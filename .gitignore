@@ -11,11 +11,49 @@ node_modules/
 dist/
 .vite/
 
-# App data
+# App data - keep generated videos, analysis artifacts and DB local only
 backend/storage/*
 !backend/storage/.gitkeep
 !backend/storage/matches/
 !backend/storage/matches/.gitkeep
+backend/storage/matches/**
+!backend/storage/matches/.gitkeep
+backend/storage/database/**
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Video and generated media
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.m4v
+*.mpg
+*.mpeg
+*.mts
+*.m2ts
+*.3gp
+*.wmv
+*.flv
+*.MP4
+*.MOV
+*.AVI
+*.MKV
+*.WEBM
+
+# Generated analysis artifacts
+tracks.json
+analysis_report.json
+match_package.json
+player_assignments.json
+pitch_config.json
+overlay_preview*.mp4
+heatmap*.png
+frame_*.jpg
 
 # Model/cache files
 *.pt
