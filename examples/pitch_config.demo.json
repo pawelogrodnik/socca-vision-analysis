@@ -1,0 +1,11 @@
+{
+  "image_points": [
+    [92, 126],
+    [921, 124],
+    [972, 706],
+    [40, 695]
+  ],
+  "width_m": 26,
+  "length_m": 56,
+  "source": "manual_demo_rough"
+}

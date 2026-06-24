@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# App data
+backend/storage/*
+!backend/storage/.gitkeep
+!backend/storage/matches/
+!backend/storage/matches/.gitkeep
+
+# Model/cache files
+*.pt
+*.onnx
+*.engine
+runs/
+
+# OS
+.DS_Store
+Thumbs.db

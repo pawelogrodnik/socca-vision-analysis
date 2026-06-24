@@ -1,0 +1,37 @@
+{
+  "status": "completed",
+  "analysis_type": "yolo-ultralytics",
+  "note": "Overlay labels are raw Ultralytics tracker IDs. Inspect P<ID> flickering before building player_id assignment.",
+  "video": {
+    "path": "/app/storage/matches/d9517bc9/video.mp4",
+    "fps": 30.0,
+    "frame_count": 338,
+    "width": 1920,
+    "height": 1080,
+    "duration_sec": 11.267
+  },
+  "parameters": {
+    "max_seconds": 30.0,
+    "frame_stride": 1,
+    "yolo_model": "yolov8s.pt",
+    "yolo_conf": 0.12,
+    "yolo_imgsz": 1536,
+    "yolo_tracker": "botsort.yaml",
+    "yolo_device": "auto",
+    "classes": [
+      "person"
+    ],
+    "pitch_mask_before_yolo": true
+  },
+  "frames_processed": 338,
+  "yolo_frames_with_results": 338,
+  "detections_kept": 4087,
+  "detections_rejected_outside_pitch": 0,
+  "tracks_count": 58,
+  "warnings": [],
+  "artifacts": {
+    "tracks_json": "tracks.json",
+    "overlay_preview": "overlay_preview.mp4",
+    "heatmap_all_tracks": "heatmap_all_tracks.png"
+  }
+}

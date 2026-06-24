@@ -1,0 +1,33 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: orlik-vision-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/storage:/app/storage
+      - ./examples:/app/examples:ro
+    environment:
+      - ORLIK_STORAGE_DIR=/app/storage
+      - ORLIK_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  client:
+    build:
+      context: ./client
+    container_name: orlik-vision-client
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount the whole client for Vite hot reload, but keep node_modules inside Docker.
+      - ./client:/app
+      - client_node_modules:/app/node_modules
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    depends_on:
+      - backend
+    command: sh -c "if [ ! -x node_modules/.bin/vite ]; then npm install --no-audit --no-fund; fi && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  client_node_modules:

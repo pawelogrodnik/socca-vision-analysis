@@ -1,0 +1,13 @@
+{
+  "id": "d9517bc9",
+  "title": "Test match",
+  "video_filename": "test_video_2.mp4",
+  "video": {
+    "path": "/app/storage/matches/d9517bc9/video.mp4",
+    "fps": 30.0,
+    "frame_count": 338,
+    "width": 1920,
+    "height": 1080,
+    "duration_sec": 11.267
+  }
+}
