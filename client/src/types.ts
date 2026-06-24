@@ -38,6 +38,7 @@ export type Match = MatchMetadataPayload & {
   video: VideoMetadata;
   created_at?: string;
   updated_at?: string;
+  published_match_id?: string;
   pitch_config?: unknown;
   analysis_report?: AnalysisReport;
   match_package?: MatchPackage;
@@ -85,4 +86,30 @@ export type MatchPackage = {
   assets: Record<string, string>;
   publish_status: string;
   [key: string]: unknown;
+};
+
+export type PublishedMatch = {
+  id: string;
+  source_match_id: string;
+  title: string;
+  match_date?: string | null;
+  season?: string | null;
+  venue?: string | null;
+  format?: string | null;
+  status: string;
+  schema_version: string;
+  team_count: number;
+  player_count: number;
+  tracks_count?: number | null;
+  frames_processed?: number | null;
+  detections_kept?: number | null;
+  warnings_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PublishedMatchDetail = PublishedMatch & {
+  package: MatchPackage;
+  teams: Array<Record<string, unknown>>;
+  players: Array<Record<string, unknown>>;
 };
