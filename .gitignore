@@ -25,7 +25,7 @@ backend/storage/database/**
 *.db-wal
 *.db-shm
 
-# Video and generated media - never commit raw match footage or heavy previews
+# Video and generated media
 *.mp4
 *.mov
 *.avi
@@ -49,6 +49,7 @@ backend/storage/database/**
 tracks.json
 analysis_report.json
 match_package.json
+player_assignments.json
 pitch_config.json
 overlay_preview*.mp4
 heatmap*.png
