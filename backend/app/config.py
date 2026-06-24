@@ -11,8 +11,8 @@ DATABASE_PATH = Path(os.getenv("ORLIK_DATABASE_PATH", DATABASE_DIR / "orlik.sqli
 MATCHES_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_PITCH_WIDTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_WIDTH_M", "26"))
-DEFAULT_PITCH_LENGTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_LENGTH_M", "56"))
+DEFAULT_PITCH_WIDTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_WIDTH_M", "30"))
+DEFAULT_PITCH_LENGTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_LENGTH_M", "47.4"))
 
 CORS_ORIGINS = [
     origin.strip()
