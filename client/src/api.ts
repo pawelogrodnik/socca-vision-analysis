@@ -1,4 +1,4 @@
-import type { AnalysisPayload, AnalysisReport, Match } from './types';
+import type { AnalysisPayload, AnalysisReport, Match, MatchMetadataPayload, MatchPackage, Team } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -27,10 +27,23 @@ export function frameUrl(matchId: string, second: number): string {
   return `${API_BASE}/api/matches/${matchId}/frame?second=${second}&_=${Date.now()}`;
 }
 
-export async function createMatch(title: string, video: File): Promise<Match> {
+export async function createMatch(input: {
+  title: string;
+  video: File;
+  match_date?: string;
+  season?: string;
+  venue?: string;
+  format: string;
+  teams: Team[];
+}): Promise<Match> {
   const body = new FormData();
-  body.append('title', title);
-  body.append('video', video);
+  body.append('title', input.title);
+  body.append('video', input.video);
+  body.append('format', input.format);
+  if (input.match_date) body.append('match_date', input.match_date);
+  if (input.season) body.append('season', input.season);
+  if (input.venue) body.append('venue', input.venue);
+  body.append('teams_json', JSON.stringify(input.teams));
   return request<Match>('/api/matches', { method: 'POST', body });
 }
 
@@ -40,6 +53,14 @@ export async function listMatches(): Promise<Match[]> {
 
 export async function getMatch(matchId: string): Promise<Match> {
   return request<Match>(`/api/matches/${matchId}`);
+}
+
+export async function updateMatchMetadata(matchId: string, payload: MatchMetadataPayload): Promise<Match> {
+  return request<Match>(`/api/matches/${matchId}/metadata`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
 }
 
 export async function savePitch(matchId: string, payload: { image_points: number[][]; width_m: number; length_m: number; source: string }) {
@@ -56,4 +77,8 @@ export async function analyzeMatch(matchId: string, payload: AnalysisPayload): P
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
+}
+
+export async function createMatchPackage(matchId: string): Promise<MatchPackage> {
+  return request<MatchPackage>(`/api/matches/${matchId}/package`, { method: 'POST' });
 }
