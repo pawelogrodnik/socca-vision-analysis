@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { analyzeMatch, artifactUrl, createMatch, frameUrl, getMatch, listMatches, savePitch } from './api';
-import type { AnalysisPayload, AnalysisReport, Match } from './types';
+import {
+  analyzeMatch,
+  artifactUrl,
+  createMatch,
+  createMatchPackage,
+  frameUrl,
+  getMatch,
+  listMatches,
+  savePitch,
+  updateMatchMetadata
+} from './api';
+import type { AnalysisPayload, Match, MatchMetadataPayload, Player, Team } from './types';
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -11,374 +21,459 @@ const defaultAnalysis: AnalysisPayload = {
   max_seconds: 30,
   frame_stride: 1,
   yolo_model: 'yolov8n.pt',
-  yolo_conf: 0.25,
-  yolo_imgsz: 960,
+  yolo_conf: 0.12,
+  yolo_imgsz: 1280,
   yolo_tracker: 'botsort.yaml',
   yolo_device: null
 };
+
+const emptyTeam = (name: string, color: string): Team => ({ name, color, players: [] });
+const defaultTeams = (): Team[] => [emptyTeam('Team A', '#ef4444'), emptyTeam('Team B', '#2563eb')];
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function App() {
+function parseRoster(value: string): Player[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [namePart, numberPart, rolePart] = line.split(',').map((part) => part?.trim());
+      const role = rolePart || 'player';
+      return {
+        name: namePart,
+        number: numberPart || null,
+        role,
+        is_guest: role.toLowerCase().includes('guest') || role.toLowerCase().includes('najem')
+      };
+    });
+}
+
+function rosterToText(players: Player[]): string {
+  return players.map((player) => [player.name, player.number || '', player.role || 'player'].join(', ')).join('\n');
+}
+
+function metadataFromMatch(match: Match): MatchMetadataPayload {
+  return {
+    title: match.title,
+    match_date: match.match_date || null,
+    season: match.season || null,
+    venue: match.venue || null,
+    format: match.format || '7v7',
+    status: match.status || 'uploaded',
+    teams: match.teams || []
+  };
+}
+
+function App() {
+  const isAdmin = window.location.pathname.startsWith('/admin-panel');
+  return isAdmin ? <AdminPanel /> : <Viewer />;
+}
+
+function Viewer() {
   const [matches, setMatches] = useState<Match[]>([]);
-  const [selectedMatchId, setSelectedMatchId] = useState('');
-  const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
-  const [uploadTitle, setUploadTitle] = useState('Test match');
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [selectedId, setSelectedId] = useState('');
+  const [selected, setSelected] = useState<Match | null>(null);
+  const [status, setStatus] = useState('');
+
+  useEffect(() => {
+    listMatches()
+      .then((items) => {
+        setMatches(items);
+        if (items[0]) setSelectedId(items[0].id);
+      })
+      .catch((error) => setStatus(errorMessage(error)));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    getMatch(selectedId)
+      .then(setSelected)
+      .catch((error) => setStatus(errorMessage(error)));
+  }, [selectedId]);
+
+  return (
+    <main className="app">
+      <section className="hero">
+        <p className="eyebrow">Public viewer</p>
+        <h1>Socca Vision Analysis</h1>
+        <p>Read-only widok meczów, drużyn i artefaktów gotowych do publikacji.</p>
+        <a href="/admin-panel">Przejdź do lokalnego admin panelu</a>
+      </section>
+      {status && <p className="status">{status}</p>}
+      <div className="grid two">
+        <section className="card">
+          <h2>Mecze</h2>
+          <MatchList matches={matches} selectedId={selectedId} onSelect={setSelectedId} />
+        </section>
+        <section className="card">
+          <h2>Raport meczu</h2>
+          {selected ? <MatchSummary match={selected} /> : <p className="muted">Brak wybranego meczu.</p>}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function AdminPanel() {
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [selected, setSelected] = useState<Match | null>(null);
+  const [status, setStatus] = useState('');
+  const [analysis, setAnalysis] = useState<AnalysisPayload>(defaultAnalysis);
   const [frameSecond, setFrameSecond] = useState(1);
   const [frameSrc, setFrameSrc] = useState('');
-  const [points, setPoints] = useState<Point[]>([]);
-  const [pitchWidth, setPitchWidth] = useState(26);
-  const [pitchLength, setPitchLength] = useState(56);
-  const [analysis, setAnalysis] = useState<AnalysisPayload>(defaultAnalysis);
-  const [report, setReport] = useState<AnalysisReport | null>(null);
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
-  const [isBusy, setIsBusy] = useState(false);
-  const [artifactCacheKey, setArtifactCacheKey] = useState(Date.now());
+  const [pitchPoints, setPitchPoints] = useState<Point[]>([]);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
 
-  const selected = useMemo(() => matches.find((m) => m.id === selectedMatchId) || null, [matches, selectedMatchId]);
-
-  function clearMessages() {
-    setError('');
-  }
-
-  async function refresh() {
-    clearMessages();
-    const data = await listMatches();
-    setMatches(data);
-    if (!selectedMatchId && data.length) {
-      setSelectedMatchId(data[0].id);
-    }
+  async function refresh(selectId?: string) {
+    const items = await listMatches();
+    setMatches(items);
+    const nextId = selectId || selectedId || items[0]?.id || '';
+    setSelectedId(nextId);
+    if (nextId) setSelected(await getMatch(nextId));
   }
 
   useEffect(() => {
-    refresh().catch((err) => setError(errorMessage(err)));
+    refresh().catch((error) => setStatus(errorMessage(error)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!selectedMatchId) return;
-    clearMessages();
-    getMatch(selectedMatchId)
-      .then((m) => {
-        setSelectedMatch(m);
-        setReport(m.analysis_report || null);
-      })
-      .catch((err) => setError(errorMessage(err)));
-  }, [selectedMatchId]);
+    if (!selectedId) return;
+    getMatch(selectedId)
+      .then(setSelected)
+      .catch((error) => setStatus(errorMessage(error)));
+  }, [selectedId]);
 
-  function drawCanvas(img?: HTMLImageElement, pts = points) {
+  useEffect(() => {
     const canvas = canvasRef.current;
-    const image = img || imageRef.current;
-    if (!canvas || !image) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!canvas || !frameSrc) return;
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0);
+      drawPitchOverlay(ctx, pitchPoints);
+    };
+    img.src = frameSrc;
+  }, [frameSrc, pitchPoints]);
 
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    if (pts.length > 0) {
-      ctx.lineWidth = Math.max(2, canvas.width / 450);
-      ctx.strokeStyle = '#facc15';
-      ctx.fillStyle = '#ef4444';
-      ctx.beginPath();
-      pts.forEach((p, idx) => {
-        if (idx === 0) ctx.moveTo(p[0], p[1]);
-        else ctx.lineTo(p[0], p[1]);
-      });
-      if (pts.length === 4) ctx.closePath();
-      ctx.stroke();
-
-      pts.forEach((p, idx) => {
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.arc(p[0], p[1], Math.max(6, canvas.width / 180), 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'white';
-        ctx.font = `bold ${Math.max(16, canvas.width / 70)}px sans-serif`;
-        ctx.fillText(String(idx + 1), p[0] + 10, p[1] - 10);
-      });
-    }
+  async function handleCreated(match: Match) {
+    setStatus(`Dodano mecz: ${match.title}`);
+    await refresh(match.id);
   }
 
-  async function handleUpload() {
-    if (!uploadFile) return alert('Wybierz plik video.');
-    setIsBusy(true);
-    clearMessages();
-    setStatus('Uploading...');
-    try {
-      const match = await createMatch(uploadTitle, uploadFile);
-      setStatus(`Uploaded match ${match.id}`);
-      await refresh();
-      setSelectedMatchId(match.id);
-    } catch (err) {
-      setError(errorMessage(err));
-      setStatus('Upload failed.');
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  function loadFrame() {
-    if (!selectedMatchId) return alert('Wybierz mecz.');
-    clearMessages();
-    const src = frameUrl(selectedMatchId, frameSecond);
-    setFrameSrc(src);
-    setPoints([]);
-    const image = new Image();
-    image.crossOrigin = 'anonymous';
-    image.onload = () => {
-      imageRef.current = image;
-      drawCanvas(image, []);
-      setStatus(`Frame loaded: ${image.naturalWidth}×${image.naturalHeight}`);
-    };
-    image.onerror = () => {
-      setError('Could not load calibration frame. Check backend logs and selected match video.');
-    };
-    image.src = src;
+  async function loadFrame() {
+    if (!selectedId) return;
+    setFrameSrc(frameUrl(selectedId, frameSecond));
+    setPitchPoints([]);
   }
 
   function handleCanvasClick(event: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
-    if (!canvas || !imageRef.current || points.length >= 4) return;
-
+    if (!canvas || pitchPoints.length >= 4) return;
     const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-
-    // Map the click from the displayed CSS canvas size to the canvas internal pixel size.
-    // The canvas CSS must preserve aspect ratio; see .pitch-canvas in styles.css.
     const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
     const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
-    const clampedX = Math.min(canvas.width - 1, Math.max(0, x));
-    const clampedY = Math.min(canvas.height - 1, Math.max(0, y));
-
-    const next: Point[] = [...points, [Math.round(clampedX), Math.round(clampedY)]];
-    setPoints(next);
-    drawCanvas(undefined, next);
+    setPitchPoints((points) => [...points, [x, y]]);
   }
 
-  async function handleSavePitch() {
-    if (!selectedMatchId) return alert('Wybierz mecz.');
-    if (points.length !== 4) return alert('Kliknij dokładnie 4 punkty boiska.');
-    setIsBusy(true);
-    clearMessages();
-    setStatus('Saving pitch config...');
-    try {
-      await savePitch(selectedMatchId, {
-        image_points: points,
-        width_m: pitchWidth,
-        length_m: pitchLength,
-        source: 'manual'
-      });
-      setStatus('Pitch config saved.');
-      setSelectedMatch(await getMatch(selectedMatchId));
-    } catch (err) {
-      setError(errorMessage(err));
-      setStatus('Saving pitch config failed.');
-    } finally {
-      setIsBusy(false);
+  async function persistPitch() {
+    if (!selectedId || pitchPoints.length !== 4) {
+      setStatus('Kliknij dokładnie 4 rogi boiska.');
+      return;
     }
+    await savePitch(selectedId, { image_points: pitchPoints, width_m: 26, length_m: 56, source: 'manual' });
+    setStatus('Zapisano konfigurację boiska.');
+    setSelected(await getMatch(selectedId));
   }
 
-  async function handleAnalyze() {
-    if (!selectedMatchId) return alert('Wybierz mecz.');
-    setIsBusy(true);
-    clearMessages();
-    setStatus('Analysis running... endpoint jest synchroniczny, więc UI wróci po zakończeniu.');
-    setReport(null);
-    try {
-      const cleanPayload = { ...analysis, yolo_device: analysis.yolo_device?.trim() || null };
-      const result = await analyzeMatch(selectedMatchId, cleanPayload);
-      setReport(result);
-      setArtifactCacheKey(Date.now());
-      setStatus(result.status === 'completed' ? 'Analysis completed.' : 'Analysis finished with non-completed status.');
-      setSelectedMatch(await getMatch(selectedMatchId));
-    } catch (err) {
-      setError(errorMessage(err));
-      setStatus('Analysis failed. Check backend logs and analysis_report.json if it exists.');
-      try {
-        setSelectedMatch(await getMatch(selectedMatchId));
-      } catch {
-        // Ignore refresh failures after analysis errors.
-      }
-    } finally {
-      setIsBusy(false);
-    }
+  async function runAnalysis() {
+    if (!selectedId) return;
+    setStatus('Analiza uruchomiona...');
+    await analyzeMatch(selectedId, analysis);
+    setStatus('Analiza zakończona.');
+    setSelected(await getMatch(selectedId));
   }
 
-  const overlaySrc = selectedMatchId && report?.artifacts ? `${artifactUrl(selectedMatchId, report.artifacts.overlay_preview)}?_=${artifactCacheKey}` : '';
-  const heatmapSrc = selectedMatchId && report?.artifacts ? `${artifactUrl(selectedMatchId, report.artifacts.heatmap_all_tracks)}?_=${artifactCacheKey}` : '';
+  async function buildPackage() {
+    if (!selectedId) return;
+    setStatus('Generuję publishable match package...');
+    await createMatchPackage(selectedId);
+    setStatus('Wygenerowano match_package.json.');
+    setSelected(await getMatch(selectedId));
+  }
+
+  async function saveMetadata(payload: MatchMetadataPayload) {
+    if (!selectedId) return;
+    const updated = await updateMatchMetadata(selectedId, payload);
+    setSelected(updated);
+    setStatus('Zapisano metadane meczu, drużyny i zawodników.');
+    await refresh(updated.id);
+  }
 
   return (
     <main className="app">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Orlik Vision</p>
-          <h1>Player ID flickering test + pitch calibration</h1>
-          <p>React/Vite client + FastAPI backend + YOLO/Ultralytics adapter. Starter pod analizę nagrań z orlika.</p>
-        </div>
-      </header>
-
-      {status && <div className="status">{status}</div>}
-      {error && <div className="error-box"><strong>Error:</strong> {error}</div>}
-      {report?.warnings && report.warnings.length > 0 && (
-        <div className="warning-box">
-          <strong>Warnings:</strong>
-          <ul>
-            {report.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-          </ul>
-        </div>
-      )}
-
-      <section className="grid two">
-        <div className="card">
-          <h2>1. Upload video</h2>
-          <label>Title</label>
-          <input value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)} />
-          <label>Video</label>
-          <input type="file" accept="video/*" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} />
-          <button disabled={isBusy} onClick={handleUpload}>Upload</button>
-        </div>
-
-        <div className="card">
-          <h2>2. Select match</h2>
-          <div className="row">
-            <select value={selectedMatchId} onChange={(e) => setSelectedMatchId(e.target.value)}>
-              <option value="">-- select --</option>
-              {matches.map((match) => (
-                <option key={match.id} value={match.id}>
-                  {match.id} — {match.title}
-                </option>
-              ))}
-            </select>
-            <button disabled={isBusy} onClick={() => refresh().catch((err) => setError(errorMessage(err)))}>Refresh</button>
-          </div>
-          {selected && (
-            <p className="muted">
-              {selected.video_filename} · {selected.video.width}×{selected.video.height} · {selected.video.fps} fps · {selected.video.duration_sec}s
-            </p>
-          )}
-        </div>
+      <section className="hero">
+        <p className="eyebrow">Local admin panel</p>
+        <h1>Panel dodawania i analizy meczu</h1>
+        <p>Ten widok jest do lokalnej pracy: upload video, drużyny, roster, kalibracja, YOLO i paczka publikacyjna.</p>
+        <a href="/">Public viewer</a>
       </section>
 
-      <section className="card">
-        <h2>3. Pitch calibration</h2>
-        <p className="muted">Kliknij 4 rogi boiska: top-left, top-right, bottom-right, bottom-left. To tworzy pitch mask i homografię.</p>
-        <div className="controls">
-          <label>
-            Frame second
-            <input type="number" value={frameSecond} min={0} step={0.5} onChange={(e) => setFrameSecond(Number(e.target.value))} />
-          </label>
-          <label>
-            Width m
-            <input type="number" value={pitchWidth} onChange={(e) => setPitchWidth(Number(e.target.value))} />
-          </label>
-          <label>
-            Length m
-            <input type="number" value={pitchLength} onChange={(e) => setPitchLength(Number(e.target.value))} />
-          </label>
-        </div>
-        <div className="row">
-          <button disabled={isBusy} onClick={loadFrame}>Load frame</button>
-          <button disabled={isBusy} onClick={() => { const next = points.slice(0, -1); setPoints(next); drawCanvas(undefined, next); }}>Undo point</button>
-          <button disabled={isBusy} onClick={() => { setPoints([]); drawCanvas(undefined, []); }}>Clear</button>
-          <button disabled={isBusy} onClick={handleSavePitch}>Save pitch config</button>
-        </div>
-        <p className="muted">Points: {points.length}/4</p>
-        {frameSrc && (
-          <div className="pitch-canvas-wrap">
-            <canvas ref={canvasRef} onClick={handleCanvasClick} className="pitch-canvas" />
-          </div>
-        )}
-        {canvasRef.current && (
-          <p className="debug-small">
-            Canvas internal size: {canvasRef.current.width}×{canvasRef.current.height}. If click drift appears, check that CSS does not stretch canvas aspect ratio.
-          </p>
-        )}
-      </section>
+      {status && <p className="status">{status}</p>}
 
-      <section className="grid two">
-        <div className="card">
-          <h2>4. Run analysis</h2>
-          <div className="controls vertical">
-            <label>
-              Adapter
-              <select value={analysis.adapter} onChange={(e) => setAnalysis({ ...analysis, adapter: e.target.value as 'yolo' | 'motion' })}>
-                <option value="yolo">YOLO / Ultralytics</option>
-                <option value="motion">Motion fallback</option>
-              </select>
-            </label>
-            <label>
-              Max seconds
-              <input type="number" value={analysis.max_seconds} onChange={(e) => setAnalysis({ ...analysis, max_seconds: Number(e.target.value) })} />
-            </label>
-            <label>
-              Frame stride
-              <input type="number" value={analysis.frame_stride} min={1} onChange={(e) => setAnalysis({ ...analysis, frame_stride: Number(e.target.value) })} />
-            </label>
-            <label>
-              YOLO model
-              <input value={analysis.yolo_model} onChange={(e) => setAnalysis({ ...analysis, yolo_model: e.target.value })} />
-            </label>
-            <label>
-              YOLO tracker
-              <select value={analysis.yolo_tracker} onChange={(e) => setAnalysis({ ...analysis, yolo_tracker: e.target.value })}>
-                <option value="botsort.yaml">botsort.yaml</option>
-                <option value="bytetrack.yaml">bytetrack.yaml</option>
-              </select>
-            </label>
-            <label>
-              Conf
-              <input type="number" min={0.01} max={1} step={0.01} value={analysis.yolo_conf} onChange={(e) => setAnalysis({ ...analysis, yolo_conf: Number(e.target.value) })} />
-            </label>
-            <label>
-              imgsz
-              <input type="number" value={analysis.yolo_imgsz} onChange={(e) => setAnalysis({ ...analysis, yolo_imgsz: Number(e.target.value) })} />
-            </label>
-            <label>
-              device
-              <input placeholder="auto | cpu | 0" value={analysis.yolo_device || ''} onChange={(e) => setAnalysis({ ...analysis, yolo_device: e.target.value })} />
-            </label>
-          </div>
-          <button disabled={isBusy} onClick={handleAnalyze}>Run analysis</button>
-        </div>
-
-        <div className="card">
-          <h2>Match / report JSON</h2>
-          <pre>{pretty(selectedMatch || report || {})}</pre>
-        </div>
-      </section>
-
-      {selectedMatchId && report?.artifacts && (
-        <section className="grid three">
-          <div className="card artifact">
-            <h2>Overlay preview</h2>
-            <video
-              controls
-              src={overlaySrc}
-              onError={() => setError('Browser could not play overlay_preview.mp4. Backend now transcodes to H.264; rebuild Docker and rerun analysis if this is an old artifact.')}
-            />
-            <a href={overlaySrc} target="_blank">Open video</a>
-          </div>
-          <div className="card artifact">
-            <h2>Heatmap</h2>
-            <img src={heatmapSrc} />
-            <a href={heatmapSrc} target="_blank">Open heatmap</a>
-          </div>
-          <div className="card artifact">
-            <h2>Data</h2>
-            <a href={artifactUrl(selectedMatchId, report.artifacts.tracks_json)} target="_blank">tracks.json</a>
-            <a href={artifactUrl(selectedMatchId, 'analysis_report.json')} target="_blank">analysis_report.json</a>
-          </div>
+      <div className="grid two">
+        <section className="card">
+          <h2>1. Dodaj mecz</h2>
+          <NewMatchForm onCreated={handleCreated} onError={setStatus} />
         </section>
+        <section className="card">
+          <h2>2. Wybierz mecz</h2>
+          <MatchList matches={matches} selectedId={selectedId} onSelect={setSelectedId} />
+          {selected && <MatchSummary match={selected} />}
+        </section>
+      </div>
+
+      {selected && (
+        <div className="grid two">
+          <section className="card">
+            <h2>3. Drużyny i zawodnicy</h2>
+            <MetadataEditor match={selected} onSave={saveMetadata} />
+          </section>
+          <section className="card">
+            <h2>4. Analiza meczu</h2>
+            <div className="controls">
+              <label>
+                Sekunda klatki do kalibracji
+                <input type="number" value={frameSecond} min={0} step={0.5} onChange={(event) => setFrameSecond(Number(event.target.value))} />
+              </label>
+              <button type="button" onClick={loadFrame}>Załaduj klatkę</button>
+              <button type="button" onClick={() => setPitchPoints([])}>Wyczyść punkty</button>
+              <button type="button" onClick={persistPitch}>Zapisz boisko</button>
+            </div>
+            <p className="muted">Kliknij 4 rogi boiska: góra-lewo, góra-prawo, dół-prawo, dół-lewo. Punkty: {pitchPoints.length}/4.</p>
+            <div className="pitch-canvas-wrap">
+              <canvas ref={canvasRef} onClick={handleCanvasClick} className="pitch-canvas" />
+            </div>
+            <AnalysisForm analysis={analysis} onChange={setAnalysis} onRun={runAnalysis} />
+            <button type="button" onClick={buildPackage}>Generate publishable match package</button>
+          </section>
+        </div>
       )}
+
+      {selected && <AnalysisArtifacts match={selected} />}
     </main>
   );
 }
+
+function drawPitchOverlay(ctx: CanvasRenderingContext2D, points: Point[]) {
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#facc15';
+  ctx.fillStyle = '#ef4444';
+  if (points.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    points.slice(1).forEach(([x, y]) => ctx.lineTo(x, y));
+    if (points.length === 4) ctx.closePath();
+    ctx.stroke();
+  }
+  points.forEach(([x, y], index) => {
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(String(index + 1), x + 10, y - 10);
+  });
+}
+
+function NewMatchForm({ onCreated, onError }: { onCreated: (match: Match) => void; onError: (message: string) => void }) {
+  const [title, setTitle] = useState('Nowy mecz');
+  const [matchDate, setMatchDate] = useState('');
+  const [season, setSeason] = useState('2026');
+  const [venue, setVenue] = useState('');
+  const [format, setFormat] = useState('7v7');
+  const [teams, setTeams] = useState<Team[]>(defaultTeams());
+  const [video, setVideo] = useState<File | null>(null);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!video) {
+      onError('Wybierz plik video.');
+      return;
+    }
+    try {
+      const match = await createMatch({ title, video, match_date: matchDate, season, venue, format, teams });
+      onCreated(match);
+    } catch (error) {
+      onError(errorMessage(error));
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="stack">
+      <label>Tytuł meczu<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+      <div className="grid three compact">
+        <label>Data<input type="date" value={matchDate} onChange={(event) => setMatchDate(event.target.value)} /></label>
+        <label>Sezon<input value={season} onChange={(event) => setSeason(event.target.value)} /></label>
+        <label>Format<input value={format} onChange={(event) => setFormat(event.target.value)} /></label>
+      </div>
+      <label>Miejsce<input value={venue} onChange={(event) => setVenue(event.target.value)} /></label>
+      <TeamEditor teams={teams} onChange={setTeams} />
+      <label>Video<input type="file" accept="video/*" onChange={(event) => setVideo(event.target.files?.[0] || null)} /></label>
+      <button type="submit">Dodaj mecz</button>
+    </form>
+  );
+}
+
+function MetadataEditor({ match, onSave }: { match: Match; onSave: (payload: MatchMetadataPayload) => void }) {
+  const [title, setTitle] = useState(match.title);
+  const [matchDate, setMatchDate] = useState(match.match_date || '');
+  const [season, setSeason] = useState(match.season || '');
+  const [venue, setVenue] = useState(match.venue || '');
+  const [format, setFormat] = useState(match.format || '7v7');
+  const [status, setStatus] = useState(match.status || 'uploaded');
+  const [teams, setTeams] = useState<Team[]>(match.teams || defaultTeams());
+
+  useEffect(() => {
+    setTitle(match.title);
+    setMatchDate(match.match_date || '');
+    setSeason(match.season || '');
+    setVenue(match.venue || '');
+    setFormat(match.format || '7v7');
+    setStatus(match.status || 'uploaded');
+    setTeams(match.teams || defaultTeams());
+  }, [match]);
+
+  return (
+    <div className="stack">
+      <label>Tytuł<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+      <div className="grid three compact">
+        <label>Data<input type="date" value={matchDate} onChange={(event) => setMatchDate(event.target.value)} /></label>
+        <label>Sezon<input value={season} onChange={(event) => setSeason(event.target.value)} /></label>
+        <label>Status<input value={status} onChange={(event) => setStatus(event.target.value)} /></label>
+      </div>
+      <label>Miejsce<input value={venue} onChange={(event) => setVenue(event.target.value)} /></label>
+      <label>Format<input value={format} onChange={(event) => setFormat(event.target.value)} /></label>
+      <TeamEditor teams={teams} onChange={setTeams} />
+      <button type="button" onClick={() => onSave({ title, match_date: matchDate || null, season: season || null, venue: venue || null, format, status, teams })}>Zapisz metadane</button>
+    </div>
+  );
+}
+
+function TeamEditor({ teams, onChange }: { teams: Team[]; onChange: (teams: Team[]) => void }) {
+  function updateTeam(index: number, patch: Partial<Team>) {
+    onChange(teams.map((team, teamIndex) => (teamIndex === index ? { ...team, ...patch } : team)));
+  }
+
+  return (
+    <div className="stack">
+      <div className="row between">
+        <strong>Drużyny i roster</strong>
+        <button type="button" onClick={() => onChange([...teams, emptyTeam(`Team ${teams.length + 1}`, '#64748b')])}>Dodaj drużynę</button>
+      </div>
+      {teams.map((team, index) => (
+        <div className="team-card" key={team.id || index}>
+          <div className="grid three compact">
+            <label>Nazwa<input value={team.name} onChange={(event) => updateTeam(index, { name: event.target.value })} /></label>
+            <label>Kolor<input type="color" value={team.color || '#64748b'} onChange={(event) => updateTeam(index, { color: event.target.value })} /></label>
+            <button type="button" onClick={() => onChange(teams.filter((_, teamIndex) => teamIndex !== index))}>Usuń</button>
+          </div>
+          <label>
+            Zawodnicy: imię, numer, rola — jeden na linię
+            <textarea value={rosterToText(team.players || [])} onChange={(event) => updateTeam(index, { players: parseRoster(event.target.value) })} rows={5} />
+          </label>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalysisForm({ analysis, onChange, onRun }: { analysis: AnalysisPayload; onChange: (payload: AnalysisPayload) => void; onRun: () => void }) {
+  return (
+    <div className="analysis-form">
+      <h3>Ustawienia YOLO</h3>
+      <div className="grid three compact">
+        <label>Adapter<select value={analysis.adapter} onChange={(event) => onChange({ ...analysis, adapter: event.target.value as AnalysisPayload['adapter'] })}><option value="yolo">yolo</option><option value="motion">motion</option></select></label>
+        <label>Max seconds<input type="number" value={analysis.max_seconds} onChange={(event) => onChange({ ...analysis, max_seconds: Number(event.target.value) })} /></label>
+        <label>Frame stride<input type="number" value={analysis.frame_stride} min={1} onChange={(event) => onChange({ ...analysis, frame_stride: Number(event.target.value) })} /></label>
+      </div>
+      <div className="grid three compact">
+        <label>Model<input value={analysis.yolo_model} onChange={(event) => onChange({ ...analysis, yolo_model: event.target.value })} /></label>
+        <label>Conf<input type="number" step="0.01" value={analysis.yolo_conf} onChange={(event) => onChange({ ...analysis, yolo_conf: Number(event.target.value) })} /></label>
+        <label>Img size<input type="number" value={analysis.yolo_imgsz} onChange={(event) => onChange({ ...analysis, yolo_imgsz: Number(event.target.value) })} /></label>
+      </div>
+      <div className="grid two compact">
+        <label>Tracker<input value={analysis.yolo_tracker} onChange={(event) => onChange({ ...analysis, yolo_tracker: event.target.value })} /></label>
+        <label>Device<input value={analysis.yolo_device || ''} onChange={(event) => onChange({ ...analysis, yolo_device: event.target.value || null })} /></label>
+      </div>
+      <button type="button" onClick={onRun}>Uruchom analizę</button>
+    </div>
+  );
+}
+
+function MatchList({ matches, selectedId, onSelect }: { matches: Match[]; selectedId: string; onSelect: (id: string) => void }) {
+  if (!matches.length) return <p className="muted">Brak meczów.</p>;
+  return (
+    <div className="match-list">
+      {matches.map((match) => (
+        <button type="button" className={match.id === selectedId ? 'match-item active' : 'match-item'} key={match.id} onClick={() => onSelect(match.id)}>
+          <strong>{match.title}</strong>
+          <span>{match.match_date || 'brak daty'} · {match.status || 'uploaded'}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MatchSummary({ match }: { match: Match }) {
+  const playerCount = useMemo(() => (match.teams || []).reduce((sum, team) => sum + (team.players?.length || 0), 0), [match.teams]);
+  return (
+    <div className="summary">
+      <h3>{match.title}</h3>
+      <p className="muted">{match.match_date || 'brak daty'} · {match.season || 'brak sezonu'} · {match.venue || 'brak miejsca'}</p>
+      <div className="chips">
+        <span>Status: {match.status || 'uploaded'}</span>
+        <span>Format: {match.format || '7v7'}</span>
+        <span>Drużyny: {(match.teams || []).length}</span>
+        <span>Zawodnicy: {playerCount}</span>
+      </div>
+      {(match.teams || []).map((team) => (
+        <div className="team-row" key={team.id || team.name}>
+          <span className="color-dot" style={{ background: team.color || '#64748b' }} />
+          <strong>{team.name}</strong>
+          <span className="muted">{team.players?.length || 0} zawodników</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalysisArtifacts({ match }: { match: Match }) {
+  const report = match.analysis_report;
+  const heatmap = report?.artifacts?.heatmap_all_tracks;
+  const overlay = report?.artifacts?.overlay_preview;
+  return (
+    <section className="card">
+      <h2>Widok analizy</h2>
+      <div className="grid two">
+        <div>
+          <h3>Artefakty</h3>
+          {overlay && <video controls src={artifactUrl(match.id, overlay)} className="video" />}
+          {heatmap && <img src={artifactUrl(match.id, heatmap)} className="heatmap" alt="Heatmap" />}
+          {match.match_package && <a href={artifactUrl(match.id, 'match_package.json')}>Pobierz match_package.json</a>}
+        </div>
+        <div>
+          <h3>Analysis report</h3>
+          <pre>{pretty(report || { status: 'not analyzed' })}</pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export default App;
