@@ -1,6 +1,9 @@
 import type {
   AnalysisPayload,
   AnalysisReport,
+  IdentityAssignment,
+  IdentityAssignmentsDocument,
+  IdentityReviewState,
   Match,
   MatchMetadataPayload,
   MatchPackage,
@@ -97,6 +100,18 @@ export async function getTrackletReview(matchId: string): Promise<TrackletReview
 
 export async function savePlayerAssignments(matchId: string, assignments: PlayerAssignment[]): Promise<PlayerAssignmentsDocument> {
   return request<PlayerAssignmentsDocument>(`/api/matches/${matchId}/player-assignments`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assignments })
+  });
+}
+
+export async function getIdentityReview(matchId: string): Promise<IdentityReviewState> {
+  return request<IdentityReviewState>(`/api/matches/${matchId}/identity-candidates`);
+}
+
+export async function saveIdentityAssignments(matchId: string, assignments: IdentityAssignment[]): Promise<IdentityAssignmentsDocument> {
+  return request<IdentityAssignmentsDocument>(`/api/matches/${matchId}/identity-assignments`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ assignments })
