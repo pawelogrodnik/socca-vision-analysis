@@ -4,13 +4,17 @@ import {
   artifactUrl,
   createMatch,
   createMatchPackage,
+  deletePublishedMatch,
   frameUrl,
   getMatch,
+  getPublishedMatch,
   listMatches,
+  listPublishedMatches,
+  publishLocalMatch,
   savePitch,
   updateMatchMetadata
 } from './api';
-import type { AnalysisPayload, Match, MatchMetadataPayload, Player, Team } from './types';
+import type { AnalysisPayload, Match, MatchMetadataPayload, Player, PublishedMatch, PublishedMatchDetail, Team } from './types';
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -55,31 +59,19 @@ function rosterToText(players: Player[]): string {
   return players.map((player) => [player.name, player.number || '', player.role || 'player'].join(', ')).join('\n');
 }
 
-function metadataFromMatch(match: Match): MatchMetadataPayload {
-  return {
-    title: match.title,
-    match_date: match.match_date || null,
-    season: match.season || null,
-    venue: match.venue || null,
-    format: match.format || '7v7',
-    status: match.status || 'uploaded',
-    teams: match.teams || []
-  };
-}
-
 function App() {
   const isAdmin = window.location.pathname.startsWith('/admin-panel');
   return isAdmin ? <AdminPanel /> : <Viewer />;
 }
 
 function Viewer() {
-  const [matches, setMatches] = useState<Match[]>([]);
+  const [matches, setMatches] = useState<PublishedMatch[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [selected, setSelected] = useState<Match | null>(null);
+  const [selected, setSelected] = useState<PublishedMatchDetail | null>(null);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
-    listMatches()
+    listPublishedMatches()
       .then((items) => {
         setMatches(items);
         if (items[0]) setSelectedId(items[0].id);
@@ -89,7 +81,7 @@ function Viewer() {
 
   useEffect(() => {
     if (!selectedId) return;
-    getMatch(selectedId)
+    getPublishedMatch(selectedId)
       .then(setSelected)
       .catch((error) => setStatus(errorMessage(error)));
   }, [selectedId]);
@@ -99,18 +91,18 @@ function Viewer() {
       <section className="hero">
         <p className="eyebrow">Public viewer</p>
         <h1>Socca Vision Analysis</h1>
-        <p>Read-only widok meczów, drużyn i artefaktów gotowych do publikacji.</p>
+        <p>Read-only widok opublikowanych meczów z lekkiej bazy SQLite.</p>
         <a href="/admin-panel">Przejdź do lokalnego admin panelu</a>
       </section>
       {status && <p className="status">{status}</p>}
       <div className="grid two">
         <section className="card">
-          <h2>Mecze</h2>
-          <MatchList matches={matches} selectedId={selectedId} onSelect={setSelectedId} />
+          <h2>Opublikowane mecze</h2>
+          <PublishedMatchList matches={matches} selectedId={selectedId} onSelect={setSelectedId} />
         </section>
         <section className="card">
-          <h2>Raport meczu</h2>
-          {selected ? <MatchSummary match={selected} /> : <p className="muted">Brak wybranego meczu.</p>}
+          <h2>Publiczny raport</h2>
+          {selected ? <PublishedMatchSummary match={selected} /> : <p className="muted">Brak opublikowanych meczów w bazie.</p>}
         </section>
       </div>
     </main>
@@ -209,6 +201,14 @@ function AdminPanel() {
     setSelected(await getMatch(selectedId));
   }
 
+  async function publishSelected(replace = false) {
+    if (!selectedId) return;
+    setStatus(replace ? 'Nadpisuję mecz w bazie...' : 'Importuję mecz do bazy SQLite...');
+    const published = await publishLocalMatch(selectedId, replace);
+    setStatus(`Mecz opublikowany w bazie jako ${published.id}.`);
+    setSelected(await getMatch(selectedId));
+  }
+
   async function saveMetadata(payload: MatchMetadataPayload) {
     if (!selectedId) return;
     const updated = await updateMatchMetadata(selectedId, payload);
@@ -222,7 +222,7 @@ function AdminPanel() {
       <section className="hero">
         <p className="eyebrow">Local admin panel</p>
         <h1>Panel dodawania i analizy meczu</h1>
-        <p>Ten widok jest do lokalnej pracy: upload video, drużyny, roster, kalibracja, YOLO i paczka publikacyjna.</p>
+        <p>Ten widok jest do lokalnej pracy: upload video, drużyny, roster, kalibracja, YOLO i publikacja do SQLite.</p>
         <a href="/">Public viewer</a>
       </section>
 
@@ -234,7 +234,7 @@ function AdminPanel() {
           <NewMatchForm onCreated={handleCreated} onError={setStatus} />
         </section>
         <section className="card">
-          <h2>2. Wybierz mecz</h2>
+          <h2>2. Wybierz mecz lokalny</h2>
           <MatchList matches={matches} selectedId={selectedId} onSelect={setSelectedId} />
           {selected && <MatchSummary match={selected} />}
         </section>
@@ -262,12 +262,17 @@ function AdminPanel() {
               <canvas ref={canvasRef} onClick={handleCanvasClick} className="pitch-canvas" />
             </div>
             <AnalysisForm analysis={analysis} onChange={setAnalysis} onRun={runAnalysis} />
-            <button type="button" onClick={buildPackage}>Generate publishable match package</button>
+            <div className="row">
+              <button type="button" onClick={buildPackage}>Generate match_package.json</button>
+              <button type="button" onClick={() => publishSelected(false)}>Publish/import to DB</button>
+              <button type="button" className="secondary" onClick={() => publishSelected(true)}>Replace in DB</button>
+            </div>
           </section>
         </div>
       )}
 
       {selected && <AnalysisArtifacts match={selected} />}
+      <PublishedDatabasePanel onStatus={setStatus} />
     </main>
   );
 }
@@ -430,6 +435,20 @@ function MatchList({ matches, selectedId, onSelect }: { matches: Match[]; select
   );
 }
 
+function PublishedMatchList({ matches, selectedId, onSelect }: { matches: PublishedMatch[]; selectedId: string; onSelect: (id: string) => void }) {
+  if (!matches.length) return <p className="muted">Brak opublikowanych meczów.</p>;
+  return (
+    <div className="match-list">
+      {matches.map((match) => (
+        <button type="button" className={match.id === selectedId ? 'match-item active' : 'match-item'} key={match.id} onClick={() => onSelect(match.id)}>
+          <strong>{match.title}</strong>
+          <span>{match.match_date || 'brak daty'} · {match.player_count} zawodników · {match.tracks_count ?? 0} tracków</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function MatchSummary({ match }: { match: Match }) {
   const playerCount = useMemo(() => (match.teams || []).reduce((sum, team) => sum + (team.players?.length || 0), 0), [match.teams]);
   return (
@@ -441,6 +460,7 @@ function MatchSummary({ match }: { match: Match }) {
         <span>Format: {match.format || '7v7'}</span>
         <span>Drużyny: {(match.teams || []).length}</span>
         <span>Zawodnicy: {playerCount}</span>
+        {match.published_match_id && <span>DB: {match.published_match_id}</span>}
       </div>
       {(match.teams || []).map((team) => (
         <div className="team-row" key={team.id || team.name}>
@@ -449,6 +469,33 @@ function MatchSummary({ match }: { match: Match }) {
           <span className="muted">{team.players?.length || 0} zawodników</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function PublishedMatchSummary({ match }: { match: PublishedMatchDetail }) {
+  const source = match.package?.match;
+  return (
+    <div className="summary">
+      <h3>{match.title}</h3>
+      <p className="muted">{match.match_date || 'brak daty'} · {match.season || 'brak sezonu'} · {match.venue || 'brak miejsca'}</p>
+      <div className="chips">
+        <span>Status: {match.status}</span>
+        <span>Drużyny: {match.team_count}</span>
+        <span>Zawodnicy: {match.player_count}</span>
+        <span>Tracki: {match.tracks_count ?? 0}</span>
+        <span>Klatki: {match.frames_processed ?? 0}</span>
+        <span>Warnings: {match.warnings_count}</span>
+      </div>
+      {(source?.teams || []).map((team) => (
+        <div className="team-row" key={team.id || team.name}>
+          <span className="color-dot" style={{ background: team.color || '#64748b' }} />
+          <strong>{team.name}</strong>
+          <span className="muted">{team.players?.length || 0} zawodników</span>
+        </div>
+      ))}
+      <h4>Analysis snapshot</h4>
+      <pre>{pretty(match.package?.analysis_report || { status: 'no analysis report' })}</pre>
     </div>
   );
 }
@@ -462,7 +509,7 @@ function AnalysisArtifacts({ match }: { match: Match }) {
       <h2>Widok analizy</h2>
       <div className="grid two">
         <div>
-          <h3>Artefakty</h3>
+          <h3>Artefakty lokalne</h3>
           {overlay && <video controls src={artifactUrl(match.id, overlay)} className="video" />}
           {heatmap && <img src={artifactUrl(match.id, heatmap)} className="heatmap" alt="Heatmap" />}
           {match.match_package && <a href={artifactUrl(match.id, 'match_package.json')}>Pobierz match_package.json</a>}
@@ -470,6 +517,63 @@ function AnalysisArtifacts({ match }: { match: Match }) {
         <div>
           <h3>Analysis report</h3>
           <pre>{pretty(report || { status: 'not analyzed' })}</pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PublishedDatabasePanel({ onStatus }: { onStatus: (message: string) => void }) {
+  const [matches, setMatches] = useState<PublishedMatch[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [selected, setSelected] = useState<PublishedMatchDetail | null>(null);
+
+  async function refresh(nextSelectedId = selectedId) {
+    const items = await listPublishedMatches();
+    setMatches(items);
+    const id = nextSelectedId || items[0]?.id || '';
+    setSelectedId(id);
+    setSelected(id ? await getPublishedMatch(id) : null);
+  }
+
+  useEffect(() => {
+    refresh().catch((error) => onStatus(errorMessage(error)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function select(id: string) {
+    setSelectedId(id);
+    setSelected(await getPublishedMatch(id));
+  }
+
+  async function remove(id: string) {
+    const confirmed = window.confirm('Usunąć opublikowany mecz z bazy? Tego używamy przy duplikatach albo błędnych statystykach.');
+    if (!confirmed) return;
+    await deletePublishedMatch(id);
+    onStatus(`Usunięto ${id} z bazy.`);
+    await refresh('');
+  }
+
+  return (
+    <section className="card">
+      <div className="row between">
+        <h2>5. Zarządzanie opublikowanymi statystykami</h2>
+        <button type="button" onClick={() => refresh()}>Odśwież bazę</button>
+      </div>
+      <p className="muted">To są mecze zaimportowane do SQLite. Tu można usunąć duplikaty albo błędne snapshoty statystyk.</p>
+      <div className="grid two">
+        <PublishedMatchList matches={matches} selectedId={selectedId} onSelect={select} />
+        <div>
+          {selected ? (
+            <>
+              <PublishedMatchSummary match={selected} />
+              <div className="row">
+                <button type="button" className="danger" onClick={() => remove(selected.id)}>Usuń z bazy</button>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Brak rekordów w bazie.</p>
+          )}
         </div>
       </div>
     </section>
