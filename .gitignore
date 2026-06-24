@@ -1,3 +1,11 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+backend/.env
+client/.env
+*.local.env
+
 # Python
 __pycache__/
 *.py[cod]
@@ -50,6 +58,8 @@ tracks.json
 analysis_report.json
 match_package.json
 player_assignments.json
+identity_candidates.json
+identity_assignments.json
 pitch_config.json
 overlay_preview*.mp4
 heatmap*.png

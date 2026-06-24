@@ -11,8 +11,14 @@ DATABASE_PATH = Path(os.getenv("ORLIK_DATABASE_PATH", DATABASE_DIR / "orlik.sqli
 MATCHES_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_PITCH_WIDTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_WIDTH_M", "26"))
-DEFAULT_PITCH_LENGTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_LENGTH_M", "56"))
+DEFAULT_PITCH_WIDTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_WIDTH_M", "30"))
+DEFAULT_PITCH_LENGTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_LENGTH_M", "47.4"))
+
+APP_MODE = os.getenv("ORLIK_APP_MODE", "local-analysis")  # local-analysis | production-viewer
+PUBLISH_TARGET = os.getenv("ORLIK_PUBLISH_TARGET", "local-db")  # local-db | remote-api
+PRODUCTION_API_URL = os.getenv("ORLIK_PRODUCTION_API_URL", "").rstrip("/")
+PRODUCTION_API_TOKEN = os.getenv("ORLIK_PRODUCTION_API_TOKEN", "")
+ADMIN_IMPORT_TOKEN = os.getenv("ORLIK_ADMIN_IMPORT_TOKEN", "")
 
 CORS_ORIGINS = [
     origin.strip()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PlayerPayload(BaseModel):
@@ -31,9 +31,17 @@ class MatchMetadataPayload(BaseModel):
 class PitchConfigPayload(BaseModel):
     # Order should match destination corners: top-left, top-right, bottom-right, bottom-left
     image_points: list[list[float]] = Field(min_length=4, max_length=4)
-    width_m: float = 26.0
-    length_m: float = 56.0
+    width_m: float = 30.0
+    length_m: float = 47.4
     source: str = "manual"
+
+    @model_validator(mode="after")
+    def normalize_legacy_default_pitch_size(self) -> "PitchConfigPayload":
+        # Older UI builds sent 26 x 56 by default. Current pitch is 30 x 47.40 m.
+        if abs(self.width_m - 26.0) < 0.001 and abs(self.length_m - 56.0) < 0.001:
+            self.width_m = 30.0
+            self.length_m = 47.4
+        return self
 
 
 class AnalyzePayload(BaseModel):

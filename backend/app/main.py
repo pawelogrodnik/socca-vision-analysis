@@ -8,17 +8,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from app.config import CORS_ORIGINS, MATCHES_DIR
+from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.models import AnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
+from app.services.identity import build_identity_review, save_identity_assignments
+from app.services.publish import PublishError, publish_match_package
 from app.services.video import extract_frame, read_video_metadata
 
-app = FastAPI(title="Orlik Vision API", version="0.5.0")
+app = FastAPI(title="Orlik Vision API", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -40,6 +42,14 @@ def now_iso() -> str:
 def slugify(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
     return normalized or "item"
+
+
+def require_admin_import_token(authorization: str | None) -> None:
+    if not ADMIN_IMPORT_TOKEN:
+        return
+    expected = f"Bearer {ADMIN_IMPORT_TOKEN}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing admin import token")
 
 
 def with_generated_ids(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -71,13 +81,6 @@ def write_match_meta(path: Path, meta: dict[str, Any]) -> dict[str, Any]:
     meta["updated_at"] = now_iso()
     (path / "match.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
-
-
-def read_json_if_exists(path: Path, filename: str) -> dict[str, Any] | list[Any] | None:
-    file_path = path / filename
-    if not file_path.exists():
-        return None
-    return json.loads(file_path.read_text(encoding="utf-8"))
 
 
 def match_dir(match_id: str) -> Path:
@@ -185,10 +188,8 @@ def load_player_assignments(path: Path, tracks: list[dict[str, Any]] | None = No
 def build_assignment_summary(meta: dict[str, Any], tracks: list[dict[str, Any]], assignments: list[dict[str, Any]]) -> dict[str, Any]:
     track_ids = {int(track.get("track_id")) for track in tracks if track.get("track_id") is not None}
     valid_assignments = [a for a in assignments if int(a.get("tracklet_id", -1)) in track_ids]
-    resolved_statuses = {"assigned"}
-    ignored_statuses = {"false_positive", "referee", "opponent"}
-    assigned_tracklets = [a for a in valid_assignments if a.get("status") in resolved_statuses and a.get("player_id")]
-    ignored_tracklets = [a for a in valid_assignments if a.get("status") in ignored_statuses]
+    assigned_tracklets = [a for a in valid_assignments if a.get("status") == "assigned" and a.get("player_id")]
+    ignored_tracklets = [a for a in valid_assignments if a.get("status") in {"false_positive", "referee", "opponent"}]
     unassigned_tracklets = [a for a in valid_assignments if a.get("status") in {None, "", "unassigned", "unknown"}]
 
     unique_players_by_team: dict[str, set[str]] = {}
@@ -221,7 +222,12 @@ def build_assignment_summary(meta: dict[str, Any], tracks: list[dict[str, Any]],
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "database": database_health()}
+    return {
+        "status": "ok",
+        "app_mode": APP_MODE,
+        "publish_target": PUBLISH_TARGET,
+        "database": database_health(),
+    }
 
 
 @app.post("/api/matches")
@@ -234,6 +240,8 @@ def create_match(
     format: str = Form("7v7"),
     teams_json: str | None = Form(None),
 ) -> dict[str, Any]:
+    if APP_MODE == "production-viewer":
+        raise HTTPException(status_code=403, detail="Video upload is disabled in production-viewer mode")
     if not video.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     suffix = Path(video.filename).suffix.lower() or ".mp4"
@@ -280,7 +288,14 @@ def list_matches() -> list[dict[str, Any]]:
 def get_match(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     meta = read_match_meta(path)
-    for optional in ["pitch_config.json", "analysis_report.json", "match_package.json", "player_assignments.json"]:
+    for optional in [
+        "pitch_config.json",
+        "analysis_report.json",
+        "match_package.json",
+        "player_assignments.json",
+        "identity_candidates.json",
+        "identity_assignments.json",
+    ]:
         optional_path = path / optional
         if optional_path.exists():
             meta[optional.removesuffix(".json")] = json.loads(optional_path.read_text(encoding="utf-8"))
@@ -292,7 +307,6 @@ def update_match_metadata(match_id: str, payload: MatchMetadataPayload) -> dict[
     path = match_dir(match_id)
     meta = read_match_meta(path)
     next_metadata = with_generated_ids(payload.model_dump())
-    # Preserve immutable/imported technical metadata.
     meta.update(next_metadata)
     write_match_meta(path, meta)
     return meta
@@ -328,6 +342,8 @@ def save_pitch(match_id: str, payload: PitchConfigPayload) -> dict[str, Any]:
 
 @app.post("/api/matches/{match_id}/analyze")
 def analyze(match_id: str, payload: AnalyzePayload) -> dict[str, Any]:
+    if APP_MODE == "production-viewer":
+        raise HTTPException(status_code=403, detail="Video analysis is disabled in production-viewer mode")
     path = match_dir(match_id)
     video_path = match_video_path(path)
     try:
@@ -374,6 +390,37 @@ def get_match_tracklets(match_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/matches/{match_id}/identity-candidates")
+def get_identity_candidates(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    try:
+        return build_identity_review(path, meta)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/identity-assignments")
+def save_candidate_assignments(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    assignments = payload.get("assignments")
+    if not isinstance(assignments, list):
+        raise HTTPException(status_code=400, detail="assignments must be a list")
+    try:
+        doc = save_identity_assignments(path, meta, assignments)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
 @app.put("/api/matches/{match_id}/player-assignments")
 def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -408,7 +455,6 @@ def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) 
             }
         )
 
-    # Preserve unmentioned tracklets as unassigned so the review UI always has a complete checklist.
     existing_ids = {int(item["tracklet_id"]) for item in normalized}
     for track_id in sorted(track_ids - existing_ids):
         normalized.append({"tracklet_id": track_id, "status": "unassigned", "team_id": None, "player_id": None, "notes": ""})
@@ -437,6 +483,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "pitch_config": None,
         "analysis_report": None,
         "player_assignments": None,
+        "identity_candidates": None,
+        "identity_assignments": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
         "assets": {},
@@ -446,6 +494,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("pitch_config", "pitch_config.json"),
         ("analysis_report", "analysis_report.json"),
         ("player_assignments", "player_assignments.json"),
+        ("identity_candidates", "identity_candidates.json"),
+        ("identity_assignments", "identity_assignments.json"),
     ]:
         file_path = path / filename
         if file_path.exists():
@@ -456,6 +506,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["tracks_json"] = "tracks.json"
     if (path / "player_assignments.json").exists():
         package["assets"]["player_assignments_json"] = "player_assignments.json"
+    if (path / "identity_candidates.json").exists():
+        package["assets"]["identity_candidates_json"] = "identity_candidates.json"
+    if (path / "identity_assignments.json").exists():
+        package["assets"]["identity_assignments_json"] = "identity_assignments.json"
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -464,6 +518,26 @@ def build_match_package(path: Path) -> dict[str, Any]:
 def create_match_package(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     return build_match_package(path)
+
+
+@app.post("/api/matches/{match_id}/publish")
+def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    package_path = path / "match_package.json"
+    package = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else build_match_package(path)
+    try:
+        published = publish_match_package(package, replace=replace)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (PublishError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    meta = read_match_meta(path)
+    meta["status"] = "published"
+    meta["publish_target"] = PUBLISH_TARGET
+    meta["published_match_id"] = published.get("id")
+    write_match_meta(path, meta)
+    return published
 
 
 @app.post("/api/matches/{match_id}/publish-local")
@@ -480,6 +554,7 @@ def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str
 
     meta = read_match_meta(path)
     meta["status"] = "published"
+    meta["publish_target"] = "local-db"
     meta["published_match_id"] = published["id"]
     write_match_meta(path, meta)
     return published
@@ -508,7 +583,12 @@ def api_delete_published_match(published_match_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/admin/import-match")
-def api_import_match_package(package: dict[str, Any] = Body(...), replace: bool = Query(False)) -> dict[str, Any]:
+def api_import_match_package(
+    package: dict[str, Any] = Body(...),
+    replace: bool = Query(False),
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    require_admin_import_token(authorization)
     try:
         return import_match_package(package, replace=replace)
     except FileExistsError as exc:
@@ -528,6 +608,8 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "pitch_config.json": "application/json",
         "match_package.json": "application/json",
         "player_assignments.json": "application/json",
+        "identity_candidates.json": "application/json",
+        "identity_assignments.json": "application/json",
     }
     if artifact_name not in allowed:
         raise HTTPException(status_code=404, detail="Artifact not available")
