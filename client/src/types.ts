@@ -7,13 +7,40 @@ export type VideoMetadata = {
   path?: string;
 };
 
-export type Match = {
-  id: string;
+export type Player = {
+  id?: string;
+  name: string;
+  number?: string | null;
+  role: 'player' | 'goalkeeper' | 'guest' | 'unknown' | string;
+  is_guest: boolean;
+};
+
+export type Team = {
+  id?: string;
+  name: string;
+  color?: string | null;
+  players: Player[];
+};
+
+export type MatchMetadataPayload = {
   title: string;
+  match_date?: string | null;
+  season?: string | null;
+  venue?: string | null;
+  format: string;
+  status: string;
+  teams: Team[];
+};
+
+export type Match = MatchMetadataPayload & {
+  id: string;
   video_filename: string;
   video: VideoMetadata;
+  created_at?: string;
+  updated_at?: string;
   pitch_config?: unknown;
   analysis_report?: AnalysisReport;
+  match_package?: MatchPackage;
 };
 
 export type AnalysisPayload = {
@@ -32,6 +59,8 @@ export type AnalysisReport = {
   analysis_type: string;
   note?: string;
   frames_processed?: number;
+  detections_kept?: number;
+  detections_rejected_outside_pitch?: number;
   tracks_count?: number;
   warnings?: string[];
   error?: {
@@ -43,5 +72,17 @@ export type AnalysisReport = {
     overlay_preview: string;
     heatmap_all_tracks: string;
   };
+  [key: string]: unknown;
+};
+
+export type MatchPackage = {
+  schema_version: string;
+  generated_at: string;
+  contains_video: boolean;
+  match: Match;
+  team_count: number;
+  player_count: number;
+  assets: Record<string, string>;
+  publish_status: string;
   [key: string]: unknown;
 };
