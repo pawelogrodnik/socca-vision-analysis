@@ -1,4 +1,16 @@
-import type { AnalysisPayload, AnalysisReport, Match, MatchMetadataPayload, MatchPackage, PublishedMatch, PublishedMatchDetail, Team } from './types';
+import type {
+  AnalysisPayload,
+  AnalysisReport,
+  Match,
+  MatchMetadataPayload,
+  MatchPackage,
+  PlayerAssignment,
+  PlayerAssignmentsDocument,
+  PublishedMatch,
+  PublishedMatchDetail,
+  Team,
+  TrackletReviewState
+} from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -76,6 +88,18 @@ export async function analyzeMatch(matchId: string, payload: AnalysisPayload): P
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
+  });
+}
+
+export async function getTrackletReview(matchId: string): Promise<TrackletReviewState> {
+  return request<TrackletReviewState>(`/api/matches/${matchId}/tracklets`);
+}
+
+export async function savePlayerAssignments(matchId: string, assignments: PlayerAssignment[]): Promise<PlayerAssignmentsDocument> {
+  return request<PlayerAssignmentsDocument>(`/api/matches/${matchId}/player-assignments`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assignments })
   });
 }
 
