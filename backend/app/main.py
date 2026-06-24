@@ -8,16 +8,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.config import CORS_ORIGINS, MATCHES_DIR
 from app.models import AnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match
+from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.video import extract_frame, read_video_metadata
 
-app = FastAPI(title="Orlik Vision API", version="0.3.0")
+app = FastAPI(title="Orlik Vision API", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -25,6 +26,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
 
 
 def now_iso() -> str:
@@ -111,8 +117,8 @@ def parse_metadata_form(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    return {"status": "ok", "database": database_health()}
 
 
 @app.post("/api/matches")
@@ -279,6 +285,57 @@ def build_match_package(path: Path) -> dict[str, Any]:
 def create_match_package(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     return build_match_package(path)
+
+
+@app.post("/api/matches/{match_id}/publish-local")
+def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    package_path = path / "match_package.json"
+    package = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else build_match_package(path)
+    try:
+        published = import_match_package(package, replace=replace)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    meta = read_match_meta(path)
+    meta["status"] = "published"
+    meta["published_match_id"] = published["id"]
+    write_match_meta(path, meta)
+    return published
+
+
+@app.get("/api/published/matches")
+def api_list_published_matches() -> list[dict[str, Any]]:
+    return list_published_matches()
+
+
+@app.get("/api/published/matches/{published_match_id}")
+def api_get_published_match(published_match_id: str) -> dict[str, Any]:
+    try:
+        return get_published_match(published_match_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Published match not found") from exc
+
+
+@app.delete("/api/published/matches/{published_match_id}")
+def api_delete_published_match(published_match_id: str) -> dict[str, Any]:
+    try:
+        deleted = delete_published_match(published_match_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Published match not found") from exc
+    return {"status": "deleted", "match": deleted}
+
+
+@app.post("/api/admin/import-match")
+def api_import_match_package(package: dict[str, Any] = Body(...), replace: bool = Query(False)) -> dict[str, Any]:
+    try:
+        return import_match_package(package, replace=replace)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/matches/{match_id}/artifact/{artifact_name}")
