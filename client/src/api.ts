@@ -1,4 +1,4 @@
-import type { AnalysisPayload, AnalysisReport, Match, MatchMetadataPayload, MatchPackage, Team } from './types';
+import type { AnalysisPayload, AnalysisReport, Match, MatchMetadataPayload, MatchPackage, PublishedMatch, PublishedMatchDetail, Team } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -81,4 +81,20 @@ export async function analyzeMatch(matchId: string, payload: AnalysisPayload): P
 
 export async function createMatchPackage(matchId: string): Promise<MatchPackage> {
   return request<MatchPackage>(`/api/matches/${matchId}/package`, { method: 'POST' });
+}
+
+export async function publishLocalMatch(matchId: string, replace = false): Promise<PublishedMatchDetail> {
+  return request<PublishedMatchDetail>(`/api/matches/${matchId}/publish-local?replace=${String(replace)}`, { method: 'POST' });
+}
+
+export async function listPublishedMatches(): Promise<PublishedMatch[]> {
+  return request<PublishedMatch[]>('/api/published/matches');
+}
+
+export async function getPublishedMatch(matchId: string): Promise<PublishedMatchDetail> {
+  return request<PublishedMatchDetail>(`/api/published/matches/${matchId}`);
+}
+
+export async function deletePublishedMatch(matchId: string): Promise<{ status: string; match: PublishedMatch }> {
+  return request<{ status: string; match: PublishedMatch }>(`/api/published/matches/${matchId}`, { method: 'DELETE' });
 }
