@@ -16,9 +16,10 @@ from app.config import CORS_ORIGINS, MATCHES_DIR
 from app.models import AnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
+from app.services.identity import build_identity_review, save_identity_assignments
 from app.services.video import extract_frame, read_video_metadata
 
-app = FastAPI(title="Orlik Vision API", version="0.5.0")
+app = FastAPI(title="Orlik Vision API", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -71,13 +72,6 @@ def write_match_meta(path: Path, meta: dict[str, Any]) -> dict[str, Any]:
     meta["updated_at"] = now_iso()
     (path / "match.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     return meta
-
-
-def read_json_if_exists(path: Path, filename: str) -> dict[str, Any] | list[Any] | None:
-    file_path = path / filename
-    if not file_path.exists():
-        return None
-    return json.loads(file_path.read_text(encoding="utf-8"))
 
 
 def match_dir(match_id: str) -> Path:
@@ -185,10 +179,8 @@ def load_player_assignments(path: Path, tracks: list[dict[str, Any]] | None = No
 def build_assignment_summary(meta: dict[str, Any], tracks: list[dict[str, Any]], assignments: list[dict[str, Any]]) -> dict[str, Any]:
     track_ids = {int(track.get("track_id")) for track in tracks if track.get("track_id") is not None}
     valid_assignments = [a for a in assignments if int(a.get("tracklet_id", -1)) in track_ids]
-    resolved_statuses = {"assigned"}
-    ignored_statuses = {"false_positive", "referee", "opponent"}
-    assigned_tracklets = [a for a in valid_assignments if a.get("status") in resolved_statuses and a.get("player_id")]
-    ignored_tracklets = [a for a in valid_assignments if a.get("status") in ignored_statuses]
+    assigned_tracklets = [a for a in valid_assignments if a.get("status") == "assigned" and a.get("player_id")]
+    ignored_tracklets = [a for a in valid_assignments if a.get("status") in {"false_positive", "referee", "opponent"}]
     unassigned_tracklets = [a for a in valid_assignments if a.get("status") in {None, "", "unassigned", "unknown"}]
 
     unique_players_by_team: dict[str, set[str]] = {}
@@ -280,7 +272,14 @@ def list_matches() -> list[dict[str, Any]]:
 def get_match(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     meta = read_match_meta(path)
-    for optional in ["pitch_config.json", "analysis_report.json", "match_package.json", "player_assignments.json"]:
+    for optional in [
+        "pitch_config.json",
+        "analysis_report.json",
+        "match_package.json",
+        "player_assignments.json",
+        "identity_candidates.json",
+        "identity_assignments.json",
+    ]:
         optional_path = path / optional
         if optional_path.exists():
             meta[optional.removesuffix(".json")] = json.loads(optional_path.read_text(encoding="utf-8"))
@@ -292,7 +291,6 @@ def update_match_metadata(match_id: str, payload: MatchMetadataPayload) -> dict[
     path = match_dir(match_id)
     meta = read_match_meta(path)
     next_metadata = with_generated_ids(payload.model_dump())
-    # Preserve immutable/imported technical metadata.
     meta.update(next_metadata)
     write_match_meta(path, meta)
     return meta
@@ -374,6 +372,37 @@ def get_match_tracklets(match_id: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/matches/{match_id}/identity-candidates")
+def get_identity_candidates(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    try:
+        return build_identity_review(path, meta)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/identity-assignments")
+def save_candidate_assignments(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    assignments = payload.get("assignments")
+    if not isinstance(assignments, list):
+        raise HTTPException(status_code=400, detail="assignments must be a list")
+    try:
+        doc = save_identity_assignments(path, meta, assignments)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
 @app.put("/api/matches/{match_id}/player-assignments")
 def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -408,7 +437,6 @@ def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) 
             }
         )
 
-    # Preserve unmentioned tracklets as unassigned so the review UI always has a complete checklist.
     existing_ids = {int(item["tracklet_id"]) for item in normalized}
     for track_id in sorted(track_ids - existing_ids):
         normalized.append({"tracklet_id": track_id, "status": "unassigned", "team_id": None, "player_id": None, "notes": ""})
@@ -437,6 +465,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "pitch_config": None,
         "analysis_report": None,
         "player_assignments": None,
+        "identity_candidates": None,
+        "identity_assignments": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
         "assets": {},
@@ -446,6 +476,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("pitch_config", "pitch_config.json"),
         ("analysis_report", "analysis_report.json"),
         ("player_assignments", "player_assignments.json"),
+        ("identity_candidates", "identity_candidates.json"),
+        ("identity_assignments", "identity_assignments.json"),
     ]:
         file_path = path / filename
         if file_path.exists():
@@ -456,6 +488,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["tracks_json"] = "tracks.json"
     if (path / "player_assignments.json").exists():
         package["assets"]["player_assignments_json"] = "player_assignments.json"
+    if (path / "identity_candidates.json").exists():
+        package["assets"]["identity_candidates_json"] = "identity_candidates.json"
+    if (path / "identity_assignments.json").exists():
+        package["assets"]["identity_assignments_json"] = "identity_assignments.json"
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -528,6 +564,8 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "pitch_config.json": "application/json",
         "match_package.json": "application/json",
         "player_assignments.json": "application/json",
+        "identity_candidates.json": "application/json",
+        "identity_assignments.json": "application/json",
     }
     if artifact_name not in allowed:
         raise HTTPException(status_code=404, detail="Artifact not available")
