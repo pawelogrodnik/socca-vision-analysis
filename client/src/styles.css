@@ -98,7 +98,7 @@ a { color: #93c5fd; }
 }
 .summary { display: grid; gap: 10px; }
 .summary h3 { margin: 0; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .chips span {
   background: #0f172a;
   border: 1px solid #334155;
@@ -109,6 +109,17 @@ a { color: #93c5fd; }
 .team-row { display: flex; align-items: center; gap: 10px; }
 .color-dot { width: 14px; height: 14px; border-radius: 999px; border: 1px solid #e5e7eb; }
 .video, .heatmap { width: 100%; border-radius: 14px; border: 1px solid #334155; margin: 8px 0; background: #020617; }
+.resolver-grid { align-items: start; }
+.tracklet-list {
+  display: grid;
+  gap: 10px;
+  max-height: 680px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: #020617;
+}
 
 @media (max-width: 900px) {
   .app { padding: 16px; }
