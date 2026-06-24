@@ -8,13 +8,27 @@ import {
   frameUrl,
   getMatch,
   getPublishedMatch,
+  getTrackletReview,
   listMatches,
   listPublishedMatches,
   publishLocalMatch,
   savePitch,
+  savePlayerAssignments,
   updateMatchMetadata
 } from './api';
-import type { AnalysisPayload, Match, MatchMetadataPayload, Player, PublishedMatch, PublishedMatchDetail, Team } from './types';
+import type {
+  AnalysisPayload,
+  Match,
+  MatchMetadataPayload,
+  Player,
+  PlayerAssignment,
+  PlayerAssignmentStatus,
+  PublishedMatch,
+  PublishedMatchDetail,
+  Team,
+  TrackletReviewState,
+  TrackletSummary
+} from './types';
 
 const pretty = (value: unknown) => JSON.stringify(value, null, 2);
 
@@ -33,6 +47,15 @@ const defaultAnalysis: AnalysisPayload = {
 
 const emptyTeam = (name: string, color: string): Team => ({ name, color, players: [] });
 const defaultTeams = (): Team[] => [emptyTeam('Team A', '#ef4444'), emptyTeam('Team B', '#2563eb')];
+
+const assignmentStatuses: Array<{ value: PlayerAssignmentStatus; label: string }> = [
+  { value: 'unassigned', label: 'Do decyzji' },
+  { value: 'assigned', label: 'Przypisany zawodnik' },
+  { value: 'unknown', label: 'Nie wiem / później' },
+  { value: 'false_positive', label: 'Fałszywa detekcja' },
+  { value: 'opponent', label: 'Poza rosterem / inny mecz' },
+  { value: 'referee', label: 'Sędzia / osoba techniczna' }
+];
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -189,7 +212,7 @@ function AdminPanel() {
     if (!selectedId) return;
     setStatus('Analiza uruchomiona...');
     await analyzeMatch(selectedId, analysis);
-    setStatus('Analiza zakończona.');
+    setStatus('Analiza zakończona. Przejdź do sekcji akceptacji trackletów i przypisz je do zawodników.');
     setSelected(await getMatch(selectedId));
   }
 
@@ -215,6 +238,11 @@ function AdminPanel() {
     setSelected(updated);
     setStatus('Zapisano metadane meczu, drużyny i zawodników.');
     await refresh(updated.id);
+  }
+
+  async function refreshSelected() {
+    if (!selectedId) return;
+    setSelected(await getMatch(selectedId));
   }
 
   return (
@@ -262,16 +290,25 @@ function AdminPanel() {
               <canvas ref={canvasRef} onClick={handleCanvasClick} className="pitch-canvas" />
             </div>
             <AnalysisForm analysis={analysis} onChange={setAnalysis} onRun={runAnalysis} />
-            <div className="row">
-              <button type="button" onClick={buildPackage}>Generate match_package.json</button>
-              <button type="button" onClick={() => publishSelected(false)}>Publish/import to DB</button>
-              <button type="button" className="secondary" onClick={() => publishSelected(true)}>Replace in DB</button>
-            </div>
           </section>
         </div>
       )}
 
       {selected && <AnalysisArtifacts match={selected} />}
+      {selected && <TrackletAssignmentPanel match={selected} onStatus={setStatus} onSaved={refreshSelected} />}
+
+      {selected && (
+        <section className="card">
+          <h2>6. Publikacja do bazy</h2>
+          <p className="muted">Najpierw zaakceptuj tracklety i przypisz je do rosteru. Potem wygeneruj paczkę i zaimportuj snapshot do SQLite.</p>
+          <div className="row">
+            <button type="button" onClick={buildPackage}>Generate match_package.json</button>
+            <button type="button" onClick={() => publishSelected(false)}>Publish/import to DB</button>
+            <button type="button" className="secondary" onClick={() => publishSelected(true)}>Replace in DB</button>
+          </div>
+        </section>
+      )}
+
       <PublishedDatabasePanel onStatus={setStatus} />
     </main>
   );
@@ -494,6 +531,12 @@ function PublishedMatchSummary({ match }: { match: PublishedMatchDetail }) {
           <span className="muted">{team.players?.length || 0} zawodników</span>
         </div>
       ))}
+      {match.package?.player_assignments?.summary && (
+        <>
+          <h4>Zaakceptowane przypisania</h4>
+          <AssignmentSummaryChips matchTeams={source?.teams || []} summary={match.package.player_assignments.summary} />
+        </>
+      )}
       <h4>Analysis snapshot</h4>
       <pre>{pretty(match.package?.analysis_report || { status: 'no analysis report' })}</pre>
     </div>
@@ -513,10 +556,206 @@ function AnalysisArtifacts({ match }: { match: Match }) {
           {overlay && <video controls src={artifactUrl(match.id, overlay)} className="video" />}
           {heatmap && <img src={artifactUrl(match.id, heatmap)} className="heatmap" alt="Heatmap" />}
           {match.match_package && <a href={artifactUrl(match.id, 'match_package.json')}>Pobierz match_package.json</a>}
+          {match.player_assignments && <a href={artifactUrl(match.id, 'player_assignments.json')}>Pobierz player_assignments.json</a>}
         </div>
         <div>
           <h3>Analysis report</h3>
           <pre>{pretty(report || { status: 'not analyzed' })}</pre>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AssignmentSummaryChips({ matchTeams, summary }: { matchTeams: Team[]; summary: TrackletReviewState['summary'] }) {
+  return (
+    <div className="chips">
+      <span>Raw tracklety: {summary.raw_tracklets}</span>
+      <span>Przypisane tracklety: {summary.assigned_tracklets}</span>
+      <span>Nieprzypisane: {summary.unassigned_tracklets}</span>
+      <span>Ignored: {summary.ignored_tracklets}</span>
+      <span>Unikalni zawodnicy: {summary.unique_players_total}</span>
+      {matchTeams.map((team) => {
+        const teamId = team.id || team.name;
+        return (
+          <span key={teamId}>
+            {team.name}: {summary.unique_players_by_team[teamId] || 0}/{summary.roster_players_by_team[teamId] || team.players?.length || 0} graczy
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function TrackletAssignmentPanel({ match, onStatus, onSaved }: { match: Match; onStatus: (message: string) => void; onSaved: () => void }) {
+  const [review, setReview] = useState<TrackletReviewState | null>(null);
+  const [assignments, setAssignments] = useState<PlayerAssignment[]>([]);
+  const [selectedTrackletId, setSelectedTrackletId] = useState<number | null>(null);
+
+  async function load() {
+    try {
+      const data = await getTrackletReview(match.id);
+      setReview(data);
+      setAssignments(data.assignments);
+      setSelectedTrackletId(data.tracklets[0]?.tracklet_id ?? null);
+      onStatus('Załadowano tracklety do akceptacji.');
+    } catch (error) {
+      onStatus(`Nie mogę załadować trackletów: ${errorMessage(error)}`);
+    }
+  }
+
+  useEffect(() => {
+    if (match.analysis_report?.status === 'completed') {
+      load().catch((error) => onStatus(errorMessage(error)));
+    } else {
+      setReview(null);
+      setAssignments([]);
+      setSelectedTrackletId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.id, match.analysis_report?.status]);
+
+  function assignmentFor(trackletId: number): PlayerAssignment {
+    return assignments.find((assignment) => assignment.tracklet_id === trackletId) || {
+      tracklet_id: trackletId,
+      status: 'unassigned',
+      team_id: null,
+      player_id: null,
+      notes: ''
+    };
+  }
+
+  function updateAssignment(trackletId: number, patch: Partial<PlayerAssignment>) {
+    const current = assignmentFor(trackletId);
+    const next = { ...current, ...patch };
+    if (next.status !== 'assigned') {
+      next.team_id = patch.team_id ?? next.team_id;
+      next.player_id = null;
+    }
+    setAssignments((items) => {
+      const exists = items.some((item) => item.tracklet_id === trackletId);
+      return exists ? items.map((item) => (item.tracklet_id === trackletId ? next : item)) : [...items, next];
+    });
+  }
+
+  async function save() {
+    const saved = await savePlayerAssignments(match.id, assignments);
+    onStatus(`Zapisano przypisania: ${saved.summary.assigned_tracklets} trackletów przypisanych, ${saved.summary.unique_players_total} unikalnych zawodników.`);
+    const fresh = await getTrackletReview(match.id);
+    setReview(fresh);
+    setAssignments(fresh.assignments);
+    await onSaved();
+  }
+
+  if (match.analysis_report?.status !== 'completed') {
+    return (
+      <section className="card">
+        <h2>5. Akceptacja trackletów i player_id</h2>
+        <p className="muted">Uruchom analizę, żeby dostać listę surowych trackletów do przypisania zawodnikom.</p>
+      </section>
+    );
+  }
+
+  if (!review) {
+    return (
+      <section className="card">
+        <h2>5. Akceptacja trackletów i player_id</h2>
+        <button type="button" onClick={load}>Załaduj tracklety</button>
+      </section>
+    );
+  }
+
+  const selectedTracklet = review.tracklets.find((tracklet) => tracklet.tracklet_id === selectedTrackletId) || review.tracklets[0];
+  const selectedAssignment = selectedTracklet ? assignmentFor(selectedTracklet.tracklet_id) : null;
+  const selectedTeam = match.teams.find((team) => team.id === selectedAssignment?.team_id);
+
+  return (
+    <section className="card">
+      <div className="row between">
+        <div>
+          <h2>5. Akceptacja trackletów i player_id</h2>
+          <p className="muted">YOLO/BoT-SORT daje surowe tracklety. Tutaj akceptujesz, czy to prawdziwy zawodnik i łączysz tracklet z graczem z rosteru.</p>
+        </div>
+        <div className="row">
+          <button type="button" onClick={load}>Odśwież tracklety</button>
+          <button type="button" onClick={save}>Zapisz przypisania</button>
+        </div>
+      </div>
+
+      <AssignmentSummaryChips matchTeams={match.teams || []} summary={review.summary} />
+
+      <div className="grid two resolver-grid">
+        <div className="tracklet-list">
+          {review.tracklets.map((tracklet) => {
+            const assignment = assignmentFor(tracklet.tracklet_id);
+            return (
+              <button
+                type="button"
+                className={tracklet.tracklet_id === selectedTracklet?.tracklet_id ? 'match-item active' : 'match-item'}
+                key={tracklet.tracklet_id}
+                onClick={() => setSelectedTrackletId(tracklet.tracklet_id)}
+              >
+                <strong>T{tracklet.tracklet_id} · {assignment.status}</strong>
+                <span>{Number(tracklet.duration_sec || 0).toFixed(1)}s · {tracklet.positions_count || 0} punktów · conf {tracklet.avg_confidence ?? 'n/a'}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="team-card">
+          {selectedTracklet && selectedAssignment ? (
+            <div className="stack">
+              <h3>Tracklet T{selectedTracklet.tracklet_id}</h3>
+              <div className="chips">
+                <span>Czas: {selectedTracklet.start_time_sec ?? '?'}s → {selectedTracklet.end_time_sec ?? '?'}s</span>
+                <span>Długość: {Number(selectedTracklet.duration_sec || 0).toFixed(1)}s</span>
+                <span>Pozycje: {selectedTracklet.positions_count || 0}</span>
+                <span>Conf: {selectedTracklet.avg_confidence ?? 'n/a'}</span>
+              </div>
+              <label>
+                Status
+                <select value={selectedAssignment.status} onChange={(event) => updateAssignment(selectedTracklet.tracklet_id, { status: event.target.value as PlayerAssignmentStatus })}>
+                  {assignmentStatuses.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                </select>
+              </label>
+              <label>
+                Drużyna
+                <select
+                  value={selectedAssignment.team_id || ''}
+                  onChange={(event) => updateAssignment(selectedTracklet.tracklet_id, { team_id: event.target.value || null, player_id: null, status: 'assigned' })}
+                >
+                  <option value="">-- wybierz drużynę --</option>
+                  {(match.teams || []).map((team) => <option key={team.id || team.name} value={team.id || team.name}>{team.name}</option>)}
+                </select>
+              </label>
+              <label>
+                Zawodnik
+                <select
+                  value={selectedAssignment.player_id || ''}
+                  onChange={(event) => updateAssignment(selectedTracklet.tracklet_id, { player_id: event.target.value || null, status: event.target.value ? 'assigned' : selectedAssignment.status })}
+                  disabled={!selectedTeam}
+                >
+                  <option value="">-- wybierz zawodnika --</option>
+                  {(selectedTeam?.players || []).map((player) => (
+                    <option key={player.id || player.name} value={player.id || player.name}>
+                      {player.number ? `#${player.number} ` : ''}{player.name} · {player.role}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Notatka
+                <textarea rows={3} value={selectedAssignment.notes || ''} onChange={(event) => updateAssignment(selectedTracklet.tracklet_id, { notes: event.target.value })} />
+              </label>
+              <div className="row">
+                <button type="button" onClick={() => updateAssignment(selectedTracklet.tracklet_id, { status: 'false_positive', team_id: null, player_id: null })}>Oznacz false positive</button>
+                <button type="button" className="secondary" onClick={() => updateAssignment(selectedTracklet.tracklet_id, { status: 'unknown', team_id: null, player_id: null })}>Zostaw unknown</button>
+              </div>
+              <pre>{pretty(selectedTracklet)}</pre>
+            </div>
+          ) : (
+            <p className="muted">Brak trackletów.</p>
+          )}
         </div>
       </div>
     </section>
@@ -557,7 +796,7 @@ function PublishedDatabasePanel({ onStatus }: { onStatus: (message: string) => v
   return (
     <section className="card">
       <div className="row between">
-        <h2>5. Zarządzanie opublikowanymi statystykami</h2>
+        <h2>7. Zarządzanie opublikowanymi statystykami</h2>
         <button type="button" onClick={() => refresh()}>Odśwież bazę</button>
       </div>
       <p className="muted">To są mecze zaimportowane do SQLite. Tu można usunąć duplikaty albo błędne snapshoty statystyk.</p>
