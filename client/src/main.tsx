@@ -1,10 +1,14 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { IdentityCandidateAdminSection as ExtraAdmin } from './IdentityCandidateAdminSection';
 import './styles.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const Root = () => (
   <React.StrictMode>
     <App />
-  </React.StrictMode>,
+    <ExtraAdmin />
+  </React.StrictMode>
 );
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<Root />);
