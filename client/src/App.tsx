@@ -231,11 +231,11 @@ function AdminPanel() {
     }
     await savePitch(selectedId, {
       image_points: pitchPoints,
-      width_m: 26,
-      length_m: 56,
+      width_m: 30,
+      length_m: 47.4,
       source: 'manual',
     });
-    setStatus('Zapisano konfigurację boiska.');
+    setStatus('Zapisano konfigurację boiska 30 x 47.4 m.');
     setSelected(await getMatch(selectedId));
   }
 
@@ -244,7 +244,7 @@ function AdminPanel() {
     setStatus('Analiza uruchomiona...');
     await analyzeMatch(selectedId, analysis);
     setStatus(
-      'Analiza zakończona. Przejdź do sekcji akceptacji trackletów i przypisz je do zawodników.',
+      'Analiza zakończona. Przejdź do sekcji identity candidates i przypisz kandydatów do zawodników.',
     );
     setSelected(await getMatch(selectedId));
   }
@@ -275,11 +275,6 @@ function AdminPanel() {
     setSelected(updated);
     setStatus('Zapisano metadane meczu, drużyny i zawodników.');
     await refresh(updated.id);
-  }
-
-  async function refreshSelected() {
-    if (!selectedId) return;
-    setSelected(await getMatch(selectedId));
   }
 
   return (
@@ -345,7 +340,7 @@ function AdminPanel() {
             </div>
             <p className='muted'>
               Kliknij 4 rogi boiska: góra-lewo, góra-prawo, dół-prawo, dół-lewo.
-              Punkty: {pitchPoints.length}/4.
+              Boisko: 30 x 47.4 m. Punkty: {pitchPoints.length}/4.
             </p>
             <div className='pitch-canvas-wrap'>
               <canvas
@@ -368,7 +363,7 @@ function AdminPanel() {
         <TrackletAssignmentPanel
           match={selected}
           onStatus={setStatus}
-          onSaved={refreshSelected}
+          onSaved={async () => setSelected(await getMatch(selected.id))}
         />
       )}
 
@@ -376,8 +371,8 @@ function AdminPanel() {
         <section className='card'>
           <h2>6. Publikacja do bazy</h2>
           <p className='muted'>
-            Najpierw zaakceptuj tracklety i przypisz je do rosteru. Potem
-            wygeneruj paczkę i zaimportuj snapshot do SQLite.
+            Najpierw zaakceptuj identity candidates i przypisz je do rosteru.
+            Potem wygeneruj paczkę i zaimportuj snapshot do SQLite.
           </p>
           <div className='row'>
             <button type='button' onClick={buildPackage}>
