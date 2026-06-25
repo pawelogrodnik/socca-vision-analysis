@@ -7,6 +7,7 @@ These instructions apply to `client/`.
 - React + Vite + TypeScript.
 - Keep the app lightweight and local-first.
 - Prefer plain CSS modules/files or well-structured CSS classes. Do not use inline styles except for truly dynamic canvas/video geometry that cannot be expressed in CSS.
+- do not let unused code hanging
 
 ## Component architecture
 
