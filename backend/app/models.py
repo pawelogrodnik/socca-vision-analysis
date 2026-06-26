@@ -51,7 +51,7 @@ class AnalyzePayload(BaseModel):
 
     # YOLO options
     yolo_model: str = "yolov8n.pt"
-    yolo_conf: float = 0.25
-    yolo_imgsz: int = 960
-    yolo_tracker: str = "botsort.yaml"
+    yolo_conf: float = 0.05
+    yolo_imgsz: int = 1920
+    yolo_tracker: str = "centroid_high_recall"
     yolo_device: str | None = None  # None/empty = auto, "cpu", or "0"

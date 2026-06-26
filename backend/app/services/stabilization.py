@@ -1,0 +1,2109 @@
+from __future__ import annotations
+
+from collections import defaultdict, deque
+import json
+import math
+import shutil
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+from statistics import median
+from typing import Any
+
+from app.services.conservative_identity import (
+    build_frame_detection_counts_from_global_identity,
+    build_global_identity_report,
+    build_stable_players_from_global_identity,
+    resolve_conservative_identity,
+)
+
+
+MAX_INTERPOLATION_GAP_FRAMES = 15
+MAX_INTERPOLATION_GAP_SEC = 0.6
+MAX_INTERPOLATION_SPEED_MPS = 9.5
+DEFAULT_ACTIVE_PLAYERS_CAP = 14
+DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP = 7
+TEAM_COLOR_MIN_REFERENCE_SAMPLES = 2
+TEAM_COLOR_MIN_REFERENCE_QUALITY = 0.22
+TEAM_COLOR_UNKNOWN_CONFIDENCE = 0.42
+TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE = 95.0
+LIVE_STATS_MAX_SPEED_MPS = 9.5
+LIVE_STATS_ESTIMATED_GAP_SEC = 2.0
+LIVE_STATS_OBSERVED_GAP_FRAMES = 2
+LIVE_STATS_SPEED_MIN_WINDOW_SEC = 0.16
+LIVE_STATS_SPEED_MAX_WINDOW_SEC = 0.75
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _distance_m(a: list[float] | tuple[float, float] | None, b: list[float] | tuple[float, float] | None) -> float | None:
+    if not a or not b or len(a) < 2 or len(b) < 2:
+        return None
+    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _round_point(point: list[float] | tuple[float, float] | None, digits: int = 3) -> list[float] | None:
+    if not point or len(point) < 2:
+        return None
+    return [round(float(point[0]), digits), round(float(point[1]), digits)]
+
+
+def _color_distance(a: list[float] | tuple[float, float, float] | None, b: list[float] | tuple[float, float, float] | None) -> float | None:
+    if not a or not b or len(a) < 3 or len(b) < 3:
+        return None
+    return math.sqrt(sum((float(a[idx]) - float(b[idx])) ** 2 for idx in range(3)))
+
+
+def _hex_to_rgb(value: str | None) -> list[float] | None:
+    if not value:
+        return None
+    value = value.strip().lstrip("#")
+    if len(value) != 6:
+        return None
+    try:
+        return [float(int(value[idx : idx + 2], 16)) for idx in (0, 2, 4)]
+    except ValueError:
+        return None
+
+
+def _rgb_to_hex(rgb: list[float] | tuple[float, float, float] | None) -> str | None:
+    if not rgb or len(rgb) < 3:
+        return None
+    return "#" + "".join(f"{max(0, min(255, int(round(channel)))):02x}" for channel in rgb[:3])
+
+
+def _smoothed_positions(points: list[list[float]], radius: int = 2) -> list[list[float]]:
+    smoothed: list[list[float]] = []
+    for index in range(len(points)):
+        window = points[max(0, index - radius) : min(len(points), index + radius + 1)]
+        smoothed.append(
+            [
+                round(sum(point[0] for point in window) / len(window), 3),
+                round(sum(point[1] for point in window) / len(window), 3),
+            ]
+        )
+    return smoothed
+
+
+def split_tracks_into_tracklets(
+    tracks: list[dict[str, Any]],
+    *,
+    max_internal_gap_sec: float = 0.7,
+    split_speed_mps: float = 16.0,
+    min_duration_sec: float = 0.2,
+    min_positions: int = 4,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    tracklets: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+
+    for track in tracks:
+        raw_track_id = int(track.get("track_id"))
+        current: list[dict[str, Any]] = []
+        segment_index = 1
+        previous: dict[str, Any] | None = None
+
+        def finish_segment(reason: str | None = None) -> None:
+            nonlocal current, segment_index
+            if not current:
+                return
+            prepared = _build_tracklet(raw_track_id, segment_index, current)
+            if (
+                prepared["duration_sec"] < min_duration_sec
+                or prepared["positions_count"] < min_positions
+                or not prepared["first_pitch_m"]
+                or not prepared["last_pitch_m"]
+            ):
+                rejected.append({**prepared, "reject_reason": reason or "short_or_missing_position"})
+            else:
+                tracklets.append(prepared)
+            segment_index += 1
+            current = []
+
+        for position in sorted(track.get("positions") or [], key=lambda item: (int(item.get("frame", 0)), float(item.get("time_sec", 0)))):
+            pitch_m = position.get("pitch_m")
+            if not pitch_m:
+                continue
+            should_split = False
+            split_reason = None
+            if previous is not None:
+                dt = float(position.get("time_sec") or 0) - float(previous.get("time_sec") or 0)
+                distance = _distance_m(previous.get("pitch_m"), pitch_m)
+                if dt > max_internal_gap_sec:
+                    should_split = True
+                    split_reason = "internal_gap"
+                elif dt > 0 and distance is not None and distance / max(dt, 0.25) > split_speed_mps:
+                    should_split = True
+                    split_reason = "unrealistic_jump"
+            if should_split:
+                finish_segment(split_reason)
+            current.append(dict(position))
+            previous = position
+        finish_segment()
+
+    return tracklets, rejected
+
+
+def _build_tracklet(raw_track_id: int, segment_index: int, positions: list[dict[str, Any]]) -> dict[str, Any]:
+    tracklet_id = f"{raw_track_id}:{segment_index}"
+    pitch_points = [[float(pos["pitch_m"][0]), float(pos["pitch_m"][1])] for pos in positions]
+    smoothed = _smoothed_positions(pitch_points)
+    prepared_positions: list[dict[str, Any]] = []
+    for position, smooth in zip(positions, smoothed):
+        row = dict(position)
+        row["smoothed_pitch_m"] = smooth
+        row["stable_tracklet_id"] = tracklet_id
+        prepared_positions.append(row)
+
+    confidences = [float(pos.get("confidence")) for pos in positions if pos.get("confidence") is not None]
+    start_time = float(prepared_positions[0].get("time_sec") or 0)
+    end_time = float(prepared_positions[-1].get("time_sec") or start_time)
+    return {
+        "tracklet_id": tracklet_id,
+        "source_track_id": raw_track_id,
+        "segment_index": segment_index,
+        "start_time_sec": round(start_time, 3),
+        "end_time_sec": round(end_time, 3),
+        "duration_sec": round(max(0.0, end_time - start_time), 3),
+        "positions_count": len(prepared_positions),
+        "mean_confidence": round(_mean(confidences) or 0.0, 4),
+        "first_pitch_m": _round_point(prepared_positions[0].get("smoothed_pitch_m")),
+        "last_pitch_m": _round_point(prepared_positions[-1].get("smoothed_pitch_m")),
+        "positions": prepared_positions,
+        "appearance_rgb": None,
+        "appearance_samples": 0,
+        "team_cluster_id": None,
+        "team_confidence": 0.0,
+    }
+
+
+def _sample_indices(length: int, max_samples: int) -> list[int]:
+    if length <= max_samples:
+        return list(range(length))
+    return sorted({round(idx * (length - 1) / (max_samples - 1)) for idx in range(max_samples)})
+
+
+def sample_tracklet_appearance(video_path: Path, tracklets: list[dict[str, Any]], *, max_samples_per_tracklet: int = 14) -> None:
+    if not tracklets:
+        return
+
+    import cv2
+    import numpy as np
+
+    requests: dict[int, list[tuple[str, list[int]]]] = {}
+    by_id = {tracklet["tracklet_id"]: tracklet for tracklet in tracklets}
+    for tracklet in tracklets:
+        positions = tracklet.get("positions") or []
+        for index in _sample_indices(len(positions), max_samples_per_tracklet):
+            position = positions[index]
+            bbox = position.get("bbox_xyxy")
+            frame = position.get("frame")
+            if bbox and frame is not None:
+                requests.setdefault(int(frame), []).append((tracklet["tracklet_id"], [int(v) for v in bbox]))
+
+    if not requests:
+        return
+
+    samples: dict[str, list[dict[str, Any]]] = {tracklet["tracklet_id"]: [] for tracklet in tracklets}
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return
+    try:
+        requested_frames = set(requests)
+        max_requested_frame = max(requested_frames)
+        frame_idx = 0
+        while frame_idx <= max_requested_frame:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if frame_idx not in requested_frames:
+                frame_idx += 1
+                continue
+            height, width = frame.shape[:2]
+            for tracklet_id, bbox in requests[frame_idx]:
+                x1, y1, x2, y2 = bbox
+                box_w = max(1, x2 - x1)
+                box_h = max(1, y2 - y1)
+                crop_x1 = max(0, min(width - 1, int(x1 + box_w * 0.24)))
+                crop_x2 = max(0, min(width, int(x2 - box_w * 0.24)))
+                crop_y1 = max(0, min(height - 1, int(y1 + box_h * 0.12)))
+                crop_y2 = max(0, min(height, int(y1 + box_h * 0.56)))
+                if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
+                    continue
+                crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                if crop.size == 0:
+                    continue
+                sample = _extract_torso_color_sample(crop)
+                if sample is not None:
+                    samples[tracklet_id].append(sample)
+            frame_idx += 1
+    finally:
+        cap.release()
+
+    for tracklet_id, colors in samples.items():
+        if not colors:
+            continue
+        by_id[tracklet_id]["appearance_rgb"] = [
+            round(median([sample["rgb"][idx] for sample in colors]), 2)
+            for idx in range(3)
+        ]
+        by_id[tracklet_id]["appearance_hsv"] = [
+            round(median([sample["hsv"][idx] for sample in colors]), 2)
+            for idx in range(3)
+        ]
+        by_id[tracklet_id]["appearance_lab"] = [
+            round(median([sample["lab"][idx] for sample in colors]), 2)
+            for idx in range(3)
+        ]
+        by_id[tracklet_id]["appearance_feature"] = [
+            round(median([sample["feature"][idx] for sample in colors]), 3)
+            for idx in range(len(colors[0]["feature"]))
+        ]
+        by_id[tracklet_id]["appearance_quality"] = round(_mean([float(sample["quality"]) for sample in colors]) or 0.0, 4)
+        by_id[tracklet_id]["appearance_samples"] = len(colors)
+
+
+def _extract_torso_color_sample(crop: Any) -> dict[str, Any] | None:
+    import cv2
+    import numpy as np
+
+    if crop.size == 0:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+    hue = hsv[:, :, 0]
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+    bright_enough = value > 42
+    not_turf = ~((hue >= 35) & (hue <= 95) & (saturation > 25) & (value < 190))
+    jersey_like = bright_enough & not_turf & ((saturation > 30) | (value > 105))
+    if int(jersey_like.sum()) < 8:
+        jersey_like = bright_enough & not_turf
+    if int(jersey_like.sum()) < 8:
+        return None
+
+    bgr_pixels = crop[jersey_like]
+    hsv_pixels = hsv[jersey_like]
+    lab_pixels = lab[jersey_like]
+    rgb_pixels = bgr_pixels[:, ::-1]
+    median_rgb = np.median(rgb_pixels, axis=0)
+    median_hsv = np.median(hsv_pixels, axis=0)
+    median_lab = np.median(lab_pixels, axis=0)
+    selected_ratio = float(jersey_like.sum()) / float(jersey_like.size)
+    saturation_score = float(np.median(hsv_pixels[:, 1])) / 255.0
+    value_score = float(np.median(hsv_pixels[:, 2])) / 255.0
+    quality = max(0.0, min(1.0, selected_ratio * 0.45 + saturation_score * 0.25 + value_score * 0.3))
+    return {
+        "rgb": [float(median_rgb[0]), float(median_rgb[1]), float(median_rgb[2])],
+        "hsv": [float(median_hsv[0]), float(median_hsv[1]), float(median_hsv[2])],
+        "lab": [float(median_lab[0]), float(median_lab[1]), float(median_lab[2])],
+        "feature": _team_color_feature_from_hsv_lab(median_hsv, median_lab),
+        "quality": quality,
+    }
+
+
+def cluster_tracklet_teams(tracklets: list[dict[str, Any]], teams: list[dict[str, Any]]) -> dict[str, Any]:
+    colored = [tracklet for tracklet in tracklets if _tracklet_team_feature(tracklet) is not None]
+    references = [
+        tracklet
+        for tracklet in colored
+        if int(tracklet.get("appearance_samples") or 0) >= TEAM_COLOR_MIN_REFERENCE_SAMPLES
+        and float(tracklet.get("appearance_quality") if tracklet.get("appearance_quality") is not None else 0.35) >= TEAM_COLOR_MIN_REFERENCE_QUALITY
+        and int(tracklet.get("positions_count") or 0) >= 4
+    ]
+    if len(references) < 2:
+        return _empty_team_clusters(tracklets, teams)
+
+    white_references, bib_references = _white_vs_bib_references(references)
+    use_white_bib_strategy = len(white_references) >= 2 and len(bib_references) >= 2
+    if use_white_bib_strategy:
+        centers = [_weighted_feature_center(white_references), _weighted_feature_center(bib_references)]
+        cluster_to_team = {
+            0: teams[0] if len(teams) >= 1 else {"id": None, "name": "Team A"},
+            1: teams[1] if len(teams) >= 2 else {"id": None, "name": "Team B"},
+        }
+        method = "torso_color_white_vs_bib_v3"
+    else:
+        centers = _kmeans_two_team_features(references)
+        team_refs = [(team, _hex_to_rgb(team.get("color"))) for team in teams[:2]]
+        cluster_to_team = _map_clusters_to_teams(centers, references, team_refs)
+        method = "torso_color_lab_hsv_weighted_kmeans_v2"
+
+    assignments: dict[str, int] = {}
+    tracklet_confidences: dict[str, float] = {}
+    for tracklet in colored:
+        feature = _tracklet_team_feature(tracklet)
+        if feature is None:
+            continue
+        if use_white_bib_strategy:
+            goalkeeper_team_idx = _goalkeeper_outlier_team_index(tracklet)
+            if goalkeeper_team_idx is not None:
+                assignments[tracklet["tracklet_id"]] = goalkeeper_team_idx
+                tracklet_confidences[tracklet["tracklet_id"]] = 0.46
+                tracklet["team_assignment_reason"] = (
+                    "green_goalkeeper_color_to_team_a"
+                    if goalkeeper_team_idx == 0
+                    else "dark_goalkeeper_color_to_team_b"
+                )
+                continue
+        distances = [_feature_distance(feature, center) for center in centers]
+        cluster_idx = 0 if distances[0] <= distances[1] else 1
+        own = distances[cluster_idx]
+        other = distances[1 - cluster_idx]
+        margin = max(0.0, other - own)
+        confidence = max(0.0, min(1.0, 0.35 + margin / max(45.0, _feature_distance(centers[0], centers[1]))))
+        assignments[tracklet["tracklet_id"]] = cluster_idx
+        tracklet_confidences[tracklet["tracklet_id"]] = confidence
+
+    clusters: list[dict[str, Any]] = []
+    for cluster_idx, center in enumerate(centers):
+        members = [tracklet for tracklet in colored if assignments.get(tracklet["tracklet_id"]) == cluster_idx]
+        confident_members = [
+            member
+            for member in members
+            if tracklet_confidences.get(member["tracklet_id"], 0.0) >= TEAM_COLOR_UNKNOWN_CONFIDENCE
+            and _feature_distance(_tracklet_team_feature(member) or center, center) <= TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE
+        ]
+        other_center = centers[1 - cluster_idx] if len(centers) > 1 else None
+        distances = [_feature_distance(_tracklet_team_feature(member) or center, center) for member in confident_members]
+        other_distances = [_feature_distance(_tracklet_team_feature(member) or center, other_center) for member in confident_members] if other_center else []
+        own = _mean(distances) or 0.0
+        other = _mean(other_distances) or own
+        confidence = max(0.0, min(1.0, (other - own) / 85.0 + 0.45)) if other_center else 0.35
+        team = cluster_to_team.get(cluster_idx)
+        team_label = chr(ord("A") + cluster_idx)
+        if team:
+            try:
+                team_index = teams.index(team)
+                team_label = chr(ord("A") + team_index)
+            except ValueError:
+                pass
+        cluster_doc = {
+            "cluster_id": f"cluster-{cluster_idx + 1}",
+            "team_label": team_label,
+            "team_id": team.get("id") if team else None,
+            "team_name": team.get("name") if team else f"Team {team_label}",
+            "center_rgb": _cluster_center_rgb(confident_members),
+            "center_hsv": _cluster_center_vector(confident_members, "appearance_hsv"),
+            "center_lab": _cluster_center_vector(confident_members, "appearance_lab"),
+            "color_hex": _rgb_to_hex(_cluster_center_rgb(confident_members)),
+            "tracklets_count": len(confident_members),
+            "candidate_tracklets_count": len(members),
+            "reference_tracklets_count": (
+                len(white_references)
+                if use_white_bib_strategy and cluster_idx == 0
+                else len(bib_references)
+                if use_white_bib_strategy and cluster_idx == 1
+                else sum(1 for item in references if assignments.get(item["tracklet_id"]) == cluster_idx)
+            ),
+            "confidence": round(confidence, 3),
+        }
+        clusters.append(cluster_doc)
+        for member in members:
+            member_confidence = tracklet_confidences.get(member["tracklet_id"], 0.0)
+            member_distance = _feature_distance(_tracklet_team_feature(member) or center, center)
+            goalkeeper_assignment = str(member.get("team_assignment_reason") or "").endswith("_goalkeeper_color_to_team_a") or str(
+                member.get("team_assignment_reason") or ""
+            ).endswith("_goalkeeper_color_to_team_b")
+            if not goalkeeper_assignment and (member_confidence < TEAM_COLOR_UNKNOWN_CONFIDENCE or member_distance > TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE):
+                continue
+            member["team_cluster_id"] = cluster_doc["cluster_id"]
+            member["team_label"] = cluster_doc["team_label"]
+            member["team_id"] = cluster_doc["team_id"]
+            member["team_name"] = cluster_doc["team_name"]
+            member["team_confidence"] = round(member_confidence, 4)
+
+    for tracklet in tracklets:
+        if not tracklet.get("team_cluster_id"):
+            tracklet["team_label"] = "U"
+            tracklet["team_id"] = None
+            tracklet["team_name"] = "Unknown"
+            tracklet["team_confidence"] = 0.0
+
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "method": method,
+        "clusters": clusters,
+        "reference_tracklets_count": len(references),
+        "candidate_tracklets_count": len(colored),
+        "white_reference_tracklets_count": len(white_references),
+        "bib_reference_tracklets_count": len(bib_references),
+        "goalkeeper_color_outliers_count": sum(1 for tracklet in colored if _is_goalkeeper_color_outlier(tracklet)),
+        "unknown_tracklets": [tracklet["tracklet_id"] for tracklet in tracklets if tracklet.get("team_label") == "U"],
+    }
+
+
+def _empty_team_clusters(tracklets: list[dict[str, Any]], teams: list[dict[str, Any]]) -> dict[str, Any]:
+    for tracklet in tracklets:
+        tracklet["team_label"] = "U"
+        tracklet["team_id"] = None
+        tracklet["team_name"] = "Unknown"
+        tracklet["team_confidence"] = 0.0
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "method": "torso_color_lab_hsv_weighted_kmeans_v2",
+        "clusters": [],
+        "reference_tracklets_count": 0,
+        "candidate_tracklets_count": len([tracklet for tracklet in tracklets if _tracklet_team_feature(tracklet) is not None]),
+        "unknown_tracklets": [tracklet["tracklet_id"] for tracklet in tracklets],
+        "warning": "Not enough appearance samples to create team clusters.",
+    }
+
+
+def _team_color_feature_from_hsv_lab(hsv: Any, lab: Any) -> list[float]:
+    hue = float(hsv[0])
+    saturation = float(hsv[1])
+    value = float(hsv[2])
+    lab_l = float(lab[0])
+    lab_a = float(lab[1])
+    lab_b = float(lab[2])
+    hue_radians = (hue / 180.0) * math.tau
+    hue_weight = saturation / 255.0
+    return [
+        lab_l * 0.35,
+        (lab_a - 128.0) * 1.2,
+        (lab_b - 128.0) * 1.2,
+        math.cos(hue_radians) * hue_weight * 45.0,
+        math.sin(hue_radians) * hue_weight * 45.0,
+        saturation * 0.22,
+        value * 0.12,
+    ]
+
+
+def _tracklet_team_feature(tracklet: dict[str, Any]) -> list[float] | None:
+    feature = tracklet.get("appearance_feature")
+    if isinstance(feature, list) and len(feature) >= 3:
+        return [float(value) for value in feature]
+    hsv = tracklet.get("appearance_hsv")
+    lab = tracklet.get("appearance_lab")
+    if isinstance(hsv, list) and len(hsv) >= 3 and isinstance(lab, list) and len(lab) >= 3:
+        return _team_color_feature_from_hsv_lab(hsv, lab)
+    rgb = tracklet.get("appearance_rgb")
+    if isinstance(rgb, list) and len(rgb) >= 3:
+        return [float(rgb[0]), float(rgb[1]), float(rgb[2])]
+    return None
+
+
+def _feature_distance(a: list[float], b: list[float]) -> float:
+    size = min(len(a), len(b))
+    if size == 0:
+        return 999.0
+    return math.sqrt(sum((float(a[idx]) - float(b[idx])) ** 2 for idx in range(size)))
+
+
+def _appearance_weight(tracklet: dict[str, Any]) -> float:
+    sample_score = min(1.0, float(tracklet.get("appearance_samples") or 0) / 8.0)
+    quality_score = max(0.0, min(1.0, float(tracklet.get("appearance_quality") or 0.35)))
+    duration_score = min(1.0, float(tracklet.get("duration_sec") or 0.0) / 1.5)
+    confidence_score = max(0.0, min(1.0, float(tracklet.get("mean_confidence") or 0.0)))
+    return max(0.15, sample_score * 0.3 + quality_score * 0.35 + duration_score * 0.15 + confidence_score * 0.2)
+
+
+def _tracklet_color_profile(tracklet: dict[str, Any]) -> dict[str, float] | None:
+    rgb = tracklet.get("appearance_rgb")
+    hsv = tracklet.get("appearance_hsv")
+    if not isinstance(rgb, list) or len(rgb) < 3:
+        return None
+    red = float(rgb[0])
+    green = float(rgb[1])
+    blue = float(rgb[2])
+    saturation = float(hsv[1]) if isinstance(hsv, list) and len(hsv) >= 3 else max(red, green, blue) - min(red, green, blue)
+    value = float(hsv[2]) if isinstance(hsv, list) and len(hsv) >= 3 else max(red, green, blue)
+    channel_spread = max(red, green, blue) - min(red, green, blue)
+    red_advantage = red - max(green, blue)
+    green_advantage = green - max(red, blue)
+    neutral_score = value - saturation * 0.8 - channel_spread * 0.25
+    bib_score = red_advantage + saturation * 0.22
+    return {
+        "red": red,
+        "green": green,
+        "blue": blue,
+        "saturation": saturation,
+        "value": value,
+        "channel_spread": channel_spread,
+        "red_advantage": red_advantage,
+        "green_advantage": green_advantage,
+        "neutral_score": neutral_score,
+        "bib_score": bib_score,
+    }
+
+
+def _is_bib_color(tracklet: dict[str, Any]) -> bool:
+    profile = _tracklet_color_profile(tracklet)
+    if profile is None:
+        return False
+    return (
+        profile["red_advantage"] >= 22.0
+        and profile["saturation"] >= 70.0
+        and profile["value"] >= 95.0
+    ) or profile["bib_score"] >= 55.0
+
+
+def _is_white_or_neutral_color(tracklet: dict[str, Any]) -> bool:
+    profile = _tracklet_color_profile(tracklet)
+    if profile is None:
+        return False
+    if _is_goalkeeper_color_outlier(tracklet) or _is_bib_color(tracklet):
+        return False
+    return (
+        profile["value"] >= 95.0
+        and profile["saturation"] <= 95.0
+        and profile["channel_spread"] <= 75.0
+        and profile["neutral_score"] >= 40.0
+    )
+
+
+def _is_goalkeeper_color_outlier(tracklet: dict[str, Any]) -> bool:
+    profile = _tracklet_color_profile(tracklet)
+    if profile is None:
+        return False
+    green_outlier = profile["green_advantage"] >= 24.0 and profile["saturation"] >= 55.0
+    dark_outlier = profile["value"] <= 82.0 and profile["saturation"] >= 45.0
+    return green_outlier or dark_outlier
+
+
+def _goalkeeper_outlier_team_index(tracklet: dict[str, Any]) -> int | None:
+    profile = _tracklet_color_profile(tracklet)
+    if profile is None:
+        return None
+    if profile["green_advantage"] >= 24.0 and profile["saturation"] >= 55.0:
+        return 0
+    if profile["value"] <= 82.0 and profile["saturation"] >= 45.0:
+        return 1
+    return None
+
+
+def _white_vs_bib_references(tracklets: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    white = [tracklet for tracklet in tracklets if _is_white_or_neutral_color(tracklet)]
+    bib = [tracklet for tracklet in tracklets if _is_bib_color(tracklet)]
+    white = sorted(white, key=_appearance_weight, reverse=True)[:24]
+    bib = sorted(bib, key=_appearance_weight, reverse=True)[:24]
+    return white, bib
+
+
+def _weighted_feature_center(tracklets: list[dict[str, Any]]) -> list[float]:
+    features = [(_tracklet_team_feature(tracklet), _appearance_weight(tracklet)) for tracklet in tracklets]
+    features = [(feature, weight) for feature, weight in features if feature is not None]
+    if not features:
+        return [0.0, 0.0, 0.0]
+    total_weight = sum(weight for _, weight in features)
+    return [
+        sum(feature[channel] * weight for feature, weight in features) / max(total_weight, 0.001)
+        for channel in range(len(features[0][0]))
+    ]
+
+
+def _kmeans_two_team_features(tracklets: list[dict[str, Any]]) -> list[list[float]]:
+    first_tracklet = max(tracklets, key=_appearance_weight)
+    first = _tracklet_team_feature(first_tracklet) or [0.0, 0.0, 0.0]
+    second_tracklet = max(tracklets, key=lambda item: _feature_distance(first, _tracklet_team_feature(item) or first) * _appearance_weight(item))
+    second = _tracklet_team_feature(second_tracklet) or list(first)
+    centers = [list(first), list(second)]
+    for _ in range(12):
+        buckets: list[list[tuple[list[float], float]]] = [[], []]
+        for tracklet in tracklets:
+            feature = _tracklet_team_feature(tracklet)
+            if feature is None:
+                continue
+            distances = [_feature_distance(feature, center) for center in centers]
+            buckets[0 if distances[0] <= distances[1] else 1].append((feature, _appearance_weight(tracklet)))
+        next_centers = []
+        for idx, bucket in enumerate(buckets):
+            if not bucket:
+                next_centers.append(centers[idx])
+            else:
+                total_weight = sum(weight for _, weight in bucket)
+                next_centers.append(
+                    [
+                        sum(feature[channel] * weight for feature, weight in bucket) / max(total_weight, 0.001)
+                        for channel in range(len(bucket[0][0]))
+                    ]
+                )
+        if all(_feature_distance(centers[idx], next_centers[idx]) < 0.5 for idx in range(2)):
+            centers = next_centers
+            break
+        centers = next_centers
+    return centers
+
+
+def _cluster_center_vector(members: list[dict[str, Any]], key: str) -> list[float] | None:
+    vectors = [member.get(key) for member in members if isinstance(member.get(key), list) and len(member.get(key)) >= 3]
+    if not vectors:
+        return None
+    return [round(_mean([float(vector[idx]) for vector in vectors]) or 0.0, 2) for idx in range(3)]
+
+
+def _cluster_center_rgb(members: list[dict[str, Any]]) -> list[float] | None:
+    return _cluster_center_vector(members, "appearance_rgb")
+
+
+def _cluster_white_score(tracklets: list[dict[str, Any]]) -> float:
+    hsv_values = [item.get("appearance_hsv") for item in tracklets if isinstance(item.get("appearance_hsv"), list)]
+    if not hsv_values:
+        rgb = _cluster_center_rgb(tracklets)
+        return _mean(rgb or []) or 0.0
+    saturation = _mean([float(hsv[1]) for hsv in hsv_values]) or 0.0
+    value = _mean([float(hsv[2]) for hsv in hsv_values]) or 0.0
+    return value - saturation * 0.7
+
+
+def _map_clusters_to_teams(
+    centers: list[list[float]],
+    references: list[dict[str, Any]],
+    team_refs: list[tuple[dict[str, Any], list[float] | None]],
+) -> dict[int, dict[str, Any]]:
+    cluster_members = []
+    if len(team_refs) >= 2:
+        for center in centers:
+            cluster_members.append(
+                [
+                    tracklet
+                    for tracklet in references
+                    if _tracklet_team_feature(tracklet) is not None
+                    and _feature_distance(_tracklet_team_feature(tracklet) or center, center)
+                    <= min(_feature_distance(_tracklet_team_feature(tracklet) or center, other) for other in centers)
+                ]
+            )
+        if len(cluster_members) >= 2:
+            white_scores = [_cluster_white_score(members) for members in cluster_members]
+            if abs(white_scores[0] - white_scores[1]) >= 28.0:
+                whiter_idx = 0 if white_scores[0] > white_scores[1] else 1
+                other_idx = 1 - whiter_idx
+                return {whiter_idx: team_refs[0][0], other_idx: team_refs[1][0]}
+
+    usable_refs = [(team, rgb) for team, rgb in team_refs if rgb]
+    if len(usable_refs) < 2:
+        return {idx: team_refs[idx][0] for idx in range(min(len(centers), len(team_refs)))}
+
+    if not cluster_members:
+        cluster_members = [[] for _ in centers]
+    cluster_rgbs = [_cluster_center_rgb(members) for members in cluster_members]
+    if len(cluster_rgbs) >= 2 and cluster_rgbs[0] and cluster_rgbs[1]:
+        direct = (_color_distance(cluster_rgbs[0], usable_refs[0][1]) or 999.0) + (_color_distance(cluster_rgbs[1], usable_refs[1][1]) or 999.0)
+        swapped = (_color_distance(cluster_rgbs[0], usable_refs[1][1]) or 999.0) + (_color_distance(cluster_rgbs[1], usable_refs[0][1]) or 999.0)
+        if min(direct, swapped) <= 220.0:
+            if swapped < direct:
+                return {0: usable_refs[1][0], 1: usable_refs[0][0]}
+            return {0: usable_refs[0][0], 1: usable_refs[1][0]}
+    return {0: usable_refs[0][0], 1: usable_refs[1][0]}
+
+
+def build_stable_players(
+    tracklets: list[dict[str, Any]],
+    *,
+    max_link_gap_sec: float = 3.0,
+    max_link_speed_mps: float = 9.5,
+    max_link_distance_m: float = 12.0,
+) -> list[dict[str, Any]]:
+    stable_players: list[dict[str, Any]] = []
+    for tracklet in sorted(tracklets, key=lambda item: (float(item["start_time_sec"]), -float(item["duration_sec"]))):
+        best_player: dict[str, Any] | None = None
+        best_score: float | None = None
+        best_link: dict[str, Any] | None = None
+        for player in stable_players:
+            link = _score_tracklet_link(
+                player,
+                tracklet,
+                max_link_gap_sec=max_link_gap_sec,
+                max_link_speed_mps=max_link_speed_mps,
+                max_link_distance_m=max_link_distance_m,
+            )
+            if not link:
+                continue
+            if best_score is None or link["score"] < best_score:
+                best_player = player
+                best_score = link["score"]
+                best_link = link
+        if best_player is None or best_link is None:
+            stable_players.append(_new_stable_player(len(stable_players) + 1, tracklet))
+        else:
+            _append_tracklet_to_player(best_player, tracklet, best_link)
+
+    for player in stable_players:
+        _finalize_stable_player(player)
+    renumber_stable_players(stable_players)
+    return stable_players
+
+
+def _score_tracklet_link(
+    player: dict[str, Any],
+    tracklet: dict[str, Any],
+    *,
+    max_link_gap_sec: float,
+    max_link_speed_mps: float,
+    max_link_distance_m: float,
+) -> dict[str, Any] | None:
+    start = float(tracklet["start_time_sec"])
+    previous_end = float(player["end_time_sec"])
+    if start <= previous_end - 0.05:
+        return None
+    gap = start - previous_end
+    if gap > max_link_gap_sec:
+        return None
+    distance = _distance_m(player.get("last_pitch_m"), tracklet.get("first_pitch_m"))
+    if distance is None:
+        return None
+    if distance > max_link_distance_m:
+        return None
+    required_speed = distance / max(gap, 0.4)
+    if required_speed > max_link_speed_mps:
+        return None
+
+    player_team = player.get("team_label")
+    tracklet_team = tracklet.get("team_label")
+    if player_team not in {None, "U"} and tracklet_team not in {None, "U"} and player_team != tracklet_team:
+        return None
+
+    color_distance = _color_distance(player.get("appearance_rgb"), tracklet.get("appearance_rgb"))
+    normalized_color = min(1.0, color_distance / 180.0) if color_distance is not None else 0.35
+    score = distance + gap * 1.2 + normalized_color * 4.0
+    confidence_score = max(0.0, min(1.0, 1.0 - (distance / 8.0) - (gap / 6.0) - normalized_color * 0.25))
+    return {
+        "score": round(score, 4),
+        "gap_sec": round(gap, 3),
+        "distance_m": round(distance, 3),
+        "required_speed_mps": round(required_speed, 3),
+        "confidence_score": round(confidence_score, 4),
+        "confidence": confidence_level(confidence_score),
+    }
+
+
+def confidence_level(score: float) -> str:
+    if score >= 0.72:
+        return "high"
+    if score >= 0.45:
+        return "medium"
+    return "low"
+
+
+def _new_stable_player(index: int, tracklet: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stable_subject_id": f"sp-{index:03d}",
+        "stable_player_id": "",
+        "status": "active",
+        "team_label": tracklet.get("team_label") or "U",
+        "team_id": tracklet.get("team_id"),
+        "team_name": tracklet.get("team_name") or "Unknown",
+        "team_confidence": tracklet.get("team_confidence") or 0.0,
+        "tracklet_ids": [tracklet["tracklet_id"]],
+        "raw_track_ids": [tracklet["source_track_id"]],
+        "tracklet_count": 1,
+        "positions": list(tracklet.get("positions") or []),
+        "start_time_sec": tracklet["start_time_sec"],
+        "end_time_sec": tracklet["end_time_sec"],
+        "first_pitch_m": tracklet.get("first_pitch_m"),
+        "last_pitch_m": tracklet.get("last_pitch_m"),
+        "appearance_rgb": tracklet.get("appearance_rgb"),
+        "appearance_samples": tracklet.get("appearance_samples") or 0,
+        "link_confidences": [],
+        "risky_links": [],
+    }
+
+
+def _append_tracklet_to_player(player: dict[str, Any], tracklet: dict[str, Any], link: dict[str, Any]) -> None:
+    previous_tracklet_id = player["tracklet_ids"][-1]
+    player["tracklet_ids"].append(tracklet["tracklet_id"])
+    if tracklet["source_track_id"] not in player["raw_track_ids"]:
+        player["raw_track_ids"].append(tracklet["source_track_id"])
+    player["tracklet_count"] += 1
+    player["positions"].extend(tracklet.get("positions") or [])
+    player["end_time_sec"] = max(float(player["end_time_sec"]), float(tracklet["end_time_sec"]))
+    player["last_pitch_m"] = tracklet.get("last_pitch_m") or player.get("last_pitch_m")
+    player["link_confidences"].append(link["confidence_score"])
+    if link["confidence"] != "high":
+        player["risky_links"].append(
+            {
+                "from_tracklet_id": previous_tracklet_id,
+                "to_tracklet_id": tracklet["tracklet_id"],
+                "gap_sec": link["gap_sec"],
+                "distance_m": link["distance_m"],
+                "required_speed_mps": link["required_speed_mps"],
+                "confidence": link["confidence"],
+            }
+        )
+    if player.get("appearance_rgb") and tracklet.get("appearance_rgb"):
+        player["appearance_rgb"] = [
+            round((float(player["appearance_rgb"][idx]) * (player["tracklet_count"] - 1) + float(tracklet["appearance_rgb"][idx])) / player["tracklet_count"], 2)
+            for idx in range(3)
+        ]
+    elif tracklet.get("appearance_rgb"):
+        player["appearance_rgb"] = tracklet["appearance_rgb"]
+    player["appearance_samples"] = int(player.get("appearance_samples") or 0) + int(tracklet.get("appearance_samples") or 0)
+    if player.get("team_label") in {None, "U"} and tracklet.get("team_label") not in {None, "U"}:
+        player["team_label"] = tracklet.get("team_label")
+        player["team_id"] = tracklet.get("team_id")
+        player["team_name"] = tracklet.get("team_name")
+        player["team_confidence"] = tracklet.get("team_confidence") or 0.0
+
+
+def _finalize_stable_player(player: dict[str, Any]) -> None:
+    detected_positions = sorted(player.get("positions") or [], key=lambda item: (int(item.get("frame", 0)), float(item.get("time_sec", 0))))
+    positions, interpolation_stats = _positions_with_short_gap_interpolation(detected_positions)
+    player["positions"] = positions
+    player["positions_count"] = len(detected_positions)
+    player["real_positions_count"] = len(detected_positions)
+    player["overlay_positions_count"] = len([position for position in positions if position.get("bbox_xyxy") is not None])
+    player.update(interpolation_stats)
+    player["duration_sec"] = round(max(0.0, float(player["end_time_sec"]) - float(player["start_time_sec"])), 3)
+    confidences = [float(pos.get("confidence")) for pos in detected_positions if pos.get("confidence") is not None]
+    player["mean_detection_confidence"] = round(_mean(confidences) or 0.0, 4)
+    link_scores = player.get("link_confidences") or [1.0]
+    team_score = float(player.get("team_confidence") or 0.0)
+    player["confidence_score"] = round(min(_mean(link_scores) or 1.0, max(team_score, 0.35)), 4)
+    player["confidence"] = confidence_level(float(player["confidence_score"]))
+    player["jersey_color_hex"] = _rgb_to_hex(player.get("appearance_rgb"))
+    player["trajectory_m"] = _downsample_trajectory(positions)
+    player["overlay_positions"] = [
+        {
+            "frame": int(position.get("frame") or 0),
+            "time_sec": round(float(position.get("time_sec") or 0), 3),
+            "bbox_xyxy": position.get("bbox_xyxy"),
+            "tracklet_id": position.get("stable_tracklet_id"),
+            "confidence": position.get("confidence"),
+            "source": position.get("source") or "detected",
+        }
+        for position in positions
+        if position.get("bbox_xyxy") is not None
+    ]
+    player.pop("positions", None)
+    player.pop("link_confidences", None)
+
+
+def _positions_with_short_gap_interpolation(positions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    stats = {
+        "interpolated_positions_count": 0,
+        "interpolated_gaps_count": 0,
+        "skipped_interpolation_gaps_count": 0,
+        "longest_interpolated_gap_frames": 0,
+    }
+    if not positions:
+        return [], stats
+
+    interpolated: list[dict[str, Any]] = []
+    detected = [dict(position, source=position.get("source") or "detected") for position in positions]
+    for index, current in enumerate(detected):
+        interpolated.append(current)
+        if index >= len(detected) - 1:
+            continue
+        following = detected[index + 1]
+        frame_gap = int(following.get("frame") or 0) - int(current.get("frame") or 0)
+        missing_frames = frame_gap - 1
+        if missing_frames <= 0:
+            continue
+        if not _can_interpolate_gap(current, following, missing_frames=missing_frames):
+            stats["skipped_interpolation_gaps_count"] += 1
+            continue
+        stats["interpolated_gaps_count"] += 1
+        stats["interpolated_positions_count"] += missing_frames
+        stats["longest_interpolated_gap_frames"] = max(stats["longest_interpolated_gap_frames"], missing_frames)
+        for offset in range(1, frame_gap):
+            ratio = offset / frame_gap
+            interpolated.append(_interpolate_position(current, following, offset=offset, ratio=ratio))
+    return interpolated, stats
+
+
+def _can_interpolate_gap(current: dict[str, Any], following: dict[str, Any], *, missing_frames: int) -> bool:
+    if missing_frames > MAX_INTERPOLATION_GAP_FRAMES:
+        return False
+    time_gap = float(following.get("time_sec") or 0.0) - float(current.get("time_sec") or 0.0)
+    if time_gap <= 0 or time_gap > MAX_INTERPOLATION_GAP_SEC:
+        return False
+    distance = _distance_m(_position_pitch_point(current), _position_pitch_point(following))
+    if distance is None or distance / max(time_gap, 0.001) > MAX_INTERPOLATION_SPEED_MPS:
+        return False
+    if not _valid_bbox(current.get("bbox_xyxy")) or not _valid_bbox(following.get("bbox_xyxy")):
+        return False
+    return _bbox_shape_is_close(current["bbox_xyxy"], following["bbox_xyxy"])
+
+
+def _position_pitch_point(position: dict[str, Any]) -> list[float] | None:
+    point = position.get("smoothed_pitch_m") or position.get("pitch_m")
+    return [float(point[0]), float(point[1])] if point and len(point) >= 2 else None
+
+
+def _valid_bbox(bbox_xyxy: Any) -> bool:
+    if not bbox_xyxy or len(bbox_xyxy) != 4:
+        return False
+    x1, y1, x2, y2 = [float(value) for value in bbox_xyxy]
+    return x2 > x1 and y2 > y1
+
+
+def _bbox_shape_is_close(a: list[float], b: list[float], *, max_ratio: float = 2.4) -> bool:
+    aw = max(1.0, float(a[2]) - float(a[0]))
+    ah = max(1.0, float(a[3]) - float(a[1]))
+    bw = max(1.0, float(b[2]) - float(b[0]))
+    bh = max(1.0, float(b[3]) - float(b[1]))
+    return max(aw / bw, bw / aw) <= max_ratio and max(ah / bh, bh / ah) <= max_ratio
+
+
+def _interpolate_position(current: dict[str, Any], following: dict[str, Any], *, offset: int, ratio: float) -> dict[str, Any]:
+    current_frame = int(current.get("frame") or 0)
+    current_time = float(current.get("time_sec") or 0.0)
+    following_time = float(following.get("time_sec") or current_time)
+    current_pitch = _position_pitch_point(current)
+    following_pitch = _position_pitch_point(following)
+    current_tracklet_id = current.get("stable_tracklet_id")
+    following_tracklet_id = following.get("stable_tracklet_id")
+    interpolated_tracklet_id = current_tracklet_id if current_tracklet_id == following_tracklet_id else f"{current_tracklet_id}->{following_tracklet_id}"
+    return {
+        "frame": current_frame + offset,
+        "time_sec": round(_lerp(current_time, following_time, ratio), 3),
+        "bbox_xyxy": [int(round(_lerp(float(current["bbox_xyxy"][idx]), float(following["bbox_xyxy"][idx]), ratio))) for idx in range(4)],
+        "footpoint": _interpolate_optional_point(current.get("footpoint"), following.get("footpoint"), ratio, digits=2),
+        "pitch_m": _round_point(_interpolate_optional_point(current_pitch, following_pitch, ratio, digits=4)),
+        "smoothed_pitch_m": _round_point(_interpolate_optional_point(current_pitch, following_pitch, ratio, digits=4)),
+        "stable_tracklet_id": interpolated_tracklet_id,
+        "source": "interpolated",
+        "confidence": round(min(float(current.get("confidence") or 0.0), float(following.get("confidence") or 0.0), 0.5), 4),
+        "interpolated_from_frame": current_frame,
+        "interpolated_to_frame": int(following.get("frame") or current_frame),
+        "interpolation_ratio": round(ratio, 3),
+    }
+
+
+def _interpolate_optional_point(a: Any, b: Any, ratio: float, *, digits: int) -> list[float] | None:
+    if not a or not b or len(a) < 2 or len(b) < 2:
+        return None
+    return [round(_lerp(float(a[0]), float(b[0]), ratio), digits), round(_lerp(float(a[1]), float(b[1]), ratio), digits)]
+
+
+def _lerp(a: float, b: float, ratio: float) -> float:
+    return a + (b - a) * ratio
+
+
+def _downsample_trajectory(positions: list[dict[str, Any]], max_points: int = 180) -> list[dict[str, Any]]:
+    if not positions:
+        return []
+    indices = _sample_indices(len(positions), min(max_points, len(positions)))
+    trajectory = []
+    for index in indices:
+        position = positions[index]
+        point = position.get("smoothed_pitch_m") or position.get("pitch_m")
+        if not point:
+            continue
+        trajectory.append(
+            {
+                "frame": int(position.get("frame") or 0),
+                "time_sec": round(float(position.get("time_sec") or 0), 3),
+                "pitch_m": _round_point(point),
+                "source": position.get("source") or "detected",
+            }
+        )
+    return trajectory
+
+
+def renumber_stable_players(players: list[dict[str, Any]]) -> None:
+    counters: dict[str, int] = {}
+    for player in sorted(players, key=lambda item: (str(item.get("team_label") or "U"), -float(item.get("duration_sec") or 0), str(item.get("stable_subject_id")))):
+        label = str(player.get("team_label") or "U")
+        if label not in {"A", "B"}:
+            label = "U"
+        counters[label] = counters.get(label, 0) + 1
+        player["team_label"] = label
+        player["stable_player_id"] = f"{label}{counters[label]:02d}"
+
+
+def select_active_stable_players(
+    players: list[dict[str, Any]],
+    *,
+    total_cap: int = DEFAULT_ACTIVE_PLAYERS_CAP,
+    per_team_cap: int = DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if total_cap <= 0 or len(players) <= total_cap:
+        return list(players), []
+
+    ranked = sorted(players, key=_stable_player_rank, reverse=True)
+    active_subject_ids: set[str] = set()
+    team_counts: dict[str, int] = {"A": 0, "B": 0}
+    for player in ranked:
+        label = str(player.get("team_label") or "U")
+        if label in {"A", "B"} and team_counts[label] >= per_team_cap:
+            continue
+        active_subject_ids.add(str(player.get("stable_subject_id")))
+        if label in {"A", "B"}:
+            team_counts[label] += 1
+        if len(active_subject_ids) >= total_cap:
+            break
+
+    if len(active_subject_ids) < total_cap:
+        for player in ranked:
+            subject_id = str(player.get("stable_subject_id"))
+            if subject_id in active_subject_ids:
+                continue
+            active_subject_ids.add(subject_id)
+            if len(active_subject_ids) >= total_cap:
+                break
+
+    active: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    for player in players:
+        if str(player.get("stable_subject_id")) in active_subject_ids:
+            active.append(player)
+        else:
+            suppressed.append(
+                {
+                    **player,
+                    "status": "suppressed_extra_candidate",
+                    "suppress_reason": "active_players_cap",
+                }
+            )
+    return active, suppressed
+
+
+def _stable_player_rank(player: dict[str, Any]) -> tuple[float, int, float, float]:
+    return (
+        float(player.get("duration_sec") or 0.0),
+        int(player.get("positions_count") or 0),
+        float(player.get("confidence_score") or 0.0),
+        float(player.get("mean_detection_confidence") or 0.0),
+    )
+
+
+def build_stable_players_document(
+    *,
+    stable_players: list[dict[str, Any]],
+    raw_tracks_count: int,
+    tracklets_count: int,
+    rejected_tracklets: list[dict[str, Any]],
+    pitch_width_m: float,
+    pitch_length_m: float,
+) -> dict[str, Any]:
+    active_players, suppressed_candidates = select_active_stable_players(stable_players)
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "pitch_dimensions_m": {"width_m": pitch_width_m, "length_m": pitch_length_m},
+        "players": sorted(active_players, key=lambda item: item["stable_player_id"]),
+        "suppressed_candidates": sorted(suppressed_candidates, key=lambda item: item["stable_player_id"]),
+        "summary": {
+            "raw_tracks": raw_tracks_count,
+            "clean_tracklets": tracklets_count,
+            "rejected_tracklets": len(rejected_tracklets),
+            "stable_players": len(active_players),
+            "stable_player_candidates": len(stable_players),
+            "suppressed_extra_candidates": len(suppressed_candidates),
+            "team_counts": _team_counts(active_players),
+            "risky_links": sum(len(player.get("risky_links") or []) for player in active_players),
+            "low_confidence_players": sum(1 for player in active_players if player.get("confidence") == "low"),
+            "interpolated_frames": sum(int(player.get("interpolated_positions_count") or 0) for player in active_players),
+            "interpolated_gaps": sum(int(player.get("interpolated_gaps_count") or 0) for player in active_players),
+            "skipped_interpolation_gaps": sum(int(player.get("skipped_interpolation_gaps_count") or 0) for player in active_players),
+            "players_with_interpolation": sum(1 for player in active_players if int(player.get("interpolated_positions_count") or 0) > 0),
+            "longest_interpolated_gap_frames": max((int(player.get("longest_interpolated_gap_frames") or 0) for player in active_players), default=0),
+        },
+    }
+
+
+def build_frame_detection_counts(
+    tracks: list[dict[str, Any]],
+    stable_doc: dict[str, Any],
+    *,
+    fps: float,
+    target_players: int = DEFAULT_ACTIVE_PLAYERS_CAP,
+) -> dict[str, Any]:
+    raw_counts: dict[int, int] = defaultdict(int)
+    for track in tracks:
+        for position in track.get("positions") or []:
+            if position.get("frame") is not None:
+                raw_counts[int(position["frame"])] += 1
+
+    stable_detected_counts: dict[int, int] = defaultdict(int)
+    stable_interpolated_counts: dict[int, int] = defaultdict(int)
+    for player in stable_doc.get("players", []):
+        for position in player.get("overlay_positions") or []:
+            if position.get("frame") is None:
+                continue
+            frame = int(position["frame"])
+            if position.get("source") == "interpolated":
+                stable_interpolated_counts[frame] += 1
+            else:
+                stable_detected_counts[frame] += 1
+
+    max_frame = max(
+        [0]
+        + list(raw_counts.keys())
+        + list(stable_detected_counts.keys())
+        + list(stable_interpolated_counts.keys())
+    )
+    frames = []
+    for frame in range(max_frame + 1):
+        raw = raw_counts.get(frame, 0)
+        stable_detected = stable_detected_counts.get(frame, 0)
+        stable_interpolated = stable_interpolated_counts.get(frame, 0)
+        stable_total = stable_detected + stable_interpolated
+        frames.append(
+            {
+                "frame": frame,
+                "time_sec": round(frame / max(fps, 0.001), 3),
+                "raw_detections": raw,
+                "stable_detected": stable_detected,
+                "stable_interpolated": stable_interpolated,
+                "stable_total": stable_total,
+                "raw_missing_vs_target": max(0, target_players - raw),
+                "stable_missing_vs_target": max(0, target_players - stable_total),
+                "raw_extra_vs_target": max(0, raw - target_players),
+            }
+        )
+
+    raw_values = [frame["raw_detections"] for frame in frames]
+    stable_values = [frame["stable_total"] for frame in frames]
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "target_players": target_players,
+        "summary": {
+            "frames": len(frames),
+            "raw_min": min(raw_values) if raw_values else 0,
+            "raw_max": max(raw_values) if raw_values else 0,
+            "raw_avg": round(_mean([float(value) for value in raw_values]) or 0.0, 3),
+            "stable_min": min(stable_values) if stable_values else 0,
+            "stable_max": max(stable_values) if stable_values else 0,
+            "stable_avg": round(_mean([float(value) for value in stable_values]) or 0.0, 3),
+            "raw_frames_below_target": sum(1 for value in raw_values if value < target_players),
+            "stable_frames_below_target": sum(1 for value in stable_values if value < target_players),
+            "raw_frames_at_or_above_target": sum(1 for value in raw_values if value >= target_players),
+            "stable_frames_at_or_above_target": sum(1 for value in stable_values if value >= target_players),
+        },
+        "frames": frames,
+    }
+
+
+def _team_counts(players: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for player in players:
+        label = str(player.get("team_label") or "U")
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def build_stabilization_report(
+    *,
+    stable_doc: dict[str, Any],
+    rejected_tracklets: list[dict[str, Any]],
+    team_clusters: dict[str, Any],
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "status": "completed",
+        "parameters": parameters,
+        "summary": stable_doc["summary"],
+        "frame_detection_summary": stable_doc.get("frame_detection_summary"),
+        "movement_stats_summary": stable_doc.get("movement_stats_summary"),
+        "team_clusters_summary": [
+            {
+                "cluster_id": cluster.get("cluster_id"),
+                "team_label": cluster.get("team_label"),
+                "team_name": cluster.get("team_name"),
+                "tracklets_count": cluster.get("tracklets_count"),
+                "confidence": cluster.get("confidence"),
+                "color_hex": cluster.get("color_hex"),
+            }
+            for cluster in team_clusters.get("clusters", [])
+        ],
+        "rejected_tracklets": [
+            {
+                "tracklet_id": item.get("tracklet_id"),
+                "source_track_id": item.get("source_track_id"),
+                "duration_sec": item.get("duration_sec"),
+                "positions_count": item.get("positions_count"),
+                "reject_reason": item.get("reject_reason"),
+            }
+            for item in rejected_tracklets[:500]
+        ],
+        "risky_links": [
+            {"stable_player_id": player["stable_player_id"], **link}
+            for player in stable_doc.get("players", [])
+            for link in (player.get("risky_links") or [])
+        ],
+        "suppressed_extra_candidates": [
+            {
+                "stable_player_id": player.get("stable_player_id"),
+                "team_label": player.get("team_label"),
+                "duration_sec": player.get("duration_sec"),
+                "positions_count": player.get("positions_count"),
+                "tracklet_count": player.get("tracklet_count"),
+                "confidence": player.get("confidence"),
+                "mean_detection_confidence": player.get("mean_detection_confidence"),
+                "suppress_reason": player.get("suppress_reason"),
+            }
+            for player in stable_doc.get("suppressed_candidates", [])
+        ],
+        "interpolation": [
+            {
+                "stable_player_id": player["stable_player_id"],
+                "interpolated_frames": player.get("interpolated_positions_count"),
+                "interpolated_gaps": player.get("interpolated_gaps_count"),
+                "skipped_gaps": player.get("skipped_interpolation_gaps_count"),
+                "longest_gap_frames": player.get("longest_interpolated_gap_frames"),
+            }
+            for player in stable_doc.get("players", [])
+            if int(player.get("interpolated_positions_count") or 0) > 0
+        ],
+    }
+
+
+def build_movement_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
+    players = []
+    for player in stable_doc.get("players", []):
+        stats = player.get("movement_stats") or {}
+        players.append(
+            {
+                "stable_player_id": player.get("stable_player_id"),
+                "stable_subject_id": player.get("stable_subject_id"),
+                "slot_id": player.get("slot_id"),
+                "team_label": player.get("team_label"),
+                "team_id": player.get("team_id"),
+                "team_name": player.get("team_name"),
+                "confidence": player.get("confidence"),
+                "confidence_score": player.get("confidence_score"),
+                "movement_stats": stats,
+            }
+        )
+    summary = {
+        "players": len(players),
+        "total_distance_m": round(sum(float((item.get("movement_stats") or {}).get("total_distance_m") or 0.0) for item in players), 2),
+        "observed_distance_m": round(sum(float((item.get("movement_stats") or {}).get("observed_distance_m") or 0.0) for item in players), 2),
+        "estimated_gap_distance_m": round(sum(float((item.get("movement_stats") or {}).get("estimated_gap_distance_m") or 0.0) for item in players), 2),
+        "players_with_estimated_distance": sum(
+            1 for item in players if float((item.get("movement_stats") or {}).get("estimated_gap_distance_m") or 0.0) > 0.0
+        ),
+        "players_low_quality": sum(
+            1 for item in players if (item.get("movement_stats") or {}).get("distance_quality") == "low"
+        ),
+        "players_medium_quality": sum(
+            1 for item in players if (item.get("movement_stats") or {}).get("distance_quality") == "medium"
+        ),
+        "players_high_quality": sum(
+            1 for item in players if (item.get("movement_stats") or {}).get("distance_quality") == "high"
+        ),
+        "top_speed_kmh": round(
+            max([float((item.get("movement_stats") or {}).get("top_speed_kmh") or 0.0) for item in players] or [0.0]),
+            2,
+        ),
+    }
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "source": stable_doc.get("source") or "conservative_identity_v2",
+        "identity_semantics": stable_doc.get("identity_semantics") or "stint_first",
+        "units": {
+            "distance": "meters",
+            "speed": "mps_and_kmh",
+            "time": "seconds",
+        },
+        "summary": summary,
+        "players": sorted(players, key=lambda item: str(item.get("stable_player_id") or "")),
+    }
+
+
+def _strip_overlay_positions(stable_doc: dict[str, Any]) -> dict[str, Any]:
+    public_doc = dict(stable_doc)
+    public_doc.pop("frame_detection_counts", None)
+    public_players = []
+    for player in stable_doc.get("players", []):
+        public_player = dict(player)
+        public_player.pop("overlay_positions", None)
+        public_players.append(public_player)
+    public_doc["players"] = public_players
+    public_suppressed = []
+    for player in stable_doc.get("suppressed_candidates", []):
+        public_player = dict(player)
+        public_player.pop("overlay_positions", None)
+        public_suppressed.append(public_player)
+    public_doc["suppressed_candidates"] = public_suppressed
+    return public_doc
+
+
+class _StableOverlayWriter:
+    def __init__(self, match_dir: Path, output_name: str, fps: float, frame_size: tuple[int, int]) -> None:
+        self.frame_size = frame_size
+        self.fps = max(1.0, float(fps))
+        self.final_path = match_dir / output_name
+        self.temp_path = match_dir / f"{output_name}.raw.avi"
+        self.frames_written = 0
+        import cv2
+
+        self._writer = cv2.VideoWriter(str(self.temp_path), cv2.VideoWriter_fourcc(*"MJPG"), self.fps, frame_size)
+        if not self._writer.isOpened():
+            raise RuntimeError(f"Could not open OpenCV VideoWriter for {self.temp_path.name}.")
+
+    def write(self, frame: Any) -> None:
+        expected_w, expected_h = self.frame_size
+        if frame.shape[1] != expected_w or frame.shape[0] != expected_h:
+            import cv2
+
+            frame = cv2.resize(frame, (expected_w, expected_h))
+        self._writer.write(frame)
+        self.frames_written += 1
+
+    def close(self) -> Path:
+        self._writer.release()
+        if self.frames_written == 0:
+            self.temp_path.unlink(missing_ok=True)
+            raise RuntimeError("Stable overlay was not generated because zero frames were processed.")
+        if self.final_path.exists():
+            self.final_path.unlink()
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg is not available, so stable overlay could not be converted to MP4.")
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(self.temp_path),
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(self.final_path),
+        ]
+        completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        self.temp_path.unlink(missing_ok=True)
+        if completed.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed while converting stable overlay: {completed.stderr.strip()}")
+        return self.final_path
+
+
+def write_stable_overlay(
+    video_path: Path,
+    match_dir: Path,
+    stable_doc: dict[str, Any],
+    pitch_polygon: Any,
+    *,
+    fps: float,
+    frame_size: tuple[int, int],
+    output_name: str = "stable_overlay_preview.mp4",
+    include_untrusted: bool = False,
+) -> Path:
+    import cv2
+    import numpy as np
+
+    frame_rows: dict[int, list[dict[str, Any]]] = {}
+    player_colors: dict[str, tuple[int, int, int]] = {}
+    stats_rows = _overlay_stats_rows(stable_doc.get("players", []))
+    for player in stable_doc.get("players", []):
+        stable_player_id = player["stable_player_id"]
+        player_colors[stable_player_id] = _stable_bgr_color(player.get("team_label"))
+        overlay_positions = player.get("overlay_positions") or []
+        bbox_stats = _player_bbox_stats(overlay_positions)
+        live_movement = _live_movement_by_frame(overlay_positions, fps)
+        for position in overlay_positions:
+            if not position.get("bbox_xyxy"):
+                continue
+            source = position.get("source") or "detected"
+            if not include_untrusted and source != "detected":
+                continue
+            if source in {"predicted", "interpolated"} and not _bbox_footpoint_inside_polygon(position.get("bbox_xyxy"), pitch_polygon):
+                continue
+            if not _bbox_is_visual_candidate(position, bbox_stats):
+                continue
+            row = dict(position)
+            row["stable_player_id"] = stable_player_id
+            row["team_label"] = player.get("team_label")
+            row["player_confidence"] = player.get("confidence")
+            row["player_confidence_score"] = player.get("confidence_score")
+            row["team_confidence"] = player.get("team_confidence")
+            row["mean_detection_confidence"] = player.get("mean_detection_confidence")
+            row["tracklet_count"] = player.get("tracklet_count")
+            row["duration_sec"] = player.get("duration_sec")
+            row["risky_link_count"] = len(player.get("risky_links") or [])
+            row["source"] = source
+            row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
+            frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video for stable overlay: {video_path}")
+    writer = _StableOverlayWriter(match_dir, output_name, fps=fps, frame_size=frame_size)
+    max_frame = max(frame_rows) if frame_rows else int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) - 1
+    frame_idx = 0
+    trail_points: dict[str, deque[tuple[int, tuple[int, int]]]] = defaultdict(deque)
+    summary = stable_doc.get("summary") or {}
+    frame_counts = {
+        int(item.get("frame") or 0): item
+        for item in (stable_doc.get("frame_detection_counts") or {}).get("frames", [])
+    }
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame_idx > max_frame:
+                break
+            overlay = frame.copy()
+            cv2.polylines(overlay, [pitch_polygon.astype(np.int32)], isClosed=True, color=(0, 255, 255), thickness=2)
+            current_rows = frame_rows.get(frame_idx, [])
+            for row in current_rows:
+                center = _bbox_center(row["bbox_xyxy"])
+                if center is not None and row.get("source") == "detected":
+                    trail_points[row["stable_player_id"]].append((frame_idx, center))
+            _trim_trails(trail_points, frame_idx, trail_frame_window=45)
+            _draw_stable_trails(overlay, trail_points, player_colors)
+            for row in current_rows:
+                _draw_stable_row(overlay, row)
+            visual_counts = _visual_counts(current_rows)
+            _draw_stable_hud(overlay, frame_idx, fps, summary, frame_counts.get(frame_idx), visual_counts)
+            _draw_player_stats_panel(overlay, stats_rows)
+            _draw_frame_stamp(overlay, frame_idx)
+            writer.write(overlay)
+            frame_idx += 1
+    finally:
+        cap.release()
+    return writer.close()
+
+
+def _stable_bgr_color(team_label: Any) -> tuple[int, int, int]:
+    if team_label == "A":
+        return (0, 80, 255)
+    if team_label == "B":
+        return (255, 180, 40)
+    return (0, 255, 255)
+
+
+def _overlay_stats_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for player in players:
+        stats = player.get("movement_stats") or {}
+        rows.append(
+            {
+                "stable_player_id": player.get("stable_player_id"),
+                "team_label": player.get("team_label"),
+                "distance_m": float(stats.get("total_distance_m") or 0.0),
+                "estimated_distance_m": float(stats.get("estimated_gap_distance_m") or 0.0),
+                "avg_speed_kmh": float(stats.get("avg_speed_kmh") or 0.0),
+                "top_speed_kmh": float(stats.get("top_speed_kmh") or 0.0),
+                "playing_time_sec": float(stats.get("playing_time_sec") or player.get("duration_sec") or 0.0),
+                "quality": stats.get("distance_quality") or "unknown",
+            }
+        )
+    return sorted(rows, key=lambda item: str(item.get("stable_player_id") or ""))
+
+
+def _live_movement_by_frame(positions: list[dict[str, Any]], fps: float) -> dict[int, dict[str, Any]]:
+    detected = [
+        position
+        for position in sorted(positions, key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)))
+        if (position.get("source") or "detected") == "detected" and position.get("pitch_m")
+    ]
+    fps_safe = max(float(fps or 0.0), 0.001)
+    live_by_frame: dict[int, dict[str, Any]] = {}
+    cumulative_distance = 0.0
+    estimated_distance = 0.0
+    last_speed_kmh: float | None = None
+    previous: dict[str, Any] | None = None
+
+    for index, current in enumerate(detected):
+        frame = int(current.get("frame") or 0)
+        segment_source = "start"
+        if previous is not None:
+            previous_frame = int(previous.get("frame") or 0)
+            frame_gap = max(1, frame - previous_frame)
+            previous_time = float(previous.get("time_sec") or previous_frame / fps_safe)
+            current_time = float(current.get("time_sec") or frame / fps_safe)
+            dt = max(1.0 / fps_safe, current_time - previous_time)
+            distance = _distance_m(previous.get("pitch_m"), current.get("pitch_m"))
+            if distance is not None:
+                speed_mps = distance / dt
+                if speed_mps <= LIVE_STATS_MAX_SPEED_MPS and dt <= LIVE_STATS_ESTIMATED_GAP_SEC:
+                    cumulative_distance += distance
+                    last_speed_kmh = (_windowed_live_speed_mps(detected, index, fps_safe) or speed_mps) * 3.6
+                    if frame_gap <= LIVE_STATS_OBSERVED_GAP_FRAMES:
+                        segment_source = "observed"
+                    else:
+                        segment_source = "estimated"
+                        estimated_distance += distance
+                else:
+                    segment_source = "skipped"
+
+        live_by_frame[frame] = {
+            "current_speed_kmh": round(last_speed_kmh, 1) if last_speed_kmh is not None else None,
+            "cumulative_distance_m": round(cumulative_distance, 1),
+            "estimated_distance_m": round(estimated_distance, 1),
+            "segment_source": segment_source,
+            "has_estimated_distance": estimated_distance > 0.0,
+        }
+        previous = current
+    return live_by_frame
+
+
+def _windowed_live_speed_mps(detected: list[dict[str, Any]], current_index: int, fps: float) -> float | None:
+    current = detected[current_index]
+    current_frame = int(current.get("frame") or 0)
+    current_time = float(current.get("time_sec") or current_frame / fps)
+    current_point = current.get("pitch_m")
+    best_candidate: float | None = None
+    for previous in reversed(detected[:current_index]):
+        previous_frame = int(previous.get("frame") or 0)
+        previous_time = float(previous.get("time_sec") or previous_frame / fps)
+        dt = current_time - previous_time
+        if dt < LIVE_STATS_SPEED_MIN_WINDOW_SEC:
+            continue
+        if dt > LIVE_STATS_SPEED_MAX_WINDOW_SEC:
+            break
+        distance = _distance_m(previous.get("pitch_m"), current_point)
+        if distance is None:
+            continue
+        speed = distance / max(dt, 0.001)
+        if speed <= LIVE_STATS_MAX_SPEED_MPS:
+            best_candidate = speed
+            break
+    return best_candidate
+
+
+def _bbox_center(bbox_xyxy: Any) -> tuple[int, int] | None:
+    if not bbox_xyxy or len(bbox_xyxy) != 4:
+        return None
+    x1, y1, x2, y2 = [int(value) for value in bbox_xyxy]
+    return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+
+def _bbox_footpoint_inside_polygon(bbox_xyxy: Any, pitch_polygon: Any) -> bool:
+    if not bbox_xyxy or len(bbox_xyxy) != 4:
+        return False
+    import cv2
+
+    x1, _, x2, y2 = [float(value) for value in bbox_xyxy]
+    footpoint = ((x1 + x2) / 2.0, y2)
+    return cv2.pointPolygonTest(pitch_polygon.astype("float32"), footpoint, False) >= 0
+
+
+def _player_bbox_stats(positions: list[dict[str, Any]]) -> dict[str, float] | None:
+    widths: list[float] = []
+    heights: list[float] = []
+    areas: list[float] = []
+    for position in positions:
+        bbox = position.get("bbox_xyxy")
+        if not bbox or len(bbox) != 4:
+            continue
+        width = max(1.0, float(bbox[2]) - float(bbox[0]))
+        height = max(1.0, float(bbox[3]) - float(bbox[1]))
+        widths.append(width)
+        heights.append(height)
+        areas.append(width * height)
+    if len(areas) < 6:
+        return None
+    return {
+        "median_width": float(median(widths)),
+        "median_height": float(median(heights)),
+        "median_area": float(median(areas)),
+    }
+
+
+def _bbox_is_visual_candidate(position: dict[str, Any], stats: dict[str, float] | None) -> bool:
+    bbox = position.get("bbox_xyxy")
+    if not bbox or len(bbox) != 4:
+        return False
+    x1, y1, x2, y2 = [float(value) for value in bbox]
+    width = max(1.0, x2 - x1)
+    height = max(1.0, y2 - y1)
+    area = width * height
+    if width < 3 or height < 8 or area < 24:
+        return False
+    if not stats:
+        return True
+    median_area = max(1.0, stats["median_area"])
+    median_width = max(1.0, stats["median_width"])
+    median_height = max(1.0, stats["median_height"])
+    area_ratio = area / median_area
+    width_ratio = width / median_width
+    height_ratio = height / median_height
+    confidence = float(position.get("confidence") or 0.0)
+    if area_ratio > 4.0 or width_ratio > 2.4 or height_ratio > 2.4:
+        return confidence >= 0.2 and area_ratio <= 6.0 and width_ratio <= 3.0 and height_ratio <= 3.0
+    return True
+
+
+def _trim_trails(trail_points: dict[str, deque[tuple[int, tuple[int, int]]]], frame_idx: int, *, trail_frame_window: int) -> None:
+    for stable_player_id in list(trail_points.keys()):
+        points = trail_points[stable_player_id]
+        while points and frame_idx - points[0][0] > trail_frame_window:
+            points.popleft()
+        if not points:
+            trail_points.pop(stable_player_id, None)
+
+
+def _draw_stable_trails(
+    frame: Any,
+    trail_points: dict[str, deque[tuple[int, tuple[int, int]]]],
+    player_colors: dict[str, tuple[int, int, int]],
+) -> None:
+    import cv2
+    import numpy as np
+
+    for stable_player_id, points in trail_points.items():
+        if len(points) < 2:
+            continue
+        color = player_colors.get(stable_player_id, (0, 255, 255))
+        polyline = np.array([point for _, point in points], dtype=np.int32).reshape((-1, 1, 2))
+        cv2.polylines(frame, [polyline], isClosed=False, color=color, thickness=1, lineType=cv2.LINE_AA)
+
+
+def _draw_stable_row(frame: Any, row: dict[str, Any]) -> None:
+    import cv2
+
+    color = _stable_bgr_color(row.get("team_label"))
+    x1, y1, x2, y2 = [int(v) for v in row["bbox_xyxy"]]
+    source = row.get("source")
+    is_untrusted = source in {"interpolated", "predicted", "ambiguous"}
+    if is_untrusted:
+        _draw_dashed_rectangle(frame, x1, y1, x2, y2, color)
+    else:
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    stable_player_id = str(row.get("stable_player_id") or "?")
+    label = f"{stable_player_id}?" if source == "ambiguous" else f"{stable_player_id}*" if is_untrusted else stable_player_id
+    _draw_minimal_label(frame, label, x1, y1, color)
+    if row.get("source") == "detected":
+        _draw_live_stats_label(frame, row.get("live_movement"), x1, y1, y2, color)
+
+
+def _draw_dashed_rectangle(
+    frame: Any,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    color: tuple[int, int, int],
+    *,
+    dash_length: int = 8,
+) -> None:
+    import cv2
+
+    for start in range(x1, x2, dash_length * 2):
+        cv2.line(frame, (start, y1), (min(start + dash_length, x2), y1), color, 1, cv2.LINE_AA)
+        cv2.line(frame, (start, y2), (min(start + dash_length, x2), y2), color, 1, cv2.LINE_AA)
+    for start in range(y1, y2, dash_length * 2):
+        cv2.line(frame, (x1, start), (x1, min(start + dash_length, y2)), color, 1, cv2.LINE_AA)
+        cv2.line(frame, (x2, start), (x2, min(start + dash_length, y2)), color, 1, cv2.LINE_AA)
+
+
+def _draw_minimal_label(
+    frame: Any,
+    label: str,
+    x1: int,
+    y1: int,
+    color: tuple[int, int, int],
+) -> None:
+    import cv2
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.48
+    thickness = 1
+    y = max(16, y1 - 5)
+    cv2.putText(frame, label, (x1, y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+    cv2.putText(frame, label, (x1, y), font, font_scale, color, thickness, cv2.LINE_AA)
+
+
+def _draw_live_stats_label(
+    frame: Any,
+    live_movement: dict[str, Any] | None,
+    x1: int,
+    y1: int,
+    y2: int,
+    color: tuple[int, int, int],
+) -> None:
+    if not live_movement:
+        return
+
+    import cv2
+
+    speed = live_movement.get("current_speed_kmh")
+    distance = float(live_movement.get("cumulative_distance_m") or 0.0)
+    marker = "*" if live_movement.get("segment_source") == "estimated" else ""
+    speed_label = "--" if speed is None else f"{float(speed):.1f}"
+    label = f"v={speed_label}km/h d={distance:.1f}m{marker}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.36
+    thickness = 1
+    frame_height = frame.shape[0]
+    y = y2 + 15
+    if y > frame_height - 8:
+        y = max(16, y1 - 20)
+    cv2.putText(frame, label, (x1, y), font, font_scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+    cv2.putText(frame, label, (x1, y), font, font_scale, color, thickness, cv2.LINE_AA)
+
+
+def _format_score(value: Any) -> str:
+    if value is None:
+        return "--"
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    visible_detected = sum(1 for row in rows if row.get("source") == "detected")
+    visible_predicted = sum(1 for row in rows if row.get("source") in {"predicted", "interpolated"})
+    visible_ambiguous = sum(1 for row in rows if row.get("source") == "ambiguous")
+    team_a = sum(1 for row in rows if row.get("team_label") == "A")
+    team_b = sum(1 for row in rows if row.get("team_label") == "B")
+    return {
+        "visible_boxes": len(rows),
+        "visible_detected": visible_detected,
+        "visible_predicted": visible_predicted,
+        "visible_ambiguous": visible_ambiguous,
+        "visible_team_a": team_a,
+        "visible_team_b": team_b,
+    }
+
+
+def apply_stable_overlay_visual_counts(
+    frame_detection_counts: dict[str, Any],
+    stable_doc: dict[str, Any],
+    pitch_polygon: Any,
+) -> dict[str, Any]:
+    counts_by_frame: dict[int, int] = defaultdict(int)
+    for player in stable_doc.get("players", []):
+        bbox_stats = _player_bbox_stats(player.get("overlay_positions") or [])
+        for position in player.get("overlay_positions") or []:
+            if not position.get("bbox_xyxy"):
+                continue
+            if (position.get("source") or "detected") != "detected":
+                continue
+            if not _bbox_footpoint_inside_polygon(position.get("bbox_xyxy"), pitch_polygon):
+                continue
+            if not _bbox_is_visual_candidate(position, bbox_stats):
+                continue
+            counts_by_frame[int(position.get("frame") or 0)] += 1
+
+    frames = []
+    stable_values: list[int] = []
+    predicted_visible_values: list[int] = []
+    target_players = int(frame_detection_counts.get("target_players") or DEFAULT_ACTIVE_PLAYERS_CAP)
+    for frame in frame_detection_counts.get("frames", []):
+        frame_index = int(frame.get("frame") or 0)
+        visible = counts_by_frame.get(frame_index, 0)
+        predicted_visible = int(frame.get("predicted_visible_boxes") or 0)
+        updated = {
+            **frame,
+            "stable_detected": visible,
+            "stable_interpolated": predicted_visible,
+            "stable_total": visible,
+            "trusted_detected": visible,
+            "visible_stable_boxes": visible,
+            "predicted_visible_boxes": predicted_visible,
+            "stable_missing_vs_target": max(0, target_players - visible),
+        }
+        frames.append(updated)
+        stable_values.append(visible)
+        predicted_visible_values.append(predicted_visible)
+
+    summary = dict(frame_detection_counts.get("summary") or {})
+    summary.update(
+        {
+            "stable_min": min(stable_values) if stable_values else 0,
+            "stable_max": max(stable_values) if stable_values else 0,
+            "stable_avg": round(_mean([float(value) for value in stable_values]) or 0.0, 3),
+            "stable_frames_below_target": sum(1 for value in stable_values if value < target_players),
+            "stable_frames_at_or_above_target": sum(1 for value in stable_values if value >= target_players),
+            "predicted_visible_boxes": sum(predicted_visible_values),
+            "ghost_bbox_count": sum(predicted_visible_values),
+        }
+    )
+    return {**frame_detection_counts, "summary": summary, "frames": frames}
+
+
+def _draw_stable_hud(
+    frame: Any,
+    frame_idx: int,
+    fps: float,
+    summary: dict[str, Any],
+    frame_count: dict[str, Any] | None = None,
+    visual_counts: dict[str, int] | None = None,
+) -> None:
+    import cv2
+
+    time_sec = frame_idx / max(fps, 0.001)
+    active_slots = _count_value(frame_count, "active_slots")
+    slot_detected = _count_value(frame_count, "slot_detected")
+    slot_predicted = _count_value(frame_count, "slot_predicted")
+    slot_missing = _count_value(frame_count, "slot_missing")
+    visible = visual_counts or {}
+    lines = [
+        f"frame={frame_idx} t={time_sec:.1f}s raw={_count_value(frame_count, 'raw_detections')}",
+        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)}",
+        f"slots active={active_slots} det={slot_detected} amb={_count_value(frame_count, 'slot_ambiguous')} miss={slot_missing} A={_count_value(frame_count, 'active_team_a')} B={_count_value(frame_count, 'active_team_b')}",
+        f"match slots={summary.get('stable_players', 0)} risky={summary.get('risky_links', 0)} low={summary.get('low_confidence_players', 0)}",
+    ]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.42
+    thickness = 1
+    line_height = 16
+    widths = [cv2.getTextSize(line, font, font_scale, thickness)[0][0] for line in lines]
+    width = max(widths, default=320) + 18
+    height = line_height * len(lines) + 14
+    frame_height, frame_width = frame.shape[:2]
+    x1 = 12
+    y1 = 12
+    x2 = min(frame_width - 12, x1 + width)
+    y2 = min(frame_height - 12, y1 + height)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (20, 20, 20), -1)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (230, 230, 230), 1)
+    for index, line in enumerate(lines):
+        y = y1 + 20 + index * line_height
+        cv2.putText(frame, line, (x1 + 8, y), font, font_scale, (245, 245, 245), thickness, cv2.LINE_AA)
+
+
+def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> None:
+    if not stats_rows:
+        return
+
+    import cv2
+
+    frame_height, frame_width = frame.shape[:2]
+    x1 = 12
+    y1 = 96
+    line_height = 15
+    max_rows = max(0, min(len(stats_rows), (frame_height - y1 - 24) // line_height))
+    if max_rows <= 0:
+        return
+    visible_rows = stats_rows[:max_rows]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    title_scale = 0.42
+    row_scale = 0.36
+    thickness = 1
+    lines = ["player stats: dist avg top time q"]
+    for row in visible_rows:
+        quality = str(row.get("quality") or "?")[:1]
+        estimated = float(row.get("estimated_distance_m") or 0.0)
+        estimated_marker = "*" if estimated > 0.0 else " "
+        lines.append(
+            f"{row.get('stable_player_id')}{estimated_marker} "
+            f"d={float(row.get('distance_m') or 0.0):4.1f}m "
+            f"avg={float(row.get('avg_speed_kmh') or 0.0):4.1f} "
+            f"top={float(row.get('top_speed_kmh') or 0.0):4.1f} "
+            f"t={float(row.get('playing_time_sec') or 0.0):4.1f}s "
+            f"{quality}"
+        )
+    if max_rows < len(stats_rows):
+        lines.append(f"+{len(stats_rows) - max_rows} more")
+    widths = [
+        cv2.getTextSize(line, font, title_scale if index == 0 else row_scale, thickness)[0][0]
+        for index, line in enumerate(lines)
+    ]
+    width = min(frame_width - 24, max(widths, default=300) + 18)
+    height = line_height * len(lines) + 12
+    y2 = min(frame_height - 12, y1 + height)
+    cv2.rectangle(frame, (x1, y1), (x1 + width, y2), (20, 20, 20), -1)
+    cv2.rectangle(frame, (x1, y1), (x1 + width, y2), (180, 180, 180), 1)
+    for index, line in enumerate(lines):
+        y = y1 + 18 + index * line_height
+        color = (245, 245, 245)
+        if index > 0 and index <= len(visible_rows):
+            color = _stable_bgr_color(visible_rows[index - 1].get("team_label"))
+        scale = title_scale if index == 0 else row_scale
+        cv2.putText(frame, line, (x1 + 8, y), font, scale, color, thickness, cv2.LINE_AA)
+
+
+def _count_value(frame_count: dict[str, Any] | None, key: str) -> str:
+    if not frame_count:
+        return "--"
+    value = frame_count.get(key)
+    return str(value) if value is not None else "--"
+
+
+def _draw_frame_stamp(frame: Any, frame_idx: int) -> None:
+    import cv2
+
+    label = f"FRAME {frame_idx:06d}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.9
+    thickness = 2
+    padding_x = 14
+    padding_y = 10
+    (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+    frame_height, frame_width = frame.shape[:2]
+    x2 = frame_width - 18
+    y2 = frame_height - 18
+    x1 = max(0, x2 - text_width - padding_x * 2)
+    y1 = max(0, y2 - text_height - baseline - padding_y * 2)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (20, 20, 20), -1)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (245, 245, 245), 1)
+    cv2.putText(
+        frame,
+        label,
+        (x1 + padding_x, y2 - padding_y - baseline),
+        font,
+        font_scale,
+        (245, 245, 245),
+        thickness,
+        cv2.LINE_AA,
+    )
+
+
+def stabilize_match(
+    match_dir: Path,
+    video_path: Path,
+    pitch: Any,
+    tracks: list[dict[str, Any]],
+    video_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    meta_path = match_dir / "match.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    teams = meta.get("teams") if isinstance(meta.get("teams"), list) else []
+    tracklets, rejected = split_tracks_into_tracklets(tracks)
+    sample_tracklet_appearance(video_path, tracklets)
+    team_clusters = cluster_tracklet_teams(tracklets, teams)
+    global_identity = resolve_conservative_identity(
+        tracklets,
+        raw_tracks_count=len(tracks),
+        rejected_tracklets_count=len(rejected),
+        pitch_width_m=float(pitch.width_m),
+        pitch_length_m=float(pitch.length_m),
+        fps=float(video_metadata.get("fps") or 25.0),
+        pitch_polygon=pitch.polygon_np,
+    )
+    stable_doc = build_stable_players_from_global_identity(global_identity)
+    frame_detection_counts = build_frame_detection_counts_from_global_identity(
+        global_identity,
+        fps=float(video_metadata.get("fps") or 25.0),
+    )
+    frame_detection_counts = apply_stable_overlay_visual_counts(
+        frame_detection_counts,
+        stable_doc,
+        pitch.polygon_np,
+    )
+    stable_doc["frame_detection_summary"] = frame_detection_counts["summary"]
+    stable_doc["frame_detection_counts"] = frame_detection_counts
+    movement_stats = build_movement_stats_document(stable_doc)
+    stable_doc["movement_stats_summary"] = movement_stats["summary"]
+    write_stable_overlay(
+        video_path,
+        match_dir,
+        stable_doc,
+        pitch.polygon_np,
+        fps=float(video_metadata.get("fps") or 25.0),
+        frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
+    )
+    write_stable_overlay(
+        video_path,
+        match_dir,
+        stable_doc,
+        pitch.polygon_np,
+        fps=float(video_metadata.get("fps") or 25.0),
+        frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
+        output_name="debug_identity_overlay.mp4",
+        include_untrusted=True,
+    )
+    public_stable_doc = _strip_overlay_positions(stable_doc)
+    parameters = {
+        "max_internal_gap_sec": 0.7,
+        "split_speed_mps": 16.0,
+        "max_link_gap_sec": 3.0,
+        "max_link_speed_mps": 9.5,
+        "max_link_distance_m": 12.0,
+        "team_method": "torso_color_kmeans",
+        "max_interpolation_gap_frames": MAX_INTERPOLATION_GAP_FRAMES,
+        "max_interpolation_gap_sec": MAX_INTERPOLATION_GAP_SEC,
+        "max_interpolation_speed_mps": MAX_INTERPOLATION_SPEED_MPS,
+        "identity_resolver": "conservative_identity_v2",
+        "identity_semantics": "stint_first",
+        "global_max_assignment_speed_mps": global_identity["parameters"]["max_assignment_speed_mps"],
+        "global_max_prediction_sec": global_identity["parameters"]["max_prediction_sec"],
+        "global_substitution_gap_sec": global_identity["parameters"]["substitution_gap_sec"],
+    }
+    report = build_stabilization_report(
+        stable_doc=public_stable_doc,
+        rejected_tracklets=rejected,
+        team_clusters=team_clusters,
+        parameters=parameters,
+    )
+    global_identity_report = build_global_identity_report(
+        global_identity,
+        frame_detection_counts,
+        parameters=parameters,
+    )
+
+    (match_dir / "stable_players.json").write_text(json.dumps(public_stable_doc, indent=2), encoding="utf-8")
+    (match_dir / "global_identity.json").write_text(json.dumps(global_identity, indent=2), encoding="utf-8")
+    (match_dir / "global_identity_report.json").write_text(json.dumps(global_identity_report, indent=2), encoding="utf-8")
+    (match_dir / "team_clusters.json").write_text(json.dumps(team_clusters, indent=2), encoding="utf-8")
+    (match_dir / "frame_detection_counts.json").write_text(json.dumps(frame_detection_counts, indent=2), encoding="utf-8")
+    (match_dir / "movement_stats.json").write_text(json.dumps(movement_stats, indent=2), encoding="utf-8")
+    (match_dir / "stabilization_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return {
+        "stable_players": public_stable_doc,
+        "global_identity": global_identity,
+        "global_identity_report": global_identity_report,
+        "team_clusters": team_clusters,
+        "frame_detection_counts": frame_detection_counts,
+        "movement_stats": movement_stats,
+        "stabilization_report": report,
+        "artifacts": {
+            "stable_players": "stable_players.json",
+            "global_identity": "global_identity.json",
+            "global_identity_report": "global_identity_report.json",
+            "stabilization_report": "stabilization_report.json",
+            "stable_overlay_preview": "stable_overlay_preview.mp4",
+            "debug_identity_overlay": "debug_identity_overlay.mp4",
+            "team_clusters": "team_clusters.json",
+            "frame_detection_counts": "frame_detection_counts.json",
+            "movement_stats": "movement_stats.json",
+        },
+    }
+
+
+def load_stable_review(match_path: Path) -> dict[str, Any]:
+    stable_path = match_path / "stable_players.json"
+    if not stable_path.exists():
+        raise FileNotFoundError("stable_players.json not found. Run analysis first.")
+    stable_doc = json.loads(stable_path.read_text(encoding="utf-8"))
+    report_path = match_path / "stabilization_report.json"
+    global_report_path = match_path / "global_identity_report.json"
+    clusters_path = match_path / "team_clusters.json"
+    movement_stats_path = match_path / "movement_stats.json"
+    return {
+        "stable_players": stable_doc,
+        "stabilization_report": json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None,
+        "global_identity_report": json.loads(global_report_path.read_text(encoding="utf-8")) if global_report_path.exists() else None,
+        "team_clusters": json.loads(clusters_path.read_text(encoding="utf-8")) if clusters_path.exists() else None,
+        "movement_stats": json.loads(movement_stats_path.read_text(encoding="utf-8")) if movement_stats_path.exists() else None,
+    }
+
+
+def save_stable_review(match_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    review = load_stable_review(match_path)
+    stable_doc = review["stable_players"]
+    players = stable_doc.get("players") if isinstance(stable_doc.get("players"), list) else []
+    if payload.get("swap_teams"):
+        for player in players:
+            if player.get("team_label") == "A":
+                player["team_label"] = "B"
+            elif player.get("team_label") == "B":
+                player["team_label"] = "A"
+    updates = payload.get("updates") if isinstance(payload.get("updates"), list) else []
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        target = str(update.get("stable_subject_id") or update.get("stable_player_id") or "")
+        for player in players:
+            if target not in {str(player.get("stable_subject_id")), str(player.get("stable_player_id"))}:
+                continue
+            if update.get("team_label") in {"A", "B", "U"}:
+                player["team_label"] = update["team_label"]
+            if "team_id" in update:
+                player["team_id"] = update.get("team_id")
+            if "team_name" in update:
+                player["team_name"] = update.get("team_name") or "Unknown"
+            if update.get("status") in {"active", "ignore", "referee", "false_positive", "unknown"}:
+                player["status"] = update["status"]
+    renumber_stable_players(players)
+    stable_doc["updated_at"] = now_iso()
+    stable_doc["summary"]["team_counts"] = _team_counts(players)
+    stable_doc["summary"]["stable_players"] = len(players)
+    (match_path / "stable_players.json").write_text(json.dumps(stable_doc, indent=2), encoding="utf-8")
+    return load_stable_review(match_path)

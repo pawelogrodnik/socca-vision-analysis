@@ -120,6 +120,61 @@ a { color: #93c5fd; }
   border-radius: 14px;
   background: #020617;
 }
+.stable-grid { align-items: start; }
+.stable-player-list {
+  display: grid;
+  gap: 10px;
+  max-height: 720px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid #1f2937;
+  border-radius: 14px;
+  background: #020617;
+}
+.stable-player-item strong { font-size: 20px; }
+.trajectory-map {
+  width: min(280px, 100%);
+  aspect-ratio: 5 / 8;
+  display: block;
+  margin: 0 auto;
+  background: #064e3b;
+  border: 1px solid #22c55e;
+  border-radius: 8px;
+}
+.trajectory-map rect,
+.trajectory-map line {
+  fill: none;
+  stroke: rgba(226, 232, 240, 0.75);
+  stroke-width: 0.8;
+}
+.trajectory-map polyline {
+  fill: none;
+  stroke: #facc15;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.confidence-pill {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #1e293b;
+  color: #e5e7eb;
+  font-weight: 800;
+}
+.confidence-pill.high { border-color: #22c55e; color: #bbf7d0; }
+.confidence-pill.medium { border-color: #facc15; color: #fef08a; }
+.confidence-pill.low { border-color: #ef4444; color: #fecaca; }
+.debug-details {
+  border: 1px solid #334155;
+  border-radius: 14px;
+  padding: 12px;
+  background: #020617;
+}
+.debug-details summary {
+  cursor: pointer;
+  font-weight: 800;
+}
 
 @media (max-width: 900px) {
   .app { padding: 16px; }

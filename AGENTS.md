@@ -67,6 +67,10 @@ Do not collapse `track_id`, `tracklet_id` and `player_id` into one concept.
 - Prefer pure helper functions for transformations and calculations.
 - Validate inputs near API boundaries.
 - Keep long-running video analysis isolated from request/response logic; the current synchronous endpoint is MVP-only.
+- Na froncie każdy nowy komponent pisz w React i dbaj o minimalny zakres odpowiedzialności: logikę wynoś do osobnych plików `utils/`, `types/`, `consts/`, a komponent trzymaj w dedykowanym pliku `.tsx`.
+- Na backendzie utrzymuj ten sam modularny podział – rozbijaj rozrastające się pliki na mniejsze moduły/serwisy i dodawaj testy jednostkowe do nowych utili oraz scraperów na bieżąco.
+  Po każdej większej zmianie uruchom `npx tsc --noEmit --noUnusedLocals --noUnusedParameters` osobno w `client/`. Usuń wszystkie wskazane importy i parametry zanim zgłosisz pracę.
+  - do nawigacji po stronie frontendowej uzywamy routera, nie robimy zadnych workaroundow - aplikacja od poczatku ma byc pisania zgodnie z najlepszymi standardami
 
 ## Before adding a feature
 
@@ -91,7 +95,21 @@ In early iterations, avoid implementing these as core requirements:
 
 Build the reliable tracking/stat foundation first.
 
-
 ## Progressive implementation plan
 
 When implementing new features, follow `docs/IMPLEMENTATION_PLAN.md`. It defines milestone order, user stories, acceptance criteria, and explicit scope boundaries. Do not skip ahead to ball/event analytics before tracking, tracklets, identity assignments and tracking-only player stats are usable.
+
+## Validation before save
+
+- Check that no corrupted characters were introduced, including:
+  - `�`
+  - `ï¿½`
+  - `Ã³`
+  - `Å‚`
+  - `Ä…`
+- If any such sequence appears, abort the change and restore the previous content.
+
+## Safety rule
+
+- If encoding is unclear or file content looks corrupted, do not edit the file.
+- Report the issue instead of saving changes.

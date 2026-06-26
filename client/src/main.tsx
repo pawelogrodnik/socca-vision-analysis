@@ -1,13 +1,14 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
 import App from './App';
-import { IdentityCandidateAdminSection as ExtraAdmin } from './IdentityCandidateAdminSection';
 import './styles.css';
 
 const Root = () => (
   <React.StrictMode>
-    <App />
-    <ExtraAdmin />
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
   </React.StrictMode>
 );
 

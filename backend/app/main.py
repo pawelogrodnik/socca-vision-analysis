@@ -18,6 +18,7 @@ from app.services.analysis import analyze_match
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.identity import build_identity_review, save_identity_assignments
 from app.services.publish import PublishError, publish_match_package
+from app.services.stabilization import load_stable_review, save_stable_review
 from app.services.video import extract_frame, read_video_metadata
 
 app = FastAPI(title="Orlik Vision API", version="0.6.0")
@@ -295,6 +296,12 @@ def get_match(match_id: str) -> dict[str, Any]:
         "player_assignments.json",
         "identity_candidates.json",
         "identity_assignments.json",
+        "stable_players.json",
+        "global_identity_report.json",
+        "stabilization_report.json",
+        "team_clusters.json",
+        "frame_detection_counts.json",
+        "movement_stats.json",
     ]:
         optional_path = path / optional
         if optional_path.exists():
@@ -421,6 +428,29 @@ def save_candidate_assignments(match_id: str, payload: dict[str, Any] = Body(...
     return doc
 
 
+@app.get("/api/matches/{match_id}/stable-players")
+def get_stable_players(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_stable_review(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/stable-players/review")
+def review_stable_players(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        doc = save_stable_review(path, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    meta = read_match_meta(path)
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
 @app.put("/api/matches/{match_id}/player-assignments")
 def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -485,6 +515,13 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "player_assignments": None,
         "identity_candidates": None,
         "identity_assignments": None,
+        "stable_players": None,
+        "global_identity": None,
+        "global_identity_report": None,
+        "stabilization_report": None,
+        "team_clusters": None,
+        "frame_detection_counts": None,
+        "movement_stats": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
         "assets": {},
@@ -496,6 +533,13 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("player_assignments", "player_assignments.json"),
         ("identity_candidates", "identity_candidates.json"),
         ("identity_assignments", "identity_assignments.json"),
+        ("stable_players", "stable_players.json"),
+        ("global_identity", "global_identity.json"),
+        ("global_identity_report", "global_identity_report.json"),
+        ("stabilization_report", "stabilization_report.json"),
+        ("team_clusters", "team_clusters.json"),
+        ("frame_detection_counts", "frame_detection_counts.json"),
+        ("movement_stats", "movement_stats.json"),
     ]:
         file_path = path / filename
         if file_path.exists():
@@ -510,6 +554,24 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["identity_candidates_json"] = "identity_candidates.json"
     if (path / "identity_assignments.json").exists():
         package["assets"]["identity_assignments_json"] = "identity_assignments.json"
+    if (path / "stable_players.json").exists():
+        package["assets"]["stable_players_json"] = "stable_players.json"
+    if (path / "global_identity.json").exists():
+        package["assets"]["global_identity_json"] = "global_identity.json"
+    if (path / "global_identity_report.json").exists():
+        package["assets"]["global_identity_report_json"] = "global_identity_report.json"
+    if (path / "stabilization_report.json").exists():
+        package["assets"]["stabilization_report_json"] = "stabilization_report.json"
+    if (path / "stable_overlay_preview.mp4").exists():
+        package["assets"]["stable_overlay_preview"] = "stable_overlay_preview.mp4"
+    if (path / "debug_identity_overlay.mp4").exists():
+        package["assets"]["debug_identity_overlay"] = "debug_identity_overlay.mp4"
+    if (path / "team_clusters.json").exists():
+        package["assets"]["team_clusters_json"] = "team_clusters.json"
+    if (path / "frame_detection_counts.json").exists():
+        package["assets"]["frame_detection_counts_json"] = "frame_detection_counts.json"
+    if (path / "movement_stats.json").exists():
+        package["assets"]["movement_stats_json"] = "movement_stats.json"
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -610,6 +672,15 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "player_assignments.json": "application/json",
         "identity_candidates.json": "application/json",
         "identity_assignments.json": "application/json",
+        "stable_players.json": "application/json",
+        "global_identity.json": "application/json",
+        "global_identity_report.json": "application/json",
+        "stabilization_report.json": "application/json",
+        "team_clusters.json": "application/json",
+        "frame_detection_counts.json": "application/json",
+        "movement_stats.json": "application/json",
+        "stable_overlay_preview.mp4": "video/mp4",
+        "debug_identity_overlay.mp4": "video/mp4",
     }
     if artifact_name not in allowed:
         raise HTTPException(status_code=404, detail="Artifact not available")

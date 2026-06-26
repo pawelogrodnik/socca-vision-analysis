@@ -8,6 +8,8 @@ import type {
   PlayerAssignmentsDocument,
   PublishedMatch,
   PublishedMatchDetail,
+  StablePlayerReviewPayload,
+  StablePlayersReviewState,
   Team,
   TrackletReviewState
 } from './types';
@@ -100,6 +102,18 @@ export async function savePlayerAssignments(matchId: string, assignments: Player
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ assignments })
+  });
+}
+
+export async function getStablePlayers(matchId: string): Promise<StablePlayersReviewState> {
+  return request<StablePlayersReviewState>(`/api/matches/${matchId}/stable-players`);
+}
+
+export async function reviewStablePlayers(matchId: string, payload: StablePlayerReviewPayload): Promise<StablePlayersReviewState> {
+  return request<StablePlayersReviewState>(`/api/matches/${matchId}/stable-players/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
   });
 }
 

@@ -68,6 +68,21 @@ def init_db() -> None:
                 PRIMARY KEY (match_id, id),
                 FOREIGN KEY (match_id, team_id) REFERENCES published_teams(match_id, id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS published_stable_players (
+                id TEXT NOT NULL,
+                match_id TEXT NOT NULL,
+                stable_subject_id TEXT,
+                team_id TEXT,
+                team_label TEXT NOT NULL,
+                team_name TEXT,
+                duration_sec REAL NOT NULL DEFAULT 0,
+                confidence TEXT NOT NULL,
+                confidence_score REAL,
+                tracklet_ids_json TEXT NOT NULL,
+                PRIMARY KEY (match_id, id),
+                FOREIGN KEY (match_id) REFERENCES published_matches(id) ON DELETE CASCADE
+            );
             """
         )
 
@@ -193,6 +208,35 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
                     ),
                 )
 
+        stable_doc = package.get("stable_players") if isinstance(package.get("stable_players"), dict) else {}
+        stable_players = stable_doc.get("players") if isinstance(stable_doc.get("players"), list) else []
+        for player in stable_players:
+            if not isinstance(player, dict):
+                continue
+            stable_player_id = str(player.get("stable_player_id") or player.get("stable_subject_id") or "")
+            if not stable_player_id:
+                continue
+            conn.execute(
+                """
+                INSERT INTO published_stable_players (
+                    id, match_id, stable_subject_id, team_id, team_label, team_name,
+                    duration_sec, confidence, confidence_score, tracklet_ids_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    stable_player_id,
+                    published_id,
+                    player.get("stable_subject_id"),
+                    player.get("team_id"),
+                    str(player.get("team_label") or "U"),
+                    player.get("team_name"),
+                    float(player.get("duration_sec") or 0),
+                    str(player.get("confidence") or "low"),
+                    player.get("confidence_score"),
+                    json.dumps(player.get("tracklet_ids") or [], ensure_ascii=False, sort_keys=True),
+                ),
+            )
+
     return get_published_match(published_id)
 
 
@@ -217,11 +261,13 @@ def get_published_match(match_id: str) -> dict[str, Any]:
         package = json.loads(row["package_json"])
         teams = conn.execute("SELECT * FROM published_teams WHERE match_id = ? ORDER BY name", (match_id,)).fetchall()
         players = conn.execute("SELECT * FROM published_players WHERE match_id = ? ORDER BY team_id, name", (match_id,)).fetchall()
+        stable_players = conn.execute("SELECT * FROM published_stable_players WHERE match_id = ? ORDER BY team_label, id", (match_id,)).fetchall()
     return {
         **_row_to_match(row),
         "package": package,
         "teams": [dict(team) | {"players_json": json.loads(team["players_json"])} for team in teams],
         "players": [dict(player) | {"is_guest": bool(player["is_guest"])} for player in players],
+        "stable_players": [dict(player) | {"tracklet_ids": json.loads(player["tracklet_ids_json"])} for player in stable_players],
     }
 
 

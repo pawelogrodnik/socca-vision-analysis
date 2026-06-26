@@ -1,0 +1,111 @@
+import type { AnalysisPayload } from '../types';
+
+interface AnalysisFormProps {
+  analysis: AnalysisPayload;
+  onChange: (payload: AnalysisPayload) => void;
+  onRun: () => void;
+}
+
+export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
+  return (
+    <div className='analysis-form'>
+      <h3>Ustawienia YOLO</h3>
+      <div className='grid three compact'>
+        <label>
+          Adapter
+          <select
+            value={analysis.adapter}
+            onChange={(event) =>
+              onChange({
+                ...analysis,
+                adapter: event.target.value as AnalysisPayload['adapter'],
+              })
+            }
+          >
+            <option value='yolo'>yolo</option>
+            <option value='motion'>motion</option>
+          </select>
+        </label>
+        <label>
+          Max seconds
+          <input
+            type='number'
+            value={analysis.max_seconds}
+            onChange={(event) =>
+              onChange({ ...analysis, max_seconds: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          Frame stride
+          <input
+            type='number'
+            value={analysis.frame_stride}
+            min={1}
+            onChange={(event) =>
+              onChange({
+                ...analysis,
+                frame_stride: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+      </div>
+      <div className='grid three compact'>
+        <label>
+          Model
+          <input
+            value={analysis.yolo_model}
+            onChange={(event) =>
+              onChange({ ...analysis, yolo_model: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          Conf
+          <input
+            type='number'
+            step='0.01'
+            value={analysis.yolo_conf}
+            onChange={(event) =>
+              onChange({ ...analysis, yolo_conf: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          Img size
+          <input
+            type='number'
+            value={analysis.yolo_imgsz}
+            onChange={(event) =>
+              onChange({ ...analysis, yolo_imgsz: Number(event.target.value) })
+            }
+          />
+        </label>
+      </div>
+      <div className='grid two compact'>
+        <label>
+          Tracker
+          <input
+            value={analysis.yolo_tracker}
+            onChange={(event) =>
+              onChange({ ...analysis, yolo_tracker: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          Device
+          <input
+            value={analysis.yolo_device || ''}
+            onChange={(event) =>
+              onChange({ ...analysis, yolo_device: event.target.value || null })
+            }
+          />
+        </label>
+      </div>
+      <button type='button' onClick={onRun}>
+        Uruchom analizę
+      </button>
+    </div>
+  );
+}
