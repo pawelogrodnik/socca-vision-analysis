@@ -316,6 +316,8 @@ export type Match = MatchMetadataPayload & {
   team_clusters?: TeamClustersDocument;
   frame_detection_counts?: Record<string, unknown>;
   movement_stats?: MovementStatsDocument;
+  tracklets?: Record<string, unknown>;
+  tracking_quality_report?: Record<string, unknown>;
   match_package?: MatchPackage;
   player_assignments?: PlayerAssignmentsDocument;
 };
@@ -334,6 +336,10 @@ export type AnalysisPayload = {
 export type AnalysisReport = {
   status: 'completed' | 'failed' | string;
   analysis_type: string;
+  run_id?: string;
+  generated_at?: string;
+  run_directory?: string;
+  run_manifest?: string;
   note?: string;
   frames_processed?: number;
   detections_kept?: number;
@@ -357,7 +363,10 @@ export type AnalysisReport = {
     team_clusters?: string;
     frame_detection_counts?: string;
     movement_stats?: string;
+    tracklets?: string;
+    tracking_quality_report?: string;
   };
+  run_artifacts?: Record<string, string>;
   [key: string]: unknown;
 };
 
@@ -378,6 +387,8 @@ export type MatchPackage = {
   team_clusters?: TeamClustersDocument | null;
   frame_detection_counts?: Record<string, unknown> | null;
   movement_stats?: MovementStatsDocument | null;
+  tracklets?: Record<string, unknown> | null;
+  tracking_quality_report?: Record<string, unknown> | null;
   [key: string]: unknown;
 };
 

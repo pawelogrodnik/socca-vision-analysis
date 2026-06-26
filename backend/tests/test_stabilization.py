@@ -7,6 +7,8 @@ from app.services.stabilization import (
     build_frame_detection_counts,
     build_stable_players,
     build_stable_players_document,
+    build_tracklets_document,
+    build_tracking_quality_report,
     cluster_tracklet_teams,
     split_tracks_into_tracklets,
 )
@@ -322,6 +324,56 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(counts["frames"][1]["raw_detections"], 2)
         self.assertEqual(counts["frames"][1]["stable_interpolated"], 1)
         self.assertEqual(counts["summary"]["raw_frames_below_target"], 1)
+
+    def test_tracklets_document_exports_formal_contract(self) -> None:
+        clean = [
+            tracklet("1:1", 0.0, 1.0, [0, 0], [1, 0], [240, 30, 30]),
+        ]
+        rejected = [
+            {
+                **tracklet("2:1", 0.0, 0.05, [2, 0], [2.1, 0], None),
+                "reject_reason": "too_short",
+            }
+        ]
+
+        doc = build_tracklets_document(
+            clean,
+            rejected,
+            raw_tracks_count=2,
+            parameters={"min_duration_sec": 0.2},
+        )
+
+        self.assertEqual(doc["schema_version"], "0.1.0")
+        self.assertEqual(doc["summary"]["raw_tracks"], 2)
+        self.assertEqual(doc["summary"]["clean_tracklets"], 1)
+        self.assertEqual(doc["summary"]["rejected_tracklets"], 1)
+        exported = doc["tracklets"][0]
+        self.assertEqual(exported["tracklet_id"], "1:1")
+        self.assertEqual(exported["source_tracker_id"], 1)
+        self.assertEqual(exported["frames_count"], exported["positions_count"])
+        self.assertEqual(exported["missing_frames_count"], 29)
+        self.assertEqual(exported["team_candidate"], "A")
+        self.assertIn("positions_m", exported)
+        self.assertEqual(doc["rejected_tracklets"][0]["reject_reason"], "too_short")
+
+    def test_tracking_quality_report_summarizes_gaps_and_team_over_cap(self) -> None:
+        clean = [
+            tracklet(f"{index + 1}:1", 0.0, 1.0, [index, 0], [index + 0.1, 0], [240, 30, 30])
+            for index in range(8)
+        ]
+        report = build_tracking_quality_report(
+            clean,
+            [],
+            raw_tracks_count=8,
+            parameters={"min_positions": 4},
+            target_players_per_team=7,
+        )
+
+        self.assertEqual(report["schema_version"], "0.1.0")
+        self.assertEqual(report["summary"]["clean_tracklets"], 8)
+        self.assertEqual(report["summary"]["frames_with_team_over_cap"], 2)
+        self.assertGreater(report["summary"]["suspicious_events"], 0)
+        self.assertTrue(any(row["team_over_cap"] for row in report["frame_team_counts"]))
 
 
 if __name__ == "__main__":

@@ -33,14 +33,21 @@ class PitchConfigPayload(BaseModel):
     image_points: list[list[float]] = Field(min_length=4, max_length=4)
     width_m: float = 30.0
     length_m: float = 47.4
+    pitch_dimensions_m: dict[str, float] | None = None
+    calibration_frame_time_sec: float | None = None
+    created_at: str | None = None
     source: str = "manual"
 
     @model_validator(mode="after")
     def normalize_legacy_default_pitch_size(self) -> "PitchConfigPayload":
+        if self.pitch_dimensions_m:
+            self.width_m = float(self.pitch_dimensions_m.get("width_m", self.width_m))
+            self.length_m = float(self.pitch_dimensions_m.get("length_m", self.length_m))
         # Older UI builds sent 26 x 56 by default. Current pitch is 30 x 47.40 m.
         if abs(self.width_m - 26.0) < 0.001 and abs(self.length_m - 56.0) < 0.001:
             self.width_m = 30.0
             self.length_m = 47.4
+        self.pitch_dimensions_m = {"width_m": self.width_m, "length_m": self.length_m}
         return self
 
 

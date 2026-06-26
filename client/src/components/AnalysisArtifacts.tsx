@@ -16,6 +16,8 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const globalIdentity = report?.artifacts?.global_identity;
   const globalIdentityReport = report?.artifacts?.global_identity_report;
   const movementStats = report?.artifacts?.movement_stats;
+  const tracklets = report?.artifacts?.tracklets;
+  const trackingQualityReport = report?.artifacts?.tracking_quality_report;
 
   return (
     <section className='card'>
@@ -23,6 +25,16 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
       <div className='grid two'>
         <div>
           <h3>Artefakty lokalne</h3>
+          {report?.run_id && (
+            <p className='muted'>
+              Analysis run: {report.run_id}
+            </p>
+          )}
+          {report?.run_manifest && (
+            <a href={artifactUrl(match.id, report.run_manifest)}>
+              Pobierz run_metadata.json
+            </a>
+          )}
           {stableOverlay && (
             <video
               controls
@@ -76,6 +88,16 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
           {movementStats && (
             <a href={artifactUrl(match.id, movementStats)}>
               Pobierz movement_stats.json
+            </a>
+          )}
+          {tracklets && (
+            <a href={artifactUrl(match.id, tracklets)}>
+              Pobierz tracklets.json
+            </a>
+          )}
+          {trackingQualityReport && (
+            <a href={artifactUrl(match.id, trackingQualityReport)}>
+              Pobierz tracking_quality_report.json
             </a>
           )}
           {debugIdentityOverlay && (

@@ -34,7 +34,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export function artifactUrl(matchId: string, artifactName: string): string {
-  return `${API_BASE}/api/matches/${matchId}/artifact/${artifactName}`;
+  const encodedArtifact = artifactName
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
+  return `${API_BASE}/api/matches/${encodeURIComponent(matchId)}/artifact/${encodedArtifact}`;
 }
 
 export function frameUrl(matchId: string, second: number): string {
@@ -77,7 +82,14 @@ export async function updateMatchMetadata(matchId: string, payload: MatchMetadat
   });
 }
 
-export async function savePitch(matchId: string, payload: { image_points: number[][]; width_m: number; length_m: number; source: string }) {
+export async function savePitch(matchId: string, payload: {
+  image_points: number[][];
+  width_m: number;
+  length_m: number;
+  pitch_dimensions_m?: { width_m: number; length_m: number };
+  calibration_frame_time_sec?: number;
+  source: string;
+}) {
   return request(`/api/matches/${matchId}/pitch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

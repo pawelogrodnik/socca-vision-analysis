@@ -10,6 +10,7 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
+from app.services.analysis_runs import finalize_analysis_report
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
 from app.services.stabilization import stabilize_match
 from app.services.tracker import CentroidTracker
@@ -106,10 +107,16 @@ def load_pitch_config(match_dir: Path) -> PitchConfig:
     if not path.exists():
         raise FileNotFoundError("Missing pitch_config.json. Calibrate pitch first.")
     data = json.loads(path.read_text(encoding="utf-8"))
+    pitch_dimensions = data.get("pitch_dimensions_m") if isinstance(data.get("pitch_dimensions_m"), dict) else {}
+    width_m = float(data.get("width_m") or pitch_dimensions.get("width_m") or 30.0)
+    length_m = float(data.get("length_m") or pitch_dimensions.get("length_m") or 47.4)
+    if abs(width_m - 26.0) < 0.001 and abs(length_m - 56.0) < 0.001:
+        width_m = 30.0
+        length_m = 47.4
     return PitchConfig(
         image_points=data["image_points"],
-        width_m=float(data.get("width_m", 26.0)),
-        length_m=float(data.get("length_m", 56.0)),
+        width_m=width_m,
+        length_m=length_m,
     )
 
 
@@ -265,9 +272,9 @@ def _write_failed_report(match_dir: Path, *, adapter: str, error: Exception) -> 
             "type": error.__class__.__name__,
             "message": str(error),
         },
+        "artifacts": {},
     }
-    (match_dir / "analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    return report
+    return finalize_analysis_report(match_dir, report)
 
 
 def _validate_common_video_params(metadata: dict[str, Any], frame_stride: int) -> tuple[float, int, int]:
@@ -352,8 +359,7 @@ def analyze_match_motion(match_dir: Path, video_path: Path, *, max_seconds: floa
             "artifacts": artifacts,
             "warnings": [] if tracks_json else ["No tracks were detected. Check pitch polygon, video quality, and adapter settings."],
         }
-        (match_dir / "analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        return report
+        return finalize_analysis_report(match_dir, report)
     except Exception as exc:
         _write_failed_report(match_dir, adapter=adapter_name, error=exc)
         raise
@@ -551,8 +557,7 @@ def analyze_match_yolo(
             "warnings": warnings,
             "artifacts": artifacts,
         }
-        (match_dir / "analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-        return report
+        return finalize_analysis_report(match_dir, report)
     except Exception as exc:
         _write_failed_report(match_dir, adapter=adapter_name, error=exc)
         raise

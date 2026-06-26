@@ -111,6 +111,8 @@ export function AdminPanel() {
       image_points: pitchPoints,
       width_m: 30,
       length_m: 47.4,
+      pitch_dimensions_m: { width_m: 30, length_m: 47.4 },
+      calibration_frame_time_sec: frameSecond,
       source: 'manual',
     });
     setStatus('Zapisano konfigurację boiska 30 x 47.4 m.');

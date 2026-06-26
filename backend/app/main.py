@@ -156,6 +156,21 @@ def summarize_track(track: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def summarize_analysis_run(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": report.get("run_id"),
+        "status": report.get("status"),
+        "analysis_type": report.get("analysis_type"),
+        "generated_at": report.get("generated_at"),
+        "frames_processed": report.get("frames_processed"),
+        "tracks_count": report.get("tracks_count"),
+        "stable_players_count": report.get("stable_players_count"),
+        "parameters": report.get("parameters") or {},
+        "run_directory": report.get("run_directory"),
+        "run_manifest": report.get("run_manifest"),
+    }
+
+
 def default_assignments_for_tracks(tracks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
@@ -302,6 +317,8 @@ def get_match(match_id: str) -> dict[str, Any]:
         "team_clusters.json",
         "frame_detection_counts.json",
         "movement_stats.json",
+        "tracklets.json",
+        "tracking_quality_report.json",
     ]:
         optional_path = path / optional
         if optional_path.exists():
@@ -339,11 +356,22 @@ def get_video(match_id: str) -> FileResponse:
 def save_pitch(match_id: str, payload: PitchConfigPayload) -> dict[str, Any]:
     path = match_dir(match_id)
     data = payload.model_dump()
+    existing_path = path / "pitch_config.json"
+    existing = json.loads(existing_path.read_text(encoding="utf-8")) if existing_path.exists() else {}
+    data["pitch_dimensions_m"] = {
+        "width_m": float(data.get("width_m") or 30.0),
+        "length_m": float(data.get("length_m") or 47.4),
+    }
+    if data.get("calibration_frame_time_sec") is None and existing.get("calibration_frame_time_sec") is not None:
+        data["calibration_frame_time_sec"] = existing.get("calibration_frame_time_sec")
+    data["created_at"] = data.get("created_at") or existing.get("created_at") or now_iso()
+    data["updated_at"] = now_iso()
     (path / "pitch_config.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
     meta = read_match_meta(path)
     if meta.get("status") in {"draft", "uploaded"}:
         meta["status"] = "calibrated"
-        write_match_meta(path, meta)
+    meta["updated_at"] = now_iso()
+    write_match_meta(path, meta)
     return {"status": "saved", "pitch_config": data}
 
 
@@ -369,7 +397,14 @@ def analyze(match_id: str, payload: AnalyzePayload) -> dict[str, Any]:
         meta = read_match_meta(path)
         if report.get("status") == "completed":
             meta["status"] = "analyzed"
-            write_match_meta(path, meta)
+        run_summary = summarize_analysis_run(report)
+        if run_summary.get("run_id"):
+            existing_runs = [item for item in meta.get("analysis_runs", []) if isinstance(item, dict)]
+            existing_runs = [item for item in existing_runs if item.get("run_id") != run_summary["run_id"]]
+            meta["analysis_runs"] = [run_summary, *existing_runs][:30]
+            meta["latest_analysis_run_id"] = run_summary["run_id"]
+        meta["updated_at"] = now_iso()
+        write_match_meta(path, meta)
         return report
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -522,6 +557,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "team_clusters": None,
         "frame_detection_counts": None,
         "movement_stats": None,
+        "tracklets": None,
+        "tracking_quality_report": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
         "assets": {},
@@ -540,6 +577,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("team_clusters", "team_clusters.json"),
         ("frame_detection_counts", "frame_detection_counts.json"),
         ("movement_stats", "movement_stats.json"),
+        ("tracklets", "tracklets.json"),
+        ("tracking_quality_report", "tracking_quality_report.json"),
     ]:
         file_path = path / filename
         if file_path.exists():
@@ -572,6 +611,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["frame_detection_counts_json"] = "frame_detection_counts.json"
     if (path / "movement_stats.json").exists():
         package["assets"]["movement_stats_json"] = "movement_stats.json"
+    if (path / "tracklets.json").exists():
+        package["assets"]["tracklets_json"] = "tracklets.json"
+    if (path / "tracking_quality_report.json").exists():
+        package["assets"]["tracking_quality_report_json"] = "tracking_quality_report.json"
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -659,7 +702,7 @@ def api_import_match_package(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/matches/{match_id}/artifact/{artifact_name}")
+@app.get("/api/matches/{match_id}/artifact/{artifact_name:path}")
 def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     path = match_dir(match_id)
     allowed = {
@@ -679,14 +722,24 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "team_clusters.json": "application/json",
         "frame_detection_counts.json": "application/json",
         "movement_stats.json": "application/json",
+        "tracklets.json": "application/json",
+        "tracking_quality_report.json": "application/json",
+        "run_metadata.json": "application/json",
         "stable_overlay_preview.mp4": "video/mp4",
         "debug_identity_overlay.mp4": "video/mp4",
     }
-    if artifact_name not in allowed:
+    artifact_rel = Path(artifact_name)
+    if artifact_rel.is_absolute() or any(part == ".." for part in artifact_rel.parts):
         raise HTTPException(status_code=404, detail="Artifact not available")
-    artifact_path = path / artifact_name
+    artifact_basename = artifact_rel.name
+    if artifact_basename not in allowed:
+        raise HTTPException(status_code=404, detail="Artifact not available")
+    artifact_path = (path / artifact_rel).resolve()
+    match_root = path.resolve()
+    if artifact_path != match_root and match_root not in artifact_path.parents:
+        raise HTTPException(status_code=404, detail="Artifact not available")
     if not artifact_path.exists():
         raise HTTPException(status_code=404, detail="Artifact not generated yet")
     if artifact_path.stat().st_size == 0:
         raise HTTPException(status_code=410, detail=f"Artifact {artifact_name} exists but is empty. Rerun analysis and check backend logs.")
-    return FileResponse(artifact_path, media_type=allowed[artifact_name])
+    return FileResponse(artifact_path, media_type=allowed[artifact_basename])

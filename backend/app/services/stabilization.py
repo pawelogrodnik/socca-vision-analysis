@@ -149,6 +149,225 @@ def split_tracks_into_tracklets(
     return tracklets, rejected
 
 
+def build_tracklets_document(
+    tracklets: list[dict[str, Any]],
+    rejected_tracklets: list[dict[str, Any]],
+    *,
+    raw_tracks_count: int,
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    clean_docs = [_tracklet_public_doc(tracklet, status="clean") for tracklet in tracklets]
+    rejected_docs = [
+        {
+            **_tracklet_public_doc(tracklet, status="rejected"),
+            "reject_reason": tracklet.get("reject_reason") or "unknown",
+        }
+        for tracklet in rejected_tracklets
+    ]
+    durations = [float(item.get("duration_sec") or 0.0) for item in clean_docs]
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "source": "tracks_json_splitter",
+        "parameters": parameters,
+        "summary": {
+            "raw_tracks": raw_tracks_count,
+            "clean_tracklets": len(clean_docs),
+            "rejected_tracklets": len(rejected_docs),
+            "tracklets_total": len(clean_docs) + len(rejected_docs),
+            "duration_sec_avg": round(_mean(durations) or 0.0, 3),
+            "duration_sec_median": round(float(median(durations)), 3) if durations else 0.0,
+            "positions_total": sum(int(item.get("positions_count") or 0) for item in clean_docs),
+            "missing_frames_total": sum(int(item.get("missing_frames_count") or 0) for item in clean_docs),
+            "team_counts": _tracklet_team_counts(clean_docs),
+        },
+        "tracklets": clean_docs,
+        "rejected_tracklets": rejected_docs,
+    }
+
+
+def build_tracking_quality_report(
+    tracklets: list[dict[str, Any]],
+    rejected_tracklets: list[dict[str, Any]],
+    *,
+    raw_tracks_count: int,
+    parameters: dict[str, Any],
+    target_players_per_team: int = DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP,
+) -> dict[str, Any]:
+    clean_docs = [_tracklet_public_doc(tracklet, status="clean", include_positions=False) for tracklet in tracklets]
+    rejected_docs = [
+        {
+            **_tracklet_public_doc(tracklet, status="rejected", include_positions=False),
+            "reject_reason": tracklet.get("reject_reason") or "unknown",
+        }
+        for tracklet in rejected_tracklets
+    ]
+    durations = [float(item.get("duration_sec") or 0.0) for item in clean_docs]
+    confidences = [float(item.get("mean_confidence") or 0.0) for item in clean_docs]
+    frame_rows = _tracklet_frame_quality_rows(tracklets, target_players_per_team=target_players_per_team)
+    suspicious_events = _tracklet_suspicious_events(clean_docs, rejected_docs)
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "source": "tracklets_json",
+        "parameters": parameters,
+        "summary": {
+            "raw_tracks": raw_tracks_count,
+            "clean_tracklets": len(clean_docs),
+            "rejected_tracklets": len(rejected_docs),
+            "duration_sec_min": round(min(durations), 3) if durations else 0.0,
+            "duration_sec_max": round(max(durations), 3) if durations else 0.0,
+            "duration_sec_avg": round(_mean(durations) or 0.0, 3),
+            "duration_sec_median": round(float(median(durations)), 3) if durations else 0.0,
+            "mean_confidence_avg": round(_mean(confidences) or 0.0, 4),
+            "missing_frames_total": sum(int(item.get("missing_frames_count") or 0) for item in clean_docs),
+            "team_counts": _tracklet_team_counts(clean_docs),
+            "frames_with_team_over_cap": sum(1 for row in frame_rows if row.get("team_over_cap")),
+            "suspicious_events": len(suspicious_events),
+        },
+        "frame_team_counts": frame_rows[:1000],
+        "suspicious_events": suspicious_events[:1000],
+        "rejected_tracklets": [
+            {
+                "tracklet_id": item.get("tracklet_id"),
+                "source_tracker_id": item.get("source_tracker_id"),
+                "duration_sec": item.get("duration_sec"),
+                "positions_count": item.get("positions_count"),
+                "reject_reason": item.get("reject_reason") or "unknown",
+            }
+            for item in rejected_docs[:500]
+        ],
+    }
+
+
+def _tracklet_public_doc(tracklet: dict[str, Any], *, status: str, include_positions: bool = True) -> dict[str, Any]:
+    positions = sorted(tracklet.get("positions") or [], key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)))
+    first = positions[0] if positions else {}
+    last = positions[-1] if positions else {}
+    doc = {
+        "tracklet_id": tracklet.get("tracklet_id"),
+        "source_tracker_id": tracklet.get("source_track_id"),
+        "segment_index": tracklet.get("segment_index"),
+        "status": status,
+        "start_time_sec": tracklet.get("start_time_sec"),
+        "end_time_sec": tracklet.get("end_time_sec"),
+        "duration_sec": tracklet.get("duration_sec"),
+        "frames_count": tracklet.get("positions_count") or len(positions),
+        "positions_count": tracklet.get("positions_count") or len(positions),
+        "mean_confidence": tracklet.get("mean_confidence"),
+        "missing_frames_count": _tracklet_missing_frames_count(positions),
+        "team_candidate": tracklet.get("team_label") or "unknown",
+        "team_label": tracklet.get("team_label") or "unknown",
+        "team_confidence": round(float(tracklet.get("team_confidence") or 0.0), 4),
+        "team_id": tracklet.get("team_id"),
+        "team_name": tracklet.get("team_name"),
+        "team_cluster_id": tracklet.get("team_cluster_id"),
+        "first_pitch_m": tracklet.get("first_pitch_m") or _round_point(first.get("pitch_m")),
+        "last_pitch_m": tracklet.get("last_pitch_m") or _round_point(last.get("pitch_m")),
+        "first_bbox_xyxy": first.get("bbox_xyxy") if isinstance(first, dict) else None,
+        "last_bbox_xyxy": last.get("bbox_xyxy") if isinstance(last, dict) else None,
+    }
+    if include_positions:
+        doc["positions_m"] = [
+            {
+                "frame": int(position.get("frame") or 0),
+                "time_sec": round(float(position.get("time_sec") or 0.0), 3),
+                "pitch_m": _round_point(position.get("pitch_m")),
+                "smoothed_pitch_m": _round_point(position.get("smoothed_pitch_m") or position.get("pitch_m")),
+                "bbox_xyxy": position.get("bbox_xyxy"),
+                "confidence": round(float(position.get("confidence") or 0.0), 4),
+            }
+            for position in positions
+        ]
+    return doc
+
+
+def _tracklet_missing_frames_count(positions: list[dict[str, Any]]) -> int:
+    missing = 0
+    previous_frame: int | None = None
+    for position in positions:
+        frame = int(position.get("frame") or 0)
+        if previous_frame is not None:
+            missing += max(0, frame - previous_frame - 1)
+        previous_frame = frame
+    return missing
+
+
+def _tracklet_team_counts(tracklets: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for tracklet in tracklets:
+        label = str(tracklet.get("team_label") or tracklet.get("team_candidate") or "unknown")
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def _tracklet_frame_quality_rows(tracklets: list[dict[str, Any]], *, target_players_per_team: int) -> list[dict[str, Any]]:
+    per_frame: dict[int, dict[str, Any]] = {}
+    for tracklet in tracklets:
+        label = str(tracklet.get("team_label") or "unknown")
+        for position in tracklet.get("positions") or []:
+            frame = int(position.get("frame") or 0)
+            row = per_frame.setdefault(
+                frame,
+                {
+                    "frame": frame,
+                    "time_sec": round(float(position.get("time_sec") or 0.0), 3),
+                    "active_tracklets": 0,
+                    "team_counts": {},
+                    "team_over_cap": False,
+                },
+            )
+            row["active_tracklets"] += 1
+            row["team_counts"][label] = int(row["team_counts"].get(label, 0)) + 1
+    rows = []
+    for row in sorted(per_frame.values(), key=lambda item: int(item.get("frame") or 0)):
+        row["team_over_cap"] = any(int(count) > target_players_per_team for count in row.get("team_counts", {}).values())
+        rows.append(row)
+    return rows
+
+
+def _tracklet_suspicious_events(clean_tracklets: list[dict[str, Any]], rejected_tracklets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for tracklet in rejected_tracklets:
+        events.append(
+            {
+                "type": "rejected_tracklet",
+                "tracklet_id": tracklet.get("tracklet_id"),
+                "source_tracker_id": tracklet.get("source_tracker_id"),
+                "duration_sec": tracklet.get("duration_sec"),
+                "positions_count": tracklet.get("positions_count"),
+                "reason": tracklet.get("reject_reason") or "short_or_missing_position",
+            }
+        )
+    for tracklet in clean_tracklets:
+        if float(tracklet.get("duration_sec") or 0.0) < 1.0:
+            events.append(
+                {
+                    "type": "short_tracklet",
+                    "tracklet_id": tracklet.get("tracklet_id"),
+                    "duration_sec": tracklet.get("duration_sec"),
+                    "positions_count": tracklet.get("positions_count"),
+                }
+            )
+        if float(tracklet.get("mean_confidence") or 0.0) < 0.25:
+            events.append(
+                {
+                    "type": "low_confidence_tracklet",
+                    "tracklet_id": tracklet.get("tracklet_id"),
+                    "mean_confidence": tracklet.get("mean_confidence"),
+                }
+            )
+        if int(tracklet.get("missing_frames_count") or 0) > 0:
+            events.append(
+                {
+                    "type": "internal_frame_gap",
+                    "tracklet_id": tracklet.get("tracklet_id"),
+                    "missing_frames_count": tracklet.get("missing_frames_count"),
+                }
+            )
+    return events
+
+
 def _build_tracklet(raw_track_id: int, segment_index: int, positions: list[dict[str, Any]]) -> dict[str, Any]:
     tracklet_id = f"{raw_track_id}:{segment_index}"
     pitch_points = [[float(pos["pitch_m"][0]), float(pos["pitch_m"][1])] for pos in positions]
@@ -1955,9 +2174,27 @@ def stabilize_match(
     meta_path = match_dir / "match.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     teams = meta.get("teams") if isinstance(meta.get("teams"), list) else []
-    tracklets, rejected = split_tracks_into_tracklets(tracks)
+    tracklet_parameters = {
+        "max_internal_gap_sec": 0.7,
+        "split_speed_mps": 16.0,
+        "min_duration_sec": 0.2,
+        "min_positions": 4,
+    }
+    tracklets, rejected = split_tracks_into_tracklets(tracks, **tracklet_parameters)
     sample_tracklet_appearance(video_path, tracklets)
     team_clusters = cluster_tracklet_teams(tracklets, teams)
+    tracklets_doc = build_tracklets_document(
+        tracklets,
+        rejected,
+        raw_tracks_count=len(tracks),
+        parameters=tracklet_parameters,
+    )
+    tracking_quality_report = build_tracking_quality_report(
+        tracklets,
+        rejected,
+        raw_tracks_count=len(tracks),
+        parameters=tracklet_parameters,
+    )
     global_identity = resolve_conservative_identity(
         tracklets,
         raw_tracks_count=len(tracks),
@@ -2034,6 +2271,8 @@ def stabilize_match(
     (match_dir / "team_clusters.json").write_text(json.dumps(team_clusters, indent=2), encoding="utf-8")
     (match_dir / "frame_detection_counts.json").write_text(json.dumps(frame_detection_counts, indent=2), encoding="utf-8")
     (match_dir / "movement_stats.json").write_text(json.dumps(movement_stats, indent=2), encoding="utf-8")
+    (match_dir / "tracklets.json").write_text(json.dumps(tracklets_doc, indent=2), encoding="utf-8")
+    (match_dir / "tracking_quality_report.json").write_text(json.dumps(tracking_quality_report, indent=2), encoding="utf-8")
     (match_dir / "stabilization_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return {
         "stable_players": public_stable_doc,
@@ -2042,6 +2281,8 @@ def stabilize_match(
         "team_clusters": team_clusters,
         "frame_detection_counts": frame_detection_counts,
         "movement_stats": movement_stats,
+        "tracklets": tracklets_doc,
+        "tracking_quality_report": tracking_quality_report,
         "stabilization_report": report,
         "artifacts": {
             "stable_players": "stable_players.json",
@@ -2053,6 +2294,8 @@ def stabilize_match(
             "team_clusters": "team_clusters.json",
             "frame_detection_counts": "frame_detection_counts.json",
             "movement_stats": "movement_stats.json",
+            "tracklets": "tracklets.json",
+            "tracking_quality_report": "tracking_quality_report.json",
         },
     }
 
