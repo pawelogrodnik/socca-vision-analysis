@@ -47,10 +47,6 @@ export function emptyTeam(name: string, color: string): Team {
   };
 }
 
-export function defaultTeams(): Team[] {
-  return [emptyTeam('Team A', '#ef4444'), emptyTeam('Team B', '#2563eb')];
-}
-
 export function drawPitchOverlay(
   ctx: CanvasRenderingContext2D,
   points: Point[],

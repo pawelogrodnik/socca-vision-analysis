@@ -3,10 +3,18 @@ import type { AnalysisPayload } from '../types';
 interface AnalysisFormProps {
   analysis: AnalysisPayload;
   onChange: (payload: AnalysisPayload) => void;
-  onRun: () => void;
+  onRun: () => Promise<void> | void;
+  disabled?: boolean;
+  isRunning?: boolean;
 }
 
-export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
+export function AnalysisForm({
+  analysis,
+  onChange,
+  onRun,
+  disabled = false,
+  isRunning = false,
+}: AnalysisFormProps) {
   return (
     <div className='analysis-form'>
       <h3>Ustawienia YOLO</h3>
@@ -15,6 +23,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
           Adapter
           <select
             value={analysis.adapter}
+            disabled={disabled}
             onChange={(event) =>
               onChange({
                 ...analysis,
@@ -31,6 +40,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
           <input
             type='number'
             value={analysis.max_seconds}
+            disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, max_seconds: Number(event.target.value) })
             }
@@ -42,6 +52,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
             type='number'
             value={analysis.frame_stride}
             min={1}
+            disabled={disabled}
             onChange={(event) =>
               onChange({
                 ...analysis,
@@ -56,6 +67,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
           Model
           <input
             value={analysis.yolo_model}
+            disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, yolo_model: event.target.value })
             }
@@ -67,6 +79,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
             type='number'
             step='0.01'
             value={analysis.yolo_conf}
+            disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, yolo_conf: Number(event.target.value) })
             }
@@ -77,6 +90,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
           <input
             type='number'
             value={analysis.yolo_imgsz}
+            disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, yolo_imgsz: Number(event.target.value) })
             }
@@ -88,6 +102,7 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
           Tracker
           <input
             value={analysis.yolo_tracker}
+            disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, yolo_tracker: event.target.value })
             }
@@ -97,14 +112,15 @@ export function AnalysisForm({ analysis, onChange, onRun }: AnalysisFormProps) {
           Device
           <input
             value={analysis.yolo_device || ''}
+            disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, yolo_device: event.target.value || null })
             }
           />
         </label>
       </div>
-      <button type='button' onClick={onRun}>
-        Uruchom analizę
+      <button type='button' onClick={onRun} disabled={disabled}>
+        {isRunning ? 'Analiza w toku...' : 'Uruchom analizę'}
       </button>
     </div>
   );

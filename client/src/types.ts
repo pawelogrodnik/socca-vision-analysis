@@ -67,11 +67,17 @@ export type MovementStats = {
   avg_speed_mps: number;
   avg_speed_kmh: number;
   observed_avg_speed_mps: number;
+  peak_sustained_speed_mps?: number;
+  peak_sustained_speed_kmh?: number;
   top_speed_mps: number;
   top_speed_kmh: number;
+  raw_segment_top_speed_mps?: number;
+  raw_segment_top_speed_kmh?: number;
   detected_coverage: number;
   estimated_distance_ratio: number;
   distance_quality: 'high' | 'medium' | 'low' | string;
+  speed_quality?: 'high' | 'medium' | 'low' | string;
+  speed_window_sec?: number;
   samples_used: number;
   active_frames: number;
   detected_frames: number;
@@ -81,7 +87,9 @@ export type MovementStats = {
   observed_segments: number;
   estimated_gap_segments: number;
   skipped_outlier_segments: number;
+  skipped_speed_outlier_segments?: number;
   skipped_long_gap_segments: number;
+  sustained_speed_windows?: number;
   stats_note?: string;
 };
 
@@ -114,6 +122,9 @@ export type StablePlayer = {
   mean_detection_confidence?: number | null;
   jersey_color_hex?: string | null;
   movement_stats?: MovementStats;
+  heatmap_path?: string;
+  heatmap_samples?: number;
+  heatmap_quality?: 'high' | 'medium' | 'low' | string;
   trajectory_m: Array<{
     frame: number;
     time_sec: number;
@@ -228,12 +239,108 @@ export type TeamClustersDocument = {
   unknown_tracklets: string[];
 };
 
+export type TeamConfigDocument = {
+  schema_version: string;
+  generated_at: string;
+  updated_at?: string;
+  source: string;
+  match_id?: string;
+  team_assignment_semantics: string;
+  locked: boolean;
+  teams: Array<{
+    team_label: 'A' | 'B' | string;
+    team_id?: string | null;
+    team_name: string;
+    display_color?: string | null;
+    detected_color_hex?: string | null;
+    cluster_id?: string | null;
+    cluster_confidence?: number | null;
+    reference_tracklets_count?: number;
+    candidate_tracklets_count?: number;
+    stable_players_count?: number;
+    locked: boolean;
+    assignment_source?: string;
+    goalkeeper_exceptions?: string[];
+    notes?: string;
+  }>;
+  unknown_stable_players?: number;
+  team_clusters_method?: string | null;
+  team_clusters_summary?: Record<string, unknown>;
+};
+
+export type TeamStatsDocument = {
+  schema_version: string;
+  generated_at: string;
+  source: string;
+  scope: string;
+  units: Record<string, string>;
+  summary: Record<string, unknown>;
+  teams: Array<Record<string, unknown>>;
+};
+
+export type PlayerHeatmapsDocument = {
+  schema_version: string;
+  generated_at: string;
+  source: string;
+  identity_semantics: string;
+  method: string;
+  pitch_dimensions_m: {
+    width_m: number;
+    length_m: number;
+  };
+  image_size_px: {
+    width: number;
+    height: number;
+  };
+  summary: Record<string, unknown>;
+  heatmaps: Array<{
+    stable_player_id: string;
+    stable_subject_id: string;
+    slot_id?: string;
+    team_label?: string;
+    team_id?: string | null;
+    team_name?: string | null;
+    path: string;
+    samples: number;
+    detected_samples: number;
+    interpolated_samples: number;
+    quality: 'high' | 'medium' | 'low' | string;
+    included_sources: string[];
+    ignored_sources: string[];
+  }>;
+};
+
+export type TeamConfigReviewState = {
+  team_config: TeamConfigDocument;
+  team_stats?: TeamStatsDocument | null;
+  player_stats?: PlayerStatsDocument | null;
+  team_clusters?: TeamClustersDocument | null;
+};
+
+export type TeamConfigReviewPayload = {
+  teams: Array<{
+    team_label: 'A' | 'B';
+    team_id?: string | null;
+    team_name?: string;
+    display_color?: string | null;
+    detected_color_hex?: string | null;
+    locked?: boolean;
+    notes?: string;
+    goalkeeper_exceptions?: string[];
+  }>;
+};
+
 export type StablePlayersReviewState = {
   stable_players: StablePlayersDocument;
   stabilization_report?: Record<string, unknown> | null;
   global_identity_report?: GlobalIdentityReport | null;
   team_clusters?: TeamClustersDocument | null;
   movement_stats?: MovementStatsDocument | null;
+  player_stats?: PlayerStatsDocument | null;
+  resolved_player_stats?: ResolvedPlayerStatsDocument | null;
+  player_heatmaps?: PlayerHeatmapsDocument | null;
+  team_config?: TeamConfigDocument | null;
+  team_stats?: TeamStatsDocument | null;
 };
 
 export type MovementStatsDocument = {
@@ -256,6 +363,133 @@ export type MovementStatsDocument = {
   }>;
 };
 
+export type PlayerStatsDocument = {
+  schema_version: string;
+  generated_at: string;
+  source: string;
+  identity_semantics: string;
+  scope: 'tracking_only_no_ball' | string;
+  units: Record<string, string>;
+  summary: Record<string, unknown>;
+  teams: Array<Record<string, unknown>>;
+  players: Array<{
+    stable_player_id: string;
+    stable_subject_id: string;
+    slot_id?: string;
+    identity_semantics?: string;
+    status?: string;
+    team_label?: string;
+    team_id?: string | null;
+    team_name?: string | null;
+    confidence?: string;
+    confidence_score?: number | null;
+    tracklet_ids?: string[];
+    raw_track_ids?: number[];
+    stint_count?: number;
+    time: Record<string, number>;
+    distance: Record<string, number | string>;
+    speed: Record<string, number>;
+    frames: Record<string, number>;
+    segments: Record<string, number>;
+    tracking_only: boolean;
+    stats_note?: string;
+  }>;
+};
+
+export type ResolvedPlayerStatsDocument = {
+  schema_version: string;
+  generated_at: string;
+  source: string;
+  stats_source: string;
+  identity_semantics: string;
+  scope: 'resolved_player_tracking_only_no_ball' | string;
+  units: Record<string, string>;
+  summary: Record<string, unknown>;
+  teams: Array<Record<string, unknown>>;
+  players: Array<Record<string, unknown>>;
+  skipped_assignments?: Array<Record<string, unknown>>;
+};
+
+export type PlayerProfileStatsDocument = {
+  schema_version: string;
+  generated_at: string;
+  scope: 'player_profile_tracking_only_no_ball' | string;
+  identity_semantics: string;
+  player: {
+    player_id: string;
+    player_name?: string | null;
+    player_number?: string | null;
+    player_role?: string | null;
+    is_guest?: boolean;
+    team_id?: string | null;
+    team_name?: string | null;
+    known_from_registry?: boolean;
+  };
+  teams: Array<Record<string, unknown>>;
+  summary: Record<string, unknown>;
+  appearances: Array<{
+    match_id: string;
+    match_title?: string | null;
+    match_date?: string | null;
+    season?: string | null;
+    venue?: string | null;
+    format?: string | null;
+    match_status?: string | null;
+    team_label?: string | null;
+    team_id?: string | null;
+    team_name?: string | null;
+    player_name?: string | null;
+    player_number?: string | null;
+    player_role?: string | null;
+    stable_player_ids?: string[];
+    stable_subject_ids?: string[];
+    source_stable_slots?: Array<Record<string, unknown>>;
+    time?: Record<string, number>;
+    distance?: Record<string, number | string>;
+    speed?: Record<string, number | string>;
+    frames?: Record<string, number>;
+    segments?: Record<string, number>;
+    review_warnings?: string[];
+    distance_quality?: string;
+    speed_quality?: string;
+    tracking_only?: boolean;
+  }>;
+  notes?: string[];
+};
+
+export type AnalysisRunSummary = {
+  run_id?: string;
+  status?: string;
+  analysis_type?: string;
+  generated_at?: string;
+  frames_processed?: number;
+  tracks_count?: number;
+  stable_players_count?: number;
+  parameters?: Record<string, unknown>;
+  run_directory?: string;
+  run_manifest?: string;
+};
+
+export type FrameDetectionCountsDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  target_players?: number;
+  summary?: Record<string, unknown>;
+  frames?: Array<Record<string, unknown>>;
+};
+
+export type TrackingQualityReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  parameters?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  frame_team_counts?: Array<Record<string, unknown>>;
+  suspicious_events?: Array<Record<string, unknown>>;
+  rejected_tracklets?: Array<Record<string, unknown>>;
+};
+
 export type StablePlayerReviewUpdate = {
   stable_subject_id?: string;
   stable_player_id?: string;
@@ -268,6 +502,53 @@ export type StablePlayerReviewUpdate = {
 export type StablePlayerReviewPayload = {
   swap_teams?: boolean;
   updates?: StablePlayerReviewUpdate[];
+};
+
+export type PlayerIdentityAssignmentStatus =
+  | 'unassigned'
+  | 'assigned'
+  | 'unknown'
+  | 'ignore'
+  | 'referee'
+  | 'false_positive';
+
+export type PlayerIdentityAssignment = {
+  stable_subject_id: string;
+  stable_player_id?: string;
+  slot_id?: string | null;
+  stint_id?: string | null;
+  stint_ids?: string[];
+  assignment_scope?: 'stable_slot' | 'stint' | string;
+  status: PlayerIdentityAssignmentStatus;
+  team_label?: 'A' | 'B' | 'U' | string;
+  team_id?: string | null;
+  team_name?: string | null;
+  player_id?: string | null;
+  player_name?: string | null;
+  player_number?: string | null;
+  player_role?: string | null;
+  notes?: string;
+  review_warnings?: string[];
+};
+
+export type PlayerIdentityAssignmentsDocument = {
+  schema_version: string;
+  updated_at: string;
+  source: string;
+  identity_semantics: string;
+  assignment_scope: string;
+  assignments: PlayerIdentityAssignment[];
+  expanded_stint_assignments: Array<Record<string, unknown>>;
+  summary: Record<string, unknown>;
+};
+
+export type PlayerIdentityReviewState = {
+  player_identity_assignments: PlayerIdentityAssignmentsDocument;
+  resolved_player_stats?: ResolvedPlayerStatsDocument | null;
+  roster: {
+    teams: Team[];
+    summary: Record<string, unknown>;
+  };
 };
 
 export type AssignmentSummary = {
@@ -308,18 +589,25 @@ export type Match = MatchMetadataPayload & {
   created_at?: string;
   updated_at?: string;
   published_match_id?: string;
+  analysis_runs?: AnalysisRunSummary[];
+  latest_analysis_run_id?: string;
   pitch_config?: unknown;
   analysis_report?: AnalysisReport;
   stable_players?: StablePlayersDocument;
   stabilization_report?: Record<string, unknown>;
   global_identity_report?: GlobalIdentityReport;
   team_clusters?: TeamClustersDocument;
-  frame_detection_counts?: Record<string, unknown>;
+  team_config?: TeamConfigDocument;
+  team_stats?: TeamStatsDocument;
+  frame_detection_counts?: FrameDetectionCountsDocument;
   movement_stats?: MovementStatsDocument;
+  player_stats?: PlayerStatsDocument;
+  resolved_player_stats?: ResolvedPlayerStatsDocument;
   tracklets?: Record<string, unknown>;
-  tracking_quality_report?: Record<string, unknown>;
+  tracking_quality_report?: TrackingQualityReport;
   match_package?: MatchPackage;
   player_assignments?: PlayerAssignmentsDocument;
+  player_identity_assignments?: PlayerIdentityAssignmentsDocument;
 };
 
 export type AnalysisPayload = {
@@ -361,8 +649,13 @@ export type AnalysisReport = {
     stable_overlay_preview?: string;
     debug_identity_overlay?: string;
     team_clusters?: string;
+    team_config?: string;
+    team_stats?: string;
     frame_detection_counts?: string;
     movement_stats?: string;
+    player_stats?: string;
+    resolved_player_stats?: string;
+    player_heatmaps?: string;
     tracklets?: string;
     tracking_quality_report?: string;
   };
@@ -380,15 +673,21 @@ export type MatchPackage = {
   assets: Record<string, string>;
   publish_status: string;
   player_assignments?: PlayerAssignmentsDocument | null;
+  player_identity_assignments?: PlayerIdentityAssignmentsDocument | null;
   stable_players?: StablePlayersDocument | null;
   global_identity?: Record<string, unknown> | null;
   global_identity_report?: GlobalIdentityReport | null;
   stabilization_report?: Record<string, unknown> | null;
   team_clusters?: TeamClustersDocument | null;
-  frame_detection_counts?: Record<string, unknown> | null;
+  team_config?: TeamConfigDocument | null;
+  team_stats?: TeamStatsDocument | null;
+  frame_detection_counts?: FrameDetectionCountsDocument | null;
   movement_stats?: MovementStatsDocument | null;
+  player_stats?: PlayerStatsDocument | null;
+  resolved_player_stats?: ResolvedPlayerStatsDocument | null;
+  player_heatmaps?: PlayerHeatmapsDocument | null;
   tracklets?: Record<string, unknown> | null;
-  tracking_quality_report?: Record<string, unknown> | null;
+  tracking_quality_report?: TrackingQualityReport | null;
   [key: string]: unknown;
 };
 

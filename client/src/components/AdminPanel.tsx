@@ -18,10 +18,12 @@ import { MatchSummary } from './MatchSummary';
 import { MetadataEditor } from './MetadataEditor';
 import { AnalysisForm } from './AnalysisForm';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
+import { AnalysisQualityPanel } from './AnalysisQualityPanel';
 import { TrackletAssignmentPanel } from './TrackletAssignmentPanel';
 import { PublishedDatabasePanel } from './PublishedDatabasePanel';
 import { IdentityCandidatePanel } from '../IdentityCandidatePanel';
 import { StablePlayersPanel } from './StablePlayersPanel';
+import { TeamConfigPanel } from './TeamConfigPanel';
 
 const defaultAnalysis: AnalysisPayload = {
   adapter: 'yolo',
@@ -45,7 +47,10 @@ export function AdminPanel() {
   const [frameSecond, setFrameSecond] = useState(1);
   const [frameSrc, setFrameSrc] = useState('');
   const [pitchPoints, setPitchPoints] = useState<Point[]>([]);
+  const [showDeveloperDebug, setShowDeveloperDebug] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isBusy = busyAction !== null;
 
   async function refresh(selectId?: string) {
     const items = await listMatches();
@@ -103,58 +108,96 @@ export function AdminPanel() {
   }
 
   async function persistPitch() {
+    if (isBusy) return;
     if (!selectedId || pitchPoints.length !== 4) {
       setStatus('Kliknij dokładnie 4 rogi boiska.');
       return;
     }
-    await savePitch(selectedId, {
-      image_points: pitchPoints,
-      width_m: 30,
-      length_m: 47.4,
-      pitch_dimensions_m: { width_m: 30, length_m: 47.4 },
-      calibration_frame_time_sec: frameSecond,
-      source: 'manual',
-    });
-    setStatus('Zapisano konfigurację boiska 30 x 47.4 m.');
-    setSelected(await getMatch(selectedId));
+    setBusyAction('pitch');
+    setStatus('Zapisuję konfigurację boiska...');
+    try {
+      await savePitch(selectedId, {
+        image_points: pitchPoints,
+        width_m: 30,
+        length_m: 47.4,
+        pitch_dimensions_m: { width_m: 30, length_m: 47.4 },
+        calibration_frame_time_sec: frameSecond,
+        source: 'manual',
+      });
+      setStatus('Zapisano konfigurację boiska 30 x 47.4 m.');
+      setSelected(await getMatch(selectedId));
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function runAnalysis() {
-    if (!selectedId) return;
+    if (!selectedId || isBusy) return;
+    setBusyAction('analysis');
     setStatus('Analiza uruchomiona...');
-    await analyzeMatch(selectedId, analysis);
-    setStatus(
-      'Analiza zakończona. Sprawdź stabilnych zawodników i stable overlay.',
-    );
-    setSelected(await getMatch(selectedId));
+    try {
+      await analyzeMatch(selectedId, analysis);
+      setStatus(
+        'Analiza zakończona. Sprawdź stabilnych zawodników i stable overlay.',
+      );
+      setSelected(await getMatch(selectedId));
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function buildPackage() {
-    if (!selectedId) return;
+    if (!selectedId || isBusy) return;
+    setBusyAction('package');
     setStatus('Generuję publishable match package...');
-    await createMatchPackage(selectedId);
-    setStatus('Wygenerowano match_package.json.');
-    setSelected(await getMatch(selectedId));
+    try {
+      await createMatchPackage(selectedId);
+      setStatus('Wygenerowano match_package.json.');
+      setSelected(await getMatch(selectedId));
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function publishSelected(replace = false) {
-    if (!selectedId) return;
+    if (!selectedId || isBusy) return;
+    setBusyAction('publish');
     setStatus(
       replace
         ? 'Nadpisuję mecz w bazie...'
         : 'Importuję mecz do bazy SQLite...',
     );
-    const published = await publishLocalMatch(selectedId, replace);
-    setStatus(`Mecz opublikowany w bazie jako ${published.id}.`);
-    setSelected(await getMatch(selectedId));
+    try {
+      const published = await publishLocalMatch(selectedId, replace);
+      setStatus(`Mecz opublikowany w bazie jako ${published.id}.`);
+      setSelected(await getMatch(selectedId));
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function saveMetadata(payload: MatchMetadataPayload) {
-    if (!selectedId) return;
-    const updated = await updateMatchMetadata(selectedId, payload);
-    setSelected(updated);
-    setStatus('Zapisano metadane meczu, drużyny i zawodników.');
-    await refresh(updated.id);
+    if (!selectedId || isBusy) return;
+    setBusyAction('metadata');
+    setStatus('Zapisuję metadane meczu...');
+    try {
+      const updated = await updateMatchMetadata(selectedId, payload);
+      setSelected(updated);
+      setStatus('Zapisano metadane meczu.');
+      await refresh(updated.id);
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
   }
 
   async function refreshSelected() {
@@ -168,13 +211,21 @@ export function AdminPanel() {
         <p className='eyebrow'>Local admin panel</p>
         <h1>Panel dodawania i analizy meczu</h1>
         <p>
-          Ten widok jest do lokalnej pracy: upload video, drużyny, roster,
-          kalibracja, YOLO i publikacja do SQLite.
+          Ten widok jest do lokalnej pracy: upload video, wybor druzyn,
+          kalibracja, analiza i publikacja do SQLite.
         </p>
-        <Link to='/'>Public viewer</Link>
+        <div className='row'>
+          <Link to='/'>Public viewer</Link>
+          <Link to='/teams'>Rejestr drużyn</Link>
+        </div>
       </section>
 
-      {status && <p className='status'>{status}</p>}
+      {status && (
+        <p className={isBusy ? 'status loading-status' : 'status'}>
+          {isBusy && <span className='spinner' />}
+          {status}
+        </p>
+      )}
 
       <div className='grid two'>
         <section className='card'>
@@ -193,9 +244,9 @@ export function AdminPanel() {
       </div>
 
       {selected && (
-        <div className='grid two'>
+        <div className='grid'>
           <section className='card'>
-            <h2>3. Drużyny i zawodnicy</h2>
+            <h2>3. Metadane meczu</h2>
             <MetadataEditor match={selected} onSave={saveMetadata} />
           </section>
           <section className='card'>
@@ -213,14 +264,18 @@ export function AdminPanel() {
                   }
                 />
               </label>
-              <button type='button' onClick={loadFrame}>
+              <button type='button' onClick={loadFrame} disabled={isBusy}>
                 Załaduj klatkę
               </button>
-              <button type='button' onClick={() => setPitchPoints([])}>
+              <button
+                type='button'
+                onClick={() => setPitchPoints([])}
+                disabled={isBusy}
+              >
                 Wyczyść punkty
               </button>
-              <button type='button' onClick={persistPitch}>
-                Zapisz boisko
+              <button type='button' onClick={persistPitch} disabled={isBusy}>
+                {busyAction === 'pitch' ? 'Zapisuję boisko...' : 'Zapisz boisko'}
               </button>
             </div>
             <p className='muted'>
@@ -238,6 +293,8 @@ export function AdminPanel() {
               analysis={analysis}
               onChange={setAnalysis}
               onRun={runAnalysis}
+              disabled={isBusy}
+              isRunning={busyAction === 'analysis'}
             />
           </section>
         </div>
@@ -250,20 +307,39 @@ export function AdminPanel() {
           onSaved={refreshSelected}
         />
       )}
+      {selected && (
+        <TeamConfigPanel
+          match={selected}
+          onStatus={setStatus}
+          onSaved={refreshSelected}
+        />
+      )}
+      {selected && <AnalysisQualityPanel match={selected} />}
       {selected && <AnalysisArtifacts match={selected} />}
       {selected && (
-        <details className='debug-details'>
-          <summary>Debug: raw identity candidates i tracklety</summary>
-          <IdentityCandidatePanel
-            match={selected}
-            onStatus={setStatus}
-            onSaved={refreshSelected}
-          />
-          <TrackletAssignmentPanel
-            match={selected}
-            onStatus={setStatus}
-            onSaved={refreshSelected}
-          />
+        <details
+          className='debug-details'
+          onToggle={(event) => setShowDeveloperDebug(event.currentTarget.open)}
+        >
+          <summary>Developer debug: legacy identity candidates i raw tracklety</summary>
+          {showDeveloperDebug && (
+            <>
+              <p className='muted'>
+                Stare panele do ręcznego przypisywania raw trackletów.
+                Główny workflow używa teraz stable slotów i team config.
+              </p>
+              <IdentityCandidatePanel
+                match={selected}
+                onStatus={setStatus}
+                onSaved={refreshSelected}
+              />
+              <TrackletAssignmentPanel
+                match={selected}
+                onStatus={setStatus}
+                onSaved={refreshSelected}
+              />
+            </>
+          )}
         </details>
       )}
 
@@ -275,16 +351,23 @@ export function AdminPanel() {
             paczkę i zaimportuj snapshot do SQLite.
           </p>
           <div className='row'>
-            <button type='button' onClick={buildPackage}>
-              Generate match_package.json
+            <button type='button' onClick={buildPackage} disabled={isBusy}>
+              {busyAction === 'package'
+                ? 'Generuję paczkę...'
+                : 'Generate match_package.json'}
             </button>
-            <button type='button' onClick={() => publishSelected(false)}>
-              Publish/import to DB
+            <button
+              type='button'
+              onClick={() => publishSelected(false)}
+              disabled={isBusy}
+            >
+              {busyAction === 'publish' ? 'Publikuję...' : 'Publish/import to DB'}
             </button>
             <button
               type='button'
               className='secondary'
               onClick={() => publishSelected(true)}
+              disabled={isBusy}
             >
               Replace in DB
             </button>

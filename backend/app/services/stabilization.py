@@ -27,11 +27,12 @@ TEAM_COLOR_MIN_REFERENCE_SAMPLES = 2
 TEAM_COLOR_MIN_REFERENCE_QUALITY = 0.22
 TEAM_COLOR_UNKNOWN_CONFIDENCE = 0.42
 TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE = 95.0
-LIVE_STATS_MAX_SPEED_MPS = 9.5
+LIVE_STATS_MAX_SPEED_MPS = 8.5
+LIVE_STATS_SUSTAINED_SPEED_MPS = 8.0
 LIVE_STATS_ESTIMATED_GAP_SEC = 2.0
 LIVE_STATS_OBSERVED_GAP_FRAMES = 2
-LIVE_STATS_SPEED_MIN_WINDOW_SEC = 0.16
-LIVE_STATS_SPEED_MAX_WINDOW_SEC = 0.75
+LIVE_STATS_SPEED_MIN_WINDOW_SEC = 0.5
+LIVE_STATS_SPEED_MAX_WINDOW_SEC = 1.25
 
 
 def now_iso() -> str:
@@ -1504,11 +1505,22 @@ def build_movement_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
         "players_high_quality": sum(
             1 for item in players if (item.get("movement_stats") or {}).get("distance_quality") == "high"
         ),
-        "top_speed_kmh": round(
-            max([float((item.get("movement_stats") or {}).get("top_speed_kmh") or 0.0) for item in players] or [0.0]),
+        "peak_sustained_speed_kmh": round(
+            max(
+                [
+                    float(
+                        (item.get("movement_stats") or {}).get("peak_sustained_speed_kmh")
+                        or (item.get("movement_stats") or {}).get("top_speed_kmh")
+                        or 0.0
+                    )
+                    for item in players
+                ]
+                or [0.0]
+            ),
             2,
         ),
     }
+    summary["top_speed_kmh"] = summary["peak_sustained_speed_kmh"]
     return {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
@@ -1522,6 +1534,462 @@ def build_movement_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "players": sorted(players, key=lambda item: str(item.get("stable_player_id") or "")),
     }
+
+
+def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
+    player_rows = []
+    team_rows: dict[str, dict[str, Any]] = {}
+    for player in stable_doc.get("players", []):
+        stats = player.get("movement_stats") or {}
+        team_label = str(player.get("team_label") or "U")
+        row = {
+            "stable_player_id": player.get("stable_player_id"),
+            "stable_subject_id": player.get("stable_subject_id"),
+            "slot_id": player.get("slot_id"),
+            "identity_semantics": player.get("identity_semantics") or stable_doc.get("identity_semantics") or "stint_first",
+            "status": player.get("status") or "active",
+            "team_label": team_label,
+            "team_id": player.get("team_id"),
+            "team_name": player.get("team_name"),
+            "confidence": player.get("confidence"),
+            "confidence_score": player.get("confidence_score"),
+            "tracklet_ids": player.get("tracklet_ids") or [],
+            "raw_track_ids": player.get("raw_track_ids") or [],
+            "stint_count": int(player.get("stint_count") or 0),
+            "time": {
+                "playing_time_sec": _stats_float(stats, "playing_time_sec"),
+                "detected_time_sec": _stats_float(stats, "detected_time_sec"),
+                "missing_time_sec": _stats_float(stats, "missing_time_sec"),
+                "ambiguous_time_sec": _stats_float(stats, "ambiguous_time_sec"),
+            },
+            "distance": {
+                "observed_distance_m": _stats_float(stats, "observed_distance_m"),
+                "estimated_short_gap_distance_m": _stats_float(stats, "estimated_gap_distance_m"),
+                "total_distance_m": _stats_float(stats, "total_distance_m"),
+                "estimated_distance_ratio": _stats_float(stats, "estimated_distance_ratio"),
+                "quality": stats.get("distance_quality") or "unknown",
+            },
+            "speed": {
+                "avg_speed_mps": _stats_float(stats, "avg_speed_mps"),
+                "avg_speed_kmh": _stats_float(stats, "avg_speed_kmh"),
+                "observed_avg_speed_mps": _stats_float(stats, "observed_avg_speed_mps"),
+                "peak_sustained_speed_mps": _stats_float(stats, "peak_sustained_speed_mps", _stats_float(stats, "top_speed_mps")),
+                "peak_sustained_speed_kmh": _stats_float(stats, "peak_sustained_speed_kmh", _stats_float(stats, "top_speed_kmh")),
+                "top_speed_mps": _stats_float(stats, "top_speed_mps"),
+                "top_speed_kmh": _stats_float(stats, "top_speed_kmh"),
+                "raw_segment_top_speed_mps": _stats_float(stats, "raw_segment_top_speed_mps"),
+                "raw_segment_top_speed_kmh": _stats_float(stats, "raw_segment_top_speed_kmh"),
+                "quality": stats.get("speed_quality") or "unknown",
+            },
+            "frames": {
+                "active_frames": int(stats.get("active_frames") or 0),
+                "detected_frames": int(stats.get("detected_frames") or 0),
+                "missing_frames": int(stats.get("missing_frames") or 0),
+                "ambiguous_frames": int(stats.get("ambiguous_frames") or 0),
+                "predicted_frames": int(stats.get("predicted_frames") or 0),
+                "samples_used": int(stats.get("samples_used") or 0),
+            },
+            "segments": {
+                "observed_segments": int(stats.get("observed_segments") or 0),
+                "estimated_gap_segments": int(stats.get("estimated_gap_segments") or 0),
+                "skipped_outlier_segments": int(stats.get("skipped_outlier_segments") or 0),
+                "skipped_speed_outlier_segments": int(stats.get("skipped_speed_outlier_segments") or 0),
+                "skipped_long_gap_segments": int(stats.get("skipped_long_gap_segments") or 0),
+                "sustained_speed_windows": int(stats.get("sustained_speed_windows") or 0),
+            },
+            "tracking_only": True,
+            "stats_note": stats.get("stats_note")
+            or "tracking-only stats from stable slot/stint positions; ball events are not included",
+        }
+        player_rows.append(row)
+
+        team_row = team_rows.setdefault(
+            team_label,
+            {
+                "team_label": team_label,
+                "players": 0,
+                "playing_time_sec": 0.0,
+                "detected_time_sec": 0.0,
+                "missing_time_sec": 0.0,
+                "ambiguous_time_sec": 0.0,
+                "total_distance_m": 0.0,
+                "observed_distance_m": 0.0,
+                "estimated_short_gap_distance_m": 0.0,
+                "peak_sustained_speed_kmh": 0.0,
+                "top_speed_kmh": 0.0,
+                "players_low_quality": 0,
+                "players_medium_quality": 0,
+                "players_high_quality": 0,
+            },
+        )
+        team_row["players"] += 1
+        team_row["playing_time_sec"] += row["time"]["playing_time_sec"]
+        team_row["detected_time_sec"] += row["time"]["detected_time_sec"]
+        team_row["missing_time_sec"] += row["time"]["missing_time_sec"]
+        team_row["ambiguous_time_sec"] += row["time"]["ambiguous_time_sec"]
+        team_row["total_distance_m"] += row["distance"]["total_distance_m"]
+        team_row["observed_distance_m"] += row["distance"]["observed_distance_m"]
+        team_row["estimated_short_gap_distance_m"] += row["distance"]["estimated_short_gap_distance_m"]
+        team_row["peak_sustained_speed_kmh"] = max(
+            float(team_row["peak_sustained_speed_kmh"]),
+            row["speed"]["peak_sustained_speed_kmh"],
+        )
+        team_row["top_speed_kmh"] = team_row["peak_sustained_speed_kmh"]
+        quality_key = f"players_{row['distance']['quality']}_quality"
+        if quality_key in team_row:
+            team_row[quality_key] += 1
+
+    for team_row in team_rows.values():
+        for key in [
+            "playing_time_sec",
+            "detected_time_sec",
+            "missing_time_sec",
+            "ambiguous_time_sec",
+            "total_distance_m",
+            "observed_distance_m",
+            "estimated_short_gap_distance_m",
+            "peak_sustained_speed_kmh",
+            "top_speed_kmh",
+        ]:
+            team_row[key] = round(float(team_row[key]), 2)
+
+    summary = {
+        "players": len(player_rows),
+        "team_counts": _team_counts(stable_doc.get("players", [])),
+        "total_distance_m": round(sum(row["distance"]["total_distance_m"] for row in player_rows), 2),
+        "observed_distance_m": round(sum(row["distance"]["observed_distance_m"] for row in player_rows), 2),
+        "estimated_short_gap_distance_m": round(
+            sum(row["distance"]["estimated_short_gap_distance_m"] for row in player_rows),
+            2,
+        ),
+        "playing_time_sec": round(sum(row["time"]["playing_time_sec"] for row in player_rows), 2),
+        "detected_time_sec": round(sum(row["time"]["detected_time_sec"] for row in player_rows), 2),
+        "missing_time_sec": round(sum(row["time"]["missing_time_sec"] for row in player_rows), 2),
+        "ambiguous_time_sec": round(sum(row["time"]["ambiguous_time_sec"] for row in player_rows), 2),
+        "peak_sustained_speed_kmh": round(
+            max([row["speed"]["peak_sustained_speed_kmh"] for row in player_rows] or [0.0]),
+            2,
+        ),
+        "top_speed_kmh": round(max([row["speed"]["top_speed_kmh"] for row in player_rows] or [0.0]), 2),
+        "players_with_estimated_distance": sum(
+            1 for row in player_rows if row["distance"]["estimated_short_gap_distance_m"] > 0
+        ),
+        "players_low_quality": sum(1 for row in player_rows if row["distance"]["quality"] == "low"),
+        "players_medium_quality": sum(1 for row in player_rows if row["distance"]["quality"] == "medium"),
+        "players_high_quality": sum(1 for row in player_rows if row["distance"]["quality"] == "high"),
+    }
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "source": stable_doc.get("source") or "conservative_identity_v2",
+        "identity_semantics": stable_doc.get("identity_semantics") or "stint_first",
+        "scope": "tracking_only_no_ball",
+        "units": {
+            "distance": "meters",
+            "speed": "mps_and_kmh",
+            "time": "seconds",
+        },
+        "summary": summary,
+        "teams": sorted(team_rows.values(), key=lambda item: str(item.get("team_label") or "")),
+        "players": sorted(player_rows, key=lambda item: str(item.get("stable_player_id") or "")),
+    }
+
+
+def build_team_config_document(
+    meta: dict[str, Any],
+    team_clusters: dict[str, Any] | None,
+    stable_doc: dict[str, Any] | None = None,
+    existing_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    teams = meta.get("teams") if isinstance(meta.get("teams"), list) else []
+    clusters = team_clusters.get("clusters") if isinstance(team_clusters, dict) and isinstance(team_clusters.get("clusters"), list) else []
+    existing_by_label = {
+        str(item.get("team_label")): item
+        for item in (existing_config or {}).get("teams", [])
+        if isinstance(item, dict) and item.get("team_label")
+    }
+    player_counts = _team_counts(stable_doc.get("players", []) if isinstance(stable_doc, dict) else [])
+    config_teams = []
+    for index, label in enumerate(["A", "B"]):
+        match_team = teams[index] if index < len(teams) and isinstance(teams[index], dict) else {}
+        cluster = next((item for item in clusters if item.get("team_label") == label), {})
+        existing = existing_by_label.get(label, {})
+        locked = bool(existing.get("locked")) if existing else False
+        config_teams.append(
+            {
+                "team_label": label,
+                "team_id": existing.get("team_id") if existing.get("team_id") is not None else match_team.get("id"),
+                "team_name": existing.get("team_name") or match_team.get("name") or f"Team {label}",
+                "display_color": existing.get("display_color") or match_team.get("color"),
+                "detected_color_hex": cluster.get("color_hex") or existing.get("detected_color_hex"),
+                "cluster_id": cluster.get("cluster_id"),
+                "cluster_confidence": cluster.get("confidence"),
+                "reference_tracklets_count": cluster.get("reference_tracklets_count", 0),
+                "candidate_tracklets_count": cluster.get("candidate_tracklets_count", 0),
+                "stable_players_count": player_counts.get(label, 0),
+                "locked": locked,
+                "assignment_source": existing.get("assignment_source") or ("manual_lock" if locked else "auto_cluster"),
+                "goalkeeper_exceptions": existing.get("goalkeeper_exceptions") if isinstance(existing.get("goalkeeper_exceptions"), list) else [],
+                "notes": existing.get("notes") or "",
+            }
+        )
+    unknown_count = player_counts.get("U", 0) + player_counts.get("unknown", 0)
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "updated_at": now_iso(),
+        "source": "team_clusters_review",
+        "match_id": meta.get("id"),
+        "team_assignment_semantics": "stable_slot_team_label",
+        "locked": any(item["locked"] for item in config_teams),
+        "teams": config_teams,
+        "unknown_stable_players": unknown_count,
+        "team_clusters_method": team_clusters.get("method") if isinstance(team_clusters, dict) else None,
+        "team_clusters_summary": {
+            "reference_tracklets_count": team_clusters.get("reference_tracklets_count") if isinstance(team_clusters, dict) else None,
+            "candidate_tracklets_count": team_clusters.get("candidate_tracklets_count") if isinstance(team_clusters, dict) else None,
+            "unknown_tracklets_count": len(team_clusters.get("unknown_tracklets", [])) if isinstance(team_clusters, dict) else 0,
+        },
+    }
+
+
+def build_team_stats_document(player_stats: dict[str, Any], team_config: dict[str, Any] | None = None) -> dict[str, Any]:
+    config_by_label = {
+        str(item.get("team_label")): item
+        for item in (team_config or {}).get("teams", [])
+        if isinstance(item, dict) and item.get("team_label")
+    }
+    teams = []
+    for team in player_stats.get("teams", []):
+        if not isinstance(team, dict):
+            continue
+        label = str(team.get("team_label") or "U")
+        config = config_by_label.get(label, {})
+        teams.append(
+            {
+                "team_label": label,
+                "team_id": config.get("team_id"),
+                "team_name": config.get("team_name") or f"Team {label}",
+                "display_color": config.get("display_color"),
+                "detected_color_hex": config.get("detected_color_hex"),
+                "locked": bool(config.get("locked")),
+                "players": int(team.get("players") or 0),
+                "playing_time_sec": round(float(team.get("playing_time_sec") or 0.0), 2),
+                "detected_time_sec": round(float(team.get("detected_time_sec") or 0.0), 2),
+                "missing_time_sec": round(float(team.get("missing_time_sec") or 0.0), 2),
+                "ambiguous_time_sec": round(float(team.get("ambiguous_time_sec") or 0.0), 2),
+                "total_distance_m": round(float(team.get("total_distance_m") or 0.0), 2),
+                "observed_distance_m": round(float(team.get("observed_distance_m") or 0.0), 2),
+                "estimated_short_gap_distance_m": round(float(team.get("estimated_short_gap_distance_m") or 0.0), 2),
+                "peak_sustained_speed_kmh": round(
+                    float(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh") or 0.0),
+                    2,
+                ),
+                "top_speed_kmh": round(
+                    float(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh") or 0.0),
+                    2,
+                ),
+                "players_low_quality": int(team.get("players_low_quality") or 0),
+                "players_medium_quality": int(team.get("players_medium_quality") or 0),
+                "players_high_quality": int(team.get("players_high_quality") or 0),
+            }
+        )
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "source": player_stats.get("source") or "player_stats",
+        "scope": player_stats.get("scope") or "tracking_only_no_ball",
+        "units": player_stats.get("units") or {},
+        "summary": {
+            "teams": len(teams),
+            "players": sum(int(team.get("players") or 0) for team in teams),
+            "total_distance_m": round(sum(float(team.get("total_distance_m") or 0.0) for team in teams), 2),
+            "observed_distance_m": round(sum(float(team.get("observed_distance_m") or 0.0) for team in teams), 2),
+            "estimated_short_gap_distance_m": round(
+                sum(float(team.get("estimated_short_gap_distance_m") or 0.0) for team in teams),
+                2,
+            ),
+            "peak_sustained_speed_kmh": round(
+                max([float(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh") or 0.0) for team in teams] or [0.0]),
+                2,
+            ),
+            "top_speed_kmh": round(max([float(team.get("top_speed_kmh") or 0.0) for team in teams] or [0.0]), 2),
+            "tracking_only": True,
+        },
+        "teams": sorted(teams, key=lambda item: str(item.get("team_label") or "")),
+    }
+
+
+def build_player_heatmaps_document(
+    stable_doc: dict[str, Any],
+    match_dir: Path,
+    *,
+    width_px: int = 360,
+    length_px: int = 720,
+) -> dict[str, Any]:
+    heatmap_dir = match_dir / "player_heatmaps"
+    heatmap_dir.mkdir(parents=True, exist_ok=True)
+    pitch = stable_doc.get("pitch_dimensions_m") if isinstance(stable_doc.get("pitch_dimensions_m"), dict) else {}
+    pitch_width_m = float(pitch.get("width_m") or 30.0)
+    pitch_length_m = float(pitch.get("length_m") or 47.4)
+    rows = []
+    total_samples = 0
+    detected_samples_total = 0
+    interpolated_samples_total = 0
+    for player in stable_doc.get("players", []):
+        if not isinstance(player, dict):
+            continue
+        heatmap_rows = _player_heatmap_rows(player)
+        stable_subject_id = str(player.get("stable_subject_id") or player.get("stable_player_id") or "player")
+        stable_player_id = str(player.get("stable_player_id") or stable_subject_id)
+        filename = f"heatmap_{_safe_artifact_id(stable_subject_id)}.png"
+        relative_path = f"player_heatmaps/{filename}"
+        output_path = heatmap_dir / filename
+        _write_player_heatmap_png(
+            output_path,
+            heatmap_rows,
+            pitch_width_m=pitch_width_m,
+            pitch_length_m=pitch_length_m,
+            width_px=width_px,
+            length_px=length_px,
+        )
+        detected_samples = sum(1 for row in heatmap_rows if row.get("source") == "detected")
+        interpolated_samples = len(heatmap_rows) - detected_samples
+        quality = _heatmap_quality(
+            samples=len(heatmap_rows),
+            detected_samples=detected_samples,
+            detected_frames=int(player.get("detected_frames") or 0),
+            ambiguous_frames=int(player.get("ambiguous_frames") or 0),
+        )
+        player["heatmap_path"] = relative_path
+        player["heatmap_samples"] = len(heatmap_rows)
+        player["heatmap_quality"] = quality
+        row = {
+            "stable_player_id": stable_player_id,
+            "stable_subject_id": stable_subject_id,
+            "slot_id": player.get("slot_id"),
+            "team_label": player.get("team_label"),
+            "team_id": player.get("team_id"),
+            "team_name": player.get("team_name"),
+            "path": relative_path,
+            "samples": len(heatmap_rows),
+            "detected_samples": detected_samples,
+            "interpolated_samples": interpolated_samples,
+            "quality": quality,
+            "included_sources": sorted({str(row.get("source") or "detected") for row in heatmap_rows}),
+            "ignored_sources": ["missing", "ambiguous", "inactive"],
+        }
+        rows.append(row)
+        total_samples += len(heatmap_rows)
+        detected_samples_total += detected_samples
+        interpolated_samples_total += interpolated_samples
+    summary = {
+        "players": len(rows),
+        "players_with_samples": sum(1 for row in rows if int(row.get("samples") or 0) > 0),
+        "samples_total": total_samples,
+        "detected_samples_total": detected_samples_total,
+        "interpolated_samples_total": interpolated_samples_total,
+        "players_low_quality": sum(1 for row in rows if row.get("quality") == "low"),
+        "players_medium_quality": sum(1 for row in rows if row.get("quality") == "medium"),
+        "players_high_quality": sum(1 for row in rows if row.get("quality") == "high"),
+    }
+    return {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "source": stable_doc.get("source") or "conservative_identity_v2",
+        "identity_semantics": stable_doc.get("identity_semantics") or "stint_first",
+        "method": "pitch_meter_gaussian_heatmap_v1",
+        "pitch_dimensions_m": {"width_m": pitch_width_m, "length_m": pitch_length_m},
+        "image_size_px": {"width": width_px, "height": length_px},
+        "summary": summary,
+        "heatmaps": sorted(rows, key=lambda item: str(item.get("stable_player_id") or "")),
+    }
+
+
+def _safe_artifact_id(value: str) -> str:
+    safe = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
+    safe = "-".join(part for part in safe.split("-") if part)
+    return safe or "player"
+
+
+def _player_heatmap_rows(player: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for row in player.get("overlay_positions") or []:
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or row.get("status") or "detected")
+        if source in {"missing", "ambiguous", "inactive"}:
+            continue
+        if source not in {"detected", "interpolated", "short_gap_interpolated", "predicted"}:
+            continue
+        pitch_m = row.get("pitch_m")
+        if not pitch_m or len(pitch_m) < 2:
+            continue
+        if source == "predicted" and row.get("visual_trusted") is False:
+            continue
+        rows.append({"pitch_m": pitch_m, "source": source})
+    return rows
+
+
+def _write_player_heatmap_png(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    width_px: int,
+    length_px: int,
+) -> None:
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFilter, ImageOps
+
+    heat = np.zeros((length_px, width_px), dtype=np.float32)
+    for row in rows:
+        pitch_m = row.get("pitch_m")
+        if not pitch_m or len(pitch_m) < 2:
+            continue
+        x_m, y_m = float(pitch_m[0]), float(pitch_m[1])
+        x = int(np.clip(x_m / max(pitch_width_m, 0.001) * (width_px - 1), 0, width_px - 1))
+        y = int(np.clip(y_m / max(pitch_length_m, 0.001) * (length_px - 1), 0, length_px - 1))
+        heat[y, x] += 1.0
+    if heat.max() > 0:
+        normalized = (heat / heat.max() * 255).astype(np.uint8)
+        heat_image = Image.fromarray(normalized, mode="L").filter(ImageFilter.GaussianBlur(radius=12))
+        blurred = np.asarray(heat_image, dtype=np.float32)
+        if blurred.max() > 0:
+            heat_image = Image.fromarray((blurred / blurred.max() * 255).astype(np.uint8), mode="L")
+        colored = ImageOps.colorize(heat_image, black="#163d2b", mid="#facc15", white="#ef4444")
+    else:
+        colored = Image.new("RGB", (width_px, length_px), "#1a4630")
+    _draw_pitch_on_heatmap(colored, ImageDraw.Draw(colored))
+    colored.save(output_path)
+
+
+def _draw_pitch_on_heatmap(image: Any, draw: Any) -> None:
+    width, height = image.size
+    line = "#f5f5f5"
+    draw.rectangle((2, 2, width - 3, height - 3), outline=line, width=2)
+    draw.line((2, height // 2, width - 3, height // 2), fill=line, width=1)
+    box_depth = max(20, int(height * 0.18))
+    box_width = max(40, int(width * 0.62))
+    box_x1 = (width - box_width) // 2
+    box_x2 = box_x1 + box_width
+    draw.rectangle((box_x1, 2, box_x2, box_depth), outline=line, width=1)
+    draw.rectangle((box_x1, height - box_depth, box_x2, height - 3), outline=line, width=1)
+
+
+def _heatmap_quality(samples: int, detected_samples: int, detected_frames: int, ambiguous_frames: int) -> str:
+    if samples < 8 or detected_samples < 5:
+        return "low"
+    detected_ratio = detected_samples / max(1, samples)
+    ambiguous_ratio = ambiguous_frames / max(1, detected_frames + ambiguous_frames)
+    if detected_ratio < 0.65 or ambiguous_ratio > 0.25:
+        return "medium"
+    return "high"
+
+
+def _stats_float(stats: dict[str, Any], key: str, fallback: float = 0.0) -> float:
+    return round(float(stats.get(key) if stats.get(key) is not None else fallback), 4)
 
 
 def _strip_overlay_positions(stable_doc: dict[str, Any]) -> dict[str, Any]:
@@ -1704,9 +2172,12 @@ def _overlay_stats_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "distance_m": float(stats.get("total_distance_m") or 0.0),
                 "estimated_distance_m": float(stats.get("estimated_gap_distance_m") or 0.0),
                 "avg_speed_kmh": float(stats.get("avg_speed_kmh") or 0.0),
-                "top_speed_kmh": float(stats.get("top_speed_kmh") or 0.0),
+                "peak_sustained_speed_kmh": float(
+                    stats.get("peak_sustained_speed_kmh") or stats.get("top_speed_kmh") or 0.0
+                ),
+                "raw_segment_top_speed_kmh": float(stats.get("raw_segment_top_speed_kmh") or 0.0),
                 "playing_time_sec": float(stats.get("playing_time_sec") or player.get("duration_sec") or 0.0),
-                "quality": stats.get("distance_quality") or "unknown",
+                "quality": stats.get("speed_quality") or stats.get("distance_quality") or "unknown",
             }
         )
     return sorted(rows, key=lambda item: str(item.get("stable_player_id") or ""))
@@ -1739,7 +2210,8 @@ def _live_movement_by_frame(positions: list[dict[str, Any]], fps: float) -> dict
                 speed_mps = distance / dt
                 if speed_mps <= LIVE_STATS_MAX_SPEED_MPS and dt <= LIVE_STATS_ESTIMATED_GAP_SEC:
                     cumulative_distance += distance
-                    last_speed_kmh = (_windowed_live_speed_mps(detected, index, fps_safe) or speed_mps) * 3.6
+                    windowed_speed = _windowed_live_speed_mps(detected, index, fps_safe)
+                    last_speed_kmh = windowed_speed * 3.6 if windowed_speed is not None else None
                     if frame_gap <= LIVE_STATS_OBSERVED_GAP_FRAMES:
                         segment_source = "observed"
                     else:
@@ -1777,7 +2249,7 @@ def _windowed_live_speed_mps(detected: list[dict[str, Any]], current_index: int,
         if distance is None:
             continue
         speed = distance / max(dt, 0.001)
-        if speed <= LIVE_STATS_MAX_SPEED_MPS:
+        if speed <= LIVE_STATS_SUSTAINED_SPEED_MPS:
             best_candidate = speed
             break
     return best_candidate
@@ -2095,7 +2567,7 @@ def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> No
     title_scale = 0.42
     row_scale = 0.36
     thickness = 1
-    lines = ["player stats: dist avg top time q"]
+    lines = ["player stats: dist avg peak time q"]
     for row in visible_rows:
         quality = str(row.get("quality") or "?")[:1]
         estimated = float(row.get("estimated_distance_m") or 0.0)
@@ -2104,7 +2576,7 @@ def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> No
             f"{row.get('stable_player_id')}{estimated_marker} "
             f"d={float(row.get('distance_m') or 0.0):4.1f}m "
             f"avg={float(row.get('avg_speed_kmh') or 0.0):4.1f} "
-            f"top={float(row.get('top_speed_kmh') or 0.0):4.1f} "
+            f"pk={float(row.get('peak_sustained_speed_kmh') or 0.0):4.1f} "
             f"t={float(row.get('playing_time_sec') or 0.0):4.1f}s "
             f"{quality}"
         )
@@ -2218,6 +2690,19 @@ def stabilize_match(
     stable_doc["frame_detection_counts"] = frame_detection_counts
     movement_stats = build_movement_stats_document(stable_doc)
     stable_doc["movement_stats_summary"] = movement_stats["summary"]
+    player_stats = build_player_stats_document(stable_doc)
+    stable_doc["player_stats_summary"] = player_stats["summary"]
+    existing_team_config_path = match_dir / "team_config.json"
+    existing_team_config = (
+        json.loads(existing_team_config_path.read_text(encoding="utf-8"))
+        if existing_team_config_path.exists()
+        else None
+    )
+    team_config = build_team_config_document(meta, team_clusters, stable_doc, existing_team_config)
+    team_stats = build_team_stats_document(player_stats, team_config)
+    stable_doc["team_stats_summary"] = team_stats["summary"]
+    player_heatmaps = build_player_heatmaps_document(stable_doc, match_dir)
+    stable_doc["player_heatmaps_summary"] = player_heatmaps["summary"]
     write_stable_overlay(
         video_path,
         match_dir,
@@ -2271,6 +2756,10 @@ def stabilize_match(
     (match_dir / "team_clusters.json").write_text(json.dumps(team_clusters, indent=2), encoding="utf-8")
     (match_dir / "frame_detection_counts.json").write_text(json.dumps(frame_detection_counts, indent=2), encoding="utf-8")
     (match_dir / "movement_stats.json").write_text(json.dumps(movement_stats, indent=2), encoding="utf-8")
+    (match_dir / "player_stats.json").write_text(json.dumps(player_stats, indent=2), encoding="utf-8")
+    (match_dir / "player_heatmaps.json").write_text(json.dumps(player_heatmaps, indent=2), encoding="utf-8")
+    (match_dir / "team_config.json").write_text(json.dumps(team_config, indent=2), encoding="utf-8")
+    (match_dir / "team_stats.json").write_text(json.dumps(team_stats, indent=2), encoding="utf-8")
     (match_dir / "tracklets.json").write_text(json.dumps(tracklets_doc, indent=2), encoding="utf-8")
     (match_dir / "tracking_quality_report.json").write_text(json.dumps(tracking_quality_report, indent=2), encoding="utf-8")
     (match_dir / "stabilization_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -2281,6 +2770,10 @@ def stabilize_match(
         "team_clusters": team_clusters,
         "frame_detection_counts": frame_detection_counts,
         "movement_stats": movement_stats,
+        "player_stats": player_stats,
+        "player_heatmaps": player_heatmaps,
+        "team_config": team_config,
+        "team_stats": team_stats,
         "tracklets": tracklets_doc,
         "tracking_quality_report": tracking_quality_report,
         "stabilization_report": report,
@@ -2294,6 +2787,10 @@ def stabilize_match(
             "team_clusters": "team_clusters.json",
             "frame_detection_counts": "frame_detection_counts.json",
             "movement_stats": "movement_stats.json",
+            "player_stats": "player_stats.json",
+            "player_heatmaps": "player_heatmaps.json",
+            "team_config": "team_config.json",
+            "team_stats": "team_stats.json",
             "tracklets": "tracklets.json",
             "tracking_quality_report": "tracking_quality_report.json",
         },
@@ -2309,12 +2806,20 @@ def load_stable_review(match_path: Path) -> dict[str, Any]:
     global_report_path = match_path / "global_identity_report.json"
     clusters_path = match_path / "team_clusters.json"
     movement_stats_path = match_path / "movement_stats.json"
+    player_stats_path = match_path / "player_stats.json"
+    player_heatmaps_path = match_path / "player_heatmaps.json"
+    team_config_path = match_path / "team_config.json"
+    team_stats_path = match_path / "team_stats.json"
     return {
         "stable_players": stable_doc,
         "stabilization_report": json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else None,
         "global_identity_report": json.loads(global_report_path.read_text(encoding="utf-8")) if global_report_path.exists() else None,
         "team_clusters": json.loads(clusters_path.read_text(encoding="utf-8")) if clusters_path.exists() else None,
         "movement_stats": json.loads(movement_stats_path.read_text(encoding="utf-8")) if movement_stats_path.exists() else None,
+        "player_stats": json.loads(player_stats_path.read_text(encoding="utf-8")) if player_stats_path.exists() else None,
+        "player_heatmaps": json.loads(player_heatmaps_path.read_text(encoding="utf-8")) if player_heatmaps_path.exists() else None,
+        "team_config": json.loads(team_config_path.read_text(encoding="utf-8")) if team_config_path.exists() else None,
+        "team_stats": json.loads(team_stats_path.read_text(encoding="utf-8")) if team_stats_path.exists() else None,
     }
 
 
@@ -2348,5 +2853,132 @@ def save_stable_review(match_path: Path, payload: dict[str, Any]) -> dict[str, A
     stable_doc["updated_at"] = now_iso()
     stable_doc["summary"]["team_counts"] = _team_counts(players)
     stable_doc["summary"]["stable_players"] = len(players)
+    meta_path = match_path / "match.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    clusters_path = match_path / "team_clusters.json"
+    team_clusters = json.loads(clusters_path.read_text(encoding="utf-8")) if clusters_path.exists() else {}
+    team_config_path = match_path / "team_config.json"
+    existing_team_config = json.loads(team_config_path.read_text(encoding="utf-8")) if team_config_path.exists() else None
+    movement_stats = build_movement_stats_document(stable_doc)
+    player_stats = build_player_stats_document(stable_doc)
+    team_config = build_team_config_document(meta, team_clusters, stable_doc, existing_team_config)
+    team_stats = build_team_stats_document(player_stats, team_config)
+    stable_doc["movement_stats_summary"] = movement_stats["summary"]
+    stable_doc["player_stats_summary"] = player_stats["summary"]
+    stable_doc["team_stats_summary"] = team_stats["summary"]
     (match_path / "stable_players.json").write_text(json.dumps(stable_doc, indent=2), encoding="utf-8")
+    (match_path / "movement_stats.json").write_text(json.dumps(movement_stats, indent=2), encoding="utf-8")
+    (match_path / "player_stats.json").write_text(json.dumps(player_stats, indent=2), encoding="utf-8")
+    (match_path / "team_config.json").write_text(json.dumps(team_config, indent=2), encoding="utf-8")
+    (match_path / "team_stats.json").write_text(json.dumps(team_stats, indent=2), encoding="utf-8")
     return load_stable_review(match_path)
+
+
+def load_team_config_review(match_path: Path) -> dict[str, Any]:
+    meta_path = match_path / "match.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    stable_path = match_path / "stable_players.json"
+    if not stable_path.exists():
+        raise FileNotFoundError("stable_players.json not found. Run analysis first.")
+    stable_doc = json.loads(stable_path.read_text(encoding="utf-8"))
+    clusters_path = match_path / "team_clusters.json"
+    team_clusters = json.loads(clusters_path.read_text(encoding="utf-8")) if clusters_path.exists() else {}
+    team_config_path = match_path / "team_config.json"
+    team_config = (
+        json.loads(team_config_path.read_text(encoding="utf-8"))
+        if team_config_path.exists()
+        else build_team_config_document(meta, team_clusters, stable_doc)
+    )
+    player_stats_path = match_path / "player_stats.json"
+    player_stats = (
+        json.loads(player_stats_path.read_text(encoding="utf-8"))
+        if player_stats_path.exists()
+        else build_player_stats_document(stable_doc)
+    )
+    team_stats_path = match_path / "team_stats.json"
+    team_stats = (
+        json.loads(team_stats_path.read_text(encoding="utf-8"))
+        if team_stats_path.exists()
+        else build_team_stats_document(player_stats, team_config)
+    )
+    return {
+        "team_config": team_config,
+        "team_stats": team_stats,
+        "player_stats": player_stats,
+        "team_clusters": team_clusters,
+    }
+
+
+def save_team_config_review(match_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    meta_path = match_path / "match.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    stable_path = match_path / "stable_players.json"
+    if not stable_path.exists():
+        raise FileNotFoundError("stable_players.json not found. Run analysis first.")
+    stable_doc = json.loads(stable_path.read_text(encoding="utf-8"))
+    players = stable_doc.get("players") if isinstance(stable_doc.get("players"), list) else []
+    clusters_path = match_path / "team_clusters.json"
+    team_clusters = json.loads(clusters_path.read_text(encoding="utf-8")) if clusters_path.exists() else {}
+    team_config_path = match_path / "team_config.json"
+    existing_team_config = (
+        json.loads(team_config_path.read_text(encoding="utf-8"))
+        if team_config_path.exists()
+        else build_team_config_document(meta, team_clusters, stable_doc)
+    )
+    teams = existing_team_config.get("teams") if isinstance(existing_team_config.get("teams"), list) else []
+    by_label = {
+        str(item.get("team_label")): dict(item)
+        for item in teams
+        if isinstance(item, dict) and item.get("team_label") in {"A", "B"}
+    }
+    for label in ["A", "B"]:
+        by_label.setdefault(label, {"team_label": label, "team_name": f"Team {label}", "locked": False})
+
+    updates = payload.get("teams") if isinstance(payload.get("teams"), list) else []
+    for update in updates:
+        if not isinstance(update, dict) or update.get("team_label") not in {"A", "B"}:
+            continue
+        row = by_label[str(update["team_label"])]
+        if "team_id" in update:
+            row["team_id"] = update.get("team_id") or None
+        if "team_name" in update:
+            row["team_name"] = update.get("team_name") or f"Team {row['team_label']}"
+        if "display_color" in update:
+            row["display_color"] = update.get("display_color") or None
+        if "detected_color_hex" in update:
+            row["detected_color_hex"] = update.get("detected_color_hex") or row.get("detected_color_hex")
+        if "locked" in update:
+            row["locked"] = bool(update.get("locked"))
+            row["assignment_source"] = "manual_lock" if row["locked"] else "review_unlocked"
+        if "notes" in update:
+            row["notes"] = str(update.get("notes") or "")
+        if isinstance(update.get("goalkeeper_exceptions"), list):
+            row["goalkeeper_exceptions"] = update["goalkeeper_exceptions"]
+
+    existing_team_config["teams"] = [by_label["A"], by_label["B"]]
+    existing_team_config["updated_at"] = now_iso()
+    existing_team_config["locked"] = any(bool(item.get("locked")) for item in existing_team_config["teams"])
+
+    for player in players:
+        label = str(player.get("team_label") or "U")
+        config = by_label.get(label)
+        if not config:
+            continue
+        player["team_id"] = config.get("team_id")
+        player["team_name"] = config.get("team_name") or f"Team {label}"
+
+    movement_stats = build_movement_stats_document(stable_doc)
+    player_stats = build_player_stats_document(stable_doc)
+    team_config = build_team_config_document(meta, team_clusters, stable_doc, existing_team_config)
+    team_stats = build_team_stats_document(player_stats, team_config)
+    stable_doc["updated_at"] = now_iso()
+    stable_doc["movement_stats_summary"] = movement_stats["summary"]
+    stable_doc["player_stats_summary"] = player_stats["summary"]
+    stable_doc["team_stats_summary"] = team_stats["summary"]
+
+    stable_path.write_text(json.dumps(stable_doc, indent=2), encoding="utf-8")
+    (match_path / "movement_stats.json").write_text(json.dumps(movement_stats, indent=2), encoding="utf-8")
+    (match_path / "player_stats.json").write_text(json.dumps(player_stats, indent=2), encoding="utf-8")
+    team_config_path.write_text(json.dumps(team_config, indent=2), encoding="utf-8")
+    (match_path / "team_stats.json").write_text(json.dumps(team_stats, indent=2), encoding="utf-8")
+    return load_team_config_review(match_path)

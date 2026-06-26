@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import type { Match, PublishedMatchDetail } from '../types';
 import { pretty } from '../lib/helpers';
 
@@ -31,6 +32,11 @@ export function MatchSummary({ match }: MatchSummaryProps) {
         {match.published_match_id && (
           <span>DB: {match.published_match_id}</span>
         )}
+      </div>
+      <div className='row'>
+        <Link to={`/matches/${encodeURIComponent(match.id)}/report`}>
+          Otworz raport meczu
+        </Link>
       </div>
       {(match.teams || []).map((team) => (
         <div className='team-row' key={team.id || team.name}>

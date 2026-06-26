@@ -17,8 +17,16 @@ from app.models import AnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.identity import build_identity_review, save_identity_assignments
+from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
+from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
-from app.services.stabilization import load_stable_review, save_stable_review
+from app.services.resolved_player_stats import build_resolved_player_stats_from_files
+from app.services.stabilization import load_stable_review, load_team_config_review, save_stable_review, save_team_config_review
+from app.services.team_registry import create_team as registry_create_team
+from app.services.team_registry import delete_team as registry_delete_team
+from app.services.team_registry import get_team as registry_get_team
+from app.services.team_registry import list_teams as registry_list_teams
+from app.services.team_registry import update_team as registry_update_team
 from app.services.video import extract_frame, read_video_metadata
 
 app = FastAPI(title="Orlik Vision API", version="0.6.0")
@@ -246,6 +254,45 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.get("/api/teams")
+def api_list_teams() -> list[dict[str, Any]]:
+    return registry_list_teams()
+
+
+@app.post("/api/teams")
+def api_create_team(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return registry_create_team(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/teams/{team_id}")
+def api_get_team(team_id: str) -> dict[str, Any]:
+    try:
+        return registry_get_team(team_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team not found") from exc
+
+
+@app.put("/api/teams/{team_id}")
+def api_update_team(team_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return registry_update_team(team_id, payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/teams/{team_id}")
+def api_delete_team(team_id: str) -> dict[str, Any]:
+    try:
+        return registry_delete_team(team_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Team not found") from exc
+
+
 @app.post("/api/matches")
 def create_match(
     video: UploadFile = File(...),
@@ -311,12 +358,17 @@ def get_match(match_id: str) -> dict[str, Any]:
         "player_assignments.json",
         "identity_candidates.json",
         "identity_assignments.json",
+        "player_identity_assignments.json",
         "stable_players.json",
         "global_identity_report.json",
         "stabilization_report.json",
         "team_clusters.json",
         "frame_detection_counts.json",
         "movement_stats.json",
+        "player_stats.json",
+        "resolved_player_stats.json",
+        "team_config.json",
+        "team_stats.json",
         "tracklets.json",
         "tracking_quality_report.json",
     ]:
@@ -463,6 +515,65 @@ def save_candidate_assignments(match_id: str, payload: dict[str, Any] = Body(...
     return doc
 
 
+@app.get("/api/matches/{match_id}/player-identity")
+def get_player_identity(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    try:
+        doc = build_player_identity_review(path, meta)
+        if (path / "player_identity_assignments.json").exists() and (path / "player_stats.json").exists():
+            doc["resolved_player_stats"] = build_resolved_player_stats_from_files(path, persist=True)
+        return doc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/player-identity")
+def review_player_identity(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    assignments = payload.get("assignments")
+    if not isinstance(assignments, list):
+        raise HTTPException(status_code=400, detail="assignments must be a list")
+    try:
+        doc = save_player_identity_assignments(path, meta, assignments)
+        try:
+            doc["resolved_player_stats"] = build_resolved_player_stats_from_files(path, persist=True)
+        except FileNotFoundError:
+            doc["resolved_player_stats"] = None
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
+@app.get("/api/matches/{match_id}/resolved-player-stats")
+def get_resolved_player_stats(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_resolved_player_stats_from_files(path, persist=True)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/players/{player_id}/stats")
+def get_player_profile_stats(player_id: str) -> dict[str, Any]:
+    try:
+        return build_player_profile_stats(MATCHES_DIR, player_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Player not found: {player_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/matches/{match_id}/stable-players")
 def get_stable_players(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -477,6 +588,29 @@ def review_stable_players(match_id: str, payload: dict[str, Any] = Body(...)) ->
     path = match_dir(match_id)
     try:
         doc = save_stable_review(path, payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    meta = read_match_meta(path)
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
+@app.get("/api/matches/{match_id}/team-config")
+def get_team_config(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_team_config_review(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/team-config")
+def review_team_config(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        doc = save_team_config_review(path, payload)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     meta = read_match_meta(path)
@@ -550,6 +684,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "player_assignments": None,
         "identity_candidates": None,
         "identity_assignments": None,
+        "player_identity_assignments": None,
         "stable_players": None,
         "global_identity": None,
         "global_identity_report": None,
@@ -557,6 +692,11 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "team_clusters": None,
         "frame_detection_counts": None,
         "movement_stats": None,
+        "player_stats": None,
+        "resolved_player_stats": None,
+        "player_heatmaps": None,
+        "team_config": None,
+        "team_stats": None,
         "tracklets": None,
         "tracking_quality_report": None,
         "team_count": len(meta.get("teams") or []),
@@ -570,6 +710,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("player_assignments", "player_assignments.json"),
         ("identity_candidates", "identity_candidates.json"),
         ("identity_assignments", "identity_assignments.json"),
+        ("player_identity_assignments", "player_identity_assignments.json"),
         ("stable_players", "stable_players.json"),
         ("global_identity", "global_identity.json"),
         ("global_identity_report", "global_identity_report.json"),
@@ -577,6 +718,11 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("team_clusters", "team_clusters.json"),
         ("frame_detection_counts", "frame_detection_counts.json"),
         ("movement_stats", "movement_stats.json"),
+        ("player_stats", "player_stats.json"),
+        ("resolved_player_stats", "resolved_player_stats.json"),
+        ("player_heatmaps", "player_heatmaps.json"),
+        ("team_config", "team_config.json"),
+        ("team_stats", "team_stats.json"),
         ("tracklets", "tracklets.json"),
         ("tracking_quality_report", "tracking_quality_report.json"),
     ]:
@@ -593,6 +739,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["identity_candidates_json"] = "identity_candidates.json"
     if (path / "identity_assignments.json").exists():
         package["assets"]["identity_assignments_json"] = "identity_assignments.json"
+    if (path / "player_identity_assignments.json").exists():
+        package["assets"]["player_identity_assignments_json"] = "player_identity_assignments.json"
     if (path / "stable_players.json").exists():
         package["assets"]["stable_players_json"] = "stable_players.json"
     if (path / "global_identity.json").exists():
@@ -611,6 +759,16 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["frame_detection_counts_json"] = "frame_detection_counts.json"
     if (path / "movement_stats.json").exists():
         package["assets"]["movement_stats_json"] = "movement_stats.json"
+    if (path / "player_stats.json").exists():
+        package["assets"]["player_stats_json"] = "player_stats.json"
+    if (path / "resolved_player_stats.json").exists():
+        package["assets"]["resolved_player_stats_json"] = "resolved_player_stats.json"
+    if (path / "player_heatmaps.json").exists():
+        package["assets"]["player_heatmaps_json"] = "player_heatmaps.json"
+    if (path / "team_config.json").exists():
+        package["assets"]["team_config_json"] = "team_config.json"
+    if (path / "team_stats.json").exists():
+        package["assets"]["team_stats_json"] = "team_stats.json"
     if (path / "tracklets.json").exists():
         package["assets"]["tracklets_json"] = "tracklets.json"
     if (path / "tracking_quality_report.json").exists():
@@ -715,6 +873,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "player_assignments.json": "application/json",
         "identity_candidates.json": "application/json",
         "identity_assignments.json": "application/json",
+        "player_identity_assignments.json": "application/json",
         "stable_players.json": "application/json",
         "global_identity.json": "application/json",
         "global_identity_report.json": "application/json",
@@ -722,6 +881,11 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "team_clusters.json": "application/json",
         "frame_detection_counts.json": "application/json",
         "movement_stats.json": "application/json",
+        "player_stats.json": "application/json",
+        "resolved_player_stats.json": "application/json",
+        "player_heatmaps.json": "application/json",
+        "team_config.json": "application/json",
+        "team_stats.json": "application/json",
         "tracklets.json": "application/json",
         "tracking_quality_report.json": "application/json",
         "run_metadata.json": "application/json",
@@ -732,6 +896,12 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     if artifact_rel.is_absolute() or any(part == ".." for part in artifact_rel.parts):
         raise HTTPException(status_code=404, detail="Artifact not available")
     artifact_basename = artifact_rel.name
+    if (
+        artifact_rel.parts
+        and artifact_rel.parts[0] == "player_heatmaps"
+        and artifact_basename.lower().endswith(".png")
+    ):
+        allowed[artifact_basename] = "image/png"
     if artifact_basename not in allowed:
         raise HTTPException(status_code=404, detail="Artifact not available")
     artifact_path = (path / artifact_rel).resolve()

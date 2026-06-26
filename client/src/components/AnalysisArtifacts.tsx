@@ -15,7 +15,12 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const frameDetectionCounts = report?.artifacts?.frame_detection_counts;
   const globalIdentity = report?.artifacts?.global_identity;
   const globalIdentityReport = report?.artifacts?.global_identity_report;
+  const teamConfig = report?.artifacts?.team_config;
+  const teamStats = report?.artifacts?.team_stats;
   const movementStats = report?.artifacts?.movement_stats;
+  const playerStats = report?.artifacts?.player_stats;
+  const resolvedPlayerStats = report?.artifacts?.resolved_player_stats || (match.resolved_player_stats ? 'resolved_player_stats.json' : undefined);
+  const playerHeatmaps = report?.artifacts?.player_heatmaps;
   const tracklets = report?.artifacts?.tracklets;
   const trackingQualityReport = report?.artifacts?.tracking_quality_report;
 
@@ -47,13 +52,6 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
               Brak stable overlay. Uruchom ponownie analize, zeby wygenerowac
               stabilne ID zawodnikow.
             </p>
-          )}
-          {heatmap && (
-            <img
-              src={artifactUrl(match.id, heatmap)}
-              className='heatmap'
-              alt='Heatmap'
-            />
           )}
           {match.match_package && (
             <a href={artifactUrl(match.id, 'match_package.json')}>
@@ -90,6 +88,31 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
               Pobierz movement_stats.json
             </a>
           )}
+          {teamConfig && (
+            <a href={artifactUrl(match.id, teamConfig)}>
+              Pobierz team_config.json
+            </a>
+          )}
+          {teamStats && (
+            <a href={artifactUrl(match.id, teamStats)}>
+              Pobierz team_stats.json
+            </a>
+          )}
+          {playerStats && (
+            <a href={artifactUrl(match.id, playerStats)}>
+              Pobierz player_stats.json
+            </a>
+          )}
+          {resolvedPlayerStats && (
+            <a href={artifactUrl(match.id, resolvedPlayerStats)}>
+              Pobierz resolved_player_stats.json
+            </a>
+          )}
+          {playerHeatmaps && (
+            <a href={artifactUrl(match.id, playerHeatmaps)}>
+              Pobierz player_heatmaps.json
+            </a>
+          )}
           {tracklets && (
             <a href={artifactUrl(match.id, tracklets)}>
               Pobierz tracklets.json
@@ -100,30 +123,33 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
               Pobierz tracking_quality_report.json
             </a>
           )}
-          {debugIdentityOverlay && (
+          {(heatmap || debugIdentityOverlay || rawOverlay || report) && (
             <details className='debug-details'>
-              <summary>Debug identity overlay</summary>
-              <video
-                controls
-                src={artifactUrl(match.id, debugIdentityOverlay)}
-                className='video'
-              />
+              <summary>Developer debug artifacts</summary>
+              {heatmap && (
+                <img
+                  src={artifactUrl(match.id, heatmap)}
+                  className='heatmap'
+                  alt='Raw all-tracks heatmap'
+                />
+              )}
+              {debugIdentityOverlay && (
+                <video
+                  controls
+                  src={artifactUrl(match.id, debugIdentityOverlay)}
+                  className='video'
+                />
+              )}
+              {rawOverlay && (
+                <video
+                  controls
+                  src={artifactUrl(match.id, rawOverlay)}
+                  className='video'
+                />
+              )}
+              <pre>{pretty(report || { status: 'not analyzed' })}</pre>
             </details>
           )}
-          {rawOverlay && (
-            <details className='debug-details'>
-              <summary>Raw tracker overlay debug</summary>
-              <video
-                controls
-                src={artifactUrl(match.id, rawOverlay)}
-                className='video'
-              />
-            </details>
-          )}
-        </div>
-        <div>
-          <h3>Analysis report</h3>
-          <pre>{pretty(report || { status: 'not analyzed' })}</pre>
         </div>
       </div>
     </section>

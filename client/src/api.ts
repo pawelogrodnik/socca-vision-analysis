@@ -4,6 +4,10 @@ import type {
   Match,
   MatchMetadataPayload,
   MatchPackage,
+  PlayerIdentityAssignment,
+  PlayerIdentityReviewState,
+  PlayerProfileStatsDocument,
+  ResolvedPlayerStatsDocument,
   PlayerAssignment,
   PlayerAssignmentsDocument,
   PublishedMatch,
@@ -11,6 +15,8 @@ import type {
   StablePlayerReviewPayload,
   StablePlayersReviewState,
   Team,
+  TeamConfigReviewPayload,
+  TeamConfigReviewState,
   TrackletReviewState
 } from './types';
 
@@ -64,6 +70,36 @@ export async function createMatch(input: {
   if (input.venue) body.append('venue', input.venue);
   body.append('teams_json', JSON.stringify(input.teams));
   return request<Match>('/api/matches', { method: 'POST', body });
+}
+
+export async function listTeams(): Promise<Team[]> {
+  return request<Team[]>('/api/teams');
+}
+
+export async function getTeam(teamId: string): Promise<Team> {
+  return request<Team>(`/api/teams/${encodeURIComponent(teamId)}`);
+}
+
+export async function createTeam(payload: Team): Promise<Team> {
+  return request<Team>('/api/teams', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function updateTeam(teamId: string, payload: Team): Promise<Team> {
+  return request<Team>(`/api/teams/${encodeURIComponent(teamId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteTeam(teamId: string): Promise<{ status: string; team_id: string }> {
+  return request<{ status: string; team_id: string }>(`/api/teams/${encodeURIComponent(teamId)}`, {
+    method: 'DELETE'
+  });
 }
 
 export async function listMatches(): Promise<Match[]> {
@@ -123,6 +159,41 @@ export async function getStablePlayers(matchId: string): Promise<StablePlayersRe
 
 export async function reviewStablePlayers(matchId: string, payload: StablePlayerReviewPayload): Promise<StablePlayersReviewState> {
   return request<StablePlayersReviewState>(`/api/matches/${matchId}/stable-players/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getPlayerIdentityReview(matchId: string): Promise<PlayerIdentityReviewState> {
+  return request<PlayerIdentityReviewState>(`/api/matches/${matchId}/player-identity`);
+}
+
+export async function savePlayerIdentityAssignments(
+  matchId: string,
+  assignments: PlayerIdentityAssignment[],
+): Promise<PlayerIdentityReviewState> {
+  return request<PlayerIdentityReviewState>(`/api/matches/${matchId}/player-identity`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assignments })
+  });
+}
+
+export async function getResolvedPlayerStats(matchId: string): Promise<ResolvedPlayerStatsDocument> {
+  return request<ResolvedPlayerStatsDocument>(`/api/matches/${matchId}/resolved-player-stats`);
+}
+
+export async function getPlayerProfileStats(playerId: string): Promise<PlayerProfileStatsDocument> {
+  return request<PlayerProfileStatsDocument>(`/api/players/${encodeURIComponent(playerId)}/stats`);
+}
+
+export async function getTeamConfig(matchId: string): Promise<TeamConfigReviewState> {
+  return request<TeamConfigReviewState>(`/api/matches/${matchId}/team-config`);
+}
+
+export async function reviewTeamConfig(matchId: string, payload: TeamConfigReviewPayload): Promise<TeamConfigReviewState> {
+  return request<TeamConfigReviewState>(`/api/matches/${matchId}/team-config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

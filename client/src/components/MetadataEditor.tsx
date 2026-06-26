@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { Match, MatchMetadataPayload, Team } from '../types';
-import { defaultTeams } from '../lib/helpers';
-import { TeamEditor } from './TeamEditor';
+import { Link } from 'react-router-dom';
+import type { Match, MatchMetadataPayload } from '../types';
 
 interface MetadataEditorProps {
   match: Match;
@@ -15,7 +14,6 @@ export function MetadataEditor({ match, onSave }: MetadataEditorProps) {
   const [venue, setVenue] = useState(match.venue || '');
   const [format, setFormat] = useState(match.format || '7v7');
   const [status, setStatus] = useState(match.status || 'uploaded');
-  const [teams, setTeams] = useState<Team[]>(match.teams || defaultTeams());
 
   useEffect(() => {
     setTitle(match.title);
@@ -24,7 +22,6 @@ export function MetadataEditor({ match, onSave }: MetadataEditorProps) {
     setVenue(match.venue || '');
     setFormat(match.format || '7v7');
     setStatus(match.status || 'uploaded');
-    setTeams(match.teams || defaultTeams());
   }, [match]);
 
   return (
@@ -74,7 +71,28 @@ export function MetadataEditor({ match, onSave }: MetadataEditorProps) {
           onChange={(event) => setFormat(event.target.value)}
         />
       </label>
-      <TeamEditor teams={teams} onChange={setTeams} />
+      <div className='team-snapshot'>
+        <div className='row between'>
+          <strong>Snapshot drużyn meczu</strong>
+          <Link to='/teams'>Zarządzaj drużynami</Link>
+        </div>
+        <p className='muted'>
+          Drużyny i rostery są zarządzane poza analizą meczu. Ten mecz
+          przechowuje snapshot dwóch drużyn wybranych przy tworzeniu.
+        </p>
+        {(match.teams || []).map((team) => (
+          <div className='team-row' key={team.id || team.name}>
+            <span
+              className='color-dot'
+              style={{ background: team.color || '#64748b' }}
+            />
+            <strong>{team.name}</strong>
+            <span className='muted'>
+              {team.players?.length || 0} zawodników
+            </span>
+          </div>
+        ))}
+      </div>
       <button
         type='button'
         onClick={() =>
@@ -85,7 +103,7 @@ export function MetadataEditor({ match, onSave }: MetadataEditorProps) {
             venue: venue || null,
             format,
             status,
-            teams,
+            teams: match.teams || [],
           })
         }
       >

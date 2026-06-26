@@ -22,11 +22,13 @@ BBOX_OUTLIER_MIN_DETECTIONS = 6
 SHADOW_LIKE_MAX_ASPECT_RATIO = 1.35
 SHADOW_LIKE_LOW_CONFIDENCE = 0.25
 TEAM_LABELS = ("A", "B")
-MAX_STATS_SPEED_MPS = 9.5
+MAX_STATS_SPEED_MPS = 8.5
+MAX_STATS_SUSTAINED_SPEED_MPS = 8.0
 MAX_STATS_ESTIMATED_GAP_SEC = 2.0
 STATS_OBSERVED_GAP_FRAMES = 2
-STATS_TOP_SPEED_MIN_WINDOW_SEC = 0.16
-STATS_TOP_SPEED_MAX_WINDOW_SEC = 0.75
+STATS_PEAK_SPEED_MIN_WINDOW_SEC = 0.5
+STATS_PEAK_SPEED_MAX_WINDOW_SEC = 1.25
+STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC = 0.25
 
 
 def now_iso() -> str:
@@ -585,7 +587,10 @@ def resolve_global_identity(
             "switch_conflict_radius_m": SWITCH_CONFLICT_RADIUS_M,
             "assignment_solver": "lapjv_or_greedy_fallback",
             "stats_max_speed_mps": MAX_STATS_SPEED_MPS,
+            "stats_max_sustained_speed_mps": MAX_STATS_SUSTAINED_SPEED_MPS,
             "stats_max_estimated_gap_sec": MAX_STATS_ESTIMATED_GAP_SEC,
+            "stats_peak_speed_min_window_sec": STATS_PEAK_SPEED_MIN_WINDOW_SEC,
+            "stats_peak_speed_max_window_sec": STATS_PEAK_SPEED_MAX_WINDOW_SEC,
         },
         "summary": summary,
         "slots": sorted(active_slot_docs, key=lambda item: item["slot_id"]),
@@ -1146,6 +1151,7 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
     skipped_outlier_segments = 0
     skipped_long_gap_segments = 0
     segment_speeds: list[float] = []
+    speed_segments: list[dict[str, Any]] = []
 
     for previous, current in zip(detected_rows, detected_rows[1:]):
         previous_point = previous.get("pitch_m")
@@ -1163,6 +1169,20 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
         if speed > MAX_STATS_SPEED_MPS:
             skipped_outlier_segments += 1
             continue
+        speed_segments.append(
+            {
+                "start_frame": previous_frame,
+                "end_frame": current_frame,
+                "start_time": previous_time,
+                "end_time": current_time,
+                "dt": dt,
+                "distance": distance,
+                "speed": speed,
+                "frame_gap": frame_gap,
+                "start_point": previous_point,
+                "end_point": current_point,
+            }
+        )
         if frame_gap <= STATS_OBSERVED_GAP_FRAMES:
             observed_distance += distance
             observed_segments += 1
@@ -1175,13 +1195,21 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
             skipped_long_gap_segments += 1
 
     total_distance = observed_distance + estimated_gap_distance
-    top_speed = _windowed_top_speed_mps(detected_rows, fps_safe)
-    if not top_speed and segment_speeds:
-        top_speed = max(segment_speeds)
+    peak_speed, sustained_windows = _peak_sustained_speed_mps(detected_rows, speed_segments, fps_safe)
+    raw_segment_top_speed = max(segment_speeds) if segment_speeds else 0.0
     avg_speed = total_distance / playing_time_sec if playing_time_sec > 0 else 0.0
     observed_avg_speed = observed_distance / detected_time_sec if detected_time_sec > 0 else 0.0
     detected_coverage = detected_frames / max(1, active_frames)
     estimated_ratio = estimated_gap_distance / total_distance if total_distance > 0 else 0.0
+    distance_quality = _movement_quality(detected_coverage, estimated_ratio, skipped_outlier_segments)
+    speed_quality = _speed_quality(
+        detected_coverage,
+        peak_speed,
+        raw_segment_top_speed,
+        skipped_outlier_segments,
+        sustained_windows,
+        detected_time_sec,
+    )
 
     return {
         "playing_time_sec": round(playing_time_sec, 3),
@@ -1194,11 +1222,17 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
         "avg_speed_mps": round(avg_speed, 3),
         "avg_speed_kmh": round(avg_speed * 3.6, 2),
         "observed_avg_speed_mps": round(observed_avg_speed, 3),
-        "top_speed_mps": round(top_speed, 3),
-        "top_speed_kmh": round(top_speed * 3.6, 2),
+        "peak_sustained_speed_mps": round(peak_speed, 3),
+        "peak_sustained_speed_kmh": round(peak_speed * 3.6, 2),
+        "top_speed_mps": round(peak_speed, 3),
+        "top_speed_kmh": round(peak_speed * 3.6, 2),
+        "raw_segment_top_speed_mps": round(raw_segment_top_speed, 3),
+        "raw_segment_top_speed_kmh": round(raw_segment_top_speed * 3.6, 2),
         "detected_coverage": round(detected_coverage, 4),
         "estimated_distance_ratio": round(estimated_ratio, 4),
-        "distance_quality": _movement_quality(detected_coverage, estimated_ratio, skipped_outlier_segments),
+        "distance_quality": distance_quality,
+        "speed_quality": speed_quality,
+        "speed_window_sec": STATS_PEAK_SPEED_MIN_WINDOW_SEC,
         "samples_used": detected_frames,
         "active_frames": active_frames,
         "detected_frames": detected_frames,
@@ -1208,32 +1242,75 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
         "observed_segments": observed_segments,
         "estimated_gap_segments": estimated_gap_segments,
         "skipped_outlier_segments": skipped_outlier_segments,
+        "skipped_speed_outlier_segments": skipped_outlier_segments,
         "skipped_long_gap_segments": skipped_long_gap_segments,
-        "stats_note": "distance uses trusted detected pitch positions; short gaps are counted separately as estimated_gap_distance_m",
+        "sustained_speed_windows": sustained_windows,
+        "stats_note": "distance uses trusted detected pitch positions; top_speed is peak_sustained_speed over a conservative window; short gaps are counted separately as estimated_gap_distance_m",
     }
 
 
-def _windowed_top_speed_mps(detected_rows: list[dict[str, Any]], fps: float) -> float:
+def _peak_sustained_speed_mps(
+    detected_rows: list[dict[str, Any]],
+    speed_segments: list[dict[str, Any]],
+    fps: float,
+) -> tuple[float, int]:
     best = 0.0
+    windows = 0
+    segment_by_pair = {
+        (int(segment["start_frame"]), int(segment["end_frame"])): segment
+        for segment in speed_segments
+    }
     for start_index, start in enumerate(detected_rows):
         start_frame = int(start.get("frame") or 0)
         start_time = float(start.get("time_sec") or start_frame / fps)
         start_point = start.get("pitch_m")
+        previous = start
         for end in detected_rows[start_index + 1 :]:
             end_frame = int(end.get("frame") or 0)
             end_time = float(end.get("time_sec") or end_frame / fps)
+            previous_frame = int(previous.get("frame") or 0)
+            segment = segment_by_pair.get((previous_frame, end_frame))
+            if not segment or float(segment.get("dt") or 0.0) > STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC:
+                break
+            if float(segment.get("speed") or 0.0) > MAX_STATS_SUSTAINED_SPEED_MPS:
+                break
             dt = end_time - start_time
-            if dt < STATS_TOP_SPEED_MIN_WINDOW_SEC:
+            if dt < STATS_PEAK_SPEED_MIN_WINDOW_SEC:
+                previous = end
                 continue
-            if dt > STATS_TOP_SPEED_MAX_WINDOW_SEC:
+            if dt > STATS_PEAK_SPEED_MAX_WINDOW_SEC:
                 break
             distance = _distance_m(start_point, end.get("pitch_m"))
             if distance is None:
+                previous = end
                 continue
             speed = distance / max(dt, 0.001)
-            if speed <= MAX_STATS_SPEED_MPS:
+            windows += 1
+            if speed <= MAX_STATS_SUSTAINED_SPEED_MPS:
                 best = max(best, speed)
-    return best
+            previous = end
+    return best, windows
+
+
+def _speed_quality(
+    detected_coverage: float,
+    peak_speed_mps: float,
+    raw_segment_top_speed_mps: float,
+    skipped_outlier_segments: int,
+    sustained_windows: int,
+    detected_time_sec: float,
+) -> str:
+    if detected_time_sec >= STATS_PEAK_SPEED_MIN_WINDOW_SEC and sustained_windows == 0:
+        return "low"
+    if skipped_outlier_segments > 2:
+        return "low"
+    if peak_speed_mps <= 0.0 and raw_segment_top_speed_mps > 0.0:
+        return "low"
+    if raw_segment_top_speed_mps - peak_speed_mps > 2.0:
+        return "medium"
+    if skipped_outlier_segments > 0 or detected_coverage < 0.7 or sustained_windows < 2:
+        return "medium"
+    return "high"
 
 
 def _movement_quality(detected_coverage: float, estimated_ratio: float, skipped_outlier_segments: int) -> str:

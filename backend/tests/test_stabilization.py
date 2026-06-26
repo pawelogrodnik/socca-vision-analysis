@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from app.services.stabilization import (
     _live_movement_by_frame,
     build_frame_detection_counts,
+    build_player_heatmaps_document,
+    build_player_stats_document,
     build_stable_players,
     build_stable_players_document,
+    build_team_config_document,
+    build_team_stats_document,
     build_tracklets_document,
     build_tracking_quality_report,
     cluster_tracklet_teams,
@@ -230,6 +236,7 @@ class StabilizationTests(unittest.TestCase):
                 position(0, 0.0, 0.0, 0.0),
                 position(1, 1 / 30, 0.1, 0.0),
                 position(6, 0.2, 1.0, 0.0),
+                position(18, 0.6, 1.8, 0.0),
             ],
             fps=30,
         )
@@ -237,8 +244,10 @@ class StabilizationTests(unittest.TestCase):
         self.assertAlmostEqual(live[1]["cumulative_distance_m"], 0.1, places=2)
         self.assertEqual(live[1]["segment_source"], "observed")
         self.assertAlmostEqual(live[6]["cumulative_distance_m"], 1.0, places=2)
-        self.assertAlmostEqual(live[6]["current_speed_kmh"], 19.4, places=2)
+        self.assertIsNone(live[6]["current_speed_kmh"])
         self.assertEqual(live[6]["segment_source"], "estimated")
+        self.assertAlmostEqual(live[18]["cumulative_distance_m"], 1.8, places=2)
+        self.assertAlmostEqual(live[18]["current_speed_kmh"], 10.8, places=2)
 
     def test_live_movement_stats_skip_unrealistic_jump(self) -> None:
         live = _live_movement_by_frame(
@@ -374,6 +383,219 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(report["summary"]["frames_with_team_over_cap"], 2)
         self.assertGreater(report["summary"]["suspicious_events"], 0)
         self.assertTrue(any(row["team_over_cap"] for row in report["frame_team_counts"]))
+
+    def test_player_stats_document_exports_tracking_only_contract(self) -> None:
+        stable_doc = {
+            "source": "conservative_identity_v2",
+            "identity_semantics": "stint_first",
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "stable_subject_id": "slot-a01",
+                    "slot_id": "A01",
+                    "status": "active",
+                    "team_label": "A",
+                    "confidence": "high",
+                    "confidence_score": 0.9,
+                    "tracklet_ids": ["1:1"],
+                    "raw_track_ids": [1],
+                    "stint_count": 1,
+                    "movement_stats": {
+                        "playing_time_sec": 10.0,
+                        "detected_time_sec": 8.0,
+                        "missing_time_sec": 1.5,
+                        "ambiguous_time_sec": 0.5,
+                        "observed_distance_m": 25.0,
+                        "estimated_gap_distance_m": 5.0,
+                        "total_distance_m": 30.0,
+                        "estimated_distance_ratio": 0.1667,
+                        "distance_quality": "high",
+                        "avg_speed_mps": 3.0,
+                        "avg_speed_kmh": 10.8,
+                        "observed_avg_speed_mps": 3.125,
+                        "peak_sustained_speed_mps": 5.5,
+                        "peak_sustained_speed_kmh": 19.8,
+                        "top_speed_mps": 6.0,
+                        "top_speed_kmh": 21.6,
+                        "raw_segment_top_speed_mps": 6.8,
+                        "raw_segment_top_speed_kmh": 24.48,
+                        "speed_quality": "medium",
+                        "active_frames": 300,
+                        "detected_frames": 240,
+                        "missing_frames": 45,
+                        "ambiguous_frames": 15,
+                        "predicted_frames": 0,
+                        "samples_used": 240,
+                        "observed_segments": 40,
+                        "estimated_gap_segments": 2,
+                        "skipped_outlier_segments": 1,
+                        "skipped_speed_outlier_segments": 1,
+                        "skipped_long_gap_segments": 0,
+                        "sustained_speed_windows": 4,
+                    },
+                }
+            ],
+        }
+
+        doc = build_player_stats_document(stable_doc)
+
+        self.assertEqual(doc["schema_version"], "0.1.0")
+        self.assertEqual(doc["scope"], "tracking_only_no_ball")
+        self.assertEqual(doc["summary"]["players"], 1)
+        self.assertEqual(doc["summary"]["total_distance_m"], 30.0)
+        self.assertEqual(doc["summary"]["estimated_short_gap_distance_m"], 5.0)
+        self.assertEqual(doc["teams"][0]["team_label"], "A")
+        player = doc["players"][0]
+        self.assertEqual(player["stable_player_id"], "A01")
+        self.assertTrue(player["tracking_only"])
+        self.assertEqual(player["distance"]["observed_distance_m"], 25.0)
+        self.assertEqual(player["distance"]["estimated_short_gap_distance_m"], 5.0)
+        self.assertEqual(player["speed"]["peak_sustained_speed_kmh"], 19.8)
+        self.assertEqual(player["speed"]["top_speed_kmh"], 21.6)
+        self.assertEqual(player["speed"]["raw_segment_top_speed_kmh"], 24.48)
+        self.assertEqual(player["speed"]["quality"], "medium")
+
+    def test_player_heatmaps_document_uses_trusted_positions_only(self) -> None:
+        stable_doc = {
+            "source": "conservative_identity_v2",
+            "identity_semantics": "stint_first",
+            "pitch_dimensions_m": {"width_m": 30, "length_m": 47.4},
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "stable_subject_id": "slot-a01",
+                    "slot_id": "A01",
+                    "team_label": "A",
+                    "team_id": "team-a",
+                    "team_name": "Team A",
+                    "detected_frames": 2,
+                    "ambiguous_frames": 1,
+                    "overlay_positions": [
+                        {"pitch_m": [1.0, 2.0], "source": "detected"},
+                        {"pitch_m": [1.2, 2.2], "source": "interpolated"},
+                        {"pitch_m": [9.0, 9.0], "source": "ambiguous"},
+                        {"pitch_m": [10.0, 10.0], "source": "missing"},
+                    ],
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = build_player_heatmaps_document(stable_doc, Path(tmp))
+
+            self.assertEqual(doc["schema_version"], "0.1.0")
+            self.assertEqual(doc["summary"]["players"], 1)
+            self.assertEqual(doc["summary"]["samples_total"], 2)
+            heatmap = doc["heatmaps"][0]
+            self.assertEqual(heatmap["samples"], 2)
+            self.assertEqual(heatmap["detected_samples"], 1)
+            self.assertEqual(heatmap["interpolated_samples"], 1)
+            self.assertTrue((Path(tmp) / heatmap["path"]).exists())
+            self.assertEqual(stable_doc["players"][0]["heatmap_path"], heatmap["path"])
+
+    def test_team_config_document_preserves_manual_lock(self) -> None:
+        meta = {
+            "id": "match-1",
+            "teams": [
+                {"id": "team-white", "name": "White", "color": "#f8fafc"},
+                {"id": "team-orange", "name": "Orange", "color": "#f97316"},
+            ],
+        }
+        team_clusters = {
+            "method": "torso_color_white_vs_bib_v3",
+            "reference_tracklets_count": 4,
+            "candidate_tracklets_count": 6,
+            "unknown_tracklets": ["9:1"],
+            "clusters": [
+                {
+                    "cluster_id": "cluster-1",
+                    "team_label": "A",
+                    "color_hex": "#eeeeee",
+                    "confidence": 0.8,
+                    "reference_tracklets_count": 2,
+                    "candidate_tracklets_count": 3,
+                },
+                {
+                    "cluster_id": "cluster-2",
+                    "team_label": "B",
+                    "color_hex": "#f97316",
+                    "confidence": 0.77,
+                    "reference_tracklets_count": 2,
+                    "candidate_tracklets_count": 3,
+                },
+            ],
+        }
+        stable_doc = {
+            "players": [
+                {"stable_player_id": "A01", "team_label": "A"},
+                {"stable_player_id": "B01", "team_label": "B"},
+            ]
+        }
+        existing = {
+            "teams": [
+                {
+                    "team_label": "A",
+                    "team_id": "team-white",
+                    "team_name": "White locked",
+                    "locked": True,
+                    "assignment_source": "manual_lock",
+                }
+            ]
+        }
+
+        config = build_team_config_document(meta, team_clusters, stable_doc, existing)
+
+        self.assertTrue(config["locked"])
+        self.assertEqual(config["teams"][0]["team_name"], "White locked")
+        self.assertTrue(config["teams"][0]["locked"])
+        self.assertEqual(config["teams"][0]["stable_players_count"], 1)
+        self.assertEqual(config["teams"][1]["detected_color_hex"], "#f97316")
+        self.assertEqual(config["team_clusters_summary"]["unknown_tracklets_count"], 1)
+
+    def test_team_stats_document_enriches_player_stats_with_team_config(self) -> None:
+        player_stats = {
+            "source": "conservative_identity_v2",
+            "scope": "tracking_only_no_ball",
+            "units": {"distance": "meters"},
+            "teams": [
+                {
+                    "team_label": "A",
+                    "players": 2,
+                    "playing_time_sec": 20.0,
+                    "detected_time_sec": 18.0,
+                    "missing_time_sec": 2.0,
+                    "ambiguous_time_sec": 0.0,
+                    "total_distance_m": 100.0,
+                    "observed_distance_m": 90.0,
+                    "estimated_short_gap_distance_m": 10.0,
+                    "top_speed_kmh": 22.5,
+                    "players_low_quality": 0,
+                    "players_medium_quality": 1,
+                    "players_high_quality": 1,
+                }
+            ],
+        }
+        team_config = {
+            "teams": [
+                {
+                    "team_label": "A",
+                    "team_id": "team-a",
+                    "team_name": "White",
+                    "display_color": "#ffffff",
+                    "detected_color_hex": "#eeeeee",
+                    "locked": True,
+                }
+            ]
+        }
+
+        doc = build_team_stats_document(player_stats, team_config)
+
+        self.assertEqual(doc["schema_version"], "0.1.0")
+        self.assertEqual(doc["summary"]["teams"], 1)
+        self.assertEqual(doc["summary"]["total_distance_m"], 100.0)
+        self.assertEqual(doc["teams"][0]["team_name"], "White")
+        self.assertTrue(doc["teams"][0]["locked"])
+        self.assertEqual(doc["teams"][0]["players_medium_quality"], 1)
 
 
 if __name__ == "__main__":

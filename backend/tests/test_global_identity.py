@@ -206,6 +206,60 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(stats["total_distance_m"], 0.0)
         self.assertEqual(stats["skipped_outlier_segments"], 1)
 
+    def test_movement_stats_peak_sustained_speed_for_steady_runner(self) -> None:
+        stats = _slot_movement_stats(
+            [
+                {
+                    "frame": frame,
+                    "time_sec": frame / 30,
+                    "pitch_m": [frame * 0.1, 0],
+                    "source": "detected",
+                }
+                for frame in range(31)
+            ],
+            fps=30,
+        )
+
+        self.assertAlmostEqual(stats["peak_sustained_speed_kmh"], 10.8, places=1)
+        self.assertAlmostEqual(stats["top_speed_kmh"], 10.8, places=1)
+        self.assertEqual(stats["speed_quality"], "high")
+        self.assertGreater(stats["sustained_speed_windows"], 0)
+
+    def test_movement_stats_short_spike_does_not_set_peak_speed(self) -> None:
+        stats = _slot_movement_stats(
+            [
+                {"frame": 0, "time_sec": 0.0, "pitch_m": [0, 0], "source": "detected"},
+                {"frame": 1, "time_sec": 1 / 30, "pitch_m": [0.25, 0], "source": "detected"},
+            ],
+            fps=30,
+        )
+
+        self.assertGreater(stats["raw_segment_top_speed_kmh"], 25.0)
+        self.assertEqual(stats["peak_sustained_speed_kmh"], 0.0)
+        self.assertEqual(stats["top_speed_kmh"], 0.0)
+        self.assertEqual(stats["speed_quality"], "low")
+
+    def test_movement_stats_single_outlier_does_not_inflate_peak_speed(self) -> None:
+        rows = []
+        for frame in range(31):
+            x = frame * 0.1
+            if frame == 10:
+                x = 3.5
+            rows.append(
+                {
+                    "frame": frame,
+                    "time_sec": frame / 30,
+                    "pitch_m": [x, 0],
+                    "source": "detected",
+                }
+            )
+
+        stats = _slot_movement_stats(rows, fps=30)
+
+        self.assertLessEqual(stats["peak_sustained_speed_kmh"], 11.0)
+        self.assertLessEqual(stats["top_speed_kmh"], 11.0)
+        self.assertGreaterEqual(stats["skipped_outlier_segments"], 1)
+
     def test_stable_players_include_movement_stats(self) -> None:
         identity = self.resolve(
             [
@@ -216,6 +270,7 @@ class GlobalIdentityTests(unittest.TestCase):
         stats = stable_doc["players"][0]["movement_stats"]
         self.assertIn("total_distance_m", stats)
         self.assertIn("top_speed_kmh", stats)
+        self.assertIn("peak_sustained_speed_kmh", stats)
 
 
 if __name__ == "__main__":

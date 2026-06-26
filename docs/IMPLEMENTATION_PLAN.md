@@ -46,11 +46,11 @@ This snapshot should be updated whenever a milestone is completed or materially 
 - `[x]` Core local app shell: upload, match selection, manual pitch calibration, Docker workflow, healthcheck.
 - `[x]` YOLO/motion analysis pipeline: raw tracker overlay, `tracks.json`, `analysis_report.json`, all-tracks heatmap.
 - `[x]` Tracklets and quality diagnostics: analysis now exports standalone `tracklets.json` and `tracking_quality_report.json` contracts.
-- `[~]` Team assignment: automatic torso-color clustering, goalkeeper color outliers, `team_clusters.json`, and Team A/B review exist; explicit `team_config.json` and full UI sampling are not done.
-- `[~]` Identity resolver: current production path is anonymous stable slot/stint identity (`A01-A07`, `B01-B07`) with conservative anti-switch logic, not real roster `player_id` resolution yet.
-- `[~]` Player stats: tracking-only movement stats exist per stable slot in `movement_stats.json` and overlays, but final `player_stats.json`, sprint thresholds, and per-player heatmaps are not done.
-- `[~]` Match report: app shows artifacts, stable slots, diagnostics and movement stats, but not a polished separate match report view.
-- `[ ]` Ball tracking, possession, passes, event review, season aggregation and background jobs are not implemented.
+- `[x]` Team assignment: automatic Team A/B assignment, `team_clusters.json`, explicit `team_config.json`, Team A/B lock/review, stable-slot team correction, ignore/referee/false-positive review, team sanity diagnostics and `team_stats.json` exist. Torso-color clustering remains implementation evidence/debug, not a required user workflow.
+- `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`) exists with conservative anti-switch logic, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
+- `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; sprint thresholds are not done.
+- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, quality diagnostics and movement/player stats; separate `/matches/:matchId/report` exists, but polished published report UX is still pending.
+- `[ ]` Ball tracking, possession, passes, event review, season/team aggregation and background jobs are not implemented; player-level cross-match profile MVP exists.
 
 ---
 
@@ -266,108 +266,115 @@ Jako developer chcę mieć metryki diagnostyczne, żeby porównywać modele/trac
 
 # Milestone 4 — Team assignment and non-player filtering
 
-**Status:** `[~]` automatic team assignment and review exist, but explicit team config/sampling workflow is incomplete.
+**Status:** `[x]` closed for MVP. Team A/B assignment, review and diagnostics are implemented; manual color sampling is not required for the product flow.
 
 ## Cel
 
-Przypisać tracklety do drużyn na podstawie kolorów/stref/logiki oraz skutecznie odfiltrować sędziego, rezerwowych i osoby spoza gry.
+Przypisać stabilne sloty/tracklety do `Team A` albo `Team B`, dać użytkownikowi prostą korektę i nie liczyć obiektów oznaczonych jako `unknown`, `ignore`, `referee` albo `false_positive`.
+
+Kolor koszulki/znacznika jest tylko automatycznym sygnałem pomocniczym po stronie backendu. Użytkownik nie powinien musieć rozumieć klastrów kolorów ani ręcznie wybierać próbek kolorów, jeśli automatyczny Team A/B działa.
 
 ## User stories
 
-### US4.1 — Definicja kolorów drużyn
-Jako użytkownik chcę wskazać kolory drużyn na klatce albo wybrać przykładowych zawodników, żeby system klasyfikował drużyny.
+### US4.1 — Team A/B match setup
+Jako użytkownik chcę wybrać drużyny z rejestru `/teams` dla `Team A` i `Team B`, żeby analiza i statystyki miały czytelne nazwy drużyn.
 
-### US4.2 — Team assignment per detection/tracklet
-Jako system chcę przypisać `team_candidate` do detekcji i trackletów, żeby później liczyć statystyki drużynowe.
+### US4.2 — Automatic team assignment
+Jako system chcę automatycznie przypisać stable slot/tracklet do `Team A`, `Team B` albo `unknown`, żeby statystyki drużynowe nie wymagały ręcznego klikania każdego zawodnika.
 
-### US4.3 — Unknown/ignore bucket
-Jako system chcę oznaczać obiekty jako `unknown` albo `ignore_non_player`, żeby sędzia/rezerwowi nie byli liczeni jako gracze.
+### US4.3 — Team review and correction
+Jako użytkownik chcę móc zamienić Team A/B lub poprawić drużynę pojedynczego stable slotu, żeby naprawić błędny automatyczny assignment.
 
-### US4.4 — Team count sanity check
+### US4.4 — Unknown/ignore bucket
+Jako system chcę oznaczać obiekty jako `unknown`, `ignore`, `referee` albo `false_positive`, żeby sędzia/rezerwowi/fałszywe detekcje nie były liczone jako gracze.
+
+### US4.5 — Team count sanity check
 Jako użytkownik chcę widzieć alert, gdy system wykrywa więcej niż 7 zawodników jednej drużyny na boisku.
-
-### US4.5 — Goalkeeper handling
-Jako użytkownik chcę móc oznaczyć bramkarza jako rolę w drużynie, nawet jeśli ma inny kolor koszulki.
 
 ## Acceptance criteria
 
-- `[~]` UI pozwala zdefiniować kolory drużyn w metadanych meczu, ale nie ma jeszcze pełnego sample-pickera zawodników.
-- `[ ]` Backend nie zapisuje jeszcze dedykowanego `team_config.json`.
-- `[~]` Tracklety/stable slots zawierają `team_label` i `team_confidence`; raw `tracks.json` nie jest głównym miejscem dla team assignment.
-- `[~]` Istnieje `unknown` oraz review `ignore/referee/false_positive` na stable slots/assignments, ale non-player filtering wymaga dalszego utwardzenia.
+- `[x]` UI ma osobny rejestr `/teams` dla drużyn/rosterów oraz wybór Team A/B przy meczu.
+- `[x]` Backend zapisuje dedykowane `team_config.json`, `team_clusters.json` i `team_stats.json`.
+- `[x]` Tracklety/stable slots zawierają `team_label`, `team_confidence`, `team_id` i `team_name`; raw `tracks.json` nie jest głównym miejscem dla team assignment.
+- `[x]` UI pozwala zamienić Team A/B, przypisać roster team do labela A/B i zablokować zweryfikowany `team_config`.
+- `[x]` UI pozwala poprawić team pojedynczego stable slotu oraz oznaczyć go jako `ignore`, `referee` albo `false_positive`.
 - `[x]` Raporty diagnostyczne zawierają liczby A/B/active per frame (`frame_detection_counts.json`, HUD overlayu).
-- `[~]` UI pokazuje diagnostykę liczby slotów i team counts, ale nie ma jeszcze twardego alertu przekroczenia 7 przez zadany próg.
-- `[~]` Goalkeeper handling działa częściowo przez color outliers w team clusteringu, ale nie ma jeszcze pełnego UI do oznaczania roli bramkarza.
+- `[x]` UI pokazuje team stats, unknown stable players i twardy alert `Team over-cap`, gdy raport wykryje więcej niż 7 aktywnych obiektów w jednej drużynie.
+- `[x]` Torso-color clustering działa jako automatyczna evidence/debug layer; ręczny sample-picker kolorów nie jest wymagany do zamknięcia MVP.
+- `[x]` Bramkarz w innym kolorze jest obsługiwany praktycznie przez stable-slot team correction albo `unknown`/review; osobny goalkeeper-role UI nie jest wymagany w MVP.
 
 ## Do not do yet
 
 - Nie implementuj rozpoznawania numerów koszulek.
 - Nie implementuj face recognition.
+- Nie dodawaj ręcznego color sample-pickera jako domyślnego workflow, dopóki Team A/B review wystarcza.
 
 ## Suggested agent prompt
 
-> Implementuj Milestone 4 z `docs/IMPLEMENTATION_PLAN.md`: team assignment, ignore bucket i sanity check liczby graczy. Nie dodawaj jeszcze player identity resolvera ani ball trackingu.
+> Milestone 4 jest zamknięty dla MVP. Kontynuuj od Milestone 5/6/7 zależnie od celu: identity assignment do realnych zawodników, tracking-only player stats albo czytelny Match Report UI. Nie dodawaj jeszcze ball trackingu.
 
 ---
 
 # Milestone 5 — Identity resolver: tracklet -> player -> stint
 
-**Status:** `[~]` re-scoped in practice to anonymous stable slot/stint resolver first; real roster `player_id` mapping remains later work.
+**Status:** `[x]` closed for MVP as stable-slot/stint identity review. Anonymous resolver remains automatic, and the user can now map stable slots to real roster `player_id`.
 
 ## Cel
 
-Dodać panel, w którym użytkownik może przypisać jeden lub wiele trackletów do realnego zawodnika oraz oznaczyć okresy gry. To jest najważniejszy krok do wiarygodnych statystyk per zawodnik.
+Dodać panel, w którym użytkownik może przypisać stabilny slot/stint (`A01`, `B04`, itd.) do realnego zawodnika z rosteru. Raw tracklety pozostają debugiem; główny workflow identity działa na konserwatywnych stable slots, bo to jest warstwa używana później do statystyk personalnych.
 
 ## User stories
 
 ### US5.1 — Roster meczu
 Jako użytkownik chcę utworzyć listę zawodników drużyny na dany mecz, w tym gości/najemników, żeby przypisywać tracklety do realnych osób.
 
-### US5.2 — Assign tracklet to player
-Jako użytkownik chcę przypisać tracklet do zawodnika, żeby statystyki były liczone per realny zawodnik.
+### US5.2 — Assign stable slot/stint to player
+Jako użytkownik chcę przypisać stable slot/stint do zawodnika, żeby późniejsze statystyki mogły być agregowane po realnym `player_id`.
 
-### US5.3 — Merge tracklets
-Jako użytkownik chcę połączyć wiele trackletów w jednego zawodnika, gdy tracker zgubił ID albo zawodnik wrócił po zmianie.
+### US5.3 — Stable slot as suggested assignment
+Jako użytkownik chcę dostać automatyczny stable slot jako propozycję identity, żeby nie musieć ręcznie łączyć dziesiątek raw trackletów.
 
-### US5.4 — Split tracklet
-Jako użytkownik chcę przeciąć tracklet w konkretnym czasie, gdy tracker zamienił ID między dwoma osobami.
+### US5.4 — Stints
+Jako użytkownik chcę widzieć stinty stable slotu, żeby rozumieć okresy gry i przygotować późniejsze przypisania per wejście/zejście.
 
-### US5.5 — Stints
-Jako użytkownik chcę oznaczyć okresy gry zawodnika, żeby system liczył realny czas na boisku mimo dynamicznych zmian.
+### US5.5 — Conflict detection
+Jako użytkownik chcę widzieć konflikt, gdy stable slot z Team A zostanie przypisany do zawodnika Team B, żeby poprawić błąd team assignment albo identity assignment.
 
-### US5.6 — Conflict detection
-Jako użytkownik chcę widzieć konflikty, np. jeden zawodnik przypisany do dwóch trackletów jednocześnie, żeby poprawić błędy.
-
-### US5.7 — Suggested assignments
-Jako użytkownik chcę dostać automatyczne propozycje przypisań, ale z możliwością ręcznego zatwierdzenia.
+### US5.6 — Legacy raw tracklet debug
+Jako developer chcę zachować stary raw tracklet assignment w debug details, żeby analizować przypadki, których stable resolver nie rozwiązał.
 
 ## Acceptance criteria
 
-- `[~]` Istnieją struktury `PlayerPayload`, assignment docs oraz stable slot/stint docs; nie ma jeszcze pełnego finalnego modelu realnego `Player/Stint/IdentityAssignment`.
-- `[~]` UI ma roster/metadane drużyn w meczu, ale roster nie jest jeszcze pełnym workflow identity.
-- `[x]` UI ma listę trackletów i assignment panel w trybie debug/developer.
-- `[x]` Użytkownik może przypisać tracklet do zawodnika w manual assignment flow.
-- `[~]` Użytkownik może mapować wiele trackletów do tego samego zawodnika przez assignmenty, ale nie ma jeszcze ergonomicznego merge/split review.
+- `[x]` Istnieją struktury `PlayerPayload`, roster team docs, stable slot/stint docs oraz formalny `player_identity_assignments.json`.
+- `[x]` UI ma osobny rejestr drużyn/rosterów pod `/teams`; mecz trzyma snapshot wybranych drużyn i zawodników.
+- `[x]` UI pozwala przypisać wybrany stable slot do realnego zawodnika z rosteru meczu.
+- `[x]` Backend ma endpointy `GET/PUT /api/matches/{match_id}/player-identity`.
+- `[x]` Częściowe przypisanie jest poprawnym workflow: użytkownik może przypisać tylko swoją drużynę, a przeciwnik może zostać anonimowy.
+- `[x]` `player_identity_assignments.json` zapisuje `stable_subject_id`, `stable_player_id`, opcjonalne `stint_id`, status, `player_id`, dane zawodnika i `review_warnings`.
+- `[x]` Dokument rozwija przypisania do `expanded_stint_assignments`, żeby późniejsza agregacja mogła działać po stintach.
+- `[x]` UI ma listę trackletów i assignment panel wyłącznie w trybie debug/developer.
 - `[x]` Użytkownik może oznaczyć tracklet/stable slot jako `false_positive`, `referee`, `ignore` lub podobny status.
-- `[~]` Backend zapisuje assignmenty oraz stable slots/stints (`identity_assignments.json`, `stable_players.json`, `global_identity.json`); osobny `stints.json` nie istnieje.
-- `[~]` Backend blokuje agresywne identity/team switche i raportuje konflikty/ambiguous, ale nie wykrywa jeszcze pełnych konfliktów realnego `player_id`.
-- `[~]` UI pokazuje risky/blocked/ambiguous diagnostics, ale nie blokuje jeszcze finalnych statystyk realnego `player_id`.
-- `[~]` Suggested assignments istnieją jako automatyczne anonimowe stable slots `A##/B##`, nie jako propozycje realnych osób z rosteru.
+- `[x]` Backend zapisuje assignmenty, stable slots/stints (`player_identity_assignments.json`, `stable_players.json`, `global_identity.json`) i dołącza je do `match_package.json`.
+- `[x]` Backend wykrywa team mismatch między stable slotem a przypisanym zawodnikiem i zapisuje `review_warnings`.
+- `[x]` UI pokazuje risky/blocked/ambiguous diagnostics oraz identity warning dla konfliktów roster/team.
+- `[x]` Suggested assignments istnieją jako automatyczne anonimowe stable slots `A##/B##`, które użytkownik zatwierdza przez roster mapping.
 
 ## Do not do yet
 
 - Nie implementuj jeszcze podań ani posiadania.
 - Nie zakładaj, że raw tracker ID jest stabilne przez cały mecz.
+- Nie buduj jeszcze sezonowej agregacji po `player_id`; to jest Milestone 8.
+- Nie rób merge/split raw trackletów jako głównego workflow, dopóki stable resolver działa wystarczająco dobrze.
 
 ## Suggested agent prompt
 
-> Implementuj Milestone 5 z `docs/IMPLEMENTATION_PLAN.md`: identity resolver, roster, przypisywanie trackletów do zawodników, stinty i conflict detection. To ma być panel korekty po meczu, nie automatyczna magia.
+> Milestone 5 jest zamknięty dla MVP. Kolejny krok to Milestone 6/7 dla raportu albo Milestone 8, jeśli chcesz użyć `player_identity_assignments.json` do `resolved_player_stats.json` i profilu `/players/:playerId`.
 
 ---
 
 # Milestone 6 — Player stats from tracking only
 
-**Status:** `[~]` first tracking-only stats exist per stable slot; final player/team stats contract is not complete.
+**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, per-player heatmaps and team stats exist, while sprint thresholds are still pending.
 
 ## Cel
 
@@ -385,7 +392,7 @@ Jako użytkownik chcę zobaczyć heatmapę zawodnika dla meczu, żeby ocenić je
 Jako użytkownik chcę zobaczyć dystans zawodnika, liczony po wygładzonej trajektorii, żeby uniknąć zawyżenia przez jitter trackingu.
 
 ### US6.4 — Speed and sprints
-Jako użytkownik chcę zobaczyć prędkość maksymalną i sprinty, żeby ocenić intensywność gry.
+Jako użytkownik chcę zobaczyć defensywną prędkość szczytową (`peak_sustained_speed`) i sprinty, żeby ocenić intensywność gry bez zawyżania przez jitter bboxów.
 
 ### US6.5 — Average position
 Jako użytkownik chcę zobaczyć średnią pozycję zawodnika, żeby ocenić jego rolę na boisku.
@@ -395,12 +402,15 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 
 ## Acceptance criteria
 
-- `[~]` Statystyki są liczone po stable slot/stint (`A01/B01`), nie po raw `tracker_id`; realny `player_id` pozostaje kolejnym krokiem.
+- `[x]` Statystyki są liczone po stable slot/stint (`A01/B01`), nie po raw `tracker_id`; realny `player_id` pozostaje kolejnym krokiem.
 - `[x]` Dystans jest liczony z pozycji w metrach po smoothingu/quality gates i z osobnym `estimated_gap_distance_m`.
-- `[~]` Backend zapisuje `movement_stats.json`, ale nie finalny `player_stats.json`.
-- `[ ]` Backend nie zapisuje jeszcze `team_stats.json`.
+- `[x]` Backend zapisuje `movement_stats.json` oraz formalny tracking-only `player_stats.json`.
+- `[x]` Backend zapisuje `player_heatmaps.json` oraz per-slot PNG w `player_heatmaps/`.
+- `[x]` Backend zapisuje podstawowy tracking-only `team_stats.json`.
+- `[x]` `top_speed_*` jest kompatybilnym aliasem dla `peak_sustained_speed_*`, a nie surowym maksimum z pojedynczego segmentu.
+- `[x]` Statystyki prędkości zawierają `speed_quality`, `raw_segment_top_speed_*` i liczbę okien/odrzuconych segmentów.
 - `[x]` UI pokazuje tabelę stabilnych zawodników i podstawowe statystyki ruchu.
-- `[ ]` UI nie pokazuje jeszcze heatmapy per zawodnik.
+- `[x]` UI pokazuje heatmapę wybranego stable slotu w player detail.
 - `[ ]` UI nie pozwala jeszcze ustawić progów sprintów/high intensity.
 - `[x]` Raport/artefakty jasno rozróżniają tracking-only stats i brak piłki.
 - `[x]` Overlay debug pokazuje live speed/distance przy bboxie zawodnika.
@@ -425,7 +435,7 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 
 # Milestone 7 — Match report UI
 
-**Status:** `[~]` artifact/stable review UI exists; polished separate match report page is still pending.
+**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, and first `/matches/:matchId/report` page exists; polished published report UX is still pending.
 
 ## Cel
 
@@ -450,12 +460,18 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 
 ## Acceptance criteria
 
-- `[~]` Client ma sekcje raportowo-review dla meczu, ale nie ma jeszcze osobnego, dopracowanego widoku Match Report.
+- `[x]` Client ma osobny route `/matches/:matchId/report` dla czytelnego raportu pojedynczego meczu.
+- `[x]` Match Report pokazuje summary, stable overlay, team comparison, real assigned players i wszystkich stable zawodników w meczu.
+- `[x]` Match Report rozróżnia anonimowe stable sloty meczowe od realnych `player_id` i linkuje przypisanych zawodników do `/players/:playerId`.
+- `[~]` Client ma sekcje raportowo-review dla meczu i osobny `/teams` registry; polished published report UX wymaga jeszcze dopracowania.
 - `[x]` Komponenty UI są rozdzielone od transformacji danych w nowych komponentach.
 - `[x]` Zwykłe style są w CSS, nie jako inline CSS.
 - `[x]` API client jest osobno od komponentów.
+- `[x]` UI pokazuje analizę runów, metryki jakości trackingu, low-visible frames, suspicious tracklets i blocked switches.
 - `[~]` UI pokazuje diagnostykę braków/niepewności, ale statusy brakujących kroków wymagają uporządkowania productowego.
 - `[x]` UI ma artifact browser dla overlay video, JSON i debug details.
+- `[x]` Legacy identity candidates oraz raw tracklet assignment nie są już domyślnym workflow i są schowane w developer debug.
+- `[ ]` Raport nie ma jeszcze docelowego układu eksportu/share i widoku publicznego bez admin panelu.
 
 ## Do not do yet
 
@@ -468,13 +484,23 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 
 ---
 
-# Milestone 8 — Season storage and aggregation
+# Milestone 8 — Player profiles and cross-match aggregation
 
-**Status:** `[~]` local publish/package persistence exists; real season/roster aggregation is not implemented.
+**Status:** `[~]` local team registry, match-level roster assignment, `resolved_player_stats.json` and `/players/:playerId` profile aggregation exist; season dashboard/team season stats are not implemented.
 
 ## Cel
 
-Zacząć gromadzić statystyki zawodników i drużyn między meczami.
+Zacząć gromadzić statystyki zawodników i drużyn między meczami na podstawie trwałego `player_id` z lokalnego rosteru. To nie jest system logowania ani prywatny portal gracza: profile zawodników są lokalnym/publicznym widokiem danych przypisanych w aplikacji.
+
+Docelowy model:
+
+```text
+team roster player_id -> match stable slot/stint -> resolved player stats per match -> /players/:playerId aggregate
+```
+
+Ważne doprecyzowanie: nie wymagamy przypisania obu drużyn. Typowy workflow może polegać na przypisaniu tylko własnej drużyny, a przeciwnik pozostaje anonimowy jako stable slots/stints.
+
+Najważniejsza zasada: zawodnik pojawia się w agregacji tylko w tych meczach, w których stable slot/stint został przypisany do jego `player_id`.
 
 ## User stories
 
@@ -493,22 +519,43 @@ Jako użytkownik chcę widzieć średnie drużynowe per sezon.
 ### US8.5 — Recompute stats
 Jako użytkownik chcę przeliczyć statystyki sezonowe po poprawieniu identity assignments w meczu.
 
+### US8.6 — Player profile across matches, no auth
+Jako użytkownik chcę wejść w profil zawodnika, np. `/players/:playerId`, i zobaczyć jego sumaryczne statystyki oraz listę meczów, w których został przypisany do stable slotu/stintu.
+
+### US8.7 — Player match breakdown
+Jako użytkownik chcę na profilu zawodnika zobaczyć statystyki per mecz: czas gry, dystans, peak sustained speed, heatmapę/pozycje i jakość danych, żeby porównać występy.
+
+### US8.8 — Match roster assignments as source
+Jako system chcę agregować statystyki wyłącznie z zatwierdzonych przypisań `stable_subject_id/stint -> player_id`, żeby nie mieszać anonimowych slotów `A03/B05` z realnymi zawodnikami.
+
 ## Acceptance criteria
 
-- `[~]` Istnieje lokalna persystencja/publish package w SQLite dla opublikowanych meczów i stable players, ale nie pełny roster/sezon.
+- `[~]` Istnieje lokalny rejestr `/teams` zapisany w JSON oraz persystencja/publish package w SQLite dla opublikowanych meczów i stable players, ale nie pełny roster/sezon.
 - `[x]` Startowa lokalna warstwa SQLite/JSON package istnieje bez ciężkiej infrastruktury.
-- `[ ]` Sezonowe statystyki z zatwierdzonych meczów nie są jeszcze liczone.
-- `[ ]` UI nie pokazuje jeszcze profilu zawodnika przez wiele meczów.
+- `[x]` Istnieje artefakt per mecz `player_identity_assignments.json`, mapujący `stable_subject_id`/stint na realny `player_id` z rosteru.
+- `[x]` Istnieje artefakt per mecz `resolved_player_stats.json`, z tracking-only statystykami po realnym `player_id`.
+- `[x]` API ma `GET /api/matches/{match_id}/resolved-player-stats`, a zapis player identity automatycznie przelicza `resolved_player_stats.json`.
+- `[x]` Agregator potrafi zebrać wszystkie mecze, w których występuje dany `player_id`, i policzyć sumy/średnie: mecze, czas gry, dystans, observed/estimated distance, peak sustained speed i jakość danych.
+- `[x]` API ma `GET /api/players/{player_id}/stats` dla tracking-only profilu zawodnika.
+- `[x]` UI ma route `/players/:playerId` pokazujący profil zawodnika bez logowania.
+- `[x]` Profil zawodnika pokazuje summary across matches oraz tabelę per match.
+- `[x]` Profil zawodnika pokazuje tylko dane z meczów, w których ten `player_id` został jawnie przypisany do stable slotu/stintu.
+- `[x]` Profil zawodnika i agregator nie traktują nieprzypisanych slotów przeciwnika jako brakującej pracy; to poprawny anonimowy stan.
+- `[x]` Profil zawodnika rozróżnia `stable_player_id` z meczu od realnego `player_id` z rosteru.
+- `[ ]` Profil zawodnika nie agreguje jeszcze heatmapy sezonowej/łącznej.
+- `[ ]` Nie ma jeszcze sezonowego dashboardu drużyny ani team season stats.
 - `[~]` Mecze mają statusy typu `draft/uploaded/calibrated/analyzed/reviewed/published`, ale nie pełny workflow `needs_review/approved`.
 
 ## Do not do yet
 
 - Nie rób cloud multi-tenant.
-- Nie rób skomplikowanego auth.
+- Nie rób logowania ani prywatnych kont graczy.
+- Nie rób uprawnień typu "gracz widzi tylko siebie"; profil jest lokalnym/publicznym widokiem po `player_id`.
+- Nie agreguj anonimowych slotów `A03/B05` jako realnych zawodników bez jawnego assignmentu.
 
 ## Suggested agent prompt
 
-> Implementuj Milestone 8 z `docs/IMPLEMENTATION_PLAN.md`: lokalny roster, profile zawodników, status meczu i sezonową agregację trackingowych statystyk. Nie dodawaj jeszcze eventów piłkarskich zależnych od piłki.
+> Implementuj Milestone 8 z `docs/IMPLEMENTATION_PLAN.md`: lokalny roster, mapping stable slot/stint do realnego `player_id`, `resolved_player_stats.json` per mecz oraz publiczny/lokalny profil `/players/:playerId` z agregacją tracking-only statystyk przez mecze. Nie dodawaj logowania, uprawnień ani eventów piłkarskich zależnych od piłki.
 
 ---
 
@@ -745,7 +792,7 @@ Aplikację można uznać za użyteczne MVP dopiero, gdy:
 - `[x]` widzi tracklety,
 - `[~]` przypisuje tracklety do zawodników; działa manual/debug flow, ale docelowy realny `player_id -> stint` nie jest gotowy,
 - `[x]` system liczy czas gry dla stable slotów,
-- `[ ]` system generuje heatmapę per zawodnik,
+- `[x]` system generuje heatmapę per zawodnik,
 - `[x]` system liczy dystans z wygładzeniem dla stable slotów,
 - `[ ]` system liczy sprinty/progi intensywności,
 - `[~]` użytkownik widzi raport/diagnostykę meczu, ale nie pełny polished Match Report,
