@@ -62,3 +62,12 @@ class AnalyzePayload(BaseModel):
     yolo_imgsz: int = 1920
     yolo_tracker: str = "centroid_high_recall"
     yolo_device: str | None = None  # None/empty = auto, "cpu", or "0"
+
+
+class BallAnalyzePayload(BaseModel):
+    max_seconds: float = 3.0
+    frame_stride: int = 4
+    yolo_model: str = "yolov8n.pt"
+    yolo_conf: float = 0.05
+    yolo_imgsz: int = 960
+    yolo_device: str | None = None

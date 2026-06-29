@@ -1525,7 +1525,17 @@ def build_movement_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
         "sprint_time_sec": round(sum(float(((item.get("movement_stats") or {}).get("intensity") or {}).get("sprint_time_sec") or 0.0) for item in players), 2),
         "sprint_distance_m": round(sum(float(((item.get("movement_stats") or {}).get("intensity") or {}).get("sprint_distance_m") or 0.0) for item in players), 2),
         "max_sprint_speed_kmh": round(max([float(((item.get("movement_stats") or {}).get("intensity") or {}).get("max_sprint_speed_kmh") or 0.0) for item in players] or [0.0]), 2),
+        "sprint_candidate_count": sum(int(((item.get("movement_stats") or {}).get("intensity") or {}).get("sprint_candidate_count") or 0) for item in players),
+        "rejected_sprint_candidate_count": sum(int(((item.get("movement_stats") or {}).get("intensity") or {}).get("rejected_sprint_candidate_count") or 0) for item in players),
+        "best_sprint_candidate_speed_kmh": round(max([float(((item.get("movement_stats") or {}).get("intensity") or {}).get("best_sprint_candidate_speed_kmh") or 0.0) for item in players] or [0.0]), 2),
+        "best_sprint_candidate_duration_sec": round(max([float(((item.get("movement_stats") or {}).get("intensity") or {}).get("best_sprint_candidate_duration_sec") or 0.0) for item in players] or [0.0]), 3),
     }
+    summary["best_rejected_sprint_candidate"] = _best_sprint_candidate_from_rows(
+        [
+            ((item.get("movement_stats") or {}).get("intensity") or {}).get("best_rejected_sprint_candidate")
+            for item in players
+        ]
+    )
     summary["top_speed_kmh"] = summary["peak_sustained_speed_kmh"]
     return {
         "schema_version": "0.1.0",
@@ -1604,6 +1614,14 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
                 "longest_sprint_distance_m": _stats_nested_float(stats, "intensity", "longest_sprint_distance_m"),
                 "max_sprint_speed_kmh": _stats_nested_float(stats, "intensity", "max_sprint_speed_kmh"),
                 "trusted_speed_segments": _stats_nested_int(stats, "intensity", "trusted_speed_segments"),
+                "sprint_candidate_count": _stats_nested_int(stats, "intensity", "sprint_candidate_count"),
+                "rejected_sprint_candidate_count": _stats_nested_int(stats, "intensity", "rejected_sprint_candidate_count"),
+                "best_sprint_candidate_speed_kmh": _stats_nested_float(stats, "intensity", "best_sprint_candidate_speed_kmh"),
+                "best_sprint_candidate_duration_sec": _stats_nested_float(stats, "intensity", "best_sprint_candidate_duration_sec"),
+                "best_sprint_candidate_distance_m": _stats_nested_float(stats, "intensity", "best_sprint_candidate_distance_m"),
+                "best_sprint_candidate_reason": str(_stats_record(stats, "intensity").get("best_sprint_candidate_reason") or "none"),
+                "best_rejected_sprint_candidate": _stats_nested_record(stats, "intensity", "best_rejected_sprint_candidate"),
+                "rejected_sprint_candidates": _stats_record(stats, "intensity").get("rejected_sprint_candidates") or [],
             },
             "frames": {
                 "active_frames": int(stats.get("active_frames") or 0),
@@ -1648,6 +1666,11 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
                 "sprint_distance_m": 0.0,
                 "longest_sprint_distance_m": 0.0,
                 "max_sprint_speed_kmh": 0.0,
+                "sprint_candidate_count": 0,
+                "rejected_sprint_candidate_count": 0,
+                "best_sprint_candidate_speed_kmh": 0.0,
+                "best_sprint_candidate_duration_sec": 0.0,
+                "best_rejected_sprint_candidate": {},
                 "players_low_quality": 0,
                 "players_medium_quality": 0,
                 "players_high_quality": 0,
@@ -1666,6 +1689,22 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
         team_row["sprint_count"] += row["intensity"]["sprint_count"]
         team_row["sprint_time_sec"] += row["intensity"]["sprint_time_sec"]
         team_row["sprint_distance_m"] += row["intensity"]["sprint_distance_m"]
+        team_row["sprint_candidate_count"] += row["intensity"]["sprint_candidate_count"]
+        team_row["rejected_sprint_candidate_count"] += row["intensity"]["rejected_sprint_candidate_count"]
+        team_row["best_sprint_candidate_speed_kmh"] = max(
+            float(team_row["best_sprint_candidate_speed_kmh"]),
+            row["intensity"]["best_sprint_candidate_speed_kmh"],
+        )
+        team_row["best_sprint_candidate_duration_sec"] = max(
+            float(team_row["best_sprint_candidate_duration_sec"]),
+            row["intensity"]["best_sprint_candidate_duration_sec"],
+        )
+        team_row["best_rejected_sprint_candidate"] = _best_sprint_candidate_from_rows(
+            [
+                team_row.get("best_rejected_sprint_candidate") or {},
+                row["intensity"].get("best_rejected_sprint_candidate") or {},
+            ]
+        )
         team_row["longest_sprint_distance_m"] = max(
             float(team_row["longest_sprint_distance_m"]),
             row["intensity"]["longest_sprint_distance_m"],
@@ -1700,6 +1739,8 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
             "sprint_distance_m",
             "longest_sprint_distance_m",
             "max_sprint_speed_kmh",
+            "best_sprint_candidate_speed_kmh",
+            "best_sprint_candidate_duration_sec",
         ]:
             team_row[key] = round(float(team_row[key]), 2)
 
@@ -1728,6 +1769,13 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
         "sprint_distance_m": round(sum(row["intensity"]["sprint_distance_m"] for row in player_rows), 2),
         "longest_sprint_distance_m": round(max([row["intensity"]["longest_sprint_distance_m"] for row in player_rows] or [0.0]), 2),
         "max_sprint_speed_kmh": round(max([row["intensity"]["max_sprint_speed_kmh"] for row in player_rows] or [0.0]), 2),
+        "sprint_candidate_count": sum(row["intensity"]["sprint_candidate_count"] for row in player_rows),
+        "rejected_sprint_candidate_count": sum(row["intensity"]["rejected_sprint_candidate_count"] for row in player_rows),
+        "best_sprint_candidate_speed_kmh": round(max([row["intensity"]["best_sprint_candidate_speed_kmh"] for row in player_rows] or [0.0]), 2),
+        "best_sprint_candidate_duration_sec": round(max([row["intensity"]["best_sprint_candidate_duration_sec"] for row in player_rows] or [0.0]), 3),
+        "best_rejected_sprint_candidate": _best_sprint_candidate_from_rows(
+            [row["intensity"].get("best_rejected_sprint_candidate") or {} for row in player_rows]
+        ),
         "players_with_estimated_distance": sum(
             1 for row in player_rows if row["distance"]["estimated_short_gap_distance_m"] > 0
         ),
@@ -1846,6 +1894,11 @@ def build_team_stats_document(player_stats: dict[str, Any], team_config: dict[st
                 "sprint_distance_m": round(float(team.get("sprint_distance_m") or 0.0), 2),
                 "longest_sprint_distance_m": round(float(team.get("longest_sprint_distance_m") or 0.0), 2),
                 "max_sprint_speed_kmh": round(float(team.get("max_sprint_speed_kmh") or 0.0), 2),
+                "sprint_candidate_count": int(team.get("sprint_candidate_count") or 0),
+                "rejected_sprint_candidate_count": int(team.get("rejected_sprint_candidate_count") or 0),
+                "best_sprint_candidate_speed_kmh": round(float(team.get("best_sprint_candidate_speed_kmh") or 0.0), 2),
+                "best_sprint_candidate_duration_sec": round(float(team.get("best_sprint_candidate_duration_sec") or 0.0), 3),
+                "best_rejected_sprint_candidate": team.get("best_rejected_sprint_candidate") or {},
                 "peak_sustained_speed_kmh": round(
                     float(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh") or 0.0),
                     2,
@@ -1886,6 +1939,13 @@ def build_team_stats_document(player_stats: dict[str, Any], team_config: dict[st
             "sprint_distance_m": round(sum(float(team.get("sprint_distance_m") or 0.0) for team in teams), 2),
             "longest_sprint_distance_m": round(max([float(team.get("longest_sprint_distance_m") or 0.0) for team in teams] or [0.0]), 2),
             "max_sprint_speed_kmh": round(max([float(team.get("max_sprint_speed_kmh") or 0.0) for team in teams] or [0.0]), 2),
+            "sprint_candidate_count": sum(int(team.get("sprint_candidate_count") or 0) for team in teams),
+            "rejected_sprint_candidate_count": sum(int(team.get("rejected_sprint_candidate_count") or 0) for team in teams),
+            "best_sprint_candidate_speed_kmh": round(max([float(team.get("best_sprint_candidate_speed_kmh") or 0.0) for team in teams] or [0.0]), 2),
+            "best_sprint_candidate_duration_sec": round(max([float(team.get("best_sprint_candidate_duration_sec") or 0.0) for team in teams] or [0.0]), 3),
+            "best_rejected_sprint_candidate": _best_sprint_candidate_from_rows(
+                [team.get("best_rejected_sprint_candidate") or {} for team in teams]
+            ),
             "tracking_only": True,
         },
         "teams": sorted(teams, key=lambda item: str(item.get("team_label") or "")),
@@ -2076,6 +2136,38 @@ def _stats_nested_float(stats: dict[str, Any], group: str, key: str, fallback: f
 def _stats_nested_int(stats: dict[str, Any], group: str, key: str, fallback: int = 0) -> int:
     value = _stats_record(stats, group).get(key)
     return int(value) if isinstance(value, (int, float)) else fallback
+
+
+def _stats_nested_record(stats: dict[str, Any], group: str, key: str) -> dict[str, Any]:
+    return _stats_record(_stats_record(stats, group), key)
+
+
+def _best_sprint_candidate_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    candidates = [
+        row
+        for row in rows
+        if isinstance(row, dict) and float(row.get("max_speed_kmh") or 0.0) > 0.0
+    ]
+    if not candidates:
+        return {}
+    best = max(
+        candidates,
+        key=lambda row: (
+            float(row.get("max_speed_kmh") or 0.0),
+            float(row.get("duration_sec") or 0.0),
+            float(row.get("distance_m") or 0.0),
+        ),
+    )
+    return {
+        "start_frame": int(best.get("start_frame") or 0),
+        "end_frame": int(best.get("end_frame") or 0),
+        "start_time_sec": round(float(best.get("start_time_sec") or 0.0), 3),
+        "end_time_sec": round(float(best.get("end_time_sec") or 0.0), 3),
+        "duration_sec": round(float(best.get("duration_sec") or 0.0), 3),
+        "distance_m": round(float(best.get("distance_m") or 0.0), 2),
+        "max_speed_kmh": round(float(best.get("max_speed_kmh") or 0.0), 2),
+        "reason": str(best.get("reason") or "none"),
+    }
 
 
 def _strip_overlay_positions(stable_doc: dict[str, Any]) -> dict[str, Any]:

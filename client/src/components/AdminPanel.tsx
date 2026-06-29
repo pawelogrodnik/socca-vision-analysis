@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  analyzeBall,
   analyzeMatch,
+  artifactUrl,
   createMatchPackage,
   frameUrl,
   getMatch,
@@ -10,20 +12,30 @@ import {
   savePitch,
   updateMatchMetadata,
 } from '../api';
-import type { AnalysisPayload, Match, MatchMetadataPayload } from '../types';
-import { errorMessage, drawPitchOverlay } from '../lib/helpers';
-import { NewMatchForm } from './NewMatchForm';
-import { MatchList } from './MatchList';
-import { MatchSummary } from './MatchSummary';
-import { MetadataEditor } from './MetadataEditor';
-import { AnalysisForm } from './AnalysisForm';
+import type {
+  AnalysisPayload,
+  BallAnalysisPayload,
+  Match,
+  MatchMetadataPayload,
+} from '../types';
+import { drawPitchOverlay, errorMessage } from '../lib/helpers';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
+import { AnalysisForm } from './AnalysisForm';
 import { AnalysisQualityPanel } from './AnalysisQualityPanel';
-import { TrackletAssignmentPanel } from './TrackletAssignmentPanel';
-import { PublishedDatabasePanel } from './PublishedDatabasePanel';
 import { IdentityCandidatePanel } from '../IdentityCandidatePanel';
+import { MatchList } from './MatchList';
+import { MatchRosterPanel } from './MatchRosterPanel';
+import { MatchSummary } from './MatchSummary';
+import {
+  MatchWorkflowStepper,
+  type WorkflowStep,
+} from './MatchWorkflowStepper';
+import { MetadataEditor } from './MetadataEditor';
+import { NewMatchForm } from './NewMatchForm';
+import { PublishedDatabasePanel } from './PublishedDatabasePanel';
 import { StablePlayersPanel } from './StablePlayersPanel';
 import { TeamConfigPanel } from './TeamConfigPanel';
+import { TrackletAssignmentPanel } from './TrackletAssignmentPanel';
 
 const defaultAnalysis: AnalysisPayload = {
   adapter: 'yolo',
@@ -36,14 +48,120 @@ const defaultAnalysis: AnalysisPayload = {
   yolo_device: null,
 };
 
+const defaultBallAnalysis: BallAnalysisPayload = {
+  max_seconds: 3,
+  frame_stride: 4,
+  yolo_model: 'yolov8n.pt',
+  yolo_conf: 0.05,
+  yolo_imgsz: 960,
+  yolo_device: null,
+};
+
+const localBallModelPath = 'models/best (9).pt';
+
 type Point = [number, number];
+type WorkflowStepId = 'video' | 'analysis' | 'review' | 'publish';
+
+const workflowCopy: Record<
+  WorkflowStepId,
+  { label: string; description: string }
+> = {
+  video: {
+    label: 'Wideo',
+    description: 'dodaj lub wybierz mecz',
+  },
+  analysis: {
+    label: 'Analiza',
+    description: 'boisko + YOLO',
+  },
+  review: {
+    label: 'Review',
+    description: 'zawodnicy i jakosc',
+  },
+  publish: {
+    label: 'Raport',
+    description: 'raport i publikacja',
+  },
+};
+
+function isAnalysisCompleted(match: Match | null): boolean {
+  return match?.analysis_report?.status === 'completed';
+}
+
+function isPublished(match: Match | null): boolean {
+  return Boolean(match?.published_match_id || match?.status === 'published');
+}
+
+function hasPitchConfig(match: Match | null): boolean {
+  return Boolean(match?.pitch_config);
+}
+
+function suggestedStep(match: Match | null): WorkflowStepId {
+  if (!match) return 'video';
+  if (!isAnalysisCompleted(match)) return 'analysis';
+  if (isPublished(match)) return 'publish';
+  return 'review';
+}
+
+function stepStatus(
+  stepId: WorkflowStepId,
+  activeStep: WorkflowStepId,
+  selected: Match | null,
+): WorkflowStep['status'] {
+  if (stepId === activeStep) return 'current';
+  if (stepId === 'video' && selected) return 'done';
+  if (stepId === 'analysis' && isAnalysisCompleted(selected)) return 'done';
+  if (stepId === 'review' && isAnalysisCompleted(selected) && activeStep === 'publish') {
+    return 'done';
+  }
+  if (stepId === 'publish' && isPublished(selected)) return 'done';
+  if ((stepId === 'analysis' && !selected) || (stepId !== 'video' && stepId !== 'analysis' && !isAnalysisCompleted(selected))) {
+    return 'locked';
+  }
+  return 'ready';
+}
+
+function workflowSteps(
+  activeStep: WorkflowStepId,
+  selected: Match | null,
+): WorkflowStep[] {
+  return (Object.keys(workflowCopy) as WorkflowStepId[]).map((stepId) => {
+    const status = stepStatus(stepId, activeStep, selected);
+    return {
+      id: stepId,
+      label: workflowCopy[stepId].label,
+      description: workflowCopy[stepId].description,
+      status,
+      disabled: status === 'locked',
+    };
+  });
+}
+
+function pointsFromPitchConfig(config: unknown): Point[] {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return [];
+  }
+  const points = (config as { image_points?: unknown }).image_points;
+  if (!Array.isArray(points) || points.length !== 4) return [];
+  const parsed = points
+    .map((point) => {
+      if (!Array.isArray(point) || point.length < 2) return null;
+      const x = Number(point[0]);
+      const y = Number(point[1]);
+      return Number.isFinite(x) && Number.isFinite(y) ? ([x, y] as Point) : null;
+    })
+    .filter((point): point is Point => Boolean(point));
+  return parsed.length === 4 ? parsed : [];
+}
 
 export function AdminPanel() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [selected, setSelected] = useState<Match | null>(null);
+  const [activeStep, setActiveStep] = useState<WorkflowStepId>('video');
   const [status, setStatus] = useState('');
   const [analysis, setAnalysis] = useState<AnalysisPayload>(defaultAnalysis);
+  const [ballAnalysis, setBallAnalysis] = useState<BallAnalysisPayload>(defaultBallAnalysis);
   const [frameSecond, setFrameSecond] = useState(1);
   const [frameSrc, setFrameSrc] = useState('');
   const [pitchPoints, setPitchPoints] = useState<Point[]>([]);
@@ -52,12 +170,20 @@ export function AdminPanel() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isBusy = busyAction !== null;
 
-  async function refresh(selectId?: string) {
+  async function refresh(selectId?: string, nextStep?: WorkflowStepId) {
     const items = await listMatches();
     setMatches(items);
     const nextId = selectId || selectedId || items[0]?.id || '';
     setSelectedId(nextId);
-    if (nextId) setSelected(await getMatch(nextId));
+    if (!nextId) {
+      setSelected(null);
+      setActiveStep('video');
+      return;
+    }
+    const nextMatch = await getMatch(nextId);
+    setSelected(nextMatch);
+    setPitchPoints(pointsFromPitchConfig(nextMatch.pitch_config));
+    setActiveStep(nextStep || suggestedStep(nextMatch));
   }
 
   useEffect(() => {
@@ -68,9 +194,18 @@ export function AdminPanel() {
   useEffect(() => {
     if (!selectedId) return;
     getMatch(selectedId)
-      .then(setSelected)
+      .then((match) => {
+        setSelected(match);
+        setPitchPoints(pointsFromPitchConfig(match.pitch_config));
+        setActiveStep(suggestedStep(match));
+      })
       .catch((error) => setStatus(errorMessage(error)));
   }, [selectedId]);
+
+  useEffect(() => {
+    if (activeStep !== 'analysis' || !selectedId) return;
+    setFrameSrc(frameUrl(selectedId, frameSecond));
+  }, [activeStep, selectedId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -89,13 +224,25 @@ export function AdminPanel() {
 
   async function handleCreated(match: Match) {
     setStatus(`Dodano mecz: ${match.title}`);
-    await refresh(match.id);
+    await refresh(match.id, 'analysis');
+  }
+
+  async function selectMatch(matchId: string) {
+    setSelectedId(matchId);
+  }
+
+  async function refreshSelected(nextStep?: WorkflowStepId) {
+    if (!selectedId) return;
+    const match = await getMatch(selectedId);
+    setSelected(match);
+    setPitchPoints(pointsFromPitchConfig(match.pitch_config));
+    if (nextStep) setActiveStep(nextStep);
   }
 
   async function loadFrame() {
     if (!selectedId) return;
     setFrameSrc(frameUrl(selectedId, frameSecond));
-    setPitchPoints([]);
+    setPitchPoints(pointsFromPitchConfig(selected?.pitch_config));
   }
 
   function handleCanvasClick(event: React.MouseEvent<HTMLCanvasElement>) {
@@ -107,14 +254,14 @@ export function AdminPanel() {
     setPitchPoints((points) => [...points, [x, y]]);
   }
 
-  async function persistPitch() {
+  async function savePitchOnly() {
     if (isBusy) return;
     if (!selectedId || pitchPoints.length !== 4) {
-      setStatus('Kliknij dokładnie 4 rogi boiska.');
+      setStatus('Kliknij dokladnie 4 rogi boiska.');
       return;
     }
     setBusyAction('pitch');
-    setStatus('Zapisuję konfigurację boiska...');
+    setStatus('Zapisuje konfiguracje boiska...');
     try {
       await savePitch(selectedId, {
         image_points: pitchPoints,
@@ -124,8 +271,8 @@ export function AdminPanel() {
         calibration_frame_time_sec: frameSecond,
         source: 'manual',
       });
-      setStatus('Zapisano konfigurację boiska 30 x 47.4 m.');
-      setSelected(await getMatch(selectedId));
+      setStatus('Zapisano konfiguracje boiska 30 x 47.4 m.');
+      await refreshSelected('analysis');
     } catch (error) {
       setStatus(errorMessage(error));
     } finally {
@@ -135,14 +282,78 @@ export function AdminPanel() {
 
   async function runAnalysis() {
     if (!selectedId || isBusy) return;
+    if (!hasPitchConfig(selected) && pitchPoints.length !== 4) {
+      setStatus('Najpierw kliknij 4 rogi boiska albo zapisz konfiguracje boiska.');
+      return;
+    }
     setBusyAction('analysis');
     setStatus('Analiza uruchomiona...');
     try {
       await analyzeMatch(selectedId, analysis);
+      setStatus('Analiza zakonczona. Sprawdz stable overlay i przypisania.');
+      await refreshSelected('review');
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function runBallAnalysis() {
+    if (!selectedId || isBusy) return;
+    if (!hasPitchConfig(selected)) {
+      setStatus('Najpierw zapisz konfiguracje boiska.');
+      return;
+    }
+    setBusyAction('ball-analysis');
+    setStatus('Uruchamiam szybki test detekcji pilki...');
+    try {
+      const report = await analyzeBall(selectedId, {
+        ...ballAnalysis,
+        frame_stride: Math.max(1, ballAnalysis.frame_stride),
+        yolo_model: ballAnalysis.yolo_model || analysis.yolo_model,
+        yolo_device: ballAnalysis.yolo_device || analysis.yolo_device,
+      });
+      const summary = report.ball_tracking_summary as
+        | { known_coverage?: number; candidate_count?: number }
+        | undefined;
+      const recommendation = report.ball_quality_recommendation;
+      const coverage = Number(summary?.known_coverage ?? 0) * 100;
+      const candidates = Number(summary?.candidate_count ?? 0);
       setStatus(
-        'Analiza zakończona. Sprawdź stabilnych zawodników i stable overlay.',
+        `Test pilki zakonczony: known coverage ${coverage.toFixed(1)}%, kandydaci ${candidates}, decyzja ${recommendation?.decision || 'n/a'}.`,
       );
-      setSelected(await getMatch(selectedId));
+      await refreshSelected('review');
+    } catch (error) {
+      setStatus(errorMessage(error));
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function savePitchAndRunAnalysis() {
+    if (!selectedId || isBusy) return;
+    const canUseExistingPitch = hasPitchConfig(selected);
+    if (!canUseExistingPitch && pitchPoints.length !== 4) {
+      setStatus('Kliknij 4 rogi boiska przed analiza.');
+      return;
+    }
+    setBusyAction('analysis');
+    setStatus('Zapisuje boisko i uruchamiam analize...');
+    try {
+      if (pitchPoints.length === 4) {
+        await savePitch(selectedId, {
+          image_points: pitchPoints,
+          width_m: 30,
+          length_m: 47.4,
+          pitch_dimensions_m: { width_m: 30, length_m: 47.4 },
+          calibration_frame_time_sec: frameSecond,
+          source: 'manual',
+        });
+      }
+      await analyzeMatch(selectedId, analysis);
+      setStatus('Analiza zakonczona. Sprawdz stable overlay i przypisania.');
+      await refreshSelected('review');
     } catch (error) {
       setStatus(errorMessage(error));
     } finally {
@@ -153,11 +364,11 @@ export function AdminPanel() {
   async function buildPackage() {
     if (!selectedId || isBusy) return;
     setBusyAction('package');
-    setStatus('Generuję publishable match package...');
+    setStatus('Generuje match_package.json...');
     try {
       await createMatchPackage(selectedId);
       setStatus('Wygenerowano match_package.json.');
-      setSelected(await getMatch(selectedId));
+      await refreshSelected('publish');
     } catch (error) {
       setStatus(errorMessage(error));
     } finally {
@@ -168,15 +379,11 @@ export function AdminPanel() {
   async function publishSelected(replace = false) {
     if (!selectedId || isBusy) return;
     setBusyAction('publish');
-    setStatus(
-      replace
-        ? 'Nadpisuję mecz w bazie...'
-        : 'Importuję mecz do bazy SQLite...',
-    );
+    setStatus(replace ? 'Nadpisuje mecz w bazie...' : 'Importuje mecz do SQLite...');
     try {
       const published = await publishLocalMatch(selectedId, replace);
       setStatus(`Mecz opublikowany w bazie jako ${published.id}.`);
-      setSelected(await getMatch(selectedId));
+      await refreshSelected('publish');
     } catch (error) {
       setStatus(errorMessage(error));
     } finally {
@@ -187,12 +394,12 @@ export function AdminPanel() {
   async function saveMetadata(payload: MatchMetadataPayload) {
     if (!selectedId || isBusy) return;
     setBusyAction('metadata');
-    setStatus('Zapisuję metadane meczu...');
+    setStatus('Zapisuje metadane meczu...');
     try {
       const updated = await updateMatchMetadata(selectedId, payload);
       setSelected(updated);
       setStatus('Zapisano metadane meczu.');
-      await refresh(updated.id);
+      await refresh(updated.id, activeStep);
     } catch (error) {
       setStatus(errorMessage(error));
     } finally {
@@ -200,23 +407,55 @@ export function AdminPanel() {
     }
   }
 
-  async function refreshSelected() {
-    if (!selectedId) return;
-    setSelected(await getMatch(selectedId));
+  async function saveRosterTeams(teams: Match['teams']) {
+    if (!selectedId || !selected || isBusy) return;
+    setBusyAction('metadata');
+    setStatus('Zapisuje roster meczu...');
+    try {
+      const updated = await updateMatchMetadata(selectedId, {
+        title: selected.title,
+        match_date: selected.match_date || null,
+        season: selected.season || null,
+        venue: selected.venue || null,
+        format: selected.format || '7v7',
+        status: selected.status || 'uploaded',
+        teams,
+      });
+      setSelected(updated);
+      await refresh(updated.id, activeStep);
+    } catch (error) {
+      setStatus(errorMessage(error));
+      throw error;
+    } finally {
+      setBusyAction(null);
+    }
   }
+
+  function selectStep(stepId: string) {
+    const nextStep = stepId as WorkflowStepId;
+    if (nextStep === 'analysis' && !selected) return;
+    if ((nextStep === 'review' || nextStep === 'publish') && !isAnalysisCompleted(selected)) {
+      return;
+    }
+    setActiveStep(nextStep);
+  }
+
+  const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || hasPitchConfig(selected)));
+  const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
+  const steps = workflowSteps(activeStep, selected);
 
   return (
     <main className='app'>
-      <section className='hero'>
-        <p className='eyebrow'>Local admin panel</p>
-        <h1>Panel dodawania i analizy meczu</h1>
+      <section className='hero compact-hero'>
+        <p className='eyebrow'>Local workflow</p>
+        <h1>Dodawanie i analiza meczu</h1>
         <p>
-          Ten widok jest do lokalnej pracy: upload video, wybor druzyn,
-          kalibracja, analiza i publikacja do SQLite.
+          Wybierz video, skalibruj boisko, uruchom analize, przypisz swoich
+          zawodnikow i opublikuj raport.
         </p>
         <div className='row'>
           <Link to='/'>Public viewer</Link>
-          <Link to='/teams'>Rejestr drużyn</Link>
+          <Link to='/teams'>Rejestr druzyn</Link>
         </div>
       </section>
 
@@ -227,155 +466,492 @@ export function AdminPanel() {
         </p>
       )}
 
-      <div className='grid two'>
-        <section className='card'>
-          <h2>1. Dodaj mecz</h2>
-          <NewMatchForm onCreated={handleCreated} onError={setStatus} />
-        </section>
-        <section className='card'>
-          <h2>2. Wybierz mecz lokalny</h2>
-          <MatchList
-            matches={matches}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
-          {selected && <MatchSummary match={selected} />}
-        </section>
-      </div>
+      <MatchWorkflowStepper steps={steps} onSelect={selectStep} />
 
-      {selected && (
-        <div className='grid'>
-          <section className='card'>
-            <h2>3. Metadane meczu</h2>
-            <MetadataEditor match={selected} onSave={saveMetadata} />
-          </section>
-          <section className='card'>
-            <h2>4. Analiza meczu</h2>
-            <div className='controls'>
-              <label>
-                Sekunda klatki do kalibracji
-                <input
-                  type='number'
-                  value={frameSecond}
-                  min={0}
-                  step={0.5}
-                  onChange={(event) =>
-                    setFrameSecond(Number(event.target.value))
-                  }
-                />
-              </label>
-              <button type='button' onClick={loadFrame} disabled={isBusy}>
-                Załaduj klatkę
+      {activeStep === 'video' && (
+        <section className='card workflow-card'>
+          <div className='row between'>
+            <div>
+              <h2>1. Dodaj lub wybierz video</h2>
+              <p className='muted'>
+                Metadata i roster sa opcjonalne. Najwazniejsze jest video,
+                ktore przejdzie do kalibracji i analizy.
+              </p>
+            </div>
+            {selected && (
+              <button
+                type='button'
+                onClick={() => setActiveStep('analysis')}
+                disabled={isBusy}
+              >
+                Przejdz do analizy
+              </button>
+            )}
+          </div>
+          <div className='grid two workflow-grid'>
+            <div>
+              <h3>Nowe video</h3>
+              <NewMatchForm onCreated={handleCreated} onError={setStatus} />
+            </div>
+            <div>
+              <h3>Istniejace mecze lokalne</h3>
+              <MatchList
+                matches={matches}
+                selectedId={selectedId}
+                onSelect={selectMatch}
+              />
+              {selected && <MatchSummary match={selected} />}
+            </div>
+          </div>
+          {selected && (
+            <MatchRosterPanel
+              match={selected}
+              disabled={isBusy}
+              surface='panel'
+              onSave={saveRosterTeams}
+              onStatus={setStatus}
+            />
+          )}
+          {selected && (
+            <details className='debug-details'>
+              <summary>Opcjonalnie: edytuj metadane wybranego meczu</summary>
+              <MetadataEditor match={selected} onSave={saveMetadata} />
+            </details>
+          )}
+        </section>
+      )}
+
+      {activeStep === 'analysis' && selected && (
+        <section className='card workflow-card'>
+          <div className='row between'>
+            <div>
+              <h2>2. Kalibracja boiska i analiza</h2>
+              <p className='muted'>
+                Kliknij 4 rogi boiska na jednej klatce. Ustawienia YOLO sa
+                domyslne i schowane w zaawansowanych opcjach.
+              </p>
+            </div>
+            <div className='row'>
+              <button type='button' className='secondary' onClick={() => setActiveStep('video')}>
+                Zmien video
               </button>
               <button
                 type='button'
+                onClick={savePitchAndRunAnalysis}
+                disabled={isBusy || !canAnalyze}
+              >
+                {busyAction === 'analysis'
+                  ? 'Analiza w toku...'
+                  : pitchPoints.length === 4
+                    ? 'Zapisz boisko i uruchom analize'
+                    : 'Uruchom analize'}
+              </button>
+            </div>
+          </div>
+          <div className='controls'>
+            <label>
+              Sekunda klatki do kalibracji
+              <input
+                type='number'
+                value={frameSecond}
+                min={0}
+                step={0.5}
+                onChange={(event) => setFrameSecond(Number(event.target.value))}
+              />
+            </label>
+            <div className='row'>
+              <button type='button' onClick={loadFrame} disabled={isBusy}>
+                Zaladuj klatke
+              </button>
+              <button
+                type='button'
+                className='secondary'
                 onClick={() => setPitchPoints([])}
                 disabled={isBusy}
               >
-                Wyczyść punkty
+                Wyczysc punkty
               </button>
-              <button type='button' onClick={persistPitch} disabled={isBusy}>
-                {busyAction === 'pitch' ? 'Zapisuję boisko...' : 'Zapisz boisko'}
+              <button type='button' onClick={savePitchOnly} disabled={isBusy || pitchPoints.length !== 4}>
+                {busyAction === 'pitch' ? 'Zapisuje...' : 'Zapisz boisko'}
               </button>
             </div>
-            <p className='muted'>
-              Kliknij 4 rogi boiska: góra-lewo, góra-prawo, dół-prawo, dół-lewo.
-              Boisko: 30 x 47.4 m. Punkty: {pitchPoints.length}/4.
-            </p>
-            <div className='pitch-canvas-wrap'>
-              <canvas
-                ref={canvasRef}
-                onClick={handleCanvasClick}
-                className='pitch-canvas'
-              />
-            </div>
+          </div>
+          <p className='muted'>
+            Kolejnosc: gora-lewo, gora-prawo, dol-prawo, dol-lewo. Boisko:
+            30 x 47.4 m. Punkty: {pitchPoints.length}/4.
+          </p>
+          <div className='pitch-canvas-wrap workflow-pitch'>
+            <canvas
+              ref={canvasRef}
+              onClick={handleCanvasClick}
+              className='pitch-canvas'
+            />
+          </div>
+          <details className='debug-details'>
+            <summary>Zaawansowane ustawienia analizy</summary>
             <AnalysisForm
               analysis={analysis}
               onChange={setAnalysis}
               onRun={runAnalysis}
               disabled={isBusy}
               isRunning={busyAction === 'analysis'}
+              showRunButton={false}
             />
-          </section>
-        </div>
-      )}
-
-      {selected && (
-        <StablePlayersPanel
-          match={selected}
-          onStatus={setStatus}
-          onSaved={refreshSelected}
-        />
-      )}
-      {selected && (
-        <TeamConfigPanel
-          match={selected}
-          onStatus={setStatus}
-          onSaved={refreshSelected}
-        />
-      )}
-      {selected && <AnalysisQualityPanel match={selected} />}
-      {selected && <AnalysisArtifacts match={selected} />}
-      {selected && (
-        <details
-          className='debug-details'
-          onToggle={(event) => setShowDeveloperDebug(event.currentTarget.open)}
-        >
-          <summary>Developer debug: legacy identity candidates i raw tracklety</summary>
-          {showDeveloperDebug && (
-            <>
-              <p className='muted'>
-                Stare panele do ręcznego przypisywania raw trackletów.
-                Główny workflow używa teraz stable slotów i team config.
-              </p>
-              <IdentityCandidatePanel
-                match={selected}
-                onStatus={setStatus}
-                onSaved={refreshSelected}
-              />
-              <TrackletAssignmentPanel
-                match={selected}
-                onStatus={setStatus}
-                onSaved={refreshSelected}
-              />
-            </>
-          )}
-        </details>
-      )}
-
-      {selected && (
-        <section className='card'>
-          <h2>6. Publikacja do bazy</h2>
-          <p className='muted'>
-            Najpierw sprawdź stabilne ID i team assignment. Potem wygeneruj
-            paczkę i zaimportuj snapshot do SQLite.
-          </p>
-          <div className='row'>
-            <button type='button' onClick={buildPackage} disabled={isBusy}>
-              {busyAction === 'package'
-                ? 'Generuję paczkę...'
-                : 'Generate match_package.json'}
-            </button>
-            <button
-              type='button'
-              onClick={() => publishSelected(false)}
-              disabled={isBusy}
-            >
-              {busyAction === 'publish' ? 'Publikuję...' : 'Publish/import to DB'}
-            </button>
-            <button
-              type='button'
-              className='secondary'
-              onClick={() => publishSelected(true)}
-              disabled={isBusy}
-            >
-              Replace in DB
-            </button>
-          </div>
+          </details>
         </section>
       )}
 
-      <PublishedDatabasePanel onStatus={setStatus} />
+      {activeStep === 'analysis' && !selected && (
+        <section className='card workflow-card'>
+          <h2>Najpierw wybierz video</h2>
+          <p className='muted'>Analiza jest dostepna po dodaniu albo wybraniu meczu.</p>
+          <button type='button' onClick={() => setActiveStep('video')}>
+            Wroc do wyboru video
+          </button>
+        </section>
+      )}
+
+      {activeStep === 'review' && selected && (
+        <>
+          <section className='card workflow-card'>
+            <div className='row between'>
+              <div>
+                <h2>3. Weryfikacja analizy i przypisanie zawodnikow</h2>
+                <p className='muted'>
+                  Przypisz tylko tych realnych zawodnikow, ktorych chcesz
+                  agregowac w profilach. Przeciwnik moze zostac anonimowy.
+                </p>
+              </div>
+              <div className='row'>
+                <Link to={`/matches/${encodeURIComponent(selected.id)}/report`}>
+                  Otworz raport roboczy
+                </Link>
+                <button type='button' onClick={() => setActiveStep('publish')}>
+                  Przejdz do publikacji
+                </button>
+              </div>
+            </div>
+          </section>
+          <section className='card workflow-card'>
+            <div className='row between'>
+              <div>
+                <h2>Stable overlay do review</h2>
+                <p className='muted'>
+                  Uzyj tego video jako glownego podgladu przy przypisywaniu
+                  stable slotow do zawodnikow.
+                </p>
+              </div>
+              {selected.analysis_report?.run_id && (
+                <span className='confidence-pill medium'>
+                  run {selected.analysis_report.run_id}
+                </span>
+              )}
+            </div>
+            {reviewStableOverlay ? (
+              <video
+                controls
+                src={artifactUrl(selected.id, reviewStableOverlay)}
+                className='video'
+              />
+            ) : (
+              <p className='muted'>
+                Brak stable_overlay_preview.mp4 dla tego meczu. Uruchom
+                ponownie analize, zeby wygenerowac podglad stable ID.
+              </p>
+            )}
+          </section>
+          <AnalysisQualityPanel match={selected} />
+          <MatchRosterPanel
+            match={selected}
+            disabled={isBusy}
+            onSave={saveRosterTeams}
+            onStatus={setStatus}
+          />
+          <StablePlayersPanel
+            match={selected}
+            onStatus={setStatus}
+            onSaved={() => refreshSelected('review')}
+          />
+          <details className='debug-details'>
+            <summary>Opcjonalnie: team config i team stats</summary>
+            <TeamConfigPanel
+              match={selected}
+              onStatus={setStatus}
+              onSaved={() => refreshSelected('review')}
+            />
+          </details>
+          <details className='debug-details'>
+            <summary>Opcjonalnie: artefakty i overlay debug</summary>
+            <div className='artifact-box'>
+              <div>
+                <h3>Ball tracking quick test</h3>
+                <p className='muted'>
+                  Uruchamia tylko detekcje pilki. Nie przelicza stable ID ani
+                  statystyk zawodnikow.
+                </p>
+              </div>
+              <div className='row'>
+                <button
+                  type='button'
+                  className='secondary'
+                  disabled={isBusy}
+                  onClick={() =>
+                    setBallAnalysis({
+                      max_seconds: 3,
+                      frame_stride: 4,
+                      yolo_model: analysis.yolo_model,
+                      yolo_conf: 0.05,
+                      yolo_imgsz: 960,
+                      yolo_device: analysis.yolo_device,
+                    })
+                  }
+                >
+                  Fast 3s
+                </button>
+                <button
+                  type='button'
+                  className='secondary'
+                  disabled={isBusy}
+                  onClick={() =>
+                    setBallAnalysis({
+                      max_seconds: 6,
+                      frame_stride: 3,
+                      yolo_model: analysis.yolo_model,
+                      yolo_conf: 0.04,
+                      yolo_imgsz: 1280,
+                      yolo_device: analysis.yolo_device,
+                    })
+                  }
+                >
+                  Balanced 6s
+                </button>
+                <button
+                  type='button'
+                  className='secondary'
+                  disabled={isBusy}
+                  onClick={() =>
+                    setBallAnalysis({
+                      max_seconds: 12,
+                      frame_stride: 2,
+                      yolo_model: analysis.yolo_model,
+                      yolo_conf: 0.03,
+                      yolo_imgsz: 1280,
+                      yolo_device: analysis.yolo_device,
+                    })
+                  }
+                >
+                  Full sample
+                </button>
+                <button
+                  type='button'
+                  className='secondary'
+                  disabled={isBusy}
+                  onClick={() =>
+                    setBallAnalysis({
+                      max_seconds: 12,
+                      frame_stride: 1,
+                      yolo_model: localBallModelPath,
+                      yolo_conf: 0.05,
+                      yolo_imgsz: 1280,
+                      yolo_device: analysis.yolo_device,
+                    })
+                  }
+                >
+                  Custom PT
+                </button>
+              </div>
+              <div className='grid three compact'>
+                <label>
+                  Max seconds
+                  <input
+                    type='number'
+                    min={1}
+                    value={ballAnalysis.max_seconds}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setBallAnalysis({
+                        ...ballAnalysis,
+                        max_seconds: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Frame stride
+                  <input
+                    type='number'
+                    min={1}
+                    value={ballAnalysis.frame_stride}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setBallAnalysis({
+                        ...ballAnalysis,
+                        frame_stride: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Img size
+                  <input
+                    type='number'
+                    min={320}
+                    step={32}
+                    value={ballAnalysis.yolo_imgsz}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setBallAnalysis({
+                        ...ballAnalysis,
+                        yolo_imgsz: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <div className='grid three compact'>
+                <label>
+                  Conf
+                  <input
+                    type='number'
+                    min={0.01}
+                    max={0.5}
+                    step={0.01}
+                    value={ballAnalysis.yolo_conf}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setBallAnalysis({
+                        ...ballAnalysis,
+                        yolo_conf: Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Model
+                  <input
+                    value={ballAnalysis.yolo_model}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setBallAnalysis({
+                        ...ballAnalysis,
+                        yolo_model: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Device
+                  <input
+                    value={ballAnalysis.yolo_device || ''}
+                    disabled={isBusy}
+                    onChange={(event) =>
+                      setBallAnalysis({
+                        ...ballAnalysis,
+                        yolo_device: event.target.value || null,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <div className='row between'>
+                <p className='muted'>
+                  Aktualnie: {ballAnalysis.max_seconds}s, stride{' '}
+                  {ballAnalysis.frame_stride}, imgsz {ballAnalysis.yolo_imgsz},
+                  conf {ballAnalysis.yolo_conf}
+                </p>
+                <button
+                  type='button'
+                  className='secondary'
+                  onClick={runBallAnalysis}
+                  disabled={isBusy}
+                >
+                  {busyAction === 'ball-analysis'
+                    ? 'Testuje pilke...'
+                    : 'Uruchom test pilki'}
+                </button>
+              </div>
+            </div>
+            <AnalysisArtifacts match={selected} />
+          </details>
+          <details
+            className='debug-details'
+            onToggle={(event) => setShowDeveloperDebug(event.currentTarget.open)}
+          >
+            <summary>Developer debug: legacy identity candidates i raw tracklety</summary>
+            {showDeveloperDebug && (
+              <>
+                <p className='muted'>
+                  Stare panele do recznego przypisywania raw trackletow.
+                  Glowny workflow uzywa stable slotow i roster mapping.
+                </p>
+                <IdentityCandidatePanel
+                  match={selected}
+                  onStatus={setStatus}
+                  onSaved={() => refreshSelected('review')}
+                />
+                <TrackletAssignmentPanel
+                  match={selected}
+                  onStatus={setStatus}
+                  onSaved={() => refreshSelected('review')}
+                />
+              </>
+            )}
+          </details>
+        </>
+      )}
+
+      {activeStep === 'publish' && selected && (
+        <>
+          <section className='card workflow-card'>
+            <div className='row between'>
+              <div>
+                <h2>4. Raport i publikacja</h2>
+                <p className='muted'>
+                  Otworz raport roboczy albo opublikuj snapshot do SQLite, zeby
+                  byl widoczny na stronie glownej.
+                </p>
+              </div>
+              <div className='row'>
+                <Link to={`/matches/${encodeURIComponent(selected.id)}/report`}>
+                  Raport roboczy
+                </Link>
+                {selected.published_match_id && (
+                  <Link to={`/published/matches/${encodeURIComponent(selected.published_match_id)}/report`}>
+                    Raport publiczny
+                  </Link>
+                )}
+              </div>
+            </div>
+            <div className='chips'>
+              <span>Status: {selected.status || 'uploaded'}</span>
+              <span>Analysis: {selected.analysis_report?.status || 'missing'}</span>
+              <span>Package: {selected.match_package ? 'ready' : 'not generated'}</span>
+              <span>Published: {selected.published_match_id || 'not yet'}</span>
+            </div>
+            <div className='row'>
+              <button type='button' onClick={buildPackage} disabled={isBusy}>
+                {busyAction === 'package' ? 'Generuje...' : 'Generate match_package.json'}
+              </button>
+              <button
+                type='button'
+                onClick={() => publishSelected(false)}
+                disabled={isBusy}
+              >
+                {busyAction === 'publish' ? 'Publikuje...' : 'Publish/import to DB'}
+              </button>
+              <button
+                type='button'
+                className='secondary'
+                onClick={() => publishSelected(true)}
+                disabled={isBusy}
+              >
+                Replace in DB
+              </button>
+            </div>
+          </section>
+          <PublishedDatabasePanel onStatus={setStatus} />
+        </>
+      )}
     </main>
   );
 }

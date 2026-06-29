@@ -22,6 +22,34 @@ def _record(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _best_sprint_candidate_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    candidates = [
+        row
+        for row in rows
+        if isinstance(row, dict) and _number(row.get("max_speed_kmh")) > 0.0
+    ]
+    if not candidates:
+        return {}
+    best = max(
+        candidates,
+        key=lambda row: (
+            _number(row.get("max_speed_kmh")),
+            _number(row.get("duration_sec")),
+            _number(row.get("distance_m")),
+        ),
+    )
+    return {
+        "start_frame": _int(best.get("start_frame")),
+        "end_frame": _int(best.get("end_frame")),
+        "start_time_sec": round(_number(best.get("start_time_sec")), 3),
+        "end_time_sec": round(_number(best.get("end_time_sec")), 3),
+        "duration_sec": round(_number(best.get("duration_sec")), 3),
+        "distance_m": round(_number(best.get("distance_m")), 2),
+        "max_speed_kmh": round(_number(best.get("max_speed_kmh")), 2),
+        "reason": str(best.get("reason") or "none"),
+    }
+
+
 def _load_json(path: Path, filename: str) -> dict[str, Any]:
     file_path = path / filename
     if not file_path.exists():
@@ -106,6 +134,14 @@ def _empty_player_row(assignment: dict[str, Any]) -> dict[str, Any]:
             "longest_sprint_distance_m": 0.0,
             "max_sprint_speed_kmh": 0.0,
             "trusted_speed_segments": 0,
+            "sprint_candidate_count": 0,
+            "rejected_sprint_candidate_count": 0,
+            "best_sprint_candidate_speed_kmh": 0.0,
+            "best_sprint_candidate_duration_sec": 0.0,
+            "best_sprint_candidate_distance_m": 0.0,
+            "best_sprint_candidate_reason": "none",
+            "best_rejected_sprint_candidate": {},
+            "rejected_sprint_candidates": [],
         },
         "frames": {
             "active_frames": 0,
@@ -190,6 +226,23 @@ def _merge_slot_stats(row: dict[str, Any], assignment: dict[str, Any], slot_stat
         row["intensity"][key] += _int(source_intensity.get(key))
     for key in ["longest_sprint_time_sec", "longest_sprint_distance_m", "max_sprint_speed_kmh"]:
         row["intensity"][key] = max(_number(row["intensity"].get(key)), _number(source_intensity.get(key)))
+    for key in ["sprint_candidate_count", "rejected_sprint_candidate_count"]:
+        row["intensity"][key] += _int(source_intensity.get(key))
+    previous_best_speed = _number(row["intensity"].get("best_sprint_candidate_speed_kmh"))
+    source_best_speed = _number(source_intensity.get("best_sprint_candidate_speed_kmh"))
+    if source_best_speed > previous_best_speed:
+        row["intensity"]["best_sprint_candidate_speed_kmh"] = source_best_speed
+        row["intensity"]["best_sprint_candidate_duration_sec"] = _number(source_intensity.get("best_sprint_candidate_duration_sec"))
+        row["intensity"]["best_sprint_candidate_distance_m"] = _number(source_intensity.get("best_sprint_candidate_distance_m"))
+        row["intensity"]["best_sprint_candidate_reason"] = str(source_intensity.get("best_sprint_candidate_reason") or "none")
+    row["intensity"]["best_rejected_sprint_candidate"] = _best_sprint_candidate_from_rows(
+        [
+            _record(row["intensity"].get("best_rejected_sprint_candidate")),
+            _record(source_intensity.get("best_rejected_sprint_candidate")),
+        ]
+    )
+    rejected = source_intensity.get("rejected_sprint_candidates") if isinstance(source_intensity.get("rejected_sprint_candidates"), list) else []
+    row["intensity"]["rejected_sprint_candidates"].extend(rejected[:5])
     row["review_warnings"].extend(assignment.get("review_warnings") or [])
 
 
@@ -208,6 +261,19 @@ def _finalize_player_row(row: dict[str, Any], distance_qualities: list[str], spe
     row["speed"]["quality"] = _worst_quality(speed_qualities)
     row["intensity"]["high_intensity_distance_ratio"] = round(_number(row["intensity"].get("high_intensity_distance_m")) / total_distance, 4) if total_distance > 0 else 0.0
     row["intensity"]["sprint_distance_ratio"] = round(_number(row["intensity"].get("sprint_distance_m")) / total_distance, 4) if total_distance > 0 else 0.0
+    row["intensity"]["rejected_sprint_candidates"] = sorted(
+        [
+            item
+            for item in row["intensity"].get("rejected_sprint_candidates", [])
+            if isinstance(item, dict)
+        ],
+        key=lambda item: (
+            _number(item.get("max_speed_kmh")),
+            _number(item.get("duration_sec")),
+            _number(item.get("distance_m")),
+        ),
+        reverse=True,
+    )[:5]
 
     for group in ["time", "distance", "speed", "intensity"]:
         for key, value in list(row[group].items()):
@@ -249,6 +315,11 @@ def _team_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "sprint_distance_m": 0.0,
                 "longest_sprint_distance_m": 0.0,
                 "max_sprint_speed_kmh": 0.0,
+                "sprint_candidate_count": 0,
+                "rejected_sprint_candidate_count": 0,
+                "best_sprint_candidate_speed_kmh": 0.0,
+                "best_sprint_candidate_duration_sec": 0.0,
+                "best_rejected_sprint_candidate": {},
                 "players_low_quality": 0,
                 "players_medium_quality": 0,
                 "players_high_quality": 0,
@@ -270,6 +341,13 @@ def _team_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row["sprint_count"] += _int(intensity.get("sprint_count"))
         row["sprint_time_sec"] += _number(intensity.get("sprint_time_sec"))
         row["sprint_distance_m"] += _number(intensity.get("sprint_distance_m"))
+        row["sprint_candidate_count"] += _int(intensity.get("sprint_candidate_count"))
+        row["rejected_sprint_candidate_count"] += _int(intensity.get("rejected_sprint_candidate_count"))
+        row["best_sprint_candidate_speed_kmh"] = max(_number(row["best_sprint_candidate_speed_kmh"]), _number(intensity.get("best_sprint_candidate_speed_kmh")))
+        row["best_sprint_candidate_duration_sec"] = max(_number(row["best_sprint_candidate_duration_sec"]), _number(intensity.get("best_sprint_candidate_duration_sec")))
+        row["best_rejected_sprint_candidate"] = _best_sprint_candidate_from_rows(
+            [_record(row.get("best_rejected_sprint_candidate")), _record(intensity.get("best_rejected_sprint_candidate"))]
+        )
         row["longest_sprint_distance_m"] = max(_number(row["longest_sprint_distance_m"]), _number(intensity.get("longest_sprint_distance_m")))
         row["max_sprint_speed_kmh"] = max(_number(row["max_sprint_speed_kmh"]), _number(intensity.get("max_sprint_speed_kmh")))
         quality_key = f"players_{player['distance'].get('quality')}_quality"
@@ -341,6 +419,13 @@ def build_resolved_player_stats_document(
         "sprint_distance_m": round(sum(_number(_record(player.get("intensity")).get("sprint_distance_m")) for player in players), 2),
         "longest_sprint_distance_m": round(max([_number(_record(player.get("intensity")).get("longest_sprint_distance_m")) for player in players] or [0.0]), 2),
         "max_sprint_speed_kmh": round(max([_number(_record(player.get("intensity")).get("max_sprint_speed_kmh")) for player in players] or [0.0]), 2),
+        "sprint_candidate_count": sum(_int(_record(player.get("intensity")).get("sprint_candidate_count")) for player in players),
+        "rejected_sprint_candidate_count": sum(_int(_record(player.get("intensity")).get("rejected_sprint_candidate_count")) for player in players),
+        "best_sprint_candidate_speed_kmh": round(max([_number(_record(player.get("intensity")).get("best_sprint_candidate_speed_kmh")) for player in players] or [0.0]), 2),
+        "best_sprint_candidate_duration_sec": round(max([_number(_record(player.get("intensity")).get("best_sprint_candidate_duration_sec")) for player in players] or [0.0]), 3),
+        "best_rejected_sprint_candidate": _best_sprint_candidate_from_rows(
+            [_record(_record(player.get("intensity")).get("best_rejected_sprint_candidate")) for player in players]
+        ),
     }
     return {
         "schema_version": "0.1.0",

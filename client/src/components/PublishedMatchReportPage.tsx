@@ -7,6 +7,7 @@ import {
   MatchReportContent,
   sourceFromPublishedPackage,
 } from './MatchReportContent';
+import { ReportActions } from './ReportActions';
 
 export function PublishedMatchReportPage() {
   const { matchId } = useParams();
@@ -59,6 +60,17 @@ export function PublishedMatchReportPage() {
         </p>
       )}
       {status && <p className='status'>{status}</p>}
+
+      {match && (
+        <ReportActions
+          mode='published'
+          jsonDownload={{
+            label: 'Pobierz snapshot JSON',
+            filename: `${match.id}.json`,
+            data: match.package,
+          }}
+        />
+      )}
 
       {reportSource && (
         <MatchReportContent

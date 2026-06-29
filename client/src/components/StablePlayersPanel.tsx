@@ -12,6 +12,7 @@ import type {
   PlayerIdentityAssignment,
   PlayerIdentityAssignmentStatus,
   PlayerIdentityReviewState,
+  MovementStats,
   StablePlayer,
   StablePlayerStatus,
   StablePlayersReviewState,
@@ -131,8 +132,32 @@ function nestedArrayLength(record: Record<string, unknown> | undefined | null, k
   return Array.isArray(value) ? value.length : 0;
 }
 
+function recordFromValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function peakSpeedFrom(record: Record<string, unknown> | undefined): number | null {
   return numberFrom(record, 'peak_sustained_speed_kmh') ?? numberFrom(record, 'top_speed_kmh');
+}
+
+function sprintCandidateLabel(candidate: unknown): string {
+  const row = recordFromValue(candidate);
+  if (!row) return 'n/a';
+  const speed = numberFrom(row, 'max_speed_kmh');
+  const duration = numberFrom(row, 'duration_sec');
+  const reason = row.reason ? String(row.reason) : 'unknown';
+  const frameStart = numberFrom(row, 'start_frame');
+  const frameEnd = numberFrom(row, 'end_frame');
+  const frameText = frameStart != null && frameEnd != null ? ` f${frameStart}-${frameEnd}` : '';
+  const speedText = speed == null ? 'n/a' : `${speed.toFixed(1)} km/h`;
+  const durationText = duration == null ? 'n/a' : `${duration.toFixed(2)}s`;
+  return `${speedText} / ${durationText} / ${reason}${frameText}`;
+}
+
+function intensityRecord(stats: MovementStats | undefined): Record<string, unknown> | undefined {
+  return stats?.intensity as Record<string, unknown> | undefined;
 }
 
 function PlayerTrajectory({
@@ -438,6 +463,9 @@ export function StablePlayersPanel({
           <span>Estimated gaps: {numberFrom(movementSummary, 'estimated_gap_distance_m') ?? 'n/a'} m</span>
           <span>Players estimated: {numberFrom(movementSummary, 'players_with_estimated_distance') ?? 'n/a'}</span>
           <span>Peak sustained: {peakSpeedFrom(movementSummary) ?? 'n/a'} km/h</span>
+          <span>Sprint candidates: {numberFrom(movementSummary, 'sprint_candidate_count') ?? 'n/a'}</span>
+          <span>Rejected candidates: {numberFrom(movementSummary, 'rejected_sprint_candidate_count') ?? 'n/a'}</span>
+          <span>Best sprint candidate: {numberFrom(movementSummary, 'best_sprint_candidate_speed_kmh') ?? 'n/a'} km/h</span>
         </div>
       )}
 
@@ -641,6 +669,9 @@ export function StablePlayersPanel({
                     <span>Resolved peak: {nestedValue(selectedResolvedStats, 'speed', 'peak_sustained_speed_kmh')} km/h</span>
                     <span>Resolved sprints: {nestedValue(selectedResolvedStats, 'intensity', 'sprint_count')}</span>
                     <span>Resolved sprint dist: {nestedValue(selectedResolvedStats, 'intensity', 'sprint_distance_m')} m</span>
+                    <span>Resolved sprint candidates: {nestedValue(selectedResolvedStats, 'intensity', 'sprint_candidate_count')}</span>
+                    <span>Resolved rejected candidates: {nestedValue(selectedResolvedStats, 'intensity', 'rejected_sprint_candidate_count')}</span>
+                    <span>Resolved best candidate: {nestedValue(selectedResolvedStats, 'intensity', 'best_sprint_candidate_speed_kmh')} km/h</span>
                     <span>Stable sources: {nestedArrayLength(selectedResolvedStats, 'source_stable_slots')}</span>
                   </div>
                 )}
@@ -675,11 +706,36 @@ export function StablePlayersPanel({
                   </span>
                   <span>Sprints: {selected.movement_stats.intensity?.sprint_count ?? 0}</span>
                   <span>Sprint dist: {(selected.movement_stats.intensity?.sprint_distance_m ?? 0).toFixed(1)} m</span>
+                  <span>
+                    Sprint threshold: {selected.movement_stats.intensity?.sprint_threshold_kmh ?? 'n/a'} km/h /{' '}
+                    {selected.movement_stats.intensity?.min_sprint_duration_sec ?? 'n/a'}s
+                  </span>
+                  <span>Sprint candidates: {selected.movement_stats.intensity?.sprint_candidate_count ?? 0}</span>
+                  <span>Rejected candidates: {selected.movement_stats.intensity?.rejected_sprint_candidate_count ?? 0}</span>
+                  <span>
+                    Best candidate:{' '}
+                    {(selected.movement_stats.intensity?.best_sprint_candidate_speed_kmh ?? 0).toFixed(1)} km/h /{' '}
+                    {(selected.movement_stats.intensity?.best_sprint_candidate_duration_sec ?? 0).toFixed(2)}s
+                  </span>
                   <span>HI dist: {(selected.movement_stats.intensity?.high_intensity_distance_m ?? 0).toFixed(1)} m</span>
                   <span>Playing: {selected.movement_stats.playing_time_sec.toFixed(1)}s</span>
                   <span>Quality: {selected.movement_stats.distance_quality}</span>
                 </div>
               )}
+
+              {selected.movement_stats?.intensity &&
+                (selected.movement_stats.intensity.sprint_count ?? 0) === 0 &&
+                (selected.movement_stats.intensity.rejected_sprint_candidate_count ?? 0) > 0 && (
+                  <div className='quality-alert'>
+                    <strong>Brak zaliczonego sprintu</strong>
+                    <span>
+                      Najlepszy odrzucony kandydat:{' '}
+                      {sprintCandidateLabel(
+                        intensityRecord(selected.movement_stats)?.best_rejected_sprint_candidate,
+                      )}
+                    </span>
+                  </div>
+                )}
 
               {(selected.stints?.length || 0) > 0 && (
                 <details className='debug-details'>

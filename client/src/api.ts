@@ -1,6 +1,9 @@
 import type {
   AnalysisPayload,
   AnalysisReport,
+  BallAnalysisPayload,
+  ContactCandidateReviewUpdate,
+  ContactCandidatesDocument,
   Match,
   MatchMetadataPayload,
   MatchPackage,
@@ -8,6 +11,7 @@ import type {
   PlayerIdentityReviewState,
   PlayerProfileStatsDocument,
   ResolvedPlayerStatsDocument,
+  TeamProfileStatsDocument,
   PlayerAssignment,
   PlayerAssignmentsDocument,
   PublishedMatch,
@@ -141,6 +145,14 @@ export async function analyzeMatch(matchId: string, payload: AnalysisPayload): P
   });
 }
 
+export async function analyzeBall(matchId: string, payload: BallAnalysisPayload): Promise<AnalysisReport> {
+  return request<AnalysisReport>(`/api/matches/${matchId}/analyze-ball`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function getTrackletReview(matchId: string): Promise<TrackletReviewState> {
   return request<TrackletReviewState>(`/api/matches/${matchId}/tracklets`);
 }
@@ -188,6 +200,11 @@ export async function getPlayerProfileStats(playerId: string): Promise<PlayerPro
   return request<PlayerProfileStatsDocument>(`/api/players/${encodeURIComponent(playerId)}/stats`);
 }
 
+export async function getTeamProfileStats(teamId: string, season?: string): Promise<TeamProfileStatsDocument> {
+  const params = season ? `?season=${encodeURIComponent(season)}` : '';
+  return request<TeamProfileStatsDocument>(`/api/teams/${encodeURIComponent(teamId)}/stats${params}`);
+}
+
 export async function getTeamConfig(matchId: string): Promise<TeamConfigReviewState> {
   return request<TeamConfigReviewState>(`/api/matches/${matchId}/team-config`);
 }
@@ -197,6 +214,21 @@ export async function reviewTeamConfig(matchId: string, payload: TeamConfigRevie
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
+  });
+}
+
+export async function getContactCandidates(matchId: string): Promise<ContactCandidatesDocument> {
+  return request<ContactCandidatesDocument>(`/api/matches/${matchId}/contact-candidates`);
+}
+
+export async function reviewContactCandidates(
+  matchId: string,
+  updates: ContactCandidateReviewUpdate[],
+): Promise<ContactCandidatesDocument> {
+  return request<ContactCandidatesDocument>(`/api/matches/${matchId}/contact-candidates/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates })
   });
 }
 

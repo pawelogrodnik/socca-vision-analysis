@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
-from app.models import AnalyzePayload, MatchMetadataPayload, PitchConfigPayload
-from app.services.analysis import analyze_match
+from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload, PitchConfigPayload
+from app.services.analysis import analyze_match, analyze_match_ball_yolo
+from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.identity import build_identity_review, save_identity_assignments
 from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
@@ -22,6 +23,7 @@ from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
 from app.services.stabilization import load_stable_review, load_team_config_review, save_stable_review, save_team_config_review
+from app.services.team_profiles import build_team_profile_stats
 from app.services.team_registry import create_team as registry_create_team
 from app.services.team_registry import delete_team as registry_delete_team
 from app.services.team_registry import get_team as registry_get_team
@@ -275,6 +277,16 @@ def api_get_team(team_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Team not found") from exc
 
 
+@app.get("/api/teams/{team_id}/stats")
+def api_get_team_stats(team_id: str, season: str | None = Query(default=None)) -> dict[str, Any]:
+    try:
+        return build_team_profile_stats(MATCHES_DIR, team_id, season=season or None)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Team not found: {team_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.put("/api/teams/{team_id}")
 def api_update_team(team_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     try:
@@ -371,6 +383,13 @@ def get_match(match_id: str) -> dict[str, Any]:
         "team_stats.json",
         "tracklets.json",
         "tracking_quality_report.json",
+        "ball_analysis_report.json",
+        "ball_tracking_report.json",
+        "ball_quality_report.json",
+        "possession_candidates.json",
+        "possession_segments.json",
+        "contact_candidates.json",
+        "possession_report.json",
     ]:
         optional_path = path / optional
         if optional_path.exists():
@@ -466,6 +485,51 @@ def analyze(match_id: str, payload: AnalyzePayload) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected analysis error: {exc}") from exc
+
+
+@app.post("/api/matches/{match_id}/analyze-ball")
+def analyze_ball(match_id: str, payload: BallAnalyzePayload) -> dict[str, Any]:
+    if APP_MODE == "production-viewer":
+        raise HTTPException(status_code=403, detail="Video analysis is disabled in production-viewer mode")
+    path = match_dir(match_id)
+    video_path = match_video_path(path)
+    try:
+        report = analyze_match_ball_yolo(
+            path,
+            video_path,
+            max_seconds=payload.max_seconds,
+            frame_stride=max(1, payload.frame_stride),
+            yolo_model=payload.yolo_model,
+            yolo_conf=payload.yolo_conf,
+            yolo_imgsz=payload.yolo_imgsz,
+            yolo_device=payload.yolo_device,
+        )
+        meta = read_match_meta(path)
+        run_summary = {
+            "run_id": report.get("run_id"),
+            "status": report.get("status"),
+            "analysis_type": report.get("analysis_type"),
+            "generated_at": report.get("generated_at"),
+            "frames_processed": report.get("frames_processed"),
+            "parameters": report.get("parameters") or {},
+            "run_directory": report.get("run_directory"),
+            "run_manifest": report.get("run_manifest"),
+        }
+        existing_runs = [item for item in meta.get("ball_analysis_runs", []) if isinstance(item, dict)]
+        existing_runs = [item for item in existing_runs if item.get("run_id") != run_summary["run_id"]]
+        meta["ball_analysis_runs"] = [run_summary, *existing_runs][:30]
+        meta["latest_ball_analysis_run_id"] = run_summary["run_id"]
+        meta["updated_at"] = now_iso()
+        write_match_meta(path, meta)
+        return report
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unexpected ball analysis error: {exc}") from exc
 
 
 @app.get("/api/matches/{match_id}/tracklets")
@@ -620,6 +684,36 @@ def review_team_config(match_id: str, payload: dict[str, Any] = Body(...)) -> di
     return doc
 
 
+@app.get("/api/matches/{match_id}/contact-candidates")
+def get_contact_candidates(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_contact_candidates_review(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/contact-candidates/review")
+def review_contact_candidates(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    try:
+        doc = save_contact_candidate_reviews(path, updates)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    meta = read_match_meta(path)
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
 @app.put("/api/matches/{match_id}/player-assignments")
 def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -699,6 +793,14 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "team_stats": None,
         "tracklets": None,
         "tracking_quality_report": None,
+        "ball_tracks": None,
+        "ball_analysis_report": None,
+        "ball_tracking_report": None,
+        "ball_quality_report": None,
+        "possession_candidates": None,
+        "possession_segments": None,
+        "contact_candidates": None,
+        "possession_report": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
         "assets": {},
@@ -725,6 +827,14 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("team_stats", "team_stats.json"),
         ("tracklets", "tracklets.json"),
         ("tracking_quality_report", "tracking_quality_report.json"),
+        ("ball_tracks", "ball_tracks.json"),
+        ("ball_analysis_report", "ball_analysis_report.json"),
+        ("ball_tracking_report", "ball_tracking_report.json"),
+        ("ball_quality_report", "ball_quality_report.json"),
+        ("possession_candidates", "possession_candidates.json"),
+        ("possession_segments", "possession_segments.json"),
+        ("contact_candidates", "contact_candidates.json"),
+        ("possession_report", "possession_report.json"),
     ]:
         file_path = path / filename
         if file_path.exists():
@@ -773,6 +883,28 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["tracklets_json"] = "tracklets.json"
     if (path / "tracking_quality_report.json").exists():
         package["assets"]["tracking_quality_report_json"] = "tracking_quality_report.json"
+    if (path / "ball_candidates.json").exists():
+        package["assets"]["ball_candidates_json"] = "ball_candidates.json"
+    if (path / "ball_tracks.json").exists():
+        package["assets"]["ball_tracks_json"] = "ball_tracks.json"
+    if (path / "ball_analysis_report.json").exists():
+        package["assets"]["ball_analysis_report_json"] = "ball_analysis_report.json"
+    if (path / "ball_tracking_report.json").exists():
+        package["assets"]["ball_tracking_report_json"] = "ball_tracking_report.json"
+    if (path / "ball_quality_report.json").exists():
+        package["assets"]["ball_quality_report_json"] = "ball_quality_report.json"
+    if (path / "ball_overlay_preview.mp4").exists():
+        package["assets"]["ball_overlay_preview"] = "ball_overlay_preview.mp4"
+    if (path / "possession_candidates.json").exists():
+        package["assets"]["possession_candidates_json"] = "possession_candidates.json"
+    if (path / "possession_segments.json").exists():
+        package["assets"]["possession_segments_json"] = "possession_segments.json"
+    if (path / "contact_candidates.json").exists():
+        package["assets"]["contact_candidates_json"] = "contact_candidates.json"
+    if (path / "possession_report.json").exists():
+        package["assets"]["possession_report_json"] = "possession_report.json"
+    if (path / "possession_overlay_preview.mp4").exists():
+        package["assets"]["possession_overlay_preview"] = "possession_overlay_preview.mp4"
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -888,9 +1020,20 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "team_stats.json": "application/json",
         "tracklets.json": "application/json",
         "tracking_quality_report.json": "application/json",
+        "ball_candidates.json": "application/json",
+        "ball_tracks.json": "application/json",
+        "ball_analysis_report.json": "application/json",
+        "ball_tracking_report.json": "application/json",
+        "ball_quality_report.json": "application/json",
+        "possession_candidates.json": "application/json",
+        "possession_segments.json": "application/json",
+        "contact_candidates.json": "application/json",
+        "possession_report.json": "application/json",
         "run_metadata.json": "application/json",
         "stable_overlay_preview.mp4": "video/mp4",
         "debug_identity_overlay.mp4": "video/mp4",
+        "ball_overlay_preview.mp4": "video/mp4",
+        "possession_overlay_preview.mp4": "video/mp4",
     }
     artifact_rel = Path(artifact_name)
     if artifact_rel.is_absolute() or any(part == ".." for part in artifact_rel.parts):

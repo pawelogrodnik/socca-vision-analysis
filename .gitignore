@@ -65,6 +65,9 @@ overlay_preview*.mp4
 heatmap*.png
 frame_*.jpg
 
+# Local annotation/training frame exports
+training_frames/
+
 # Model/cache files
 *.pt
 *.onnx

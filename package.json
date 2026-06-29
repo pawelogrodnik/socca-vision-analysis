@@ -1,0 +1,9 @@
+{
+  "name": "orlik-vision-app",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract:frames": "node scripts/extract-training-frames.mjs"
+  }
+}

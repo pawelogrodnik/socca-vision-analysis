@@ -58,6 +58,7 @@ export function TeamEditPage({ mode }: TeamEditPageProps) {
         <p>Zarządzanie rosterem jest oddzielone od analizy meczu.</p>
         <div className='row'>
           <Link to='/teams'>Drużyny</Link>
+          {teamId && <Link to={`/teams/${encodeURIComponent(teamId)}/stats`}>Statystyki</Link>}
           <Link to='/admin-panel'>Panel meczu</Link>
         </div>
       </section>

@@ -1,6 +1,7 @@
 import type { Match } from '../types';
 import { artifactUrl } from '../api';
 import { pretty } from '../lib/helpers';
+import { ContactCandidatesReview } from './ContactCandidatesReview';
 
 interface AnalysisArtifactsProps {
   match: Match;
@@ -23,6 +24,20 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const playerHeatmaps = report?.artifacts?.player_heatmaps;
   const tracklets = report?.artifacts?.tracklets;
   const trackingQualityReport = report?.artifacts?.tracking_quality_report;
+  const ballOverlay = report?.artifacts?.ball_overlay_preview;
+  const ballCandidates = report?.artifacts?.ball_candidates;
+  const ballTracks = report?.artifacts?.ball_tracks;
+  const ballAnalysisReport = report?.artifacts?.ball_analysis_report;
+  const ballTrackingReport = report?.artifacts?.ball_tracking_report;
+  const ballQualityReport = report?.artifacts?.ball_quality_report;
+  const possessionOverlay = report?.artifacts?.possession_overlay_preview;
+  const possessionCandidates = report?.artifacts?.possession_candidates;
+  const possessionSegments = report?.artifacts?.possession_segments;
+  const contactCandidates = report?.artifacts?.contact_candidates;
+  const possessionReport = report?.artifacts?.possession_report;
+  const ballSummary = match.ball_tracking_report?.summary;
+  const ballQuality = match.ball_quality_report;
+  const possessionSummary = match.possession_report?.summary;
 
   return (
     <section className='card'>
@@ -123,6 +138,161 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
               Pobierz tracking_quality_report.json
             </a>
           )}
+          {(ballOverlay || ballSummary || ballTrackingReport) && (
+            <div className='artifact-box'>
+              <h3>Ball tracking (experimental)</h3>
+              {ballOverlay && (
+                <video
+                  controls
+                  src={artifactUrl(match.id, ballOverlay)}
+                  className='video'
+                />
+              )}
+              {possessionOverlay && (
+                <>
+                  <h4>Possession candidates (experimental)</h4>
+                  <video
+                    controls
+                    src={artifactUrl(match.id, possessionOverlay)}
+                    className='video'
+                  />
+                </>
+              )}
+              {ballSummary && (
+                <div className='chips'>
+                  <span>Detected: {formatPercent(ballSummary.detected_coverage)}</span>
+                  <span>Interpolated: {formatPercent(ballSummary.interpolated_coverage)}</span>
+                  <span>Known: {formatPercent(ballSummary.known_coverage)}</span>
+                  <span>Candidates: {formatCount(ballSummary.candidate_count)}</span>
+                  <span>Rejected: {formatCount(ballSummary.rejected_candidate_count)}</span>
+                </div>
+              )}
+              {ballQuality?.recommendation && (
+                <div className='quality-alert'>
+                  <strong>
+                    Decision: {ballQuality.recommendation.decision || 'n/a'}
+                  </strong>
+                  <span>
+                    Custom dataset:{' '}
+                    {ballQuality.recommendation.custom_dataset_recommended
+                      ? 'recommended'
+                      : 'not yet'}
+                  </span>
+                  {ballQuality.recommendation.next_step && (
+                    <span>{ballQuality.recommendation.next_step}</span>
+                  )}
+                  {(ballQuality.recommendation.reasons || []).map((reason) => (
+                    <span key={reason}>{reason}</span>
+                  ))}
+                </div>
+              )}
+              {ballQuality?.summary && (
+                <div className='chips'>
+                  <span>
+                    Candidate frames:{' '}
+                    {formatPercent(ballQuality.summary.candidate_frame_ratio)}
+                  </span>
+                  <span>
+                    Multi candidates:{' '}
+                    {formatPercent(ballQuality.summary.multi_candidate_ratio)}
+                  </span>
+                  <span>
+                    Unknown longest:{' '}
+                    {formatCount(ballQuality.summary.longest_unknown_streak_frames)}f
+                  </span>
+                  <span>
+                    Unknown:{' '}
+                    {formatPercent(ballQuality.summary.unknown_coverage)}
+                  </span>
+                </div>
+              )}
+              {possessionSummary && (
+                <div className='chips'>
+                  <span>
+                    Controlled:{' '}
+                    {formatPercent(possessionSummary.controlled_coverage)}
+                  </span>
+                  <span>
+                    Contested:{' '}
+                    {formatPercent(possessionSummary.contested_coverage)}
+                  </span>
+                  <span>
+                    Free: {formatPercent(possessionSummary.free_coverage)}
+                  </span>
+                  <span>
+                    Unknown:{' '}
+                    {formatPercent(possessionSummary.unknown_coverage)}
+                  </span>
+                  <span>
+                    Contacts:{' '}
+                    {formatCount(possessionSummary.contact_candidates)}
+                  </span>
+                  <span>
+                    Player interp:{' '}
+                    {formatCount(possessionSummary.interpolated_player_position_frames)}
+                  </span>
+                </div>
+              )}
+              {match.possession_report?.warnings?.length ? (
+                <p className='muted'>
+                  {match.possession_report.warnings[0]}
+                </p>
+              ) : null}
+              {match.ball_tracking_report?.warnings?.length ? (
+                <p className='muted'>
+                  {match.ball_tracking_report.warnings[0]}
+                </p>
+              ) : null}
+              <div className='row'>
+                {ballTracks && (
+                  <a href={artifactUrl(match.id, ballTracks)}>
+                    Pobierz ball_tracks.json
+                  </a>
+                )}
+                {ballTrackingReport && (
+                  <a href={artifactUrl(match.id, ballTrackingReport)}>
+                    Pobierz ball_tracking_report.json
+                  </a>
+                )}
+                {ballAnalysisReport && (
+                  <a href={artifactUrl(match.id, ballAnalysisReport)}>
+                    Pobierz ball_analysis_report.json
+                  </a>
+                )}
+                {ballQualityReport && (
+                  <a href={artifactUrl(match.id, ballQualityReport)}>
+                    Pobierz ball_quality_report.json
+                  </a>
+                )}
+                {ballCandidates && (
+                  <a href={artifactUrl(match.id, ballCandidates)}>
+                    Pobierz ball_candidates.json
+                  </a>
+                )}
+                {possessionReport && (
+                  <a href={artifactUrl(match.id, possessionReport)}>
+                    Pobierz possession_report.json
+                  </a>
+                )}
+                {possessionCandidates && (
+                  <a href={artifactUrl(match.id, possessionCandidates)}>
+                    Pobierz possession_candidates.json
+                  </a>
+                )}
+                {possessionSegments && (
+                  <a href={artifactUrl(match.id, possessionSegments)}>
+                    Pobierz possession_segments.json
+                  </a>
+                )}
+                {contactCandidates && (
+                  <a href={artifactUrl(match.id, contactCandidates)}>
+                    Pobierz contact_candidates.json
+                  </a>
+                )}
+              </div>
+              <ContactCandidatesReview match={match} enabled={Boolean(contactCandidates)} />
+            </div>
+          )}
           {(heatmap || debugIdentityOverlay || rawOverlay || report) && (
             <details className='debug-details'>
               <summary>Developer debug artifacts</summary>
@@ -154,4 +324,20 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
       </div>
     </section>
   );
+}
+
+function formatPercent(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '--';
+  }
+  return `${(numeric * 100).toFixed(1)}%`;
+}
+
+function formatCount(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '--';
+  }
+  return String(Math.round(numeric));
 }

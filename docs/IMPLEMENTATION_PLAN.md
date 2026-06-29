@@ -48,9 +48,9 @@ This snapshot should be updated whenever a milestone is completed or materially 
 - `[x]` Tracklets and quality diagnostics: analysis now exports standalone `tracklets.json` and `tracking_quality_report.json` contracts.
 - `[x]` Team assignment: automatic Team A/B assignment, `team_clusters.json`, explicit `team_config.json`, Team A/B lock/review, stable-slot team correction, ignore/referee/false-positive review, team sanity diagnostics and `team_stats.json` exist. Torso-color clustering remains implementation evidence/debug, not a required user workflow.
 - `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`) exists with conservative anti-switch logic, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
-- `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, sprint/high-intensity metrics, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; configurable thresholds UI is not done.
-- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, while export/share polish is still pending.
-- `[ ]` Ball tracking, possession, passes, event review, season/team aggregation and background jobs are not implemented; player-level cross-match profile MVP exists.
+- `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; configurable thresholds UI is not done.
+- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, and admin uses a step-by-step workflow, while export/share polish is still pending.
+- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates and contact-candidate review exist as experimental layers, while passes, shots, full event review, export/share polish and background jobs are not implemented.
 
 ---
 
@@ -347,6 +347,7 @@ Jako developer chcę zachować stary raw tracklet assignment w debug details, ż
 
 - `[x]` Istnieją struktury `PlayerPayload`, roster team docs, stable slot/stint docs oraz formalny `player_identity_assignments.json`.
 - `[x]` UI ma osobny rejestr drużyn/rosterów pod `/teams`; mecz trzyma snapshot wybranych drużyn i zawodników.
+- `[x]` UI pozwala dopiac albo zmienic roster snapshot dla juz istniejacego meczu bez ponownego uploadu video.
 - `[x]` UI pozwala przypisać wybrany stable slot do realnego zawodnika z rosteru meczu.
 - `[x]` Backend ma endpointy `GET/PUT /api/matches/{match_id}/player-identity`.
 - `[x]` Częściowe przypisanie jest poprawnym workflow: użytkownik może przypisać tylko swoją drużynę, a przeciwnik może zostać anonimowy.
@@ -374,7 +375,7 @@ Jako developer chcę zachować stary raw tracklet assignment w debug details, ż
 
 # Milestone 6 — Player stats from tracking only
 
-**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, sprint/high-intensity metrics, per-player heatmaps and team stats exist, while configurable thresholds UI is still pending.
+**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps and team stats exist, while configurable thresholds UI is still pending.
 
 ## Cel
 
@@ -413,6 +414,7 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 - `[x]` UI pokazuje heatmapę wybranego stable slotu w player detail.
 - `[x]` Backend liczy sprint/high-intensity metrics konserwatywnie z zaufanych krótkich segmentów detekcji, bez używania długich braków/interpolacji.
 - `[x]` `player_stats.json`, `team_stats.json`, `resolved_player_stats.json`, profil zawodnika i Match Report pokazują sprint count, sprint distance/time oraz high-intensity distance/time.
+- `[x]` Raporty pokazują diagnostykę kandydatów sprintu: `sprint_candidate_count`, `rejected_sprint_candidate_count`, `best_sprint_candidate_*` i powód odrzucenia, bez podbijania konserwatywnego `sprint_count`.
 - `[ ]` UI nie pozwala jeszcze ustawić progów sprintów/high intensity; aktualne progi są stałe w backendzie.
 - `[x]` Raport/artefakty jasno rozróżniają tracking-only stats i brak piłki.
 - `[x]` Overlay debug pokazuje live speed/distance przy bboxie zawodnika.
@@ -437,7 +439,7 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 
 # Milestone 7 — Match report UI
 
-**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, and local/published match report pages share one layout; export/share polish is still pending.
+**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, local/published match report pages share one layout, the local admin panel uses a step-by-step match workflow, and MVP export/share actions exist; deeper public-share polish is still pending.
 
 ## Cel
 
@@ -467,6 +469,8 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 - `[x]` Match Report pokazuje summary, stable overlay, team comparison, real assigned players i wszystkich stable zawodników w meczu.
 - `[x]` Match Report rozróżnia anonimowe stable sloty meczowe od realnych `player_id` i linkuje przypisanych zawodników do `/players/:playerId`.
 - `[x]` Client ma sekcje raportowo-review dla meczu, osobny `/teams` registry i link do pełnego raportu z publicznej strony głównej.
+- `[x]` Admin panel ma krokowy workflow: video, kalibracja/analiza, review/przypisania, raport/publikacja.
+- `[x]` Metadata, team config, advanced YOLO settings, artifact browser i legacy raw identity panels sa opcjonalne albo schowane w details/debug zamiast blokowac glowny flow.
 - `[x]` Komponenty UI są rozdzielone od transformacji danych w nowych komponentach.
 - `[x]` Zwykłe style są w CSS, nie jako inline CSS.
 - `[x]` API client jest osobno od komponentów.
@@ -474,7 +478,9 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 - `[~]` UI pokazuje diagnostykę braków/niepewności, ale statusy brakujących kroków wymagają uporządkowania productowego.
 - `[x]` UI ma artifact browser dla overlay video, JSON i debug details.
 - `[x]` Legacy identity candidates oraz raw tracklet assignment nie są już domyślnym workflow i są schowane w developer debug.
-- `[~]` Raport ma widok publiczny bez admin panelu, ale nie ma jeszcze docelowego układu eksportu/share.
+- `[x]` Raport lokalny ma akcje: kopiowanie linku, generowanie `match_package.json`, publikacja/nadpisanie w SQLite, pobranie package JSON i druk/PDF.
+- `[x]` Raport publiczny ma akcje: kopiowanie linku, eksport snapshotu JSON i druk/PDF.
+- `[~]` Raport ma widok publiczny bez admin panelu; public-share polish jest lokalny/SQLite, bez hostingu ani auth.
 
 ## Do not do yet
 
@@ -489,7 +495,7 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 
 # Milestone 8 — Player profiles and cross-match aggregation
 
-**Status:** `[~]` local team registry, match-level roster assignment, `resolved_player_stats.json` and `/players/:playerId` profile aggregation exist; season dashboard/team season stats are not implemented.
+**Status:** `[~]` local team registry, match-level roster assignment, `resolved_player_stats.json`, `/players/:playerId` profile aggregation and local `/teams/:teamId/stats` team dashboard exist; season heatmaps and polished exports are not implemented.
 
 ## Cel
 
@@ -534,6 +540,7 @@ Jako system chcę agregować statystyki wyłącznie z zatwierdzonych przypisań 
 ## Acceptance criteria
 
 - `[~]` Istnieje lokalny rejestr `/teams` zapisany w JSON oraz persystencja/publish package w SQLite dla opublikowanych meczów i stable players, ale nie pełny roster/sezon.
+- `[x]` Match workflow pozwala przypisac istniejaca druzyne z `/teams` do aktualnego meczu jako Team A oraz opcjonalnie Team B.
 - `[x]` Startowa lokalna warstwa SQLite/JSON package istnieje bez ciężkiej infrastruktury.
 - `[x]` Istnieje artefakt per mecz `player_identity_assignments.json`, mapujący `stable_subject_id`/stint na realny `player_id` z rosteru.
 - `[x]` Istnieje artefakt per mecz `resolved_player_stats.json`, z tracking-only statystykami po realnym `player_id`.
@@ -546,7 +553,11 @@ Jako system chcę agregować statystyki wyłącznie z zatwierdzonych przypisań 
 - `[x]` Profil zawodnika i agregator nie traktują nieprzypisanych slotów przeciwnika jako brakującej pracy; to poprawny anonimowy stan.
 - `[x]` Profil zawodnika rozróżnia `stable_player_id` z meczu od realnego `player_id` z rosteru.
 - `[ ]` Profil zawodnika nie agreguje jeszcze heatmapy sezonowej/łącznej.
-- `[ ]` Nie ma jeszcze sezonowego dashboardu drużyny ani team season stats.
+- `[x]` UI ma route `/teams/:teamId/stats` z tracking-only dashboardem drużyny/sezonu.
+- `[x]` API ma `GET /api/teams/{team_id}/stats`, które agreguje tylko jawnie przypisanych realnych zawodników.
+- `[x]` Dashboard drużyny nie agreguje anonimowych slotów przeciwnika między meczami.
+- `[x]` Dashboard pokazuje listę meczów wliczonych do agregacji oraz braki typu `missing_resolved_player_stats`.
+- `[ ]` Nie ma jeszcze sezonowej/łącznej heatmapy drużyny.
 - `[~]` Mecze mają statusy typu `draft/uploaded/calibrated/analyzed/reviewed/published`, ale nie pełny workflow `needs_review/approved`.
 
 ## Do not do yet
@@ -562,9 +573,52 @@ Jako system chcę agregować statystyki wyłącznie z zatwierdzonych przypisań 
 
 ---
 
+# Next recommended implementation step — Season/team tracking-only dashboard
+
+**Status:** `[x]` MVP implemented as local tracking-only team dashboard. Next polish can extend this section, but do not add ball tracking here.
+
+## Dlaczego teraz
+
+Mamy już stabilne sloty, roster, `player_identity_assignments.json`, `resolved_player_stats.json` oraz profil `/players/:playerId`. Największa wartość produktowa bez ryzyka ball trackingu to czytelny widok agregacji po wielu meczach: zawodnicy, drużyna, sezon i porównanie meczów.
+
+## Scope
+
+- `[x]` Dodać tracking-only dashboard sezonu/drużyny oparty wyłącznie o przypisanych realnych zawodników.
+- `[x]` Nie agregować anonimowych slotów `A03/B05` między meczami; anonimowe sloty zostają tylko w raporcie pojedynczego meczu.
+- `[x]` Użyć istniejących artefaktów `resolved_player_stats.json` i `player_identity_assignments.json` jako źródła danych.
+- `[x]` Pokazać anonimowych przeciwników tylko jako kontekst per mecz, nie jako profile sezonowe.
+
+## Backend/API
+
+- `[x]` Dodać endpoint `GET /api/teams/{team_id}/stats` albo `GET /api/seasons/{season}/teams/{team_id}/stats`.
+- `[x]` Zwracać summary: mecze, zawodnicy, total distance, playing time, avg/peak speed, sprint count, high-intensity distance, warnings, quality distribution.
+- `[x]` Zwracać tabelę zawodników z agregacją po `player_id`.
+- `[x]` Zwracać listę meczów użytych do agregacji i informację, które mecze nie mają `resolved_player_stats.json`.
+
+## Frontend
+
+- `[x]` Dodać link z `/teams` do raportu/statystyk drużyny.
+- `[x]` Dodać widok drużyny/sezonu z tabelą zawodników i linkami do `/players/:playerId`.
+- `[x]` Dodać prosty filtr sezonu i sortowanie tabeli po dystansie, czasie gry, sprintach i peak speed.
+
+## Acceptance criteria
+
+- `[x]` Użytkownik może wejść z listy drużyn w tracking-only raport drużyny.
+- `[x]` Raport drużyny pokazuje tylko zawodników jawnie przypisanych w meczach.
+- `[x]` Raport nie agreguje anonimowych slotów przeciwnika między meczami.
+- `[x]` Każdy zawodnik w tabeli linkuje do profilu `/players/:playerId`.
+- `[x]` Raport pokazuje listę meczów wliczonych do agregacji i brakujące dane.
+- `[x]` Nie dodajemy jeszcze logowania, ball trackingu, podań, posiadania ani eventów.
+
+## Suggested agent prompt
+
+> Następny sensowny krok po dashboardzie: dopracuj raport/export/share polish w Milestone 7 albo przejdź do Milestone 9 ball tracking foundation. Nie dodawaj jeszcze podań, posiadania ani finalnych eventów bez wiarygodnego `ball_tracks.json`.
+
+---
+
 # Milestone 9 — Ball tracking foundation
 
-**Status:** `[ ]` not implemented.
+**Status:** `[~]` baseline implemented with Ultralytics COCO `sports ball` plus local custom YOLO `.pt` support as an experimental diagnostic layer. It generates ball candidates/tracks/report/overlay and coverage metrics, but model quality still needs validation on real match clips before possession or event analytics.
 
 ## Cel
 
@@ -589,16 +643,22 @@ Jako użytkownik chcę zobaczyć coverage piłki: ile czasu wykryta, ile interpo
 
 ## Acceptance criteria
 
-- `[ ]` Backend generuje `ball_tracks.json`.
-- `[ ]` Każdy rekord pozycji piłki ma:
-  - `[ ]` `time_sec`,
-  - `[ ]` `position_px`,
-  - `[ ]` `position_m`,
-  - `[ ]` `source: detected | interpolated | predicted | unknown`,
-  - `[ ]` `confidence`.
-- `[ ]` Interpolacja krótkich braków ma konfigurowalny limit, np. max 0.5s/1.0s.
-- `[ ]` Długie braki nie są wymyślane jako pewna pozycja.
-- `[ ]` UI pokazuje coverage piłki.
+- `[x]` Backend generuje `ball_tracks.json`.
+- `[x]` Każdy rekord pozycji piłki ma:
+  - `[x]` `time_sec`,
+  - `[x]` `position_px`,
+  - `[x]` `position_m`,
+  - `[x]` `source: detected | interpolated | predicted | unknown`,
+  - `[x]` `confidence`.
+- `[x]` Interpolacja krótkich braków ma konfigurowalny limit, np. max 0.5s/1.0s.
+- `[x]` Długie braki nie są wymyślane jako pewna pozycja.
+- `[x]` UI pokazuje coverage piłki.
+- `[~]` `ball_candidates.json` i `ball_overlay_preview.mp4` są artefaktami diagnostycznymi do oceny, czy wybrany detektor w ogóle łapie piłkę na naszych nagraniach.
+- `[x]` Istnieje ball-only endpoint/preset `POST /api/matches/{match_id}/analyze-ball`, który nie przelicza stable ID ani statystyk zawodników.
+- `[x]` Backend generuje `ball_quality_report.json` z coverage, confidence, unknown streaks i rekomendacją `custom_dataset_recommended`.
+- `[x]` UI pozwala zmieniać parametry ball-only testu i korzystać z presetów `Fast`, `Balanced`, `Full sample`.
+- `[x]` Root npm script `extract:frames` exports evenly sampled JPG frames and `metadata.json` to ignored `training_frames/` for Roboflow/custom dataset labeling.
+- `[x]` Ball-only analysis can use a local custom YOLO `.pt` model from mounted `backend/models/`, with automatic `ball` class resolution instead of hardcoded COCO class 32.
 
 ## Do not do yet
 
@@ -613,7 +673,7 @@ Jako użytkownik chcę zobaczyć coverage piłki: ile czasu wykryta, ile interpo
 
 # Milestone 10 — Possession and simple event candidates
 
-**Status:** `[ ]` not implemented.
+**Status:** `[~]` conservative possession/contact candidate layer is implemented. It generates candidate JSON artifacts and overlay from `ball_tracks.json` + trusted stable player positions, and contact-candidate review exists for accepted/rejected/uncertain labels. Full event review, pass candidates and shot candidates are not implemented yet.
 
 ## Cel
 
@@ -638,12 +698,19 @@ Jako użytkownik chcę potwierdzić/poprawić eventy w panelu, żeby statystyki 
 
 ## Acceptance criteria
 
-- `[ ]` Backend generuje `possession_segments.json`.
-- `[ ]` Segmenty mają `team`, `start_time`, `end_time`, `confidence`, `source`.
-- `[ ]` Jest osobna kategoria `unknown/free/contested`.
-- `[ ]` Backend generuje `event_candidates.json`.
-- `[ ]` UI pokazuje segmenty posiadania i podstawowe eventy.
-- `[ ]` Użytkownik może oznaczyć event jako accepted/rejected/corrected.
+- `[x]` Backend generuje `possession_segments.json`.
+- `[x]` Segmenty mają stable slot/team, `start_time_sec`, `end_time_sec`, `confidence`, `source/status`.
+- `[x]` Jest osobna kategoria `unknown/free/contested`.
+- `[x]` Backend generuje `contact_candidates.json` jako konserwatywne kandydaty kontaktu zawodnik-piłka.
+- `[x]` Backend generuje `possession_candidates.json`, `possession_report.json` i `possession_overlay_preview.mp4`.
+- `[x]` Possession layer używa krótkich, jawnie oznaczonych `short_gap_interpolated` pozycji zawodnika z niższym confidence; długie braki nadal zostają `unknown`.
+- `[x]` API ma `GET /api/matches/{match_id}/contact-candidates` oraz `PUT /api/matches/{match_id}/contact-candidates/review`.
+- `[x]` UI pokazuje overlay i summary kandydatów posiadania/kontaktu jako warstwę eksperymentalną.
+- `[x]` UI pozwala oznaczyć `contact_candidates` jako `needs_review`, `accepted`, `uncertain` albo `rejected` i zapisać notatkę.
+- `[~]` Podstawowy review istnieje tylko dla kandydatów kontaktu; nie obejmuje jeszcze korekty geometrii/czasu eventu ani podań/strzałów.
+- `[ ]` Backend nie generuje jeszcze pełnego `event_candidates.json`.
+- `[ ]` UI nie ma jeszcze pełnego panelu review eventów.
+- `[ ]` Użytkownik nie może jeszcze oznaczyć finalnego eventu jako corrected.
 
 ## Do not do yet
 
@@ -793,11 +860,11 @@ Aplikację można uznać za użyteczne MVP dopiero, gdy:
 - `[x]` uruchamia tracking,
 - `[x]` dostaje overlay z ID,
 - `[x]` widzi tracklety,
-- `[~]` przypisuje tracklety do zawodników; działa manual/debug flow, ale docelowy realny `player_id -> stint` nie jest gotowy,
+- `[x]` przypisuje stable slot/stint do realnego `player_id` przez roster mapping; raw tracklet assignment zostaje debug/legacy,
 - `[x]` system liczy czas gry dla stable slotów,
 - `[x]` system generuje heatmapę per zawodnik,
 - `[x]` system liczy dystans z wygładzeniem dla stable slotów,
-- `[ ]` system liczy sprinty/progi intensywności,
+- `[x]` system liczy sprinty/progi intensywności i pokazuje diagnostykę odrzuconych kandydatów sprintu,
 - `[~]` użytkownik widzi raport/diagnostykę meczu, ale nie pełny polished Match Report,
 - `[x]` dane da się zachować i wrócić do nich później przez lokalny storage/package.
 

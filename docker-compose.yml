@@ -7,6 +7,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/storage:/app/storage
+      - ./backend/models:/app/models:ro
       - ./examples:/app/examples:ro
     environment:
       - ORLIK_STORAGE_DIR=/app/storage

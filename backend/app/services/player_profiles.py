@@ -49,6 +49,34 @@ def _record(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _best_sprint_candidate_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    candidates = [
+        row
+        for row in rows
+        if isinstance(row, dict) and _number(row.get("max_speed_kmh")) > 0.0
+    ]
+    if not candidates:
+        return {}
+    best = max(
+        candidates,
+        key=lambda row: (
+            _number(row.get("max_speed_kmh")),
+            _number(row.get("duration_sec")),
+            _number(row.get("distance_m")),
+        ),
+    )
+    return {
+        "start_frame": int(_number(best.get("start_frame"))),
+        "end_frame": int(_number(best.get("end_frame"))),
+        "start_time_sec": round(_number(best.get("start_time_sec")), 3),
+        "end_time_sec": round(_number(best.get("end_time_sec")), 3),
+        "duration_sec": round(_number(best.get("duration_sec")), 3),
+        "distance_m": round(_number(best.get("distance_m")), 2),
+        "max_speed_kmh": round(_number(best.get("max_speed_kmh")), 2),
+        "reason": str(best.get("reason") or "none"),
+    }
+
+
 def _registry_player(player_id: str, registry_teams: list[dict[str, Any]]) -> dict[str, Any] | None:
     for team in registry_teams:
         if not isinstance(team, dict):
@@ -170,6 +198,12 @@ def _summary(appearances: list[dict[str, Any]], scanned_matches: int) -> dict[st
     peak_speed = max([_nested_number(row, "speed", "peak_sustained_speed_kmh") for row in appearances] or [0.0])
     top_speed = max([_nested_number(row, "speed", "top_speed_kmh") for row in appearances] or [0.0])
     max_sprint_speed = max([_nested_number(row, "intensity", "max_sprint_speed_kmh") for row in appearances] or [0.0])
+    best_rejected = _best_sprint_candidate_from_rows(
+        [
+            _record(_record(row.get("intensity")).get("best_rejected_sprint_candidate"))
+            for row in appearances
+        ]
+    )
     return {
         "matches": len(appearances),
         "appearances": len(appearances),
@@ -193,6 +227,11 @@ def _summary(appearances: list[dict[str, Any]], scanned_matches: int) -> dict[st
         "sprint_distance_m": round(sum(_nested_number(row, "intensity", "sprint_distance_m") for row in appearances), 2),
         "longest_sprint_distance_m": round(max([_nested_number(row, "intensity", "longest_sprint_distance_m") for row in appearances] or [0.0]), 2),
         "max_sprint_speed_kmh": round(max_sprint_speed, 2),
+        "sprint_candidate_count": sum(int(_nested_number(row, "intensity", "sprint_candidate_count")) for row in appearances),
+        "rejected_sprint_candidate_count": sum(int(_nested_number(row, "intensity", "rejected_sprint_candidate_count")) for row in appearances),
+        "best_sprint_candidate_speed_kmh": round(max([_nested_number(row, "intensity", "best_sprint_candidate_speed_kmh") for row in appearances] or [0.0]), 2),
+        "best_sprint_candidate_duration_sec": round(max([_nested_number(row, "intensity", "best_sprint_candidate_duration_sec") for row in appearances] or [0.0]), 3),
+        "best_rejected_sprint_candidate": best_rejected,
         "matches_with_warnings": sum(1 for row in appearances if row.get("review_warnings")),
         "stable_slots": sum(len(_list(row.get("stable_player_ids"))) for row in appearances),
         "distance_quality": _worst_quality([str(row.get("distance_quality") or "unknown") for row in appearances]),

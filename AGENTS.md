@@ -99,15 +99,29 @@ Build the reliable tracking/stat foundation first.
 
 When implementing new features, follow `docs/IMPLEMENTATION_PLAN.md`. It defines milestone order, user stories, acceptance criteria, and explicit scope boundaries. Do not skip ahead to ball/event analytics before tracking, tracklets, identity assignments and tracking-only player stats are usable.
 
+## UTF-8 editing notes for docs
+
+- `docs/IMPLEMENTATION_PLAN.md` is UTF-8. In Windows PowerShell, always read it with an explicit encoding:
+  - `Get-Content docs/IMPLEMENTATION_PLAN.md -Encoding utf8`
+- Do not trust mojibake shown by plain `Get-Content docs/IMPLEMENTATION_PLAN.md`; sequences like `â€”`, `Ĺ‚`, `Ä…` or `Ăł` can be a console decoding issue, not real file corruption.
+- Prefer `apply_patch` for manual edits. If a shell/editor must write the file, make sure it writes UTF-8 and does not convert the file to ANSI/Windows-1250.
+- Before editing, verify that the file can be decoded as UTF-8:
+  - `python -c "from pathlib import Path; Path('docs/IMPLEMENTATION_PLAN.md').read_text(encoding='utf-8'); print('utf8 ok')"`
+- After editing, re-open with `Get-Content ... -Encoding utf8` and run the corrupted-character check below.
+
 ## Validation before save
 
-- Check that no corrupted characters were introduced, including:
+- Check that no corrupted characters were introduced outside explicit encoding examples in this section, including:
   - `�`
   - `ï¿½`
   - `Ã³`
   - `Å‚`
   - `Ä…`
-- If any such sequence appears, abort the change and restore the previous content.
+  - `Ä‡`
+  - `Ĺ`
+  - `Ăł`
+  - `â€”`
+- If any such sequence appears in changed content where it is not intentionally quoted as an encoding/mojibake example, abort the change and restore the previous content.
 
 ## Safety rule
 

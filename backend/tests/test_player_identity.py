@@ -117,6 +117,20 @@ def player_stats_doc() -> dict:
                     "sprint_distance_m": 3.5,
                     "longest_sprint_distance_m": 3.5,
                     "max_sprint_speed_kmh": 21.0,
+                    "sprint_candidate_count": 2,
+                    "rejected_sprint_candidate_count": 1,
+                    "best_sprint_candidate_speed_kmh": 27.0,
+                    "best_sprint_candidate_duration_sec": 0.13,
+                    "best_sprint_candidate_distance_m": 1.0,
+                    "best_sprint_candidate_reason": "too_short",
+                    "best_rejected_sprint_candidate": {
+                        "start_frame": 80,
+                        "end_frame": 84,
+                        "duration_sec": 0.13,
+                        "distance_m": 1.0,
+                        "max_speed_kmh": 27.0,
+                        "reason": "too_short",
+                    },
                 },
                 "frames": {"active_frames": 300, "detected_frames": 240, "missing_frames": 45, "ambiguous_frames": 15, "predicted_frames": 0, "samples_used": 240},
                 "segments": {"observed_segments": 10, "estimated_gap_segments": 1, "skipped_outlier_segments": 0, "skipped_speed_outlier_segments": 0, "skipped_long_gap_segments": 0, "sustained_speed_windows": 5},
@@ -230,7 +244,12 @@ class PlayerIdentityTests(unittest.TestCase):
             self.assertEqual(doc["players"][0]["distance"]["total_distance_m"], 23.0)
             self.assertEqual(doc["players"][0]["speed"]["peak_sustained_speed_kmh"], 18.0)
             self.assertEqual(doc["players"][0]["intensity"]["sprint_count"], 1)
+            self.assertEqual(doc["players"][0]["intensity"]["sprint_candidate_count"], 2)
+            self.assertEqual(doc["players"][0]["intensity"]["rejected_sprint_candidate_count"], 1)
+            self.assertEqual(doc["players"][0]["intensity"]["best_sprint_candidate_reason"], "too_short")
+            self.assertEqual(doc["players"][0]["intensity"]["best_rejected_sprint_candidate"]["reason"], "too_short")
             self.assertEqual(doc["summary"]["sprint_distance_m"], 3.5)
+            self.assertEqual(doc["summary"]["sprint_candidate_count"], 2)
             self.assertTrue((path / "resolved_player_stats.json").exists())
 
 

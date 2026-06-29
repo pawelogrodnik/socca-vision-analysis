@@ -9,9 +9,21 @@ function recordNumber(record: Record<string, unknown> | undefined, key: string):
   return typeof value === 'number' ? value : 0;
 }
 
-function nestedNumber(record: Record<string, number | string> | undefined, key: string): number {
+function nestedNumber(record: Record<string, unknown> | undefined, key: string): number {
   const value = record?.[key];
   return typeof value === 'number' ? value : 0;
+}
+
+function candidateLabel(candidate: unknown): string {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return 'n/a';
+  }
+  const row = candidate as Record<string, unknown>;
+  const speed = nestedNumber(row, 'max_speed_kmh');
+  const duration = nestedNumber(row, 'duration_sec');
+  const reason = row.reason ? String(row.reason) : 'unknown';
+  if (speed <= 0) return 'n/a';
+  return `${formatSpeed(speed)} / ${duration.toFixed(2)}s / ${reason}`;
 }
 
 function formatMeters(value: number): string {
@@ -116,6 +128,9 @@ export function PlayerProfilePage() {
               <span>Sprinty: {recordNumber(summary, 'sprint_count')}</span>
               <span>Sprint dist: {formatMeters(recordNumber(summary, 'sprint_distance_m'))}</span>
               <span>Max sprint: {formatSpeed(recordNumber(summary, 'max_sprint_speed_kmh'))}</span>
+              <span>Sprint candidates: {recordNumber(summary, 'sprint_candidate_count')}</span>
+              <span>Rejected candidates: {recordNumber(summary, 'rejected_sprint_candidate_count')}</span>
+              <span>Best candidate: {formatSpeed(recordNumber(summary, 'best_sprint_candidate_speed_kmh'))}</span>
               <span>Distance quality: {String(summary?.distance_quality || 'unknown')}</span>
               <span>Warnings: {recordNumber(summary, 'matches_with_warnings')}</span>
             </div>
@@ -160,6 +175,17 @@ export function PlayerProfilePage() {
                         <td>
                           {nestedNumber(appearance.intensity, 'sprint_count')}
                           <span>{formatMeters(nestedNumber(appearance.intensity, 'sprint_distance_m'))}</span>
+                          <span>
+                            cand {nestedNumber(appearance.intensity, 'sprint_candidate_count')} / rej{' '}
+                            {nestedNumber(appearance.intensity, 'rejected_sprint_candidate_count')}
+                          </span>
+                          {nestedNumber(appearance.intensity, 'sprint_count') === 0 &&
+                            nestedNumber(appearance.intensity, 'rejected_sprint_candidate_count') > 0 && (
+                              <span>
+                                best rejected{' '}
+                                {candidateLabel(appearance.intensity?.best_rejected_sprint_candidate)}
+                              </span>
+                            )}
                         </td>
                         <td>{formatSpeed(nestedNumber(appearance.speed, 'peak_sustained_speed_kmh'))}</td>
                         <td>{appearance.distance_quality || 'unknown'}</td>

@@ -130,6 +130,31 @@ function doubleNestedNumber(
   return recordNumber(nestedRecord(nestedRecord(record, group), nestedGroup), key);
 }
 
+function candidateLabel(candidate: unknown): string {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return 'n/a';
+  }
+  const row = candidate as GenericRow;
+  const speed = recordNumber(row, 'max_speed_kmh');
+  const duration = recordNumber(row, 'duration_sec');
+  const reason = recordText(row, 'reason', 'unknown');
+  if (speed <= 0) return 'n/a';
+  return `${formatSpeed(speed)} / ${duration.toFixed(2)}s / ${reason}`;
+}
+
+function bestRejectedCandidateFrom(row: GenericRow): unknown {
+  const direct = nestedRecord(row, 'intensity').best_rejected_sprint_candidate;
+  if (direct) return direct;
+  return nestedRecord(nestedRecord(row, 'movement_stats'), 'intensity').best_rejected_sprint_candidate;
+}
+
+function sprintMetric(row: GenericRow, key: string): number {
+  return (
+    nestedNumber(row, 'intensity', key) ||
+    doubleNestedNumber(row, 'movement_stats', 'intensity', key)
+  );
+}
+
 function formatMeters(value: number): string {
   return `${value.toFixed(1)} m`;
 }
@@ -235,6 +260,9 @@ export function MatchReportContent({
           </span>
           <span>Sprinty: {recordNumber(movementSummary, 'sprint_count')}</span>
           <span>Sprint dist: {formatMeters(recordNumber(movementSummary, 'sprint_distance_m'))}</span>
+          <span>Sprint candidates: {recordNumber(movementSummary, 'sprint_candidate_count')}</span>
+          <span>Rejected candidates: {recordNumber(movementSummary, 'rejected_sprint_candidate_count')}</span>
+          <span>Best candidate: {formatSpeed(recordNumber(movementSummary, 'best_sprint_candidate_speed_kmh'))}</span>
           <span>HI dist: {formatMeters(recordNumber(movementSummary, 'high_intensity_distance_m'))}</span>
           <span>Visible avg: {recordNumber(frameSummary, 'stable_avg').toFixed(1)}</span>
           <span>Warnings: {source.analysisReport?.warnings?.length || 0}</span>
@@ -285,6 +313,10 @@ export function MatchReportContent({
                     <td>
                       {recordNumber(team, 'sprint_count')}
                       <span>{formatMeters(recordNumber(team, 'sprint_distance_m'))}</span>
+                      <span>
+                        cand {recordNumber(team, 'sprint_candidate_count')} / rej{' '}
+                        {recordNumber(team, 'rejected_sprint_candidate_count')}
+                      </span>
                     </td>
                     <td>
                       {formatSpeed(
@@ -347,6 +379,10 @@ export function MatchReportContent({
                         {nestedNumber(player, 'intensity', 'sprint_count')}
                         <span>
                           {formatMeters(nestedNumber(player, 'intensity', 'sprint_distance_m'))}
+                        </span>
+                        <span>
+                          cand {nestedNumber(player, 'intensity', 'sprint_candidate_count')} / rej{' '}
+                          {nestedNumber(player, 'intensity', 'rejected_sprint_candidate_count')}
                         </span>
                       </td>
                       <td>{formatSpeed(nestedNumber(player, 'speed', 'peak_sustained_speed_kmh'))}</td>
@@ -447,6 +483,14 @@ export function MatchReportContent({
                             ),
                         )}
                       </span>
+                      <span>
+                        cand {sprintMetric(player, 'sprint_candidate_count')} / rej{' '}
+                        {sprintMetric(player, 'rejected_sprint_candidate_count')}
+                      </span>
+                      {sprintMetric(player, 'sprint_count') === 0 &&
+                        sprintMetric(player, 'rejected_sprint_candidate_count') > 0 && (
+                          <span>best rejected {candidateLabel(bestRejectedCandidateFrom(player))}</span>
+                        )}
                     </td>
                     <td>
                       {formatSpeed(

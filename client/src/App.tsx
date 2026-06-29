@@ -4,6 +4,7 @@ import { MatchReportPage } from './components/MatchReportPage';
 import { PlayerProfilePage } from './components/PlayerProfilePage';
 import { PublishedMatchReportPage } from './components/PublishedMatchReportPage';
 import { TeamEditPage } from './components/TeamEditPage';
+import { TeamStatsPage } from './components/TeamStatsPage';
 import { TeamsPage } from './components/TeamsPage';
 import { Viewer } from './components/Viewer';
 
@@ -16,6 +17,7 @@ function App() {
       <Route path='/published/matches/:matchId/report' element={<PublishedMatchReportPage />} />
       <Route path='/teams' element={<TeamsPage />} />
       <Route path='/teams/add' element={<TeamEditPage mode='create' />} />
+      <Route path='/teams/:teamId/stats' element={<TeamStatsPage />} />
       <Route path='/teams/:teamId' element={<TeamEditPage mode='edit' />} />
       <Route path='/players/:playerId' element={<PlayerProfilePage />} />
       <Route path='*' element={<Navigate to='/' replace />} />

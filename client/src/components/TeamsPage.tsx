@@ -40,18 +40,23 @@ export function TeamsPage() {
         ) : (
           <div className='team-registry-list'>
             {teams.map((team) => (
-              <Link
+              <div
                 className='team-registry-item'
-                to={`/teams/${team.id}`}
                 key={team.id || team.name}
               >
                 <span
                   className='color-dot'
                   style={{ background: team.color || '#64748b' }}
                 />
-                <strong>{team.name}</strong>
-                <span>{team.players?.length || 0} zawodników</span>
-              </Link>
+                <div>
+                  <strong>{team.name}</strong>
+                  <span>{team.players?.length || 0} zawodników</span>
+                </div>
+                <div className='team-registry-actions'>
+                  {team.id && <Link to={`/teams/${encodeURIComponent(team.id)}/stats`}>Statystyki</Link>}
+                  {team.id && <Link to={`/teams/${encodeURIComponent(team.id)}`}>Edytuj</Link>}
+                </div>
+              </div>
             ))}
           </div>
         )}

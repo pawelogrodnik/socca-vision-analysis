@@ -10,13 +10,29 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
-from app.services.analysis_runs import finalize_analysis_report
+from app.config import ROOT_DIR
+from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id, now_iso
+from app.services.ball_tracking import DEFAULT_BALL_CONF, detect_ball_yolo_coco
+from app.services.ball_possession import build_ball_possession_analysis
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
 from app.services.stabilization import stabilize_match
 from app.services.tracker import CentroidTracker
 from app.services.video import read_video_metadata
 
 AnalysisAdapter = Literal["motion", "yolo"]
+
+BALL_ARTIFACT_FILENAMES = {
+    "ball_candidates": "ball_candidates.json",
+    "ball_tracks": "ball_tracks.json",
+    "ball_tracking_report": "ball_tracking_report.json",
+    "ball_quality_report": "ball_quality_report.json",
+    "ball_overlay_preview": "ball_overlay_preview.mp4",
+    "possession_candidates": "possession_candidates.json",
+    "possession_segments": "possession_segments.json",
+    "contact_candidates": "contact_candidates.json",
+    "possession_report": "possession_report.json",
+    "possession_overlay_preview": "possession_overlay_preview.mp4",
+}
 
 
 class OverlayWriter:
@@ -370,7 +386,61 @@ def _load_yolo_model(model_name: str):
         from ultralytics import YOLO
     except ImportError as exc:
         raise RuntimeError("YOLO adapter requires ultralytics. Install it with: pip install ultralytics") from exc
-    return YOLO(model_name)
+    return YOLO(_resolve_yolo_model_name(model_name))
+
+
+def _resolve_yolo_model_name(model_name: str) -> str:
+    raw = str(model_name or "").strip()
+    if not raw:
+        raise ValueError("YOLO model name/path cannot be empty.")
+
+    direct = Path(raw)
+    if direct.is_absolute() or direct.exists():
+        return str(direct)
+
+    normalized = raw.replace("\\", "/")
+    candidates = [
+        ROOT_DIR / raw,
+        ROOT_DIR.parent / raw,
+    ]
+    if normalized.startswith("backend/"):
+        candidates.append(ROOT_DIR / normalized[len("backend/") :])
+    if normalized.startswith("models/"):
+        candidates.append(ROOT_DIR / normalized)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+
+    return raw
+
+
+def _load_stable_players_doc(match_dir: Path) -> dict[str, Any]:
+    stable_path = match_dir / "stable_players.json"
+    if not stable_path.exists():
+        return {"schema_version": "0.1.0", "players": []}
+    loaded = json.loads(stable_path.read_text(encoding="utf-8"))
+    return loaded if isinstance(loaded, dict) else {"schema_version": "0.1.0", "players": []}
+
+
+def _build_ball_possession_artifacts(
+    match_dir: Path,
+    video_path: Path,
+    pitch: PitchConfig,
+    metadata: dict[str, Any],
+    ball_tracking: dict[str, Any],
+    *,
+    stable_players_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    stable_doc = stable_players_doc or _load_stable_players_doc(match_dir)
+    return build_ball_possession_analysis(
+        match_dir,
+        video_path,
+        pitch,
+        metadata,
+        ball_tracking.get("ball_tracks") or {},
+        stable_doc,
+    )
 
 
 def _resolve_yolo_tracker_config(tracker_name: str) -> str:
@@ -410,7 +480,8 @@ def analyze_match_yolo(
         max_frames = int(max_seconds * fps) if max_seconds > 0 else int(metadata["frame_count"])
         overlay_writer = OverlayWriter(match_dir, fps=fps / frame_stride, frame_size=(width, height))
 
-        model = _load_yolo_model(yolo_model)
+        resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
+        model = _load_yolo_model(resolved_yolo_model)
         use_centroid_tracker = yolo_tracker == "centroid_high_recall"
         tracker_config = _resolve_yolo_tracker_config(yolo_tracker)
         centroid_tracker = CentroidTracker(max_distance_px=max(45, width * 0.04), max_missing=max(12, int(fps * 0.6 / max(frame_stride, 1))))
@@ -516,10 +587,6 @@ def analyze_match_yolo(
         else:
             raw_tracks = [{"track_id": tid, "positions": positions} for tid, positions in sorted(tracks.items()) if positions]
         tracks_json = _tracks_with_pitch_positions(raw_tracks, H)
-        artifacts = _write_outputs(match_dir, pitch, tracks_json)
-        stabilization = stabilize_match(match_dir, video_path, pitch, tracks_json, metadata)
-        artifacts.update(stabilization["artifacts"])
-
         warnings: list[str] = []
         if processed == 0:
             warnings.append("No frames were processed.")
@@ -527,6 +594,42 @@ def analyze_match_yolo(
             warnings.append("YOLO did not keep any person detections inside the pitch polygon. Check pitch points, confidence, imgsz, and model.")
         elif len(tracks_json) == 0:
             warnings.append("Detections were found, but no track positions were exported.")
+
+        artifacts = _write_outputs(match_dir, pitch, tracks_json)
+        stabilization = stabilize_match(match_dir, video_path, pitch, tracks_json, metadata)
+        artifacts.update(stabilization["artifacts"])
+        ball_tracking: dict[str, Any] | None = None
+        possession: dict[str, Any] | None = None
+        try:
+            ball_tracking = detect_ball_yolo_coco(
+                match_dir,
+                video_path,
+                pitch,
+                metadata,
+                model=model,
+                max_seconds=max_seconds,
+                frame_stride=frame_stride,
+                yolo_imgsz=int(yolo_imgsz),
+                yolo_device=yolo_device,
+                ball_conf=min(float(yolo_conf), DEFAULT_BALL_CONF),
+            )
+            artifacts.update(ball_tracking["artifacts"])
+        except Exception as exc:
+            warnings.append(f"Experimental ball detection failed: {exc}")
+        if ball_tracking is not None:
+            try:
+                possession = _build_ball_possession_artifacts(
+                    match_dir,
+                    video_path,
+                    pitch,
+                    metadata,
+                    ball_tracking,
+                    stable_players_doc=stabilization["stable_players"],
+                )
+                artifacts.update(possession["artifacts"])
+                warnings.extend(possession["possession_report"].get("warnings") or [])
+            except Exception as exc:
+                warnings.append(f"Experimental possession candidate layer failed: {exc}")
 
         report = {
             "status": "completed",
@@ -537,6 +640,7 @@ def analyze_match_yolo(
                 "max_seconds": max_seconds,
                 "frame_stride": frame_stride,
                 "yolo_model": yolo_model,
+                "yolo_model_resolved": resolved_yolo_model,
                 "yolo_conf": yolo_conf,
                 "yolo_iou": 0.45,
                 "yolo_imgsz": yolo_imgsz,
@@ -554,6 +658,9 @@ def analyze_match_yolo(
             "detections_rejected_outside_pitch": detections_rejected_outside_pitch,
             "tracks_count": len(tracks_json),
             "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
+            "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
+            "ball_quality_summary": (ball_tracking or {}).get("ball_quality_report", {}).get("summary"),
+            "possession_summary": (possession or {}).get("possession_report", {}).get("summary"),
             "warnings": warnings,
             "artifacts": artifacts,
         }
@@ -561,6 +668,152 @@ def analyze_match_yolo(
     except Exception as exc:
         _write_failed_report(match_dir, adapter=adapter_name, error=exc)
         raise
+
+
+def analyze_match_ball_yolo(
+    match_dir: Path,
+    video_path: Path,
+    *,
+    max_seconds: float,
+    frame_stride: int,
+    yolo_model: str,
+    yolo_conf: float,
+    yolo_imgsz: int,
+    yolo_device: str | None,
+) -> dict[str, Any]:
+    adapter_name = "ball-yolo"
+    try:
+        metadata = read_video_metadata(video_path)
+        pitch = load_pitch_config(match_dir)
+        resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
+        model = _load_yolo_model(resolved_yolo_model)
+        ball_tracking = detect_ball_yolo_coco(
+            match_dir,
+            video_path,
+            pitch,
+            metadata,
+            model=model,
+            max_seconds=max_seconds,
+            frame_stride=max(1, frame_stride),
+            yolo_imgsz=int(yolo_imgsz),
+            yolo_device=yolo_device,
+            ball_conf=min(float(yolo_conf), DEFAULT_BALL_CONF),
+        )
+        possession = _build_ball_possession_artifacts(
+            match_dir,
+            video_path,
+            pitch,
+            metadata,
+            ball_tracking,
+        )
+        ball_parameters = ball_tracking["ball_tracking_report"].get("parameters") or {}
+        run_id = new_analysis_run_id(adapter_name)
+        generated_at = now_iso()
+        run_dir = match_dir / "analysis_runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        report = {
+            "schema_version": "0.1.0",
+            "status": "completed",
+            "analysis_type": adapter_name,
+            "experimental": True,
+            "run_id": run_id,
+            "generated_at": generated_at,
+            "run_directory": f"analysis_runs/{run_id}",
+            "run_manifest": f"analysis_runs/{run_id}/run_metadata.json",
+            "video": metadata,
+            "parameters": {
+                "max_seconds": max_seconds,
+                "frame_stride": max(1, frame_stride),
+                "yolo_model": yolo_model,
+                "yolo_model_resolved": resolved_yolo_model,
+                "yolo_conf": yolo_conf,
+                "yolo_imgsz": yolo_imgsz,
+                "yolo_device": yolo_device or "auto",
+                "detector": ball_parameters.get("detector"),
+                "classes": ball_parameters.get("ball_class_names") or ["ball"],
+                "class_ids": ball_parameters.get("ball_class_ids") or [],
+                "class_resolution": ball_parameters.get("ball_class_resolution"),
+                "pitch_filter": "center_in_pitch_polygon",
+            },
+            "frames_processed": ball_tracking["ball_tracking_report"]["summary"]["processed_frames"],
+            "ball_tracking_summary": ball_tracking["ball_tracking_report"]["summary"],
+            "ball_quality_summary": ball_tracking["ball_quality_report"]["summary"],
+            "ball_quality_recommendation": ball_tracking["ball_quality_report"]["recommendation"],
+            "possession_summary": possession["possession_report"]["summary"],
+            "warnings": [
+                *(ball_tracking["ball_tracking_report"].get("warnings") or []),
+                *(possession["possession_report"].get("warnings") or []),
+            ],
+            "artifacts": {**ball_tracking["artifacts"], **possession["artifacts"]},
+        }
+        report["run_artifacts"] = {
+            key: f"analysis_runs/{run_id}/{Path(filename).name}"
+            for key, filename in report["artifacts"].items()
+        }
+        (match_dir / "ball_analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (run_dir / "ball_analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        (run_dir / "run_metadata.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "0.1.0",
+                    "run_id": run_id,
+                    "generated_at": generated_at,
+                    "status": report["status"],
+                    "analysis_type": adapter_name,
+                    "parameters": report["parameters"],
+                    "artifacts": report["artifacts"],
+                    "run_artifacts": report["run_artifacts"],
+                    "report": "ball_analysis_report.json",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        for filename in ["pitch_config.json", "ball_analysis_report.json", *BALL_ARTIFACT_FILENAMES.values()]:
+            source = match_dir / filename
+            if source.exists() and source.is_file():
+                shutil.copy2(source, run_dir / filename)
+        _merge_ball_analysis_into_main_report(match_dir, report)
+        return report
+    except Exception as exc:
+        failed = {
+            "schema_version": "0.1.0",
+            "status": "failed",
+            "analysis_type": adapter_name,
+            "generated_at": now_iso(),
+            "error": {"type": exc.__class__.__name__, "message": str(exc)},
+            "artifacts": {},
+        }
+        (match_dir / "ball_analysis_report.json").write_text(json.dumps(failed, indent=2), encoding="utf-8")
+        raise
+
+
+def _merge_ball_analysis_into_main_report(match_dir: Path, ball_report: dict[str, Any]) -> None:
+    report_path = match_dir / "analysis_report.json"
+    if report_path.exists():
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    else:
+        report = {
+            "status": "completed",
+            "analysis_type": "ball-yolo-only",
+            "generated_at": ball_report.get("generated_at") or now_iso(),
+            "artifacts": {},
+        }
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    artifacts.update(ball_report.get("artifacts") or {})
+    artifacts["ball_analysis_report"] = "ball_analysis_report.json"
+    report["artifacts"] = artifacts
+    report["ball_tracking_summary"] = ball_report.get("ball_tracking_summary")
+    report["ball_quality_summary"] = ball_report.get("ball_quality_summary")
+    report["ball_quality_recommendation"] = ball_report.get("ball_quality_recommendation")
+    report["latest_ball_analysis_run"] = {
+        "run_id": ball_report.get("run_id"),
+        "generated_at": ball_report.get("generated_at"),
+        "run_directory": ball_report.get("run_directory"),
+        "run_manifest": ball_report.get("run_manifest"),
+        "parameters": ball_report.get("parameters") or {},
+    }
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 
 def analyze_match(

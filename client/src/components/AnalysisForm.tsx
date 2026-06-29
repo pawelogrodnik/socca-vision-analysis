@@ -6,6 +6,7 @@ interface AnalysisFormProps {
   onRun: () => Promise<void> | void;
   disabled?: boolean;
   isRunning?: boolean;
+  showRunButton?: boolean;
 }
 
 export function AnalysisForm({
@@ -14,6 +15,7 @@ export function AnalysisForm({
   onRun,
   disabled = false,
   isRunning = false,
+  showRunButton = true,
 }: AnalysisFormProps) {
   return (
     <div className='analysis-form'>
@@ -119,9 +121,11 @@ export function AnalysisForm({
           />
         </label>
       </div>
-      <button type='button' onClick={onRun} disabled={disabled}>
-        {isRunning ? 'Analiza w toku...' : 'Uruchom analizę'}
-      </button>
+      {showRunButton && (
+        <button type='button' onClick={onRun} disabled={disabled}>
+          {isRunning ? 'Analiza w toku...' : 'Uruchom analize'}
+        </button>
+      )}
     </div>
   );
 }

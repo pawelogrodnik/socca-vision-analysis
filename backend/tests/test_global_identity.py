@@ -245,6 +245,11 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertAlmostEqual(intensity["sprint_time_sec"], 1.0, places=1)
         self.assertAlmostEqual(intensity["high_intensity_distance_m"], 6.0, places=1)
         self.assertAlmostEqual(intensity["max_sprint_speed_kmh"], 21.6, places=1)
+        self.assertEqual(intensity["sprint_candidate_count"], 1)
+        self.assertEqual(intensity["rejected_sprint_candidate_count"], 0)
+        self.assertAlmostEqual(intensity["best_sprint_candidate_speed_kmh"], 21.6, places=1)
+        self.assertAlmostEqual(intensity["best_sprint_candidate_duration_sec"], 1.0, places=1)
+        self.assertEqual(intensity["best_sprint_candidate_reason"], "accepted")
 
     def test_movement_stats_short_spike_does_not_set_peak_speed(self) -> None:
         stats = _slot_movement_stats(
@@ -260,6 +265,28 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(stats["top_speed_kmh"], 0.0)
         self.assertEqual(stats["speed_quality"], "low")
         self.assertEqual(stats["intensity"]["sprint_count"], 0)
+        self.assertEqual(stats["intensity"]["sprint_candidate_count"], 1)
+        self.assertEqual(stats["intensity"]["rejected_sprint_candidate_count"], 1)
+        self.assertEqual(stats["intensity"]["best_sprint_candidate_reason"], "too_short")
+        self.assertEqual(stats["intensity"]["best_rejected_sprint_candidate"]["reason"], "too_short")
+        self.assertGreater(stats["intensity"]["best_rejected_sprint_candidate"]["max_speed_kmh"], 25.0)
+        self.assertLess(stats["intensity"]["best_rejected_sprint_candidate"]["duration_sec"], 0.5)
+
+    def test_movement_stats_reports_gap_sprint_candidate_as_rejected(self) -> None:
+        stats = _slot_movement_stats(
+            [
+                {"frame": 0, "time_sec": 0.0, "pitch_m": [0, 0], "source": "detected"},
+                {"frame": 10, "time_sec": 10 / 30, "pitch_m": [2.0, 0], "source": "detected"},
+            ],
+            fps=30,
+        )
+
+        intensity = stats["intensity"]
+        self.assertEqual(intensity["sprint_count"], 0)
+        self.assertEqual(intensity["sprint_candidate_count"], 1)
+        self.assertEqual(intensity["rejected_sprint_candidate_count"], 1)
+        self.assertEqual(intensity["best_sprint_candidate_reason"], "gap_too_large")
+        self.assertEqual(intensity["best_rejected_sprint_candidate"]["reason"], "gap_too_large")
 
     def test_movement_stats_single_outlier_does_not_inflate_peak_speed(self) -> None:
         rows = []

@@ -1309,6 +1309,24 @@ def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: f
         if int(segment.get("frame_gap") or 0) <= STATS_OBSERVED_GAP_FRAMES
         and float(segment.get("dt") or 0.0) <= STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC
     ]
+    rejected_gap_candidates = [
+        {
+            "start_frame": int(segment.get("start_frame") or 0),
+            "end_frame": int(segment.get("end_frame") or 0),
+            "start_time_sec": float(segment.get("start_time") or 0.0),
+            "end_time_sec": float(segment.get("end_time") or 0.0),
+            "time_sec": float(segment.get("dt") or 0.0),
+            "distance_m": float(segment.get("distance") or 0.0),
+            "max_speed_mps": float(segment.get("speed") or 0.0),
+            "reason": "gap_too_large",
+        }
+        for segment in speed_segments
+        if float(segment.get("speed") or 0.0) >= sprint_threshold_mps
+        and (
+            int(segment.get("frame_gap") or 0) > STATS_OBSERVED_GAP_FRAMES
+            or float(segment.get("dt") or 0.0) > STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC
+        )
+    ]
 
     high_time = 0.0
     high_distance = 0.0
@@ -1320,8 +1338,8 @@ def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: f
         high_distance += float(segment.get("distance") or 0.0)
         high_segments += 1
 
-    sprint_runs: list[dict[str, float]] = []
-    current_run: dict[str, float] | None = None
+    sprint_runs: list[dict[str, Any]] = []
+    current_run: dict[str, Any] | None = None
     previous_end_frame: int | None = None
     for segment in trusted_segments:
         speed = float(segment.get("speed") or 0.0)
@@ -1332,10 +1350,21 @@ def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: f
             if current_run is None or not continues_previous:
                 if current_run is not None:
                     sprint_runs.append(current_run)
-                current_run = {"time_sec": 0.0, "distance_m": 0.0, "max_speed_mps": 0.0}
+                current_run = {
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "start_time_sec": float(segment.get("start_time") or 0.0),
+                    "end_time_sec": float(segment.get("end_time") or 0.0),
+                    "time_sec": 0.0,
+                    "distance_m": 0.0,
+                    "max_speed_mps": 0.0,
+                    "reason": "accepted",
+                }
             current_run["time_sec"] += float(segment.get("dt") or 0.0)
             current_run["distance_m"] += float(segment.get("distance") or 0.0)
             current_run["max_speed_mps"] = max(current_run["max_speed_mps"], speed)
+            current_run["end_frame"] = end_frame
+            current_run["end_time_sec"] = float(segment.get("end_time") or current_run["end_time_sec"])
         elif current_run is not None:
             sprint_runs.append(current_run)
             current_run = None
@@ -1344,10 +1373,48 @@ def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: f
         sprint_runs.append(current_run)
 
     valid_sprints = [run for run in sprint_runs if float(run.get("time_sec") or 0.0) >= SPRINT_MIN_DURATION_SEC]
+    rejected_sprints = [
+        {**run, "reason": "too_short"}
+        for run in sprint_runs
+        if float(run.get("time_sec") or 0.0) < SPRINT_MIN_DURATION_SEC
+    ] + rejected_gap_candidates
+    sprint_candidates = [*valid_sprints, *rejected_sprints]
     sprint_time = sum(float(run.get("time_sec") or 0.0) for run in valid_sprints)
     sprint_distance = sum(float(run.get("distance_m") or 0.0) for run in valid_sprints)
     longest = max(valid_sprints, key=lambda run: float(run.get("distance_m") or 0.0), default={})
     max_sprint_speed = max([float(run.get("max_speed_mps") or 0.0) for run in valid_sprints] or [0.0])
+    best_candidate = max(
+        sprint_candidates,
+        key=lambda run: (
+            float(run.get("max_speed_mps") or 0.0),
+            float(run.get("time_sec") or 0.0),
+            float(run.get("distance_m") or 0.0),
+        ),
+        default={},
+    )
+    best_rejected = max(
+        rejected_sprints,
+        key=lambda run: (
+            float(run.get("max_speed_mps") or 0.0),
+            float(run.get("time_sec") or 0.0),
+            float(run.get("distance_m") or 0.0),
+        ),
+        default={},
+    )
+
+    def serialize_candidate(run: dict[str, Any]) -> dict[str, Any]:
+        if not run:
+            return {}
+        return {
+            "start_frame": int(run.get("start_frame") or 0),
+            "end_frame": int(run.get("end_frame") or 0),
+            "start_time_sec": round(float(run.get("start_time_sec") or 0.0), 3),
+            "end_time_sec": round(float(run.get("end_time_sec") or 0.0), 3),
+            "duration_sec": round(float(run.get("time_sec") or 0.0), 3),
+            "distance_m": round(float(run.get("distance_m") or 0.0), 2),
+            "max_speed_kmh": round(float(run.get("max_speed_mps") or 0.0) * 3.6, 2),
+            "reason": str(run.get("reason") or "accepted"),
+        }
 
     return {
         "high_intensity_threshold_kmh": HIGH_INTENSITY_THRESHOLD_KMH,
@@ -1365,6 +1432,14 @@ def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: f
         "longest_sprint_distance_m": round(float(longest.get("distance_m") or 0.0), 2),
         "max_sprint_speed_kmh": round(max_sprint_speed * 3.6, 2),
         "trusted_speed_segments": len(trusted_segments),
+        "sprint_candidate_count": len(sprint_candidates),
+        "rejected_sprint_candidate_count": len(rejected_sprints),
+        "best_sprint_candidate_speed_kmh": round(float(best_candidate.get("max_speed_mps") or 0.0) * 3.6, 2),
+        "best_sprint_candidate_duration_sec": round(float(best_candidate.get("time_sec") or 0.0), 3),
+        "best_sprint_candidate_distance_m": round(float(best_candidate.get("distance_m") or 0.0), 2),
+        "best_sprint_candidate_reason": str(best_candidate.get("reason") or "none") if best_candidate else "none",
+        "best_rejected_sprint_candidate": serialize_candidate(best_rejected),
+        "rejected_sprint_candidates": [serialize_candidate(run) for run in rejected_sprints[:5]],
     }
 
 

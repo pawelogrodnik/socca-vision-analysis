@@ -436,6 +436,30 @@ class StabilizationTests(unittest.TestCase):
                             "longest_sprint_distance_m": 4.2,
                             "max_sprint_speed_kmh": 23.1,
                             "trusted_speed_segments": 40,
+                            "sprint_candidate_count": 2,
+                            "rejected_sprint_candidate_count": 1,
+                            "best_sprint_candidate_speed_kmh": 28.0,
+                            "best_sprint_candidate_duration_sec": 0.18,
+                            "best_sprint_candidate_distance_m": 1.4,
+                            "best_sprint_candidate_reason": "too_short",
+                            "best_rejected_sprint_candidate": {
+                                "start_frame": 44,
+                                "end_frame": 49,
+                                "duration_sec": 0.18,
+                                "distance_m": 1.4,
+                                "max_speed_kmh": 28.0,
+                                "reason": "too_short",
+                            },
+                            "rejected_sprint_candidates": [
+                                {
+                                    "start_frame": 44,
+                                    "end_frame": 49,
+                                    "duration_sec": 0.18,
+                                    "distance_m": 1.4,
+                                    "max_speed_kmh": 28.0,
+                                    "reason": "too_short",
+                                }
+                            ],
                         },
                         "active_frames": 300,
                         "detected_frames": 240,
@@ -473,9 +497,15 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(player["speed"]["quality"], "medium")
         self.assertEqual(player["intensity"]["sprint_count"], 1)
         self.assertEqual(player["intensity"]["sprint_distance_m"], 4.2)
+        self.assertEqual(player["intensity"]["sprint_candidate_count"], 2)
+        self.assertEqual(player["intensity"]["rejected_sprint_candidate_count"], 1)
+        self.assertEqual(player["intensity"]["best_sprint_candidate_reason"], "too_short")
         self.assertEqual(doc["summary"]["sprint_count"], 1)
+        self.assertEqual(doc["summary"]["sprint_candidate_count"], 2)
+        self.assertEqual(doc["summary"]["best_rejected_sprint_candidate"]["reason"], "too_short")
         self.assertEqual(doc["summary"]["high_intensity_distance_m"], 7.0)
         self.assertEqual(doc["teams"][0]["sprint_count"], 1)
+        self.assertEqual(doc["teams"][0]["sprint_candidate_count"], 2)
 
     def test_player_heatmaps_document_uses_trusted_positions_only(self) -> None:
         stable_doc = {
@@ -598,6 +628,16 @@ class StabilizationTests(unittest.TestCase):
                     "sprint_distance_m": 8.0,
                     "longest_sprint_distance_m": 5.0,
                     "max_sprint_speed_kmh": 24.0,
+                    "sprint_candidate_count": 3,
+                    "rejected_sprint_candidate_count": 1,
+                    "best_sprint_candidate_speed_kmh": 26.0,
+                    "best_sprint_candidate_duration_sec": 0.22,
+                    "best_rejected_sprint_candidate": {
+                        "duration_sec": 0.22,
+                        "distance_m": 1.6,
+                        "max_speed_kmh": 26.0,
+                        "reason": "too_short",
+                    },
                     "players_low_quality": 0,
                     "players_medium_quality": 1,
                     "players_high_quality": 1,
@@ -626,7 +666,11 @@ class StabilizationTests(unittest.TestCase):
         self.assertTrue(doc["teams"][0]["locked"])
         self.assertEqual(doc["teams"][0]["players_medium_quality"], 1)
         self.assertEqual(doc["teams"][0]["sprint_count"], 2)
+        self.assertEqual(doc["teams"][0]["sprint_candidate_count"], 3)
+        self.assertEqual(doc["teams"][0]["rejected_sprint_candidate_count"], 1)
         self.assertEqual(doc["summary"]["sprint_distance_m"], 8.0)
+        self.assertEqual(doc["summary"]["sprint_candidate_count"], 3)
+        self.assertEqual(doc["summary"]["best_rejected_sprint_candidate"]["reason"], "too_short")
 
 
 if __name__ == "__main__":

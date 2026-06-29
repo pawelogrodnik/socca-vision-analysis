@@ -56,6 +56,17 @@ export type StablePlayerStatus =
   | 'false_positive'
   | 'unknown';
 
+export type SprintCandidate = {
+  start_frame?: number;
+  end_frame?: number;
+  start_time_sec?: number;
+  end_time_sec?: number;
+  duration_sec?: number;
+  distance_m?: number;
+  max_speed_kmh?: number;
+  reason?: string;
+};
+
 export type MovementStats = {
   playing_time_sec: number;
   detected_time_sec: number;
@@ -106,6 +117,14 @@ export type MovementStats = {
     longest_sprint_distance_m?: number;
     max_sprint_speed_kmh?: number;
     trusted_speed_segments?: number;
+    sprint_candidate_count?: number;
+    rejected_sprint_candidate_count?: number;
+    best_sprint_candidate_speed_kmh?: number;
+    best_sprint_candidate_duration_sec?: number;
+    best_sprint_candidate_distance_m?: number;
+    best_sprint_candidate_reason?: string;
+    best_rejected_sprint_candidate?: SprintCandidate;
+    rejected_sprint_candidates?: SprintCandidate[];
   };
   stats_note?: string;
 };
@@ -406,7 +425,7 @@ export type PlayerStatsDocument = {
     time: Record<string, number>;
     distance: Record<string, number | string>;
     speed: Record<string, number>;
-    intensity?: Record<string, number>;
+    intensity?: Record<string, unknown>;
     frames: Record<string, number>;
     segments: Record<string, number>;
     tracking_only: boolean;
@@ -465,7 +484,7 @@ export type PlayerProfileStatsDocument = {
     time?: Record<string, number>;
     distance?: Record<string, number | string>;
     speed?: Record<string, number | string>;
-    intensity?: Record<string, number | string>;
+    intensity?: Record<string, unknown>;
     frames?: Record<string, number>;
     segments?: Record<string, number>;
     review_warnings?: string[];
@@ -473,6 +492,27 @@ export type PlayerProfileStatsDocument = {
     speed_quality?: string;
     tracking_only?: boolean;
   }>;
+  notes?: string[];
+};
+
+export type TeamProfileStatsDocument = {
+  schema_version: string;
+  generated_at: string;
+  scope: 'team_tracking_only_no_ball' | string;
+  identity_semantics: string;
+  team: {
+    team_id: string;
+    team_name?: string | null;
+    color?: string | null;
+    known_from_registry?: boolean;
+    roster_players?: Player[];
+  };
+  season?: string | null;
+  available_seasons: string[];
+  summary: Record<string, unknown>;
+  players: Array<Record<string, unknown>>;
+  matches: Array<Record<string, unknown>>;
+  missing_matches: Array<Record<string, unknown>>;
   notes?: string[];
 };
 
@@ -507,6 +547,90 @@ export type TrackingQualityReport = {
   frame_team_counts?: Array<Record<string, unknown>>;
   suspicious_events?: Array<Record<string, unknown>>;
   rejected_tracklets?: Array<Record<string, unknown>>;
+};
+
+export type BallTrackingReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  status?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+  warnings?: string[];
+};
+
+export type BallQualityReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  recommendation?: {
+    decision?: string;
+    custom_dataset_recommended?: boolean;
+    confidence?: string;
+    reasons?: string[];
+    next_step?: string;
+  };
+  diagnostics?: Record<string, unknown>;
+  notes?: string[];
+};
+
+export type PossessionReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  status?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  warnings?: string[];
+  notes?: string[];
+};
+
+export type ContactCandidateReviewStatus = 'needs_review' | 'accepted' | 'rejected' | 'uncertain';
+
+export type ContactCandidate = {
+  candidate_id: string;
+  stable_player_id?: string | null;
+  stable_subject_id?: string | null;
+  team_label?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  start_time_sec?: number | null;
+  end_time_sec?: number | null;
+  duration_sec?: number | null;
+  frames?: number | null;
+  detected_ball_frames?: number | null;
+  detected_player_frames?: number | null;
+  interpolated_player_frames?: number | null;
+  mean_distance_m?: number | null;
+  min_distance_m?: number | null;
+  mean_confidence?: number | null;
+  source?: string;
+  status?: ContactCandidateReviewStatus | string;
+  review_status?: ContactCandidateReviewStatus;
+  review_notes?: string;
+  reviewed_at?: string;
+  player_source_counts?: Record<string, number>;
+};
+
+export type ContactCandidateReviewUpdate = {
+  candidate_id: string;
+  review_status: ContactCandidateReviewStatus;
+  notes?: string;
+};
+
+export type ContactCandidatesDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  updated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  candidates: ContactCandidate[];
 };
 
 export type StablePlayerReviewUpdate = {
@@ -624,6 +748,11 @@ export type Match = MatchMetadataPayload & {
   resolved_player_stats?: ResolvedPlayerStatsDocument;
   tracklets?: Record<string, unknown>;
   tracking_quality_report?: TrackingQualityReport;
+  ball_analysis_report?: Record<string, unknown>;
+  ball_tracking_report?: BallTrackingReport;
+  ball_quality_report?: BallQualityReport;
+  contact_candidates?: ContactCandidatesDocument;
+  possession_report?: PossessionReport;
   match_package?: MatchPackage;
   player_assignments?: PlayerAssignmentsDocument;
   player_identity_assignments?: PlayerIdentityAssignmentsDocument;
@@ -640,6 +769,15 @@ export type AnalysisPayload = {
   yolo_device: string | null;
 };
 
+export type BallAnalysisPayload = {
+  max_seconds: number;
+  frame_stride: number;
+  yolo_model: string;
+  yolo_conf: number;
+  yolo_imgsz: number;
+  yolo_device: string | null;
+};
+
 export type AnalysisReport = {
   status: 'completed' | 'failed' | string;
   analysis_type: string;
@@ -652,6 +790,10 @@ export type AnalysisReport = {
   detections_kept?: number;
   detections_rejected_outside_pitch?: number;
   tracks_count?: number;
+  ball_tracking_summary?: Record<string, unknown>;
+  ball_quality_summary?: Record<string, unknown>;
+  ball_quality_recommendation?: BallQualityReport['recommendation'];
+  possession_summary?: Record<string, unknown>;
   warnings?: string[];
   error?: {
     type?: string;
@@ -677,6 +819,17 @@ export type AnalysisReport = {
     player_heatmaps?: string;
     tracklets?: string;
     tracking_quality_report?: string;
+    ball_candidates?: string;
+    ball_tracks?: string;
+    ball_analysis_report?: string;
+    ball_tracking_report?: string;
+    ball_quality_report?: string;
+    ball_overlay_preview?: string;
+    possession_candidates?: string;
+    possession_segments?: string;
+    contact_candidates?: string;
+    possession_report?: string;
+    possession_overlay_preview?: string;
   };
   run_artifacts?: Record<string, string>;
   [key: string]: unknown;
@@ -707,6 +860,14 @@ export type MatchPackage = {
   player_heatmaps?: PlayerHeatmapsDocument | null;
   tracklets?: Record<string, unknown> | null;
   tracking_quality_report?: TrackingQualityReport | null;
+  ball_analysis_report?: Record<string, unknown> | null;
+  ball_tracks?: Record<string, unknown> | null;
+  ball_tracking_report?: BallTrackingReport | null;
+  ball_quality_report?: BallQualityReport | null;
+  possession_candidates?: Record<string, unknown> | null;
+  possession_segments?: Record<string, unknown> | null;
+  contact_candidates?: ContactCandidatesDocument | null;
+  possession_report?: PossessionReport | null;
   [key: string]: unknown;
 };
 
