@@ -86,6 +86,7 @@ def _match_identity(match_path: Path, meta: dict[str, Any]) -> str:
 def _appearance(match_path: Path, meta: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     distance = _record(row.get("distance"))
     speed = _record(row.get("speed"))
+    intensity = _record(row.get("intensity"))
     return {
         "match_id": _match_identity(match_path, meta),
         "match_title": meta.get("title") or _match_identity(match_path, meta),
@@ -106,6 +107,7 @@ def _appearance(match_path: Path, meta: dict[str, Any], row: dict[str, Any]) -> 
         "time": _record(row.get("time")),
         "distance": distance,
         "speed": speed,
+        "intensity": intensity,
         "frames": _record(row.get("frames")),
         "segments": _record(row.get("segments")),
         "review_warnings": _list(row.get("review_warnings")),
@@ -167,6 +169,7 @@ def _summary(appearances: list[dict[str, Any]], scanned_matches: int) -> dict[st
     detected_time = sum(_nested_number(row, "time", "detected_time_sec") for row in appearances)
     peak_speed = max([_nested_number(row, "speed", "peak_sustained_speed_kmh") for row in appearances] or [0.0])
     top_speed = max([_nested_number(row, "speed", "top_speed_kmh") for row in appearances] or [0.0])
+    max_sprint_speed = max([_nested_number(row, "intensity", "max_sprint_speed_kmh") for row in appearances] or [0.0])
     return {
         "matches": len(appearances),
         "appearances": len(appearances),
@@ -183,6 +186,13 @@ def _summary(appearances: list[dict[str, Any]], scanned_matches: int) -> dict[st
         "avg_speed_kmh": round((total_distance / playing_time) * 3.6, 2) if playing_time > 0 else 0.0,
         "peak_sustained_speed_kmh": round(peak_speed, 2),
         "top_speed_kmh": round(top_speed, 2),
+        "high_intensity_time_sec": round(sum(_nested_number(row, "intensity", "high_intensity_time_sec") for row in appearances), 2),
+        "high_intensity_distance_m": round(sum(_nested_number(row, "intensity", "high_intensity_distance_m") for row in appearances), 2),
+        "sprint_count": sum(int(_nested_number(row, "intensity", "sprint_count")) for row in appearances),
+        "sprint_time_sec": round(sum(_nested_number(row, "intensity", "sprint_time_sec") for row in appearances), 2),
+        "sprint_distance_m": round(sum(_nested_number(row, "intensity", "sprint_distance_m") for row in appearances), 2),
+        "longest_sprint_distance_m": round(max([_nested_number(row, "intensity", "longest_sprint_distance_m") for row in appearances] or [0.0]), 2),
+        "max_sprint_speed_kmh": round(max_sprint_speed, 2),
         "matches_with_warnings": sum(1 for row in appearances if row.get("review_warnings")),
         "stable_slots": sum(len(_list(row.get("stable_player_ids"))) for row in appearances),
         "distance_quality": _worst_quality([str(row.get("distance_quality") or "unknown") for row in appearances]),

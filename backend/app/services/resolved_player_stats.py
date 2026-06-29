@@ -18,6 +18,10 @@ def _int(value: Any) -> int:
     return int(value) if isinstance(value, (int, float)) else 0
 
 
+def _record(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _load_json(path: Path, filename: str) -> dict[str, Any]:
     file_path = path / filename
     if not file_path.exists():
@@ -86,6 +90,23 @@ def _empty_player_row(assignment: dict[str, Any]) -> dict[str, Any]:
             "raw_segment_top_speed_kmh": 0.0,
             "quality": "unknown",
         },
+        "intensity": {
+            "high_intensity_threshold_kmh": 0.0,
+            "sprint_threshold_kmh": 0.0,
+            "min_sprint_duration_sec": 0.0,
+            "high_intensity_time_sec": 0.0,
+            "high_intensity_distance_m": 0.0,
+            "high_intensity_segments": 0,
+            "high_intensity_distance_ratio": 0.0,
+            "sprint_count": 0,
+            "sprint_time_sec": 0.0,
+            "sprint_distance_m": 0.0,
+            "sprint_distance_ratio": 0.0,
+            "longest_sprint_time_sec": 0.0,
+            "longest_sprint_distance_m": 0.0,
+            "max_sprint_speed_kmh": 0.0,
+            "trusted_speed_segments": 0,
+        },
         "frames": {
             "active_frames": 0,
             "detected_frames": 0,
@@ -150,6 +171,25 @@ def _merge_slot_stats(row: dict[str, Any], assignment: dict[str, Any], slot_stat
     source_speed = slot_stats.get("speed") if isinstance(slot_stats.get("speed"), dict) else {}
     for key in ["peak_sustained_speed_mps", "peak_sustained_speed_kmh", "top_speed_mps", "top_speed_kmh", "raw_segment_top_speed_mps", "raw_segment_top_speed_kmh"]:
         row["speed"][key] = max(_number(row["speed"].get(key)), _number(source_speed.get(key)))
+
+    source_intensity = slot_stats.get("intensity") if isinstance(slot_stats.get("intensity"), dict) else {}
+    for key in [
+        "high_intensity_threshold_kmh",
+        "sprint_threshold_kmh",
+        "min_sprint_duration_sec",
+    ]:
+        row["intensity"][key] = max(_number(row["intensity"].get(key)), _number(source_intensity.get(key)))
+    for key in [
+        "high_intensity_time_sec",
+        "high_intensity_distance_m",
+        "sprint_time_sec",
+        "sprint_distance_m",
+    ]:
+        row["intensity"][key] += _number(source_intensity.get(key))
+    for key in ["high_intensity_segments", "sprint_count", "trusted_speed_segments"]:
+        row["intensity"][key] += _int(source_intensity.get(key))
+    for key in ["longest_sprint_time_sec", "longest_sprint_distance_m", "max_sprint_speed_kmh"]:
+        row["intensity"][key] = max(_number(row["intensity"].get(key)), _number(source_intensity.get(key)))
     row["review_warnings"].extend(assignment.get("review_warnings") or [])
 
 
@@ -166,8 +206,10 @@ def _finalize_player_row(row: dict[str, Any], distance_qualities: list[str], spe
     row["speed"]["avg_speed_kmh"] = round(row["speed"]["avg_speed_mps"] * 3.6, 2)
     row["speed"]["observed_avg_speed_mps"] = round(observed_distance / detected_time, 3) if detected_time > 0 else 0.0
     row["speed"]["quality"] = _worst_quality(speed_qualities)
+    row["intensity"]["high_intensity_distance_ratio"] = round(_number(row["intensity"].get("high_intensity_distance_m")) / total_distance, 4) if total_distance > 0 else 0.0
+    row["intensity"]["sprint_distance_ratio"] = round(_number(row["intensity"].get("sprint_distance_m")) / total_distance, 4) if total_distance > 0 else 0.0
 
-    for group in ["time", "distance", "speed"]:
+    for group in ["time", "distance", "speed", "intensity"]:
         for key, value in list(row[group].items()):
             if isinstance(value, float):
                 row[group][key] = round(value, 2 if key.endswith("_kmh") or key.endswith("_m") or key.endswith("_sec") else 4)
@@ -200,6 +242,13 @@ def _team_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "estimated_short_gap_distance_m": 0.0,
                 "peak_sustained_speed_kmh": 0.0,
                 "top_speed_kmh": 0.0,
+                "high_intensity_time_sec": 0.0,
+                "high_intensity_distance_m": 0.0,
+                "sprint_count": 0,
+                "sprint_time_sec": 0.0,
+                "sprint_distance_m": 0.0,
+                "longest_sprint_distance_m": 0.0,
+                "max_sprint_speed_kmh": 0.0,
                 "players_low_quality": 0,
                 "players_medium_quality": 0,
                 "players_high_quality": 0,
@@ -215,6 +264,14 @@ def _team_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row["estimated_short_gap_distance_m"] += _number(player["distance"].get("estimated_short_gap_distance_m"))
         row["peak_sustained_speed_kmh"] = max(_number(row["peak_sustained_speed_kmh"]), _number(player["speed"].get("peak_sustained_speed_kmh")))
         row["top_speed_kmh"] = max(_number(row["top_speed_kmh"]), _number(player["speed"].get("top_speed_kmh")))
+        intensity = player.get("intensity") if isinstance(player.get("intensity"), dict) else {}
+        row["high_intensity_time_sec"] += _number(intensity.get("high_intensity_time_sec"))
+        row["high_intensity_distance_m"] += _number(intensity.get("high_intensity_distance_m"))
+        row["sprint_count"] += _int(intensity.get("sprint_count"))
+        row["sprint_time_sec"] += _number(intensity.get("sprint_time_sec"))
+        row["sprint_distance_m"] += _number(intensity.get("sprint_distance_m"))
+        row["longest_sprint_distance_m"] = max(_number(row["longest_sprint_distance_m"]), _number(intensity.get("longest_sprint_distance_m")))
+        row["max_sprint_speed_kmh"] = max(_number(row["max_sprint_speed_kmh"]), _number(intensity.get("max_sprint_speed_kmh")))
         quality_key = f"players_{player['distance'].get('quality')}_quality"
         if quality_key in row:
             row[quality_key] += 1
@@ -277,6 +334,13 @@ def build_resolved_player_stats_document(
         "ambiguous_time_sec": round(sum(_number(player["time"].get("ambiguous_time_sec")) for player in players), 2),
         "peak_sustained_speed_kmh": round(max([_number(player["speed"].get("peak_sustained_speed_kmh")) for player in players] or [0.0]), 2),
         "top_speed_kmh": round(max([_number(player["speed"].get("top_speed_kmh")) for player in players] or [0.0]), 2),
+        "high_intensity_time_sec": round(sum(_number(_record(player.get("intensity")).get("high_intensity_time_sec")) for player in players), 2),
+        "high_intensity_distance_m": round(sum(_number(_record(player.get("intensity")).get("high_intensity_distance_m")) for player in players), 2),
+        "sprint_count": sum(_int(_record(player.get("intensity")).get("sprint_count")) for player in players),
+        "sprint_time_sec": round(sum(_number(_record(player.get("intensity")).get("sprint_time_sec")) for player in players), 2),
+        "sprint_distance_m": round(sum(_number(_record(player.get("intensity")).get("sprint_distance_m")) for player in players), 2),
+        "longest_sprint_distance_m": round(max([_number(_record(player.get("intensity")).get("longest_sprint_distance_m")) for player in players] or [0.0]), 2),
+        "max_sprint_speed_kmh": round(max([_number(_record(player.get("intensity")).get("max_sprint_speed_kmh")) for player in players] or [0.0]), 2),
     }
     return {
         "schema_version": "0.1.0",

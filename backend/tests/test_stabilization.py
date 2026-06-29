@@ -420,6 +420,23 @@ class StabilizationTests(unittest.TestCase):
                         "raw_segment_top_speed_mps": 6.8,
                         "raw_segment_top_speed_kmh": 24.48,
                         "speed_quality": "medium",
+                        "intensity": {
+                            "high_intensity_threshold_kmh": 15.0,
+                            "sprint_threshold_kmh": 20.0,
+                            "min_sprint_duration_sec": 0.5,
+                            "high_intensity_time_sec": 1.2,
+                            "high_intensity_distance_m": 7.0,
+                            "high_intensity_segments": 12,
+                            "high_intensity_distance_ratio": 0.2333,
+                            "sprint_count": 1,
+                            "sprint_time_sec": 0.7,
+                            "sprint_distance_m": 4.2,
+                            "sprint_distance_ratio": 0.14,
+                            "longest_sprint_time_sec": 0.7,
+                            "longest_sprint_distance_m": 4.2,
+                            "max_sprint_speed_kmh": 23.1,
+                            "trusted_speed_segments": 40,
+                        },
                         "active_frames": 300,
                         "detected_frames": 240,
                         "missing_frames": 45,
@@ -454,6 +471,11 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(player["speed"]["top_speed_kmh"], 21.6)
         self.assertEqual(player["speed"]["raw_segment_top_speed_kmh"], 24.48)
         self.assertEqual(player["speed"]["quality"], "medium")
+        self.assertEqual(player["intensity"]["sprint_count"], 1)
+        self.assertEqual(player["intensity"]["sprint_distance_m"], 4.2)
+        self.assertEqual(doc["summary"]["sprint_count"], 1)
+        self.assertEqual(doc["summary"]["high_intensity_distance_m"], 7.0)
+        self.assertEqual(doc["teams"][0]["sprint_count"], 1)
 
     def test_player_heatmaps_document_uses_trusted_positions_only(self) -> None:
         stable_doc = {
@@ -569,6 +591,13 @@ class StabilizationTests(unittest.TestCase):
                     "observed_distance_m": 90.0,
                     "estimated_short_gap_distance_m": 10.0,
                     "top_speed_kmh": 22.5,
+                    "high_intensity_time_sec": 2.5,
+                    "high_intensity_distance_m": 18.0,
+                    "sprint_count": 2,
+                    "sprint_time_sec": 1.1,
+                    "sprint_distance_m": 8.0,
+                    "longest_sprint_distance_m": 5.0,
+                    "max_sprint_speed_kmh": 24.0,
                     "players_low_quality": 0,
                     "players_medium_quality": 1,
                     "players_high_quality": 1,
@@ -596,6 +625,8 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(doc["teams"][0]["team_name"], "White")
         self.assertTrue(doc["teams"][0]["locked"])
         self.assertEqual(doc["teams"][0]["players_medium_quality"], 1)
+        self.assertEqual(doc["teams"][0]["sprint_count"], 2)
+        self.assertEqual(doc["summary"]["sprint_distance_m"], 8.0)
 
 
 if __name__ == "__main__":

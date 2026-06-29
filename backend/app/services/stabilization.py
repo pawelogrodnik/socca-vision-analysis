@@ -1519,6 +1519,12 @@ def build_movement_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
             ),
             2,
         ),
+        "high_intensity_time_sec": round(sum(float(((item.get("movement_stats") or {}).get("intensity") or {}).get("high_intensity_time_sec") or 0.0) for item in players), 2),
+        "high_intensity_distance_m": round(sum(float(((item.get("movement_stats") or {}).get("intensity") or {}).get("high_intensity_distance_m") or 0.0) for item in players), 2),
+        "sprint_count": sum(int(((item.get("movement_stats") or {}).get("intensity") or {}).get("sprint_count") or 0) for item in players),
+        "sprint_time_sec": round(sum(float(((item.get("movement_stats") or {}).get("intensity") or {}).get("sprint_time_sec") or 0.0) for item in players), 2),
+        "sprint_distance_m": round(sum(float(((item.get("movement_stats") or {}).get("intensity") or {}).get("sprint_distance_m") or 0.0) for item in players), 2),
+        "max_sprint_speed_kmh": round(max([float(((item.get("movement_stats") or {}).get("intensity") or {}).get("max_sprint_speed_kmh") or 0.0) for item in players] or [0.0]), 2),
     }
     summary["top_speed_kmh"] = summary["peak_sustained_speed_kmh"]
     return {
@@ -1530,6 +1536,7 @@ def build_movement_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
             "distance": "meters",
             "speed": "mps_and_kmh",
             "time": "seconds",
+            "intensity": "counts_seconds_meters_kmh",
         },
         "summary": summary,
         "players": sorted(players, key=lambda item: str(item.get("stable_player_id") or "")),
@@ -1581,6 +1588,23 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
                 "raw_segment_top_speed_kmh": _stats_float(stats, "raw_segment_top_speed_kmh"),
                 "quality": stats.get("speed_quality") or "unknown",
             },
+            "intensity": {
+                "high_intensity_threshold_kmh": _stats_nested_float(stats, "intensity", "high_intensity_threshold_kmh"),
+                "sprint_threshold_kmh": _stats_nested_float(stats, "intensity", "sprint_threshold_kmh"),
+                "min_sprint_duration_sec": _stats_nested_float(stats, "intensity", "min_sprint_duration_sec"),
+                "high_intensity_time_sec": _stats_nested_float(stats, "intensity", "high_intensity_time_sec"),
+                "high_intensity_distance_m": _stats_nested_float(stats, "intensity", "high_intensity_distance_m"),
+                "high_intensity_segments": _stats_nested_int(stats, "intensity", "high_intensity_segments"),
+                "high_intensity_distance_ratio": _stats_nested_float(stats, "intensity", "high_intensity_distance_ratio"),
+                "sprint_count": _stats_nested_int(stats, "intensity", "sprint_count"),
+                "sprint_time_sec": _stats_nested_float(stats, "intensity", "sprint_time_sec"),
+                "sprint_distance_m": _stats_nested_float(stats, "intensity", "sprint_distance_m"),
+                "sprint_distance_ratio": _stats_nested_float(stats, "intensity", "sprint_distance_ratio"),
+                "longest_sprint_time_sec": _stats_nested_float(stats, "intensity", "longest_sprint_time_sec"),
+                "longest_sprint_distance_m": _stats_nested_float(stats, "intensity", "longest_sprint_distance_m"),
+                "max_sprint_speed_kmh": _stats_nested_float(stats, "intensity", "max_sprint_speed_kmh"),
+                "trusted_speed_segments": _stats_nested_int(stats, "intensity", "trusted_speed_segments"),
+            },
             "frames": {
                 "active_frames": int(stats.get("active_frames") or 0),
                 "detected_frames": int(stats.get("detected_frames") or 0),
@@ -1617,6 +1641,13 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
                 "estimated_short_gap_distance_m": 0.0,
                 "peak_sustained_speed_kmh": 0.0,
                 "top_speed_kmh": 0.0,
+                "high_intensity_time_sec": 0.0,
+                "high_intensity_distance_m": 0.0,
+                "sprint_count": 0,
+                "sprint_time_sec": 0.0,
+                "sprint_distance_m": 0.0,
+                "longest_sprint_distance_m": 0.0,
+                "max_sprint_speed_kmh": 0.0,
                 "players_low_quality": 0,
                 "players_medium_quality": 0,
                 "players_high_quality": 0,
@@ -1630,6 +1661,19 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
         team_row["total_distance_m"] += row["distance"]["total_distance_m"]
         team_row["observed_distance_m"] += row["distance"]["observed_distance_m"]
         team_row["estimated_short_gap_distance_m"] += row["distance"]["estimated_short_gap_distance_m"]
+        team_row["high_intensity_time_sec"] += row["intensity"]["high_intensity_time_sec"]
+        team_row["high_intensity_distance_m"] += row["intensity"]["high_intensity_distance_m"]
+        team_row["sprint_count"] += row["intensity"]["sprint_count"]
+        team_row["sprint_time_sec"] += row["intensity"]["sprint_time_sec"]
+        team_row["sprint_distance_m"] += row["intensity"]["sprint_distance_m"]
+        team_row["longest_sprint_distance_m"] = max(
+            float(team_row["longest_sprint_distance_m"]),
+            row["intensity"]["longest_sprint_distance_m"],
+        )
+        team_row["max_sprint_speed_kmh"] = max(
+            float(team_row["max_sprint_speed_kmh"]),
+            row["intensity"]["max_sprint_speed_kmh"],
+        )
         team_row["peak_sustained_speed_kmh"] = max(
             float(team_row["peak_sustained_speed_kmh"]),
             row["speed"]["peak_sustained_speed_kmh"],
@@ -1650,6 +1694,12 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
             "estimated_short_gap_distance_m",
             "peak_sustained_speed_kmh",
             "top_speed_kmh",
+            "high_intensity_time_sec",
+            "high_intensity_distance_m",
+            "sprint_time_sec",
+            "sprint_distance_m",
+            "longest_sprint_distance_m",
+            "max_sprint_speed_kmh",
         ]:
             team_row[key] = round(float(team_row[key]), 2)
 
@@ -1671,6 +1721,13 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
             2,
         ),
         "top_speed_kmh": round(max([row["speed"]["top_speed_kmh"] for row in player_rows] or [0.0]), 2),
+        "high_intensity_time_sec": round(sum(row["intensity"]["high_intensity_time_sec"] for row in player_rows), 2),
+        "high_intensity_distance_m": round(sum(row["intensity"]["high_intensity_distance_m"] for row in player_rows), 2),
+        "sprint_count": sum(row["intensity"]["sprint_count"] for row in player_rows),
+        "sprint_time_sec": round(sum(row["intensity"]["sprint_time_sec"] for row in player_rows), 2),
+        "sprint_distance_m": round(sum(row["intensity"]["sprint_distance_m"] for row in player_rows), 2),
+        "longest_sprint_distance_m": round(max([row["intensity"]["longest_sprint_distance_m"] for row in player_rows] or [0.0]), 2),
+        "max_sprint_speed_kmh": round(max([row["intensity"]["max_sprint_speed_kmh"] for row in player_rows] or [0.0]), 2),
         "players_with_estimated_distance": sum(
             1 for row in player_rows if row["distance"]["estimated_short_gap_distance_m"] > 0
         ),
@@ -1688,6 +1745,7 @@ def build_player_stats_document(stable_doc: dict[str, Any]) -> dict[str, Any]:
             "distance": "meters",
             "speed": "mps_and_kmh",
             "time": "seconds",
+            "intensity": "counts_seconds_meters_kmh",
         },
         "summary": summary,
         "teams": sorted(team_rows.values(), key=lambda item: str(item.get("team_label") or "")),
@@ -1781,6 +1839,13 @@ def build_team_stats_document(player_stats: dict[str, Any], team_config: dict[st
                 "total_distance_m": round(float(team.get("total_distance_m") or 0.0), 2),
                 "observed_distance_m": round(float(team.get("observed_distance_m") or 0.0), 2),
                 "estimated_short_gap_distance_m": round(float(team.get("estimated_short_gap_distance_m") or 0.0), 2),
+                "high_intensity_time_sec": round(float(team.get("high_intensity_time_sec") or 0.0), 2),
+                "high_intensity_distance_m": round(float(team.get("high_intensity_distance_m") or 0.0), 2),
+                "sprint_count": int(team.get("sprint_count") or 0),
+                "sprint_time_sec": round(float(team.get("sprint_time_sec") or 0.0), 2),
+                "sprint_distance_m": round(float(team.get("sprint_distance_m") or 0.0), 2),
+                "longest_sprint_distance_m": round(float(team.get("longest_sprint_distance_m") or 0.0), 2),
+                "max_sprint_speed_kmh": round(float(team.get("max_sprint_speed_kmh") or 0.0), 2),
                 "peak_sustained_speed_kmh": round(
                     float(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh") or 0.0),
                     2,
@@ -1814,6 +1879,13 @@ def build_team_stats_document(player_stats: dict[str, Any], team_config: dict[st
                 2,
             ),
             "top_speed_kmh": round(max([float(team.get("top_speed_kmh") or 0.0) for team in teams] or [0.0]), 2),
+            "high_intensity_time_sec": round(sum(float(team.get("high_intensity_time_sec") or 0.0) for team in teams), 2),
+            "high_intensity_distance_m": round(sum(float(team.get("high_intensity_distance_m") or 0.0) for team in teams), 2),
+            "sprint_count": sum(int(team.get("sprint_count") or 0) for team in teams),
+            "sprint_time_sec": round(sum(float(team.get("sprint_time_sec") or 0.0) for team in teams), 2),
+            "sprint_distance_m": round(sum(float(team.get("sprint_distance_m") or 0.0) for team in teams), 2),
+            "longest_sprint_distance_m": round(max([float(team.get("longest_sprint_distance_m") or 0.0) for team in teams] or [0.0]), 2),
+            "max_sprint_speed_kmh": round(max([float(team.get("max_sprint_speed_kmh") or 0.0) for team in teams] or [0.0]), 2),
             "tracking_only": True,
         },
         "teams": sorted(teams, key=lambda item: str(item.get("team_label") or "")),
@@ -1990,6 +2062,20 @@ def _heatmap_quality(samples: int, detected_samples: int, detected_frames: int, 
 
 def _stats_float(stats: dict[str, Any], key: str, fallback: float = 0.0) -> float:
     return round(float(stats.get(key) if stats.get(key) is not None else fallback), 4)
+
+
+def _stats_record(stats: dict[str, Any], key: str) -> dict[str, Any]:
+    value = stats.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _stats_nested_float(stats: dict[str, Any], group: str, key: str, fallback: float = 0.0) -> float:
+    return _stats_float(_stats_record(stats, group), key, fallback)
+
+
+def _stats_nested_int(stats: dict[str, Any], group: str, key: str, fallback: int = 0) -> int:
+    value = _stats_record(stats, group).get(key)
+    return int(value) if isinstance(value, (int, float)) else fallback
 
 
 def _strip_overlay_positions(stable_doc: dict[str, Any]) -> dict[str, Any]:

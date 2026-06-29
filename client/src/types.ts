@@ -90,6 +90,23 @@ export type MovementStats = {
   skipped_speed_outlier_segments?: number;
   skipped_long_gap_segments: number;
   sustained_speed_windows?: number;
+  intensity?: {
+    high_intensity_threshold_kmh?: number;
+    sprint_threshold_kmh?: number;
+    min_sprint_duration_sec?: number;
+    high_intensity_time_sec?: number;
+    high_intensity_distance_m?: number;
+    high_intensity_segments?: number;
+    high_intensity_distance_ratio?: number;
+    sprint_count?: number;
+    sprint_time_sec?: number;
+    sprint_distance_m?: number;
+    sprint_distance_ratio?: number;
+    longest_sprint_time_sec?: number;
+    longest_sprint_distance_m?: number;
+    max_sprint_speed_kmh?: number;
+    trusted_speed_segments?: number;
+  };
   stats_note?: string;
 };
 
@@ -389,6 +406,7 @@ export type PlayerStatsDocument = {
     time: Record<string, number>;
     distance: Record<string, number | string>;
     speed: Record<string, number>;
+    intensity?: Record<string, number>;
     frames: Record<string, number>;
     segments: Record<string, number>;
     tracking_only: boolean;
@@ -447,6 +465,7 @@ export type PlayerProfileStatsDocument = {
     time?: Record<string, number>;
     distance?: Record<string, number | string>;
     speed?: Record<string, number | string>;
+    intensity?: Record<string, number | string>;
     frames?: Record<string, number>;
     segments?: Record<string, number>;
     review_warnings?: string[];

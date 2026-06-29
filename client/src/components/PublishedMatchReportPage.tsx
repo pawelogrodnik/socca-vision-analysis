@@ -1,26 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, getMatch } from '../api';
+import { artifactUrl, getPublishedMatch } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { Match } from '../types';
+import type { PublishedMatchDetail } from '../types';
 import {
   MatchReportContent,
-  sourceFromLocalMatch,
+  sourceFromPublishedPackage,
 } from './MatchReportContent';
 
-export function MatchReportPage() {
+export function PublishedMatchReportPage() {
   const { matchId } = useParams();
-  const [match, setMatch] = useState<Match | null>(null);
+  const [match, setMatch] = useState<PublishedMatchDetail | null>(null);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!matchId) {
-      setStatus('Missing match id.');
+      setStatus('Missing published match id.');
       return;
     }
     setLoading(true);
-    getMatch(matchId)
+    getPublishedMatch(matchId)
       .then((data) => {
         setMatch(data);
         setStatus('');
@@ -33,30 +33,29 @@ export function MatchReportPage() {
   }, [matchId]);
 
   const reportSource = useMemo(
-    () => (match ? sourceFromLocalMatch(match) : null),
+    () => (match ? sourceFromPublishedPackage(match.package) : null),
     [match],
   );
 
   return (
     <main className='app'>
       <section className='hero compact-hero'>
-        <p className='eyebrow'>Match report</p>
+        <p className='eyebrow'>Published match report</p>
         <h1>{match?.title || 'Raport meczu'}</h1>
         <p>
-          Raport tracking-only dla pojedynczego meczu. Anonimowe sloty sa
-          czescia raportu meczowego, ale nie sa agregowane do profili
-          zawodnikow.
+          Publiczny snapshot raportu z bazy SQLite. Pokazuje realnie przypisanych
+          zawodnikow oraz anonimowe stable sloty tylko w kontekscie tego meczu.
         </p>
         <div className='row'>
+          <Link to='/'>Lista meczow</Link>
           <Link to='/admin-panel'>Panel admin</Link>
-          <Link to='/teams'>Druzyny</Link>
         </div>
       </section>
 
       {loading && (
         <p className='loading-line'>
           <span className='spinner' />
-          Laduje raport meczu...
+          Laduje publiczny raport...
         </p>
       )}
       {status && <p className='status'>{status}</p>}
@@ -64,8 +63,10 @@ export function MatchReportPage() {
       {reportSource && (
         <MatchReportContent
           source={reportSource}
-          mode='local'
-          artifactHref={(artifactName) => artifactUrl(reportSource.id, artifactName)}
+          mode='published'
+          artifactHref={(artifactName) =>
+            artifactUrl(reportSource.artifactMatchId || reportSource.id, artifactName)
+          }
         />
       )}
     </main>

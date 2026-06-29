@@ -109,6 +109,15 @@ def player_stats_doc() -> dict:
                     "top_speed_kmh": 18.0,
                     "quality": "medium",
                 },
+                "intensity": {
+                    "high_intensity_time_sec": 1.0,
+                    "high_intensity_distance_m": 5.0,
+                    "sprint_count": 1,
+                    "sprint_time_sec": 0.6,
+                    "sprint_distance_m": 3.5,
+                    "longest_sprint_distance_m": 3.5,
+                    "max_sprint_speed_kmh": 21.0,
+                },
                 "frames": {"active_frames": 300, "detected_frames": 240, "missing_frames": 45, "ambiguous_frames": 15, "predicted_frames": 0, "samples_used": 240},
                 "segments": {"observed_segments": 10, "estimated_gap_segments": 1, "skipped_outlier_segments": 0, "skipped_speed_outlier_segments": 0, "skipped_long_gap_segments": 0, "sustained_speed_windows": 5},
             },
@@ -220,6 +229,8 @@ class PlayerIdentityTests(unittest.TestCase):
             self.assertEqual(doc["players"][0]["player_id"], "p-a-1")
             self.assertEqual(doc["players"][0]["distance"]["total_distance_m"], 23.0)
             self.assertEqual(doc["players"][0]["speed"]["peak_sustained_speed_kmh"], 18.0)
+            self.assertEqual(doc["players"][0]["intensity"]["sprint_count"], 1)
+            self.assertEqual(doc["summary"]["sprint_distance_m"], 3.5)
             self.assertTrue((path / "resolved_player_stats.json").exists())
 
 

@@ -48,8 +48,8 @@ This snapshot should be updated whenever a milestone is completed or materially 
 - `[x]` Tracklets and quality diagnostics: analysis now exports standalone `tracklets.json` and `tracking_quality_report.json` contracts.
 - `[x]` Team assignment: automatic Team A/B assignment, `team_clusters.json`, explicit `team_config.json`, Team A/B lock/review, stable-slot team correction, ignore/referee/false-positive review, team sanity diagnostics and `team_stats.json` exist. Torso-color clustering remains implementation evidence/debug, not a required user workflow.
 - `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`) exists with conservative anti-switch logic, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
-- `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; sprint thresholds are not done.
-- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, quality diagnostics and movement/player stats; separate `/matches/:matchId/report` exists, but polished published report UX is still pending.
+- `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, sprint/high-intensity metrics, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; configurable thresholds UI is not done.
+- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, while export/share polish is still pending.
 - `[ ]` Ball tracking, possession, passes, event review, season/team aggregation and background jobs are not implemented; player-level cross-match profile MVP exists.
 
 ---
@@ -374,7 +374,7 @@ Jako developer chcę zachować stary raw tracklet assignment w debug details, ż
 
 # Milestone 6 — Player stats from tracking only
 
-**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, per-player heatmaps and team stats exist, while sprint thresholds are still pending.
+**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, sprint/high-intensity metrics, per-player heatmaps and team stats exist, while configurable thresholds UI is still pending.
 
 ## Cel
 
@@ -411,7 +411,9 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 - `[x]` Statystyki prędkości zawierają `speed_quality`, `raw_segment_top_speed_*` i liczbę okien/odrzuconych segmentów.
 - `[x]` UI pokazuje tabelę stabilnych zawodników i podstawowe statystyki ruchu.
 - `[x]` UI pokazuje heatmapę wybranego stable slotu w player detail.
-- `[ ]` UI nie pozwala jeszcze ustawić progów sprintów/high intensity.
+- `[x]` Backend liczy sprint/high-intensity metrics konserwatywnie z zaufanych krótkich segmentów detekcji, bez używania długich braków/interpolacji.
+- `[x]` `player_stats.json`, `team_stats.json`, `resolved_player_stats.json`, profil zawodnika i Match Report pokazują sprint count, sprint distance/time oraz high-intensity distance/time.
+- `[ ]` UI nie pozwala jeszcze ustawić progów sprintów/high intensity; aktualne progi są stałe w backendzie.
 - `[x]` Raport/artefakty jasno rozróżniają tracking-only stats i brak piłki.
 - `[x]` Overlay debug pokazuje live speed/distance przy bboxie zawodnika.
 
@@ -435,7 +437,7 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 
 # Milestone 7 — Match report UI
 
-**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, and first `/matches/:matchId/report` page exists; polished published report UX is still pending.
+**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, and local/published match report pages share one layout; export/share polish is still pending.
 
 ## Cel
 
@@ -461,9 +463,10 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 ## Acceptance criteria
 
 - `[x]` Client ma osobny route `/matches/:matchId/report` dla czytelnego raportu pojedynczego meczu.
+- `[x]` Client ma publiczny route `/published/matches/:matchId/report` dla snapshotów opublikowanych w SQLite.
 - `[x]` Match Report pokazuje summary, stable overlay, team comparison, real assigned players i wszystkich stable zawodników w meczu.
 - `[x]` Match Report rozróżnia anonimowe stable sloty meczowe od realnych `player_id` i linkuje przypisanych zawodników do `/players/:playerId`.
-- `[~]` Client ma sekcje raportowo-review dla meczu i osobny `/teams` registry; polished published report UX wymaga jeszcze dopracowania.
+- `[x]` Client ma sekcje raportowo-review dla meczu, osobny `/teams` registry i link do pełnego raportu z publicznej strony głównej.
 - `[x]` Komponenty UI są rozdzielone od transformacji danych w nowych komponentach.
 - `[x]` Zwykłe style są w CSS, nie jako inline CSS.
 - `[x]` API client jest osobno od komponentów.
@@ -471,7 +474,7 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 - `[~]` UI pokazuje diagnostykę braków/niepewności, ale statusy brakujących kroków wymagają uporządkowania productowego.
 - `[x]` UI ma artifact browser dla overlay video, JSON i debug details.
 - `[x]` Legacy identity candidates oraz raw tracklet assignment nie są już domyślnym workflow i są schowane w developer debug.
-- `[ ]` Raport nie ma jeszcze docelowego układu eksportu/share i widoku publicznego bez admin panelu.
+- `[~]` Raport ma widok publiczny bez admin panelu, ale nie ma jeszcze docelowego układu eksportu/share.
 
 ## Do not do yet
 

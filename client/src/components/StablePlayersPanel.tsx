@@ -639,6 +639,8 @@ export function StablePlayersPanel({
                     <span>Resolved dist: {nestedValue(selectedResolvedStats, 'distance', 'total_distance_m')} m</span>
                     <span>Resolved playing: {nestedValue(selectedResolvedStats, 'time', 'playing_time_sec')}s</span>
                     <span>Resolved peak: {nestedValue(selectedResolvedStats, 'speed', 'peak_sustained_speed_kmh')} km/h</span>
+                    <span>Resolved sprints: {nestedValue(selectedResolvedStats, 'intensity', 'sprint_count')}</span>
+                    <span>Resolved sprint dist: {nestedValue(selectedResolvedStats, 'intensity', 'sprint_distance_m')} m</span>
                     <span>Stable sources: {nestedArrayLength(selectedResolvedStats, 'source_stable_slots')}</span>
                   </div>
                 )}
@@ -671,6 +673,9 @@ export function StablePlayersPanel({
                   <span>
                     Speed quality: {selected.movement_stats.speed_quality || 'unknown'}
                   </span>
+                  <span>Sprints: {selected.movement_stats.intensity?.sprint_count ?? 0}</span>
+                  <span>Sprint dist: {(selected.movement_stats.intensity?.sprint_distance_m ?? 0).toFixed(1)} m</span>
+                  <span>HI dist: {(selected.movement_stats.intensity?.high_intensity_distance_m ?? 0).toFixed(1)} m</span>
                   <span>Playing: {selected.movement_stats.playing_time_sec.toFixed(1)}s</span>
                   <span>Quality: {selected.movement_stats.distance_quality}</span>
                 </div>

@@ -112,6 +112,10 @@ export function PlayerProfilePage() {
               <span>Estimated ratio: {formatPercentRatio(recordNumber(summary, 'estimated_distance_ratio'))}</span>
               <span>Avg: {formatSpeed(recordNumber(summary, 'avg_speed_kmh'))}</span>
               <span>Peak: {formatSpeed(recordNumber(summary, 'peak_sustained_speed_kmh'))}</span>
+              <span>HI dist: {formatMeters(recordNumber(summary, 'high_intensity_distance_m'))}</span>
+              <span>Sprinty: {recordNumber(summary, 'sprint_count')}</span>
+              <span>Sprint dist: {formatMeters(recordNumber(summary, 'sprint_distance_m'))}</span>
+              <span>Max sprint: {formatSpeed(recordNumber(summary, 'max_sprint_speed_kmh'))}</span>
               <span>Distance quality: {String(summary?.distance_quality || 'unknown')}</span>
               <span>Warnings: {recordNumber(summary, 'matches_with_warnings')}</span>
             </div>
@@ -135,6 +139,7 @@ export function PlayerProfilePage() {
                       <th>Slot</th>
                       <th>Czas</th>
                       <th>Dystans</th>
+                      <th>Sprinty</th>
                       <th>Peak</th>
                       <th>Jakosc</th>
                       <th>Uwagi</th>
@@ -152,6 +157,10 @@ export function PlayerProfilePage() {
                         <td>{appearance.stable_player_ids?.join(', ') || 'n/a'}</td>
                         <td>{formatSeconds(nestedNumber(appearance.time, 'playing_time_sec'))}</td>
                         <td>{formatMeters(nestedNumber(appearance.distance, 'total_distance_m'))}</td>
+                        <td>
+                          {nestedNumber(appearance.intensity, 'sprint_count')}
+                          <span>{formatMeters(nestedNumber(appearance.intensity, 'sprint_distance_m'))}</span>
+                        </td>
                         <td>{formatSpeed(nestedNumber(appearance.speed, 'peak_sustained_speed_kmh'))}</td>
                         <td>{appearance.distance_quality || 'unknown'}</td>
                         <td>{appearance.review_warnings?.length ? appearance.review_warnings.join(', ') : '-'}</td>

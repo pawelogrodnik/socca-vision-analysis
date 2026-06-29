@@ -29,6 +29,9 @@ STATS_OBSERVED_GAP_FRAMES = 2
 STATS_PEAK_SPEED_MIN_WINDOW_SEC = 0.5
 STATS_PEAK_SPEED_MAX_WINDOW_SEC = 1.25
 STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC = 0.25
+HIGH_INTENSITY_THRESHOLD_KMH = 15.0
+SPRINT_THRESHOLD_KMH = 20.0
+SPRINT_MIN_DURATION_SEC = 0.5
 
 
 def now_iso() -> str:
@@ -591,6 +594,9 @@ def resolve_global_identity(
             "stats_max_estimated_gap_sec": MAX_STATS_ESTIMATED_GAP_SEC,
             "stats_peak_speed_min_window_sec": STATS_PEAK_SPEED_MIN_WINDOW_SEC,
             "stats_peak_speed_max_window_sec": STATS_PEAK_SPEED_MAX_WINDOW_SEC,
+            "high_intensity_threshold_kmh": HIGH_INTENSITY_THRESHOLD_KMH,
+            "sprint_threshold_kmh": SPRINT_THRESHOLD_KMH,
+            "sprint_min_duration_sec": SPRINT_MIN_DURATION_SEC,
         },
         "summary": summary,
         "slots": sorted(active_slot_docs, key=lambda item: item["slot_id"]),
@@ -1210,6 +1216,7 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
         sustained_windows,
         detected_time_sec,
     )
+    intensity = _intensity_metrics(speed_segments, total_distance)
 
     return {
         "playing_time_sec": round(playing_time_sec, 3),
@@ -1245,7 +1252,8 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
         "skipped_speed_outlier_segments": skipped_outlier_segments,
         "skipped_long_gap_segments": skipped_long_gap_segments,
         "sustained_speed_windows": sustained_windows,
-        "stats_note": "distance uses trusted detected pitch positions; top_speed is peak_sustained_speed over a conservative window; short gaps are counted separately as estimated_gap_distance_m",
+        "intensity": intensity,
+        "stats_note": "distance uses trusted detected pitch positions; top_speed is peak_sustained_speed over a conservative window; short gaps are counted separately as estimated_gap_distance_m; sprint/high-intensity metrics use trusted short-gap detected segments only",
     }
 
 
@@ -1290,6 +1298,74 @@ def _peak_sustained_speed_mps(
                 best = max(best, speed)
             previous = end
     return best, windows
+
+
+def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: float) -> dict[str, Any]:
+    high_threshold_mps = HIGH_INTENSITY_THRESHOLD_KMH / 3.6
+    sprint_threshold_mps = SPRINT_THRESHOLD_KMH / 3.6
+    trusted_segments = [
+        segment
+        for segment in speed_segments
+        if int(segment.get("frame_gap") or 0) <= STATS_OBSERVED_GAP_FRAMES
+        and float(segment.get("dt") or 0.0) <= STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC
+    ]
+
+    high_time = 0.0
+    high_distance = 0.0
+    high_segments = 0
+    for segment in trusted_segments:
+        if float(segment.get("speed") or 0.0) < high_threshold_mps:
+            continue
+        high_time += float(segment.get("dt") or 0.0)
+        high_distance += float(segment.get("distance") or 0.0)
+        high_segments += 1
+
+    sprint_runs: list[dict[str, float]] = []
+    current_run: dict[str, float] | None = None
+    previous_end_frame: int | None = None
+    for segment in trusted_segments:
+        speed = float(segment.get("speed") or 0.0)
+        start_frame = int(segment.get("start_frame") or 0)
+        end_frame = int(segment.get("end_frame") or 0)
+        continues_previous = previous_end_frame is not None and start_frame == previous_end_frame
+        if speed >= sprint_threshold_mps:
+            if current_run is None or not continues_previous:
+                if current_run is not None:
+                    sprint_runs.append(current_run)
+                current_run = {"time_sec": 0.0, "distance_m": 0.0, "max_speed_mps": 0.0}
+            current_run["time_sec"] += float(segment.get("dt") or 0.0)
+            current_run["distance_m"] += float(segment.get("distance") or 0.0)
+            current_run["max_speed_mps"] = max(current_run["max_speed_mps"], speed)
+        elif current_run is not None:
+            sprint_runs.append(current_run)
+            current_run = None
+        previous_end_frame = end_frame
+    if current_run is not None:
+        sprint_runs.append(current_run)
+
+    valid_sprints = [run for run in sprint_runs if float(run.get("time_sec") or 0.0) >= SPRINT_MIN_DURATION_SEC]
+    sprint_time = sum(float(run.get("time_sec") or 0.0) for run in valid_sprints)
+    sprint_distance = sum(float(run.get("distance_m") or 0.0) for run in valid_sprints)
+    longest = max(valid_sprints, key=lambda run: float(run.get("distance_m") or 0.0), default={})
+    max_sprint_speed = max([float(run.get("max_speed_mps") or 0.0) for run in valid_sprints] or [0.0])
+
+    return {
+        "high_intensity_threshold_kmh": HIGH_INTENSITY_THRESHOLD_KMH,
+        "sprint_threshold_kmh": SPRINT_THRESHOLD_KMH,
+        "min_sprint_duration_sec": SPRINT_MIN_DURATION_SEC,
+        "high_intensity_time_sec": round(high_time, 3),
+        "high_intensity_distance_m": round(high_distance, 2),
+        "high_intensity_segments": high_segments,
+        "high_intensity_distance_ratio": round(high_distance / total_distance_m, 4) if total_distance_m > 0 else 0.0,
+        "sprint_count": len(valid_sprints),
+        "sprint_time_sec": round(sprint_time, 3),
+        "sprint_distance_m": round(sprint_distance, 2),
+        "sprint_distance_ratio": round(sprint_distance / total_distance_m, 4) if total_distance_m > 0 else 0.0,
+        "longest_sprint_time_sec": round(float(longest.get("time_sec") or 0.0), 3),
+        "longest_sprint_distance_m": round(float(longest.get("distance_m") or 0.0), 2),
+        "max_sprint_speed_kmh": round(max_sprint_speed * 3.6, 2),
+        "trusted_speed_segments": len(trusted_segments),
+    }
 
 
 def _speed_quality(

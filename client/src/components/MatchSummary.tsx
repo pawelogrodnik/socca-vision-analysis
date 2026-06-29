@@ -74,6 +74,11 @@ export function PublishedMatchSummary({ match }: PublishedMatchSummaryProps) {
         <span>Klatki: {match.frames_processed ?? 0}</span>
         <span>Warnings: {match.warnings_count}</span>
       </div>
+      <div className='row'>
+        <Link to={`/published/matches/${encodeURIComponent(match.id)}/report`}>
+          Otworz pelny raport
+        </Link>
+      </div>
       {(source?.teams || []).map((team) => (
         <div className='team-row' key={team.id || team.name}>
           <span

@@ -225,6 +225,27 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(stats["speed_quality"], "high")
         self.assertGreater(stats["sustained_speed_windows"], 0)
 
+    def test_movement_stats_counts_conservative_sprint_run(self) -> None:
+        stats = _slot_movement_stats(
+            [
+                {
+                    "frame": frame,
+                    "time_sec": frame / 30,
+                    "pitch_m": [frame * 0.2, 0],
+                    "source": "detected",
+                }
+                for frame in range(31)
+            ],
+            fps=30,
+        )
+
+        intensity = stats["intensity"]
+        self.assertEqual(intensity["sprint_count"], 1)
+        self.assertAlmostEqual(intensity["sprint_distance_m"], 6.0, places=1)
+        self.assertAlmostEqual(intensity["sprint_time_sec"], 1.0, places=1)
+        self.assertAlmostEqual(intensity["high_intensity_distance_m"], 6.0, places=1)
+        self.assertAlmostEqual(intensity["max_sprint_speed_kmh"], 21.6, places=1)
+
     def test_movement_stats_short_spike_does_not_set_peak_speed(self) -> None:
         stats = _slot_movement_stats(
             [
@@ -238,6 +259,7 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(stats["peak_sustained_speed_kmh"], 0.0)
         self.assertEqual(stats["top_speed_kmh"], 0.0)
         self.assertEqual(stats["speed_quality"], "low")
+        self.assertEqual(stats["intensity"]["sprint_count"], 0)
 
     def test_movement_stats_single_outlier_does_not_inflate_peak_speed(self) -> None:
         rows = []

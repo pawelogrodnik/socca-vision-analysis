@@ -38,6 +38,15 @@ def resolved_player(player_id: str, *, distance: float, playing_time: float, pea
             "top_speed_kmh": peak_speed,
             "quality": "medium",
         },
+        "intensity": {
+            "high_intensity_time_sec": 1.0,
+            "high_intensity_distance_m": 6.0,
+            "sprint_count": 1,
+            "sprint_time_sec": 0.6,
+            "sprint_distance_m": 3.0,
+            "longest_sprint_distance_m": 3.0,
+            "max_sprint_speed_kmh": peak_speed,
+        },
         "frames": {"active_frames": 100, "detected_frames": 90, "missing_frames": 10},
         "segments": {"observed_segments": 3},
         "review_warnings": [],
@@ -108,6 +117,9 @@ class PlayerProfileTests(unittest.TestCase):
             self.assertEqual(profile["summary"]["total_distance_m"], 250.0)
             self.assertEqual(profile["summary"]["playing_time_sec"], 110.0)
             self.assertEqual(profile["summary"]["peak_sustained_speed_kmh"], 20.0)
+            self.assertEqual(profile["summary"]["sprint_count"], 2)
+            self.assertEqual(profile["summary"]["sprint_distance_m"], 6.0)
+            self.assertEqual(profile["summary"]["max_sprint_speed_kmh"], 20.0)
             self.assertEqual(profile["summary"]["matches_with_warnings"], 1)
             self.assertEqual(profile["summary"]["anonymous_slots_aggregated"], 0)
             self.assertEqual([item["match_id"] for item in profile["appearances"]], ["match-2", "match-1"])
