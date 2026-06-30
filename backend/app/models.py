@@ -58,6 +58,7 @@ class AnalyzePayload(BaseModel):
     chunked: bool = False
     chunk_duration_sec: float = 120.0
     chunk_overlap_sec: float = 2.0
+    include_ball: bool = False
 
     # YOLO options
     yolo_model: str = "yolov8n.pt"
@@ -65,6 +66,12 @@ class AnalyzePayload(BaseModel):
     yolo_imgsz: int = 1920
     yolo_tracker: str = "centroid_high_recall"
     yolo_device: str | None = None  # None/empty = auto, "cpu", or "0"
+
+    # Ball YOLO options used by chunked analysis when include_ball=true.
+    ball_yolo_model: str = "models/best.pt"
+    ball_yolo_conf: float = 0.03
+    ball_yolo_imgsz: int = 960
+    ball_yolo_device: str | None = None
 
 
 class BallAnalyzePayload(BaseModel):

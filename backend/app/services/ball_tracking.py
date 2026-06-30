@@ -221,6 +221,196 @@ def detect_ball_yolo_coco(
     return _ball_result(candidates_doc, tracks_doc, report, quality_report)
 
 
+def collect_ball_candidates_range(
+    video_path: Path,
+    pitch: Any,
+    video_metadata: dict[str, Any],
+    *,
+    model: Any,
+    start_time_sec: float,
+    end_time_sec: float,
+    frame_stride: int,
+    yolo_imgsz: int,
+    yolo_device: str | None,
+    ball_conf: float = DEFAULT_BALL_CONF,
+    max_interpolation_gap_sec: float = DEFAULT_MAX_INTERPOLATION_GAP_SEC,
+) -> dict[str, Any]:
+    import cv2
+    import numpy as np
+
+    fps = float(video_metadata.get("fps") or 0.0)
+    width = int(video_metadata.get("width") or 0)
+    height = int(video_metadata.get("height") or 0)
+    frame_count = int(video_metadata.get("frame_count") or 0)
+    if fps <= 0 or width <= 0 or height <= 0:
+        raise ValueError("Video metadata is missing fps/width/height for ball tracking.")
+
+    class_config = _resolve_ball_model_classes(model)
+    parameters = ball_tracking_parameters(
+        class_config=class_config,
+        ball_conf=ball_conf,
+        yolo_imgsz=yolo_imgsz,
+        frame_stride=frame_stride,
+        max_seconds=0.0,
+        yolo_device=yolo_device,
+        max_interpolation_gap_sec=max_interpolation_gap_sec,
+    )
+    start_frame = max(0, int(round(max(0.0, start_time_sec) * fps)))
+    end_frame = max(start_frame, int(round(max(start_time_sec, end_time_sec) * fps)))
+    if frame_count > 0:
+        end_frame = min(end_frame, frame_count - 1)
+    stride = max(1, int(frame_stride))
+    processed_frames = [frame for frame in range(start_frame, end_frame + 1) if frame % stride == 0]
+    warnings: list[str] = []
+    if not class_config["class_ids"]:
+        warnings.append(
+            "Selected ball YOLO model does not expose a ball/sports ball class and is not a single-class model."
+        )
+        return {
+            "frames": [],
+            "processed_frames": processed_frames,
+            "rejected_summary": {},
+            "parameters": parameters,
+            "warnings": warnings,
+            "metrics": {
+                "start_time_sec": round(float(start_time_sec), 3),
+                "end_time_sec": round(float(end_time_sec), 3),
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "processed_frames": len(processed_frames),
+                "frames_with_candidates": 0,
+                "candidate_count": 0,
+                "rejected_candidate_count": 0,
+            },
+        }
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video for ball tracking: {video_path}")
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+    H = pitch.homography()
+    pitch_polygon = pitch.polygon_np
+    frames: list[dict[str, Any]] = []
+    rejected_summary: Counter[str] = Counter()
+    frame_idx = start_frame
+    try:
+        while frame_idx <= end_frame:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if frame_idx % stride != 0:
+                frame_idx += 1
+                continue
+
+            kwargs: dict[str, Any] = {
+                "source": frame,
+                "classes": class_config["class_ids"],
+                "conf": float(ball_conf),
+                "iou": DEFAULT_BALL_IOU,
+                "imgsz": int(yolo_imgsz),
+                "verbose": False,
+            }
+            if yolo_device:
+                kwargs["device"] = yolo_device
+
+            raw_predictions = 0
+            candidates: list[dict[str, Any]] = []
+            rejected: list[dict[str, Any]] = []
+            results = model.predict(**kwargs)
+            if results:
+                boxes = results[0].boxes
+                if boxes is not None:
+                    xyxy = boxes.xyxy.cpu().numpy()
+                    confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
+                    classes = boxes.cls.cpu().numpy() if boxes.cls is not None else None
+                    raw_predictions = len(xyxy)
+                    candidates, rejected = extract_ball_candidates(
+                        xyxy,
+                        confs,
+                        class_ids=classes,
+                        class_names=class_config["class_name_by_id"],
+                        frame_idx=frame_idx,
+                        fps=fps,
+                        pitch_polygon=pitch_polygon,
+                        homography=H,
+                        frame_size=(width, height),
+                    )
+            for item in rejected:
+                rejected_summary[str(item.get("reason") or "unknown")] += 1
+            frames.append(
+                {
+                    "frame": frame_idx,
+                    "time_sec": round(frame_idx / fps, 3),
+                    "raw_predictions": raw_predictions,
+                    "candidates": candidates,
+                    "rejected_candidates": rejected,
+                    "rejected_counts": dict(Counter(str(item.get("reason") or "unknown") for item in rejected)),
+                }
+            )
+            frame_idx += 1
+    finally:
+        cap.release()
+
+    return {
+        "frames": frames,
+        "processed_frames": processed_frames,
+        "rejected_summary": dict(rejected_summary),
+        "parameters": parameters,
+        "warnings": warnings,
+        "metrics": {
+            "start_time_sec": round(float(start_time_sec), 3),
+            "end_time_sec": round(float(end_time_sec), 3),
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "processed_frames": len(processed_frames),
+            "frames_with_candidates": sum(1 for frame in frames if frame.get("candidates")),
+            "candidate_count": sum(len(frame.get("candidates") or []) for frame in frames),
+            "rejected_candidate_count": sum(len(frame.get("rejected_candidates") or []) for frame in frames),
+            "rejected_summary": dict(rejected_summary),
+        },
+    }
+
+
+def ball_tracking_parameters(
+    *,
+    class_config: dict[str, Any],
+    ball_conf: float,
+    yolo_imgsz: int,
+    frame_stride: int,
+    max_seconds: float,
+    yolo_device: str | None,
+    max_interpolation_gap_sec: float,
+) -> dict[str, Any]:
+    parameters = {
+        "ball_conf": float(ball_conf),
+        "ball_iou": DEFAULT_BALL_IOU,
+        "imgsz": int(yolo_imgsz),
+        "frame_stride": int(frame_stride),
+        "max_seconds": float(max_seconds),
+        "max_interpolation_gap_sec": float(max_interpolation_gap_sec),
+        "max_link_speed_mps": DEFAULT_MAX_LINK_SPEED_MPS,
+        "max_interpolation_speed_mps": DEFAULT_MAX_INTERPOLATION_SPEED_MPS,
+        "min_start_conf": DEFAULT_MIN_START_CONF,
+        "pitch_filter": "center_in_pitch_polygon",
+        "size_filter": {
+            "min_area_px": DEFAULT_MIN_BALL_AREA_PX,
+            "max_area_ratio": DEFAULT_MAX_BALL_AREA_RATIO,
+        },
+        "device": yolo_device or "auto",
+    }
+    parameters.update(
+        {
+            "detector": class_config["source"],
+            "ball_class_ids": class_config["class_ids"],
+            "ball_class_names": class_config["class_names"],
+            "ball_class_resolution": class_config["resolution"],
+            "model_classes": class_config["model_classes"],
+        }
+    )
+    return parameters
+
+
 def extract_ball_candidates(
     xyxy: Any,
     confs: Any,
