@@ -50,7 +50,7 @@ This snapshot should be updated whenever a milestone is completed or materially 
 - `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`, plus bench subjects such as `A08+`/`B08+`) exists with conservative anti-switch logic, `change_candidates.json` flags likely on/off changes for review, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
 - `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; configurable thresholds UI is not done.
 - `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, `analysis_quality_report.json`, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, and admin uses a step-by-step workflow, while export/share polish is still pending.
-- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates, contact-candidate review, derived `event_candidates.json` and experimental `pass_candidates.json` with pass geometry exist as candidate layers, background analysis jobs and chunk manifest foundation exist, while shots, full event review, export/share polish and true per-chunk CV merge are not implemented.
+- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates, contact-candidate review, derived `event_candidates.json` and experimental `pass_candidates.json` with pass geometry exist as candidate layers, background analysis jobs, real chunked runner v1 with retry/resume, native runtime diagnostics and benchmark scripts exist, while shots, full event review, export/share polish and production-grade chunk merge polish are not implemented.
 
 ---
 
@@ -811,7 +811,7 @@ Jako użytkownik chcę szybko poprawić błędne kandydaty podań.
 
 # Milestone 12 — Product hardening and performance
 
-**Status:** `[~]` background analysis job API/UI polling, persisted job status files, quality smoke checker and `analysis_chunk_manifest.json` foundation are implemented. True per-chunk CV execution/merge, retry/resume controls, artifact cleanup and performance presets are still pending.
+**Status:** `[~]` background analysis job API/UI polling, persisted job status files, quality smoke checker, native runtime diagnostics, benchmark scripts and real chunked runner v1 are implemented. Stop controls, artifact cleanup, full performance presets and production-grade chunk merge polish are still pending.
 
 ## Cel
 
@@ -834,14 +834,20 @@ Jako użytkownik chcę usuwać niepotrzebne artefakty overlay/cache, żeby nie z
 ### US12.5 — Performance presets
 Jako użytkownik chcę wybrać preset: szybki test, standard, jakość, żeby dobrać parametry do laptopa.
 
+### US12.6 — Native runtime benchmark
+Jako developer chcę uruchomić ten sam benchmark na MPS/CUDA/CPU bez Dockera, żeby porównać realną wydajność laptopów przed analizą pełnych meczów.
+
 ## Acceptance criteria
 
 - `[x]` Analiza nie musi być synchroniczna w request/response; główny admin flow używa `POST /api/matches/{match_id}/analyze/background`.
 - `[x]` UI pokazuje status joba, etap, progress procentowy i link do chunk manifestu, jeśli został wygenerowany.
 - `[x]` Backend zapisuje trwałe pliki `analysis_jobs/<job_id>.json`, a API ma `GET /api/analysis-jobs/{job_id}` i `GET /api/matches/{match_id}/analysis-jobs`.
-- `[x]` Backend potrafi zapisać `analysis_chunk_manifest.json` z podziałem filmu na planowane chunki, overlapem i statusem single-pass fallback.
-- `[~]` Chunked mode jest fundamentem planowania; właściwe per-chunk YOLO execution, merge trackletów i globalny resolver po chunkach nie są jeszcze zaimplementowane.
-- `[ ]` Można zatrzymać/ponowić analizę.
+- `[x]` Backend potrafi zapisać `analysis_chunk_manifest.json` z podziałem filmu na chunki, overlapem i statusem każdego chunka.
+- `[x]` Chunked mode wykonuje realne per-chunk YOLO, pomija ukończone chunki przy retry/resume, scala tracki z globalnymi frame/time i uruchamia finalny stable resolver/statystyki na merged tracks.
+- `[x]` Chunked mode ma opcję `include_ball=true`: w tym samym jobie i manifest/retry flow zbiera per-chunk ball observations, scala `ball_candidates`/`ball_tracks`, a potem uruchamia possession/contact/event/pass candidate layers na finalnych stable players.
+- `[x]` Backend ma `GET /api/runtime`, a UI pokazuje czy runtime widzi Torch/CUDA/MPS.
+- `[x]` Istnieje native benchmark CLI zapisujący `performance_report.json` poza katalogiem meczu (`backend/storage/benchmarks/...`).
+- `[~]` Można ponowić analizę chunked bez powtarzania ukończonych chunków; stop/cancel endpoint nie jest jeszcze zaimplementowany.
 - `[ ]` Artefakty są wersjonowane per run.
 - `[ ]` Istnieją presety YOLO/tracking, np.:
   - `[ ]` `fast_debug`: max 30s, stride 2, imgsz 640/960,

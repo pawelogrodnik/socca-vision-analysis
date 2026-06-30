@@ -7,6 +7,7 @@ import {
   frameUrl,
   getAnalysisJob,
   getMatch,
+  getRuntimeInfo,
   listMatches,
   publishLocalMatch,
   savePitch,
@@ -19,6 +20,7 @@ import type {
   BallAnalysisPayload,
   Match,
   MatchMetadataPayload,
+  RuntimeInfo,
 } from '../types';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
@@ -46,11 +48,16 @@ const defaultAnalysis: AnalysisPayload = {
   chunked: false,
   chunk_duration_sec: 120,
   chunk_overlap_sec: 2,
+  include_ball: false,
   yolo_model: 'yolov8n.pt',
   yolo_conf: 0.05,
   yolo_imgsz: 1920,
   yolo_tracker: 'centroid_high_recall',
   yolo_device: null,
+  ball_yolo_model: 'models/best.pt',
+  ball_yolo_conf: 0.03,
+  ball_yolo_imgsz: 960,
+  ball_yolo_device: null,
 };
 
 const localBallModelPath = 'models/best.pt';
@@ -177,6 +184,7 @@ export function AdminPanel() {
   const [showDeveloperDebug, setShowDeveloperDebug] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [activeAnalysisJob, setActiveAnalysisJob] = useState<AnalysisJob | null>(null);
+  const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isBusy = busyAction !== null;
 
@@ -198,6 +206,9 @@ export function AdminPanel() {
 
   useEffect(() => {
     refresh().catch((error) => setStatus(errorMessage(error)));
+    getRuntimeInfo()
+      .then(setRuntimeInfo)
+      .catch(() => setRuntimeInfo(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -649,6 +660,7 @@ export function AdminPanel() {
             <AnalysisForm
               analysis={analysis}
               onChange={setAnalysis}
+              runtimeInfo={runtimeInfo}
               onRun={runAnalysis}
               disabled={isBusy}
               isRunning={busyAction === 'analysis'}

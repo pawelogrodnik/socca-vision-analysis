@@ -15,6 +15,7 @@ from app.services.analysis_runs import finalize_analysis_report, new_analysis_ru
 from app.services.ball_tracking import DEFAULT_BALL_CONF, detect_ball_yolo_coco
 from app.services.ball_possession import build_ball_possession_analysis
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
+from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label
 from app.services.stabilization import stabilize_match
 from app.services.tracker import CentroidTracker
 from app.services.video import read_video_metadata
@@ -458,6 +459,226 @@ def _resolve_yolo_tracker_config(tracker_name: str) -> str:
     return tracker_name
 
 
+def collect_yolo_tracks_range(
+    match_dir: Path,
+    video_path: Path,
+    pitch: PitchConfig,
+    metadata: dict[str, Any],
+    *,
+    start_time_sec: float,
+    end_time_sec: float,
+    frame_stride: int,
+    yolo_model: str,
+    yolo_conf: float,
+    yolo_imgsz: int,
+    yolo_tracker: str,
+    yolo_device: str | None,
+    track_id_offset: int = 0,
+    model: Any | None = None,
+) -> dict[str, Any]:
+    pitch_polygon = pitch.polygon_np
+    H = pitch.homography()
+    fps, width, _height = _validate_common_video_params(metadata, frame_stride)
+    start_frame = max(0, int(round(max(0.0, start_time_sec) * fps)))
+    end_frame = max(start_frame, int(round(max(start_time_sec, end_time_sec) * fps)))
+    resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
+    normalized_yolo_device = normalize_yolo_device(yolo_device)
+    detector = model or _load_yolo_model(resolved_yolo_model)
+    use_centroid_tracker = yolo_tracker == "centroid_high_recall"
+    tracker_config = _resolve_yolo_tracker_config(yolo_tracker)
+    centroid_tracker = CentroidTracker(
+        max_distance_px=max(45, width * 0.04),
+        max_missing=max(12, int(fps * 0.6 / max(frame_stride, 1))),
+    )
+    tracks: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    frame_idx = start_frame
+    processed = 0
+    detections_kept = 0
+    detections_rejected_outside_pitch = 0
+    yolo_frames_with_results = 0
+
+    try:
+        while frame_idx <= end_frame:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if frame_idx % frame_stride != 0:
+                frame_idx += 1
+                continue
+
+            kwargs: dict[str, Any] = {
+                "source": frame,
+                "classes": [0],
+                "conf": yolo_conf,
+                "iou": 0.45,
+                "imgsz": yolo_imgsz,
+                "verbose": False,
+            }
+            if normalized_yolo_device:
+                kwargs["device"] = normalized_yolo_device
+
+            if use_centroid_tracker:
+                results = detector.predict(**kwargs)
+                detections: list[dict[str, Any]] = []
+                if results:
+                    boxes = results[0].boxes
+                    if boxes is not None:
+                        yolo_frames_with_results += 1
+                        xyxy = boxes.xyxy.cpu().numpy()
+                        confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(xyxy))
+                        for bbox, conf in zip(xyxy, confs):
+                            x1, y1, x2, y2 = [float(v) for v in bbox]
+                            foot = [float((x1 + x2) / 2), float(y2)]
+                            if not point_in_polygon((foot[0], foot[1]), pitch_polygon):
+                                detections_rejected_outside_pitch += 1
+                                continue
+                            detections.append(
+                                {
+                                    "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
+                                    "footpoint": [round(foot[0], 2), round(foot[1], 2)],
+                                    "area_px": round(float((x2 - x1) * (y2 - y1)), 2),
+                                    "confidence": round(float(conf), 4),
+                                    "source": "yolo-person-centroid",
+                                }
+                            )
+                detections_kept += len(detections)
+                centroid_tracker.update(detections, frame_idx, frame_idx / fps)
+            else:
+                results = detector.track(
+                    **kwargs,
+                    persist=True,
+                    tracker=tracker_config,
+                )
+                if results:
+                    boxes = results[0].boxes
+                    if boxes is not None and boxes.id is not None:
+                        yolo_frames_with_results += 1
+                        xyxy = boxes.xyxy.cpu().numpy()
+                        ids = boxes.id.cpu().numpy().astype(int)
+                        confs = boxes.conf.cpu().numpy() if boxes.conf is not None else np.ones(len(ids))
+                        for bbox, track_id, conf in zip(xyxy, ids, confs):
+                            x1, y1, x2, y2 = [float(v) for v in bbox]
+                            foot = [float((x1 + x2) / 2), float(y2)]
+                            if not point_in_polygon((foot[0], foot[1]), pitch_polygon):
+                                detections_rejected_outside_pitch += 1
+                                continue
+                            global_track_id = int(track_id) + int(track_id_offset)
+                            row = {
+                                "track_id": global_track_id,
+                                "frame": int(frame_idx),
+                                "time_sec": round(float(frame_idx / fps), 3),
+                                "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
+                                "footpoint": [round(foot[0], 2), round(foot[1], 2)],
+                                "area_px": round(float((x2 - x1) * (y2 - y1)), 2),
+                                "confidence": round(float(conf), 4),
+                                "source": "yolo-person",
+                            }
+                            tracks[global_track_id].append(row)
+                            detections_kept += 1
+            processed += 1
+            frame_idx += 1
+    finally:
+        cap.release()
+
+    if use_centroid_tracker:
+        raw_tracks = []
+        for track in centroid_tracker.all_tracks():
+            global_track_id = int(track.id) + int(track_id_offset)
+            raw_tracks.append(
+                {
+                    "track_id": global_track_id,
+                    "positions": [
+                        {**position, "track_id": global_track_id}
+                        for position in track.positions
+                    ],
+                }
+            )
+    else:
+        raw_tracks = [{"track_id": tid, "positions": positions} for tid, positions in sorted(tracks.items()) if positions]
+    tracks_json = _tracks_with_pitch_positions(raw_tracks, H)
+    warnings: list[str] = []
+    if processed == 0:
+        warnings.append("No frames were processed in this chunk.")
+    if detections_kept == 0:
+        warnings.append("YOLO did not keep any person detections inside the pitch polygon in this chunk.")
+    return {
+        "tracks": tracks_json,
+        "metrics": {
+            "start_time_sec": round(float(start_time_sec), 3),
+            "end_time_sec": round(float(end_time_sec), 3),
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "frames_processed": processed,
+            "yolo_frames_with_results": yolo_frames_with_results,
+            "detections_kept": detections_kept,
+            "detections_rejected_outside_pitch": detections_rejected_outside_pitch,
+            "tracks_count": len(tracks_json),
+            "track_id_offset": int(track_id_offset),
+            "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
+            "yolo_tracker_resolved": tracker_config if not use_centroid_tracker else "internal_centroid_tracker",
+            "yolo_model_resolved": resolved_yolo_model,
+            "yolo_device": normalized_yolo_device or "auto",
+            "yolo_device_requested": requested_device_label(yolo_device),
+        },
+        "warnings": warnings,
+    }
+
+
+def write_raw_overlay_from_tracks(
+    match_dir: Path,
+    video_path: Path,
+    pitch: PitchConfig,
+    tracks_json: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    *,
+    frame_stride: int,
+    max_seconds: float,
+) -> Path:
+    fps, width, height = _validate_common_video_params(metadata, frame_stride)
+    max_frames = int(max_seconds * fps) if max_seconds > 0 else int(metadata["frame_count"])
+    pitch_polygon = pitch.polygon_np
+    rows_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for track in tracks_json:
+        track_id = int(track.get("track_id") or 0)
+        for position in track.get("positions") or []:
+            if not isinstance(position, dict) or position.get("frame") is None:
+                continue
+            row = dict(position)
+            row["track_id"] = int(row.get("track_id") or track_id)
+            rows_by_frame[int(row["frame"])].append(row)
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video: {video_path}")
+    overlay_writer = OverlayWriter(match_dir, fps=fps / frame_stride, frame_size=(width, height))
+    frame_idx = 0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok or frame_idx > max_frames:
+                break
+            if frame_idx % frame_stride != 0:
+                frame_idx += 1
+                continue
+            overlay_writer.write(
+                draw_overlay(
+                    frame,
+                    pitch_polygon,
+                    rows_by_frame.get(frame_idx, []),
+                    label_prefix="P",
+                    frame_idx=frame_idx,
+                )
+            )
+            frame_idx += 1
+    finally:
+        cap.release()
+    return overlay_writer.close()
+
+
 def analyze_match_yolo(
     match_dir: Path,
     video_path: Path,
@@ -472,6 +693,9 @@ def analyze_match_yolo(
 ) -> dict[str, Any]:
     adapter_name = "yolo-ultralytics"
     try:
+        requested_yolo_device = yolo_device
+        normalized_yolo_device = normalize_yolo_device(yolo_device)
+        runtime_info = collect_runtime_info()
         metadata = read_video_metadata(video_path)
         pitch = load_pitch_config(match_dir)
         pitch_polygon = pitch.polygon_np
@@ -516,8 +740,8 @@ def analyze_match_yolo(
                     "imgsz": yolo_imgsz,
                     "verbose": False,
                 }
-                if yolo_device:
-                    kwargs["device"] = yolo_device
+                if normalized_yolo_device:
+                    kwargs["device"] = normalized_yolo_device
 
                 if use_centroid_tracker:
                     results = model.predict(**kwargs)
@@ -615,7 +839,7 @@ def analyze_match_yolo(
                 max_seconds=max_seconds,
                 frame_stride=frame_stride,
                 yolo_imgsz=int(yolo_imgsz),
-                yolo_device=yolo_device,
+                yolo_device=normalized_yolo_device,
                 ball_conf=min(float(yolo_conf), DEFAULT_BALL_CONF),
             )
             artifacts.update(ball_tracking["artifacts"])
@@ -651,13 +875,15 @@ def analyze_match_yolo(
                 "yolo_imgsz": yolo_imgsz,
                 "yolo_tracker": yolo_tracker,
                 "yolo_tracker_resolved": tracker_config if not use_centroid_tracker else "internal_centroid_tracker",
-                "yolo_device": yolo_device or "auto",
+                "yolo_device": normalized_yolo_device or "auto",
+                "yolo_device_requested": requested_device_label(requested_yolo_device),
                 "classes": ["person"],
                 "pitch_mask_before_yolo": False,
                 "pitch_filter": "footpoint_in_pitch_polygon",
                 "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
             },
             "frames_processed": processed,
+            "runtime": runtime_info,
             "yolo_frames_with_results": yolo_frames_with_results,
             "detections_kept": detections_kept,
             "detections_rejected_outside_pitch": detections_rejected_outside_pitch,
@@ -688,6 +914,9 @@ def analyze_match_ball_yolo(
 ) -> dict[str, Any]:
     adapter_name = "ball-yolo"
     try:
+        requested_yolo_device = yolo_device
+        normalized_yolo_device = normalize_yolo_device(yolo_device)
+        runtime_info = collect_runtime_info()
         metadata = read_video_metadata(video_path)
         pitch = load_pitch_config(match_dir)
         resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
@@ -701,7 +930,7 @@ def analyze_match_ball_yolo(
             max_seconds=max_seconds,
             frame_stride=max(1, frame_stride),
             yolo_imgsz=int(yolo_imgsz),
-            yolo_device=yolo_device,
+            yolo_device=normalized_yolo_device,
             ball_conf=min(float(yolo_conf), DEFAULT_BALL_CONF),
         )
         possession = _build_ball_possession_artifacts(
@@ -733,13 +962,15 @@ def analyze_match_ball_yolo(
                 "yolo_model_resolved": resolved_yolo_model,
                 "yolo_conf": yolo_conf,
                 "yolo_imgsz": yolo_imgsz,
-                "yolo_device": yolo_device or "auto",
+                "yolo_device": normalized_yolo_device or "auto",
+                "yolo_device_requested": requested_device_label(requested_yolo_device),
                 "detector": ball_parameters.get("detector"),
                 "classes": ball_parameters.get("ball_class_names") or ["ball"],
                 "class_ids": ball_parameters.get("ball_class_ids") or [],
                 "class_resolution": ball_parameters.get("ball_class_resolution"),
                 "pitch_filter": "center_in_pitch_polygon",
             },
+            "runtime": runtime_info,
             "frames_processed": ball_tracking["ball_tracking_report"]["summary"]["processed_frames"],
             "ball_tracking_summary": ball_tracking["ball_tracking_report"]["summary"],
             "ball_quality_summary": ball_tracking["ball_quality_report"]["summary"],

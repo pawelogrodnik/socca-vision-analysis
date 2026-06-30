@@ -19,6 +19,7 @@ import type {
   PlayerIdentityReviewState,
   PlayerProfileStatsDocument,
   ResolvedPlayerStatsDocument,
+  RuntimeInfo,
   TeamProfileStatsDocument,
   PlayerAssignment,
   PlayerAssignmentsDocument,
@@ -116,6 +117,10 @@ export async function deleteTeam(teamId: string): Promise<{ status: string; team
 
 export async function listMatches(): Promise<Match[]> {
   return request<Match[]>('/api/matches');
+}
+
+export async function getRuntimeInfo(): Promise<RuntimeInfo> {
+  return request<RuntimeInfo>('/api/runtime');
 }
 
 export async function getMatch(matchId: string): Promise<Match> {

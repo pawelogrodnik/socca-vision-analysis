@@ -727,6 +727,18 @@ a { color: #93c5fd; }
   cursor: pointer;
   font-weight: 800;
 }
+.runtime-box {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #020617;
+}
+.runtime-box strong {
+  color: #bfdbfe;
+}
 
 @media (max-width: 900px) {
   .app { padding: 16px; }

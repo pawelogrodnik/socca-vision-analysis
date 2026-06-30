@@ -1,17 +1,23 @@
-import type { AnalysisPayload } from '../types';
+import type { AnalysisPayload, RuntimeInfo } from '../types';
 
 interface AnalysisFormProps {
   analysis: AnalysisPayload;
   onChange: (payload: AnalysisPayload) => void;
+  runtimeInfo?: RuntimeInfo | null;
   onRun: () => Promise<void> | void;
   disabled?: boolean;
   isRunning?: boolean;
   showRunButton?: boolean;
 }
 
+function yesNo(value: boolean | undefined): string {
+  return value ? 'tak' : 'nie';
+}
+
 export function AnalysisForm({
   analysis,
   onChange,
+  runtimeInfo = null,
   onRun,
   disabled = false,
   isRunning = false,
@@ -112,15 +118,36 @@ export function AnalysisForm({
         </label>
         <label>
           Device
-          <input
+          <select
             value={analysis.yolo_device || ''}
             disabled={disabled}
             onChange={(event) =>
               onChange({ ...analysis, yolo_device: event.target.value || null })
             }
-          />
+          >
+            <option value=''>Auto</option>
+            <option value='cpu'>CPU</option>
+            <option value='0'>CUDA / NVIDIA GPU 0</option>
+            <option value='mps'>Apple MPS</option>
+          </select>
         </label>
       </div>
+      {runtimeInfo && (
+        <div className='runtime-box'>
+          <strong>Backend runtime</strong>
+          <div className='chips'>
+            <span>Python {runtimeInfo.python.version}</span>
+            <span>Torch {runtimeInfo.torch.available ? runtimeInfo.torch.version || 'ok' : 'brak'}</span>
+            <span>CUDA: {yesNo(runtimeInfo.torch.cuda_available)}</span>
+            <span>MPS: {yesNo(runtimeInfo.torch.mps_available)}</span>
+          </div>
+          {runtimeInfo.recommended_yolo_devices.length > 0 && (
+            <p className='muted'>
+              Suggested device: {runtimeInfo.recommended_yolo_devices.join(' / ')}
+            </p>
+          )}
+        </div>
+      )}
       <div className='artifact-box'>
         <label className='checkbox-row'>
           <input
@@ -133,12 +160,23 @@ export function AnalysisForm({
           />
           Long video mode: zapisz chunk manifest
         </label>
+        <label className='checkbox-row'>
+          <input
+            type='checkbox'
+            checked={analysis.include_ball}
+            disabled={disabled || !analysis.chunked}
+            onChange={(event) =>
+              onChange({ ...analysis, include_ball: event.target.checked })
+            }
+          />
+          Analizuj pilke w tym samym chunked jobie
+        </label>
         <div className='grid two compact'>
           <label>
             Chunk duration sec
             <input
               type='number'
-              min={10}
+              min={1}
               value={analysis.chunk_duration_sec}
               disabled={disabled || !analysis.chunked}
               onChange={(event) =>
@@ -165,9 +203,48 @@ export function AnalysisForm({
             />
           </label>
         </div>
+        {analysis.include_ball && (
+          <div className='grid three compact'>
+            <label>
+              Ball model
+              <input
+                value={analysis.ball_yolo_model}
+                disabled={disabled || !analysis.chunked}
+                onChange={(event) =>
+                  onChange({ ...analysis, ball_yolo_model: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              Ball conf
+              <input
+                type='number'
+                step='0.01'
+                value={analysis.ball_yolo_conf}
+                disabled={disabled || !analysis.chunked}
+                onChange={(event) =>
+                  onChange({ ...analysis, ball_yolo_conf: Number(event.target.value) })
+                }
+              />
+            </label>
+            <label>
+              Ball img size
+              <input
+                type='number'
+                value={analysis.ball_yolo_imgsz}
+                disabled={disabled || !analysis.chunked}
+                onChange={(event) =>
+                  onChange({ ...analysis, ball_yolo_imgsz: Number(event.target.value) })
+                }
+              />
+            </label>
+          </div>
+        )}
         <p className='muted'>
-          Aktualnie chunk manifest jest fundamentem pod dlugie mecze; analyzer
-          nadal wykonuje jeden bezpieczny background run.
+          Chunked mode analizuje zakresy osobno, zapisuje status kazdego
+          chunka i przy ponownym uruchomieniu pomija juz ukonczone chunki.
+          Opcja pilki dodaje drugi model YOLO w tym samym jobie i wspolnym
+          retry/resume.
         </p>
       </div>
       {showRunButton && (

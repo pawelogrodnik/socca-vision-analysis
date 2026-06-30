@@ -17,7 +17,7 @@ from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload,
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
 from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, start_analysis_job
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
-from app.services.chunked_analysis import build_analysis_chunk_manifest, mark_chunk_manifest_single_pass_completed, write_analysis_chunk_manifest
+from app.services.chunked_analysis import analyze_match_chunked_yolo
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.identity import build_identity_review, save_identity_assignments
@@ -27,6 +27,7 @@ from app.services.player_identity import build_player_identity_review, save_play
 from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
+from app.services.runtime import collect_runtime_info
 from app.services.stabilization import load_stable_review, load_team_config_review, save_stable_review, save_team_config_review
 from app.services.team_profiles import build_team_profile_stats
 from app.services.team_registry import create_team as registry_create_team
@@ -198,44 +199,27 @@ def run_match_analysis_and_update_meta(
     if progress:
         progress("preparing", 8.0, "Preparing analysis inputs.", None)
     if payload.chunked:
-        metadata = read_video_metadata(video_path)
-        manifest = build_analysis_chunk_manifest(
-            video_metadata=metadata,
+        report = analyze_match_chunked_yolo(
+            path,
+            video_path,
             payload=payload.model_dump(),
             job_id=job_id,
+            progress=progress,
         )
-        write_analysis_chunk_manifest(path, manifest)
+    else:
         if progress:
-            progress(
-                "chunk_plan",
-                15.0,
-                f"Planned {manifest['summary']['chunks']} analysis chunks.",
-                {
-                    "chunk_count": manifest["summary"]["chunks"],
-                    "chunk_manifest": "analysis_chunk_manifest.json",
-                },
-            )
-    if progress:
-        progress("analyzing", 20.0, "Running video analysis.", None)
-    report = analyze_match(
-        path,
-        video_path,
-        adapter=payload.adapter,  # type: ignore[arg-type]
-        max_seconds=payload.max_seconds,
-        frame_stride=max(1, payload.frame_stride),
-        yolo_model=payload.yolo_model,
-        yolo_conf=payload.yolo_conf,
-        yolo_imgsz=payload.yolo_imgsz,
-        yolo_tracker=payload.yolo_tracker,
-        yolo_device=payload.yolo_device,
-    )
-    if payload.chunked:
-        mark_chunk_manifest_single_pass_completed(path, report)
-        report = attach_analysis_artifact_to_report(
+            progress("analyzing", 20.0, "Running video analysis.", None)
+        report = analyze_match(
             path,
-            report,
-            key="analysis_chunk_manifest",
-            filename="analysis_chunk_manifest.json",
+            video_path,
+            adapter=payload.adapter,  # type: ignore[arg-type]
+            max_seconds=payload.max_seconds,
+            frame_stride=max(1, payload.frame_stride),
+            yolo_model=payload.yolo_model,
+            yolo_conf=payload.yolo_conf,
+            yolo_imgsz=payload.yolo_imgsz,
+            yolo_tracker=payload.yolo_tracker,
+            yolo_device=payload.yolo_device,
         )
     if progress:
         progress("finalizing", 95.0, "Updating match metadata.", None)
@@ -355,6 +339,11 @@ def health() -> dict[str, Any]:
         "publish_target": PUBLISH_TARGET,
         "database": database_health(),
     }
+
+
+@app.get("/api/runtime")
+def runtime_info() -> dict[str, Any]:
+    return collect_runtime_info()
 
 
 @app.get("/api/teams")

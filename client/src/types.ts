@@ -1023,11 +1023,42 @@ export type AnalysisPayload = {
   chunked: boolean;
   chunk_duration_sec: number;
   chunk_overlap_sec: number;
+  include_ball: boolean;
   yolo_model: string;
   yolo_conf: number;
   yolo_imgsz: number;
   yolo_tracker: string;
   yolo_device: string | null;
+  ball_yolo_model: string;
+  ball_yolo_conf: number;
+  ball_yolo_imgsz: number;
+  ball_yolo_device: string | null;
+};
+
+export type RuntimeInfo = {
+  schema_version: string;
+  python: {
+    version: string;
+    executable: string;
+  };
+  platform: {
+    system: string;
+    release: string;
+    machine: string;
+    processor: string;
+    platform: string;
+  };
+  torch: {
+    available: boolean;
+    version?: string | null;
+    import_error?: string;
+    cuda_available: boolean;
+    cuda_device_count: number;
+    cuda_device_names: string[];
+    mps_available: boolean;
+    mps_built: boolean;
+  };
+  recommended_yolo_devices: string[];
 };
 
 export type AnalysisJob = {
