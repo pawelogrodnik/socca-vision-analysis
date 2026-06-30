@@ -149,6 +149,12 @@ class BallPossessionTests(unittest.TestCase):
         self.assertEqual(contacts["summary"]["contact_candidates"], 1)
         self.assertEqual(contacts["candidates"][0]["stable_player_id"], "A01")
         self.assertEqual(contacts["candidates"][0]["detected_ball_frames"], 2)
+        self.assertEqual(contacts["candidates"][0]["start_ball_position_m"], [5.0, 5.0])
+        self.assertEqual(contacts["candidates"][0]["end_ball_position_m"], [5.1, 5.0])
+        self.assertEqual(contacts["candidates"][0]["start_player_position_m"], [5.5, 5.0])
+        self.assertEqual(contacts["candidates"][0]["end_player_position_m"], [5.6, 5.0])
+        self.assertIn(contacts["candidates"][0]["review_status"], {"accepted", "uncertain", "rejected"})
+        self.assertEqual(contacts["candidates"][0]["review_source"], "auto_contact_review_v1")
 
 
 if __name__ == "__main__":

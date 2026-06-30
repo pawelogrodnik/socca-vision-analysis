@@ -249,6 +249,107 @@ export type GlobalIdentityReport = {
   risky_slots?: Array<Record<string, unknown>>;
 };
 
+export type AnalysisQualityComponent = {
+  name: string;
+  quality: 'high' | 'medium' | 'low' | string;
+  score: number;
+  warnings: string[];
+  metrics: Record<string, unknown>;
+};
+
+export type AnalysisQualityReport = {
+  schema_version: string;
+  generated_at: string;
+  status: string;
+  quality: 'high' | 'medium' | 'low' | string;
+  score: number;
+  recommendation: string;
+  summary: Record<string, unknown>;
+  components: {
+    tracking?: AnalysisQualityComponent;
+    identity_stability?: AnalysisQualityComponent;
+    stats?: AnalysisQualityComponent;
+    team_assignment?: AnalysisQualityComponent;
+    [key: string]: AnalysisQualityComponent | undefined;
+  };
+  warnings: string[];
+  frame_ranges?: Record<string, Array<Record<string, number>>>;
+  top_problem_frames?: Array<Record<string, unknown>>;
+};
+
+export type ChangeCandidateReviewStatus =
+  | 'needs_review'
+  | 'confirmed'
+  | 'rejected'
+  | 'uncertain'
+  | 'ignored';
+
+export type ChangeCandidate = {
+  candidate_id: string;
+  event_type?: 'substitution_candidate' | string;
+  team_label?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  time_sec?: number | null;
+  gap_sec?: number | null;
+  confidence?: string | null;
+  confidence_score?: number | null;
+  status?: ChangeCandidateReviewStatus | string;
+  review_status?: ChangeCandidateReviewStatus;
+  review_source?: string;
+  review_notes?: string;
+  reviewed_at?: string;
+  out_stable_subject_id?: string | null;
+  out_stable_player_id?: string | null;
+  out_slot_id?: string | null;
+  out_end_time_sec?: number | null;
+  in_stable_subject_id?: string | null;
+  in_stable_player_id?: string | null;
+  in_slot_id?: string | null;
+  in_start_time_sec?: number | null;
+  out_candidates?: Array<Record<string, unknown>>;
+  reid_candidates?: Array<Record<string, unknown>>;
+  suggested_existing_stable_subject_id?: string | null;
+  suggested_real_player_id?: string | null;
+  suggested_real_player_name?: string | null;
+  reviewed_out_stable_subject_id?: string | null;
+  linked_existing_stable_subject_id?: string | null;
+  reviewed_player_id?: string | null;
+  notes?: string[];
+};
+
+export type ChangeCandidateReviewUpdate = {
+  candidate_id: string;
+  review_status: ChangeCandidateReviewStatus;
+  out_stable_subject_id?: string | null;
+  linked_existing_stable_subject_id?: string | null;
+  player_id?: string | null;
+  notes?: string;
+};
+
+export type ChangeCandidatesDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  updated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  candidate_semantics?: string;
+  parameters?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  skipped_reasons?: Record<string, number>;
+  candidates: ChangeCandidate[];
+};
+
+export type ChangeReviewReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  warnings?: string[];
+  notes?: string[];
+};
+
 export type TeamClustersDocument = {
   schema_version: string;
   generated_at: string;
@@ -612,8 +713,16 @@ export type ContactCandidate = {
   source?: string;
   status?: ContactCandidateReviewStatus | string;
   review_status?: ContactCandidateReviewStatus;
+  review_source?: string;
   review_notes?: string;
   reviewed_at?: string;
+  auto_review?: {
+    review_status?: ContactCandidateReviewStatus;
+    source?: string;
+    score?: number;
+    reasons?: string[];
+    thresholds?: Record<string, number>;
+  };
   player_source_counts?: Record<string, number>;
 };
 
@@ -631,6 +740,144 @@ export type ContactCandidatesDocument = {
   experimental?: boolean;
   summary?: Record<string, unknown>;
   candidates: ContactCandidate[];
+};
+
+export type EventCandidate = {
+  event_id: string;
+  event_type: 'ball_contact' | string;
+  source_candidate_id?: string | null;
+  review_status?: ContactCandidateReviewStatus;
+  final_stat_eligible?: boolean;
+  confidence?: number | null;
+  source_confidence?: number | null;
+  stable_player_id?: string | null;
+  stable_subject_id?: string | null;
+  team_label?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  start_time_sec?: number | null;
+  end_time_sec?: number | null;
+  duration_sec?: number | null;
+  evidence?: Record<string, unknown>;
+};
+
+export type EventCandidatesDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  event_semantics?: string;
+  summary?: Record<string, unknown>;
+  events: EventCandidate[];
+};
+
+export type EventReviewReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  warnings?: string[];
+  notes?: string[];
+};
+
+export type PassCandidatesDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  candidate_semantics?: string;
+  parameters?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  candidates: PassCandidate[];
+};
+
+export type PassCandidateReviewStatus = 'needs_review' | 'accepted' | 'uncertain' | 'rejected';
+
+export type PassCandidate = {
+  candidate_id: string;
+  event_type?: string;
+  pass_type?: string;
+  source_event_id?: string | null;
+  target_event_id?: string | null;
+  from_stable_player_id?: string | null;
+  from_team_label?: string | null;
+  from_team_name?: string | null;
+  to_stable_player_id?: string | null;
+  to_team_label?: string | null;
+  to_team_name?: string | null;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  start_time_sec?: number | null;
+  end_time_sec?: number | null;
+  duration_sec?: number | null;
+  start_position_m?: number[] | null;
+  end_position_m?: number[] | null;
+  displacement_m?: number[] | null;
+  distance_m?: number | null;
+  match_phase_period_id?: string | null;
+  attack_direction?: string | null;
+  forward_progress_m?: number | null;
+  direction?: string | null;
+  is_progressive?: boolean;
+  confidence?: number | null;
+  auto_review_status?: string;
+  review_status?: PassCandidateReviewStatus;
+  review_source?: string;
+  review_notes?: string;
+  reviewed_at?: string;
+  final_stat_eligible?: boolean;
+};
+
+export type PassCandidateReviewUpdate = {
+  candidate_id: string;
+  review_status: PassCandidateReviewStatus;
+  notes?: string;
+};
+
+export type MatchPhasePeriod = {
+  period_id: string;
+  label?: string;
+  start_time_sec: number;
+  end_time_sec?: number | null;
+  team_attack_directions: Record<string, string>;
+  direction_source?: string;
+};
+
+export type MatchPhaseConfigDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  updated_at?: string;
+  source?: string;
+  coordinate_system?: string;
+  direction_axis?: string;
+  default_team_a_first_half_direction?: string;
+  default_team_b_first_half_direction?: string;
+  halves_switch_sides?: boolean;
+  second_half_start_time_sec?: number | null;
+  summary?: Record<string, unknown>;
+  periods: MatchPhasePeriod[];
+  notes?: string[];
+};
+
+export type MatchPhaseConfigPayload = {
+  second_half_start_time_sec?: number | null;
+  first_half_start_time_sec?: number;
+  first_half_end_time_sec?: number | null;
+  second_half_end_time_sec?: number | null;
+  team_a_first_half_direction?: string;
+};
+
+export type PassReviewReport = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  experimental?: boolean;
+  summary?: Record<string, unknown>;
+  warnings?: string[];
+  notes?: string[];
 };
 
 export type StablePlayerReviewUpdate = {
@@ -734,11 +981,17 @@ export type Match = MatchMetadataPayload & {
   published_match_id?: string;
   analysis_runs?: AnalysisRunSummary[];
   latest_analysis_run_id?: string;
+  latest_analysis_job_id?: string;
+  analysis_job_status?: string;
   pitch_config?: unknown;
   analysis_report?: AnalysisReport;
+  analysis_chunk_manifest?: Record<string, unknown>;
   stable_players?: StablePlayersDocument;
   stabilization_report?: Record<string, unknown>;
   global_identity_report?: GlobalIdentityReport;
+  analysis_quality_report?: AnalysisQualityReport;
+  change_candidates?: ChangeCandidatesDocument;
+  change_review_report?: ChangeReviewReport;
   team_clusters?: TeamClustersDocument;
   team_config?: TeamConfigDocument;
   team_stats?: TeamStatsDocument;
@@ -752,6 +1005,11 @@ export type Match = MatchMetadataPayload & {
   ball_tracking_report?: BallTrackingReport;
   ball_quality_report?: BallQualityReport;
   contact_candidates?: ContactCandidatesDocument;
+  match_phase_config?: MatchPhaseConfigDocument;
+  event_candidates?: EventCandidatesDocument;
+  event_review_report?: EventReviewReport;
+  pass_candidates?: PassCandidatesDocument;
+  pass_review_report?: PassReviewReport;
   possession_report?: PossessionReport;
   match_package?: MatchPackage;
   player_assignments?: PlayerAssignmentsDocument;
@@ -762,11 +1020,55 @@ export type AnalysisPayload = {
   adapter: 'yolo' | 'motion';
   max_seconds: number;
   frame_stride: number;
+  chunked: boolean;
+  chunk_duration_sec: number;
+  chunk_overlap_sec: number;
   yolo_model: string;
   yolo_conf: number;
   yolo_imgsz: number;
   yolo_tracker: string;
   yolo_device: string | null;
+};
+
+export type AnalysisJob = {
+  schema_version: string;
+  job_id: string;
+  match_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | string;
+  stage: string;
+  progress_percent: number;
+  message: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  payload?: Record<string, unknown>;
+  chunk_count?: number;
+  chunk_manifest?: string;
+  result?: {
+    status?: string;
+    analysis_type?: string;
+    run_id?: string;
+    generated_at?: string;
+    frames_processed?: number;
+    tracks_count?: number;
+    stable_players_count?: number;
+    run_directory?: string;
+    run_manifest?: string;
+    artifacts?: Record<string, string>;
+  } | null;
+  error?: {
+    type?: string;
+    message?: string;
+    traceback?: string;
+  } | null;
+};
+
+export type AnalysisJobsDocument = {
+  schema_version: string;
+  match_id: string;
+  jobs: AnalysisJob[];
+  latest_job?: AnalysisJob | null;
 };
 
 export type BallAnalysisPayload = {
@@ -803,10 +1105,14 @@ export type AnalysisReport = {
     tracks_json: string;
     overlay_preview: string;
     heatmap_all_tracks: string;
+    analysis_chunk_manifest?: string;
     stable_players?: string;
     global_identity?: string;
     global_identity_report?: string;
+    analysis_quality_report?: string;
     stabilization_report?: string;
+    change_candidates?: string;
+    change_review_report?: string;
     stable_overlay_preview?: string;
     debug_identity_overlay?: string;
     team_clusters?: string;
@@ -828,6 +1134,11 @@ export type AnalysisReport = {
     possession_candidates?: string;
     possession_segments?: string;
     contact_candidates?: string;
+    match_phase_config?: string;
+    event_candidates?: string;
+    event_review_report?: string;
+    pass_candidates?: string;
+    pass_review_report?: string;
     possession_report?: string;
     possession_overlay_preview?: string;
   };
@@ -849,7 +1160,11 @@ export type MatchPackage = {
   stable_players?: StablePlayersDocument | null;
   global_identity?: Record<string, unknown> | null;
   global_identity_report?: GlobalIdentityReport | null;
+  analysis_quality_report?: AnalysisQualityReport | null;
+  analysis_chunk_manifest?: Record<string, unknown> | null;
   stabilization_report?: Record<string, unknown> | null;
+  change_candidates?: ChangeCandidatesDocument | null;
+  change_review_report?: ChangeReviewReport | null;
   team_clusters?: TeamClustersDocument | null;
   team_config?: TeamConfigDocument | null;
   team_stats?: TeamStatsDocument | null;
@@ -867,6 +1182,11 @@ export type MatchPackage = {
   possession_candidates?: Record<string, unknown> | null;
   possession_segments?: Record<string, unknown> | null;
   contact_candidates?: ContactCandidatesDocument | null;
+  match_phase_config?: MatchPhaseConfigDocument | null;
+  event_candidates?: EventCandidatesDocument | null;
+  event_review_report?: EventReviewReport | null;
+  pass_candidates?: PassCandidatesDocument | null;
+  pass_review_report?: PassReviewReport | null;
   possession_report?: PossessionReport | null;
   [key: string]: unknown;
 };

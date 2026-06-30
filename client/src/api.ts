@@ -1,12 +1,20 @@
 import type {
   AnalysisPayload,
+  AnalysisJob,
+  AnalysisJobsDocument,
   AnalysisReport,
   BallAnalysisPayload,
+  ChangeCandidateReviewUpdate,
+  ChangeCandidatesDocument,
   ContactCandidateReviewUpdate,
   ContactCandidatesDocument,
   Match,
+  MatchPhaseConfigDocument,
+  MatchPhaseConfigPayload,
   MatchMetadataPayload,
   MatchPackage,
+  PassCandidateReviewUpdate,
+  PassCandidatesDocument,
   PlayerIdentityAssignment,
   PlayerIdentityReviewState,
   PlayerProfileStatsDocument,
@@ -145,6 +153,22 @@ export async function analyzeMatch(matchId: string, payload: AnalysisPayload): P
   });
 }
 
+export async function startAnalysisJob(matchId: string, payload: AnalysisPayload): Promise<AnalysisJob> {
+  return request<AnalysisJob>(`/api/matches/${matchId}/analyze/background`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getAnalysisJob(jobId: string): Promise<AnalysisJob> {
+  return request<AnalysisJob>(`/api/analysis-jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function listAnalysisJobs(matchId: string): Promise<AnalysisJobsDocument> {
+  return request<AnalysisJobsDocument>(`/api/matches/${encodeURIComponent(matchId)}/analysis-jobs`);
+}
+
 export async function analyzeBall(matchId: string, payload: BallAnalysisPayload): Promise<AnalysisReport> {
   return request<AnalysisReport>(`/api/matches/${matchId}/analyze-ball`, {
     method: 'POST',
@@ -174,6 +198,21 @@ export async function reviewStablePlayers(matchId: string, payload: StablePlayer
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
+  });
+}
+
+export async function getChangeCandidates(matchId: string): Promise<ChangeCandidatesDocument> {
+  return request<ChangeCandidatesDocument>(`/api/matches/${matchId}/change-candidates`);
+}
+
+export async function reviewChangeCandidates(
+  matchId: string,
+  updates: ChangeCandidateReviewUpdate[],
+): Promise<ChangeCandidatesDocument> {
+  return request<ChangeCandidatesDocument>(`/api/matches/${matchId}/change-candidates/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates })
   });
 }
 
@@ -226,6 +265,36 @@ export async function reviewContactCandidates(
   updates: ContactCandidateReviewUpdate[],
 ): Promise<ContactCandidatesDocument> {
   return request<ContactCandidatesDocument>(`/api/matches/${matchId}/contact-candidates/review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates })
+  });
+}
+
+export async function getMatchPhaseConfig(matchId: string): Promise<MatchPhaseConfigDocument> {
+  return request<MatchPhaseConfigDocument>(`/api/matches/${matchId}/match-phase-config`);
+}
+
+export async function saveMatchPhaseConfig(
+  matchId: string,
+  payload: MatchPhaseConfigPayload,
+): Promise<MatchPhaseConfigDocument> {
+  return request<MatchPhaseConfigDocument>(`/api/matches/${matchId}/match-phase-config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function getPassCandidates(matchId: string): Promise<PassCandidatesDocument> {
+  return request<PassCandidatesDocument>(`/api/matches/${matchId}/pass-candidates`);
+}
+
+export async function reviewPassCandidates(
+  matchId: string,
+  updates: PassCandidateReviewUpdate[],
+): Promise<PassCandidatesDocument> {
+  return request<PassCandidatesDocument>(`/api/matches/${matchId}/pass-candidates/review`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ updates })

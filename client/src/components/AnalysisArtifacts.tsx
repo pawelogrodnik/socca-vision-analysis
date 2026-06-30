@@ -1,7 +1,10 @@
 import type { Match } from '../types';
 import { artifactUrl } from '../api';
 import { pretty } from '../lib/helpers';
+import { ChangeCandidatesReview } from './ChangeCandidatesReview';
 import { ContactCandidatesReview } from './ContactCandidatesReview';
+import { MatchPhaseConfigPanel } from './MatchPhaseConfigPanel';
+import { PassCandidatesReview } from './PassCandidatesReview';
 
 interface AnalysisArtifactsProps {
   match: Match;
@@ -11,17 +14,21 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const report = match.analysis_report;
   const heatmap = report?.artifacts?.heatmap_all_tracks;
   const stableOverlay = report?.artifacts?.stable_overlay_preview;
+  const analysisChunkManifest = report?.artifacts?.analysis_chunk_manifest || (match.analysis_chunk_manifest ? 'analysis_chunk_manifest.json' : undefined);
   const debugIdentityOverlay = report?.artifacts?.debug_identity_overlay;
   const rawOverlay = report?.artifacts?.overlay_preview;
   const frameDetectionCounts = report?.artifacts?.frame_detection_counts;
   const globalIdentity = report?.artifacts?.global_identity;
   const globalIdentityReport = report?.artifacts?.global_identity_report;
+  const analysisQualityReport = report?.artifacts?.analysis_quality_report || (match.analysis_quality_report ? 'analysis_quality_report.json' : undefined);
   const teamConfig = report?.artifacts?.team_config;
   const teamStats = report?.artifacts?.team_stats;
   const movementStats = report?.artifacts?.movement_stats;
   const playerStats = report?.artifacts?.player_stats;
   const resolvedPlayerStats = report?.artifacts?.resolved_player_stats || (match.resolved_player_stats ? 'resolved_player_stats.json' : undefined);
   const playerHeatmaps = report?.artifacts?.player_heatmaps;
+  const changeCandidates = report?.artifacts?.change_candidates || (match.change_candidates ? 'change_candidates.json' : undefined);
+  const changeReviewReport = report?.artifacts?.change_review_report || (match.change_review_report ? 'change_review_report.json' : undefined);
   const tracklets = report?.artifacts?.tracklets;
   const trackingQualityReport = report?.artifacts?.tracking_quality_report;
   const ballOverlay = report?.artifacts?.ball_overlay_preview;
@@ -34,10 +41,17 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const possessionCandidates = report?.artifacts?.possession_candidates;
   const possessionSegments = report?.artifacts?.possession_segments;
   const contactCandidates = report?.artifacts?.contact_candidates;
+  const matchPhaseConfig = report?.artifacts?.match_phase_config || (match.match_phase_config ? 'match_phase_config.json' : undefined);
+  const eventCandidates = report?.artifacts?.event_candidates || (match.event_candidates ? 'event_candidates.json' : undefined);
+  const eventReviewReport = report?.artifacts?.event_review_report || (match.event_review_report ? 'event_review_report.json' : undefined);
+  const passCandidates = report?.artifacts?.pass_candidates || (match.pass_candidates ? 'pass_candidates.json' : undefined);
+  const passReviewReport = report?.artifacts?.pass_review_report || (match.pass_review_report ? 'pass_review_report.json' : undefined);
   const possessionReport = report?.artifacts?.possession_report;
   const ballSummary = match.ball_tracking_report?.summary;
   const ballQuality = match.ball_quality_report;
   const possessionSummary = match.possession_report?.summary;
+  const eventSummary = match.event_review_report?.summary || match.event_candidates?.summary;
+  const passSummary = match.pass_review_report?.summary || match.pass_candidates?.summary;
 
   return (
     <section className='card'>
@@ -73,6 +87,11 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
               Pobierz match_package.json
             </a>
           )}
+          {analysisChunkManifest && (
+            <a href={artifactUrl(match.id, analysisChunkManifest)}>
+              Pobierz analysis_chunk_manifest.json
+            </a>
+          )}
           {match.player_assignments && (
             <a href={artifactUrl(match.id, 'player_assignments.json')}>
               Pobierz player_assignments.json
@@ -91,6 +110,11 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
           {globalIdentityReport && (
             <a href={artifactUrl(match.id, globalIdentityReport)}>
               Pobierz global_identity_report.json
+            </a>
+          )}
+          {analysisQualityReport && (
+            <a href={artifactUrl(match.id, analysisQualityReport)}>
+              Pobierz analysis_quality_report.json
             </a>
           )}
           {frameDetectionCounts && (
@@ -126,6 +150,16 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
           {playerHeatmaps && (
             <a href={artifactUrl(match.id, playerHeatmaps)}>
               Pobierz player_heatmaps.json
+            </a>
+          )}
+          {changeCandidates && (
+            <a href={artifactUrl(match.id, changeCandidates)}>
+              Pobierz change_candidates.json
+            </a>
+          )}
+          {changeReviewReport && (
+            <a href={artifactUrl(match.id, changeReviewReport)}>
+              Pobierz change_review_report.json
             </a>
           )}
           {tracklets && (
@@ -233,6 +267,38 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
                   </span>
                 </div>
               )}
+              {eventSummary && (
+                <div className='quality-alert'>
+                  <strong>Reviewed ball contacts</strong>
+                  <span>
+                    Events: {formatCount(eventSummary.events_total)}
+                    {' '}accepted: {formatCount(eventSummary.accepted_events)}
+                    {' '}review: {formatCount(eventSummary.review_required_events)}
+                    {' '}rejected contacts: {formatCount(eventSummary.rejected_contacts)}
+                  </span>
+                  <span>
+                    Only accepted events are eligible for final downstream stats.
+                  </span>
+                </div>
+              )}
+              {passSummary && (
+                <div className='quality-alert'>
+                  <strong>Pass candidates</strong>
+                  <span>
+                    Candidates: {formatCount(passSummary.pass_candidates)}
+                    {' '}same team: {formatCount(passSummary.same_team_pass_candidates)}
+                    {' '}turnover/interception: {formatCount(passSummary.turnover_or_interception_candidates)}
+                    {' '}with positions: {formatCount(passSummary.candidates_with_positions)}
+                    {' '}forward: {formatCount(passSummary.forward_pass_candidates)}
+                    {' '}progressive: {formatCount(passSummary.progressive_pass_candidates)}
+                    {' '}final: {formatCount(passSummary.final_stat_passes)}
+                  </span>
+                  <span>
+                    Experimental candidate layer only. Final pass stats are still disabled.
+                  </span>
+                </div>
+              )}
+              <MatchPhaseConfigPanel match={match} enabled={Boolean(ballSummary || possessionSummary || passSummary)} />
               {match.possession_report?.warnings?.length ? (
                 <p className='muted'>
                   {match.possession_report.warnings[0]}
@@ -289,10 +355,37 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
                     Pobierz contact_candidates.json
                   </a>
                 )}
+                {matchPhaseConfig && (
+                  <a href={artifactUrl(match.id, matchPhaseConfig)}>
+                    Pobierz match_phase_config.json
+                  </a>
+                )}
+                {eventCandidates && (
+                  <a href={artifactUrl(match.id, eventCandidates)}>
+                    Pobierz event_candidates.json
+                  </a>
+                )}
+                {eventReviewReport && (
+                  <a href={artifactUrl(match.id, eventReviewReport)}>
+                    Pobierz event_review_report.json
+                  </a>
+                )}
+                {passCandidates && (
+                  <a href={artifactUrl(match.id, passCandidates)}>
+                    Pobierz pass_candidates.json
+                  </a>
+                )}
+                {passReviewReport && (
+                  <a href={artifactUrl(match.id, passReviewReport)}>
+                    Pobierz pass_review_report.json
+                  </a>
+                )}
               </div>
               <ContactCandidatesReview match={match} enabled={Boolean(contactCandidates)} />
+              <PassCandidatesReview match={match} enabled={Boolean(passCandidates)} />
             </div>
           )}
+          <ChangeCandidatesReview match={match} enabled={Boolean(match.stable_players || changeCandidates)} />
           {(heatmap || debugIdentityOverlay || rawOverlay || report) && (
             <details className='debug-details'>
               <summary>Developer debug artifacts</summary>

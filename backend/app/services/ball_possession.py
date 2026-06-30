@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from app.services.ball_tracking import _BallOverlayWriter, _draw_ball_position, _draw_frame_stamp
+from app.services.contact_auto_review import apply_auto_contact_review
+from app.services.event_candidates import build_event_candidate_artifacts
+from app.services.match_phase_config import load_match_phase_config
 
 POSSESSION_SOURCE = "ball_possession_candidates_v1"
 
@@ -60,8 +63,10 @@ def build_ball_possession_analysis(
     )
     segments_doc = build_possession_segments_document(candidates_doc, fps=fps)
     contact_doc = build_contact_candidates_document(candidates_doc, segments_doc)
+    match_phase_config = load_match_phase_config(match_dir, {"video": video_metadata})
+    event_docs = build_event_candidate_artifacts(contact_doc, match_phase_config)
     report_doc = build_possession_report(candidates_doc, segments_doc, contact_doc)
-    _write_possession_artifacts(match_dir, candidates_doc, segments_doc, contact_doc, report_doc)
+    _write_possession_artifacts(match_dir, candidates_doc, segments_doc, contact_doc, event_docs, report_doc)
     write_possession_overlay(
         video_path,
         match_dir,
@@ -76,11 +81,15 @@ def build_ball_possession_analysis(
         "possession_candidates": candidates_doc,
         "possession_segments": segments_doc,
         "contact_candidates": contact_doc,
+        "event_candidates": event_docs["event_candidates"],
+        "event_review_report": event_docs["event_review_report"],
         "possession_report": report_doc,
         "artifacts": {
             "possession_candidates": "possession_candidates.json",
             "possession_segments": "possession_segments.json",
             "contact_candidates": "contact_candidates.json",
+            "match_phase_config": "match_phase_config.json",
+            **event_docs["artifacts"],
             "possession_report": "possession_report.json",
             "possession_overlay_preview": "possession_overlay_preview.mp4",
         },
@@ -109,7 +118,7 @@ def build_possession_candidates_document(
     summary = _possession_summary(frames, fps=fps)
     if not event_players_by_frame:
         summary["warnings"] = ["No trusted player positions were available; possession is unknown."]
-    return {
+    document = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
         "source": POSSESSION_SOURCE,
@@ -119,6 +128,7 @@ def build_possession_candidates_document(
         "summary": summary,
         "frames": frames,
     }
+    return document
 
 
 def build_possession_segments_document(candidates_doc: dict[str, Any], *, fps: float) -> dict[str, Any]:
@@ -138,7 +148,7 @@ def build_possession_segments_document(candidates_doc: dict[str, Any], *, fps: f
         segments.append(_finalize_segment(current, interval_sec))
 
     status_counts = Counter(str(segment.get("status") or "unknown") for segment in segments)
-    return {
+    document = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
         "source": POSSESSION_SOURCE,
@@ -150,6 +160,7 @@ def build_possession_segments_document(candidates_doc: dict[str, Any], *, fps: f
         },
         "segments": segments,
     }
+    return document
 
 
 def build_contact_candidates_document(
@@ -180,11 +191,14 @@ def build_contact_candidates_document(
         ]
         confidences = [float(frame.get("confidence") or 0.0) for frame in detected_frames]
         player_source_counts = Counter(str(frame.get("nearest_player_source")) for frame in segment_frames if frame.get("nearest_player_source"))
+        start_detected = detected_frames[0]
+        end_detected = detected_frames[-1]
+        stable_player_id = segment.get("stable_player_id")
         candidate_id = f"contact-{len(candidates) + 1:04d}"
         candidates.append(
             {
                 "candidate_id": candidate_id,
-                "stable_player_id": segment.get("stable_player_id"),
+                "stable_player_id": stable_player_id,
                 "stable_subject_id": segment.get("stable_subject_id"),
                 "team_label": segment.get("team_label"),
                 "team_id": segment.get("team_id"),
@@ -201,12 +215,18 @@ def build_contact_candidates_document(
                 "interpolated_player_frames": player_source_counts.get("short_gap_interpolated", 0),
                 "mean_distance_m": round(sum(distances) / len(distances), 3) if distances else None,
                 "min_distance_m": round(min(distances), 3) if distances else None,
+                "start_ball_position_m": _rounded_pair(start_detected.get("ball_position_m")),
+                "end_ball_position_m": _rounded_pair(end_detected.get("ball_position_m")),
+                "start_ball_position_px": _rounded_pair(start_detected.get("ball_position_px")),
+                "end_ball_position_px": _rounded_pair(end_detected.get("ball_position_px")),
+                "start_player_position_m": _nearest_player_position_m(start_detected, stable_player_id),
+                "end_player_position_m": _nearest_player_position_m(end_detected, stable_player_id),
                 "mean_confidence": round(sum(confidences) / len(confidences), 4) if confidences else 0.0,
                 "source": "controlled_ball_nearest_player",
                 "status": "needs_review",
             }
         )
-    return {
+    document = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
         "source": POSSESSION_SOURCE,
@@ -220,6 +240,7 @@ def build_contact_candidates_document(
         },
         "candidates": candidates,
     }
+    return apply_auto_contact_review(document, preserve_manual=False)
 
 
 def build_possession_report(
@@ -746,16 +767,39 @@ def _pitch_to_image_px(pitch_m: Any, inverse_homography: Any) -> tuple[int, int]
     return (int(round(float(dst[0][0][0]))), int(round(float(dst[0][0][1]))))
 
 
+def _rounded_pair(value: Any) -> list[float] | None:
+    if not _valid_pair(value):
+        return None
+    return [round(float(value[0]), 3), round(float(value[1]), 3)]
+
+
+def _nearest_player_position_m(frame: dict[str, Any], stable_player_id: Any) -> list[float] | None:
+    nearest_players = frame.get("nearest_players") if isinstance(frame.get("nearest_players"), list) else []
+    for player in nearest_players:
+        if not isinstance(player, dict):
+            continue
+        if stable_player_id and player.get("stable_player_id") != stable_player_id:
+            continue
+        return _rounded_pair(player.get("position_m"))
+    if nearest_players and isinstance(nearest_players[0], dict):
+        return _rounded_pair(nearest_players[0].get("position_m"))
+    return None
+
+
 def _write_possession_artifacts(
     match_dir: Path,
     candidates_doc: dict[str, Any],
     segments_doc: dict[str, Any],
     contact_doc: dict[str, Any],
+    event_docs: dict[str, Any],
     report_doc: dict[str, Any],
 ) -> None:
     (match_dir / "possession_candidates.json").write_text(json.dumps(candidates_doc, indent=2), encoding="utf-8")
     (match_dir / "possession_segments.json").write_text(json.dumps(segments_doc, indent=2), encoding="utf-8")
     (match_dir / "contact_candidates.json").write_text(json.dumps(contact_doc, indent=2), encoding="utf-8")
+    for doc_key, filename in event_docs.get("artifacts", {}).items():
+        if doc_key in event_docs:
+            (match_dir / filename).write_text(json.dumps(event_docs[doc_key], indent=2), encoding="utf-8")
     (match_dir / "possession_report.json").write_text(json.dumps(report_doc, indent=2), encoding="utf-8")
 
 

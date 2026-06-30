@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "extract:frames": "node scripts/extract-training-frames.mjs"
+    "extract:frames": "node scripts/extract-training-frames.mjs",
+    "prelabel:ball": "node scripts/prelabel-ball-frames.mjs",
+    "quality:analysis": "python backend/scripts/check_analysis_quality.py"
   }
 }

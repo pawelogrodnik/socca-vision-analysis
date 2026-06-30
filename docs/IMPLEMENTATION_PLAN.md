@@ -47,10 +47,10 @@ This snapshot should be updated whenever a milestone is completed or materially 
 - `[x]` YOLO/motion analysis pipeline: raw tracker overlay, `tracks.json`, `analysis_report.json`, all-tracks heatmap.
 - `[x]` Tracklets and quality diagnostics: analysis now exports standalone `tracklets.json` and `tracking_quality_report.json` contracts.
 - `[x]` Team assignment: automatic Team A/B assignment, `team_clusters.json`, explicit `team_config.json`, Team A/B lock/review, stable-slot team correction, ignore/referee/false-positive review, team sanity diagnostics and `team_stats.json` exist. Torso-color clustering remains implementation evidence/debug, not a required user workflow.
-- `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`) exists with conservative anti-switch logic, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
+- `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`, plus bench subjects such as `A08+`/`B08+`) exists with conservative anti-switch logic, `change_candidates.json` flags likely on/off changes for review, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
 - `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; configurable thresholds UI is not done.
-- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, and admin uses a step-by-step workflow, while export/share polish is still pending.
-- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates and contact-candidate review exist as experimental layers, while passes, shots, full event review, export/share polish and background jobs are not implemented.
+- `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, `analysis_quality_report.json`, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, and admin uses a step-by-step workflow, while export/share polish is still pending.
+- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates, contact-candidate review, derived `event_candidates.json` and experimental `pass_candidates.json` with pass geometry exist as candidate layers, background analysis jobs and chunk manifest foundation exist, while shots, full event review, export/share polish and true per-chunk CV merge are not implemented.
 
 ---
 
@@ -317,7 +317,7 @@ Jako użytkownik chcę widzieć alert, gdy system wykrywa więcej niż 7 zawodni
 
 # Milestone 5 — Identity resolver: tracklet -> player -> stint
 
-**Status:** `[x]` closed for MVP as stable-slot/stint identity review. Anonymous resolver remains automatic, and the user can now map stable slots to real roster `player_id`.
+**Status:** `[x]` closed for MVP as stable-slot/stint identity review. Anonymous resolver remains automatic, supports bench subjects above the 7 active on-pitch slots per team, change candidates are generated for possible on/off substitutions, and the user can map stable slots to real roster `player_id`.
 
 ## Cel
 
@@ -343,6 +343,9 @@ Jako użytkownik chcę widzieć konflikt, gdy stable slot z Team A zostanie przy
 ### US5.6 — Legacy raw tracklet debug
 Jako developer chcę zachować stary raw tracklet assignment w debug details, żeby analizować przypadki, których stable resolver nie rozwiązał.
 
+### US5.7 — Change candidates
+Jako użytkownik chcę widzieć kandydatów zmian typu `A01 off -> A08 on`, żeby przy pełnym meczu ręcznie reviewować tylko kilka wejść/zejść zamiast setek trackletów.
+
 ## Acceptance criteria
 
 - `[x]` Istnieją struktury `PlayerPayload`, roster team docs, stable slot/stint docs oraz formalny `player_identity_assignments.json`.
@@ -356,6 +359,11 @@ Jako developer chcę zachować stary raw tracklet assignment w debug details, ż
 - `[x]` UI ma listę trackletów i assignment panel wyłącznie w trybie debug/developer.
 - `[x]` Użytkownik może oznaczyć tracklet/stable slot jako `false_positive`, `referee`, `ignore` lub podobny status.
 - `[x]` Backend zapisuje assignmenty, stable slots/stints (`player_identity_assignments.json`, `stable_players.json`, `global_identity.json`) i dołącza je do `match_package.json`.
+- `[x]` Resolver utrzymuje limit 7 aktywnych slotów na drużynę, ale może tworzyć bench subjects `A08+`/`B08+` zamiast agresywnie recyklingować `A01-A07` po długiej nieobecności.
+- `[x]` Backend generuje `change_candidates.json` i `change_review_report.json` na bazie stable slotów; dla krótkich sample bez zmian lista może być pusta.
+- `[x]` API ma `GET /api/matches/{match_id}/change-candidates` oraz `PUT /api/matches/{match_id}/change-candidates/review`.
+- `[x]` UI pokazuje `Change candidates review` z decyzjami `needs_review`, `confirmed`, `uncertain`, `rejected`, `ignored`.
+- `[x]` Review zmian nie przepisuje jeszcze automatycznie `player_identity_assignments.json`; to pozostaje osobnym, bezpiecznym krokiem.
 - `[x]` Backend wykrywa team mismatch między stable slotem a przypisanym zawodnikiem i zapisuje `review_warnings`.
 - `[x]` UI pokazuje risky/blocked/ambiguous diagnostics oraz identity warning dla konfliktów roster/team.
 - `[x]` Suggested assignments istnieją jako automatyczne anonimowe stable slots `A##/B##`, które użytkownik zatwierdza przez roster mapping.
@@ -375,7 +383,7 @@ Jako developer chcę zachować stary raw tracklet assignment w debug details, ż
 
 # Milestone 6 — Player stats from tracking only
 
-**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps and team stats exist, while configurable thresholds UI is still pending.
+**Status:** `[~]` tracking-only `player_stats.json` exists per stable slot; conservative peak sustained speed, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps and team stats exist, stable overlay has safe short-gap visual hold for `frame_stride` preview gaps, while configurable thresholds UI is still pending.
 
 ## Cel
 
@@ -418,6 +426,7 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 - `[ ]` UI nie pozwala jeszcze ustawić progów sprintów/high intensity; aktualne progi są stałe w backendzie.
 - `[x]` Raport/artefakty jasno rozróżniają tracking-only stats i brak piłki.
 - `[x]` Overlay debug pokazuje live speed/distance przy bboxie zawodnika.
+- `[x]` `stable_overlay_preview.mp4` redukuje miganie bboxów przy `frame_stride > 1` przez krótki, konserwatywny visual hold między dwiema zaufanymi detekcjami; `frame_detection_counts.json` rozróżnia `trusted_detected`, `visible_stable_boxes`, `visual_interpolated_boxes` i `predicted_visible_boxes`.
 
 ## Suggested smoothing rules
 
@@ -439,7 +448,7 @@ Jako użytkownik chcę zobaczyć proste statystyki drużynowe: szerokość, dłu
 
 # Milestone 7 — Match report UI
 
-**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, local/published match report pages share one layout, the local admin panel uses a step-by-step match workflow, and MVP export/share actions exist; deeper public-share polish is still pending.
+**Status:** `[~]` artifact/stable/team review UI exists, legacy debug is hidden, local/published match report pages share one layout, team comparison uses a report-style side-by-side layout, analysis quality scoring/reporting exists, the local admin panel uses a step-by-step match workflow, and MVP export/share actions exist; deeper public-share polish is still pending.
 
 ## Cel
 
@@ -467,6 +476,7 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 - `[x]` Client ma osobny route `/matches/:matchId/report` dla czytelnego raportu pojedynczego meczu.
 - `[x]` Client ma publiczny route `/published/matches/:matchId/report` dla snapshotów opublikowanych w SQLite.
 - `[x]` Match Report pokazuje summary, stable overlay, team comparison, real assigned players i wszystkich stable zawodników w meczu.
+- `[x]` Team comparison w Match Report jest kolumnowym zestawieniem Team A vs Team B, a nie szeroką tabelą.
 - `[x]` Match Report rozróżnia anonimowe stable sloty meczowe od realnych `player_id` i linkuje przypisanych zawodników do `/players/:playerId`.
 - `[x]` Client ma sekcje raportowo-review dla meczu, osobny `/teams` registry i link do pełnego raportu z publicznej strony głównej.
 - `[x]` Admin panel ma krokowy workflow: video, kalibracja/analiza, review/przypisania, raport/publikacja.
@@ -475,6 +485,10 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 - `[x]` Zwykłe style są w CSS, nie jako inline CSS.
 - `[x]` API client jest osobno od komponentów.
 - `[x]` UI pokazuje analizę runów, metryki jakości trackingu, low-visible frames, suspicious tracklets i blocked switches.
+- `[x]` Backend generuje `analysis_quality_report.json` z quality score oraz komponentami tracking/identity/stats/team assignment.
+- `[x]` Match Report pokazuje sekcję `Jakość analizy`, główne warningi i najgorsze problem frames.
+- `[x]` `analysis_quality_report.json` jest dostępny przez API, `match_package.json` i artifact browser.
+- `[x]` Jest lokalny smoke checker `npm run quality:analysis`, który sprawdza `analysis_quality_report.json` dla zapisanych meczów i wyłapuje regresje score/ghost/low-visible.
 - `[~]` UI pokazuje diagnostykę braków/niepewności, ale statusy brakujących kroków wymagają uporządkowania productowego.
 - `[x]` UI ma artifact browser dla overlay video, JSON i debug details.
 - `[x]` Legacy identity candidates oraz raw tracklet assignment nie są już domyślnym workflow i są schowane w developer debug.
@@ -673,7 +687,7 @@ Jako użytkownik chcę zobaczyć coverage piłki: ile czasu wykryta, ile interpo
 
 # Milestone 10 — Possession and simple event candidates
 
-**Status:** `[~]` conservative possession/contact candidate layer is implemented. It generates candidate JSON artifacts and overlay from `ball_tracks.json` + trusted stable player positions, and contact-candidate review exists for accepted/rejected/uncertain labels. Full event review, pass candidates and shot candidates are not implemented yet.
+**Status:** `[~]` conservative possession/contact candidate layer is implemented. It generates candidate JSON artifacts and overlay from `ball_tracks.json` + trusted stable player positions, contact-candidate review is auto-classified with optional manual override, and `event_candidates.json` is derived from reviewed contacts. Pass candidates now exist in Milestone 11; full event correction and shot candidates are not implemented yet.
 
 ## Cel
 
@@ -707,8 +721,10 @@ Jako użytkownik chcę potwierdzić/poprawić eventy w panelu, żeby statystyki 
 - `[x]` API ma `GET /api/matches/{match_id}/contact-candidates` oraz `PUT /api/matches/{match_id}/contact-candidates/review`.
 - `[x]` UI pokazuje overlay i summary kandydatów posiadania/kontaktu jako warstwę eksperymentalną.
 - `[x]` UI pozwala oznaczyć `contact_candidates` jako `needs_review`, `accepted`, `uncertain` albo `rejected` i zapisać notatkę.
+- `[x]` `contact_candidates` są domyślnie klasyfikowane automatycznie jako `accepted`, `uncertain` albo `rejected`; ręczne review jest tylko opcjonalnym override.
+- `[x]` Backend generuje `event_candidates.json` jako formalny artefakt `ball_contact` na podstawie reviewed `contact_candidates`.
+- `[x]` Backend generuje `event_review_report.json` z licznikami accepted/rejected/uncertain/needs_review.
 - `[~]` Podstawowy review istnieje tylko dla kandydatów kontaktu; nie obejmuje jeszcze korekty geometrii/czasu eventu ani podań/strzałów.
-- `[ ]` Backend nie generuje jeszcze pełnego `event_candidates.json`.
 - `[ ]` UI nie ma jeszcze pełnego panelu review eventów.
 - `[ ]` Użytkownik nie może jeszcze oznaczyć finalnego eventu jako corrected.
 
@@ -724,7 +740,7 @@ Jako użytkownik chcę potwierdzić/poprawić eventy w panelu, żeby statystyki 
 
 # Milestone 11 — Passes, forward passes and progressive passes
 
-**Status:** `[ ]` not implemented.
+**Status:** `[~]` experimental `pass_candidates.json` exists from consecutive reviewed `ball_contact` events, with start/end pitch positions, displacement, distance, attack direction, forward/lateral/backward classification, progressive-pass candidate flags and a basic pass review API/UI. It is not a final pass-stat engine yet: validated rankings and final player/team pass stats are not implemented.
 
 ## Cel
 
@@ -749,23 +765,32 @@ Jako użytkownik chcę szybko poprawić błędne kandydaty podań.
 
 ## Acceptance criteria
 
-- `[ ]` Backend generuje `pass_candidates.json`.
-- `[ ]` Każde podanie ma:
-  - `[ ]` `passer_player_id`,
-  - `[ ]` `receiver_player_id | unknown`,
-  - `[ ]` `team`,
-  - `[ ]` `start_time`,
-  - `[ ]` `end_time`,
-  - `[ ]` `start_position_m`,
-  - `[ ]` `end_position_m`,
-  - `[ ]` `direction: forward | lateral | backward`,
-  - `[ ]` `is_progressive`,
-  - `[ ]` `outcome`,
-  - `[ ]` `confidence`,
-  - `[ ]` `review_status`.
-- `[ ]` Kierunek podania uwzględnia stronę ataku drużyny i zmianę stron, jeśli występuje.
+- `[x]` Backend generuje `pass_candidates.json` jako eksperymentalną warstwę kandydatów z kolejnych reviewed `ball_contact` events.
+- `[~]` Każdy kandydat podania ma:
+  - `[x]` passer stable slot,
+  - `[x]` receiver stable slot albo turnover/interception candidate przy zmianie drużyny,
+  - `[x]` team/source/target team context,
+  - `[x]` `start_time_sec`,
+  - `[x]` `end_time_sec`,
+  - `[x]` `start_position_m`,
+  - `[x]` `end_position_m`,
+  - `[x]` `displacement_m`,
+  - `[x]` `distance_m`,
+  - `[x]` `direction: forward | lateral | backward`,
+  - `[x]` `is_progressive`,
+  - `[~]` `outcome` jako `same_team_pass`, `turnover_or_interception` albo `unknown_team_pass`,
+  - `[x]` `confidence`,
+  - `[x]` `review_status`.
+- `[x]` Backend rozdziela `auto_review_status` od manualnego `review_status`, żeby mocny kandydat nie był automatycznie finalną statystyką.
+- `[x]` API ma `GET /api/matches/{match_id}/pass-candidates` oraz `PUT /api/matches/{match_id}/pass-candidates/review`.
+- `[x]` UI ma panel `Pass candidates review` z decyzjami `needs_review`, `accepted`, `uncertain`, `rejected` i notatkami.
+- `[x]` `final_stat_eligible` jest true tylko dla zaakceptowanych `same_team_pass`; rejected/uncertain/needs_review nie liczą się jako finalne podania.
+- `[x]` Backend zapisuje `match_phase_config.json` z okresami gry, kierunkiem ataku Team A/B i opcjonalnym `second_half_start_time_sec`.
+- `[x]` API ma `GET/PUT /api/matches/{match_id}/match-phase-config`; zapis odświeża `pass_candidates.json` bez ponownej analizy YOLO.
+- `[x]` UI pozwala ustawić timestamp początku drugiej połowy i kierunek Team A w pierwszej połowie.
+- `[x]` Kierunek podania uwzględnia stronę ataku drużyny i zmianę stron, jeśli występuje.
 - `[ ]` Ranking `most forward passes` jest liczony tylko z zaakceptowanych albo high-confidence podań, zależnie od konfiguracji.
-- `[ ]` UI pokazuje ranking podań do przodu i progressive passes.
+- `[~]` UI pokazuje summary, artefakty i pass review panel, ale nie ranking podań do przodu/progressive passes.
 
 ## Suggested definitions for 7v7/orlik
 
@@ -786,7 +811,7 @@ Jako użytkownik chcę szybko poprawić błędne kandydaty podań.
 
 # Milestone 12 — Product hardening and performance
 
-**Status:** `[ ]` not implemented beyond basic Docker/local workflow.
+**Status:** `[~]` background analysis job API/UI polling, persisted job status files, quality smoke checker and `analysis_chunk_manifest.json` foundation are implemented. True per-chunk CV execution/merge, retry/resume controls, artifact cleanup and performance presets are still pending.
 
 ## Cel
 
@@ -811,8 +836,11 @@ Jako użytkownik chcę wybrać preset: szybki test, standard, jakość, żeby do
 
 ## Acceptance criteria
 
-- `[ ]` Analiza nie musi być synchroniczna w request/response.
-- `[ ]` UI pokazuje status joba.
+- `[x]` Analiza nie musi być synchroniczna w request/response; główny admin flow używa `POST /api/matches/{match_id}/analyze/background`.
+- `[x]` UI pokazuje status joba, etap, progress procentowy i link do chunk manifestu, jeśli został wygenerowany.
+- `[x]` Backend zapisuje trwałe pliki `analysis_jobs/<job_id>.json`, a API ma `GET /api/analysis-jobs/{job_id}` i `GET /api/matches/{match_id}/analysis-jobs`.
+- `[x]` Backend potrafi zapisać `analysis_chunk_manifest.json` z podziałem filmu na planowane chunki, overlapem i statusem single-pass fallback.
+- `[~]` Chunked mode jest fundamentem planowania; właściwe per-chunk YOLO execution, merge trackletów i globalny resolver po chunkach nie są jeszcze zaimplementowane.
 - `[ ]` Można zatrzymać/ponowić analizę.
 - `[ ]` Artefakty są wersjonowane per run.
 - `[ ]` Istnieją presety YOLO/tracking, np.:
@@ -865,7 +893,7 @@ Aplikację można uznać za użyteczne MVP dopiero, gdy:
 - `[x]` system generuje heatmapę per zawodnik,
 - `[x]` system liczy dystans z wygładzeniem dla stable slotów,
 - `[x]` system liczy sprinty/progi intensywności i pokazuje diagnostykę odrzuconych kandydatów sprintu,
-- `[~]` użytkownik widzi raport/diagnostykę meczu, ale nie pełny polished Match Report,
+- `[x]` użytkownik widzi raport/diagnostykę meczu z quality score i problem frames,
 - `[x]` dane da się zachować i wrócić do nich później przez lokalny storage/package.
 
 ---

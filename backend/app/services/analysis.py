@@ -30,6 +30,11 @@ BALL_ARTIFACT_FILENAMES = {
     "possession_candidates": "possession_candidates.json",
     "possession_segments": "possession_segments.json",
     "contact_candidates": "contact_candidates.json",
+    "match_phase_config": "match_phase_config.json",
+    "event_candidates": "event_candidates.json",
+    "event_review_report": "event_review_report.json",
+    "pass_candidates": "pass_candidates.json",
+    "pass_review_report": "pass_review_report.json",
     "possession_report": "possession_report.json",
     "possession_overlay_preview": "possession_overlay_preview.mp4",
 }

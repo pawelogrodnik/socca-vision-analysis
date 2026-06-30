@@ -121,6 +121,55 @@ export function AnalysisForm({
           />
         </label>
       </div>
+      <div className='artifact-box'>
+        <label className='checkbox-row'>
+          <input
+            type='checkbox'
+            checked={analysis.chunked}
+            disabled={disabled}
+            onChange={(event) =>
+              onChange({ ...analysis, chunked: event.target.checked })
+            }
+          />
+          Long video mode: zapisz chunk manifest
+        </label>
+        <div className='grid two compact'>
+          <label>
+            Chunk duration sec
+            <input
+              type='number'
+              min={10}
+              value={analysis.chunk_duration_sec}
+              disabled={disabled || !analysis.chunked}
+              onChange={(event) =>
+                onChange({
+                  ...analysis,
+                  chunk_duration_sec: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+          <label>
+            Chunk overlap sec
+            <input
+              type='number'
+              min={0}
+              value={analysis.chunk_overlap_sec}
+              disabled={disabled || !analysis.chunked}
+              onChange={(event) =>
+                onChange({
+                  ...analysis,
+                  chunk_overlap_sec: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+        </div>
+        <p className='muted'>
+          Aktualnie chunk manifest jest fundamentem pod dlugie mecze; analyzer
+          nadal wykonuje jeden bezpieczny background run.
+        </p>
+      </div>
       {showRunButton && (
         <button type='button' onClick={onRun} disabled={disabled}>
           {isRunning ? 'Analiza w toku...' : 'Uruchom analize'}

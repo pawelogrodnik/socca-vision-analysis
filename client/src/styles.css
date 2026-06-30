@@ -293,6 +293,112 @@ a { color: #93c5fd; }
   margin: 12px 0 0;
   color: #bfdbfe;
 }
+.team-comparison-card {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #e2e8f0;
+}
+.team-comparison-card h2 {
+  color: #0f172a;
+}
+.team-comparison-card .muted {
+  color: #64748b;
+}
+.team-comparison-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  margin: 6px 0 16px;
+}
+.team-comparison-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.team-comparison-side.right {
+  justify-content: end;
+  text-align: right;
+}
+.team-comparison-side strong,
+.team-comparison-side span {
+  display: block;
+}
+.team-comparison-side strong {
+  font-size: 18px;
+  color: #0f172a;
+}
+.team-comparison-side div span {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+.team-comparison-swatch {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+}
+.team-comparison-title {
+  min-width: 150px;
+  text-align: center;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.team-comparison-list {
+  display: grid;
+  gap: 2px;
+}
+.team-comparison-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(150px, 1.1fr) minmax(90px, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+}
+.team-comparison-row.experimental .team-comparison-label {
+  color: #475569;
+}
+.team-comparison-label {
+  text-align: center;
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.25;
+}
+.team-comparison-value {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  font-weight: 800;
+  color: #111827;
+}
+.team-comparison-value.left {
+  justify-content: flex-start;
+}
+.team-comparison-value.right {
+  justify-content: flex-end;
+}
+.team-comparison-value span {
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 4px 9px;
+  overflow-wrap: anywhere;
+}
+.team-comparison-value.leader span {
+  background: #ef4444;
+  color: #ffffff;
+}
+.team-comparison-note {
+  margin: 16px 0 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
 .team-row { display: flex; align-items: center; gap: 10px; }
 .color-dot { width: 14px; height: 14px; border-radius: 999px; border: 1px solid #e5e7eb; }
 .video, .heatmap { width: 100%; border-radius: 14px; border: 1px solid #334155; margin: 8px 0; background: #020617; }
@@ -307,6 +413,27 @@ a { color: #93c5fd; }
 }
 .artifact-box h3 {
   margin: 0;
+}
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.checkbox-row input {
+  width: auto;
+}
+.job-status-box {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.12);
+}
+.job-status-box strong,
+.job-status-box span {
+  display: block;
 }
 .contact-review-panel {
   display: grid;
@@ -462,6 +589,48 @@ a { color: #93c5fd; }
   min-width: 0;
 }
 .quality-box h3 { margin: 0; font-size: 15px; }
+.analysis-quality-card {
+  border-color: #334155;
+}
+.quality-component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.quality-component {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px;
+  background: #0f172a;
+}
+.quality-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border: 1px solid #475569;
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: #cbd5e1;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.quality-badge.high {
+  border-color: #22c55e;
+  color: #bbf7d0;
+}
+.quality-badge.medium {
+  border-color: #f59e0b;
+  color: #fde68a;
+}
+.quality-badge.low {
+  border-color: #ef4444;
+  color: #fecaca;
+}
 .quality-alert {
   display: grid;
   gap: 4px;
@@ -484,6 +653,9 @@ a { color: #93c5fd; }
   border: 1px solid #1f2937;
   border-radius: 10px;
   background: #020617;
+}
+.stats-table-wrap.compact .stats-table {
+  min-width: 620px;
 }
 .stats-table {
   width: 100%;
@@ -561,6 +733,32 @@ a { color: #93c5fd; }
   .grid.two, .grid.three { grid-template-columns: 1fr; }
   .workflow-stepper { grid-template-columns: 1fr; }
   .player-detail-media { grid-template-columns: 1fr; }
+  .team-comparison-header {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .team-comparison-title {
+    order: -1;
+    min-width: 0;
+  }
+  .team-comparison-side.right {
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .team-comparison-side.right .team-comparison-swatch {
+    order: -1;
+  }
+  .team-comparison-row {
+    grid-template-columns: minmax(70px, 1fr) minmax(120px, 1.2fr) minmax(70px, 1fr);
+    gap: 8px;
+  }
+  .team-comparison-label {
+    font-size: 13px;
+  }
+  .team-comparison-value span {
+    padding: 3px 7px;
+    font-size: 13px;
+  }
 }
 
 @media print {
@@ -589,6 +787,13 @@ a { color: #93c5fd; }
     background: #ffffff;
     color: #111827;
     box-shadow: none;
+  }
+  .team-comparison-card,
+  .team-comparison-card h2,
+  .team-comparison-label,
+  .team-comparison-value,
+  .team-comparison-side strong {
+    color: #111827;
   }
   .chips span,
   .stats-table-wrap,

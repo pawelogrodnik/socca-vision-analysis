@@ -9,6 +9,8 @@ from typing import Any
 
 TARGET_PLAYERS_PER_TEAM = 7
 TARGET_ACTIVE_PLAYERS = TARGET_PLAYERS_PER_TEAM * 2
+MAX_SUBJECTS_PER_TEAM = 14
+MAX_STABLE_SUBJECTS = MAX_SUBJECTS_PER_TEAM * 2
 MAX_ASSIGNMENT_SPEED_MPS = 9.5
 MAX_ASSIGNMENT_DISTANCE_M = 12.0
 MAX_PREDICTION_SEC = 2.0
@@ -580,8 +582,9 @@ def resolve_global_identity(
         "generated_at": now_iso(),
         "pitch_dimensions_m": {"width_m": pitch_width_m, "length_m": pitch_length_m},
         "parameters": {
-            "players_per_team": TARGET_PLAYERS_PER_TEAM,
-            "target_active_players": TARGET_ACTIVE_PLAYERS,
+        "players_per_team": TARGET_PLAYERS_PER_TEAM,
+        "max_subjects_per_team": MAX_SUBJECTS_PER_TEAM,
+        "target_active_players": TARGET_ACTIVE_PLAYERS,
             "max_assignment_speed_mps": MAX_ASSIGNMENT_SPEED_MPS,
             "max_assignment_distance_m": MAX_ASSIGNMENT_DISTANCE_M,
             "max_prediction_sec": MAX_PREDICTION_SEC,
@@ -626,7 +629,7 @@ def _create_slots(
 ) -> list[SlotState]:
     slots: list[SlotState] = []
     for team_label in TEAM_LABELS:
-        for index in range(1, TARGET_PLAYERS_PER_TEAM + 1):
+        for index in range(1, MAX_SUBJECTS_PER_TEAM + 1):
             slot_id = f"{team_label}{index:02d}"
             slot = SlotState(
                 slot_id=slot_id,
@@ -993,8 +996,14 @@ def _first_inactive_slot(slots: list[SlotState], team_label: str, *, prefer_unus
             continue
         if prefer_unused and slot.detected_frames > 0:
             continue
+        if not prefer_unused and _has_unused_slot(slots, team_label):
+            continue
         return slot
     return None
+
+
+def _has_unused_slot(slots: list[SlotState], team_label: str) -> bool:
+    return any(slot.team_label == team_label and not slot.active and slot.detected_frames == 0 for slot in slots)
 
 
 def _observation_for_slot(obs: Observation, slot: SlotState) -> Observation:

@@ -4,8 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from app.services.stabilization import (
     _live_movement_by_frame,
+    apply_stable_overlay_visual_counts,
     build_frame_detection_counts,
     build_player_heatmaps_document,
     build_player_stats_document,
@@ -544,6 +547,89 @@ class StabilizationTests(unittest.TestCase):
             self.assertEqual(heatmap["interpolated_samples"], 1)
             self.assertTrue((Path(tmp) / heatmap["path"]).exists())
             self.assertEqual(stable_doc["players"][0]["heatmap_path"], heatmap["path"])
+
+    def test_stable_overlay_visual_counts_fill_short_stride_gap(self) -> None:
+        pitch_polygon = np.array([[0, 0], [200, 0], [200, 200], [0, 200]], dtype=np.float32)
+        stable_doc = {
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 0,
+                            "time_sec": 0.0,
+                            "bbox_xyxy": [10, 10, 20, 30],
+                            "pitch_m": [1.0, 1.0],
+                            "confidence": 0.8,
+                            "source": "detected",
+                        },
+                        {
+                            "frame": 4,
+                            "time_sec": 4 / 30,
+                            "bbox_xyxy": [14, 10, 24, 30],
+                            "pitch_m": [1.4, 1.0],
+                            "confidence": 0.8,
+                            "source": "detected",
+                        },
+                    ],
+                }
+            ]
+        }
+        counts = {
+            "target_players": 1,
+            "summary": {},
+            "frames": [{"frame": frame, "time_sec": round(frame / 30, 3), "raw_detections": 0} for frame in range(5)],
+        }
+
+        updated = apply_stable_overlay_visual_counts(counts, stable_doc, pitch_polygon, fps=30.0)
+
+        self.assertEqual([row["visible_stable_boxes"] for row in updated["frames"]], [1, 1, 1, 1, 1])
+        self.assertEqual([row["trusted_detected"] for row in updated["frames"]], [1, 0, 0, 0, 1])
+        self.assertEqual([row["visual_interpolated_boxes"] for row in updated["frames"]], [0, 1, 1, 1, 0])
+        self.assertEqual(updated["summary"]["visual_interpolated_boxes"], 3)
+        self.assertEqual(updated["summary"]["predicted_visible_boxes"], 0)
+        self.assertEqual(updated["summary"]["ghost_bbox_count"], 0)
+
+    def test_stable_overlay_visual_counts_reject_large_stride_jump(self) -> None:
+        pitch_polygon = np.array([[0, 0], [200, 0], [200, 200], [0, 200]], dtype=np.float32)
+        stable_doc = {
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 0,
+                            "time_sec": 0.0,
+                            "bbox_xyxy": [10, 10, 20, 30],
+                            "pitch_m": [1.0, 1.0],
+                            "confidence": 0.8,
+                            "source": "detected",
+                        },
+                        {
+                            "frame": 4,
+                            "time_sec": 4 / 30,
+                            "bbox_xyxy": [80, 10, 90, 30],
+                            "pitch_m": [12.0, 1.0],
+                            "confidence": 0.8,
+                            "source": "detected",
+                        },
+                    ],
+                }
+            ]
+        }
+        counts = {
+            "target_players": 1,
+            "summary": {},
+            "frames": [{"frame": frame, "time_sec": round(frame / 30, 3), "raw_detections": 0} for frame in range(5)],
+        }
+
+        updated = apply_stable_overlay_visual_counts(counts, stable_doc, pitch_polygon, fps=30.0)
+
+        self.assertEqual([row["visible_stable_boxes"] for row in updated["frames"]], [1, 0, 0, 0, 1])
+        self.assertEqual(updated["summary"]["visual_interpolated_boxes"], 0)
+        self.assertEqual(updated["summary"]["ghost_bbox_count"], 0)
 
     def test_team_config_document_preserves_manual_lock(self) -> None:
         meta = {

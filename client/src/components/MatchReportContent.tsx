@@ -14,11 +14,16 @@ export type MatchReportSource = {
   analysisReport?: AnalysisReport;
   stablePlayers?: GenericRow;
   globalIdentityReport?: GenericRow;
+  analysisQualityReport?: GenericRow;
   frameDetectionCounts?: GenericRow;
   movementStats?: GenericRow;
   playerStats?: GenericRow;
   teamStats?: GenericRow;
   resolvedPlayerStats?: GenericRow;
+  changeCandidates?: GenericRow;
+  possessionReport?: GenericRow;
+  passCandidates?: GenericRow;
+  passReviewReport?: GenericRow;
   artifactMatchId?: string;
   stableOverlay?: string;
 };
@@ -41,11 +46,16 @@ export function sourceFromLocalMatch(match: MatchPackage['match']): MatchReportS
     analysisReport: match.analysis_report,
     stablePlayers: match.stable_players as GenericRow | undefined,
     globalIdentityReport: match.global_identity_report as GenericRow | undefined,
+    analysisQualityReport: match.analysis_quality_report as GenericRow | undefined,
     frameDetectionCounts: match.frame_detection_counts as GenericRow | undefined,
     movementStats: match.movement_stats as GenericRow | undefined,
     playerStats: match.player_stats as GenericRow | undefined,
     teamStats: match.team_stats as GenericRow | undefined,
     resolvedPlayerStats: match.resolved_player_stats as GenericRow | undefined,
+    changeCandidates: match.change_candidates as GenericRow | undefined,
+    possessionReport: match.possession_report as GenericRow | undefined,
+    passCandidates: match.pass_candidates as GenericRow | undefined,
+    passReviewReport: match.pass_review_report as GenericRow | undefined,
     artifactMatchId: match.id,
     stableOverlay: match.analysis_report?.artifacts?.stable_overlay_preview,
   };
@@ -65,11 +75,16 @@ export function sourceFromPublishedPackage(packageData: MatchPackage): MatchRepo
     analysisReport,
     stablePlayers: packageData.stable_players as GenericRow | undefined,
     globalIdentityReport: packageData.global_identity_report as GenericRow | undefined,
+    analysisQualityReport: packageData.analysis_quality_report as GenericRow | undefined,
     frameDetectionCounts: packageData.frame_detection_counts as GenericRow | undefined,
     movementStats: packageData.movement_stats as GenericRow | undefined,
     playerStats: packageData.player_stats as GenericRow | undefined,
     teamStats: packageData.team_stats as GenericRow | undefined,
     resolvedPlayerStats: packageData.resolved_player_stats as GenericRow | undefined,
+    changeCandidates: packageData.change_candidates as GenericRow | undefined,
+    possessionReport: packageData.possession_report as GenericRow | undefined,
+    passCandidates: packageData.pass_candidates as GenericRow | undefined,
+    passReviewReport: packageData.pass_review_report as GenericRow | undefined,
     artifactMatchId: match.id,
     stableOverlay: analysisReport?.artifacts?.stable_overlay_preview,
   };
@@ -84,9 +99,30 @@ function asRows(value: unknown): GenericRow[] {
     : [];
 }
 
+function objectRows(value: unknown): GenericRow[] {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.values(value).filter(
+        (item): item is GenericRow =>
+          Boolean(item) && typeof item === 'object' && !Array.isArray(item),
+      )
+    : [];
+}
+
+function stringRows(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
 function recordNumber(record: GenericRow | undefined | null, key: string): number {
   const value = record?.[key];
   return typeof value === 'number' ? value : 0;
+}
+
+function recordMaybeNumber(
+  record: GenericRow | undefined | null,
+  key: string,
+): number | undefined {
+  const value = record?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function recordText(
@@ -163,6 +199,14 @@ function formatSpeed(value: number): string {
   return `${value.toFixed(1)} km/h`;
 }
 
+function formatInteger(value: number): string {
+  return `${Math.round(value)}`;
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(0)}%`;
+}
+
 function formatSeconds(value: number): string {
   if (value < 60) return `${value.toFixed(1)}s`;
   const minutes = Math.floor(value / 60);
@@ -170,8 +214,229 @@ function formatSeconds(value: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
+function formatMaybe(
+  value: number | undefined,
+  formatter: (value: number) => string,
+): string {
+  return value == null ? '--' : formatter(value);
+}
+
+function formatScore(value: number): string {
+  return `${value.toFixed(1)}/100`;
+}
+
+function qualityBadgeClass(value: string): string {
+  const normalized = value.toLowerCase();
+  if (normalized === 'high') return 'quality-badge high';
+  if (normalized === 'medium') return 'quality-badge medium';
+  if (normalized === 'low') return 'quality-badge low';
+  return 'quality-badge';
+}
+
 function teamName(row: GenericRow): string {
   return recordText(row, 'team_name', recordText(row, 'team_label', 'Unknown'));
+}
+
+type ComparisonMetric = {
+  label: string;
+  leftText: string;
+  rightText: string;
+  leftValue?: number;
+  rightValue?: number;
+  highlightHigher?: boolean;
+  experimental?: boolean;
+};
+
+function orderedComparisonTeams(teams: GenericRow[]): GenericRow[] {
+  const teamA = teams.find((team) => recordText(team, 'team_label', '') === 'A');
+  const teamB = teams.find((team) => recordText(team, 'team_label', '') === 'B');
+  if (teamA && teamB) return [teamA, teamB];
+  return teams.slice(0, 2);
+}
+
+function teamColor(row: GenericRow, fallback: string): string {
+  const color = recordText(row, 'display_color', '');
+  return color || fallback;
+}
+
+function firstTeamMetric(row: GenericRow, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = recordMaybeNumber(row, key);
+    if (value != null) return value;
+  }
+  return undefined;
+}
+
+function teamAvgSpeed(row: GenericRow): number | undefined {
+  const explicit = firstTeamMetric(row, ['avg_speed_kmh', 'average_speed_kmh']);
+  if (explicit != null) return explicit;
+  const distance = firstTeamMetric(row, ['total_distance_m']);
+  const time = firstTeamMetric(row, ['playing_time_sec']);
+  if (distance == null || time == null || time <= 0) return undefined;
+  return (distance / time) * 3.6;
+}
+
+function makeMetric(
+  label: string,
+  leftValue: number | undefined,
+  rightValue: number | undefined,
+  formatter: (value: number) => string,
+  options: Pick<ComparisonMetric, 'highlightHigher' | 'experimental'> = {},
+): ComparisonMetric {
+  return {
+    label,
+    leftText: formatMaybe(leftValue, formatter),
+    rightText: formatMaybe(rightValue, formatter),
+    leftValue,
+    rightValue,
+    ...options,
+  };
+}
+
+function possessionShare(source: MatchReportSource, teamLabel: string): number | undefined {
+  const summary = maybeNestedRecord(source.possessionReport, 'summary');
+  const controlledFrames = maybeNestedRecord(summary, 'team_controlled_frames');
+  if (!controlledFrames) return undefined;
+  const values = Object.values(controlledFrames).filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value),
+  );
+  const total = values.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) return undefined;
+  return ((recordMaybeNumber(controlledFrames, teamLabel) || 0) / total) * 100;
+}
+
+function teamPassCount(
+  source: MatchReportSource,
+  teamLabel: string,
+  predicate: (candidate: GenericRow) => boolean,
+): number | undefined {
+  const candidates = asRows(source.passCandidates?.candidates);
+  if (candidates.length === 0) return undefined;
+  return candidates.filter(
+    (candidate) =>
+      recordText(candidate, 'from_team_label', '') === teamLabel && predicate(candidate),
+  ).length;
+}
+
+function isAcceptedPass(candidate: GenericRow): boolean {
+  return (
+    candidate.final_stat_eligible === true ||
+    recordText(candidate, 'review_status', '') === 'accepted'
+  );
+}
+
+function comparisonRowsForTeams(
+  source: MatchReportSource,
+  leftTeam: GenericRow,
+  rightTeam: GenericRow,
+): ComparisonMetric[] {
+  const leftLabel = recordText(leftTeam, 'team_label', '');
+  const rightLabel = recordText(rightTeam, 'team_label', '');
+  const rows = [
+    makeMetric(
+      'Sloty zawodnikow',
+      firstTeamMetric(leftTeam, ['players']),
+      firstTeamMetric(rightTeam, ['players']),
+      formatInteger,
+    ),
+    makeMetric(
+      'Czas detected',
+      firstTeamMetric(leftTeam, ['detected_time_sec', 'playing_time_sec']),
+      firstTeamMetric(rightTeam, ['detected_time_sec', 'playing_time_sec']),
+      formatSeconds,
+      { highlightHigher: true },
+    ),
+    makeMetric(
+      'Czas missing',
+      firstTeamMetric(leftTeam, ['missing_time_sec']),
+      firstTeamMetric(rightTeam, ['missing_time_sec']),
+      formatSeconds,
+    ),
+    makeMetric(
+      'Dystans',
+      firstTeamMetric(leftTeam, ['total_distance_m']),
+      firstTeamMetric(rightTeam, ['total_distance_m']),
+      formatMeters,
+      { highlightHigher: true },
+    ),
+    makeMetric(
+      'Dystans z luk',
+      firstTeamMetric(leftTeam, ['estimated_short_gap_distance_m']),
+      firstTeamMetric(rightTeam, ['estimated_short_gap_distance_m']),
+      formatMeters,
+    ),
+    makeMetric('Avg speed', teamAvgSpeed(leftTeam), teamAvgSpeed(rightTeam), formatSpeed, {
+      highlightHigher: true,
+    }),
+    makeMetric(
+      'Top speed',
+      firstTeamMetric(leftTeam, ['peak_sustained_speed_kmh', 'top_speed_kmh']),
+      firstTeamMetric(rightTeam, ['peak_sustained_speed_kmh', 'top_speed_kmh']),
+      formatSpeed,
+      { highlightHigher: true },
+    ),
+    makeMetric(
+      'HI distance',
+      firstTeamMetric(leftTeam, ['high_intensity_distance_m']),
+      firstTeamMetric(rightTeam, ['high_intensity_distance_m']),
+      formatMeters,
+      { highlightHigher: true },
+    ),
+    makeMetric(
+      'Sprinty',
+      firstTeamMetric(leftTeam, ['sprint_count']),
+      firstTeamMetric(rightTeam, ['sprint_count']),
+      formatInteger,
+      { highlightHigher: true },
+    ),
+    makeMetric(
+      'Low quality slots',
+      firstTeamMetric(leftTeam, ['players_low_quality']),
+      firstTeamMetric(rightTeam, ['players_low_quality']),
+      formatInteger,
+    ),
+    makeMetric(
+      'Posiadanie znane*',
+      possessionShare(source, leftLabel),
+      possessionShare(source, rightLabel),
+      formatPercent,
+      { experimental: true, highlightHigher: true },
+    ),
+    makeMetric(
+      'Podania zaakc.*',
+      teamPassCount(source, leftLabel, isAcceptedPass),
+      teamPassCount(source, rightLabel, isAcceptedPass),
+      formatInteger,
+      { experimental: true, highlightHigher: true },
+    ),
+    makeMetric(
+      'Kandydaci podan*',
+      teamPassCount(source, leftLabel, () => true),
+      teamPassCount(source, rightLabel, () => true),
+      formatInteger,
+      { experimental: true, highlightHigher: true },
+    ),
+    makeMetric(
+      'Progresywne*',
+      teamPassCount(source, leftLabel, (candidate) => candidate.is_progressive === true),
+      teamPassCount(source, rightLabel, (candidate) => candidate.is_progressive === true),
+      formatInteger,
+      { experimental: true, highlightHigher: true },
+    ),
+  ];
+  return rows.filter((row) => row.leftValue != null || row.rightValue != null);
+}
+
+function leaderClass(metric: ComparisonMetric, side: 'left' | 'right'): string {
+  if (!metric.highlightHigher || metric.leftValue == null || metric.rightValue == null) {
+    return '';
+  }
+  if (metric.leftValue === metric.rightValue) return '';
+  const isLeader =
+    side === 'left'
+      ? metric.leftValue > metric.rightValue
+      : metric.rightValue > metric.leftValue;
+  return isLeader ? ' leader' : '';
 }
 
 function stablePlayerRows(source: MatchReportSource): GenericRow[] {
@@ -184,6 +449,10 @@ function resolvedPlayerRows(source: MatchReportSource): GenericRow[] {
 
 function teamRows(source: MatchReportSource): GenericRow[] {
   return asRows(source.teamStats?.teams || source.playerStats?.teams);
+}
+
+function changeRows(source: MatchReportSource): GenericRow[] {
+  return asRows(source.changeCandidates?.candidates);
 }
 
 function visibleMetricSummary(source: MatchReportSource): GenericRow {
@@ -220,16 +489,27 @@ export function MatchReportContent({
   const stablePlayers = stablePlayerRows(source);
   const resolvedPlayers = resolvedPlayerRows(source);
   const teams = teamRows(source);
+  const changes = changeRows(source);
   const frameSummary = visibleMetricSummary(source);
   const movementSummary =
     maybeNestedRecord(source.playerStats, 'summary') ||
     maybeNestedRecord(source.movementStats, 'summary') ||
     {};
+  const qualityReport = source.analysisQualityReport;
+  const qualitySummary = maybeNestedRecord(qualityReport, 'summary') || {};
+  const qualityComponents = objectRows(qualityReport?.components);
+  const qualityWarnings = stringRows(qualityReport?.warnings);
+  const topProblemFrames = asRows(qualityReport?.top_problem_frames).slice(0, 8);
   const stableSummary = maybeNestedRecord(source.stablePlayers, 'summary') || {};
   const resolvedSummary =
     maybeNestedRecord(source.resolvedPlayerStats, 'summary') || {};
   const stableOverlayHref =
     source.stableOverlay && artifactHref ? artifactHref(source.stableOverlay) : '';
+  const comparisonTeams = orderedComparisonTeams(teams);
+  const leftTeam = comparisonTeams[0];
+  const rightTeam = comparisonTeams[1];
+  const comparisonMetrics =
+    leftTeam && rightTeam ? comparisonRowsForTeams(source, leftTeam, rightTeam) : [];
 
   return (
     <>
@@ -269,6 +549,87 @@ export function MatchReportContent({
         </div>
       </section>
 
+      {qualityReport && (
+        <section className='card analysis-quality-card'>
+          <div className='row between'>
+            <div>
+              <h2>Jakosc analizy</h2>
+              <p className='muted'>{recordText(qualityReport, 'recommendation', 'Brak rekomendacji.')}</p>
+            </div>
+            <span className={qualityBadgeClass(recordText(qualityReport, 'quality', 'unknown'))}>
+              {recordText(qualityReport, 'quality', 'unknown')} |{' '}
+              {formatScore(recordNumber(qualityReport, 'score'))}
+            </span>
+          </div>
+
+          <div className='quality-component-grid'>
+            {qualityComponents.map((component) => (
+              <div className='quality-component' key={recordText(component, 'name', '')}>
+                <div className='row between'>
+                  <strong>{recordText(component, 'name', 'quality')}</strong>
+                  <span className={qualityBadgeClass(recordText(component, 'quality', 'unknown'))}>
+                    {formatScore(recordNumber(component, 'score'))}
+                  </span>
+                </div>
+                <p className='muted'>
+                  {recordText(component, 'quality', 'unknown')}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className='chips'>
+            <span>Target: {recordNumber(qualitySummary, 'target_players')}</span>
+            <span>Visible avg: {recordNumber(qualitySummary, 'visible_avg').toFixed(1)}</span>
+            <span>Low visible frames: {recordNumber(qualitySummary, 'low_visible_frames')}</span>
+            <span>Missing frames: {recordNumber(qualitySummary, 'missing_frame_count')}</span>
+            <span>Ambiguous frames: {recordNumber(qualitySummary, 'ambiguous_frame_count')}</span>
+            <span>Visual hold: {recordNumber(qualitySummary, 'visual_interpolated_boxes')}</span>
+            <span>Ghost boxes: {recordNumber(qualitySummary, 'ghost_bbox_count')}</span>
+          </div>
+
+          {qualityWarnings.length > 0 && (
+            <div className='quality-alert'>
+              {qualityWarnings.map((warning) => (
+                <span key={warning}>{warning}</span>
+              ))}
+            </div>
+          )}
+
+          {topProblemFrames.length > 0 && (
+            <div className='stats-table-wrap compact'>
+              <table className='stats-table'>
+                <thead>
+                  <tr>
+                    <th>Frame</th>
+                    <th>Visible</th>
+                    <th>Raw</th>
+                    <th>Missing</th>
+                    <th>Ambiguous</th>
+                    <th>Severity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topProblemFrames.map((frame) => (
+                    <tr key={recordText(frame, 'frame', '')}>
+                      <td>
+                        <strong>{formatInteger(recordNumber(frame, 'frame'))}</strong>
+                        <span>{formatSeconds(recordNumber(frame, 'time_sec'))}</span>
+                      </td>
+                      <td>{recordNumber(frame, 'visible_stable_boxes')}</td>
+                      <td>{recordNumber(frame, 'raw_detections')}</td>
+                      <td>{recordNumber(frame, 'slot_missing')}</td>
+                      <td>{recordNumber(frame, 'slot_ambiguous')}</td>
+                      <td>{recordNumber(frame, 'severity_score')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       {stableOverlayHref && (
         <section className='card'>
           <h2>Stable overlay</h2>
@@ -276,66 +637,122 @@ export function MatchReportContent({
         </section>
       )}
 
-      <section className='card'>
-        <h2>Porownanie druzyn</h2>
-        {teams.length === 0 ? (
-          <p className='muted'>Brak team_stats.json. Uruchom ponownie analize albo opublikuj nowszy snapshot.</p>
+      <section className='card team-comparison-card'>
+        <h2>Statystyki druzyn</h2>
+        {!leftTeam || !rightTeam ? (
+          <p className='muted'>
+            Brak pelnego team_stats.json dla dwoch druzyn. Uruchom ponownie
+            analize albo opublikuj nowszy snapshot.
+          </p>
         ) : (
-          <div className='stats-table-wrap'>
-            <table className='stats-table'>
-              <thead>
-                <tr>
-                  <th>Druzyna</th>
-                  <th>Sloty</th>
-                  <th>Czas</th>
-                  <th>Dystans</th>
-                  <th>Observed</th>
-                  <th>Estimated</th>
-                  <th>HI dist</th>
-                  <th>Sprinty</th>
-                  <th>Peak</th>
-                  <th>Jakosc</th>
-                </tr>
-              </thead>
-              <tbody>
-                {teams.map((team) => (
-                  <tr key={`${recordText(team, 'team_id', '')}-${recordText(team, 'team_label', '')}`}>
-                    <td>
-                      <strong>{teamName(team)}</strong>
-                      <span>{recordText(team, 'team_label', 'n/a')}</span>
-                    </td>
-                    <td>{recordNumber(team, 'players')}</td>
-                    <td>{formatSeconds(recordNumber(team, 'playing_time_sec'))}</td>
-                    <td>{formatMeters(recordNumber(team, 'total_distance_m'))}</td>
-                    <td>{formatMeters(recordNumber(team, 'observed_distance_m'))}</td>
-                    <td>{formatMeters(recordNumber(team, 'estimated_short_gap_distance_m'))}</td>
-                    <td>{formatMeters(recordNumber(team, 'high_intensity_distance_m'))}</td>
-                    <td>
-                      {recordNumber(team, 'sprint_count')}
-                      <span>{formatMeters(recordNumber(team, 'sprint_distance_m'))}</span>
-                      <span>
-                        cand {recordNumber(team, 'sprint_candidate_count')} / rej{' '}
-                        {recordNumber(team, 'rejected_sprint_candidate_count')}
-                      </span>
-                    </td>
-                    <td>
-                      {formatSpeed(
-                        recordNumber(team, 'peak_sustained_speed_kmh') ||
-                          recordNumber(team, 'top_speed_kmh'),
-                      )}
-                    </td>
-                    <td>
-                      low {recordNumber(team, 'players_low_quality')} / med{' '}
-                      {recordNumber(team, 'players_medium_quality')} / high{' '}
-                      {recordNumber(team, 'players_high_quality')}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className='team-comparison-header'>
+              <div className='team-comparison-side left'>
+                <span
+                  className='team-comparison-swatch'
+                  style={{ background: teamColor(leftTeam, '#e5e7eb') }}
+                />
+                <div>
+                  <strong>{teamName(leftTeam)}</strong>
+                  <span>{recordText(leftTeam, 'team_label', 'Team A')}</span>
+                </div>
+              </div>
+              <div className='team-comparison-title'>STATYSTYKI DRUZYN</div>
+              <div className='team-comparison-side right'>
+                <div>
+                  <strong>{teamName(rightTeam)}</strong>
+                  <span>{recordText(rightTeam, 'team_label', 'Team B')}</span>
+                </div>
+                <span
+                  className='team-comparison-swatch'
+                  style={{ background: teamColor(rightTeam, '#2563eb') }}
+                />
+              </div>
+            </div>
+
+            <div className='team-comparison-list'>
+              {comparisonMetrics.map((metric) => (
+                <div
+                  className={`team-comparison-row${metric.experimental ? ' experimental' : ''}`}
+                  key={metric.label}
+                >
+                  <div className={`team-comparison-value left${leaderClass(metric, 'left')}`}>
+                    <span>{metric.leftText}</span>
+                  </div>
+                  <div className='team-comparison-label'>{metric.label}</div>
+                  <div className={`team-comparison-value right${leaderClass(metric, 'right')}`}>
+                    <span>{metric.rightText}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className='team-comparison-note'>
+              Tracking-only: dystans, predkosc, czas i sprinty bazuja na stable
+              slotach. Gwiazdka oznacza metryki eksperymentalne z pilki/podan,
+              ktore wymagaja dalszego review modelu.
+            </p>
+          </>
         )}
       </section>
+
+      {source.changeCandidates && (
+        <section className='card'>
+          <h2>Zmiany zawodnikow</h2>
+          <div className='chips'>
+            <span>Kandydaci: {recordNumber(maybeNestedRecord(source.changeCandidates, 'summary'), 'change_candidates')}</span>
+            <span>Do review: {recordNumber(maybeNestedRecord(source.changeCandidates, 'summary'), 'needs_review_candidates')}</span>
+            <span>Confirmed: {recordNumber(maybeNestedRecord(source.changeCandidates, 'summary'), 'confirmed_candidates')}</span>
+            <span>Uncertain: {recordNumber(maybeNestedRecord(source.changeCandidates, 'summary'), 'uncertain_candidates')}</span>
+          </div>
+          {changes.length === 0 ? (
+            <p className='muted'>
+              Brak wykrytych zmian w tym materiale albo sample jest za krotki.
+            </p>
+          ) : (
+            <div className='stats-table-wrap'>
+              <table className='stats-table'>
+                <thead>
+                  <tr>
+                    <th>Czas</th>
+                    <th>Druzyna</th>
+                    <th>Sugestia</th>
+                    <th>Powrot/real player</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {changes.map((candidate) => (
+                    <tr key={recordText(candidate, 'candidate_id', '')}>
+                      <td>
+                        <strong>{formatSeconds(recordNumber(candidate, 'time_sec'))}</strong>
+                        <span>gap {formatSeconds(recordNumber(candidate, 'gap_sec'))}</span>
+                      </td>
+                      <td>{teamName(candidate)}</td>
+                      <td>
+                        <strong>
+                          {recordText(candidate, 'out_stable_player_id', '?')} off -{' '}
+                          {recordText(candidate, 'in_stable_player_id', '?')} on
+                        </strong>
+                        <span>confidence {recordText(candidate, 'confidence', 'n/a')}</span>
+                      </td>
+                      <td>
+                        {recordText(candidate, 'linked_existing_stable_subject_id', '') ||
+                          recordText(candidate, 'suggested_existing_stable_subject_id', 'new anonymous slot')}
+                        <span>
+                          {recordText(candidate, 'reviewed_player_id', '') ||
+                            recordText(candidate, 'suggested_real_player_name', 'no roster player')}
+                        </span>
+                      </td>
+                      <td>{recordText(candidate, 'review_status', 'needs_review')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className='card'>
         <h2>Realni zawodnicy</h2>

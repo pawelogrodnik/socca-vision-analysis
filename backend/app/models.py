@@ -55,6 +55,9 @@ class AnalyzePayload(BaseModel):
     adapter: str = "yolo"  # yolo | motion
     max_seconds: float = 30.0
     frame_stride: int = 1
+    chunked: bool = False
+    chunk_duration_sec: float = 120.0
+    chunk_overlap_sec: float = 2.0
 
     # YOLO options
     yolo_model: str = "yolov8n.pt"

@@ -1,40 +1,39 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getContactCandidates, reviewContactCandidates } from '../api';
+import { getPassCandidates, reviewPassCandidates } from '../api';
 import type {
-  ContactCandidate,
-  ContactCandidateReviewStatus,
-  ContactCandidateReviewUpdate,
-  ContactCandidatesDocument,
-  Match
+  Match,
+  PassCandidateReviewStatus,
+  PassCandidateReviewUpdate,
+  PassCandidatesDocument
 } from '../types';
 
-const REVIEW_STATUSES: ContactCandidateReviewStatus[] = [
+const REVIEW_STATUSES: PassCandidateReviewStatus[] = [
   'needs_review',
   'accepted',
   'uncertain',
   'rejected'
 ];
 
-const REVIEW_LABELS: Record<ContactCandidateReviewStatus, string> = {
+const REVIEW_LABELS: Record<PassCandidateReviewStatus, string> = {
   needs_review: 'Do sprawdzenia',
-  accepted: 'Prawdziwy kontakt',
+  accepted: 'Prawdziwe podanie',
   uncertain: 'Niepewne',
   rejected: 'Odrzucone'
 };
 
 type DraftReview = {
-  review_status: ContactCandidateReviewStatus;
+  review_status: PassCandidateReviewStatus;
   notes: string;
 };
 
-interface ContactCandidatesReviewProps {
+interface PassCandidatesReviewProps {
   match: Match;
   enabled: boolean;
 }
 
-export function ContactCandidatesReview({ match, enabled }: ContactCandidatesReviewProps) {
-  const [document, setDocument] = useState<ContactCandidatesDocument | null>(match.contact_candidates || null);
-  const [drafts, setDrafts] = useState<Record<string, DraftReview>>(() => buildDrafts(match.contact_candidates));
+export function PassCandidatesReview({ match, enabled }: PassCandidatesReviewProps) {
+  const [document, setDocument] = useState<PassCandidatesDocument | null>(match.pass_candidates || null);
+  const [drafts, setDrafts] = useState<Record<string, DraftReview>>(() => buildDrafts(match.pass_candidates));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -42,7 +41,7 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
 
   useEffect(() => {
     let active = true;
-    if (!enabled && !match.contact_candidates) {
+    if (!enabled && !match.pass_candidates) {
       setDocument(null);
       setDrafts({});
       return () => {
@@ -51,7 +50,7 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
     }
     setLoading(true);
     setError('');
-    getContactCandidates(match.id)
+    getPassCandidates(match.id)
       .then((nextDocument) => {
         if (!active) return;
         setDocument(nextDocument);
@@ -59,9 +58,9 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
       })
       .catch((fetchError) => {
         if (!active) return;
-        if (match.contact_candidates) {
-          setDocument(match.contact_candidates);
-          setDrafts(buildDrafts(match.contact_candidates));
+        if (match.pass_candidates) {
+          setDocument(match.pass_candidates);
+          setDrafts(buildDrafts(match.pass_candidates));
           return;
         }
         setError(fetchError instanceof Error ? fetchError.message : String(fetchError));
@@ -72,15 +71,14 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
     return () => {
       active = false;
     };
-  }, [enabled, match.contact_candidates, match.id]);
+  }, [enabled, match.id, match.pass_candidates]);
 
   const candidates = document?.candidates || [];
   const summary = document?.summary || {};
   const reviewCounts = useMemo(() => {
     const counts = { accepted: 0, needs_review: 0, rejected: 0, uncertain: 0 };
     for (const candidate of candidates) {
-      const status = normalizeStatus(candidate.review_status || candidate.status);
-      counts[status] += 1;
+      counts[normalizeStatus(candidate.review_status)] += 1;
     }
     return counts;
   }, [candidates]);
@@ -101,9 +99,9 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
     setSaving(true);
     setError('');
     setMessage('');
-    const updates: ContactCandidateReviewUpdate[] = document.candidates.map((candidate) => {
+    const updates: PassCandidateReviewUpdate[] = document.candidates.map((candidate) => {
       const draft = drafts[candidate.candidate_id] || {
-        review_status: normalizeStatus(candidate.review_status || candidate.status),
+        review_status: normalizeStatus(candidate.review_status),
         notes: candidate.review_notes || ''
       };
       return {
@@ -113,10 +111,10 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
       };
     });
     try {
-      const nextDocument = await reviewContactCandidates(match.id, updates);
+      const nextDocument = await reviewPassCandidates(match.id, updates);
       setDocument(nextDocument);
       setDrafts(buildDrafts(nextDocument));
-      setMessage('Zapisano review kandydatow kontaktu i odswiezono event_candidates.json.');
+      setMessage('Zapisano review kandydatow podan i odswiezono pass_review_report.json.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -132,41 +130,41 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
     <div className='contact-review-panel'>
       <div className='row between'>
         <div>
-          <h4>Contact candidates review</h4>
+          <h4>Pass candidates review</h4>
           <p className='muted'>
-            Oznacz, ktore kandydaty faktycznie wygladaja jak kontakt zawodnika z pilka.
+            Zatwierdzaj tylko kandydaty, ktore wizualnie wygladaja jak realne podanie.
           </p>
         </div>
         <button type='button' onClick={saveReview} disabled={saving || loading || !document}>
-          {saving ? 'Zapisywanie...' : 'Zapisz review'}
+          {saving ? 'Zapisywanie...' : 'Zapisz pass review'}
         </button>
       </div>
-      {loading && <p className='muted'>Ladowanie kandydatow kontaktu...</p>}
+      {loading && <p className='muted'>Ladowanie kandydatow podan...</p>}
       {error && <p className='error'>{error}</p>}
       {message && <p className='success'>{message}</p>}
       {document && (
         <>
           <div className='chips'>
-            <span>Kandydaci: {formatCount(summary.contact_candidates ?? candidates.length)}</span>
+            <span>Kandydaci: {formatCount(summary.pass_candidates ?? candidates.length)}</span>
             <span>Do sprawdzenia: {reviewCounts.needs_review}</span>
             <span>Accepted: {reviewCounts.accepted}</span>
             <span>Uncertain: {reviewCounts.uncertain}</span>
             <span>Rejected: {reviewCounts.rejected}</span>
-            <span>Player interp: {formatCount(summary.candidates_with_interpolated_player_positions)}</span>
-            <span>Auto: {formatCount(summary.auto_reviewed_candidates)}</span>
-            <span>Manual: {formatCount(summary.manual_reviewed_candidates)}</span>
+            <span>Final passes: {formatCount(summary.final_stat_passes)}</span>
+            <span>Final forward: {formatCount(summary.final_forward_passes)}</span>
+            <span>Final progressive: {formatCount(summary.final_progressive_passes)}</span>
           </div>
           {candidates.length === 0 ? (
-            <p className='muted'>Brak kandydatow kontaktu dla tego runu.</p>
+            <p className='muted'>Brak kandydatow podan dla tego runu.</p>
           ) : (
             <div className='stats-table-wrap contact-review-table'>
               <table className='stats-table'>
                 <thead>
                   <tr>
                     <th>Kandydat</th>
-                    <th>Zawodnik</th>
+                    <th>Od-do</th>
                     <th>Zakres</th>
-                    <th>Metryki</th>
+                    <th>Geometria</th>
                     <th>Review</th>
                     <th>Notatka</th>
                   </tr>
@@ -174,18 +172,24 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
                 <tbody>
                   {candidates.map((candidate) => {
                     const draft = drafts[candidate.candidate_id] || {
-                      review_status: normalizeStatus(candidate.review_status || candidate.status),
+                      review_status: normalizeStatus(candidate.review_status),
                       notes: candidate.review_notes || ''
                     };
                     return (
                       <tr key={candidate.candidate_id}>
                         <td>
                           <strong>{candidate.candidate_id}</strong>
-                          <span>{candidate.source || 'controlled_ball_nearest_player'}</span>
+                          <span>{candidate.pass_type || 'unknown'}</span>
+                          <span>{candidate.final_stat_eligible ? 'final eligible' : 'candidate only'}</span>
                         </td>
                         <td>
-                          <strong>{candidate.stable_player_id || 'unknown'}</strong>
-                          <span>{formatTeam(candidate)}</span>
+                          <strong>
+                            {candidate.from_stable_player_id || 'unknown'} - {candidate.to_stable_player_id || 'unknown'}
+                          </strong>
+                          <span>
+                            {formatTeam(candidate.from_team_name, candidate.from_team_label)}
+                            {' '}to {formatTeam(candidate.to_team_name, candidate.to_team_label)}
+                          </span>
                         </td>
                         <td>
                           <strong>
@@ -198,13 +202,18 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
                         </td>
                         <td>
                           <strong>
-                            d={formatMeters(candidate.mean_distance_m)} min={formatMeters(candidate.min_distance_m)}
+                            {candidate.direction || 'unknown'}
+                            {candidate.is_progressive ? ' / progressive' : ''}
                           </strong>
                           <span>
-                            conf {formatPercent(candidate.mean_confidence)}
-                            {' '}ball {formatCount(candidate.detected_ball_frames)}f
-                            {' '}player {formatCount(candidate.detected_player_frames)}f
-                            {' '}interp {formatCount(candidate.interpolated_player_frames)}f
+                            progress {formatMeters(candidate.forward_progress_m)}
+                            {' '}dist {formatMeters(candidate.distance_m)}
+                            {' '}conf {formatPercent(candidate.confidence)}
+                          </span>
+                          <span>
+                            phase {candidate.match_phase_period_id || 'n/a'} / {candidate.attack_direction || 'unknown'}
+                            {' '}start {formatPoint(candidate.start_position_m)}
+                            {' '}end {formatPoint(candidate.end_position_m)}
                           </span>
                         </td>
                         <td>
@@ -212,7 +221,7 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
                             value={draft.review_status}
                             onChange={(event) => {
                               updateDraft(candidate.candidate_id, {
-                                review_status: event.target.value as ContactCandidateReviewStatus
+                                review_status: event.target.value as PassCandidateReviewStatus
                               });
                             }}
                           >
@@ -223,10 +232,8 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
                             ))}
                           </select>
                           <span>
-                            {candidate.review_source || 'unknown'}
-                            {candidate.auto_review?.reasons?.length
-                              ? `: ${candidate.auto_review.reasons.slice(0, 2).join(', ')}`
-                              : ''}
+                            auto: {candidate.auto_review_status || 'unknown'}
+                            {' '}source: {candidate.review_source || 'unknown'}
                           </span>
                         </td>
                         <td>
@@ -252,27 +259,31 @@ export function ContactCandidatesReview({ match, enabled }: ContactCandidatesRev
   );
 }
 
-function buildDrafts(document?: ContactCandidatesDocument | null): Record<string, DraftReview> {
+function buildDrafts(document?: PassCandidatesDocument | null): Record<string, DraftReview> {
   const drafts: Record<string, DraftReview> = {};
   for (const candidate of document?.candidates || []) {
     drafts[candidate.candidate_id] = {
-      review_status: normalizeStatus(candidate.review_status || candidate.status),
+      review_status: normalizeStatus(candidate.review_status),
       notes: candidate.review_notes || ''
     };
   }
   return drafts;
 }
 
-function normalizeStatus(value: unknown): ContactCandidateReviewStatus {
+function normalizeStatus(value: unknown): PassCandidateReviewStatus {
   if (value === 'accepted' || value === 'rejected' || value === 'uncertain' || value === 'needs_review') {
     return value;
   }
   return 'needs_review';
 }
 
-function formatTeam(candidate: ContactCandidate): string {
-  const team = candidate.team_name || candidate.team_label || 'unknown team';
-  return String(team);
+function formatTeam(name: unknown, label: unknown): string {
+  return String(name || label || 'unknown team');
+}
+
+function formatPoint(value: unknown): string {
+  if (!Array.isArray(value) || value.length !== 2) return '--';
+  return `[${formatNumber(value[0])}, ${formatNumber(value[1])}]`;
 }
 
 function formatCount(value: unknown): string {
@@ -297,4 +308,10 @@ function formatPercent(value: unknown): string {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '--';
   return `${(numeric * 100).toFixed(1)}%`;
+}
+
+function formatNumber(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '--';
+  return numeric.toFixed(2);
 }

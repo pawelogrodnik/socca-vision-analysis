@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   analyzeBall,
-  analyzeMatch,
   artifactUrl,
   createMatchPackage,
   frameUrl,
+  getAnalysisJob,
   getMatch,
   listMatches,
   publishLocalMatch,
   savePitch,
+  startAnalysisJob,
   updateMatchMetadata,
 } from '../api';
 import type {
+  AnalysisJob,
   AnalysisPayload,
   BallAnalysisPayload,
   Match,
@@ -41,6 +43,9 @@ const defaultAnalysis: AnalysisPayload = {
   adapter: 'yolo',
   max_seconds: 30,
   frame_stride: 1,
+  chunked: false,
+  chunk_duration_sec: 120,
+  chunk_overlap_sec: 2,
   yolo_model: 'yolov8n.pt',
   yolo_conf: 0.05,
   yolo_imgsz: 1920,
@@ -48,19 +53,23 @@ const defaultAnalysis: AnalysisPayload = {
   yolo_device: null,
 };
 
+const localBallModelPath = 'models/best.pt';
+
 const defaultBallAnalysis: BallAnalysisPayload = {
   max_seconds: 3,
   frame_stride: 4,
-  yolo_model: 'yolov8n.pt',
+  yolo_model: localBallModelPath,
   yolo_conf: 0.05,
   yolo_imgsz: 960,
   yolo_device: null,
 };
 
-const localBallModelPath = 'models/best (9).pt';
-
 type Point = [number, number];
 type WorkflowStepId = 'video' | 'analysis' | 'review' | 'publish';
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 const workflowCopy: Record<
   WorkflowStepId,
@@ -167,6 +176,7 @@ export function AdminPanel() {
   const [pitchPoints, setPitchPoints] = useState<Point[]>([]);
   const [showDeveloperDebug, setShowDeveloperDebug] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [activeAnalysisJob, setActiveAnalysisJob] = useState<AnalysisJob | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isBusy = busyAction !== null;
 
@@ -287,9 +297,11 @@ export function AdminPanel() {
       return;
     }
     setBusyAction('analysis');
-    setStatus('Analiza uruchomiona...');
+    setStatus('Uruchamiam analize w tle...');
     try {
-      await analyzeMatch(selectedId, analysis);
+      const job = await startAnalysisJob(selectedId, analysis);
+      setActiveAnalysisJob(job);
+      await waitForAnalysisJob(job.job_id);
       setStatus('Analiza zakonczona. Sprawdz stable overlay i przypisania.');
       await refreshSelected('review');
     } catch (error) {
@@ -339,7 +351,7 @@ export function AdminPanel() {
       return;
     }
     setBusyAction('analysis');
-    setStatus('Zapisuje boisko i uruchamiam analize...');
+    setStatus('Zapisuje boisko i uruchamiam analize w tle...');
     try {
       if (pitchPoints.length === 4) {
         await savePitch(selectedId, {
@@ -351,7 +363,9 @@ export function AdminPanel() {
           source: 'manual',
         });
       }
-      await analyzeMatch(selectedId, analysis);
+      const job = await startAnalysisJob(selectedId, analysis);
+      setActiveAnalysisJob(job);
+      await waitForAnalysisJob(job.job_id);
       setStatus('Analiza zakonczona. Sprawdz stable overlay i przypisania.');
       await refreshSelected('review');
     } catch (error) {
@@ -359,6 +373,24 @@ export function AdminPanel() {
     } finally {
       setBusyAction(null);
     }
+  }
+
+  async function waitForAnalysisJob(jobId: string): Promise<AnalysisJob> {
+    let latest = await getAnalysisJob(jobId);
+    setActiveAnalysisJob(latest);
+    while (!['completed', 'failed'].includes(latest.status)) {
+      const chunkText = latest.chunk_count ? ` chunks ${latest.chunk_count}` : '';
+      setStatus(
+        `Analiza ${latest.status}: ${latest.stage} ${Math.round(latest.progress_percent || 0)}%${chunkText}. ${latest.message || ''}`,
+      );
+      await delay(2000);
+      latest = await getAnalysisJob(jobId);
+      setActiveAnalysisJob(latest);
+    }
+    if (latest.status === 'failed') {
+      throw new Error(latest.error?.message || latest.message || 'Analysis job failed');
+    }
+    return latest;
   }
 
   async function buildPackage() {
@@ -576,6 +608,31 @@ export function AdminPanel() {
               </button>
             </div>
           </div>
+          {activeAnalysisJob && (
+            <div className='job-status-box'>
+              <div className='row between'>
+                <div>
+                  <strong>Analysis job: {activeAnalysisJob.job_id}</strong>
+                  <span>
+                    {activeAnalysisJob.status} / {activeAnalysisJob.stage} /{' '}
+                    {Math.round(activeAnalysisJob.progress_percent || 0)}%
+                  </span>
+                </div>
+                {activeAnalysisJob.chunk_manifest && selectedId && (
+                  <a href={artifactUrl(selectedId, activeAnalysisJob.chunk_manifest)}>
+                    chunk manifest
+                  </a>
+                )}
+              </div>
+              <p className='muted'>{activeAnalysisJob.message}</p>
+              {activeAnalysisJob.chunk_count && (
+                <div className='chips'>
+                  <span>Chunks planned: {activeAnalysisJob.chunk_count}</span>
+                  <span>Mode: background</span>
+                </div>
+              )}
+            </div>
+          )}
           <p className='muted'>
             Kolejnosc: gora-lewo, gora-prawo, dol-prawo, dol-lewo. Boisko:
             30 x 47.4 m. Punkty: {pitchPoints.length}/4.
@@ -699,7 +756,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 3,
                       frame_stride: 4,
-                      yolo_model: analysis.yolo_model,
+                      yolo_model: localBallModelPath,
                       yolo_conf: 0.05,
                       yolo_imgsz: 960,
                       yolo_device: analysis.yolo_device,
@@ -716,7 +773,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 6,
                       frame_stride: 3,
-                      yolo_model: analysis.yolo_model,
+                      yolo_model: localBallModelPath,
                       yolo_conf: 0.04,
                       yolo_imgsz: 1280,
                       yolo_device: analysis.yolo_device,
@@ -733,7 +790,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 12,
                       frame_stride: 2,
-                      yolo_model: analysis.yolo_model,
+                      yolo_model: localBallModelPath,
                       yolo_conf: 0.03,
                       yolo_imgsz: 1280,
                       yolo_device: analysis.yolo_device,

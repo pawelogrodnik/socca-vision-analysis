@@ -1,6 +1,7 @@
 import { artifactUrl } from '../api';
 import type {
   AnalysisRunSummary,
+  AnalysisQualityReport,
   FrameDetectionCountsDocument,
   GlobalIdentityReport,
   Match,
@@ -147,11 +148,13 @@ function RunList({ match }: { match: Match }) {
 }
 
 function QualitySummary({
+  analysisQuality,
   frameCounts,
   trackingQuality,
   globalIdentityReport,
   playerStats,
 }: {
+  analysisQuality?: AnalysisQualityReport;
   frameCounts?: FrameDetectionCountsDocument;
   trackingQuality?: TrackingQualityReport;
   globalIdentityReport?: GlobalIdentityReport;
@@ -162,9 +165,21 @@ function QualitySummary({
   const identitySummary = globalIdentityReport?.summary;
   const statsSummary = playerStats?.summary;
   const overCapFrames = numericValue(valueOf(trackletSummary, 'frames_with_team_over_cap'));
+  const qualitySummary = analysisQuality?.summary;
 
   return (
     <>
+      {analysisQuality && (
+        <div className='quality-alert'>
+          <strong>
+            Analysis quality: {analysisQuality.quality} / {formatNumber(analysisQuality.score, 1)}/100
+          </strong>
+          <span>{analysisQuality.recommendation}</span>
+          {(analysisQuality.warnings || []).slice(0, 4).map((warning) => (
+            <span key={warning}>{warning}</span>
+          ))}
+        </div>
+      )}
       {overCapFrames > 0 && (
         <div className='quality-alert'>
           <strong>Team count alert</strong>
@@ -182,6 +197,8 @@ function QualitySummary({
         <span>Low visible frames: {formatCompact(valueOf(frameSummary, 'stable_frames_below_target'))}</span>
         <span>Ambiguous frames: {formatCompact(valueOf(frameSummary, 'frames_with_ambiguous_slots'))}</span>
         <span>Ghost boxes: {formatCompact(valueOf(frameSummary, 'ghost_bbox_count'))}</span>
+        <span>Quality low-visible: {formatCompact(valueOf(qualitySummary, 'low_visible_frames'))}</span>
+        <span>Visual hold: {formatCompact(valueOf(qualitySummary, 'visual_interpolated_boxes'))}</span>
       </div>
       <div className='chips'>
         <span>Tracklets clean: {formatCompact(valueOf(trackletSummary, 'clean_tracklets'))}</span>
@@ -283,6 +300,7 @@ export function AnalysisQualityPanel({ match }: AnalysisQualityPanelProps) {
   const frameCounts = match.frame_detection_counts;
   const trackingQuality = match.tracking_quality_report;
   const globalIdentityReport = match.global_identity_report;
+  const analysisQuality = match.analysis_quality_report;
   const playerStats = match.player_stats;
   const teamStats = match.team_stats;
 
@@ -310,10 +328,21 @@ export function AnalysisQualityPanel({ match }: AnalysisQualityPanelProps) {
               player_stats.json
             </a>
           )}
+          {match.analysis_report.artifacts?.analysis_quality_report && (
+            <a href={artifactUrl(match.id, match.analysis_report.artifacts.analysis_quality_report)}>
+              analysis_quality_report.json
+            </a>
+          )}
+          {match.analysis_report.artifacts?.analysis_chunk_manifest && (
+            <a href={artifactUrl(match.id, match.analysis_report.artifacts.analysis_chunk_manifest)}>
+              analysis_chunk_manifest.json
+            </a>
+          )}
         </div>
       </div>
 
       <QualitySummary
+        analysisQuality={analysisQuality}
         frameCounts={frameCounts}
         trackingQuality={trackingQuality}
         globalIdentityReport={globalIdentityReport}

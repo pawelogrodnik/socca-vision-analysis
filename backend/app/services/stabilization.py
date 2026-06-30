@@ -10,6 +10,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from app.services.analysis_quality import build_analysis_quality_report
+from app.services.change_candidates import write_change_candidate_artifacts
 from app.services.conservative_identity import (
     build_frame_detection_counts_from_global_identity,
     build_global_identity_report,
@@ -33,6 +35,9 @@ LIVE_STATS_ESTIMATED_GAP_SEC = 2.0
 LIVE_STATS_OBSERVED_GAP_FRAMES = 2
 LIVE_STATS_SPEED_MIN_WINDOW_SEC = 0.5
 LIVE_STATS_SPEED_MAX_WINDOW_SEC = 1.25
+STABLE_OVERLAY_VISUAL_HOLD_MAX_GAP_FRAMES = 6
+STABLE_OVERLAY_VISUAL_HOLD_MAX_GAP_SEC = 0.35
+STABLE_OVERLAY_VISUAL_HOLD_MAX_SPEED_MPS = 8.5
 
 
 def now_iso() -> str:
@@ -2259,38 +2264,17 @@ def write_stable_overlay(
     import cv2
     import numpy as np
 
-    frame_rows: dict[int, list[dict[str, Any]]] = {}
     player_colors: dict[str, tuple[int, int, int]] = {}
     stats_rows = _overlay_stats_rows(stable_doc.get("players", []))
     for player in stable_doc.get("players", []):
         stable_player_id = player["stable_player_id"]
         player_colors[stable_player_id] = _stable_bgr_color(player.get("team_label"))
-        overlay_positions = player.get("overlay_positions") or []
-        bbox_stats = _player_bbox_stats(overlay_positions)
-        live_movement = _live_movement_by_frame(overlay_positions, fps)
-        for position in overlay_positions:
-            if not position.get("bbox_xyxy"):
-                continue
-            source = position.get("source") or "detected"
-            if not include_untrusted and source != "detected":
-                continue
-            if source in {"predicted", "interpolated"} and not _bbox_footpoint_inside_polygon(position.get("bbox_xyxy"), pitch_polygon):
-                continue
-            if not _bbox_is_visual_candidate(position, bbox_stats):
-                continue
-            row = dict(position)
-            row["stable_player_id"] = stable_player_id
-            row["team_label"] = player.get("team_label")
-            row["player_confidence"] = player.get("confidence")
-            row["player_confidence_score"] = player.get("confidence_score")
-            row["team_confidence"] = player.get("team_confidence")
-            row["mean_detection_confidence"] = player.get("mean_detection_confidence")
-            row["tracklet_count"] = player.get("tracklet_count")
-            row["duration_sec"] = player.get("duration_sec")
-            row["risky_link_count"] = len(player.get("risky_links") or [])
-            row["source"] = source
-            row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
-            frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
+    frame_rows = _stable_overlay_frame_rows(
+        stable_doc,
+        pitch_polygon,
+        fps=fps,
+        include_untrusted=include_untrusted,
+    )
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -2329,6 +2313,150 @@ def write_stable_overlay(
     finally:
         cap.release()
     return writer.close()
+
+
+def _stable_overlay_frame_rows(
+    stable_doc: dict[str, Any],
+    pitch_polygon: Any,
+    *,
+    fps: float,
+    include_untrusted: bool = False,
+) -> dict[int, list[dict[str, Any]]]:
+    frame_rows: dict[int, list[dict[str, Any]]] = {}
+    for player in stable_doc.get("players", []):
+        stable_player_id = player["stable_player_id"]
+        overlay_positions = player.get("overlay_positions") or []
+        bbox_stats = _player_bbox_stats(overlay_positions)
+        live_movement = _live_movement_by_frame(overlay_positions, fps)
+        visual_positions = _stable_overlay_visual_positions(
+            overlay_positions,
+            bbox_stats,
+            pitch_polygon,
+            fps=fps,
+            include_untrusted=include_untrusted,
+        )
+        for position in visual_positions:
+            row = dict(position)
+            row["stable_player_id"] = stable_player_id
+            row["team_label"] = player.get("team_label")
+            row["player_confidence"] = player.get("confidence")
+            row["player_confidence_score"] = player.get("confidence_score")
+            row["team_confidence"] = player.get("team_confidence")
+            row["mean_detection_confidence"] = player.get("mean_detection_confidence")
+            row["tracklet_count"] = player.get("tracklet_count")
+            row["duration_sec"] = player.get("duration_sec")
+            row["risky_link_count"] = len(player.get("risky_links") or [])
+            row["source"] = _overlay_position_source(position)
+            row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
+            frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
+    return frame_rows
+
+
+def _stable_overlay_visual_positions(
+    overlay_positions: list[dict[str, Any]],
+    bbox_stats: dict[str, float] | None,
+    pitch_polygon: Any,
+    *,
+    fps: float,
+    include_untrusted: bool,
+) -> list[dict[str, Any]]:
+    visual_by_frame: dict[int, dict[str, Any]] = {}
+    trusted_detected: list[dict[str, Any]] = []
+    sorted_positions = sorted(
+        overlay_positions,
+        key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)),
+    )
+    for position in sorted_positions:
+        if not position.get("bbox_xyxy"):
+            continue
+        source = _overlay_position_source(position)
+        if source == "detected":
+            if not _overlay_bbox_is_safe(position, bbox_stats, pitch_polygon):
+                continue
+            row = dict(position)
+            row["source"] = "detected"
+            visual_by_frame[int(row.get("frame") or 0)] = row
+            trusted_detected.append(row)
+            continue
+        if not include_untrusted:
+            continue
+        if source in {"predicted", "interpolated", "short_gap_interpolated"}:
+            if not _overlay_bbox_is_safe(position, bbox_stats, pitch_polygon):
+                continue
+        elif source == "ambiguous":
+            if not _bbox_is_visual_candidate(position, bbox_stats):
+                continue
+        else:
+            continue
+        frame = int(position.get("frame") or 0)
+        visual_by_frame.setdefault(frame, dict(position, source=source))
+
+    for position in _stable_overlay_short_gap_positions(trusted_detected, pitch_polygon, fps=fps):
+        visual_by_frame.setdefault(int(position.get("frame") or 0), position)
+
+    return [visual_by_frame[frame] for frame in sorted(visual_by_frame)]
+
+
+def _stable_overlay_short_gap_positions(
+    trusted_detected: list[dict[str, Any]],
+    pitch_polygon: Any,
+    *,
+    fps: float,
+) -> list[dict[str, Any]]:
+    interpolated: list[dict[str, Any]] = []
+    fps_safe = max(float(fps or 0.0), 0.001)
+    for index, current in enumerate(trusted_detected[:-1]):
+        following = trusted_detected[index + 1]
+        frame_gap = int(following.get("frame") or 0) - int(current.get("frame") or 0)
+        missing_frames = frame_gap - 1
+        if missing_frames <= 0:
+            continue
+        if not _can_visual_hold_gap(current, following, missing_frames=missing_frames, fps=fps_safe):
+            continue
+        for offset in range(1, frame_gap):
+            ratio = offset / frame_gap
+            row = _interpolate_position(current, following, offset=offset, ratio=ratio)
+            row["source"] = "short_gap_interpolated"
+            row["status"] = "short_gap_interpolated"
+            row["visual_trusted"] = True
+            if _overlay_bbox_is_safe(row, None, pitch_polygon):
+                interpolated.append(row)
+    return interpolated
+
+
+def _can_visual_hold_gap(
+    current: dict[str, Any],
+    following: dict[str, Any],
+    *,
+    missing_frames: int,
+    fps: float,
+) -> bool:
+    if missing_frames > STABLE_OVERLAY_VISUAL_HOLD_MAX_GAP_FRAMES:
+        return False
+    frame_gap = int(following.get("frame") or 0) - int(current.get("frame") or 0)
+    fallback_time_gap = frame_gap / max(fps, 0.001)
+    time_gap = float(following.get("time_sec") or 0.0) - float(current.get("time_sec") or 0.0)
+    if time_gap <= 0:
+        time_gap = fallback_time_gap
+    if time_gap <= 0 or time_gap > STABLE_OVERLAY_VISUAL_HOLD_MAX_GAP_SEC:
+        return False
+    distance = _distance_m(_position_pitch_point(current), _position_pitch_point(following))
+    if distance is None or distance / max(time_gap, 0.001) > STABLE_OVERLAY_VISUAL_HOLD_MAX_SPEED_MPS:
+        return False
+    if not _valid_bbox(current.get("bbox_xyxy")) or not _valid_bbox(following.get("bbox_xyxy")):
+        return False
+    return _bbox_shape_is_close(current["bbox_xyxy"], following["bbox_xyxy"], max_ratio=1.8)
+
+
+def _overlay_bbox_is_safe(position: dict[str, Any], bbox_stats: dict[str, float] | None, pitch_polygon: Any) -> bool:
+    return (
+        _bbox_footpoint_inside_polygon(position.get("bbox_xyxy"), pitch_polygon)
+        and _bbox_is_visual_candidate(position, bbox_stats)
+    )
+
+
+def _overlay_position_source(position: dict[str, Any]) -> str:
+    return str(position.get("source") or position.get("status") or "detected")
 
 
 def _stable_bgr_color(team_label: Any) -> tuple[int, int, int]:
@@ -2443,11 +2571,42 @@ def _bbox_center(bbox_xyxy: Any) -> tuple[int, int] | None:
 def _bbox_footpoint_inside_polygon(bbox_xyxy: Any, pitch_polygon: Any) -> bool:
     if not bbox_xyxy or len(bbox_xyxy) != 4:
         return False
-    import cv2
-
     x1, _, x2, y2 = [float(value) for value in bbox_xyxy]
     footpoint = ((x1 + x2) / 2.0, y2)
-    return cv2.pointPolygonTest(pitch_polygon.astype("float32"), footpoint, False) >= 0
+    try:
+        import cv2
+
+        return cv2.pointPolygonTest(pitch_polygon.astype("float32"), footpoint, False) >= 0
+    except ModuleNotFoundError:
+        return _point_inside_polygon(footpoint, pitch_polygon)
+
+
+def _point_inside_polygon(point: tuple[float, float], polygon: Any) -> bool:
+    vertices = polygon.tolist() if hasattr(polygon, "tolist") else polygon
+    if not vertices:
+        return False
+    x, y = point
+    inside = False
+    previous = vertices[-1]
+    for current in vertices:
+        x1, y1 = float(previous[0]), float(previous[1])
+        x2, y2 = float(current[0]), float(current[1])
+        if _point_on_segment(x, y, x1, y1, x2, y2):
+            return True
+        intersects = (y1 > y) != (y2 > y)
+        if intersects:
+            crossing_x = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x <= crossing_x:
+                inside = not inside
+        previous = current
+    return inside
+
+
+def _point_on_segment(x: float, y: float, x1: float, y1: float, x2: float, y2: float) -> bool:
+    cross = (x - x1) * (y2 - y1) - (y - y1) * (x2 - x1)
+    if abs(cross) > 1e-6:
+        return False
+    return min(x1, x2) - 1e-6 <= x <= max(x1, x2) + 1e-6 and min(y1, y2) - 1e-6 <= y <= max(y1, y2) + 1e-6
 
 
 def _player_bbox_stats(positions: list[dict[str, Any]]) -> dict[str, float] | None:
@@ -2528,6 +2687,7 @@ def _draw_stable_row(frame: Any, row: dict[str, Any]) -> None:
     x1, y1, x2, y2 = [int(v) for v in row["bbox_xyxy"]]
     source = row.get("source")
     is_untrusted = source in {"interpolated", "predicted", "ambiguous"}
+    is_short_gap = source == "short_gap_interpolated"
     if is_untrusted:
         _draw_dashed_rectangle(frame, x1, y1, x2, y2, color)
     else:
@@ -2535,7 +2695,7 @@ def _draw_stable_row(frame: Any, row: dict[str, Any]) -> None:
     stable_player_id = str(row.get("stable_player_id") or "?")
     label = f"{stable_player_id}?" if source == "ambiguous" else f"{stable_player_id}*" if is_untrusted else stable_player_id
     _draw_minimal_label(frame, label, x1, y1, color)
-    if row.get("source") == "detected":
+    if row.get("source") == "detected" or is_short_gap:
         _draw_live_stats_label(frame, row.get("live_movement"), x1, y1, y2, color)
 
 
@@ -2617,6 +2777,7 @@ def _format_score(value: Any) -> str:
 def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     visible_detected = sum(1 for row in rows if row.get("source") == "detected")
     visible_predicted = sum(1 for row in rows if row.get("source") in {"predicted", "interpolated"})
+    visible_interpolated = sum(1 for row in rows if row.get("source") == "short_gap_interpolated")
     visible_ambiguous = sum(1 for row in rows if row.get("source") == "ambiguous")
     team_a = sum(1 for row in rows if row.get("team_label") == "A")
     team_b = sum(1 for row in rows if row.get("team_label") == "B")
@@ -2624,6 +2785,7 @@ def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
         "visible_boxes": len(rows),
         "visible_detected": visible_detected,
         "visible_predicted": visible_predicted,
+        "visible_interpolated": visible_interpolated,
         "visible_ambiguous": visible_ambiguous,
         "visible_team_a": team_a,
         "visible_team_b": team_b,
@@ -2634,42 +2796,44 @@ def apply_stable_overlay_visual_counts(
     frame_detection_counts: dict[str, Any],
     stable_doc: dict[str, Any],
     pitch_polygon: Any,
+    *,
+    fps: float = 25.0,
 ) -> dict[str, Any]:
-    counts_by_frame: dict[int, int] = defaultdict(int)
-    for player in stable_doc.get("players", []):
-        bbox_stats = _player_bbox_stats(player.get("overlay_positions") or [])
-        for position in player.get("overlay_positions") or []:
-            if not position.get("bbox_xyxy"):
-                continue
-            if (position.get("source") or "detected") != "detected":
-                continue
-            if not _bbox_footpoint_inside_polygon(position.get("bbox_xyxy"), pitch_polygon):
-                continue
-            if not _bbox_is_visual_candidate(position, bbox_stats):
-                continue
-            counts_by_frame[int(position.get("frame") or 0)] += 1
+    frame_rows = _stable_overlay_frame_rows(
+        stable_doc,
+        pitch_polygon,
+        fps=fps,
+        include_untrusted=False,
+    )
+    counts_by_frame = {frame: _visual_counts(rows) for frame, rows in frame_rows.items()}
 
     frames = []
     stable_values: list[int] = []
     predicted_visible_values: list[int] = []
+    visual_interpolated_values: list[int] = []
     target_players = int(frame_detection_counts.get("target_players") or DEFAULT_ACTIVE_PLAYERS_CAP)
     for frame in frame_detection_counts.get("frames", []):
         frame_index = int(frame.get("frame") or 0)
-        visible = counts_by_frame.get(frame_index, 0)
-        predicted_visible = int(frame.get("predicted_visible_boxes") or 0)
+        visual = counts_by_frame.get(frame_index, {})
+        visible = int(visual.get("visible_boxes") or 0)
+        trusted_detected = int(visual.get("visible_detected") or 0)
+        visual_interpolated = int(visual.get("visible_interpolated") or 0)
+        predicted_visible = int(visual.get("visible_predicted") or 0)
         updated = {
             **frame,
-            "stable_detected": visible,
-            "stable_interpolated": predicted_visible,
+            "stable_detected": trusted_detected,
+            "stable_interpolated": visual_interpolated,
             "stable_total": visible,
-            "trusted_detected": visible,
+            "trusted_detected": trusted_detected,
             "visible_stable_boxes": visible,
+            "visual_interpolated_boxes": visual_interpolated,
             "predicted_visible_boxes": predicted_visible,
             "stable_missing_vs_target": max(0, target_players - visible),
         }
         frames.append(updated)
         stable_values.append(visible)
         predicted_visible_values.append(predicted_visible)
+        visual_interpolated_values.append(visual_interpolated)
 
     summary = dict(frame_detection_counts.get("summary") or {})
     summary.update(
@@ -2680,6 +2844,8 @@ def apply_stable_overlay_visual_counts(
             "stable_frames_below_target": sum(1 for value in stable_values if value < target_players),
             "stable_frames_at_or_above_target": sum(1 for value in stable_values if value >= target_players),
             "predicted_visible_boxes": sum(predicted_visible_values),
+            "visual_interpolated_boxes": sum(visual_interpolated_values),
+            "visual_interpolated_frames": sum(1 for value in visual_interpolated_values if value > 0),
             "ghost_bbox_count": sum(predicted_visible_values),
         }
     )
@@ -2704,7 +2870,7 @@ def _draw_stable_hud(
     visible = visual_counts or {}
     lines = [
         f"frame={frame_idx} t={time_sec:.1f}s raw={_count_value(frame_count, 'raw_detections')}",
-        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)}",
+        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} hold={visible.get('visible_interpolated', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)}",
         f"slots active={active_slots} det={slot_detected} amb={_count_value(frame_count, 'slot_ambiguous')} miss={slot_missing} A={_count_value(frame_count, 'active_team_a')} B={_count_value(frame_count, 'active_team_b')}",
         f"match slots={summary.get('stable_players', 0)} risky={summary.get('risky_links', 0)} low={summary.get('low_confidence_players', 0)}",
     ]
@@ -2863,6 +3029,7 @@ def stabilize_match(
         frame_detection_counts,
         stable_doc,
         pitch.polygon_np,
+        fps=float(video_metadata.get("fps") or 25.0),
     )
     stable_doc["frame_detection_summary"] = frame_detection_counts["summary"]
     stable_doc["frame_detection_counts"] = frame_detection_counts
@@ -2881,6 +3048,7 @@ def stabilize_match(
     stable_doc["team_stats_summary"] = team_stats["summary"]
     player_heatmaps = build_player_heatmaps_document(stable_doc, match_dir)
     stable_doc["player_heatmaps_summary"] = player_heatmaps["summary"]
+    change_artifacts = write_change_candidate_artifacts(match_dir, stable_doc)
     write_stable_overlay(
         video_path,
         match_dir,
@@ -2927,10 +3095,20 @@ def stabilize_match(
         frame_detection_counts,
         parameters=parameters,
     )
+    analysis_quality_report = build_analysis_quality_report(
+        frame_detection_counts=frame_detection_counts,
+        stable_players=stable_doc,
+        global_identity_report=global_identity_report,
+        tracking_quality_report=tracking_quality_report,
+        movement_stats=movement_stats,
+        player_stats=player_stats,
+        team_stats=team_stats,
+    )
 
     (match_dir / "stable_players.json").write_text(json.dumps(public_stable_doc, indent=2), encoding="utf-8")
     (match_dir / "global_identity.json").write_text(json.dumps(global_identity, indent=2), encoding="utf-8")
     (match_dir / "global_identity_report.json").write_text(json.dumps(global_identity_report, indent=2), encoding="utf-8")
+    (match_dir / "analysis_quality_report.json").write_text(json.dumps(analysis_quality_report, indent=2), encoding="utf-8")
     (match_dir / "team_clusters.json").write_text(json.dumps(team_clusters, indent=2), encoding="utf-8")
     (match_dir / "frame_detection_counts.json").write_text(json.dumps(frame_detection_counts, indent=2), encoding="utf-8")
     (match_dir / "movement_stats.json").write_text(json.dumps(movement_stats, indent=2), encoding="utf-8")
@@ -2945,6 +3123,7 @@ def stabilize_match(
         "stable_players": public_stable_doc,
         "global_identity": global_identity,
         "global_identity_report": global_identity_report,
+        "analysis_quality_report": analysis_quality_report,
         "team_clusters": team_clusters,
         "frame_detection_counts": frame_detection_counts,
         "movement_stats": movement_stats,
@@ -2952,6 +3131,8 @@ def stabilize_match(
         "player_heatmaps": player_heatmaps,
         "team_config": team_config,
         "team_stats": team_stats,
+        "change_candidates": change_artifacts["change_candidates"],
+        "change_review_report": change_artifacts["change_review_report"],
         "tracklets": tracklets_doc,
         "tracking_quality_report": tracking_quality_report,
         "stabilization_report": report,
@@ -2959,6 +3140,7 @@ def stabilize_match(
             "stable_players": "stable_players.json",
             "global_identity": "global_identity.json",
             "global_identity_report": "global_identity_report.json",
+            "analysis_quality_report": "analysis_quality_report.json",
             "stabilization_report": "stabilization_report.json",
             "stable_overlay_preview": "stable_overlay_preview.mp4",
             "debug_identity_overlay": "debug_identity_overlay.mp4",
@@ -2969,6 +3151,7 @@ def stabilize_match(
             "player_heatmaps": "player_heatmaps.json",
             "team_config": "team_config.json",
             "team_stats": "team_stats.json",
+            **change_artifacts["artifacts"],
             "tracklets": "tracklets.json",
             "tracking_quality_report": "tracking_quality_report.json",
         },

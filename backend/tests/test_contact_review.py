@@ -58,6 +58,8 @@ class ContactReviewTests(unittest.TestCase):
             self.assertEqual(candidate["review_notes"], "visible touch")
             self.assertEqual(document["summary"]["accepted_candidates"], 1)
             self.assertEqual(document["summary"]["needs_review_candidates"], 0)
+            self.assertTrue((match_path / "event_candidates.json").exists())
+            self.assertTrue((match_path / "event_review_report.json").exists())
 
     def test_save_review_rejects_unknown_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

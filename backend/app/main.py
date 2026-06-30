@@ -15,9 +15,14 @@ from fastapi.responses import FileResponse
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
+from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, start_analysis_job
+from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
+from app.services.chunked_analysis import build_analysis_chunk_manifest, mark_chunk_manifest_single_pass_completed, write_analysis_chunk_manifest
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
 from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.identity import build_identity_review, save_identity_assignments
+from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
+from app.services.pass_review import load_pass_candidates_review, save_pass_candidate_reviews
 from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
 from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
@@ -179,6 +184,102 @@ def summarize_analysis_run(report: dict[str, Any]) -> dict[str, Any]:
         "run_directory": report.get("run_directory"),
         "run_manifest": report.get("run_manifest"),
     }
+
+
+def run_match_analysis_and_update_meta(
+    *,
+    match_id: str,
+    path: Path,
+    video_path: Path,
+    payload: AnalyzePayload,
+    job_id: str | None = None,
+    progress: Any | None = None,
+) -> dict[str, Any]:
+    if progress:
+        progress("preparing", 8.0, "Preparing analysis inputs.", None)
+    if payload.chunked:
+        metadata = read_video_metadata(video_path)
+        manifest = build_analysis_chunk_manifest(
+            video_metadata=metadata,
+            payload=payload.model_dump(),
+            job_id=job_id,
+        )
+        write_analysis_chunk_manifest(path, manifest)
+        if progress:
+            progress(
+                "chunk_plan",
+                15.0,
+                f"Planned {manifest['summary']['chunks']} analysis chunks.",
+                {
+                    "chunk_count": manifest["summary"]["chunks"],
+                    "chunk_manifest": "analysis_chunk_manifest.json",
+                },
+            )
+    if progress:
+        progress("analyzing", 20.0, "Running video analysis.", None)
+    report = analyze_match(
+        path,
+        video_path,
+        adapter=payload.adapter,  # type: ignore[arg-type]
+        max_seconds=payload.max_seconds,
+        frame_stride=max(1, payload.frame_stride),
+        yolo_model=payload.yolo_model,
+        yolo_conf=payload.yolo_conf,
+        yolo_imgsz=payload.yolo_imgsz,
+        yolo_tracker=payload.yolo_tracker,
+        yolo_device=payload.yolo_device,
+    )
+    if payload.chunked:
+        mark_chunk_manifest_single_pass_completed(path, report)
+        report = attach_analysis_artifact_to_report(
+            path,
+            report,
+            key="analysis_chunk_manifest",
+            filename="analysis_chunk_manifest.json",
+        )
+    if progress:
+        progress("finalizing", 95.0, "Updating match metadata.", None)
+    meta = read_match_meta(path)
+    if report.get("status") == "completed":
+        meta["status"] = "analyzed"
+    run_summary = summarize_analysis_run(report)
+    if run_summary.get("run_id"):
+        existing_runs = [item for item in meta.get("analysis_runs", []) if isinstance(item, dict)]
+        existing_runs = [item for item in existing_runs if item.get("run_id") != run_summary["run_id"]]
+        meta["analysis_runs"] = [run_summary, *existing_runs][:30]
+        meta["latest_analysis_run_id"] = run_summary["run_id"]
+    meta["latest_analysis_job_id"] = job_id or meta.get("latest_analysis_job_id")
+    if job_id:
+        meta["analysis_job_status"] = "completed" if report.get("status") == "completed" else str(report.get("status") or "finished")
+    meta["updated_at"] = now_iso()
+    write_match_meta(path, meta)
+    return report
+
+
+def attach_analysis_artifact_to_report(path: Path, report: dict[str, Any], *, key: str, filename: str) -> dict[str, Any]:
+    artifacts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    artifacts[key] = filename
+    report["artifacts"] = artifacts
+    run_directory = report.get("run_directory")
+    if run_directory:
+        run_dir = path / str(run_directory)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        source = path / filename
+        if source.exists() and source.is_file():
+            shutil.copy2(source, run_dir / Path(filename).name)
+        run_artifacts = report.get("run_artifacts") if isinstance(report.get("run_artifacts"), dict) else {}
+        run_artifacts[key] = f"{run_directory}/{Path(filename).name}"
+        report["run_artifacts"] = run_artifacts
+        manifest_path = path / str(report.get("run_manifest") or "")
+        if manifest_path.exists():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(manifest, dict):
+                manifest["artifacts"] = artifacts
+                manifest["run_artifacts"] = run_artifacts
+                manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        (run_dir / "analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (path / "analysis_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
 
 
 def default_assignments_for_tracks(tracks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -366,6 +467,7 @@ def get_match(match_id: str) -> dict[str, Any]:
     for optional in [
         "pitch_config.json",
         "analysis_report.json",
+        "analysis_chunk_manifest.json",
         "match_package.json",
         "player_assignments.json",
         "identity_candidates.json",
@@ -373,6 +475,7 @@ def get_match(match_id: str) -> dict[str, Any]:
         "player_identity_assignments.json",
         "stable_players.json",
         "global_identity_report.json",
+        "analysis_quality_report.json",
         "stabilization_report.json",
         "team_clusters.json",
         "frame_detection_counts.json",
@@ -381,6 +484,8 @@ def get_match(match_id: str) -> dict[str, Any]:
         "resolved_player_stats.json",
         "team_config.json",
         "team_stats.json",
+        "change_candidates.json",
+        "change_review_report.json",
         "tracklets.json",
         "tracking_quality_report.json",
         "ball_analysis_report.json",
@@ -389,6 +494,11 @@ def get_match(match_id: str) -> dict[str, Any]:
         "possession_candidates.json",
         "possession_segments.json",
         "contact_candidates.json",
+        "match_phase_config.json",
+        "event_candidates.json",
+        "event_review_report.json",
+        "pass_candidates.json",
+        "pass_review_report.json",
         "possession_report.json",
     ]:
         optional_path = path / optional
@@ -453,30 +563,12 @@ def analyze(match_id: str, payload: AnalyzePayload) -> dict[str, Any]:
     path = match_dir(match_id)
     video_path = match_video_path(path)
     try:
-        report = analyze_match(
-            path,
-            video_path,
-            adapter=payload.adapter,  # type: ignore[arg-type]
-            max_seconds=payload.max_seconds,
-            frame_stride=max(1, payload.frame_stride),
-            yolo_model=payload.yolo_model,
-            yolo_conf=payload.yolo_conf,
-            yolo_imgsz=payload.yolo_imgsz,
-            yolo_tracker=payload.yolo_tracker,
-            yolo_device=payload.yolo_device,
+        return run_match_analysis_and_update_meta(
+            match_id=match_id,
+            path=path,
+            video_path=video_path,
+            payload=payload,
         )
-        meta = read_match_meta(path)
-        if report.get("status") == "completed":
-            meta["status"] = "analyzed"
-        run_summary = summarize_analysis_run(report)
-        if run_summary.get("run_id"):
-            existing_runs = [item for item in meta.get("analysis_runs", []) if isinstance(item, dict)]
-            existing_runs = [item for item in existing_runs if item.get("run_id") != run_summary["run_id"]]
-            meta["analysis_runs"] = [run_summary, *existing_runs][:30]
-            meta["latest_analysis_run_id"] = run_summary["run_id"]
-        meta["updated_at"] = now_iso()
-        write_match_meta(path, meta)
-        return report
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -485,6 +577,63 @@ def analyze(match_id: str, payload: AnalyzePayload) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unexpected analysis error: {exc}") from exc
+
+
+@app.post("/api/matches/{match_id}/analyze/background")
+def analyze_background(match_id: str, payload: AnalyzePayload) -> dict[str, Any]:
+    if APP_MODE == "production-viewer":
+        raise HTTPException(status_code=403, detail="Video analysis is disabled in production-viewer mode")
+    path = match_dir(match_id)
+    video_path = match_video_path(path)
+
+    def runner(job_id: str, update: Any) -> dict[str, Any]:
+        try:
+            return run_match_analysis_and_update_meta(
+                match_id=match_id,
+                path=path,
+                video_path=video_path,
+                payload=payload,
+                job_id=job_id,
+                progress=update,
+            )
+        except Exception:
+            meta = read_match_meta(path)
+            meta["latest_analysis_job_id"] = job_id
+            meta["analysis_job_status"] = "failed"
+            write_match_meta(path, meta)
+            raise
+
+    job = start_analysis_job(
+        match_id=match_id,
+        match_path=path,
+        payload=payload.model_dump(),
+        runner=runner,
+    )
+    meta = read_match_meta(path)
+    meta["latest_analysis_job_id"] = job["job_id"]
+    meta["analysis_job_status"] = job["status"]
+    write_match_meta(path, meta)
+    return job
+
+
+@app.get("/api/matches/{match_id}/analysis-jobs")
+def get_match_analysis_jobs(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    jobs = list_analysis_jobs(path)
+    return {
+        "schema_version": "0.1.0",
+        "match_id": match_id,
+        "jobs": jobs,
+        "latest_job": jobs[0] if jobs else None,
+    }
+
+
+@app.get("/api/analysis-jobs/{job_id}")
+def get_analysis_job(job_id: str) -> dict[str, Any]:
+    try:
+        return load_analysis_job(MATCHES_DIR, job_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/matches/{match_id}/analyze-ball")
@@ -661,6 +810,36 @@ def review_stable_players(match_id: str, payload: dict[str, Any] = Body(...)) ->
     return doc
 
 
+@app.get("/api/matches/{match_id}/change-candidates")
+def get_change_candidates(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_change_candidates_review(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/change-candidates/review")
+def review_change_candidates(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    try:
+        doc = save_change_candidate_reviews(path, updates)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    meta = read_match_meta(path)
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
 @app.get("/api/matches/{match_id}/team-config")
 def get_team_config(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -703,6 +882,60 @@ def review_contact_candidates(match_id: str, payload: dict[str, Any] = Body(...)
         raise HTTPException(status_code=400, detail="updates must be a list")
     try:
         doc = save_contact_candidate_reviews(path, updates)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    meta = read_match_meta(path)
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return doc
+
+
+@app.get("/api/matches/{match_id}/match-phase-config")
+def get_match_phase_config(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    try:
+        return load_match_phase_config(path, meta)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/match-phase-config")
+def update_match_phase_config(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    meta = read_match_meta(path)
+    try:
+        document = save_match_phase_config(path, meta, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if meta.get("status") == "analyzed":
+        meta["status"] = "reviewed"
+        write_match_meta(path, meta)
+    return document
+
+
+@app.get("/api/matches/{match_id}/pass-candidates")
+def get_pass_candidates(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_pass_candidates_review(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/pass-candidates/review")
+def review_pass_candidates(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    try:
+        doc = save_pass_candidate_reviews(path, updates)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -775,6 +1008,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "match": meta,
         "pitch_config": None,
         "analysis_report": None,
+        "analysis_chunk_manifest": None,
         "player_assignments": None,
         "identity_candidates": None,
         "identity_assignments": None,
@@ -782,6 +1016,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "stable_players": None,
         "global_identity": None,
         "global_identity_report": None,
+        "analysis_quality_report": None,
         "stabilization_report": None,
         "team_clusters": None,
         "frame_detection_counts": None,
@@ -791,6 +1026,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "player_heatmaps": None,
         "team_config": None,
         "team_stats": None,
+        "change_candidates": None,
+        "change_review_report": None,
         "tracklets": None,
         "tracking_quality_report": None,
         "ball_tracks": None,
@@ -800,6 +1037,11 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "possession_candidates": None,
         "possession_segments": None,
         "contact_candidates": None,
+        "match_phase_config": None,
+        "event_candidates": None,
+        "event_review_report": None,
+        "pass_candidates": None,
+        "pass_review_report": None,
         "possession_report": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
@@ -809,6 +1051,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
     for key, filename in [
         ("pitch_config", "pitch_config.json"),
         ("analysis_report", "analysis_report.json"),
+        ("analysis_chunk_manifest", "analysis_chunk_manifest.json"),
         ("player_assignments", "player_assignments.json"),
         ("identity_candidates", "identity_candidates.json"),
         ("identity_assignments", "identity_assignments.json"),
@@ -816,6 +1059,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("stable_players", "stable_players.json"),
         ("global_identity", "global_identity.json"),
         ("global_identity_report", "global_identity_report.json"),
+        ("analysis_quality_report", "analysis_quality_report.json"),
         ("stabilization_report", "stabilization_report.json"),
         ("team_clusters", "team_clusters.json"),
         ("frame_detection_counts", "frame_detection_counts.json"),
@@ -825,6 +1069,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("player_heatmaps", "player_heatmaps.json"),
         ("team_config", "team_config.json"),
         ("team_stats", "team_stats.json"),
+        ("change_candidates", "change_candidates.json"),
+        ("change_review_report", "change_review_report.json"),
         ("tracklets", "tracklets.json"),
         ("tracking_quality_report", "tracking_quality_report.json"),
         ("ball_tracks", "ball_tracks.json"),
@@ -834,6 +1080,11 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("possession_candidates", "possession_candidates.json"),
         ("possession_segments", "possession_segments.json"),
         ("contact_candidates", "contact_candidates.json"),
+        ("match_phase_config", "match_phase_config.json"),
+        ("event_candidates", "event_candidates.json"),
+        ("event_review_report", "event_review_report.json"),
+        ("pass_candidates", "pass_candidates.json"),
+        ("pass_review_report", "pass_review_report.json"),
         ("possession_report", "possession_report.json"),
     ]:
         file_path = path / filename
@@ -843,6 +1094,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
         package["assets"]["tracks_json"] = "tracks.json"
+    if (path / "analysis_chunk_manifest.json").exists():
+        package["assets"]["analysis_chunk_manifest_json"] = "analysis_chunk_manifest.json"
     if (path / "player_assignments.json").exists():
         package["assets"]["player_assignments_json"] = "player_assignments.json"
     if (path / "identity_candidates.json").exists():
@@ -857,6 +1110,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["global_identity_json"] = "global_identity.json"
     if (path / "global_identity_report.json").exists():
         package["assets"]["global_identity_report_json"] = "global_identity_report.json"
+    if (path / "analysis_quality_report.json").exists():
+        package["assets"]["analysis_quality_report_json"] = "analysis_quality_report.json"
     if (path / "stabilization_report.json").exists():
         package["assets"]["stabilization_report_json"] = "stabilization_report.json"
     if (path / "stable_overlay_preview.mp4").exists():
@@ -879,6 +1134,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["team_config_json"] = "team_config.json"
     if (path / "team_stats.json").exists():
         package["assets"]["team_stats_json"] = "team_stats.json"
+    if (path / "change_candidates.json").exists():
+        package["assets"]["change_candidates_json"] = "change_candidates.json"
+    if (path / "change_review_report.json").exists():
+        package["assets"]["change_review_report_json"] = "change_review_report.json"
     if (path / "tracklets.json").exists():
         package["assets"]["tracklets_json"] = "tracklets.json"
     if (path / "tracking_quality_report.json").exists():
@@ -901,6 +1160,16 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["possession_segments_json"] = "possession_segments.json"
     if (path / "contact_candidates.json").exists():
         package["assets"]["contact_candidates_json"] = "contact_candidates.json"
+    if (path / "match_phase_config.json").exists():
+        package["assets"]["match_phase_config_json"] = "match_phase_config.json"
+    if (path / "event_candidates.json").exists():
+        package["assets"]["event_candidates_json"] = "event_candidates.json"
+    if (path / "event_review_report.json").exists():
+        package["assets"]["event_review_report_json"] = "event_review_report.json"
+    if (path / "pass_candidates.json").exists():
+        package["assets"]["pass_candidates_json"] = "pass_candidates.json"
+    if (path / "pass_review_report.json").exists():
+        package["assets"]["pass_review_report_json"] = "pass_review_report.json"
     if (path / "possession_report.json").exists():
         package["assets"]["possession_report_json"] = "possession_report.json"
     if (path / "possession_overlay_preview.mp4").exists():
@@ -998,6 +1267,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     allowed = {
         "tracks.json": "application/json",
         "analysis_report.json": "application/json",
+        "analysis_chunk_manifest.json": "application/json",
         "overlay_preview.mp4": "video/mp4",
         "heatmap_all_tracks.png": "image/png",
         "pitch_config.json": "application/json",
@@ -1009,6 +1279,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "stable_players.json": "application/json",
         "global_identity.json": "application/json",
         "global_identity_report.json": "application/json",
+        "analysis_quality_report.json": "application/json",
         "stabilization_report.json": "application/json",
         "team_clusters.json": "application/json",
         "frame_detection_counts.json": "application/json",
@@ -1018,6 +1289,8 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "player_heatmaps.json": "application/json",
         "team_config.json": "application/json",
         "team_stats.json": "application/json",
+        "change_candidates.json": "application/json",
+        "change_review_report.json": "application/json",
         "tracklets.json": "application/json",
         "tracking_quality_report.json": "application/json",
         "ball_candidates.json": "application/json",
@@ -1028,6 +1301,11 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "possession_candidates.json": "application/json",
         "possession_segments.json": "application/json",
         "contact_candidates.json": "application/json",
+        "match_phase_config.json": "application/json",
+        "event_candidates.json": "application/json",
+        "event_review_report.json": "application/json",
+        "pass_candidates.json": "application/json",
+        "pass_review_report.json": "application/json",
         "possession_report.json": "application/json",
         "run_metadata.json": "application/json",
         "stable_overlay_preview.mp4": "video/mp4",

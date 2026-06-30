@@ -92,6 +92,33 @@ class GlobalIdentityTests(unittest.TestCase):
         identity = self.resolve(tracklets)
         self.assertEqual(identity["summary"]["team_counts"]["A"], 7)
 
+    def test_new_entry_after_long_absence_uses_bench_slot_instead_of_recycling_starter(self) -> None:
+        tracklets = [
+            tracklet("1:1", "A", [position(frame, 1 + frame * 0.01, 1) for frame in range(6)])
+        ]
+        for index in range(2, 8):
+            tracklets.append(
+                tracklet(
+                    f"{index}:1",
+                    "A",
+                    [
+                        position(0, index, 2),
+                        position(120, index + 0.1, 2),
+                        position(240, index + 0.2, 2),
+                        position(300, index + 0.3, 2),
+                    ],
+                )
+            )
+        tracklets.append(tracklet("8:1", "A", [position(300, 20, 2), position(301, 20.1, 2)]))
+
+        identity = self.resolve(tracklets)
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        a08 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A08")
+        self.assertEqual(a01["tracklet_ids"], ["1:1"])
+        self.assertEqual(a08["tracklet_ids"], ["8:1"])
+        self.assertEqual(identity["summary"]["team_counts"]["A"], 8)
+
     def test_outputs_slot_frame_counts(self) -> None:
         identity = self.resolve(
             [

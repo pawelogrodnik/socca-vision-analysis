@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.event_candidates import write_event_candidate_artifacts
+from app.services.match_phase_config import load_match_phase_config
+
 CONTACT_REVIEW_STATUSES = {"needs_review", "accepted", "rejected", "uncertain"}
 
 
@@ -102,6 +105,7 @@ def save_contact_candidate_reviews(match_path: Path, updates: list[dict[str, Any
             raise ValueError(f"Invalid review_status '{status}'. Allowed values: {allowed}")
         candidate["review_status"] = status
         candidate["status"] = status
+        candidate["review_source"] = "manual"
         if "notes" in update:
             candidate["review_notes"] = str(update.get("notes") or "")
         elif "review_notes" in update:
@@ -111,4 +115,11 @@ def save_contact_candidate_reviews(match_path: Path, updates: list[dict[str, Any
     document["updated_at"] = _now_iso()
     _update_summary(document)
     _contact_candidates_path(match_path).write_text(json.dumps(document, indent=2), encoding="utf-8")
+    write_event_candidate_artifacts(match_path, document, _load_phase_config_for_match(match_path))
     return document
+
+
+def _load_phase_config_for_match(match_path: Path) -> dict[str, Any]:
+    meta_path = match_path / "match.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    return load_match_phase_config(match_path, meta)
