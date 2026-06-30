@@ -985,6 +985,7 @@ export type Match = MatchMetadataPayload & {
   analysis_job_status?: string;
   pitch_config?: unknown;
   analysis_report?: AnalysisReport;
+  performance_report?: PerformanceReport;
   analysis_chunk_manifest?: Record<string, unknown>;
   stable_players?: StablePlayersDocument;
   stabilization_report?: Record<string, unknown>;
@@ -1061,6 +1062,25 @@ export type RuntimeInfo = {
   recommended_yolo_devices: string[];
 };
 
+export type PerformanceReport = {
+  schema_version?: string;
+  label?: string;
+  runtime?: RuntimeInfo;
+  requested_device?: string;
+  normalized_yolo_device?: string;
+  elapsed_wall_sec?: number;
+  throughput?: {
+    processed_frames?: number;
+    processed_frames_per_wall_sec?: number;
+    analyzed_video_sec?: number;
+    video_seconds_per_wall_second?: number;
+    estimated_40_min_wall_min?: number | null;
+  };
+  analysis_summary?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+  artifacts?: Record<string, unknown>;
+};
+
 export type AnalysisJob = {
   schema_version: string;
   job_id: string;
@@ -1118,6 +1138,7 @@ export type AnalysisReport = {
   generated_at?: string;
   run_directory?: string;
   run_manifest?: string;
+  performance_report?: PerformanceReport;
   note?: string;
   frames_processed?: number;
   detections_kept?: number;
@@ -1136,6 +1157,7 @@ export type AnalysisReport = {
     tracks_json: string;
     overlay_preview: string;
     heatmap_all_tracks: string;
+    performance_report?: string;
     analysis_chunk_manifest?: string;
     stable_players?: string;
     global_identity?: string;
@@ -1191,6 +1213,7 @@ export type MatchPackage = {
   stable_players?: StablePlayersDocument | null;
   global_identity?: Record<string, unknown> | null;
   global_identity_report?: GlobalIdentityReport | null;
+  performance_report?: PerformanceReport | null;
   analysis_quality_report?: AnalysisQualityReport | null;
   analysis_chunk_manifest?: Record<string, unknown> | null;
   stabilization_report?: Record<string, unknown> | null;

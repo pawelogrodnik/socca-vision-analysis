@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +28,7 @@ from app.services.player_identity import build_player_identity_review, save_play
 from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
-from app.services.runtime import collect_runtime_info
+from app.services.runtime import build_performance_report, collect_runtime_info, normalize_yolo_device
 from app.services.stabilization import load_stable_review, load_team_config_review, save_stable_review, save_team_config_review
 from app.services.team_profiles import build_team_profile_stats
 from app.services.team_registry import create_team as registry_create_team
@@ -198,6 +199,7 @@ def run_match_analysis_and_update_meta(
 ) -> dict[str, Any]:
     if progress:
         progress("preparing", 8.0, "Preparing analysis inputs.", None)
+    started_at = time.perf_counter()
     if payload.chunked:
         report = analyze_match_chunked_yolo(
             path,
@@ -221,6 +223,23 @@ def run_match_analysis_and_update_meta(
             yolo_tracker=payload.yolo_tracker,
             yolo_device=payload.yolo_device,
         )
+    elapsed_wall_sec = time.perf_counter() - started_at
+    report_runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else collect_runtime_info()
+    report_parameters = report.get("parameters") if isinstance(report.get("parameters"), dict) else {}
+    normalized_device = str(report_parameters.get("yolo_device") or "")
+    if normalized_device == "auto":
+        normalized_device = normalize_yolo_device(payload.yolo_device) or "auto"
+    performance_report = build_performance_report(
+        label=f"{match_id}-{payload.adapter}",
+        requested_device=payload.yolo_device,
+        normalized_device=normalized_device,
+        elapsed_wall_sec=elapsed_wall_sec,
+        analysis_report=report,
+        runtime_info=report_runtime,
+    )
+    report["performance_report"] = performance_report
+    (path / "performance_report.json").write_text(json.dumps(performance_report, indent=2), encoding="utf-8")
+    report = attach_analysis_artifact_to_report(path, report, key="performance_report", filename="performance_report.json")
     if progress:
         progress("finalizing", 95.0, "Updating match metadata.", None)
     meta = read_match_meta(path)
@@ -456,6 +475,7 @@ def get_match(match_id: str) -> dict[str, Any]:
     for optional in [
         "pitch_config.json",
         "analysis_report.json",
+        "performance_report.json",
         "analysis_chunk_manifest.json",
         "match_package.json",
         "player_assignments.json",
@@ -997,6 +1017,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "match": meta,
         "pitch_config": None,
         "analysis_report": None,
+        "performance_report": None,
         "analysis_chunk_manifest": None,
         "player_assignments": None,
         "identity_candidates": None,
@@ -1040,6 +1061,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
     for key, filename in [
         ("pitch_config", "pitch_config.json"),
         ("analysis_report", "analysis_report.json"),
+        ("performance_report", "performance_report.json"),
         ("analysis_chunk_manifest", "analysis_chunk_manifest.json"),
         ("player_assignments", "player_assignments.json"),
         ("identity_candidates", "identity_candidates.json"),
@@ -1085,6 +1107,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["tracks_json"] = "tracks.json"
     if (path / "analysis_chunk_manifest.json").exists():
         package["assets"]["analysis_chunk_manifest_json"] = "analysis_chunk_manifest.json"
+    if (path / "performance_report.json").exists():
+        package["assets"]["performance_report_json"] = "performance_report.json"
     if (path / "player_assignments.json").exists():
         package["assets"]["player_assignments_json"] = "player_assignments.json"
     if (path / "identity_candidates.json").exists():
@@ -1256,6 +1280,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     allowed = {
         "tracks.json": "application/json",
         "analysis_report.json": "application/json",
+        "performance_report.json": "application/json",
         "analysis_chunk_manifest.json": "application/json",
         "overlay_preview.mp4": "video/mp4",
         "heatmap_all_tracks.png": "image/png",

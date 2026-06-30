@@ -22,9 +22,11 @@ import type {
   MatchMetadataPayload,
   RuntimeInfo,
 } from '../types';
+import { applyAnalysisPreset, type AnalysisPresetId } from '../lib/analysisPreflight';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
 import { AnalysisForm } from './AnalysisForm';
+import { AnalysisPreflightPanel } from './AnalysisPreflightPanel';
 import { AnalysisQualityPanel } from './AnalysisQualityPanel';
 import { IdentityCandidatePanel } from '../IdentityCandidatePanel';
 import { MatchList } from './MatchList';
@@ -322,6 +324,11 @@ export function AdminPanel() {
     }
   }
 
+  function handleApplyAnalysisPreset(presetId: AnalysisPresetId) {
+    setAnalysis((current) => applyAnalysisPreset(current, presetId, runtimeInfo));
+    setStatus('Zastosowano preset analizy. Sprawdz production preflight przed startem.');
+  }
+
   async function runBallAnalysis() {
     if (!selectedId || isBusy) return;
     if (!hasPitchConfig(selected)) {
@@ -483,7 +490,8 @@ export function AdminPanel() {
     setActiveStep(nextStep);
   }
 
-  const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || hasPitchConfig(selected)));
+  const savedPitchConfig = hasPitchConfig(selected);
+  const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || savedPitchConfig));
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
   const steps = workflowSteps(activeStep, selected);
 
@@ -648,6 +656,18 @@ export function AdminPanel() {
             Kolejnosc: gora-lewo, gora-prawo, dol-prawo, dol-lewo. Boisko:
             30 x 47.4 m. Punkty: {pitchPoints.length}/4.
           </p>
+          <AnalysisPreflightPanel
+            match={selected}
+            analysis={analysis}
+            runtimeInfo={runtimeInfo}
+            hasSavedPitchConfig={savedPitchConfig}
+            hasPendingPitchPoints={pitchPoints.length === 4}
+            canRun={canAnalyze}
+            disabled={isBusy}
+            isRunning={busyAction === 'analysis'}
+            onApplyPreset={handleApplyAnalysisPreset}
+            onRun={savePitchAndRunAnalysis}
+          />
           <div className='pitch-canvas-wrap workflow-pitch'>
             <canvas
               ref={canvasRef}
