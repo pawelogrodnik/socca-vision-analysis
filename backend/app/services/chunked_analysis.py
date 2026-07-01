@@ -122,6 +122,8 @@ def analyze_match_chunked_yolo(
         raise ValueError("Real chunked analysis currently supports the yolo adapter only.")
 
     from app.services.analysis import (
+        DEFAULT_CLAMP_POSITIONS_TO_PITCH,
+        DEFAULT_PITCH_FILTER_MARGIN_PX,
         _load_yolo_model,
         _write_outputs,
         collect_yolo_tracks_range,
@@ -452,7 +454,9 @@ def analyze_match_chunked_yolo(
             "yolo_device": yolo_device or "auto",
             "yolo_device_requested": requested_device_label(payload.get("yolo_device")),
             "classes": ["person"],
-            "pitch_filter": "footpoint_in_pitch_polygon",
+            "pitch_filter": "footpoint_in_pitch_polygon_with_margin",
+            "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
+            "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
             "tracking_backend": "centroid" if yolo_tracker == "centroid_high_recall" else "ultralytics",
             "ball_yolo_model": ball_yolo_model if include_ball else None,
             "ball_yolo_conf": ball_yolo_conf if include_ball else None,
@@ -465,6 +469,14 @@ def analyze_match_chunked_yolo(
         "detections_rejected_outside_pitch": sum(
             int(((chunk.get("metrics") or {}).get("detections_rejected_outside_pitch") or 0)) for chunk in chunks
         ),
+        "detections_accepted_by_pitch_margin": sum(
+            int(((chunk.get("metrics") or {}).get("detections_accepted_by_pitch_margin") or 0)) for chunk in chunks
+        ),
+        "positions_clamped_to_pitch": sum(
+            int(((chunk.get("metrics") or {}).get("positions_clamped_to_pitch") or 0)) for chunk in chunks
+        ),
+        "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
+        "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
         "tracks_count": len(merged_tracks),
         "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
         "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),

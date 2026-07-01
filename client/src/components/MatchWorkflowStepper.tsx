@@ -5,6 +5,7 @@ export type WorkflowStep = {
   label: string;
   description: string;
   status: WorkflowStepStatus;
+  statusLabel?: string;
   disabled?: boolean;
 };
 
@@ -39,7 +40,7 @@ export function MatchWorkflowStepper({
             <strong>{step.label}</strong>
             <small>{step.description}</small>
           </span>
-          <em>{statusLabel(step.status)}</em>
+          <em>{step.statusLabel || statusLabel(step.status)}</em>
         </button>
       ))}
     </nav>

@@ -315,6 +315,95 @@ def load_player_assignments(path: Path, tracks: list[dict[str, Any]] | None = No
     }
 
 
+PACKAGE_REQUIRED_KEYS = [
+    "analysis_report",
+    "stable_players",
+    "player_identity_assignments",
+    "resolved_player_stats",
+    "team_config",
+    "team_stats",
+]
+
+PACKAGE_OPTIONAL_KEYS = [
+    "pitch_config",
+    "performance_report",
+    "analysis_chunk_manifest",
+    "global_identity",
+    "global_identity_report",
+    "analysis_quality_report",
+    "stabilization_report",
+    "team_clusters",
+    "frame_detection_counts",
+    "movement_stats",
+    "player_stats",
+    "player_heatmaps",
+    "change_candidates",
+    "change_review_report",
+    "ball_tracks",
+    "ball_analysis_report",
+    "ball_tracking_report",
+    "ball_quality_report",
+    "possession_candidates",
+    "possession_segments",
+    "contact_candidates",
+    "match_phase_config",
+    "event_candidates",
+    "event_review_report",
+    "pass_candidates",
+    "pass_review_report",
+    "possession_report",
+]
+
+PACKAGE_DEBUG_KEYS = [
+    "player_assignments",
+    "identity_candidates",
+    "identity_assignments",
+    "tracklets",
+    "tracking_quality_report",
+]
+
+
+def _has_assigned_real_player(identity_doc: dict[str, Any] | None) -> bool:
+    if not isinstance(identity_doc, dict):
+        return False
+    for assignment in identity_doc.get("assignments") or []:
+        if not isinstance(assignment, dict):
+            continue
+        if assignment.get("status") == "assigned" and assignment.get("player_id"):
+            return True
+    return False
+
+
+def build_package_validation(package: dict[str, Any]) -> dict[str, Any]:
+    missing_required = [key for key in PACKAGE_REQUIRED_KEYS if package.get(key) is None]
+    warnings: list[str] = []
+    analysis_report = package.get("analysis_report") if isinstance(package.get("analysis_report"), dict) else None
+    if analysis_report and analysis_report.get("status") != "completed":
+        missing_required.append("analysis_report.status_completed")
+    identity_doc = package.get("player_identity_assignments") if isinstance(package.get("player_identity_assignments"), dict) else None
+    if identity_doc and not _has_assigned_real_player(identity_doc):
+        warnings.append("No real roster player is assigned. This is allowed, but player profile aggregation will be empty.")
+    summary = identity_doc.get("summary") if isinstance(identity_doc, dict) and isinstance(identity_doc.get("summary"), dict) else {}
+    conflicts_total = int(summary.get("conflicts_total") or 0) if isinstance(summary, dict) else 0
+    if conflicts_total > 0:
+        warnings.append(f"Player identity review contains {conflicts_total} conflict(s).")
+    status = "blocked" if missing_required else ("warnings" if warnings else "ready")
+    return {
+        "status": status,
+        "missing_required": missing_required,
+        "warnings": warnings,
+        "optional_available": [key for key in PACKAGE_OPTIONAL_KEYS if package.get(key) is not None],
+        "debug_available": [key for key in PACKAGE_DEBUG_KEYS if package.get(key) is not None],
+    }
+
+
+def ensure_package_publishable(package: dict[str, Any]) -> None:
+    validation = package.get("package_validation") if isinstance(package.get("package_validation"), dict) else build_package_validation(package)
+    if validation.get("status") == "blocked":
+        missing = ", ".join(str(item) for item in validation.get("missing_required") or [])
+        raise ValueError(f"Match package is not publishable. Missing required data: {missing or 'unknown'}")
+
+
 def build_assignment_summary(meta: dict[str, Any], tracks: list[dict[str, Any]], assignments: list[dict[str, Any]]) -> dict[str, Any]:
     track_ids = {int(track.get("track_id")) for track in tracks if track.get("track_id") is not None}
     valid_assignments = [a for a in assignments if int(a.get("tracklet_id", -1)) in track_ids]
@@ -1011,7 +1100,7 @@ def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) 
 def build_match_package(path: Path) -> dict[str, Any]:
     meta = read_match_meta(path)
     package = {
-        "schema_version": "0.1.0",
+        "schema_version": "0.2.0",
         "generated_at": now_iso(),
         "contains_video": False,
         "match": meta,
@@ -1105,6 +1194,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
         package["assets"]["tracks_json"] = "tracks.json"
+    if (path / "overlay_preview.mp4").exists():
+        package["assets"]["overlay_preview"] = "overlay_preview.mp4"
     if (path / "analysis_chunk_manifest.json").exists():
         package["assets"]["analysis_chunk_manifest_json"] = "analysis_chunk_manifest.json"
     if (path / "performance_report.json").exists():
@@ -1187,6 +1278,26 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["possession_report_json"] = "possession_report.json"
     if (path / "possession_overlay_preview.mp4").exists():
         package["assets"]["possession_overlay_preview"] = "possession_overlay_preview.mp4"
+    package["required"] = {key: package.get(key) for key in PACKAGE_REQUIRED_KEYS}
+    package["optional"] = {key: package.get(key) for key in PACKAGE_OPTIONAL_KEYS}
+    package["debug"] = {
+        **{key: package.get(key) for key in PACKAGE_DEBUG_KEYS},
+        "assets": {
+            key: value
+            for key, value in package["assets"].items()
+            if key
+            in {
+                "tracks_json",
+                "overlay_preview",
+                "debug_identity_overlay",
+                "identity_candidates_json",
+                "identity_assignments_json",
+                "tracklets_json",
+                "tracking_quality_report_json",
+            }
+        },
+    }
+    package["package_validation"] = build_package_validation(package)
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -1202,6 +1313,7 @@ def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]
     path = match_dir(match_id)
     package_path = path / "match_package.json"
     package = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else build_match_package(path)
+    ensure_package_publishable(package)
     try:
         published = publish_match_package(package, replace=replace)
     except FileExistsError as exc:
@@ -1222,6 +1334,7 @@ def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str
     path = match_dir(match_id)
     package_path = path / "match_package.json"
     package = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else build_match_package(path)
+    ensure_package_publishable(package)
     try:
         published = import_match_package(package, replace=replace)
     except FileExistsError as exc:

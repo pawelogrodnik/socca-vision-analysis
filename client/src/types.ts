@@ -1199,6 +1199,14 @@ export type AnalysisReport = {
   [key: string]: unknown;
 };
 
+export type MatchPackageValidation = {
+  status: 'ready' | 'blocked' | 'warnings' | string;
+  missing_required: string[];
+  warnings: string[];
+  optional_available: string[];
+  debug_available?: string[];
+};
+
 export type MatchPackage = {
   schema_version: string;
   generated_at: string;
@@ -1208,6 +1216,10 @@ export type MatchPackage = {
   player_count: number;
   assets: Record<string, string>;
   publish_status: string;
+  required?: Record<string, unknown>;
+  optional?: Record<string, unknown>;
+  debug?: Record<string, unknown>;
+  package_validation?: MatchPackageValidation;
   player_assignments?: PlayerAssignmentsDocument | null;
   player_identity_assignments?: PlayerIdentityAssignmentsDocument | null;
   stable_players?: StablePlayersDocument | null;

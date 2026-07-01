@@ -24,6 +24,7 @@ import type {
 } from '../types';
 import { applyAnalysisPreset, type AnalysisPresetId } from '../lib/analysisPreflight';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
+import { buildReviewReadiness, type ReviewReadiness } from '../lib/reviewReadiness';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
 import { AnalysisForm } from './AnalysisForm';
 import { AnalysisPreflightPanel } from './AnalysisPreflightPanel';
@@ -125,15 +126,17 @@ function stepStatus(
   stepId: WorkflowStepId,
   activeStep: WorkflowStepId,
   selected: Match | null,
+  readiness: ReviewReadiness,
 ): WorkflowStep['status'] {
   if (stepId === activeStep) return 'current';
   if (stepId === 'video' && selected) return 'done';
   if (stepId === 'analysis' && isAnalysisCompleted(selected)) return 'done';
-  if (stepId === 'review' && isAnalysisCompleted(selected) && activeStep === 'publish') {
+  if (stepId === 'review' && readiness.readyForPackage && activeStep === 'publish') {
     return 'done';
   }
   if (stepId === 'publish' && isPublished(selected)) return 'done';
-  if ((stepId === 'analysis' && !selected) || (stepId !== 'video' && stepId !== 'analysis' && !isAnalysisCompleted(selected))) {
+  if (stepId === 'publish' && !readiness.readyForPackage) return 'locked';
+  if ((stepId === 'analysis' && !selected) || (stepId === 'review' && !isAnalysisCompleted(selected))) {
     return 'locked';
   }
   return 'ready';
@@ -143,13 +146,22 @@ function workflowSteps(
   activeStep: WorkflowStepId,
   selected: Match | null,
 ): WorkflowStep[] {
+  const readiness = buildReviewReadiness(selected);
   return (Object.keys(workflowCopy) as WorkflowStepId[]).map((stepId) => {
-    const status = stepStatus(stepId, activeStep, selected);
+    const status = stepStatus(stepId, activeStep, selected, readiness);
+    const description = stepId === 'review'
+      ? readiness.statusLabel
+      : stepId === 'publish'
+        ? readiness.readyForPublish
+          ? 'ready'
+          : 'locked until review ready'
+        : workflowCopy[stepId].description;
     return {
       id: stepId,
       label: workflowCopy[stepId].label,
-      description: workflowCopy[stepId].description,
+      description,
       status,
+      statusLabel: stepId === 'review' || stepId === 'publish' ? description : undefined,
       disabled: status === 'locked',
     };
   });
@@ -413,6 +425,11 @@ export function AdminPanel() {
 
   async function buildPackage() {
     if (!selectedId || isBusy) return;
+    const readiness = buildReviewReadiness(selected);
+    if (!readiness.readyForPackage) {
+      setStatus(`Nie mozna wygenerowac paczki: brakuje ${readiness.missingRequired.join(', ')}.`);
+      return;
+    }
     setBusyAction('package');
     setStatus('Generuje match_package.json...');
     try {
@@ -428,6 +445,11 @@ export function AdminPanel() {
 
   async function publishSelected(replace = false) {
     if (!selectedId || isBusy) return;
+    const readiness = buildReviewReadiness(selected);
+    if (!readiness.readyForPublish) {
+      setStatus(`Nie mozna opublikowac: brakuje ${readiness.missingRequired.join(', ')}.`);
+      return;
+    }
     setBusyAction('publish');
     setStatus(replace ? 'Nadpisuje mecz w bazie...' : 'Importuje mecz do SQLite...');
     try {
@@ -487,12 +509,16 @@ export function AdminPanel() {
     if ((nextStep === 'review' || nextStep === 'publish') && !isAnalysisCompleted(selected)) {
       return;
     }
+    if (nextStep === 'publish' && !buildReviewReadiness(selected).readyForPackage) {
+      return;
+    }
     setActiveStep(nextStep);
   }
 
   const savedPitchConfig = hasPitchConfig(selected);
   const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || savedPitchConfig));
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
+  const reviewReadiness = buildReviewReadiness(selected);
   const steps = workflowSteps(activeStep, selected);
 
   return (
@@ -1014,27 +1040,59 @@ export function AdminPanel() {
             <div className='chips'>
               <span>Status: {selected.status || 'uploaded'}</span>
               <span>Analysis: {selected.analysis_report?.status || 'missing'}</span>
+              <span>Review: {reviewReadiness.statusLabel}</span>
               <span>Package: {selected.match_package ? 'ready' : 'not generated'}</span>
               <span>Published: {selected.published_match_id || 'not yet'}</span>
             </div>
+            <div className='artifact-box'>
+              <h3>Review readiness</h3>
+              <div className='quality-list compact-list'>
+                {reviewReadiness.checks.map((check) => (
+                  <div key={check.key} className={`quality-row ${check.ready ? 'active' : ''}`}>
+                    <div>
+                      <strong>{check.label}</strong>
+                      <span>{check.ready ? 'ready' : 'missing'}</span>
+                    </div>
+                    <span>{check.required ? 'required' : 'optional'}</span>
+                  </div>
+                ))}
+              </div>
+              {reviewReadiness.warnings.length > 0 && (
+                <div className='quality-alert'>
+                  <strong>Review warnings</strong>
+                  {reviewReadiness.warnings.map((warning) => (
+                    <span key={warning}>{warning}</span>
+                  ))}
+                </div>
+              )}
+              {reviewReadiness.blocking && (
+                <p className='error'>
+                  Brakuje wymaganych danych: {reviewReadiness.missingRequired.join(', ')}.
+                </p>
+              )}
+            </div>
             <div className='row'>
-              <button type='button' onClick={buildPackage} disabled={isBusy}>
+              <button type='button' onClick={buildPackage} disabled={isBusy || !reviewReadiness.readyForPackage}>
                 {busyAction === 'package' ? 'Generuje...' : 'Generate match_package.json'}
               </button>
               <button
                 type='button'
                 onClick={() => publishSelected(false)}
-                disabled={isBusy}
+                disabled={isBusy || !reviewReadiness.readyForPublish}
               >
-                {busyAction === 'publish' ? 'Publikuje...' : 'Publish/import to DB'}
+                {busyAction === 'publish'
+                  ? 'Publikuje...'
+                  : reviewReadiness.warnings.length > 0
+                    ? 'Publish anyway/import to DB'
+                    : 'Publish/import to DB'}
               </button>
               <button
                 type='button'
                 className='secondary'
                 onClick={() => publishSelected(true)}
-                disabled={isBusy}
+                disabled={isBusy || !reviewReadiness.readyForPublish}
               >
-                Replace in DB
+                {reviewReadiness.warnings.length > 0 ? 'Replace anyway in DB' : 'Replace in DB'}
               </button>
             </div>
           </section>

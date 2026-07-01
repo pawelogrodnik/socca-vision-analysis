@@ -22,6 +22,9 @@ from app.services.video import read_video_metadata
 
 AnalysisAdapter = Literal["motion", "yolo"]
 
+DEFAULT_PITCH_FILTER_MARGIN_PX = 60.0
+DEFAULT_CLAMP_POSITIONS_TO_PITCH = True
+
 BALL_ARTIFACT_FILENAMES = {
     "ball_candidates": "ball_candidates.json",
     "ball_tracks": "ball_tracks.json",
@@ -229,14 +232,39 @@ def _draw_frame_stamp(frame: np.ndarray, frame_idx: int) -> None:
     )
 
 
-def _tracks_with_pitch_positions(raw_tracks: list[dict[str, Any]], H: np.ndarray) -> list[dict[str, Any]]:
+def _accept_detection_by_pitch_roi(
+    foot: tuple[float, float] | list[float],
+    pitch_polygon: np.ndarray,
+    *,
+    margin_px: float = DEFAULT_PITCH_FILTER_MARGIN_PX,
+) -> tuple[bool, bool, float]:
+    distance = float(cv2.pointPolygonTest(pitch_polygon.astype(np.float32), (float(foot[0]), float(foot[1])), True))
+    accepted_by_margin = distance < 0 and distance >= -float(margin_px)
+    return distance >= -float(margin_px), accepted_by_margin, distance
+
+
+def _tracks_with_pitch_positions(
+    raw_tracks: list[dict[str, Any]],
+    H: np.ndarray,
+    *,
+    pitch: PitchConfig | None = None,
+    clamp_positions_to_pitch: bool = DEFAULT_CLAMP_POSITIONS_TO_PITCH,
+) -> list[dict[str, Any]]:
     tracks_json: list[dict[str, Any]] = []
     for track in raw_tracks:
         positions = []
         mapped = image_to_pitch_m([(float(p["footpoint"][0]), float(p["footpoint"][1])) for p in track["positions"]], H)
         for p, pitch_m in zip(track["positions"], mapped):
             row = dict(p)
-            row["pitch_m"] = [round(float(pitch_m[0]), 3), round(float(pitch_m[1]), 3)]
+            x_m = float(pitch_m[0])
+            y_m = float(pitch_m[1])
+            if pitch is not None and clamp_positions_to_pitch:
+                clamped_x = float(np.clip(x_m, 0.0, pitch.width_m))
+                clamped_y = float(np.clip(y_m, 0.0, pitch.length_m))
+                if abs(clamped_x - x_m) > 1e-6 or abs(clamped_y - y_m) > 1e-6:
+                    row["pitch_m_clamped"] = True
+                x_m, y_m = clamped_x, clamped_y
+            row["pitch_m"] = [round(x_m, 3), round(y_m, 3)]
             positions.append(row)
         if positions:
             tracks_json.append(
@@ -250,6 +278,15 @@ def _tracks_with_pitch_positions(raw_tracks: list[dict[str, Any]], H: np.ndarray
                 }
             )
     return sorted(tracks_json, key=lambda item: int(item["track_id"]))
+
+
+def _count_clamped_pitch_positions(tracks_json: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for track in tracks_json
+        for position in (track.get("positions") or [])
+        if isinstance(position, dict) and position.get("pitch_m_clamped") is True
+    )
 
 
 def save_heatmap(match_dir: Path, pitch: PitchConfig, tracks: list[dict[str, Any]]) -> Path:
@@ -499,6 +536,7 @@ def collect_yolo_tracks_range(
     processed = 0
     detections_kept = 0
     detections_rejected_outside_pitch = 0
+    detections_accepted_by_pitch_margin = 0
     yolo_frames_with_results = 0
 
     try:
@@ -533,9 +571,12 @@ def collect_yolo_tracks_range(
                         for bbox, conf in zip(xyxy, confs):
                             x1, y1, x2, y2 = [float(v) for v in bbox]
                             foot = [float((x1 + x2) / 2), float(y2)]
-                            if not point_in_polygon((foot[0], foot[1]), pitch_polygon):
+                            accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                            if not accepted:
                                 detections_rejected_outside_pitch += 1
                                 continue
+                            if accepted_by_margin:
+                                detections_accepted_by_pitch_margin += 1
                             detections.append(
                                 {
                                     "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
@@ -563,9 +604,12 @@ def collect_yolo_tracks_range(
                         for bbox, track_id, conf in zip(xyxy, ids, confs):
                             x1, y1, x2, y2 = [float(v) for v in bbox]
                             foot = [float((x1 + x2) / 2), float(y2)]
-                            if not point_in_polygon((foot[0], foot[1]), pitch_polygon):
+                            accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                            if not accepted:
                                 detections_rejected_outside_pitch += 1
                                 continue
+                            if accepted_by_margin:
+                                detections_accepted_by_pitch_margin += 1
                             global_track_id = int(track_id) + int(track_id_offset)
                             row = {
                                 "track_id": global_track_id,
@@ -599,7 +643,8 @@ def collect_yolo_tracks_range(
             )
     else:
         raw_tracks = [{"track_id": tid, "positions": positions} for tid, positions in sorted(tracks.items()) if positions]
-    tracks_json = _tracks_with_pitch_positions(raw_tracks, H)
+    tracks_json = _tracks_with_pitch_positions(raw_tracks, H, pitch=pitch)
+    positions_clamped_to_pitch = _count_clamped_pitch_positions(tracks_json)
     warnings: list[str] = []
     if processed == 0:
         warnings.append("No frames were processed in this chunk.")
@@ -616,6 +661,10 @@ def collect_yolo_tracks_range(
             "yolo_frames_with_results": yolo_frames_with_results,
             "detections_kept": detections_kept,
             "detections_rejected_outside_pitch": detections_rejected_outside_pitch,
+            "detections_accepted_by_pitch_margin": detections_accepted_by_pitch_margin,
+            "positions_clamped_to_pitch": positions_clamped_to_pitch,
+            "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
+            "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
             "tracks_count": len(tracks_json),
             "track_id_offset": int(track_id_offset),
             "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
@@ -720,6 +769,7 @@ def analyze_match_yolo(
         processed = 0
         detections_kept = 0
         detections_rejected_outside_pitch = 0
+        detections_accepted_by_pitch_margin = 0
         yolo_frames_with_results = 0
 
         try:
@@ -755,9 +805,12 @@ def analyze_match_yolo(
                             for bbox, conf in zip(xyxy, confs):
                                 x1, y1, x2, y2 = [float(v) for v in bbox]
                                 foot = [float((x1 + x2) / 2), float(y2)]
-                                if not point_in_polygon((foot[0], foot[1]), pitch_polygon):
+                                accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                                if not accepted:
                                     detections_rejected_outside_pitch += 1
                                     continue
+                                if accepted_by_margin:
+                                    detections_accepted_by_pitch_margin += 1
                                 detections.append(
                                     {
                                         "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
@@ -786,9 +839,12 @@ def analyze_match_yolo(
                             for bbox, track_id, conf in zip(xyxy, ids, confs):
                                 x1, y1, x2, y2 = [float(v) for v in bbox]
                                 foot = [float((x1 + x2) / 2), float(y2)]
-                                if not point_in_polygon((foot[0], foot[1]), pitch_polygon):
+                                accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                                if not accepted:
                                     detections_rejected_outside_pitch += 1
                                     continue
+                                if accepted_by_margin:
+                                    detections_accepted_by_pitch_margin += 1
                                 row = {
                                     "track_id": int(track_id),
                                     "frame": int(frame_idx),
@@ -815,7 +871,8 @@ def analyze_match_yolo(
             raw_tracks = [{"track_id": track.id, "positions": track.positions} for track in centroid_tracker.all_tracks()]
         else:
             raw_tracks = [{"track_id": tid, "positions": positions} for tid, positions in sorted(tracks.items()) if positions]
-        tracks_json = _tracks_with_pitch_positions(raw_tracks, H)
+        tracks_json = _tracks_with_pitch_positions(raw_tracks, H, pitch=pitch)
+        positions_clamped_to_pitch = _count_clamped_pitch_positions(tracks_json)
         warnings: list[str] = []
         if processed == 0:
             warnings.append("No frames were processed.")
@@ -879,7 +936,9 @@ def analyze_match_yolo(
                 "yolo_device_requested": requested_device_label(requested_yolo_device),
                 "classes": ["person"],
                 "pitch_mask_before_yolo": False,
-                "pitch_filter": "footpoint_in_pitch_polygon",
+                "pitch_filter": "footpoint_in_pitch_polygon_with_margin",
+                "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
+                "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
                 "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
             },
             "frames_processed": processed,
@@ -887,6 +946,10 @@ def analyze_match_yolo(
             "yolo_frames_with_results": yolo_frames_with_results,
             "detections_kept": detections_kept,
             "detections_rejected_outside_pitch": detections_rejected_outside_pitch,
+            "detections_accepted_by_pitch_margin": detections_accepted_by_pitch_margin,
+            "positions_clamped_to_pitch": positions_clamped_to_pitch,
+            "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
+            "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
             "tracks_count": len(tracks_json),
             "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
             "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),

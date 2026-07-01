@@ -50,7 +50,7 @@ This snapshot should be updated whenever a milestone is completed or materially 
 - `[x]` Identity resolver/review: anonymous stable slot/stint identity (`A01-A07`, `B01-B07`, plus bench subjects such as `A08+`/`B08+`) exists with conservative anti-switch logic, `change_candidates.json` flags likely on/off changes for review, and `player_identity_assignments.json` maps stable slots/stints to real roster `player_id`.
 - `[~]` Player stats: tracking-only movement stats, conservative `peak_sustained_speed`, sprint/high-intensity metrics, sprint candidate/rejection diagnostics, per-player heatmaps, formal `player_stats.json`, and basic `team_stats.json` exist; configurable thresholds UI is not done.
 - `[~]` Match report/admin UI: app shows artifacts, stable slots, team config, analysis runs, `analysis_quality_report.json`, quality diagnostics and movement/player stats; local `/matches/:matchId/report` and public `/published/matches/:matchId/report` now share one layout, and admin uses a step-by-step workflow, while export/share polish is still pending.
-- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates, contact-candidate review, derived `event_candidates.json` and experimental `pass_candidates.json` with pass geometry exist as candidate layers, background analysis jobs, real chunked runner v1 with retry/resume, native runtime diagnostics, benchmark scripts and production preflight/presets exist, while shots, full event review, export/share polish and production-grade chunk merge polish are not implemented.
+- `[~]` Tracking-only cross-match aggregation exists for player profiles and local team dashboard; ball tracking, conservative possession/contact candidates, contact-candidate review, derived `event_candidates.json` and experimental `pass_candidates.json` with pass geometry exist as candidate layers, background analysis jobs, real chunked runner v1 with retry/resume, native runtime diagnostics, benchmark scripts, production preflight/presets, review readiness guards, expanded pitch-edge detection ROI and package contract `0.2.0` exist, while shots, full event review, export/share polish and production-grade chunk merge polish are not implemented.
 
 ---
 
@@ -811,7 +811,7 @@ Jako użytkownik chcę szybko poprawić błędne kandydaty podań.
 
 # Milestone 12 — Product hardening and performance
 
-**Status:** `[~]` background analysis job API/UI polling, persisted job status files, quality smoke checker, native runtime diagnostics, benchmark scripts, real chunked runner v1 and admin production preflight/presets are implemented. Stop controls, artifact cleanup, benchmark-derived wall-time estimates and production-grade chunk merge polish are still pending.
+**Status:** `[~]` background analysis job API/UI polling, persisted job status files, quality smoke checker, native runtime diagnostics, benchmark scripts, real chunked runner v1, admin production preflight/presets, review readiness guards, expanded pitch-edge detection ROI and package contract `0.2.0` are implemented. Stop controls, artifact cleanup, richer export/share polish and production-grade chunk merge polish are still pending.
 
 ## Cel
 
@@ -850,6 +850,10 @@ Jako developer chcę uruchomić ten sam benchmark na MPS/CUDA/CPU bez Dockera, �
 - `[x]` Standardowy run analizy zapisuje `performance_report.json` przy meczu i w run artifacts, żeby preflight po szybkim teście mógł oszacować koszt pełnego runa.
 - `[x]` Admin UI ma production preflight przed startem analizy: pokazuje metadata video, zakres analizy, liczbe chunków, szacowane ramki YOLO, runtime/device, checklistę blokad/ostrzeżeń oraz koszt opcji `include_ball`.
 - `[x]` UI ma presety analizy `fast_debug`, `standard_full`, `production_ball` i `quality_full`, które ustawiają payload analizy zamiast ręcznego klikania wszystkich pól.
+- `[x]` Admin UI ma review readiness checklist i blokuje package/publish, gdy brakuje wymaganych dokumentów tracking-only.
+- `[x]` YOLO player filtering używa `pitch_filter_margin_px` przy krawędziach boiska i clampuje pozycje boiskowe do prawdziwych wymiarów pitch config.
+- `[x]` `match_package.json` ma kontrakt `0.2.0` z sekcjami `required`, `optional`, `debug` oraz `package_validation`.
+- `[x]` `publish-local` i publish blokują paczki z `package_validation.status === blocked`; ball/possession/pass pozostają opcjonalne.
 - `[~]` Można ponowić analizę chunked bez powtarzania ukończonych chunków; stop/cancel endpoint nie jest jeszcze zaimplementowany.
 - `[ ]` Artefakty są wersjonowane per run.
 - `[x]` Istnieją presety YOLO/tracking:
