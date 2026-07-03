@@ -46,21 +46,24 @@ import { TrackletAssignmentPanel } from './TrackletAssignmentPanel';
 
 const defaultAnalysis: AnalysisPayload = {
   adapter: 'yolo',
-  max_seconds: 30,
+  max_seconds: 0,
   frame_stride: 1,
-  chunked: false,
+  chunked: true,
   chunk_duration_sec: 120,
   chunk_overlap_sec: 2,
-  include_ball: false,
+  include_ball: true,
   yolo_model: 'yolov8n.pt',
   yolo_conf: 0.05,
-  yolo_imgsz: 1920,
+  yolo_imgsz: 1280,
   yolo_tracker: 'centroid_high_recall',
   yolo_device: null,
   ball_yolo_model: 'models/best.pt',
   ball_yolo_conf: 0.03,
   ball_yolo_imgsz: 960,
   ball_yolo_device: null,
+  camera_motion_compensation: true,
+  camera_motion_interval_sec: 0.5,
+  camera_motion_min_inlier_ratio: 0.6,
 };
 
 const localBallModelPath = 'models/best.pt';
@@ -406,7 +409,7 @@ export function AdminPanel() {
   }
 
   async function waitForAnalysisJob(jobId: string): Promise<AnalysisJob> {
-    let latest = await getAnalysisJob(jobId);
+    let latest = await fetchAnalysisJobWithRetry(jobId);
     setActiveAnalysisJob(latest);
     while (!['completed', 'failed'].includes(latest.status)) {
       const chunkText = latest.chunk_count ? ` chunks ${latest.chunk_count}` : '';
@@ -414,13 +417,26 @@ export function AdminPanel() {
         `Analiza ${latest.status}: ${latest.stage} ${Math.round(latest.progress_percent || 0)}%${chunkText}. ${latest.message || ''}`,
       );
       await delay(2000);
-      latest = await getAnalysisJob(jobId);
+      latest = await fetchAnalysisJobWithRetry(jobId);
       setActiveAnalysisJob(latest);
     }
     if (latest.status === 'failed') {
       throw new Error(latest.error?.message || latest.message || 'Analysis job failed');
     }
     return latest;
+  }
+
+  async function fetchAnalysisJobWithRetry(jobId: string): Promise<AnalysisJob> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await getAnalysisJob(jobId);
+      } catch (error) {
+        lastError = error;
+        await delay(400 * (attempt + 1));
+      }
+    }
+    throw lastError;
   }
 
   async function buildPackage() {

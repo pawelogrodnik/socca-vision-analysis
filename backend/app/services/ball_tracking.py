@@ -41,6 +41,7 @@ def detect_ball_yolo_coco(
     yolo_device: str | None,
     ball_conf: float = DEFAULT_BALL_CONF,
     max_interpolation_gap_sec: float = DEFAULT_MAX_INTERPOLATION_GAP_SEC,
+    camera_motion: Any | None = None,
 ) -> dict[str, Any]:
     import cv2
     import numpy as np
@@ -80,6 +81,10 @@ def detect_ball_yolo_coco(
             "model_classes": class_config["model_classes"],
         }
     )
+    if camera_motion is not None and getattr(camera_motion, "enabled", False):
+        parameters["pitch_filter"] = "calibrated_center_in_pitch_polygon"
+        parameters["camera_motion_compensation"] = True
+        parameters["camera_motion_reference_frame"] = getattr(camera_motion, "reference_frame", None)
     if not class_config["class_ids"]:
         warnings.append(
             "Selected YOLO model does not expose a class named ball/sports ball and is not a single-class model, "
@@ -114,6 +119,7 @@ def detect_ball_yolo_coco(
             pitch.polygon_np,
             fps=fps,
             frame_size=(width, height),
+            camera_motion=camera_motion,
         )
         return _ball_result(candidates_doc, tracks_doc, report, quality_report)
 
@@ -172,6 +178,7 @@ def detect_ball_yolo_coco(
                         pitch_polygon=pitch_polygon,
                         homography=H,
                         frame_size=(width, height),
+                        camera_motion=camera_motion,
                     )
             for item in rejected:
                 rejected_summary[str(item.get("reason") or "unknown")] += 1
@@ -217,6 +224,7 @@ def detect_ball_yolo_coco(
         pitch_polygon,
         fps=fps,
         frame_size=(width, height),
+        camera_motion=camera_motion,
     )
     return _ball_result(candidates_doc, tracks_doc, report, quality_report)
 
@@ -234,6 +242,7 @@ def collect_ball_candidates_range(
     yolo_device: str | None,
     ball_conf: float = DEFAULT_BALL_CONF,
     max_interpolation_gap_sec: float = DEFAULT_MAX_INTERPOLATION_GAP_SEC,
+    camera_motion: Any | None = None,
 ) -> dict[str, Any]:
     import cv2
     import numpy as np
@@ -255,6 +264,10 @@ def collect_ball_candidates_range(
         yolo_device=yolo_device,
         max_interpolation_gap_sec=max_interpolation_gap_sec,
     )
+    if camera_motion is not None and getattr(camera_motion, "enabled", False):
+        parameters["pitch_filter"] = "calibrated_center_in_pitch_polygon"
+        parameters["camera_motion_compensation"] = True
+        parameters["camera_motion_reference_frame"] = getattr(camera_motion, "reference_frame", None)
     start_frame = max(0, int(round(max(0.0, start_time_sec) * fps)))
     end_frame = max(start_frame, int(round(max(start_time_sec, end_time_sec) * fps)))
     if frame_count > 0:
@@ -335,6 +348,7 @@ def collect_ball_candidates_range(
                         pitch_polygon=pitch_polygon,
                         homography=H,
                         frame_size=(width, height),
+                        camera_motion=camera_motion,
                     )
             for item in rejected:
                 rejected_summary[str(item.get("reason") or "unknown")] += 1
@@ -422,6 +436,7 @@ def extract_ball_candidates(
     pitch_polygon: Any,
     homography: Any,
     frame_size: tuple[int, int],
+    camera_motion: Any | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     width, height = frame_size
     candidates: list[dict[str, Any]] = []
@@ -434,12 +449,20 @@ def extract_ball_candidates(
         box_height = max(0.0, y2 - y1)
         area = box_width * box_height
         center = [float((x1 + x2) / 2.0), float((y1 + y2) / 2.0)]
+        calibrated_center = (
+            camera_motion.transform_point(frame_idx, center)
+            if camera_motion is not None
+            else [round(center[0], 2), round(center[1], 2)]
+        )
+        motion_fields = camera_motion.metadata_for_frame(frame_idx) if camera_motion is not None else {}
         base = {
             "candidate_id": f"ball-f{frame_idx:06d}-c{index:02d}",
             "frame": int(frame_idx),
             "time_sec": round(float(frame_idx / max(fps, 0.001)), 3),
             "bbox_xyxy": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
             "position_px": [round(center[0], 2), round(center[1], 2)],
+            "calibrated_position_px": [round(float(calibrated_center[0]), 2), round(float(calibrated_center[1]), 2)],
+            **motion_fields,
             "confidence": round(float(conf), 4),
             "class_id": detected_class_id,
             "class_name": detected_class_name,
@@ -451,11 +474,12 @@ def extract_ball_candidates(
             base,
             pitch_polygon=pitch_polygon,
             frame_size=frame_size,
+            pitch_point_px=calibrated_center,
         )
         if reject_reason:
             rejected.append({**base, "reason": reject_reason})
             continue
-        pitch_m = _image_to_pitch_m(center[0], center[1], homography)
+        pitch_m = _image_to_pitch_m(float(calibrated_center[0]), float(calibrated_center[1]), homography)
         candidates.append(
             {
                 **base,
@@ -832,6 +856,7 @@ def write_ball_overlay(
     fps: float,
     frame_size: tuple[int, int],
     output_name: str = "ball_overlay_preview.mp4",
+    camera_motion: Any | None = None,
 ) -> Path:
     import cv2
     import numpy as np
@@ -862,7 +887,8 @@ def write_ball_overlay(
                 frame_idx += 1
                 continue
             overlay = frame.copy()
-            cv2.polylines(overlay, [pitch_polygon.astype(np.int32)], isClosed=True, color=(0, 255, 255), thickness=2)
+            overlay_polygon = camera_motion.polygon_for_frame(frame_idx, pitch_polygon) if camera_motion is not None else pitch_polygon
+            cv2.polylines(overlay, [overlay_polygon.astype(np.int32)], isClosed=True, color=(0, 255, 255), thickness=2)
             _draw_ball_candidates(overlay, candidates_by_frame.get(frame_idx, []))
             _draw_ball_position(overlay, position_by_frame[frame_idx])
             _draw_ball_hud(
@@ -920,6 +946,7 @@ def _ball_candidate_reject_reason(
     *,
     pitch_polygon: Any,
     frame_size: tuple[int, int],
+    pitch_point_px: Any | None = None,
 ) -> str | None:
     width, height = frame_size
     frame_area = max(1.0, float(width * height))
@@ -935,7 +962,7 @@ def _ball_candidate_reject_reason(
     aspect = box_width / max(box_height, 0.001)
     if aspect < 0.25 or aspect > 4.0:
         return "bad_aspect_ratio"
-    center = candidate.get("position_px")
+    center = pitch_point_px or candidate.get("position_px")
     if not center or len(center) != 2:
         return "missing_center"
     if not _point_in_polygon((float(center[0]), float(center[1])), pitch_polygon):
@@ -948,6 +975,7 @@ def _candidate_to_position(candidate: dict[str, Any], *, source: str) -> dict[st
         "frame": int(candidate.get("frame") or 0),
         "time_sec": candidate.get("time_sec"),
         "position_px": candidate.get("position_px"),
+        "calibrated_position_px": candidate.get("calibrated_position_px"),
         "position_m": candidate.get("position_m"),
         "bbox_xyxy": candidate.get("bbox_xyxy"),
         "source": source,

@@ -28,6 +28,17 @@ def candidate(frame: int, x: float, y: float, confidence: float = 0.7) -> dict:
     }
 
 
+class FakeCameraMotion:
+    enabled = True
+    reference_frame = 0
+
+    def transform_point(self, _frame_idx: int, point: list[float]) -> list[float]:
+        return [round(float(point[0]) - 20.0, 2), round(float(point[1]), 2)]
+
+    def metadata_for_frame(self, _frame_idx: int) -> dict:
+        return {"camera_motion_status": "ok", "camera_motion_inlier_ratio": 0.9}
+
+
 class BallTrackingTests(unittest.TestCase):
     def test_resolve_ball_model_classes_accepts_one_class_custom_model(self) -> None:
         model = type("Model", (), {"names": {0: "ball"}})()
@@ -75,6 +86,24 @@ class BallTrackingTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
         self.assertEqual(rejected[0]["reason"], "outside_pitch")
+
+    def test_extract_ball_candidates_uses_calibrated_center_for_pitch_position(self) -> None:
+        pitch_polygon = np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32)
+        candidates, rejected = extract_ball_candidates(
+            np.array([[108, 8, 112, 12]], dtype=np.float32),
+            np.array([0.5], dtype=np.float32),
+            frame_idx=3,
+            fps=30,
+            pitch_polygon=pitch_polygon,
+            homography=np.eye(3, dtype=np.float32),
+            frame_size=(160, 120),
+            camera_motion=FakeCameraMotion(),
+        )
+
+        self.assertEqual(rejected, [])
+        self.assertEqual(candidates[0]["position_px"], [110.0, 10.0])
+        self.assertEqual(candidates[0]["calibrated_position_px"], [90.0, 10.0])
+        self.assertEqual(candidates[0]["position_m"], [90.0, 10.0])
 
     def test_ball_positions_interpolate_short_gap(self) -> None:
         selected = {

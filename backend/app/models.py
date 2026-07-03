@@ -73,6 +73,11 @@ class AnalyzePayload(BaseModel):
     ball_yolo_imgsz: int = 960
     ball_yolo_device: str | None = None
 
+    # Camera motion compensation for drone sway within one stable camera segment.
+    camera_motion_compensation: bool = True
+    camera_motion_interval_sec: float = 0.5
+    camera_motion_min_inlier_ratio: float = 0.6
+
 
 class BallAnalyzePayload(BaseModel):
     max_seconds: float = 3.0

@@ -12,6 +12,7 @@ class PitchConfig:
     image_points: list[list[float]]
     width_m: float = 26.0
     length_m: float = 56.0
+    calibration_frame_time_sec: float = 0.0
 
     @property
     def polygon_np(self) -> np.ndarray:

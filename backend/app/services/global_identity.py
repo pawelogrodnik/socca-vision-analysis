@@ -119,6 +119,7 @@ class Observation:
     time_sec: float
     bbox_xyxy: list[int]
     footpoint: list[float] | None
+    calibrated_footpoint: list[float] | None
     pitch_m: list[float]
     confidence: float
     tracklet_id: str
@@ -441,14 +442,17 @@ class SlotState:
             return False
         return gap_sec <= MAX_VISUAL_PREDICTION_SEC
 
-    def _bbox_footpoint_inside_pitch_polygon(self, bbox_xyxy: list[int]) -> bool:
+    def _bbox_footpoint_inside_pitch_polygon(self, bbox_xyxy: list[int], footpoint_override: list[float] | None = None) -> bool:
         if self.pitch_polygon is None:
             return True
         try:
             import cv2
 
-            x1, _, x2, y2 = [float(value) for value in bbox_xyxy]
-            footpoint = ((x1 + x2) / 2.0, y2)
+            if footpoint_override and len(footpoint_override) >= 2:
+                footpoint = (float(footpoint_override[0]), float(footpoint_override[1]))
+            else:
+                x1, _, x2, y2 = [float(value) for value in bbox_xyxy]
+                footpoint = ((x1 + x2) / 2.0, y2)
             return cv2.pointPolygonTest(self.pitch_polygon.astype("float32"), footpoint, False) >= 0
         except Exception:
             return True
@@ -501,6 +505,7 @@ def build_observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[O
                     time_sec=float(position.get("time_sec") or 0.0),
                     bbox_xyxy=[int(round(float(value))) for value in bbox],
                     footpoint=position.get("footpoint"),
+                    calibrated_footpoint=position.get("calibrated_footpoint"),
                     pitch_m=[float(pitch[0]), float(pitch[1])],
                     confidence=float(position.get("confidence") or tracklet.get("mean_confidence") or 0.0),
                     tracklet_id=tracklet_id,
@@ -842,7 +847,7 @@ def _trusted_detection_rejection_reason(slot: SlotState, obs: Observation) -> di
     stateless_rejection = _stateless_detection_rejection_reason(obs)
     if stateless_rejection is not None:
         return stateless_rejection
-    if not slot._bbox_footpoint_inside_pitch_polygon(obs.bbox_xyxy):
+    if not slot._bbox_footpoint_inside_pitch_polygon(obs.bbox_xyxy, obs.calibrated_footpoint):
         return {"reason": "bbox_outside_pitch_polygon"}
     if slot.detected_frames < BBOX_OUTLIER_MIN_DETECTIONS:
         return None

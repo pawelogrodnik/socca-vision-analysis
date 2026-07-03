@@ -65,6 +65,9 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       yolo_imgsz: 960,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
+      camera_motion_compensation: true,
+      camera_motion_interval_sec: 0.5,
+      camera_motion_min_inlier_ratio: 0.6,
     },
   },
   {
@@ -82,6 +85,9 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       yolo_imgsz: 1280,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
+      camera_motion_compensation: true,
+      camera_motion_interval_sec: 0.5,
+      camera_motion_min_inlier_ratio: 0.6,
     },
   },
   {
@@ -102,6 +108,9 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       ball_yolo_model: 'models/best.pt',
       ball_yolo_conf: 0.03,
       ball_yolo_imgsz: 960,
+      camera_motion_compensation: true,
+      camera_motion_interval_sec: 0.5,
+      camera_motion_min_inlier_ratio: 0.6,
     },
   },
   {
@@ -122,6 +131,9 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       ball_yolo_model: 'models/best.pt',
       ball_yolo_conf: 0.03,
       ball_yolo_imgsz: 1280,
+      camera_motion_compensation: true,
+      camera_motion_interval_sec: 0.5,
+      camera_motion_min_inlier_ratio: 0.6,
     },
   },
 ];

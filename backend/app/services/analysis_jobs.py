@@ -158,7 +158,9 @@ def _write_job(match_path: Path, document: dict[str, Any]) -> None:
     job_id = str(document["job_id"])
     path = _job_path(match_path, job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    tmp_path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _job_path(match_path: Path, job_id: str) -> Path:
@@ -172,5 +174,8 @@ def _jobs_dir(match_path: Path) -> Path:
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    loaded = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
     return loaded if isinstance(loaded, dict) else None

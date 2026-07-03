@@ -20,6 +20,8 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const frameDetectionCounts = report?.artifacts?.frame_detection_counts;
   const globalIdentity = report?.artifacts?.global_identity;
   const globalIdentityReport = report?.artifacts?.global_identity_report;
+  const cameraMotionReport = report?.artifacts?.camera_motion_report;
+  const cameraMotionOverlay = report?.artifacts?.camera_motion_overlay;
   const analysisQualityReport = report?.artifacts?.analysis_quality_report || (match.analysis_quality_report ? 'analysis_quality_report.json' : undefined);
   const teamConfig = report?.artifacts?.team_config;
   const teamStats = report?.artifacts?.team_stats;
@@ -115,6 +117,16 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
           {analysisQualityReport && (
             <a href={artifactUrl(match.id, analysisQualityReport)}>
               Pobierz analysis_quality_report.json
+            </a>
+          )}
+          {cameraMotionReport && (
+            <a href={artifactUrl(match.id, cameraMotionReport)}>
+              Pobierz camera_motion_report.json
+            </a>
+          )}
+          {cameraMotionOverlay && (
+            <a href={artifactUrl(match.id, cameraMotionOverlay)}>
+              Otworz camera_motion_overlay.mp4
             </a>
           )}
           {frameDetectionCounts && (

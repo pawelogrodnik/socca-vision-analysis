@@ -28,7 +28,7 @@ class CentroidTracker:
         self.finished: list[Track] = []
 
     def update(self, detections: list[dict[str, Any]], frame_idx: int, time_sec: float) -> list[dict[str, Any]]:
-        centroids = np.array([d["footpoint"] for d in detections], dtype=np.float32)
+        centroids = np.array([d.get("tracking_footpoint") or d["footpoint"] for d in detections], dtype=np.float32)
         unmatched_dets = set(range(len(detections)))
 
         for track in self.tracks.values():

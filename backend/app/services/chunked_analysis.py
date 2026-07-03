@@ -131,6 +131,15 @@ def analyze_match_chunked_yolo(
         write_raw_overlay_from_tracks,
     )
     from app.services.ball_possession import build_ball_possession_analysis
+    from app.services.camera_motion import (
+        DEFAULT_CAMERA_MOTION_COMPENSATION,
+        DEFAULT_CAMERA_MOTION_INTERVAL_SEC,
+        DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO,
+        CameraMotionModel,
+        build_camera_motion_model,
+        write_camera_motion_overlay,
+        write_camera_motion_report,
+    )
     from app.services.ball_tracking import (
         DEFAULT_BALL_CONF,
         build_ball_candidates_document,
@@ -160,7 +169,29 @@ def analyze_match_chunked_yolo(
     ball_yolo_conf = float(payload.get("ball_yolo_conf") or DEFAULT_BALL_CONF)
     ball_yolo_imgsz = int(payload.get("ball_yolo_imgsz") or yolo_imgsz)
     ball_yolo_device = normalize_yolo_device(payload.get("ball_yolo_device") or payload.get("yolo_device"))
+    camera_motion_compensation = bool(payload.get("camera_motion_compensation", DEFAULT_CAMERA_MOTION_COMPENSATION))
+    camera_motion_interval_sec = float(payload.get("camera_motion_interval_sec") or DEFAULT_CAMERA_MOTION_INTERVAL_SEC)
+    camera_motion_min_inlier_ratio = float(payload.get("camera_motion_min_inlier_ratio") or DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO)
     runtime_info = collect_runtime_info()
+    analysis_end_sec = float(payload.get("max_seconds") or 0.0) or None
+    camera_motion_warnings: list[str] = []
+    try:
+        camera_motion = build_camera_motion_model(
+            video_path,
+            metadata,
+            calibration_frame_time_sec=pitch.calibration_frame_time_sec,
+            start_time_sec=0.0,
+            end_time_sec=analysis_end_sec,
+            interval_sec=camera_motion_interval_sec,
+            min_inlier_ratio=camera_motion_min_inlier_ratio,
+            enabled=camera_motion_compensation,
+        )
+    except Exception as exc:
+        camera_motion = CameraMotionModel.disabled(
+            fps=float(metadata.get("fps") or 0.0),
+            frame_count=int(metadata.get("frame_count") or 0),
+        )
+        camera_motion_warnings.append(f"Camera motion compensation disabled after estimator failure: {exc}")
     shared_model = _load_yolo_model(yolo_model) if yolo_tracker == "centroid_high_recall" else None
     ball_model = _load_yolo_model(ball_yolo_model) if include_ball else None
 
@@ -174,6 +205,10 @@ def analyze_match_chunked_yolo(
     manifest["parameters"]["yolo_tracker"] = yolo_tracker
     manifest["parameters"]["yolo_device"] = yolo_device or "auto"
     manifest["parameters"]["yolo_device_requested"] = requested_device_label(payload.get("yolo_device"))
+    manifest["parameters"]["camera_motion_compensation"] = camera_motion.enabled
+    manifest["parameters"]["camera_motion_interval_sec"] = camera_motion_interval_sec
+    manifest["parameters"]["camera_motion_min_inlier_ratio"] = camera_motion_min_inlier_ratio
+    manifest["parameters"]["camera_motion_reference_frame"] = camera_motion.reference_frame
     manifest["parameters"]["include_ball"] = include_ball
     if include_ball:
         manifest["parameters"]["ball_yolo_model"] = ball_yolo_model
@@ -228,6 +263,7 @@ def analyze_match_chunked_yolo(
                 yolo_device=yolo_device,
                 track_id_offset=int(chunk["index"]) * 100000,
                 model=shared_model,
+                camera_motion=camera_motion,
             )
             tracks_path.write_text(json.dumps(chunk_result["tracks"], indent=2), encoding="utf-8")
             chunk_artifacts = {
@@ -248,6 +284,7 @@ def analyze_match_chunked_yolo(
                     yolo_imgsz=ball_yolo_imgsz,
                     yolo_device=ball_yolo_device,
                     ball_conf=ball_yolo_conf,
+                    camera_motion=camera_motion,
                 )
                 ball_observations = {
                     "schema_version": "0.1.0",
@@ -325,9 +362,25 @@ def analyze_match_chunked_yolo(
         metadata,
         frame_stride=frame_stride,
         max_seconds=float(payload.get("max_seconds") or 0.0),
+        camera_motion=camera_motion,
     )
     artifacts = _write_outputs(match_dir, pitch, merged_tracks)
-    stabilization = stabilize_match(match_dir, video_path, pitch, merged_tracks, metadata)
+    write_camera_motion_report(match_dir, camera_motion)
+    artifacts["camera_motion_report"] = "camera_motion_report.json"
+    try:
+        write_camera_motion_overlay(
+            video_path,
+            match_dir,
+            camera_motion,
+            pitch.polygon_np,
+            metadata,
+            frame_stride=frame_stride,
+            max_seconds=float(payload.get("max_seconds") or 0.0),
+        )
+        artifacts["camera_motion_overlay"] = "camera_motion_overlay.mp4"
+    except Exception as exc:
+        camera_motion_warnings.append(f"Camera motion debug overlay failed: {exc}")
+    stabilization = stabilize_match(match_dir, video_path, pitch, merged_tracks, metadata, camera_motion=camera_motion)
     artifacts.update(stabilization["artifacts"])
     artifacts["analysis_chunk_manifest"] = "analysis_chunk_manifest.json"
     ball_tracking: dict[str, Any] | None = None
@@ -370,6 +423,7 @@ def analyze_match_chunked_yolo(
             pitch.polygon_np,
             fps=float(metadata.get("fps") or 0.0),
             frame_size=(int(metadata.get("width") or 0), int(metadata.get("height") or 0)),
+            camera_motion=camera_motion,
         )
         ball_tracking = {
             "ball_candidates": ball_candidates_doc,
@@ -404,7 +458,7 @@ def analyze_match_chunked_yolo(
         for warning in (chunk.get("warnings") or [])
         if isinstance(warning, str)
     ]
-    warnings = list(dict.fromkeys(chunk_warnings))
+    warnings = list(dict.fromkeys([*camera_motion_warnings, *chunk_warnings]))
     if not include_ball:
         warnings.append("Chunked run skipped ball/possession analysis because include_ball=false.")
     manifest["status"] = "completed"
@@ -457,6 +511,11 @@ def analyze_match_chunked_yolo(
             "pitch_filter": "footpoint_in_pitch_polygon_with_margin",
             "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
             "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
+            "camera_motion_compensation": camera_motion.enabled,
+            "camera_motion_interval_sec": camera_motion_interval_sec,
+            "camera_motion_min_inlier_ratio": camera_motion_min_inlier_ratio,
+            "camera_motion_reference_frame": camera_motion.reference_frame,
+            "camera_motion_reference_time_sec": round(camera_motion.reference_time_sec, 3),
             "tracking_backend": "centroid" if yolo_tracker == "centroid_high_recall" else "ultralytics",
             "ball_yolo_model": ball_yolo_model if include_ball else None,
             "ball_yolo_conf": ball_yolo_conf if include_ball else None,
@@ -477,6 +536,7 @@ def analyze_match_chunked_yolo(
         ),
         "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
         "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
+        "camera_motion_summary": camera_motion.report()["summary"],
         "tracks_count": len(merged_tracks),
         "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
         "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
@@ -592,7 +652,14 @@ def _manifest_matches_payload(manifest: dict[str, Any], payload: dict[str, Any])
         return False
     if bool(parameters.get("include_ball")) != bool(payload.get("include_ball")):
         return False
-    numeric_keys = ["max_seconds", "frame_stride", "chunk_duration_sec", "chunk_overlap_sec"]
+    numeric_keys = [
+        "max_seconds",
+        "frame_stride",
+        "chunk_duration_sec",
+        "chunk_overlap_sec",
+        "camera_motion_interval_sec",
+        "camera_motion_min_inlier_ratio",
+    ]
     for key in numeric_keys:
         if abs(float(parameters.get(key) or 0.0) - float(payload.get(key) or 0.0)) > 1e-6:
             return False
@@ -600,6 +667,8 @@ def _manifest_matches_payload(manifest: dict[str, Any], payload: dict[str, Any])
     for key in yolo_keys:
         if key in parameters and str(parameters.get(key)) != str(payload.get(key)):
             return False
+    if bool(parameters.get("camera_motion_compensation")) != bool(payload.get("camera_motion_compensation", True)):
+        return False
     if bool(payload.get("include_ball")):
         ball_numeric_keys = ["ball_yolo_conf", "ball_yolo_imgsz"]
         for key in ball_numeric_keys:

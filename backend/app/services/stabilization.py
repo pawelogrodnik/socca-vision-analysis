@@ -2260,6 +2260,7 @@ def write_stable_overlay(
     frame_size: tuple[int, int],
     output_name: str = "stable_overlay_preview.mp4",
     include_untrusted: bool = False,
+    camera_motion: Any | None = None,
 ) -> Path:
     import cv2
     import numpy as np
@@ -2274,6 +2275,7 @@ def write_stable_overlay(
         pitch_polygon,
         fps=fps,
         include_untrusted=include_untrusted,
+        camera_motion=camera_motion,
     )
 
     cap = cv2.VideoCapture(str(video_path))
@@ -2294,7 +2296,8 @@ def write_stable_overlay(
             if not ok or frame_idx > max_frame:
                 break
             overlay = frame.copy()
-            cv2.polylines(overlay, [pitch_polygon.astype(np.int32)], isClosed=True, color=(0, 255, 255), thickness=2)
+            overlay_polygon = camera_motion.polygon_for_frame(frame_idx, pitch_polygon) if camera_motion is not None else pitch_polygon
+            cv2.polylines(overlay, [overlay_polygon.astype(np.int32)], isClosed=True, color=(0, 255, 255), thickness=2)
             current_rows = frame_rows.get(frame_idx, [])
             for row in current_rows:
                 center = _bbox_center(row["bbox_xyxy"])
@@ -2306,6 +2309,8 @@ def write_stable_overlay(
                 _draw_stable_row(overlay, row)
             visual_counts = _visual_counts(current_rows)
             _draw_stable_hud(overlay, frame_idx, fps, summary, frame_counts.get(frame_idx), visual_counts)
+            if camera_motion is not None:
+                _draw_camera_motion_hud(overlay, camera_motion.sample_for_frame(frame_idx))
             _draw_player_stats_panel(overlay, stats_rows)
             _draw_frame_stamp(overlay, frame_idx)
             writer.write(overlay)
@@ -2321,6 +2326,7 @@ def _stable_overlay_frame_rows(
     *,
     fps: float,
     include_untrusted: bool = False,
+    camera_motion: Any | None = None,
 ) -> dict[int, list[dict[str, Any]]]:
     frame_rows: dict[int, list[dict[str, Any]]] = {}
     for player in stable_doc.get("players", []):
@@ -2334,6 +2340,7 @@ def _stable_overlay_frame_rows(
             pitch_polygon,
             fps=fps,
             include_untrusted=include_untrusted,
+            camera_motion=camera_motion,
         )
         for position in visual_positions:
             row = dict(position)
@@ -2359,6 +2366,7 @@ def _stable_overlay_visual_positions(
     *,
     fps: float,
     include_untrusted: bool,
+    camera_motion: Any | None = None,
 ) -> list[dict[str, Any]]:
     visual_by_frame: dict[int, dict[str, Any]] = {}
     trusted_detected: list[dict[str, Any]] = []
@@ -2369,9 +2377,11 @@ def _stable_overlay_visual_positions(
     for position in sorted_positions:
         if not position.get("bbox_xyxy"):
             continue
+        frame = int(position.get("frame") or 0)
+        frame_pitch_polygon = camera_motion.polygon_for_frame(frame, pitch_polygon) if camera_motion is not None else pitch_polygon
         source = _overlay_position_source(position)
         if source == "detected":
-            if not _overlay_bbox_is_safe(position, bbox_stats, pitch_polygon):
+            if not _overlay_bbox_is_safe(position, bbox_stats, frame_pitch_polygon):
                 continue
             row = dict(position)
             row["source"] = "detected"
@@ -2381,7 +2391,7 @@ def _stable_overlay_visual_positions(
         if not include_untrusted:
             continue
         if source in {"predicted", "interpolated", "short_gap_interpolated"}:
-            if not _overlay_bbox_is_safe(position, bbox_stats, pitch_polygon):
+            if not _overlay_bbox_is_safe(position, bbox_stats, frame_pitch_polygon):
                 continue
         elif source == "ambiguous":
             if not _bbox_is_visual_candidate(position, bbox_stats):
@@ -2391,7 +2401,7 @@ def _stable_overlay_visual_positions(
         frame = int(position.get("frame") or 0)
         visual_by_frame.setdefault(frame, dict(position, source=source))
 
-    for position in _stable_overlay_short_gap_positions(trusted_detected, pitch_polygon, fps=fps):
+    for position in _stable_overlay_short_gap_positions(trusted_detected, pitch_polygon, fps=fps, camera_motion=camera_motion):
         visual_by_frame.setdefault(int(position.get("frame") or 0), position)
 
     return [visual_by_frame[frame] for frame in sorted(visual_by_frame)]
@@ -2402,6 +2412,7 @@ def _stable_overlay_short_gap_positions(
     pitch_polygon: Any,
     *,
     fps: float,
+    camera_motion: Any | None = None,
 ) -> list[dict[str, Any]]:
     interpolated: list[dict[str, Any]] = []
     fps_safe = max(float(fps or 0.0), 0.001)
@@ -2419,7 +2430,9 @@ def _stable_overlay_short_gap_positions(
             row["source"] = "short_gap_interpolated"
             row["status"] = "short_gap_interpolated"
             row["visual_trusted"] = True
-            if _overlay_bbox_is_safe(row, None, pitch_polygon):
+            frame = int(row.get("frame") or 0)
+            frame_pitch_polygon = camera_motion.polygon_for_frame(frame, pitch_polygon) if camera_motion is not None else pitch_polygon
+            if _overlay_bbox_is_safe(row, None, frame_pitch_polygon):
                 interpolated.append(row)
     return interpolated
 
@@ -2798,12 +2811,14 @@ def apply_stable_overlay_visual_counts(
     pitch_polygon: Any,
     *,
     fps: float = 25.0,
+    camera_motion: Any | None = None,
 ) -> dict[str, Any]:
     frame_rows = _stable_overlay_frame_rows(
         stable_doc,
         pitch_polygon,
         fps=fps,
         include_untrusted=False,
+        camera_motion=camera_motion,
     )
     counts_by_frame = {frame: _visual_counts(rows) for frame, rows in frame_rows.items()}
 
@@ -2893,6 +2908,28 @@ def _draw_stable_hud(
         cv2.putText(frame, line, (x1 + 8, y), font, font_scale, (245, 245, 245), thickness, cv2.LINE_AA)
 
 
+def _draw_camera_motion_hud(frame: Any, sample: Any) -> None:
+    import cv2
+
+    frame_height, _frame_width = frame.shape[:2]
+    inlier_ratio = getattr(sample, "inlier_ratio", None)
+    label = (
+        f"camera motion: {getattr(sample, 'status', 'unknown')} "
+        f"sample={getattr(sample, 'frame', 'n/a')} "
+        f"ir={float(inlier_ratio or 0.0):.2f} "
+        f"dx={float(getattr(sample, 'dx_px', 0.0)):.1f} dy={float(getattr(sample, 'dy_px', 0.0)):.1f}"
+    )
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.42
+    thickness = 1
+    x1 = 12
+    y1 = min(frame_height - 36, 82)
+    (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, thickness)
+    cv2.rectangle(frame, (x1, y1), (x1 + text_width + 16, y1 + text_height + baseline + 12), (20, 20, 20), -1)
+    cv2.rectangle(frame, (x1, y1), (x1 + text_width + 16, y1 + text_height + baseline + 12), (230, 230, 230), 1)
+    cv2.putText(frame, label, (x1 + 8, y1 + text_height + 6), font, font_scale, (245, 245, 245), thickness, cv2.LINE_AA)
+
+
 def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> None:
     if not stats_rows:
         return
@@ -2901,7 +2938,7 @@ def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> No
 
     frame_height, frame_width = frame.shape[:2]
     x1 = 12
-    y1 = 96
+    y1 = 124
     line_height = 15
     max_rows = max(0, min(len(stats_rows), (frame_height - y1 - 24) // line_height))
     if max_rows <= 0:
@@ -2986,6 +3023,8 @@ def stabilize_match(
     pitch: Any,
     tracks: list[dict[str, Any]],
     video_metadata: dict[str, Any],
+    *,
+    camera_motion: Any | None = None,
 ) -> dict[str, Any]:
     meta_path = match_dir / "match.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
@@ -3030,6 +3069,7 @@ def stabilize_match(
         stable_doc,
         pitch.polygon_np,
         fps=float(video_metadata.get("fps") or 25.0),
+        camera_motion=camera_motion,
     )
     stable_doc["frame_detection_summary"] = frame_detection_counts["summary"]
     stable_doc["frame_detection_counts"] = frame_detection_counts
@@ -3056,6 +3096,7 @@ def stabilize_match(
         pitch.polygon_np,
         fps=float(video_metadata.get("fps") or 25.0),
         frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
+        camera_motion=camera_motion,
     )
     write_stable_overlay(
         video_path,
@@ -3066,6 +3107,7 @@ def stabilize_match(
         frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
         output_name="debug_identity_overlay.mp4",
         include_untrusted=True,
+        camera_motion=camera_motion,
     )
     public_stable_doc = _strip_overlay_positions(stable_doc)
     parameters = {
@@ -3083,6 +3125,8 @@ def stabilize_match(
         "global_max_assignment_speed_mps": global_identity["parameters"]["max_assignment_speed_mps"],
         "global_max_prediction_sec": global_identity["parameters"]["max_prediction_sec"],
         "global_substitution_gap_sec": global_identity["parameters"]["substitution_gap_sec"],
+        "camera_motion_compensation": bool(getattr(camera_motion, "enabled", False)) if camera_motion is not None else False,
+        "camera_motion_reference_frame": getattr(camera_motion, "reference_frame", None) if camera_motion is not None else None,
     }
     report = build_stabilization_report(
         stable_doc=public_stable_doc,

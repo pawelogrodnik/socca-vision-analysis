@@ -986,6 +986,7 @@ export type Match = MatchMetadataPayload & {
   pitch_config?: unknown;
   analysis_report?: AnalysisReport;
   performance_report?: PerformanceReport;
+  camera_motion_report?: Record<string, unknown>;
   analysis_chunk_manifest?: Record<string, unknown>;
   stable_players?: StablePlayersDocument;
   stabilization_report?: Record<string, unknown>;
@@ -1034,6 +1035,9 @@ export type AnalysisPayload = {
   ball_yolo_conf: number;
   ball_yolo_imgsz: number;
   ball_yolo_device: string | null;
+  camera_motion_compensation: boolean;
+  camera_motion_interval_sec: number;
+  camera_motion_min_inlier_ratio: number;
 };
 
 export type RuntimeInfo = {
@@ -1158,6 +1162,8 @@ export type AnalysisReport = {
     overlay_preview: string;
     heatmap_all_tracks: string;
     performance_report?: string;
+    camera_motion_report?: string;
+    camera_motion_overlay?: string;
     analysis_chunk_manifest?: string;
     stable_players?: string;
     global_identity?: string;
@@ -1225,6 +1231,7 @@ export type MatchPackage = {
   stable_players?: StablePlayersDocument | null;
   global_identity?: Record<string, unknown> | null;
   global_identity_report?: GlobalIdentityReport | null;
+  camera_motion_report?: Record<string, unknown> | null;
   performance_report?: PerformanceReport | null;
   analysis_quality_report?: AnalysisQualityReport | null;
   analysis_chunk_manifest?: Record<string, unknown> | null;

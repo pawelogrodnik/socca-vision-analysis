@@ -14,6 +14,15 @@ from app.config import ROOT_DIR
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id, now_iso
 from app.services.ball_tracking import DEFAULT_BALL_CONF, detect_ball_yolo_coco
 from app.services.ball_possession import build_ball_possession_analysis
+from app.services.camera_motion import (
+    DEFAULT_CAMERA_MOTION_COMPENSATION,
+    DEFAULT_CAMERA_MOTION_INTERVAL_SEC,
+    DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO,
+    CameraMotionModel,
+    build_camera_motion_model,
+    write_camera_motion_overlay,
+    write_camera_motion_report,
+)
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
 from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label
 from app.services.stabilization import stabilize_match
@@ -142,6 +151,7 @@ def load_pitch_config(match_dir: Path) -> PitchConfig:
         image_points=data["image_points"],
         width_m=width_m,
         length_m=length_m,
+        calibration_frame_time_sec=float(data.get("calibration_frame_time_sec") or 0.0),
     )
 
 
@@ -243,6 +253,21 @@ def _accept_detection_by_pitch_roi(
     return distance >= -float(margin_px), accepted_by_margin, distance
 
 
+def _camera_motion_position_fields(
+    frame_idx: int,
+    point: tuple[float, float] | list[float],
+    camera_motion: CameraMotionModel | None,
+) -> dict[str, Any]:
+    if camera_motion is None:
+        return {"calibrated_footpoint": [round(float(point[0]), 2), round(float(point[1]), 2)]}
+    calibrated = camera_motion.transform_point(frame_idx, point)
+    return {
+        "calibrated_footpoint": calibrated,
+        "tracking_footpoint": calibrated,
+        **camera_motion.metadata_for_frame(frame_idx),
+    }
+
+
 def _tracks_with_pitch_positions(
     raw_tracks: list[dict[str, Any]],
     H: np.ndarray,
@@ -253,9 +278,16 @@ def _tracks_with_pitch_positions(
     tracks_json: list[dict[str, Any]] = []
     for track in raw_tracks:
         positions = []
-        mapped = image_to_pitch_m([(float(p["footpoint"][0]), float(p["footpoint"][1])) for p in track["positions"]], H)
+        source_points = []
+        for p in track["positions"]:
+            source_point = p.get("calibrated_footpoint") or p["footpoint"]
+            source_points.append((float(source_point[0]), float(source_point[1])))
+        mapped = image_to_pitch_m(source_points, H)
         for p, pitch_m in zip(track["positions"], mapped):
             row = dict(p)
+            row.pop("tracking_footpoint", None)
+            if p.get("calibrated_footpoint"):
+                row["pitch_m_source"] = "calibrated_footpoint"
             x_m = float(pitch_m[0])
             y_m = float(pitch_m[1])
             if pitch is not None and clamp_positions_to_pitch:
@@ -512,6 +544,7 @@ def collect_yolo_tracks_range(
     yolo_device: str | None,
     track_id_offset: int = 0,
     model: Any | None = None,
+    camera_motion: CameraMotionModel | None = None,
 ) -> dict[str, Any]:
     pitch_polygon = pitch.polygon_np
     H = pitch.homography()
@@ -571,7 +604,9 @@ def collect_yolo_tracks_range(
                         for bbox, conf in zip(xyxy, confs):
                             x1, y1, x2, y2 = [float(v) for v in bbox]
                             foot = [float((x1 + x2) / 2), float(y2)]
-                            accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                            motion_fields = _camera_motion_position_fields(frame_idx, foot, camera_motion)
+                            calibrated_foot = motion_fields["calibrated_footpoint"]
+                            accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(calibrated_foot, pitch_polygon)
                             if not accepted:
                                 detections_rejected_outside_pitch += 1
                                 continue
@@ -581,6 +616,7 @@ def collect_yolo_tracks_range(
                                 {
                                     "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
                                     "footpoint": [round(foot[0], 2), round(foot[1], 2)],
+                                    **motion_fields,
                                     "area_px": round(float((x2 - x1) * (y2 - y1)), 2),
                                     "confidence": round(float(conf), 4),
                                     "source": "yolo-person-centroid",
@@ -604,7 +640,9 @@ def collect_yolo_tracks_range(
                         for bbox, track_id, conf in zip(xyxy, ids, confs):
                             x1, y1, x2, y2 = [float(v) for v in bbox]
                             foot = [float((x1 + x2) / 2), float(y2)]
-                            accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                            motion_fields = _camera_motion_position_fields(frame_idx, foot, camera_motion)
+                            calibrated_foot = motion_fields["calibrated_footpoint"]
+                            accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(calibrated_foot, pitch_polygon)
                             if not accepted:
                                 detections_rejected_outside_pitch += 1
                                 continue
@@ -617,6 +655,7 @@ def collect_yolo_tracks_range(
                                 "time_sec": round(float(frame_idx / fps), 3),
                                 "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
                                 "footpoint": [round(foot[0], 2), round(foot[1], 2)],
+                                **motion_fields,
                                 "area_px": round(float((x2 - x1) * (y2 - y1)), 2),
                                 "confidence": round(float(conf), 4),
                                 "source": "yolo-person",
@@ -686,6 +725,7 @@ def write_raw_overlay_from_tracks(
     *,
     frame_stride: int,
     max_seconds: float,
+    camera_motion: CameraMotionModel | None = None,
 ) -> Path:
     fps, width, height = _validate_common_video_params(metadata, frame_stride)
     max_frames = int(max_seconds * fps) if max_seconds > 0 else int(metadata["frame_count"])
@@ -713,10 +753,11 @@ def write_raw_overlay_from_tracks(
             if frame_idx % frame_stride != 0:
                 frame_idx += 1
                 continue
+            overlay_polygon = camera_motion.polygon_for_frame(frame_idx, pitch_polygon) if camera_motion else pitch_polygon
             overlay_writer.write(
                 draw_overlay(
                     frame,
-                    pitch_polygon,
+                    overlay_polygon,
                     rows_by_frame.get(frame_idx, []),
                     label_prefix="P",
                     frame_idx=frame_idx,
@@ -739,6 +780,14 @@ def analyze_match_yolo(
     yolo_imgsz: int,
     yolo_tracker: str,
     yolo_device: str | None,
+    include_ball: bool = False,
+    ball_yolo_model: str = "models/best.pt",
+    ball_yolo_conf: float = DEFAULT_BALL_CONF,
+    ball_yolo_imgsz: int = 960,
+    ball_yolo_device: str | None = None,
+    camera_motion_compensation: bool = DEFAULT_CAMERA_MOTION_COMPENSATION,
+    camera_motion_interval_sec: float = DEFAULT_CAMERA_MOTION_INTERVAL_SEC,
+    camera_motion_min_inlier_ratio: float = DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO,
 ) -> dict[str, Any]:
     adapter_name = "yolo-ultralytics"
     try:
@@ -757,9 +806,25 @@ def analyze_match_yolo(
         fps, width, height = _validate_common_video_params(metadata, frame_stride)
         max_frames = int(max_seconds * fps) if max_seconds > 0 else int(metadata["frame_count"])
         overlay_writer = OverlayWriter(match_dir, fps=fps / frame_stride, frame_size=(width, height))
+        camera_motion_warnings: list[str] = []
+        try:
+            camera_motion = build_camera_motion_model(
+                video_path,
+                metadata,
+                calibration_frame_time_sec=pitch.calibration_frame_time_sec,
+                start_time_sec=0.0,
+                end_time_sec=max_seconds if max_seconds > 0 else None,
+                interval_sec=camera_motion_interval_sec,
+                min_inlier_ratio=camera_motion_min_inlier_ratio,
+                enabled=camera_motion_compensation,
+            )
+        except Exception as exc:
+            camera_motion = CameraMotionModel.disabled(fps=fps, frame_count=int(metadata.get("frame_count") or 0))
+            camera_motion_warnings.append(f"Camera motion compensation disabled after estimator failure: {exc}")
 
         resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
         model = _load_yolo_model(resolved_yolo_model)
+        ball_model = _load_yolo_model(ball_yolo_model) if include_ball else None
         use_centroid_tracker = yolo_tracker == "centroid_high_recall"
         tracker_config = _resolve_yolo_tracker_config(yolo_tracker)
         centroid_tracker = CentroidTracker(max_distance_px=max(45, width * 0.04), max_missing=max(12, int(fps * 0.6 / max(frame_stride, 1))))
@@ -805,7 +870,9 @@ def analyze_match_yolo(
                             for bbox, conf in zip(xyxy, confs):
                                 x1, y1, x2, y2 = [float(v) for v in bbox]
                                 foot = [float((x1 + x2) / 2), float(y2)]
-                                accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                                motion_fields = _camera_motion_position_fields(frame_idx, foot, camera_motion)
+                                calibrated_foot = motion_fields["calibrated_footpoint"]
+                                accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(calibrated_foot, pitch_polygon)
                                 if not accepted:
                                     detections_rejected_outside_pitch += 1
                                     continue
@@ -815,6 +882,7 @@ def analyze_match_yolo(
                                     {
                                         "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
                                         "footpoint": [round(foot[0], 2), round(foot[1], 2)],
+                                        **motion_fields,
                                         "area_px": round(float((x2 - x1) * (y2 - y1)), 2),
                                         "confidence": round(float(conf), 4),
                                         "source": "yolo-person-centroid",
@@ -839,7 +907,9 @@ def analyze_match_yolo(
                             for bbox, track_id, conf in zip(xyxy, ids, confs):
                                 x1, y1, x2, y2 = [float(v) for v in bbox]
                                 foot = [float((x1 + x2) / 2), float(y2)]
-                                accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(foot, pitch_polygon)
+                                motion_fields = _camera_motion_position_fields(frame_idx, foot, camera_motion)
+                                calibrated_foot = motion_fields["calibrated_footpoint"]
+                                accepted, accepted_by_margin, _distance = _accept_detection_by_pitch_roi(calibrated_foot, pitch_polygon)
                                 if not accepted:
                                     detections_rejected_outside_pitch += 1
                                     continue
@@ -851,6 +921,7 @@ def analyze_match_yolo(
                                     "time_sec": round(float(frame_idx / fps), 3),
                                     "bbox_xyxy": [int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))],
                                     "footpoint": [round(foot[0], 2), round(foot[1], 2)],
+                                    **motion_fields,
                                     "area_px": round(float((x2 - x1) * (y2 - y1)), 2),
                                     "confidence": round(float(conf), 4),
                                     "source": "yolo-person",
@@ -859,7 +930,8 @@ def analyze_match_yolo(
                                 active_rows.append(row)
                                 detections_kept += 1
 
-                overlay_writer.write(draw_overlay(frame, pitch_polygon, active_rows, label_prefix="P", frame_idx=frame_idx))
+                overlay_polygon = camera_motion.polygon_for_frame(frame_idx, pitch_polygon)
+                overlay_writer.write(draw_overlay(frame, overlay_polygon, active_rows, label_prefix="P", frame_idx=frame_idx))
                 processed += 1
                 frame_idx += 1
         finally:
@@ -873,7 +945,7 @@ def analyze_match_yolo(
             raw_tracks = [{"track_id": tid, "positions": positions} for tid, positions in sorted(tracks.items()) if positions]
         tracks_json = _tracks_with_pitch_positions(raw_tracks, H, pitch=pitch)
         positions_clamped_to_pitch = _count_clamped_pitch_positions(tracks_json)
-        warnings: list[str] = []
+        warnings: list[str] = list(camera_motion_warnings)
         if processed == 0:
             warnings.append("No frames were processed.")
         if detections_kept == 0:
@@ -882,26 +954,42 @@ def analyze_match_yolo(
             warnings.append("Detections were found, but no track positions were exported.")
 
         artifacts = _write_outputs(match_dir, pitch, tracks_json)
-        stabilization = stabilize_match(match_dir, video_path, pitch, tracks_json, metadata)
+        write_camera_motion_report(match_dir, camera_motion)
+        artifacts["camera_motion_report"] = "camera_motion_report.json"
+        try:
+            write_camera_motion_overlay(
+                video_path,
+                match_dir,
+                camera_motion,
+                pitch_polygon,
+                metadata,
+                frame_stride=frame_stride,
+                max_seconds=max_seconds,
+            )
+            artifacts["camera_motion_overlay"] = "camera_motion_overlay.mp4"
+        except Exception as exc:
+            warnings.append(f"Camera motion debug overlay failed: {exc}")
+        stabilization = stabilize_match(match_dir, video_path, pitch, tracks_json, metadata, camera_motion=camera_motion)
         artifacts.update(stabilization["artifacts"])
         ball_tracking: dict[str, Any] | None = None
         possession: dict[str, Any] | None = None
-        try:
+        if include_ball and ball_model is not None:
             ball_tracking = detect_ball_yolo_coco(
                 match_dir,
                 video_path,
                 pitch,
                 metadata,
-                model=model,
+                model=ball_model,
                 max_seconds=max_seconds,
                 frame_stride=frame_stride,
-                yolo_imgsz=int(yolo_imgsz),
-                yolo_device=normalized_yolo_device,
-                ball_conf=min(float(yolo_conf), DEFAULT_BALL_CONF),
+                yolo_imgsz=int(ball_yolo_imgsz),
+                yolo_device=normalize_yolo_device(ball_yolo_device or yolo_device),
+                ball_conf=float(ball_yolo_conf),
+                camera_motion=camera_motion,
             )
             artifacts.update(ball_tracking["artifacts"])
-        except Exception as exc:
-            warnings.append(f"Experimental ball detection failed: {exc}")
+        elif not include_ball:
+            warnings.append("Ball analysis skipped because include_ball=false.")
         if ball_tracking is not None:
             try:
                 possession = _build_ball_possession_artifacts(
@@ -940,6 +1028,16 @@ def analyze_match_yolo(
                 "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
                 "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
                 "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
+                "include_ball": include_ball,
+                "ball_yolo_model": ball_yolo_model if include_ball else None,
+                "ball_yolo_conf": ball_yolo_conf if include_ball else None,
+                "ball_yolo_imgsz": ball_yolo_imgsz if include_ball else None,
+                "ball_yolo_device": (normalize_yolo_device(ball_yolo_device or yolo_device) or "auto") if include_ball else None,
+                "camera_motion_compensation": camera_motion.enabled,
+                "camera_motion_interval_sec": camera_motion_interval_sec,
+                "camera_motion_min_inlier_ratio": camera_motion_min_inlier_ratio,
+                "camera_motion_reference_frame": camera_motion.reference_frame,
+                "camera_motion_reference_time_sec": round(camera_motion.reference_time_sec, 3),
             },
             "frames_processed": processed,
             "runtime": runtime_info,
@@ -950,6 +1048,7 @@ def analyze_match_yolo(
             "positions_clamped_to_pitch": positions_clamped_to_pitch,
             "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
             "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
+            "camera_motion_summary": camera_motion.report()["summary"],
             "tracks_count": len(tracks_json),
             "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
             "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
@@ -1127,6 +1226,14 @@ def analyze_match(
     yolo_imgsz: int,
     yolo_tracker: str,
     yolo_device: str | None,
+    include_ball: bool = False,
+    ball_yolo_model: str = "models/best.pt",
+    ball_yolo_conf: float = DEFAULT_BALL_CONF,
+    ball_yolo_imgsz: int = 960,
+    ball_yolo_device: str | None = None,
+    camera_motion_compensation: bool = DEFAULT_CAMERA_MOTION_COMPENSATION,
+    camera_motion_interval_sec: float = DEFAULT_CAMERA_MOTION_INTERVAL_SEC,
+    camera_motion_min_inlier_ratio: float = DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO,
 ) -> dict[str, Any]:
     if adapter == "motion":
         return analyze_match_motion(match_dir, video_path, max_seconds=max_seconds, frame_stride=frame_stride)
@@ -1141,5 +1248,13 @@ def analyze_match(
             yolo_imgsz=yolo_imgsz,
             yolo_tracker=yolo_tracker,
             yolo_device=yolo_device,
+            include_ball=include_ball,
+            ball_yolo_model=ball_yolo_model,
+            ball_yolo_conf=ball_yolo_conf,
+            ball_yolo_imgsz=ball_yolo_imgsz,
+            ball_yolo_device=ball_yolo_device,
+            camera_motion_compensation=camera_motion_compensation,
+            camera_motion_interval_sec=camera_motion_interval_sec,
+            camera_motion_min_inlier_ratio=camera_motion_min_inlier_ratio,
         )
     raise ValueError(f"Unknown analysis adapter: {adapter}")

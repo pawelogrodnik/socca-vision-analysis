@@ -222,6 +222,14 @@ def run_match_analysis_and_update_meta(
             yolo_imgsz=payload.yolo_imgsz,
             yolo_tracker=payload.yolo_tracker,
             yolo_device=payload.yolo_device,
+            include_ball=payload.include_ball,
+            ball_yolo_model=payload.ball_yolo_model,
+            ball_yolo_conf=payload.ball_yolo_conf,
+            ball_yolo_imgsz=payload.ball_yolo_imgsz,
+            ball_yolo_device=payload.ball_yolo_device,
+            camera_motion_compensation=payload.camera_motion_compensation,
+            camera_motion_interval_sec=payload.camera_motion_interval_sec,
+            camera_motion_min_inlier_ratio=payload.camera_motion_min_inlier_ratio,
         )
     elapsed_wall_sec = time.perf_counter() - started_at
     report_runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else collect_runtime_info()
@@ -327,6 +335,7 @@ PACKAGE_REQUIRED_KEYS = [
 PACKAGE_OPTIONAL_KEYS = [
     "pitch_config",
     "performance_report",
+    "camera_motion_report",
     "analysis_chunk_manifest",
     "global_identity",
     "global_identity_report",
@@ -565,6 +574,7 @@ def get_match(match_id: str) -> dict[str, Any]:
         "pitch_config.json",
         "analysis_report.json",
         "performance_report.json",
+        "camera_motion_report.json",
         "analysis_chunk_manifest.json",
         "match_package.json",
         "player_assignments.json",
@@ -1107,6 +1117,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "pitch_config": None,
         "analysis_report": None,
         "performance_report": None,
+        "camera_motion_report": None,
         "analysis_chunk_manifest": None,
         "player_assignments": None,
         "identity_candidates": None,
@@ -1151,6 +1162,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("pitch_config", "pitch_config.json"),
         ("analysis_report", "analysis_report.json"),
         ("performance_report", "performance_report.json"),
+        ("camera_motion_report", "camera_motion_report.json"),
         ("analysis_chunk_manifest", "analysis_chunk_manifest.json"),
         ("player_assignments", "player_assignments.json"),
         ("identity_candidates", "identity_candidates.json"),
@@ -1200,6 +1212,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["analysis_chunk_manifest_json"] = "analysis_chunk_manifest.json"
     if (path / "performance_report.json").exists():
         package["assets"]["performance_report_json"] = "performance_report.json"
+    if (path / "camera_motion_report.json").exists():
+        package["assets"]["camera_motion_report_json"] = "camera_motion_report.json"
+    if (path / "camera_motion_overlay.mp4").exists():
+        package["assets"]["camera_motion_overlay"] = "camera_motion_overlay.mp4"
     if (path / "player_assignments.json").exists():
         package["assets"]["player_assignments_json"] = "player_assignments.json"
     if (path / "identity_candidates.json").exists():
@@ -1394,6 +1410,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "tracks.json": "application/json",
         "analysis_report.json": "application/json",
         "performance_report.json": "application/json",
+        "camera_motion_report.json": "application/json",
         "analysis_chunk_manifest.json": "application/json",
         "overlay_preview.mp4": "video/mp4",
         "heatmap_all_tracks.png": "image/png",
@@ -1437,6 +1454,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "run_metadata.json": "application/json",
         "stable_overlay_preview.mp4": "video/mp4",
         "debug_identity_overlay.mp4": "video/mp4",
+        "camera_motion_overlay.mp4": "video/mp4",
         "ball_overlay_preview.mp4": "video/mp4",
         "possession_overlay_preview.mp4": "video/mp4",
     }

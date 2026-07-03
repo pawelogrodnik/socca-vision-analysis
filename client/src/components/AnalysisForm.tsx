@@ -152,6 +152,52 @@ export function AnalysisForm({
         <label className='checkbox-row'>
           <input
             type='checkbox'
+            checked={analysis.camera_motion_compensation}
+            disabled={disabled || analysis.adapter !== 'yolo'}
+            onChange={(event) =>
+              onChange({ ...analysis, camera_motion_compensation: event.target.checked })
+            }
+          />
+          Kompensuj lekkie bujanie kamery
+        </label>
+        <div className='grid two compact'>
+          <label>
+            Camera interval sec
+            <input
+              type='number'
+              min={0.1}
+              step={0.1}
+              value={analysis.camera_motion_interval_sec}
+              disabled={disabled || !analysis.camera_motion_compensation}
+              onChange={(event) =>
+                onChange({ ...analysis, camera_motion_interval_sec: Number(event.target.value) })
+              }
+            />
+          </label>
+          <label>
+            Min inlier ratio
+            <input
+              type='number'
+              min={0}
+              max={1}
+              step={0.05}
+              value={analysis.camera_motion_min_inlier_ratio}
+              disabled={disabled || !analysis.camera_motion_compensation}
+              onChange={(event) =>
+                onChange({ ...analysis, camera_motion_min_inlier_ratio: Number(event.target.value) })
+              }
+            />
+          </label>
+        </div>
+        <p className='muted'>
+          Manualna kalibracja boiska zostaje punktem odniesienia, a detekcje sa
+          mapowane do tej klatki przed filtrem ROI i liczeniem metrow.
+        </p>
+      </div>
+      <div className='artifact-box'>
+        <label className='checkbox-row'>
+          <input
+            type='checkbox'
             checked={analysis.chunked}
             disabled={disabled}
             onChange={(event) =>
@@ -164,12 +210,12 @@ export function AnalysisForm({
           <input
             type='checkbox'
             checked={analysis.include_ball}
-            disabled={disabled || !analysis.chunked}
+            disabled={disabled || analysis.adapter !== 'yolo'}
             onChange={(event) =>
               onChange({ ...analysis, include_ball: event.target.checked })
             }
           />
-          Analizuj pilke w tym samym chunked jobie
+          Analizuj pilke w tym samym jobie
         </label>
         <div className='grid two compact'>
           <label>
@@ -209,7 +255,7 @@ export function AnalysisForm({
               Ball model
               <input
                 value={analysis.ball_yolo_model}
-                disabled={disabled || !analysis.chunked}
+                disabled={disabled}
                 onChange={(event) =>
                   onChange({ ...analysis, ball_yolo_model: event.target.value })
                 }
@@ -221,7 +267,7 @@ export function AnalysisForm({
                 type='number'
                 step='0.01'
                 value={analysis.ball_yolo_conf}
-                disabled={disabled || !analysis.chunked}
+                disabled={disabled}
                 onChange={(event) =>
                   onChange({ ...analysis, ball_yolo_conf: Number(event.target.value) })
                 }
@@ -232,7 +278,7 @@ export function AnalysisForm({
               <input
                 type='number'
                 value={analysis.ball_yolo_imgsz}
-                disabled={disabled || !analysis.chunked}
+                disabled={disabled}
                 onChange={(event) =>
                   onChange({ ...analysis, ball_yolo_imgsz: Number(event.target.value) })
                 }
@@ -243,8 +289,8 @@ export function AnalysisForm({
         <p className='muted'>
           Chunked mode analizuje zakresy osobno, zapisuje status kazdego
           chunka i przy ponownym uruchomieniu pomija juz ukonczone chunki.
-          Opcja pilki dodaje drugi model YOLO w tym samym jobie i wspolnym
-          retry/resume.
+          Opcja pilki dodaje drugi model YOLO w tym samym jobie. W trybie
+          chunked korzysta ze wspolnego retry/resume.
         </p>
       </div>
       {showRunButton && (
