@@ -34,7 +34,7 @@ backend/storage/database/**
 *.db-shm
 
 # Video and generated media
-*.mp4
+
 *.mov
 *.avi
 *.mkv
@@ -47,7 +47,6 @@ backend/storage/database/**
 *.3gp
 *.wmv
 *.flv
-*.MP4
 *.MOV
 *.AVI
 *.MKV
@@ -77,3 +76,4 @@ runs/
 # OS
 .DS_Store
 Thumbs.db
+matches_video/*
