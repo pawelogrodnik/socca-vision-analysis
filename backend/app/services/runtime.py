@@ -26,9 +26,71 @@ def requested_device_label(device: str | None) -> str:
     return "auto" if raw.lower() in AUTO_DEVICE_VALUES else raw
 
 
+def is_cuda_device(device: str | None) -> bool:
+    normalized = normalize_yolo_device(device)
+    return bool(normalized and normalized.isdigit())
+
+
+def is_mps_device(device: str | None) -> bool:
+    return normalize_yolo_device(device) == "mps"
+
+
+def ensure_yolo_device_available(
+    device: str | None,
+    *,
+    runtime_info: dict[str, Any] | None = None,
+    context: str = "YOLO",
+) -> str | None:
+    """Validate explicit accelerator choices before Ultralytics starts work.
+
+    Auto/CPU are always allowed. Explicit CUDA/MPS choices must be visible to
+    PyTorch, otherwise the user gets a short actionable error instead of a long
+    analysis that silently falls back to CPU or fails deep inside Ultralytics.
+    """
+    normalized = normalize_yolo_device(device)
+    if normalized in {None, "cpu"}:
+        return normalized
+
+    info = runtime_info or collect_runtime_info()
+    torch_info = info.get("torch") if isinstance(info.get("torch"), dict) else {}
+    if normalized.isdigit():
+        if not torch_info.get("available"):
+            raise RuntimeError(
+                f"{context} device '{requested_device_label(device)}' requested CUDA, "
+                "but PyTorch is not importable in this backend runtime."
+            )
+        if not torch_info.get("cuda_available"):
+            raise RuntimeError(
+                f"{context} device '{requested_device_label(device)}' requested CUDA, "
+                "but this backend runtime does not see an NVIDIA CUDA device. "
+                "Run scripts/setup-backend-cuda.ps1 and start the native CUDA backend, "
+                "or use device=cpu/auto."
+            )
+        device_index = int(normalized)
+        device_count = int(torch_info.get("cuda_device_count") or 0)
+        if device_index >= device_count:
+            names = ", ".join(str(name) for name in torch_info.get("cuda_device_names") or [])
+            raise RuntimeError(
+                f"{context} requested CUDA device index {device_index}, "
+                f"but PyTorch reports {device_count} CUDA device(s)"
+                f"{f': {names}' if names else ''}."
+            )
+        return normalized
+
+    if normalized == "mps":
+        if not torch_info.get("mps_available"):
+            raise RuntimeError(
+                f"{context} device 'mps' was requested, but this backend runtime "
+                "does not report Apple MPS as available."
+            )
+        return normalized
+
+    return normalized
+
+
 def collect_runtime_info() -> dict[str, Any]:
     info: dict[str, Any] = {
-        "schema_version": "0.1.0",
+        "schema_version": "0.2.0",
         "python": {
             "version": platform.python_version(),
             "executable": sys.executable,
@@ -46,6 +108,13 @@ def collect_runtime_info() -> dict[str, Any]:
             "cuda_available": False,
             "cuda_device_count": 0,
             "cuda_device_names": [],
+            "cuda_version": None,
+            "cudnn_version": None,
+            "active_cuda_device": None,
+            "active_cuda_device_name": None,
+            "gpu_memory_total_mb": [],
+            "gpu_memory_allocated_mb": [],
+            "gpu_memory_reserved_mb": [],
             "mps_available": False,
             "mps_built": False,
         },
@@ -60,16 +129,42 @@ def collect_runtime_info() -> dict[str, Any]:
     cuda_available = bool(torch.cuda.is_available())
     cuda_device_count = int(torch.cuda.device_count()) if cuda_available else 0
     cuda_device_names: list[str] = []
+    gpu_memory_total_mb: list[int] = []
+    gpu_memory_allocated_mb: list[int] = []
+    gpu_memory_reserved_mb: list[int] = []
     if cuda_available:
         for index in range(cuda_device_count):
             try:
                 cuda_device_names.append(str(torch.cuda.get_device_name(index)))
             except Exception:
                 cuda_device_names.append(f"cuda:{index}")
+            try:
+                props = torch.cuda.get_device_properties(index)
+                gpu_memory_total_mb.append(int(round(float(props.total_memory) / (1024 * 1024))))
+            except Exception:
+                gpu_memory_total_mb.append(0)
+            try:
+                gpu_memory_allocated_mb.append(int(round(float(torch.cuda.memory_allocated(index)) / (1024 * 1024))))
+            except Exception:
+                gpu_memory_allocated_mb.append(0)
+            try:
+                gpu_memory_reserved_mb.append(int(round(float(torch.cuda.memory_reserved(index)) / (1024 * 1024))))
+            except Exception:
+                gpu_memory_reserved_mb.append(0)
 
     mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
     mps_available = bool(mps_backend and mps_backend.is_available())
     mps_built = bool(mps_backend and mps_backend.is_built())
+    cudnn_backend = getattr(getattr(torch, "backends", None), "cudnn", None)
+    active_cuda_device: int | None = None
+    active_cuda_device_name: str | None = None
+    if cuda_available:
+        try:
+            active_cuda_device = int(torch.cuda.current_device())
+            active_cuda_device_name = str(torch.cuda.get_device_name(active_cuda_device))
+        except Exception:
+            active_cuda_device = 0 if cuda_device_count > 0 else None
+            active_cuda_device_name = cuda_device_names[0] if cuda_device_names else None
 
     recommended: list[str] = []
     if cuda_available:
@@ -84,6 +179,13 @@ def collect_runtime_info() -> dict[str, Any]:
         "cuda_available": cuda_available,
         "cuda_device_count": cuda_device_count,
         "cuda_device_names": cuda_device_names,
+        "cuda_version": str(getattr(torch.version, "cuda", None) or "") or None,
+        "cudnn_version": int(cudnn_backend.version()) if cudnn_backend and cudnn_backend.is_available() else None,
+        "active_cuda_device": active_cuda_device,
+        "active_cuda_device_name": active_cuda_device_name,
+        "gpu_memory_total_mb": gpu_memory_total_mb,
+        "gpu_memory_allocated_mb": gpu_memory_allocated_mb,
+        "gpu_memory_reserved_mb": gpu_memory_reserved_mb,
         "mps_available": mps_available,
         "mps_built": mps_built,
     }
@@ -117,12 +219,18 @@ def build_performance_report(
         if video_seconds_per_wall_second > 0
         else None
     )
+    torch_info = runtime_info.get("torch") if isinstance(runtime_info.get("torch"), dict) else {}
     return {
         "schema_version": "0.1.0",
         "label": label,
         "runtime": runtime_info,
         "requested_device": requested_device_label(requested_device),
         "normalized_yolo_device": normalized_device or "auto",
+        "cuda_available": bool(torch_info.get("cuda_available")),
+        "cuda_device_names": torch_info.get("cuda_device_names") or [],
+        "torch_cuda_version": torch_info.get("cuda_version"),
+        "active_cuda_device": torch_info.get("active_cuda_device"),
+        "gpu_memory_total_mb": torch_info.get("gpu_memory_total_mb") or [],
         "elapsed_wall_sec": round(elapsed_wall_sec, 3),
         "throughput": {
             "processed_frames": frames_processed,

@@ -10,12 +10,14 @@ client/.env
 __pycache__/
 *.py[cod]
 .venv/
+backend/.venv-cuda/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
 # Node
 node_modules/
+.pnpm-store/
 dist/
 .vite/
 
@@ -68,7 +70,7 @@ frame_*.jpg
 training_frames/
 
 # Model/cache files
-*.pt
+# *.pt
 *.onnx
 *.engine
 runs/

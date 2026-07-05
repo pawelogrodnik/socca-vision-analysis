@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id
-from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label
+from app.services.runtime import collect_runtime_info, ensure_yolo_device_available, normalize_yolo_device, requested_device_label
 
 
 def now_iso() -> str:
@@ -173,6 +173,17 @@ def analyze_match_chunked_yolo(
     camera_motion_interval_sec = float(payload.get("camera_motion_interval_sec") or DEFAULT_CAMERA_MOTION_INTERVAL_SEC)
     camera_motion_min_inlier_ratio = float(payload.get("camera_motion_min_inlier_ratio") or DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO)
     runtime_info = collect_runtime_info()
+    yolo_device = ensure_yolo_device_available(
+        yolo_device,
+        runtime_info=runtime_info,
+        context="player YOLO chunked",
+    )
+    if include_ball:
+        ball_yolo_device = ensure_yolo_device_available(
+            ball_yolo_device,
+            runtime_info=runtime_info,
+            context="ball YOLO chunked",
+        )
     analysis_end_sec = float(payload.get("max_seconds") or 0.0) or None
     camera_motion_warnings: list[str] = []
     try:
@@ -484,6 +495,14 @@ def analyze_match_chunked_yolo(
         "run_manifest": f"analysis_runs/{run_id}/run_metadata.json",
     }
     write_analysis_chunk_manifest(match_dir, manifest)
+    first_player_metrics = next(
+        (
+            chunk.get("metrics") or {}
+            for chunk in chunks
+            if (chunk.get("metrics") or {}).get("player_class_ids") is not None
+        ),
+        {},
+    )
     report = {
         "schema_version": "0.1.0",
         "run_id": run_id,
@@ -492,6 +511,10 @@ def analyze_match_chunked_yolo(
         "note": "Real chunked runner v1: chunks are processed independently, completed chunks are skipped on retry, then tracks are merged into one stable analysis.",
         "video": metadata,
         "runtime": runtime_info,
+        "requested_device": requested_device_label(payload.get("yolo_device")),
+        "normalized_yolo_device": yolo_device or "auto",
+        "cuda_available": bool((runtime_info.get("torch") or {}).get("cuda_available")),
+        "cuda_device_names": (runtime_info.get("torch") or {}).get("cuda_device_names") or [],
         "parameters": {
             "adapter": "yolo",
             "chunked": True,
@@ -507,7 +530,11 @@ def analyze_match_chunked_yolo(
             "yolo_tracker": yolo_tracker,
             "yolo_device": yolo_device or "auto",
             "yolo_device_requested": requested_device_label(payload.get("yolo_device")),
-            "classes": ["person"],
+            "classes": first_player_metrics.get("player_class_names") or ["person"],
+            "player_class_ids": first_player_metrics.get("player_class_ids") or [0],
+            "player_class_names": first_player_metrics.get("player_class_names") or ["person"],
+            "player_class_resolution": first_player_metrics.get("player_class_resolution") or "fallback_class_0",
+            "model_classes": first_player_metrics.get("model_classes"),
             "pitch_filter": "footpoint_in_pitch_polygon_with_margin",
             "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
             "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,

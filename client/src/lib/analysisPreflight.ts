@@ -328,11 +328,26 @@ function buildPreflightChecks(input: {
   }
 
   const accelerated = preferredAcceleratedDevice(input.runtimeInfo);
+  const requestedDevices = selectedAnalysisDevices(input.analysis);
+  const unavailableAccelerator = requestedDevices.find((device) =>
+    (isCudaDevice(device) && !input.runtimeInfo?.torch.cuda_available) ||
+    (device === 'mps' && !input.runtimeInfo?.torch.mps_available)
+  );
+  if (unavailableAccelerator) {
+    checks.push({
+      level: 'blocking',
+      label: 'Runtime device',
+      detail: `Wybrano device=${unavailableAccelerator}, ale backend nie raportuje takiego akceleratora. Uruchom native CUDA backend albo wybierz CPU/Auto.`,
+    });
+  }
   if (accelerated) {
+    const gpuName = accelerated === '0'
+      ? input.runtimeInfo?.torch.active_cuda_device_name || input.runtimeInfo?.torch.cuda_device_names?.[0]
+      : null;
     checks.push({
       level: 'ok',
       label: 'Runtime',
-      detail: `Backend widzi akcelerator YOLO: ${accelerated}.`,
+      detail: `Backend widzi akcelerator YOLO: ${gpuName ? `${accelerated} (${gpuName})` : accelerated}.`,
     });
   } else {
     checks.push({
@@ -439,6 +454,27 @@ function planAnalysisChunks(
 function preferredAcceleratedDevice(runtimeInfo?: RuntimeInfo | null): string | null {
   const devices = runtimeInfo?.recommended_yolo_devices || [];
   return devices.find((device) => device !== 'cpu') || null;
+}
+
+function selectedAnalysisDevices(analysis: AnalysisPayload): string[] {
+  const devices = new Set<string>();
+  const playerDevice = normalizeDeviceValue(analysis.yolo_device);
+  const ballDevice = normalizeDeviceValue(analysis.ball_yolo_device || analysis.yolo_device);
+  if (playerDevice) devices.add(playerDevice);
+  if (analysis.include_ball && ballDevice) devices.add(ballDevice);
+  return Array.from(devices);
+}
+
+function normalizeDeviceValue(device: string | null | undefined): string | null {
+  const raw = String(device || '').trim().toLowerCase();
+  if (!raw || raw === 'auto' || raw === 'default' || raw === 'none' || raw === 'null') return null;
+  if (raw === 'cuda' || raw === 'gpu' || raw === 'nvidia') return '0';
+  if (raw.startsWith('cuda:')) return raw.slice('cuda:'.length);
+  return raw;
+}
+
+function isCudaDevice(device: string): boolean {
+  return /^\d+$/.test(device);
 }
 
 function positiveNumber(value: unknown): number {

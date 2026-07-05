@@ -14,6 +14,12 @@ function yesNo(value: boolean | undefined): string {
   return value ? 'tak' : 'nie';
 }
 
+function gpuMemoryLabel(runtimeInfo: RuntimeInfo): string | null {
+  const firstTotal = runtimeInfo.torch.gpu_memory_total_mb?.[0];
+  if (!firstTotal) return null;
+  return `${Math.round(firstTotal)} MB`;
+}
+
 export function AnalysisForm({
   analysis,
   onChange,
@@ -140,6 +146,11 @@ export function AnalysisForm({
             <span>Torch {runtimeInfo.torch.available ? runtimeInfo.torch.version || 'ok' : 'brak'}</span>
             <span>CUDA: {yesNo(runtimeInfo.torch.cuda_available)}</span>
             <span>MPS: {yesNo(runtimeInfo.torch.mps_available)}</span>
+            {runtimeInfo.torch.cuda_version && <span>Torch CUDA {runtimeInfo.torch.cuda_version}</span>}
+            {runtimeInfo.torch.active_cuda_device_name && (
+              <span>GPU: {runtimeInfo.torch.active_cuda_device_name}</span>
+            )}
+            {gpuMemoryLabel(runtimeInfo) && <span>GPU RAM: {gpuMemoryLabel(runtimeInfo)}</span>}
           </div>
           {runtimeInfo.recommended_yolo_devices.length > 0 && (
             <p className='muted'>

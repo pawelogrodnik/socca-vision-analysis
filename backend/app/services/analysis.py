@@ -24,7 +24,7 @@ from app.services.camera_motion import (
     write_camera_motion_report,
 )
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
-from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label
+from app.services.runtime import collect_runtime_info, ensure_yolo_device_available, normalize_yolo_device, requested_device_label
 from app.services.stabilization import stabilize_match
 from app.services.tracker import CentroidTracker
 from app.services.video import read_video_metadata
@@ -464,6 +464,39 @@ def _load_yolo_model(model_name: str):
     return YOLO(_resolve_yolo_model_name(model_name))
 
 
+def _resolve_player_model_classes(model: Any) -> dict[str, Any]:
+    model_classes = _model_classes(model)
+    selected = {
+        class_id: name
+        for class_id, name in model_classes.items()
+        if str(name).lower().strip() in {"person", "player"}
+    }
+    resolution = "class_name_match"
+    if not selected and len(model_classes) == 1:
+        selected = dict(model_classes)
+        resolution = "single_class_model"
+    if not selected and 0 in model_classes:
+        selected = {0: model_classes[0]}
+        resolution = "fallback_class_0"
+    return {
+        "source": "ultralytics_yolo_player_v1",
+        "class_ids": list(selected.keys()),
+        "class_names": list(selected.values()),
+        "class_name_by_id": selected,
+        "resolution": resolution,
+        "model_classes": model_classes,
+    }
+
+
+def _model_classes(model: Any) -> dict[int, str]:
+    names = getattr(model, "names", {}) or {}
+    if isinstance(names, dict):
+        return {int(class_id): str(name) for class_id, name in names.items()}
+    if isinstance(names, list):
+        return {index: str(name) for index, name in enumerate(names)}
+    return {}
+
+
 def _resolve_yolo_model_name(model_name: str) -> str:
     raw = str(model_name or "").strip()
     if not raw:
@@ -552,8 +585,12 @@ def collect_yolo_tracks_range(
     start_frame = max(0, int(round(max(0.0, start_time_sec) * fps)))
     end_frame = max(start_frame, int(round(max(start_time_sec, end_time_sec) * fps)))
     resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
-    normalized_yolo_device = normalize_yolo_device(yolo_device)
+    normalized_yolo_device = ensure_yolo_device_available(
+        yolo_device,
+        context="player YOLO chunk",
+    )
     detector = model or _load_yolo_model(resolved_yolo_model)
+    player_class_config = _resolve_player_model_classes(detector)
     use_centroid_tracker = yolo_tracker == "centroid_high_recall"
     tracker_config = _resolve_yolo_tracker_config(yolo_tracker)
     centroid_tracker = CentroidTracker(
@@ -583,7 +620,7 @@ def collect_yolo_tracks_range(
 
             kwargs: dict[str, Any] = {
                 "source": frame,
-                "classes": [0],
+                "classes": player_class_config["class_ids"],
                 "conf": yolo_conf,
                 "iou": 0.45,
                 "imgsz": yolo_imgsz,
@@ -687,6 +724,10 @@ def collect_yolo_tracks_range(
     warnings: list[str] = []
     if processed == 0:
         warnings.append("No frames were processed in this chunk.")
+    if not player_class_config["class_ids"]:
+        warnings.append(
+            "Selected YOLO model does not expose a class named person/player and no fallback class was available."
+        )
     if detections_kept == 0:
         warnings.append("YOLO did not keep any person detections inside the pitch polygon in this chunk.")
     return {
@@ -711,6 +752,10 @@ def collect_yolo_tracks_range(
             "yolo_model_resolved": resolved_yolo_model,
             "yolo_device": normalized_yolo_device or "auto",
             "yolo_device_requested": requested_device_label(yolo_device),
+            "player_class_ids": player_class_config["class_ids"],
+            "player_class_names": player_class_config["class_names"],
+            "player_class_resolution": player_class_config["resolution"],
+            "model_classes": player_class_config["model_classes"],
         },
         "warnings": warnings,
     }
@@ -792,8 +837,17 @@ def analyze_match_yolo(
     adapter_name = "yolo-ultralytics"
     try:
         requested_yolo_device = yolo_device
-        normalized_yolo_device = normalize_yolo_device(yolo_device)
         runtime_info = collect_runtime_info()
+        normalized_yolo_device = ensure_yolo_device_available(
+            yolo_device,
+            runtime_info=runtime_info,
+            context="player YOLO",
+        )
+        normalized_ball_yolo_device = ensure_yolo_device_available(
+            ball_yolo_device or yolo_device,
+            runtime_info=runtime_info,
+            context="ball YOLO",
+        ) if include_ball else None
         metadata = read_video_metadata(video_path)
         pitch = load_pitch_config(match_dir)
         pitch_polygon = pitch.polygon_np
@@ -824,6 +878,7 @@ def analyze_match_yolo(
 
         resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
         model = _load_yolo_model(resolved_yolo_model)
+        player_class_config = _resolve_player_model_classes(model)
         ball_model = _load_yolo_model(ball_yolo_model) if include_ball else None
         use_centroid_tracker = yolo_tracker == "centroid_high_recall"
         tracker_config = _resolve_yolo_tracker_config(yolo_tracker)
@@ -849,7 +904,7 @@ def analyze_match_yolo(
                 active_rows: list[dict[str, Any]] = []
                 kwargs: dict[str, Any] = {
                     "source": frame,
-                    "classes": [0],
+                    "classes": player_class_config["class_ids"],
                     "conf": yolo_conf,
                     "iou": 0.45,
                     "imgsz": yolo_imgsz,
@@ -948,6 +1003,10 @@ def analyze_match_yolo(
         warnings: list[str] = list(camera_motion_warnings)
         if processed == 0:
             warnings.append("No frames were processed.")
+        if not player_class_config["class_ids"]:
+            warnings.append(
+                "Selected YOLO model does not expose a class named person/player and no fallback class was available."
+            )
         if detections_kept == 0:
             warnings.append("YOLO did not keep any person detections inside the pitch polygon. Check pitch points, confidence, imgsz, and model.")
         elif len(tracks_json) == 0:
@@ -983,7 +1042,7 @@ def analyze_match_yolo(
                 max_seconds=max_seconds,
                 frame_stride=frame_stride,
                 yolo_imgsz=int(ball_yolo_imgsz),
-                yolo_device=normalize_yolo_device(ball_yolo_device or yolo_device),
+                yolo_device=normalized_ball_yolo_device,
                 ball_conf=float(ball_yolo_conf),
                 camera_motion=camera_motion,
             )
@@ -1022,7 +1081,11 @@ def analyze_match_yolo(
                 "yolo_tracker_resolved": tracker_config if not use_centroid_tracker else "internal_centroid_tracker",
                 "yolo_device": normalized_yolo_device or "auto",
                 "yolo_device_requested": requested_device_label(requested_yolo_device),
-                "classes": ["person"],
+                "classes": player_class_config["class_names"] or ["person"],
+                "player_class_ids": player_class_config["class_ids"],
+                "player_class_names": player_class_config["class_names"],
+                "player_class_resolution": player_class_config["resolution"],
+                "model_classes": player_class_config["model_classes"],
                 "pitch_mask_before_yolo": False,
                 "pitch_filter": "footpoint_in_pitch_polygon_with_margin",
                 "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
@@ -1032,7 +1095,7 @@ def analyze_match_yolo(
                 "ball_yolo_model": ball_yolo_model if include_ball else None,
                 "ball_yolo_conf": ball_yolo_conf if include_ball else None,
                 "ball_yolo_imgsz": ball_yolo_imgsz if include_ball else None,
-                "ball_yolo_device": (normalize_yolo_device(ball_yolo_device or yolo_device) or "auto") if include_ball else None,
+                "ball_yolo_device": (normalized_ball_yolo_device or "auto") if include_ball else None,
                 "camera_motion_compensation": camera_motion.enabled,
                 "camera_motion_interval_sec": camera_motion_interval_sec,
                 "camera_motion_min_inlier_ratio": camera_motion_min_inlier_ratio,
@@ -1041,6 +1104,10 @@ def analyze_match_yolo(
             },
             "frames_processed": processed,
             "runtime": runtime_info,
+            "requested_device": requested_device_label(requested_yolo_device),
+            "normalized_yolo_device": normalized_yolo_device or "auto",
+            "cuda_available": bool((runtime_info.get("torch") or {}).get("cuda_available")),
+            "cuda_device_names": (runtime_info.get("torch") or {}).get("cuda_device_names") or [],
             "yolo_frames_with_results": yolo_frames_with_results,
             "detections_kept": detections_kept,
             "detections_rejected_outside_pitch": detections_rejected_outside_pitch,
@@ -1077,8 +1144,12 @@ def analyze_match_ball_yolo(
     adapter_name = "ball-yolo"
     try:
         requested_yolo_device = yolo_device
-        normalized_yolo_device = normalize_yolo_device(yolo_device)
         runtime_info = collect_runtime_info()
+        normalized_yolo_device = ensure_yolo_device_available(
+            yolo_device,
+            runtime_info=runtime_info,
+            context="ball YOLO",
+        )
         metadata = read_video_metadata(video_path)
         pitch = load_pitch_config(match_dir)
         resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
@@ -1133,6 +1204,10 @@ def analyze_match_ball_yolo(
                 "pitch_filter": "center_in_pitch_polygon",
             },
             "runtime": runtime_info,
+            "requested_device": requested_device_label(requested_yolo_device),
+            "normalized_yolo_device": normalized_yolo_device or "auto",
+            "cuda_available": bool((runtime_info.get("torch") or {}).get("cuda_available")),
+            "cuda_device_names": (runtime_info.get("torch") or {}).get("cuda_device_names") or [],
             "frames_processed": ball_tracking["ball_tracking_report"]["summary"]["processed_frames"],
             "ball_tracking_summary": ball_tracking["ball_tracking_report"]["summary"],
             "ball_quality_summary": ball_tracking["ball_quality_report"]["summary"],

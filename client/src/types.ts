@@ -1060,6 +1060,13 @@ export type RuntimeInfo = {
     cuda_available: boolean;
     cuda_device_count: number;
     cuda_device_names: string[];
+    cuda_version?: string | null;
+    cudnn_version?: number | null;
+    active_cuda_device?: number | null;
+    active_cuda_device_name?: string | null;
+    gpu_memory_total_mb?: number[];
+    gpu_memory_allocated_mb?: number[];
+    gpu_memory_reserved_mb?: number[];
     mps_available: boolean;
     mps_built: boolean;
   };
@@ -1072,6 +1079,11 @@ export type PerformanceReport = {
   runtime?: RuntimeInfo;
   requested_device?: string;
   normalized_yolo_device?: string;
+  cuda_available?: boolean;
+  cuda_device_names?: string[];
+  torch_cuda_version?: string | null;
+  active_cuda_device?: number | null;
+  gpu_memory_total_mb?: number[];
   elapsed_wall_sec?: number;
   throughput?: {
     processed_frames?: number;

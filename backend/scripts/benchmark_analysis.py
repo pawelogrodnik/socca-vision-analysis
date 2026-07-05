@@ -56,12 +56,18 @@ def main() -> None:
     parser.add_argument("--yolo-imgsz", type=int, default=960)
     parser.add_argument("--yolo-tracker", default="centroid_high_recall")
     parser.add_argument("--device", "--yolo-device", dest="yolo_device", default="auto")
+    parser.add_argument("--include-ball", action="store_true", help="Run ball YOLO in the same benchmark.")
+    parser.add_argument("--ball-yolo-model", default="models/best.pt")
+    parser.add_argument("--ball-yolo-conf", type=float, default=0.03)
+    parser.add_argument("--ball-yolo-imgsz", type=int, default=960)
+    parser.add_argument("--ball-yolo-device", default=None, help="Defaults to --device when omitted.")
     args = parser.parse_args()
 
     from app.config import MATCHES_DIR, STORAGE_DIR
 
     video_path, pitch_config_path, input_label = _resolve_inputs(args, MATCHES_DIR)
     normalized_device = normalize_yolo_device(args.yolo_device)
+    normalized_ball_device = normalize_yolo_device(args.ball_yolo_device or args.yolo_device)
     output_root = args.output_root or STORAGE_DIR / "benchmarks"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     label = args.label or f"{input_label}-{args.yolo_device or 'auto'}"
@@ -86,6 +92,12 @@ def main() -> None:
             "yolo_tracker": args.yolo_tracker,
             "yolo_device_requested": args.yolo_device,
             "yolo_device": normalized_device or "auto",
+            "include_ball": bool(args.include_ball),
+            "ball_yolo_model": args.ball_yolo_model if args.include_ball else None,
+            "ball_yolo_conf": args.ball_yolo_conf if args.include_ball else None,
+            "ball_yolo_imgsz": args.ball_yolo_imgsz if args.include_ball else None,
+            "ball_yolo_device_requested": (args.ball_yolo_device or args.yolo_device) if args.include_ball else None,
+            "ball_yolo_device": (normalized_ball_device or "auto") if args.include_ball else None,
         },
         "runtime": runtime_info,
     }
@@ -105,6 +117,11 @@ def main() -> None:
         yolo_imgsz=args.yolo_imgsz,
         yolo_tracker=args.yolo_tracker,
         yolo_device=normalized_device,
+        include_ball=bool(args.include_ball),
+        ball_yolo_model=args.ball_yolo_model,
+        ball_yolo_conf=args.ball_yolo_conf,
+        ball_yolo_imgsz=args.ball_yolo_imgsz,
+        ball_yolo_device=normalized_ball_device,
     )
     elapsed = time.perf_counter() - started
     performance_report = build_performance_report(

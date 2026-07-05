@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "backend:native": "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000",
+    "backend:native:cuda": "backend\\.venv-cuda\\Scripts\\python.exe -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000",
     "extract:frames": "node scripts/extract-training-frames.mjs",
     "prelabel:ball": "node scripts/prelabel-ball-frames.mjs",
     "prelabel:player-ball": "node scripts/prelabel-player-ball-frames.mjs",
     "typecheck:client": "pnpm --dir client typecheck",
     "runtime:info": "python backend/scripts/runtime_info.py",
+    "runtime:info:cuda": "backend\\.venv-cuda\\Scripts\\python.exe backend/scripts/runtime_info.py",
     "benchmark:analysis": "python backend/scripts/benchmark_analysis.py",
+    "benchmark:cuda": "backend\\.venv-cuda\\Scripts\\python.exe backend/scripts/benchmark_analysis.py --device cuda --include-ball",
     "quality:analysis": "python backend/scripts/check_analysis_quality.py"
   }
 }
