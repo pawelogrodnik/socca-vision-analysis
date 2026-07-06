@@ -20,8 +20,15 @@ from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, st
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
 from app.services.chunked_analysis import analyze_match_chunked_yolo
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
-from app.services.database import database_health, delete_published_match, get_published_match, import_match_package, init_db, list_published_matches
 from app.services.identity import build_identity_review, save_identity_assignments
+from app.services.json_publish_store import (
+    delete_published_match,
+    get_published_match,
+    import_match_package,
+    init_publish_store,
+    list_published_matches,
+    publish_store_health,
+)
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
 from app.services.pass_review import load_pass_candidates_review, save_pass_candidate_reviews
 from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
@@ -50,7 +57,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
-    init_db()
+    init_publish_store()
 
 
 def now_iso() -> str:
@@ -454,7 +461,7 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "app_mode": APP_MODE,
         "publish_target": PUBLISH_TARGET,
-        "database": database_health(),
+        "publish_store": publish_store_health(),
     }
 
 
@@ -1339,7 +1346,7 @@ def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]
 
     meta = read_match_meta(path)
     meta["status"] = "published"
-    meta["publish_target"] = PUBLISH_TARGET
+    meta["publish_target"] = "local-json" if PUBLISH_TARGET == "local-db" else PUBLISH_TARGET
     meta["published_match_id"] = published.get("id")
     write_match_meta(path, meta)
     return published
@@ -1360,7 +1367,7 @@ def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str
 
     meta = read_match_meta(path)
     meta["status"] = "published"
-    meta["publish_target"] = "local-db"
+    meta["publish_target"] = "local-json"
     meta["published_match_id"] = published["id"]
     write_match_meta(path, meta)
     return published

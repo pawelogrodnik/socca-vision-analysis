@@ -12,7 +12,6 @@ ORLIK_PUBLISH_TARGET=remote-api
 ORLIK_PRODUCTION_API_URL=https://your-production-domain.example
 ORLIK_PRODUCTION_API_TOKEN=change-me
 ORLIK_ADMIN_IMPORT_TOKEN=
-ORLIK_DATABASE_PATH=/app/storage/database/orlik.sqlite3
 ORLIK_DEFAULT_PITCH_WIDTH_M=30
 ORLIK_DEFAULT_PITCH_LENGTH_M=47.4
 VITE_API_BASE_URL=http://localhost:8000
@@ -27,9 +26,8 @@ Production should receive values from GitHub Secrets or a deployment-time `.env`
 
 ```env
 ORLIK_APP_MODE=production-viewer
-ORLIK_PUBLISH_TARGET=local-db
+ORLIK_PUBLISH_TARGET=local-json
 ORLIK_ADMIN_IMPORT_TOKEN=change-me
-ORLIK_DATABASE_PATH=/app/storage/database/orlik.sqlite3
 ORLIK_DEFAULT_PITCH_WIDTH_M=30
 ORLIK_DEFAULT_PITCH_LENGTH_M=47.4
 VITE_API_BASE_URL=https://your-production-domain.example
@@ -56,7 +54,13 @@ ORLIK_ADMIN_IMPORT_TOKEN
 
 ## Publish target
 
-`ORLIK_PUBLISH_TARGET=local-db` imports into the current machine's SQLite DB.
+`ORLIK_PUBLISH_TARGET=local-json` imports into local JSON snapshots under:
+
+```text
+backend/storage/published/matches/<published_match_id>/
+```
+
+`ORLIK_PUBLISH_TARGET=local-db` is accepted as a legacy alias, but it also uses the JSON store.
 
 `ORLIK_PUBLISH_TARGET=remote-api` sends the local match package to:
 

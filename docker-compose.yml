@@ -11,10 +11,9 @@ services:
       - ./examples:/app/examples:ro
     environment:
       - ORLIK_STORAGE_DIR=/app/storage
-      - ORLIK_DATABASE_PATH=${ORLIK_DATABASE_PATH:-/app/storage/database/orlik.sqlite3}
       - ORLIK_CORS_ORIGINS=${ORLIK_CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       - ORLIK_APP_MODE=${ORLIK_APP_MODE:-local-analysis}
-      - ORLIK_PUBLISH_TARGET=${ORLIK_PUBLISH_TARGET:-local-db}
+      - ORLIK_PUBLISH_TARGET=${ORLIK_PUBLISH_TARGET:-local-json}
       - ORLIK_PRODUCTION_API_URL=${ORLIK_PRODUCTION_API_URL:-}
       - ORLIK_PRODUCTION_API_TOKEN=${ORLIK_PRODUCTION_API_TOKEN:-}
       - ORLIK_ADMIN_IMPORT_TOKEN=${ORLIK_ADMIN_IMPORT_TOKEN:-}

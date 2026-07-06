@@ -6,16 +6,17 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 STORAGE_DIR = Path(os.getenv("ORLIK_STORAGE_DIR", ROOT_DIR / "storage")).resolve()
 MATCHES_DIR = STORAGE_DIR / "matches"
+PUBLISHED_DIR = STORAGE_DIR / "published"
 DATABASE_DIR = STORAGE_DIR / "database"
 DATABASE_PATH = Path(os.getenv("ORLIK_DATABASE_PATH", DATABASE_DIR / "orlik.sqlite3")).resolve()
 MATCHES_DIR.mkdir(parents=True, exist_ok=True)
-DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+PUBLISHED_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_PITCH_WIDTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_WIDTH_M", "30"))
 DEFAULT_PITCH_LENGTH_M = float(os.getenv("ORLIK_DEFAULT_PITCH_LENGTH_M", "47.4"))
 
 APP_MODE = os.getenv("ORLIK_APP_MODE", "local-analysis")  # local-analysis | production-viewer
-PUBLISH_TARGET = os.getenv("ORLIK_PUBLISH_TARGET", "local-db")  # local-db | remote-api
+PUBLISH_TARGET = os.getenv("ORLIK_PUBLISH_TARGET", "local-json")  # local-json | local-db legacy alias | remote-api
 PRODUCTION_API_URL = os.getenv("ORLIK_PRODUCTION_API_URL", "").rstrip("/")
 PRODUCTION_API_TOKEN = os.getenv("ORLIK_PRODUCTION_API_TOKEN", "")
 ADMIN_IMPORT_TOKEN = os.getenv("ORLIK_ADMIN_IMPORT_TOKEN", "")

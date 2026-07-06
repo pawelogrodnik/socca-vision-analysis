@@ -1,0 +1,17 @@
+{
+  "image_points": [
+    [255.0, 80.0],
+    [1260.0, 80.0],
+    [1790.0, 1035.0],
+    [-80.0, 1035.0]
+  ],
+  "width_m": 30.0,
+  "length_m": 47.4,
+  "pitch_dimensions_m": {
+    "width_m": 30.0,
+    "length_m": 47.4
+  },
+  "calibration_frame_time_sec": 0.0,
+  "created_at": "2026-07-05T00:00:00Z",
+  "source": "manual_benchmark_video_static_eval"
+}

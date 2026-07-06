@@ -7,7 +7,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from app.config import PRODUCTION_API_TOKEN, PRODUCTION_API_URL, PUBLISH_TARGET
-from app.services.database import import_match_package
+from app.services.json_publish_store import import_match_package
 
 
 class PublishError(RuntimeError):
@@ -15,11 +15,11 @@ class PublishError(RuntimeError):
 
 
 def publish_match_package(package: dict[str, Any], *, replace: bool = False) -> dict[str, Any]:
-    if PUBLISH_TARGET == "local-db":
+    if PUBLISH_TARGET in {"local-json", "local-db"}:
         return import_match_package(package, replace=replace)
     if PUBLISH_TARGET == "remote-api":
         return publish_match_package_to_remote(package, replace=replace)
-    raise PublishError(f"Unsupported ORLIK_PUBLISH_TARGET={PUBLISH_TARGET!r}. Use local-db or remote-api.")
+    raise PublishError(f"Unsupported ORLIK_PUBLISH_TARGET={PUBLISH_TARGET!r}. Use local-json or remote-api.")
 
 
 def publish_match_package_to_remote(package: dict[str, Any], *, replace: bool = False) -> dict[str, Any]:

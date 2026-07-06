@@ -1,6 +1,6 @@
 # Local analysis admin vs production viewer
 
-This project runs in two modes and has a lightweight SQLite import layer for published match snapshots.
+This project runs in two modes and has a lightweight JSON import layer for published match snapshots.
 
 ## 1. Local admin / analysis mode
 
@@ -15,7 +15,7 @@ Flow:
 5. Run detection/tracking analysis.
 6. Review artifacts and resolve identity: `raw tracker_id -> identity_candidate -> player_id`.
 7. Generate a publishable match package.
-8. Publish the package either to local SQLite or to production, depending on `ORLIK_PUBLISH_TARGET`.
+8. Publish the package either to local JSON storage or to production, depending on `ORLIK_PUBLISH_TARGET`.
 9. Use replace mode when deliberately overwriting a duplicate or corrected package.
 
 The local app may store raw video, overlays, debug files, full tracks and temporary cache.
@@ -26,7 +26,7 @@ Runs on a small server. It should not run video analysis.
 
 Allowed responsibilities:
 
-- list published matches from SQLite,
+- list published matches from JSON snapshots,
 - show match reports,
 - show player/team/season dashboards,
 - serve imported heatmaps/assets in a later milestone,
@@ -54,37 +54,36 @@ Recommended production VPS values:
 
 ```env
 ORLIK_APP_MODE=production-viewer
-ORLIK_PUBLISH_TARGET=local-db
+ORLIK_PUBLISH_TARGET=local-json
 ORLIK_ADMIN_IMPORT_TOKEN=change-me
 ```
 
 `VITE_*` variables are public in the browser. Tokens must remain in backend env variables only.
 
-## SQLite storage
+## JSON storage
 
-The MVP database is SQLite because it is small, zero-admin and works well on a low-memory box.
+The MVP publish store is JSON because the project is still local-first and has only a small number of videos.
 
 Default Docker path:
 
 ```text
-/app/storage/database/orlik.sqlite3
+/app/storage/published/matches/<published_match_id>/
 ```
 
 Host path through Compose:
 
 ```text
-backend/storage/database/orlik.sqlite3
+backend/storage/published/matches/<published_match_id>/
 ```
 
-The database contains normalized summary tables:
+Each published match directory contains:
 
 ```text
-published_matches
-published_teams
-published_players
+package.json
+summary.json
 ```
 
-`published_matches.package_json` still stores the full imported package as a source-of-truth snapshot. The normalized tables are for listing, deletion and future season/player queries.
+`package.json` stores the full imported package as the source-of-truth snapshot. `summary.json` stores the lightweight list row used by `/api/published/matches`.
 
 ## Identity review before publish
 
@@ -143,7 +142,7 @@ Local publish generated from an existing match, using `ORLIK_PUBLISH_TARGET`:
 POST /api/matches/{match_id}/publish?replace=false
 ```
 
-Forced local import into the current machine's SQLite:
+Forced local import into the current machine's JSON store:
 
 ```text
 POST /api/matches/{match_id}/publish-local?replace=false

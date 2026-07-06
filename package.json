@@ -14,6 +14,7 @@
     "runtime:info:cuda": "backend\\.venv-cuda\\Scripts\\python.exe backend/scripts/runtime_info.py",
     "benchmark:analysis": "python backend/scripts/benchmark_analysis.py",
     "benchmark:cuda": "backend\\.venv-cuda\\Scripts\\python.exe backend/scripts/benchmark_analysis.py --device cuda --include-ball",
+    "model:evaluate": "python backend/scripts/evaluate_player_ball_models.py",
     "quality:analysis": "python backend/scripts/check_analysis_quality.py"
   }
 }
