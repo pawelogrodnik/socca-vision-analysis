@@ -33,7 +33,7 @@ function Resolve-Python3Command {
         try {
             $Version = & $Exe @Args -c "import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))" 2>$null
             if ($LASTEXITCODE -eq 0 -and $Version -match "^3\.") {
-                return $Candidate
+                return ,$Candidate
             }
         } catch {
             continue
