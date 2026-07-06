@@ -1,0 +1,66 @@
+{
+  "schema_version": "0.1.0",
+  "label": "windows-xps-gtx1650-cuda-smoke-1s",
+  "video_path": "scripts\\benchmark_video.mp4",
+  "pitch_config_path": "scripts\\benchmark_video_pitch_config.json",
+  "output_dir": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T100841Z-windows-xps-gtx1650-cuda-smoke-1s",
+  "parameters": {
+    "adapter": "yolo",
+    "max_seconds": 1.0,
+    "frame_stride": 1,
+    "yolo_model": "models/best-model-with-ball-and-players-500-frames.pt",
+    "yolo_conf": 0.05,
+    "yolo_imgsz": 1280,
+    "yolo_tracker": "centroid_high_recall",
+    "yolo_device_requested": "0",
+    "yolo_device": "0",
+    "include_ball": true,
+    "ball_yolo_model": "models/best-balls-only-800-frames.pt",
+    "ball_yolo_conf": 0.03,
+    "ball_yolo_imgsz": 1280,
+    "ball_yolo_device_requested": "0",
+    "ball_yolo_device": "0"
+  },
+  "runtime": {
+    "schema_version": "0.2.0",
+    "python": {
+      "version": "3.11.9",
+      "executable": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\.venv-cuda\\Scripts\\python.exe"
+    },
+    "platform": {
+      "system": "Windows",
+      "release": "10",
+      "machine": "AMD64",
+      "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+      "platform": "Windows-10-10.0.26200-SP0"
+    },
+    "torch": {
+      "available": true,
+      "version": "2.7.1+cu118",
+      "cuda_available": true,
+      "cuda_device_count": 1,
+      "cuda_device_names": [
+        "NVIDIA GeForce GTX 1650"
+      ],
+      "cuda_version": "11.8",
+      "cudnn_version": 90100,
+      "active_cuda_device": 0,
+      "active_cuda_device_name": "NVIDIA GeForce GTX 1650",
+      "gpu_memory_total_mb": [
+        4096
+      ],
+      "gpu_memory_allocated_mb": [
+        0
+      ],
+      "gpu_memory_reserved_mb": [
+        0
+      ],
+      "mps_available": false,
+      "mps_built": false
+    },
+    "recommended_yolo_devices": [
+      "0",
+      "cpu"
+    ]
+  }
+}

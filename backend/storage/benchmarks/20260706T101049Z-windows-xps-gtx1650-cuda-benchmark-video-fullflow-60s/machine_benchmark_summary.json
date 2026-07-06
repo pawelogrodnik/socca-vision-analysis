@@ -1,0 +1,139 @@
+{
+  "schema_version": "0.1.0",
+  "label": "windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s",
+  "machine": {
+    "system": "Windows",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+    "python": "3.11.9",
+    "torch": "2.7.1+cu118",
+    "cuda_available": true,
+    "cuda_device_names": [
+      "NVIDIA GeForce GTX 1650"
+    ],
+    "torch_cuda_version": "11.8",
+    "gpu_memory_total_mb": [
+      4096
+    ]
+  },
+  "input": {
+    "video": "scripts/benchmark_video.mp4",
+    "pitch_config": "scripts/benchmark_video_pitch_config.json",
+    "max_seconds": 60.0,
+    "frame_stride": 1,
+    "include_ball": true,
+    "player_model": "models/best-model-with-ball-and-players-500-frames.pt",
+    "ball_model": "models/best-balls-only-800-frames.pt",
+    "yolo_imgsz": 1280,
+    "ball_yolo_imgsz": 1280,
+    "device": "0"
+  },
+  "performance": {
+    "elapsed_wall_sec": 1002.113,
+    "elapsed_wall_min": 16.702,
+    "processed_frames": 1799,
+    "processed_frames_per_wall_sec": 1.795,
+    "analyzed_video_sec": 60.0,
+    "video_seconds_per_wall_second": 0.06,
+    "estimated_40_min_wall_min": 668.08,
+    "estimated_40_min_wall_hours": 11.135
+  },
+  "analysis_summary": {
+    "status": "completed",
+    "analysis_type": "yolo-ultralytics",
+    "run_id": "20260706T102735Z-yolo-ultralytics-3ec7aca9",
+    "frames_processed": 1799,
+    "tracks_count": 125,
+    "stable_players_count": 21,
+    "warnings": [
+      "Contested frames exist and require review before player/team possession stats.",
+      "Some contact candidates use short-gap interpolated player positions and need review."
+    ]
+  },
+  "ball_summary": {
+    "processed_frames": 1799,
+    "detected_frames": 1419,
+    "interpolated_frames": 211,
+    "unknown_frames": 169,
+    "detected_coverage": 0.7888,
+    "interpolated_coverage": 0.1173,
+    "known_coverage": 0.9061,
+    "mean_detected_confidence": 0.7251,
+    "interpolation_gaps": 54,
+    "candidate_count": 1801,
+    "frames_with_candidates": 1463,
+    "rejected_candidate_count": 270,
+    "rejected_summary": {
+      "outside_pitch": 270
+    }
+  },
+  "ball_quality_summary": {
+    "processed_frames": 1799,
+    "candidate_count": 1801,
+    "frames_with_candidates": 1463,
+    "candidate_frame_ratio": 0.8132,
+    "multi_candidate_frames": 299,
+    "multi_candidate_ratio": 0.1662,
+    "rejected_candidate_count": 270,
+    "rejected_rate": 0.1304,
+    "known_coverage": 0.9061,
+    "detected_coverage": 0.7888,
+    "interpolated_coverage": 0.1173,
+    "unknown_coverage": 0.0939,
+    "mean_detected_confidence": 0.7251,
+    "longest_unknown_streak_frames": 40,
+    "longest_unknown_streak_sec": 1.32,
+    "detected_ranges_count": 62,
+    "unknown_ranges_count": 8
+  },
+  "identity_summary": {
+    "raw_tracks": 125,
+    "clean_tracklets": 92,
+    "rejected_tracklets": 33,
+    "target_active_players": 14,
+    "players_per_team": 7,
+    "slots_total": 21,
+    "stable_players": 21,
+    "stints_total": 26,
+    "team_counts": {
+      "A": 7,
+      "B": 14
+    },
+    "detected_frames": 21263,
+    "predicted_frames": 0,
+    "missing_frames": 3380,
+    "ambiguous_frames": 543,
+    "blocked_team_switches": 0,
+    "blocked_identity_switches": 543,
+    "suspicious_assignments": 7933,
+    "rejected_candidates": 543,
+    "rejected_start_candidates": 45,
+    "low_confidence_players": 13,
+    "risky_links": 7933,
+    "predicted_visible_boxes": 0,
+    "ghost_bbox_count": 0,
+    "total_distance_m": 1110.12,
+    "observed_distance_m": 1060.43,
+    "estimated_gap_distance_m": 49.71,
+    "players_with_estimated_distance": 15,
+    "raw_frames_below_target": 200,
+    "active_slots_frames_below_target": 0,
+    "frames_with_predictions": 0,
+    "frames_with_missing_slots": 1647,
+    "frames_with_ambiguous_slots": 451
+  },
+  "warnings": [
+    "Contested frames exist and require review before player/team possession stats.",
+    "Some contact candidates use short-gap interpolated player positions and need review."
+  ],
+  "artifacts": {
+    "output_dir": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s",
+    "performance_report": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\performance_report.json",
+    "analysis_report": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\analysis_report.json",
+    "stable_overlay_preview": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\stable_overlay_preview.mp4",
+    "ball_overlay_preview": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\ball_overlay_preview.mp4",
+    "possession_overlay_preview": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\possession_overlay_preview.mp4",
+    "camera_motion_overlay": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\camera_motion_overlay.mp4",
+    "debug_identity_overlay": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\backend\\storage\\benchmarks\\20260706T101049Z-windows-xps-gtx1650-cuda-benchmark-video-fullflow-60s\\debug_identity_overlay.mp4"
+  }
+}

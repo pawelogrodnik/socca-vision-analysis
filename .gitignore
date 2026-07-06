@@ -29,6 +29,13 @@ backend/storage/*
 backend/storage/matches/**
 !backend/storage/matches/.gitkeep
 backend/storage/database/**
+!backend/storage/benchmarks/
+backend/storage/benchmarks/**
+!backend/storage/benchmarks/**/
+!backend/storage/benchmarks/**/benchmark_input.json
+!backend/storage/benchmarks/**/performance_report.json
+!backend/storage/benchmarks/**/machine_benchmark_summary.json
+!backend/storage/benchmarks/**/machine_benchmark_summary.md
 *.sqlite
 *.sqlite3
 *.db
