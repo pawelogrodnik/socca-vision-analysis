@@ -88,6 +88,27 @@ def ensure_yolo_device_available(
     return normalized
 
 
+def preferred_yolo_device(runtime_info: dict[str, Any] | None = None) -> str | None:
+    info = runtime_info or collect_runtime_info()
+    devices = info.get("recommended_yolo_devices") if isinstance(info.get("recommended_yolo_devices"), list) else []
+    for device in devices:
+        normalized = normalize_yolo_device(str(device))
+        if normalized and normalized != "cpu":
+            return normalized
+    return None
+
+
+def resolve_yolo_device(
+    device: str | None,
+    *,
+    runtime_info: dict[str, Any] | None = None,
+    context: str = "YOLO",
+) -> str | None:
+    info = runtime_info or collect_runtime_info()
+    normalized = ensure_yolo_device_available(device, runtime_info=info, context=context)
+    return preferred_yolo_device(info) if normalized is None else normalized
+
+
 def collect_runtime_info() -> dict[str, Any]:
     info: dict[str, Any] = {
         "schema_version": "0.2.0",

@@ -180,6 +180,65 @@ class GlobalIdentityTests(unittest.TestCase):
         ]
         self.assertGreater(len(ambiguous_rows), 0)
 
+    def test_confirmed_unmatched_raw_backfills_missing_active_slot(self) -> None:
+        tracklets = [
+            tracklet(f"{100 + index}:1", "A", [position(frame, index, 8) for frame in range(8)])
+            for index in range(7)
+        ]
+        tracklets.extend(
+            [
+                tracklet(f"{index + 1}:1", "B", [position(frame, index, 2) for frame in range(8)])
+                for index in range(6)
+            ]
+        )
+        tracklets.append(tracklet("7:1", "B", [position(frame, 6, 2) for frame in range(3)]))
+        tracklets.append(tracklet("8:1", "B", [position(frame, 10 + frame * 0.05, 2) for frame in range(3, 7)]))
+
+        identity = self.resolve(tracklets)
+
+        b07 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B07")
+        self.assertIn("8:1", b07["tracklet_ids"])
+        repaired_frames = [
+            row["frame"]
+            for row in b07["overlay_positions"]
+            if row.get("tracklet_id") == "8:1" and row.get("repair_reason") == "unmatched_raw_confirmed"
+        ]
+        self.assertEqual(repaired_frames, [3, 4, 5, 6])
+        self.assertEqual(identity["summary"]["unmatched_raw_backfilled"], 4)
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 0)
+
+        counts = build_frame_detection_counts_from_global_identity(identity, fps=30, target_players=14)
+        self.assertEqual(counts["frames"][3]["slot_detected"], 14)
+        self.assertEqual(counts["frames"][3]["slot_missing"], 0)
+        self.assertEqual(counts["frames"][3]["unmatched_raw_detections"], 0)
+
+    def test_short_unmatched_raw_remains_debug_only(self) -> None:
+        tracklets = [
+            tracklet(f"{100 + index}:1", "A", [position(frame, index, 8) for frame in range(5)])
+            for index in range(7)
+        ]
+        tracklets.extend(
+            [
+                tracklet(f"{index + 1}:1", "B", [position(frame, index, 2) for frame in range(5)])
+                for index in range(6)
+            ]
+        )
+        tracklets.append(tracklet("7:1", "B", [position(frame, 6, 2) for frame in range(3)]))
+        tracklets.append(tracklet("8:1", "B", [position(frame, 10 + frame * 0.05, 2) for frame in range(3, 5)]))
+
+        identity = self.resolve(tracklets)
+
+        b07 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B07")
+        self.assertNotIn("8:1", b07["tracklet_ids"])
+        self.assertEqual(identity["summary"]["unmatched_raw_backfilled"], 0)
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 2)
+        self.assertEqual([row["frame"] for row in identity["unmatched_observations"]], [3, 4])
+
+        counts = build_frame_detection_counts_from_global_identity(identity, fps=30, target_players=14)
+        self.assertEqual(counts["frames"][3]["slot_detected"], 13)
+        self.assertEqual(counts["frames"][3]["slot_missing"], 1)
+        self.assertEqual(counts["frames"][3]["unmatched_raw_detections"], 1)
+
     def test_ambiguous_candidate_is_not_counted_as_visible_stable_box(self) -> None:
         identity = self.resolve(
             [

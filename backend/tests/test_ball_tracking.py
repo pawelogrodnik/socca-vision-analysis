@@ -11,6 +11,8 @@ from app.services.ball_tracking import (
     build_ball_tracks_document,
     extract_ball_candidates,
     select_ball_detections,
+    _ball_result,
+    _draw_ball_position,
     _resolve_ball_model_classes,
 )
 
@@ -40,6 +42,29 @@ class FakeCameraMotion:
 
 
 class BallTrackingTests(unittest.TestCase):
+    def test_ball_result_skips_overlay_artifact_when_disabled(self) -> None:
+        calls: list[str] = []
+
+        result = _ball_result({}, {}, {}, {}, include_overlay=False, overlay_writer=lambda: calls.append("overlay"))
+
+        self.assertEqual(calls, [])
+        self.assertNotIn("ball_overlay_preview", result["artifacts"])
+
+    def test_draw_ball_position_draws_bbox_when_available(self) -> None:
+        frame = np.zeros((40, 40, 3), dtype=np.uint8)
+
+        _draw_ball_position(
+            frame,
+            {
+                "position_px": [15, 17],
+                "bbox_xyxy": [10, 12, 20, 22],
+                "source": "detected",
+                "confidence": 0.7,
+            },
+        )
+
+        self.assertGreater(int(frame[12, 10].sum()), 0)
+
     def test_resolve_ball_model_classes_accepts_one_class_custom_model(self) -> None:
         model = type("Model", (), {"names": {0: "ball"}})()
 

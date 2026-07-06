@@ -10,7 +10,7 @@ from typing import Any, Literal
 import cv2
 import numpy as np
 
-from app.config import ROOT_DIR
+from app.config import ROOT_DIR, WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.model_defaults import DEFAULT_BALL_YOLO_MODEL
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id, now_iso
 from app.services.ball_tracking import DEFAULT_BALL_CONF, detect_ball_yolo_coco
@@ -25,7 +25,7 @@ from app.services.camera_motion import (
     write_camera_motion_report,
 )
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
-from app.services.runtime import collect_runtime_info, ensure_yolo_device_available, normalize_yolo_device, requested_device_label
+from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label, resolve_yolo_device
 from app.services.stabilization import stabilize_match
 from app.services.tracker import CentroidTracker
 from app.services.video import read_video_metadata
@@ -52,6 +52,24 @@ BALL_ARTIFACT_FILENAMES = {
     "possession_report": "possession_report.json",
     "possession_overlay_preview": "possession_overlay_preview.mp4",
 }
+
+DEBUG_VIDEO_ARTIFACT_FILENAMES = (
+    "overlay_preview.mp4",
+    "overlay_preview.raw.avi",
+    "ball_overlay_preview.mp4",
+    "ball_overlay_preview.mp4.raw.avi",
+    "possession_overlay_preview.mp4",
+    "possession_overlay_preview.mp4.raw.avi",
+    "debug_identity_overlay.mp4",
+    "debug_identity_overlay.mp4.raw.avi",
+    "camera_motion_overlay.mp4",
+    "camera_motion_overlay.mp4.raw.avi",
+)
+
+
+def _cleanup_debug_video_artifacts(match_dir: Path) -> None:
+    for filename in DEBUG_VIDEO_ARTIFACT_FILENAMES:
+        (match_dir / filename).unlink(missing_ok=True)
 
 
 class OverlayWriter:
@@ -345,15 +363,17 @@ def save_heatmap(match_dir: Path, pitch: PitchConfig, tracks: list[dict[str, Any
     return path
 
 
-def _write_outputs(match_dir: Path, pitch: PitchConfig, tracks_json: list[dict[str, Any]]) -> dict[str, str]:
+def _write_outputs(match_dir: Path, pitch: PitchConfig, tracks_json: list[dict[str, Any]], *, include_overlay: bool = True) -> dict[str, str]:
     tracks_path = match_dir / "tracks.json"
     tracks_path.write_text(json.dumps(tracks_json, indent=2), encoding="utf-8")
     heatmap_path = save_heatmap(match_dir, pitch, tracks_json)
-    return {
+    artifacts = {
         "tracks_json": tracks_path.name,
-        "overlay_preview": "overlay_preview.mp4",
         "heatmap_all_tracks": heatmap_path.name,
     }
+    if include_overlay:
+        artifacts["overlay_preview"] = "overlay_preview.mp4"
+    return artifacts
 
 
 def _write_failed_report(match_dir: Path, *, adapter: str, error: Exception) -> dict[str, Any]:
@@ -387,6 +407,8 @@ def analyze_match_motion(match_dir: Path, video_path: Path, *, max_seconds: floa
     try:
         metadata = read_video_metadata(video_path)
         pitch = load_pitch_config(match_dir)
+        if not WRITE_DEBUG_VIDEO_ARTIFACTS:
+            _cleanup_debug_video_artifacts(match_dir)
         pitch_polygon = pitch.polygon_np
         H = pitch.homography()
 
@@ -540,6 +562,7 @@ def _build_ball_possession_artifacts(
     ball_tracking: dict[str, Any],
     *,
     stable_players_doc: dict[str, Any] | None = None,
+    write_overlay_video: bool = True,
 ) -> dict[str, Any]:
     stable_doc = stable_players_doc or _load_stable_players_doc(match_dir)
     return build_ball_possession_analysis(
@@ -549,6 +572,7 @@ def _build_ball_possession_artifacts(
         metadata,
         ball_tracking.get("ball_tracks") or {},
         stable_doc,
+        write_overlay_video=write_overlay_video,
     )
 
 
@@ -586,7 +610,7 @@ def collect_yolo_tracks_range(
     start_frame = max(0, int(round(max(0.0, start_time_sec) * fps)))
     end_frame = max(start_frame, int(round(max(start_time_sec, end_time_sec) * fps)))
     resolved_yolo_model = _resolve_yolo_model_name(yolo_model)
-    normalized_yolo_device = ensure_yolo_device_available(
+    normalized_yolo_device = resolve_yolo_device(
         yolo_device,
         context="player YOLO chunk",
     )
@@ -839,12 +863,12 @@ def analyze_match_yolo(
     try:
         requested_yolo_device = yolo_device
         runtime_info = collect_runtime_info()
-        normalized_yolo_device = ensure_yolo_device_available(
+        normalized_yolo_device = resolve_yolo_device(
             yolo_device,
             runtime_info=runtime_info,
             context="player YOLO",
         )
-        normalized_ball_yolo_device = ensure_yolo_device_available(
+        normalized_ball_yolo_device = resolve_yolo_device(
             ball_yolo_device or yolo_device,
             runtime_info=runtime_info,
             context="ball YOLO",
@@ -860,7 +884,11 @@ def analyze_match_yolo(
 
         fps, width, height = _validate_common_video_params(metadata, frame_stride)
         max_frames = int(max_seconds * fps) if max_seconds > 0 else int(metadata["frame_count"])
-        overlay_writer = OverlayWriter(match_dir, fps=fps / frame_stride, frame_size=(width, height))
+        overlay_writer = (
+            OverlayWriter(match_dir, fps=fps / frame_stride, frame_size=(width, height))
+            if WRITE_DEBUG_VIDEO_ARTIFACTS
+            else None
+        )
         camera_motion_warnings: list[str] = []
         try:
             camera_motion = build_camera_motion_model(
@@ -986,14 +1014,16 @@ def analyze_match_yolo(
                                 active_rows.append(row)
                                 detections_kept += 1
 
-                overlay_polygon = camera_motion.polygon_for_frame(frame_idx, pitch_polygon)
-                overlay_writer.write(draw_overlay(frame, overlay_polygon, active_rows, label_prefix="P", frame_idx=frame_idx))
+                if overlay_writer is not None:
+                    overlay_polygon = camera_motion.polygon_for_frame(frame_idx, pitch_polygon)
+                    overlay_writer.write(draw_overlay(frame, overlay_polygon, active_rows, label_prefix="P", frame_idx=frame_idx))
                 processed += 1
                 frame_idx += 1
         finally:
             cap.release()
 
-        overlay_writer.close()
+        if overlay_writer is not None:
+            overlay_writer.close()
 
         if use_centroid_tracker:
             raw_tracks = [{"track_id": track.id, "positions": track.positions} for track in centroid_tracker.all_tracks()]
@@ -1013,24 +1043,9 @@ def analyze_match_yolo(
         elif len(tracks_json) == 0:
             warnings.append("Detections were found, but no track positions were exported.")
 
-        artifacts = _write_outputs(match_dir, pitch, tracks_json)
+        artifacts = _write_outputs(match_dir, pitch, tracks_json, include_overlay=overlay_writer is not None)
         write_camera_motion_report(match_dir, camera_motion)
         artifacts["camera_motion_report"] = "camera_motion_report.json"
-        try:
-            write_camera_motion_overlay(
-                video_path,
-                match_dir,
-                camera_motion,
-                pitch_polygon,
-                metadata,
-                frame_stride=frame_stride,
-                max_seconds=max_seconds,
-            )
-            artifacts["camera_motion_overlay"] = "camera_motion_overlay.mp4"
-        except Exception as exc:
-            warnings.append(f"Camera motion debug overlay failed: {exc}")
-        stabilization = stabilize_match(match_dir, video_path, pitch, tracks_json, metadata, camera_motion=camera_motion)
-        artifacts.update(stabilization["artifacts"])
         ball_tracking: dict[str, Any] | None = None
         possession: dict[str, Any] | None = None
         if include_ball and ball_model is not None:
@@ -1046,10 +1061,38 @@ def analyze_match_yolo(
                 yolo_device=normalized_ball_yolo_device,
                 ball_conf=float(ball_yolo_conf),
                 camera_motion=camera_motion,
+                write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
-            artifacts.update(ball_tracking["artifacts"])
         elif not include_ball:
             warnings.append("Ball analysis skipped because include_ball=false.")
+
+        stabilization = stabilize_match(
+            match_dir,
+            video_path,
+            pitch,
+            tracks_json,
+            metadata,
+            camera_motion=camera_motion,
+            ball_tracks_doc=(ball_tracking or {}).get("ball_tracks"),
+            write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
+        )
+        artifacts.update(stabilization["artifacts"])
+        if ball_tracking is not None:
+            artifacts.update(ball_tracking["artifacts"])
+        if WRITE_DEBUG_VIDEO_ARTIFACTS:
+            try:
+                write_camera_motion_overlay(
+                    video_path,
+                    match_dir,
+                    camera_motion,
+                    pitch_polygon,
+                    metadata,
+                    frame_stride=frame_stride,
+                    max_seconds=max_seconds,
+                )
+                artifacts["camera_motion_overlay"] = "camera_motion_overlay.mp4"
+            except Exception as exc:
+                warnings.append(f"Camera motion debug overlay failed: {exc}")
         if ball_tracking is not None:
             try:
                 possession = _build_ball_possession_artifacts(
@@ -1059,6 +1102,7 @@ def analyze_match_yolo(
                     metadata,
                     ball_tracking,
                     stable_players_doc=stabilization["stable_players"],
+                    write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
                 )
                 artifacts.update(possession["artifacts"])
                 warnings.extend(possession["possession_report"].get("warnings") or [])
@@ -1146,7 +1190,7 @@ def analyze_match_ball_yolo(
     try:
         requested_yolo_device = yolo_device
         runtime_info = collect_runtime_info()
-        normalized_yolo_device = ensure_yolo_device_available(
+        normalized_yolo_device = resolve_yolo_device(
             yolo_device,
             runtime_info=runtime_info,
             context="ball YOLO",

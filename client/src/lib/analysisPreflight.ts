@@ -452,7 +452,7 @@ function planAnalysisChunks(
   return chunks;
 }
 
-function preferredAcceleratedDevice(runtimeInfo?: RuntimeInfo | null): string | null {
+export function preferredAcceleratedDevice(runtimeInfo?: RuntimeInfo | null): string | null {
   const devices = runtimeInfo?.recommended_yolo_devices || [];
   return devices.find((device) => device !== 'cpu') || null;
 }

@@ -20,6 +20,9 @@ MIN_DETECTIONS_FOR_VISUAL_PREDICTION = 6
 SWITCH_CONFIRMATION_FRAMES = 10
 SWITCH_GUARD_MIN_DETECTIONS = 3
 SWITCH_CONFLICT_RADIUS_M = 2.2
+UNMATCHED_CONFIRMATION_FRAMES = 3
+UNMATCHED_MAX_FRAME_GAP = 2
+UNMATCHED_REPAIR_MAX_DISTANCE_M = 18.0
 BBOX_OUTLIER_MIN_DETECTIONS = 6
 SHADOW_LIKE_MAX_ASPECT_RATIO = 1.35
 SHADOW_LIKE_LOW_CONFIDENCE = 0.25
@@ -327,6 +330,51 @@ class SlotState:
         self.history.append(row)
         self._update_current_stint(obs.frame, obs.time_sec, "detected", obs.tracklet_id, obs.raw_track_id)
 
+    def backfill_missing_detection(self, obs: Observation, *, reason: str) -> bool:
+        if obs.team_label in TEAM_LABELS and obs.team_label != self.team_label:
+            return False
+        for index, row in enumerate(self.history):
+            if int(row.get("frame") or -1) != obs.frame:
+                continue
+            if row.get("source") != "missing":
+                continue
+            self.history[index] = {
+                **row,
+                "bbox_xyxy": list(obs.bbox_xyxy),
+                "footpoint": obs.footpoint,
+                "pitch_m": _round_point(obs.pitch_m),
+                "tracklet_id": obs.tracklet_id,
+                "raw_track_id": obs.raw_track_id,
+                "confidence": round(obs.confidence, 4),
+                "source": "detected",
+                "status": "detected",
+                "visual_trusted": True,
+                "repair_reason": reason,
+                "repaired_from": "unmatched_raw_detection",
+                "missing_since_frame": None,
+                "short_gap_sec": None,
+            }
+            self.tracklet_ids.add(obs.tracklet_id)
+            self.raw_track_ids.add(obs.raw_track_id)
+            if obs.team_confidence:
+                self.team_confidences.append(obs.team_confidence)
+            if obs.appearance_rgb:
+                self.appearance_samples.append(obs.appearance_rgb)
+            self.identity_events.append(
+                {
+                    "type": "unmatched_raw_backfill",
+                    "frame": obs.frame,
+                    "time_sec": round(obs.time_sec, 3),
+                    "slot_id": self.slot_id,
+                    "tracklet_id": obs.tracklet_id,
+                    "raw_track_id": obs.raw_track_id,
+                    "reason": reason,
+                }
+            )
+            self._recompute_history_state()
+            return True
+        return False
+
     def add_ambiguous(
         self,
         obs: Observation,
@@ -483,6 +531,72 @@ class SlotState:
         if raw_track_id is not None and raw_track_id not in stint["raw_track_ids"]:
             stint["raw_track_ids"].append(raw_track_id)
 
+    def _recompute_history_state(self) -> None:
+        active_rows = [
+            row
+            for row in sorted(self.history, key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)))
+            if row.get("source") in {"detected", "missing", "ambiguous", "predicted"}
+        ]
+        detected_rows = [row for row in active_rows if row.get("source") == "detected"]
+        missing_rows = [row for row in active_rows if row.get("source") == "missing"]
+        ambiguous_rows = [row for row in active_rows if row.get("source") == "ambiguous"]
+        predicted_rows = [row for row in active_rows if row.get("source") == "predicted"]
+
+        self.detected_frames = len(detected_rows)
+        self.missing_frames = len(missing_rows)
+        self.ambiguous_frames = len(ambiguous_rows)
+        self.predicted_frames = len(predicted_rows)
+        self.tracklet_ids = {str(row.get("tracklet_id")) for row in detected_rows if row.get("tracklet_id")}
+        self.raw_track_ids = {int(row.get("raw_track_id")) for row in detected_rows if row.get("raw_track_id") is not None}
+        self.detection_confidences = [float(row.get("confidence") or 0.0) for row in detected_rows]
+
+        if active_rows:
+            self.first_frame = int(active_rows[0].get("frame") or 0)
+            self.last_frame = int(active_rows[-1].get("frame") or 0)
+            self.first_time_sec = float(active_rows[0].get("time_sec") or 0.0)
+            self.last_time_sec = float(active_rows[-1].get("time_sec") or 0.0)
+            self.status = str(active_rows[-1].get("status") or active_rows[-1].get("source") or self.status)
+        if detected_rows:
+            self.previous_pitch_m = detected_rows[-2].get("pitch_m") if len(detected_rows) >= 2 else None
+            self.previous_bbox_xyxy = detected_rows[-2].get("bbox_xyxy") if len(detected_rows) >= 2 else None
+            self.last_pitch_m = detected_rows[-1].get("pitch_m")
+            self.last_bbox_xyxy = detected_rows[-1].get("bbox_xyxy")
+            self.last_detected_frame = int(detected_rows[-1].get("frame") or 0)
+            self.last_detected_time_sec = float(detected_rows[-1].get("time_sec") or 0.0)
+
+        stints_by_id = {stint.get("stint_id"): stint for stint in self.stints if stint.get("stint_id")}
+        for stint in stints_by_id.values():
+            stint["detected_frames"] = 0
+            stint["predicted_frames"] = 0
+            stint["missing_frames"] = 0
+            stint["ambiguous_frames"] = 0
+            stint["tracklet_ids"] = []
+            stint["raw_track_ids"] = []
+        for row in active_rows:
+            stint = stints_by_id.get(row.get("stint_id"))
+            if stint is None:
+                continue
+            frame = int(row.get("frame") or 0)
+            time_sec = round(float(row.get("time_sec") or 0.0), 3)
+            if frame >= int(stint.get("end_frame") or frame):
+                stint["end_frame"] = frame
+                stint["end_time_sec"] = time_sec
+            source = str(row.get("source") or "")
+            if source == "detected":
+                stint["detected_frames"] = int(stint.get("detected_frames") or 0) + 1
+                tracklet_id = row.get("tracklet_id")
+                raw_track_id = row.get("raw_track_id")
+                if tracklet_id and tracklet_id not in stint["tracklet_ids"]:
+                    stint["tracklet_ids"].append(tracklet_id)
+                if raw_track_id is not None and raw_track_id not in stint["raw_track_ids"]:
+                    stint["raw_track_ids"].append(raw_track_id)
+            elif source == "predicted":
+                stint["predicted_frames"] = int(stint.get("predicted_frames") or 0) + 1
+            elif source == "missing":
+                stint["missing_frames"] = int(stint.get("missing_frames") or 0) + 1
+            elif source == "ambiguous":
+                stint["ambiguous_frames"] = int(stint.get("ambiguous_frames") or 0) + 1
+
 
 def build_observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[Observation]:
     observations: list[Observation] = []
@@ -544,6 +658,9 @@ def resolve_global_identity(
         frame_observations = observations_by_frame.get(frame, [])
         _assign_frame(slots, frame_observations, frame, frame_time, tracklet_owner, rejected_start_candidates)
 
+    repair_summary = _repair_unmatched_observations(slots, observations_by_frame, tracklet_owner)
+    unmatched_observations = _remaining_unmatched_observations(slots, observations_by_frame)
+
     for slot in slots:
         if slot.active:
             slot.close_stint(slot.last_frame or max_frame, slot.last_time_sec or (max_frame / max(fps, 0.001)), "end_of_analysis")
@@ -571,6 +688,9 @@ def resolve_global_identity(
         "suspicious_assignments": sum(len(slot.get("suspicious_assignments") or []) for slot in active_slot_docs),
         "rejected_candidates": sum(len(slot.get("rejected_candidates") or []) for slot in active_slot_docs),
         "rejected_start_candidates": len(rejected_start_candidates),
+        "unmatched_raw_backfilled": int(repair_summary.get("backfilled_observations") or 0),
+        "unmatched_raw_backfill_tracklets": int(repair_summary.get("backfilled_tracklets") or 0),
+        "unmatched_raw_remaining": len(unmatched_observations),
         "low_confidence_players": sum(1 for slot in active_slot_docs if slot.get("confidence") == "low"),
         "risky_links": sum(len(slot.get("suspicious_assignments") or []) for slot in active_slot_docs),
         "predicted_visible_boxes": 0,
@@ -596,6 +716,8 @@ def resolve_global_identity(
             "substitution_gap_sec": SUBSTITUTION_GAP_SEC,
             "switch_confirmation_frames": SWITCH_CONFIRMATION_FRAMES,
             "switch_conflict_radius_m": SWITCH_CONFLICT_RADIUS_M,
+            "unmatched_confirmation_frames": UNMATCHED_CONFIRMATION_FRAMES,
+            "unmatched_repair_max_distance_m": UNMATCHED_REPAIR_MAX_DISTANCE_M,
             "assignment_solver": "lapjv_or_greedy_fallback",
             "stats_max_speed_mps": MAX_STATS_SPEED_MPS,
             "stats_max_sustained_speed_mps": MAX_STATS_SUSTAINED_SPEED_MPS,
@@ -609,6 +731,8 @@ def resolve_global_identity(
         "summary": summary,
         "slots": sorted(active_slot_docs, key=lambda item: item["slot_id"]),
         "rejected_start_candidates": rejected_start_candidates[:1000],
+        "unmatched_repair_summary": repair_summary,
+        "unmatched_observations": unmatched_observations,
         "frames": frame_rows,
     }
 
@@ -769,6 +893,167 @@ def _assign_frame(
                     "tracklet_id": obs.tracklet_id,
                 }
             )
+
+
+def _repair_unmatched_observations(
+    slots: list[SlotState],
+    observations_by_frame: dict[int, list[Observation]],
+    tracklet_owner: dict[str, str],
+) -> dict[str, Any]:
+    unmatched_by_tracklet: dict[str, list[Observation]] = defaultdict(list)
+    assigned_by_frame = _assigned_observation_keys_by_frame(slots)
+    for frame, observations in observations_by_frame.items():
+        assigned = assigned_by_frame.get(frame, set())
+        for obs in observations:
+            if (obs.tracklet_id, obs.raw_track_id) in assigned:
+                continue
+            if obs.team_label not in TEAM_LABELS:
+                continue
+            if _stateless_detection_rejection_reason(obs) is not None:
+                continue
+            unmatched_by_tracklet[obs.tracklet_id].append(obs)
+
+    backfilled_observations = 0
+    repaired_tracklets: set[str] = set()
+    repair_events: list[dict[str, Any]] = []
+    for tracklet_id, observations in unmatched_by_tracklet.items():
+        for run in _consecutive_observation_runs(observations):
+            if len(run) < UNMATCHED_CONFIRMATION_FRAMES:
+                continue
+            slot = _select_unmatched_repair_slot(slots, run)
+            if slot is None:
+                continue
+            repaired_frames = []
+            for obs in run:
+                if slot.backfill_missing_detection(obs, reason="unmatched_raw_confirmed"):
+                    backfilled_observations += 1
+                    repaired_frames.append(obs.frame)
+            if not repaired_frames:
+                continue
+            repaired_tracklets.add(tracklet_id)
+            tracklet_owner[tracklet_id] = slot.slot_id
+            repair_events.append(
+                {
+                    "tracklet_id": tracklet_id,
+                    "raw_track_id": run[0].raw_track_id,
+                    "slot_id": slot.slot_id,
+                    "team_label": slot.team_label,
+                    "frames": len(repaired_frames),
+                    "start_frame": min(repaired_frames),
+                    "end_frame": max(repaired_frames),
+                }
+            )
+    return {
+        "method": "confirmed_unmatched_raw_backfill_v1",
+        "confirmation_frames": UNMATCHED_CONFIRMATION_FRAMES,
+        "max_frame_gap": UNMATCHED_MAX_FRAME_GAP,
+        "max_distance_m": UNMATCHED_REPAIR_MAX_DISTANCE_M,
+        "backfilled_observations": backfilled_observations,
+        "backfilled_tracklets": len(repaired_tracklets),
+        "events": repair_events[:1000],
+    }
+
+
+def _assigned_observation_keys_by_frame(slots: list[SlotState]) -> dict[int, set[tuple[str, int]]]:
+    assigned: dict[int, set[tuple[str, int]]] = defaultdict(set)
+    for slot in slots:
+        for row in slot.history:
+            frame = int(row.get("frame") or 0)
+            tracklet_id = row.get("tracklet_id") or row.get("candidate_tracklet_id")
+            raw_track_id = row.get("raw_track_id") if row.get("raw_track_id") is not None else row.get("candidate_raw_track_id")
+            if not tracklet_id or raw_track_id is None:
+                continue
+            assigned[frame].add((str(tracklet_id), int(raw_track_id)))
+    return assigned
+
+
+def _remaining_unmatched_observations(
+    slots: list[SlotState],
+    observations_by_frame: dict[int, list[Observation]],
+) -> list[dict[str, Any]]:
+    assigned_by_frame = _assigned_observation_keys_by_frame(slots)
+    rows: list[dict[str, Any]] = []
+    for frame in sorted(observations_by_frame):
+        assigned = assigned_by_frame.get(frame, set())
+        for obs in observations_by_frame[frame]:
+            if (obs.tracklet_id, obs.raw_track_id) in assigned:
+                continue
+            if _stateless_detection_rejection_reason(obs) is not None:
+                continue
+            rows.append(_unmatched_observation_doc(obs))
+    return rows
+
+
+def _unmatched_observation_doc(obs: Observation) -> dict[str, Any]:
+    return {
+        "frame": obs.frame,
+        "time_sec": round(obs.time_sec, 3),
+        "bbox_xyxy": list(obs.bbox_xyxy),
+        "footpoint": obs.footpoint,
+        "pitch_m": _round_point(obs.pitch_m),
+        "tracklet_id": obs.tracklet_id,
+        "raw_track_id": obs.raw_track_id,
+        "confidence": round(obs.confidence, 4),
+        "team_label": obs.team_label,
+        "team_id": obs.team_id,
+        "team_name": obs.team_name,
+        "team_confidence": round(obs.team_confidence, 4),
+        "source": "unmatched_raw",
+        "status": "unmatched_raw",
+        "visual_trusted": False,
+    }
+
+
+def _consecutive_observation_runs(observations: list[Observation]) -> list[list[Observation]]:
+    runs: list[list[Observation]] = []
+    current: list[Observation] = []
+    for obs in sorted(observations, key=lambda item: (item.frame, item.time_sec)):
+        if current and obs.frame > current[-1].frame + UNMATCHED_MAX_FRAME_GAP:
+            runs.append(current)
+            current = []
+        current.append(obs)
+    if current:
+        runs.append(current)
+    return runs
+
+
+def _select_unmatched_repair_slot(slots: list[SlotState], run: list[Observation]) -> SlotState | None:
+    if not run or run[0].team_label not in TEAM_LABELS:
+        return None
+    team_label = run[0].team_label
+    candidates: list[tuple[float, int, str, SlotState]] = []
+    for slot in slots:
+        if slot.team_label != team_label:
+            continue
+        missing_by_frame = _slot_missing_rows_by_frame(slot)
+        overlap = [obs for obs in run if obs.frame in missing_by_frame]
+        if len(overlap) < UNMATCHED_CONFIRMATION_FRAMES:
+            continue
+        owns_tracklet = any(obs.tracklet_id in slot.tracklet_ids for obs in run)
+        distances = [
+            distance
+            for obs in overlap
+            for distance in [_distance_m(missing_by_frame[obs.frame].get("pitch_m"), obs.pitch_m)]
+            if distance is not None
+        ]
+        mean_distance = _mean(distances) if distances else UNMATCHED_REPAIR_MAX_DISTANCE_M
+        min_distance = min(distances) if distances else 0.0
+        if not owns_tracklet and min_distance > UNMATCHED_REPAIR_MAX_DISTANCE_M:
+            continue
+        continuity_bonus = -1000.0 if owns_tracklet else 0.0
+        score = continuity_bonus + float(mean_distance or 0.0) - len(overlap) * 0.5
+        candidates.append((score, -len(overlap), slot.slot_id, slot))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (item[0], item[1], item[2]))[0][3]
+
+
+def _slot_missing_rows_by_frame(slot: SlotState) -> dict[int, dict[str, Any]]:
+    return {
+        int(row.get("frame") or 0): row
+        for row in slot.history
+        if row.get("source") == "missing"
+    }
 
 
 def _assignment_cost(slot: SlotState, obs: Observation) -> float | None:
@@ -1038,6 +1323,7 @@ def _build_identity_frame_rows(
     status_by_frame: dict[int, list[tuple[str, str]]] = defaultdict(list)
     trusted_visible_by_frame: dict[int, int] = defaultdict(int)
     predicted_visible_by_frame: dict[int, int] = defaultdict(int)
+    assigned_by_frame = _assigned_observation_keys_by_frame(slots)
     for slot in slots:
         for row in slot.history:
             frame = int(row["frame"])
@@ -1050,6 +1336,9 @@ def _build_identity_frame_rows(
     frames: list[dict[str, Any]] = []
     for frame in range(max_frame + 1):
         statuses = status_by_frame.get(frame, [])
+        raw_detections = len(observations_by_frame.get(frame, []))
+        matched_raw = len(assigned_by_frame.get(frame, set()))
+        unmatched_raw = max(0, raw_detections - matched_raw)
         slot_detected = sum(1 for _, status in statuses if status == "detected")
         slot_predicted = sum(1 for _, status in statuses if status == "predicted")
         slot_missing = sum(1 for _, status in statuses if status == "missing")
@@ -1065,7 +1354,9 @@ def _build_identity_frame_rows(
             {
                 "frame": frame,
                 "time_sec": round(frame / max(fps, 0.001), 3),
-                "raw_detections": len(observations_by_frame.get(frame, [])),
+                "raw_detections": raw_detections,
+                "raw_matched_to_slots": matched_raw,
+                "unmatched_raw_detections": unmatched_raw,
                 "slot_detected": slot_detected,
                 "slot_predicted": slot_predicted,
                 "slot_missing": slot_missing,
@@ -1557,6 +1848,8 @@ def _overlay_positions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "status": row.get("status") or row.get("source") or "detected",
             "visual_trusted": row.get("visual_trusted"),
             "ambiguous_reason": row.get("ambiguous_reason"),
+            "repair_reason": row.get("repair_reason"),
+            "repaired_from": row.get("repaired_from"),
             "candidate_tracklet_id": row.get("candidate_tracklet_id"),
             "candidate_raw_track_id": row.get("candidate_raw_track_id"),
             "stint_id": row.get("stint_id"),
@@ -1596,6 +1889,7 @@ def build_stable_players_from_global_identity(identity_doc: dict[str, Any]) -> d
         "pitch_dimensions_m": identity_doc.get("pitch_dimensions_m"),
         "players": sorted(players, key=lambda item: item["stable_player_id"]),
         "suppressed_candidates": [],
+        "unmatched_observations": identity_doc.get("unmatched_observations") or [],
         "summary": summary,
     }
 

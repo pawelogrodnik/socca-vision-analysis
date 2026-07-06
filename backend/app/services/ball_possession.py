@@ -34,6 +34,8 @@ def build_ball_possession_analysis(
     video_metadata: dict[str, Any],
     ball_tracks_doc: dict[str, Any],
     stable_players_doc: dict[str, Any] | None,
+    *,
+    write_overlay_video: bool = True,
 ) -> dict[str, Any]:
     fps = float(video_metadata.get("fps") or 0.0)
     width = int(video_metadata.get("width") or 0)
@@ -67,16 +69,26 @@ def build_ball_possession_analysis(
     event_docs = build_event_candidate_artifacts(contact_doc, match_phase_config)
     report_doc = build_possession_report(candidates_doc, segments_doc, contact_doc)
     _write_possession_artifacts(match_dir, candidates_doc, segments_doc, contact_doc, event_docs, report_doc)
-    write_possession_overlay(
-        video_path,
-        match_dir,
-        candidates_doc,
-        report_doc,
-        pitch.polygon_np,
-        pitch.homography(),
-        fps=fps,
-        frame_size=(width, height),
-    )
+    artifacts = {
+        "possession_candidates": "possession_candidates.json",
+        "possession_segments": "possession_segments.json",
+        "contact_candidates": "contact_candidates.json",
+        "match_phase_config": "match_phase_config.json",
+        **event_docs["artifacts"],
+        "possession_report": "possession_report.json",
+    }
+    if write_overlay_video:
+        write_possession_overlay(
+            video_path,
+            match_dir,
+            candidates_doc,
+            report_doc,
+            pitch.polygon_np,
+            pitch.homography(),
+            fps=fps,
+            frame_size=(width, height),
+        )
+        artifacts["possession_overlay_preview"] = "possession_overlay_preview.mp4"
     return {
         "possession_candidates": candidates_doc,
         "possession_segments": segments_doc,
@@ -84,15 +96,7 @@ def build_ball_possession_analysis(
         "event_candidates": event_docs["event_candidates"],
         "event_review_report": event_docs["event_review_report"],
         "possession_report": report_doc,
-        "artifacts": {
-            "possession_candidates": "possession_candidates.json",
-            "possession_segments": "possession_segments.json",
-            "contact_candidates": "contact_candidates.json",
-            "match_phase_config": "match_phase_config.json",
-            **event_docs["artifacts"],
-            "possession_report": "possession_report.json",
-            "possession_overlay_preview": "possession_overlay_preview.mp4",
-        },
+        "artifacts": artifacts,
     }
 
 

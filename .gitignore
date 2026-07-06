@@ -11,6 +11,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .venv*/
+.cache/
 .uv-cache/
 .uv-python/
 backend/.venv-cuda/
@@ -39,6 +40,7 @@ backend/storage/benchmarks/**
 !backend/storage/benchmarks/**/performance_report.json
 !backend/storage/benchmarks/**/machine_benchmark_summary.json
 !backend/storage/benchmarks/**/machine_benchmark_summary.md
+backend/storage/benchmarks/*-smoke-*/
 *.sqlite
 *.sqlite3
 *.db

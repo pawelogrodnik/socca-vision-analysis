@@ -42,6 +42,7 @@ def detect_ball_yolo_coco(
     ball_conf: float = DEFAULT_BALL_CONF,
     max_interpolation_gap_sec: float = DEFAULT_MAX_INTERPOLATION_GAP_SEC,
     camera_motion: Any | None = None,
+    write_overlay_video: bool = True,
 ) -> dict[str, Any]:
     import cv2
     import numpy as np
@@ -111,17 +112,23 @@ def detect_ball_yolo_coco(
         )
         quality_report = build_ball_quality_report(tracks_doc, candidates_doc, report)
         _write_ball_artifacts(match_dir, candidates_doc, tracks_doc, report, quality_report)
-        write_ball_overlay(
-            video_path,
-            match_dir,
-            tracks_doc,
+        return _ball_result(
             candidates_doc,
-            pitch.polygon_np,
-            fps=fps,
-            frame_size=(width, height),
-            camera_motion=camera_motion,
+            tracks_doc,
+            report,
+            quality_report,
+            include_overlay=write_overlay_video,
+            overlay_writer=lambda: write_ball_overlay(
+                video_path,
+                match_dir,
+                tracks_doc,
+                candidates_doc,
+                pitch.polygon_np,
+                fps=fps,
+                frame_size=(width, height),
+                camera_motion=camera_motion,
+            ),
         )
-        return _ball_result(candidates_doc, tracks_doc, report, quality_report)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -216,17 +223,23 @@ def detect_ball_yolo_coco(
     )
     quality_report = build_ball_quality_report(tracks_doc, candidates_doc, report)
     _write_ball_artifacts(match_dir, candidates_doc, tracks_doc, report, quality_report)
-    write_ball_overlay(
-        video_path,
-        match_dir,
-        tracks_doc,
+    return _ball_result(
         candidates_doc,
-        pitch_polygon,
-        fps=fps,
-        frame_size=(width, height),
-        camera_motion=camera_motion,
+        tracks_doc,
+        report,
+        quality_report,
+        include_overlay=write_overlay_video,
+        overlay_writer=lambda: write_ball_overlay(
+            video_path,
+            match_dir,
+            tracks_doc,
+            candidates_doc,
+            pitch_polygon,
+            fps=fps,
+            frame_size=(width, height),
+            camera_motion=camera_motion,
+        ),
     )
-    return _ball_result(candidates_doc, tracks_doc, report, quality_report)
 
 
 def collect_ball_candidates_range(
@@ -925,19 +938,25 @@ def _ball_result(
     tracks_doc: dict[str, Any],
     report: dict[str, Any],
     quality_report: dict[str, Any],
+    *,
+    include_overlay: bool = True,
+    overlay_writer: Any | None = None,
 ) -> dict[str, Any]:
+    artifacts = {
+        "ball_candidates": "ball_candidates.json",
+        "ball_tracks": "ball_tracks.json",
+        "ball_tracking_report": "ball_tracking_report.json",
+        "ball_quality_report": "ball_quality_report.json",
+    }
+    if include_overlay and overlay_writer is not None:
+        overlay_writer()
+        artifacts["ball_overlay_preview"] = "ball_overlay_preview.mp4"
     return {
         "ball_candidates": candidates_doc,
         "ball_tracks": tracks_doc,
         "ball_tracking_report": report,
         "ball_quality_report": quality_report,
-        "artifacts": {
-            "ball_candidates": "ball_candidates.json",
-            "ball_tracks": "ball_tracks.json",
-            "ball_tracking_report": "ball_tracking_report.json",
-            "ball_quality_report": "ball_quality_report.json",
-            "ball_overlay_preview": "ball_overlay_preview.mp4",
-        },
+        "artifacts": artifacts,
     }
 
 
@@ -1236,6 +1255,10 @@ def _draw_ball_position(frame: Any, position: dict[str, Any]) -> None:
     source = position.get("source")
     color = (0, 255, 255) if source == "detected" else (255, 255, 0)
     radius = 9 if source == "detected" else 7
+    bbox = position.get("bbox_xyxy")
+    if bbox and len(bbox) == 4:
+        x1, y1, x2, y2 = [int(round(float(value))) for value in bbox]
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
     cv2.circle(frame, (x, y), radius, color, 2, cv2.LINE_AA)
     cv2.line(frame, (x - radius - 3, y), (x + radius + 3, y), color, 1, cv2.LINE_AA)
     cv2.line(frame, (x, y - radius - 3), (x, y + radius + 3), color, 1, cv2.LINE_AA)

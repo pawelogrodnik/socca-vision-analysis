@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.config import WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id
-from app.services.runtime import collect_runtime_info, ensure_yolo_device_available, normalize_yolo_device, requested_device_label
+from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label, resolve_yolo_device
 
 
 def now_iso() -> str:
@@ -125,6 +126,7 @@ def analyze_match_chunked_yolo(
     from app.services.analysis import (
         DEFAULT_CLAMP_POSITIONS_TO_PITCH,
         DEFAULT_PITCH_FILTER_MARGIN_PX,
+        _cleanup_debug_video_artifacts,
         _load_yolo_model,
         _write_outputs,
         collect_yolo_tracks_range,
@@ -159,6 +161,8 @@ def analyze_match_chunked_yolo(
     if not chunks:
         raise ValueError("Chunk manifest does not contain any chunks.")
     pitch = load_pitch_config(match_dir)
+    if not WRITE_DEBUG_VIDEO_ARTIFACTS:
+        _cleanup_debug_video_artifacts(match_dir)
     frame_stride = max(1, int(payload.get("frame_stride") or 1))
     yolo_model = str(payload.get("yolo_model") or DEFAULT_PLAYER_YOLO_MODEL)
     yolo_tracker = str(payload.get("yolo_tracker") or "centroid_high_recall")
@@ -174,13 +178,13 @@ def analyze_match_chunked_yolo(
     camera_motion_interval_sec = float(payload.get("camera_motion_interval_sec") or DEFAULT_CAMERA_MOTION_INTERVAL_SEC)
     camera_motion_min_inlier_ratio = float(payload.get("camera_motion_min_inlier_ratio") or DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO)
     runtime_info = collect_runtime_info()
-    yolo_device = ensure_yolo_device_available(
+    yolo_device = resolve_yolo_device(
         yolo_device,
         runtime_info=runtime_info,
         context="player YOLO chunked",
     )
     if include_ball:
-        ball_yolo_device = ensure_yolo_device_available(
+        ball_yolo_device = resolve_yolo_device(
             ball_yolo_device,
             runtime_info=runtime_info,
             context="ball YOLO chunked",
@@ -366,36 +370,23 @@ def analyze_match_chunked_yolo(
     if progress:
         progress("chunk_merging", 82.0, "Merging chunk tracks and generating final artifacts.", {"chunk_count": len(chunks)})
     merged_tracks = merge_completed_chunk_tracks(match_dir, manifest)
-    write_raw_overlay_from_tracks(
-        match_dir,
-        video_path,
-        pitch,
-        merged_tracks,
-        metadata,
-        frame_stride=frame_stride,
-        max_seconds=float(payload.get("max_seconds") or 0.0),
-        camera_motion=camera_motion,
-    )
-    artifacts = _write_outputs(match_dir, pitch, merged_tracks)
-    write_camera_motion_report(match_dir, camera_motion)
-    artifacts["camera_motion_report"] = "camera_motion_report.json"
-    try:
-        write_camera_motion_overlay(
-            video_path,
+    if WRITE_DEBUG_VIDEO_ARTIFACTS:
+        write_raw_overlay_from_tracks(
             match_dir,
-            camera_motion,
-            pitch.polygon_np,
+            video_path,
+            pitch,
+            merged_tracks,
             metadata,
             frame_stride=frame_stride,
             max_seconds=float(payload.get("max_seconds") or 0.0),
+            camera_motion=camera_motion,
         )
-        artifacts["camera_motion_overlay"] = "camera_motion_overlay.mp4"
-    except Exception as exc:
-        camera_motion_warnings.append(f"Camera motion debug overlay failed: {exc}")
-    stabilization = stabilize_match(match_dir, video_path, pitch, merged_tracks, metadata, camera_motion=camera_motion)
-    artifacts.update(stabilization["artifacts"])
-    artifacts["analysis_chunk_manifest"] = "analysis_chunk_manifest.json"
+    artifacts = _write_outputs(match_dir, pitch, merged_tracks, include_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS)
+    write_camera_motion_report(match_dir, camera_motion)
+    artifacts["camera_motion_report"] = "camera_motion_report.json"
     ball_tracking: dict[str, Any] | None = None
+    ball_tracks_doc: dict[str, Any] | None = None
+    ball_report: dict[str, Any] | None = None
     possession: dict[str, Any] | None = None
     if include_ball:
         if progress:
@@ -427,30 +418,60 @@ def analyze_match_chunked_yolo(
         (match_dir / "ball_tracks.json").write_text(json.dumps(ball_tracks_doc, indent=2), encoding="utf-8")
         (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
         (match_dir / "ball_quality_report.json").write_text(json.dumps(ball_quality_report, indent=2), encoding="utf-8")
-        write_ball_overlay(
-            video_path,
-            match_dir,
-            ball_tracks_doc,
-            ball_candidates_doc,
-            pitch.polygon_np,
-            fps=float(metadata.get("fps") or 0.0),
-            frame_size=(int(metadata.get("width") or 0), int(metadata.get("height") or 0)),
-            camera_motion=camera_motion,
-        )
+        ball_artifacts = {
+            "ball_candidates": "ball_candidates.json",
+            "ball_tracks": "ball_tracks.json",
+            "ball_tracking_report": "ball_tracking_report.json",
+            "ball_quality_report": "ball_quality_report.json",
+        }
+        if WRITE_DEBUG_VIDEO_ARTIFACTS:
+            write_ball_overlay(
+                video_path,
+                match_dir,
+                ball_tracks_doc,
+                ball_candidates_doc,
+                pitch.polygon_np,
+                fps=float(metadata.get("fps") or 0.0),
+                frame_size=(int(metadata.get("width") or 0), int(metadata.get("height") or 0)),
+                camera_motion=camera_motion,
+            )
+            ball_artifacts["ball_overlay_preview"] = "ball_overlay_preview.mp4"
         ball_tracking = {
             "ball_candidates": ball_candidates_doc,
             "ball_tracks": ball_tracks_doc,
             "ball_tracking_report": ball_report,
             "ball_quality_report": ball_quality_report,
-            "artifacts": {
-                "ball_candidates": "ball_candidates.json",
-                "ball_tracks": "ball_tracks.json",
-                "ball_tracking_report": "ball_tracking_report.json",
-                "ball_quality_report": "ball_quality_report.json",
-                "ball_overlay_preview": "ball_overlay_preview.mp4",
-            },
+            "artifacts": ball_artifacts,
         }
         artifacts.update(ball_tracking["artifacts"])
+
+    stabilization = stabilize_match(
+        match_dir,
+        video_path,
+        pitch,
+        merged_tracks,
+        metadata,
+        camera_motion=camera_motion,
+        ball_tracks_doc=ball_tracks_doc,
+        write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
+    )
+    artifacts.update(stabilization["artifacts"])
+    artifacts["analysis_chunk_manifest"] = "analysis_chunk_manifest.json"
+    if WRITE_DEBUG_VIDEO_ARTIFACTS:
+        try:
+            write_camera_motion_overlay(
+                video_path,
+                match_dir,
+                camera_motion,
+                pitch.polygon_np,
+                metadata,
+                frame_stride=frame_stride,
+                max_seconds=float(payload.get("max_seconds") or 0.0),
+            )
+            artifacts["camera_motion_overlay"] = "camera_motion_overlay.mp4"
+        except Exception as exc:
+            camera_motion_warnings.append(f"Camera motion debug overlay failed: {exc}")
+    if ball_tracking is not None and ball_report is not None:
         try:
             possession = build_ball_possession_analysis(
                 match_dir,
@@ -459,6 +480,7 @@ def analyze_match_chunked_yolo(
                 metadata,
                 ball_tracks_doc,
                 stabilization["stable_players"],
+                write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
         except Exception as exc:

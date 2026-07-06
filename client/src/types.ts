@@ -1171,7 +1171,7 @@ export type AnalysisReport = {
   };
   artifacts?: {
     tracks_json: string;
-    overlay_preview: string;
+    overlay_preview?: string;
     heatmap_all_tracks: string;
     performance_report?: string;
     camera_motion_report?: string;

@@ -11,6 +11,7 @@ from statistics import median
 from typing import Any
 
 from app.services.analysis_quality import build_analysis_quality_report
+from app.services.ball_tracking import _draw_ball_position
 from app.services.change_candidates import write_change_candidate_artifacts
 from app.services.conservative_identity import (
     build_frame_detection_counts_from_global_identity,
@@ -58,6 +59,12 @@ def _round_point(point: list[float] | tuple[float, float] | None, digits: int = 
     if not point or len(point) < 2:
         return None
     return [round(float(point[0]), digits), round(float(point[1]), digits)]
+
+
+def _round_vector(values: list[float] | tuple[float, ...] | None, digits: int = 3) -> list[float] | None:
+    if not values:
+        return None
+    return [round(float(value), digits) for value in values]
 
 
 def _color_distance(a: list[float] | tuple[float, float, float] | None, b: list[float] | tuple[float, float, float] | None) -> float | None:
@@ -268,11 +275,21 @@ def _tracklet_public_doc(tracklet: dict[str, Any], *, status: str, include_posit
         "team_id": tracklet.get("team_id"),
         "team_name": tracklet.get("team_name"),
         "team_cluster_id": tracklet.get("team_cluster_id"),
+        "appearance_rgb": _round_vector(tracklet.get("appearance_rgb"), digits=2),
+        "appearance_hsv": _round_vector(tracklet.get("appearance_hsv"), digits=2),
+        "appearance_lab": _round_vector(tracklet.get("appearance_lab"), digits=2),
+        "appearance_feature": _round_vector(tracklet.get("appearance_feature"), digits=3),
+        "appearance_quality": round(float(tracklet.get("appearance_quality") or 0.0), 4),
+        "appearance_samples": int(tracklet.get("appearance_samples") or 0),
         "first_pitch_m": tracklet.get("first_pitch_m") or _round_point(first.get("pitch_m")),
         "last_pitch_m": tracklet.get("last_pitch_m") or _round_point(last.get("pitch_m")),
         "first_bbox_xyxy": first.get("bbox_xyxy") if isinstance(first, dict) else None,
         "last_bbox_xyxy": last.get("bbox_xyxy") if isinstance(last, dict) else None,
     }
+    if tracklet.get("parent_tracklet_id"):
+        doc["parent_tracklet_id"] = tracklet.get("parent_tracklet_id")
+        doc["appearance_segment_index"] = tracklet.get("appearance_segment_index")
+        doc["appearance_split_reason"] = tracklet.get("appearance_split_reason")
     if include_positions:
         doc["positions_m"] = [
             {
@@ -420,7 +437,7 @@ def sample_tracklet_appearance(video_path: Path, tracklets: list[dict[str, Any]]
     import cv2
     import numpy as np
 
-    requests: dict[int, list[tuple[str, list[int]]]] = {}
+    requests: dict[int, list[tuple[str, int, float, list[int]]]] = {}
     by_id = {tracklet["tracklet_id"]: tracklet for tracklet in tracklets}
     for tracklet in tracklets:
         positions = tracklet.get("positions") or []
@@ -429,7 +446,14 @@ def sample_tracklet_appearance(video_path: Path, tracklets: list[dict[str, Any]]
             bbox = position.get("bbox_xyxy")
             frame = position.get("frame")
             if bbox and frame is not None:
-                requests.setdefault(int(frame), []).append((tracklet["tracklet_id"], [int(v) for v in bbox]))
+                requests.setdefault(int(frame), []).append(
+                    (
+                        tracklet["tracklet_id"],
+                        int(index),
+                        float(position.get("time_sec") or 0.0),
+                        [int(v) for v in bbox],
+                    )
+                )
 
     if not requests:
         return
@@ -450,7 +474,7 @@ def sample_tracklet_appearance(video_path: Path, tracklets: list[dict[str, Any]]
                 frame_idx += 1
                 continue
             height, width = frame.shape[:2]
-            for tracklet_id, bbox in requests[frame_idx]:
+            for tracklet_id, position_index, time_sec, bbox in requests[frame_idx]:
                 x1, y1, x2, y2 = bbox
                 box_w = max(1, x2 - x1)
                 box_h = max(1, y2 - y1)
@@ -465,32 +489,198 @@ def sample_tracklet_appearance(video_path: Path, tracklets: list[dict[str, Any]]
                     continue
                 sample = _extract_torso_color_sample(crop)
                 if sample is not None:
-                    samples[tracklet_id].append(sample)
+                    samples[tracklet_id].append(
+                        {
+                            **sample,
+                            "frame": frame_idx,
+                            "time_sec": round(time_sec, 3),
+                            "position_index": position_index,
+                        }
+                    )
             frame_idx += 1
     finally:
         cap.release()
 
     for tracklet_id, colors in samples.items():
-        if not colors:
+        by_id[tracklet_id]["appearance_sample_rows"] = colors
+        _apply_appearance_samples(by_id[tracklet_id], colors)
+
+
+def _apply_appearance_samples(tracklet: dict[str, Any], colors: list[dict[str, Any]]) -> None:
+    if not colors:
+        return
+    tracklet["appearance_rgb"] = [
+        round(median([sample["rgb"][idx] for sample in colors]), 2)
+        for idx in range(3)
+    ]
+    tracklet["appearance_hsv"] = [
+        round(median([sample["hsv"][idx] for sample in colors]), 2)
+        for idx in range(3)
+    ]
+    tracklet["appearance_lab"] = [
+        round(median([sample["lab"][idx] for sample in colors]), 2)
+        for idx in range(3)
+    ]
+    tracklet["appearance_feature"] = [
+        round(median([sample["feature"][idx] for sample in colors]), 3)
+        for idx in range(len(colors[0]["feature"]))
+    ]
+    tracklet["appearance_quality"] = round(_mean([float(sample["quality"]) for sample in colors]) or 0.0, 4)
+    tracklet["appearance_samples"] = len(colors)
+
+
+def split_tracklets_by_appearance_changes(
+    tracklets: list[dict[str, Any]],
+    *,
+    min_run_samples: int = 2,
+    min_positions: int = 4,
+    min_duration_sec: float = 0.2,
+) -> list[dict[str, Any]]:
+    segmented: list[tuple[int, float, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]] = []
+    for tracklet in tracklets:
+        positions = tracklet.get("positions") or []
+        cut_indices = _appearance_split_cut_indices(tracklet, min_run_samples=min_run_samples)
+        if not cut_indices:
+            segmented.append(
+                (
+                    int(tracklet.get("source_track_id") or 0),
+                    float(tracklet.get("start_time_sec") or 0.0),
+                    positions,
+                    tracklet.get("appearance_sample_rows") or [],
+                    None,
+                )
+            )
             continue
-        by_id[tracklet_id]["appearance_rgb"] = [
-            round(median([sample["rgb"][idx] for sample in colors]), 2)
-            for idx in range(3)
-        ]
-        by_id[tracklet_id]["appearance_hsv"] = [
-            round(median([sample["hsv"][idx] for sample in colors]), 2)
-            for idx in range(3)
-        ]
-        by_id[tracklet_id]["appearance_lab"] = [
-            round(median([sample["lab"][idx] for sample in colors]), 2)
-            for idx in range(3)
-        ]
-        by_id[tracklet_id]["appearance_feature"] = [
-            round(median([sample["feature"][idx] for sample in colors]), 3)
-            for idx in range(len(colors[0]["feature"]))
-        ]
-        by_id[tracklet_id]["appearance_quality"] = round(_mean([float(sample["quality"]) for sample in colors]) or 0.0, 4)
-        by_id[tracklet_id]["appearance_samples"] = len(colors)
+        start = 0
+        candidate_segments: list[tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]] = []
+        for segment_number, end in enumerate([*cut_indices, len(positions)], start=1):
+            segment_positions = positions[start:end]
+            segment_samples = [
+                sample
+                for sample in tracklet.get("appearance_sample_rows") or []
+                if start <= int(sample.get("position_index") or 0) < end
+            ]
+            if _tracklet_segment_is_too_short(segment_positions, min_positions=min_positions, min_duration_sec=min_duration_sec):
+                candidate_segments = []
+                break
+            candidate_segments.append(
+                (
+                    segment_positions,
+                    segment_samples,
+                    {
+                        "parent_tracklet_id": tracklet.get("tracklet_id"),
+                        "appearance_segment_index": segment_number,
+                        "appearance_split_reason": "torso_color_change",
+                    },
+                )
+            )
+            start = end
+        if not candidate_segments:
+            segmented.append(
+                (
+                    int(tracklet.get("source_track_id") or 0),
+                    float(tracklet.get("start_time_sec") or 0.0),
+                    positions,
+                    tracklet.get("appearance_sample_rows") or [],
+                    None,
+                )
+            )
+            continue
+        for segment_positions, segment_samples, split_meta in candidate_segments:
+            segmented.append(
+                (
+                    int(tracklet.get("source_track_id") or 0),
+                    float(segment_positions[0].get("time_sec") or 0.0),
+                    segment_positions,
+                    segment_samples,
+                    split_meta,
+                )
+            )
+
+    result: list[dict[str, Any]] = []
+    per_raw_index: dict[int, int] = {}
+    for raw_track_id, _start_time, positions, samples, split_meta in sorted(segmented, key=lambda item: (item[0], item[1])):
+        per_raw_index[raw_track_id] = per_raw_index.get(raw_track_id, 0) + 1
+        rebuilt = _build_tracklet(raw_track_id, per_raw_index[raw_track_id], positions)
+        if split_meta:
+            rebuilt.update(split_meta)
+        rebuilt["appearance_sample_rows"] = _reindexed_appearance_samples(samples, positions)
+        _apply_appearance_samples(rebuilt, rebuilt["appearance_sample_rows"])
+        result.append(rebuilt)
+    return result
+
+
+def _appearance_split_cut_indices(tracklet: dict[str, Any], *, min_run_samples: int) -> list[int]:
+    labeled = [
+        {
+            **sample,
+            "appearance_label": _appearance_sample_team_label(sample),
+        }
+        for sample in sorted(tracklet.get("appearance_sample_rows") or [], key=lambda item: int(item.get("position_index") or 0))
+    ]
+    labeled = [sample for sample in labeled if sample["appearance_label"] in {"neutral", "colored"}]
+    if len(labeled) < min_run_samples * 2:
+        return []
+
+    runs: list[list[dict[str, Any]]] = []
+    for sample in labeled:
+        if not runs or runs[-1][0]["appearance_label"] != sample["appearance_label"]:
+            runs.append([sample])
+        else:
+            runs[-1].append(sample)
+
+    cuts: list[int] = []
+    for previous, following in zip(runs, runs[1:]):
+        if len(previous) < min_run_samples or len(following) < min_run_samples:
+            continue
+        previous_index = int(previous[-1].get("position_index") or 0)
+        following_index = int(following[0].get("position_index") or 0)
+        cut = max(previous_index + 1, (previous_index + following_index) // 2 + 1)
+        cuts.append(cut)
+    return sorted(set(cuts))
+
+
+def _appearance_sample_team_label(sample: dict[str, Any]) -> str:
+    fake_tracklet = {
+        "appearance_rgb": sample.get("rgb"),
+        "appearance_hsv": sample.get("hsv"),
+        "appearance_lab": sample.get("lab"),
+        "appearance_feature": sample.get("feature"),
+        "appearance_quality": sample.get("quality"),
+        "appearance_samples": 1,
+    }
+    if _is_team_color_outlier(fake_tracklet):
+        return "outlier"
+    if _is_white_or_neutral_color(fake_tracklet):
+        return "neutral"
+    if _is_colored_team_color(fake_tracklet):
+        return "colored"
+    return "unknown"
+
+
+def _tracklet_segment_is_too_short(
+    positions: list[dict[str, Any]],
+    *,
+    min_positions: int,
+    min_duration_sec: float,
+) -> bool:
+    if len(positions) < min_positions:
+        return True
+    start = float(positions[0].get("time_sec") or 0.0)
+    end = float(positions[-1].get("time_sec") or start)
+    return max(0.0, end - start) < min_duration_sec
+
+
+def _reindexed_appearance_samples(samples: list[dict[str, Any]], positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    frame_to_index = {int(position.get("frame") or 0): index for index, position in enumerate(positions)}
+    rows = []
+    for sample in samples:
+        frame = int(sample.get("frame") or 0)
+        row = dict(sample)
+        if frame in frame_to_index:
+            row["position_index"] = frame_to_index[frame]
+        rows.append(row)
+    return rows
 
 
 def _extract_torso_color_sample(crop: Any) -> dict[str, Any] | None:
@@ -544,19 +734,20 @@ def cluster_tracklet_teams(tracklets: list[dict[str, Any]], teams: list[dict[str
     if len(references) < 2:
         return _empty_team_clusters(tracklets, teams)
 
-    white_references, bib_references = _white_vs_bib_references(references)
-    use_white_bib_strategy = len(white_references) >= 2 and len(bib_references) >= 2
-    if use_white_bib_strategy:
-        centers = [_weighted_feature_center(white_references), _weighted_feature_center(bib_references)]
+    neutral_references, colored_references = _neutral_vs_colored_references(references)
+    use_neutral_colored_strategy = len(neutral_references) >= 2 and len(colored_references) >= 2
+    if use_neutral_colored_strategy:
+        centers = [_weighted_feature_center(neutral_references), _weighted_feature_center(colored_references)]
         cluster_to_team = {
             0: teams[0] if len(teams) >= 1 else {"id": None, "name": "Team A"},
             1: teams[1] if len(teams) >= 2 else {"id": None, "name": "Team B"},
         }
-        method = "torso_color_white_vs_bib_v3"
+        method = "torso_color_neutral_vs_colored_v1"
     else:
-        centers = _kmeans_two_team_features(references)
+        kmeans_references = _team_color_references_without_outliers(references)
+        centers = _kmeans_two_team_features(kmeans_references if len(kmeans_references) >= 2 else references)
         team_refs = [(team, _hex_to_rgb(team.get("color"))) for team in teams[:2]]
-        cluster_to_team = _map_clusters_to_teams(centers, references, team_refs)
+        cluster_to_team = _map_clusters_to_teams(centers, kmeans_references if len(kmeans_references) >= 2 else references, team_refs)
         method = "torso_color_lab_hsv_weighted_kmeans_v2"
 
     assignments: dict[str, int] = {}
@@ -565,17 +756,9 @@ def cluster_tracklet_teams(tracklets: list[dict[str, Any]], teams: list[dict[str
         feature = _tracklet_team_feature(tracklet)
         if feature is None:
             continue
-        if use_white_bib_strategy:
-            goalkeeper_team_idx = _goalkeeper_outlier_team_index(tracklet)
-            if goalkeeper_team_idx is not None:
-                assignments[tracklet["tracklet_id"]] = goalkeeper_team_idx
-                tracklet_confidences[tracklet["tracklet_id"]] = 0.46
-                tracklet["team_assignment_reason"] = (
-                    "green_goalkeeper_color_to_team_a"
-                    if goalkeeper_team_idx == 0
-                    else "dark_goalkeeper_color_to_team_b"
-                )
-                continue
+        if _is_team_color_outlier(tracklet):
+            tracklet["team_assignment_reason"] = "team_color_outlier"
+            continue
         distances = [_feature_distance(feature, center) for center in centers]
         cluster_idx = 0 if distances[0] <= distances[1] else 1
         own = distances[cluster_idx]
@@ -620,10 +803,10 @@ def cluster_tracklet_teams(tracklets: list[dict[str, Any]], teams: list[dict[str
             "tracklets_count": len(confident_members),
             "candidate_tracklets_count": len(members),
             "reference_tracklets_count": (
-                len(white_references)
-                if use_white_bib_strategy and cluster_idx == 0
-                else len(bib_references)
-                if use_white_bib_strategy and cluster_idx == 1
+                len(neutral_references)
+                if use_neutral_colored_strategy and cluster_idx == 0
+                else len(colored_references)
+                if use_neutral_colored_strategy and cluster_idx == 1
                 else sum(1 for item in references if assignments.get(item["tracklet_id"]) == cluster_idx)
             ),
             "confidence": round(confidence, 3),
@@ -632,10 +815,7 @@ def cluster_tracklet_teams(tracklets: list[dict[str, Any]], teams: list[dict[str
         for member in members:
             member_confidence = tracklet_confidences.get(member["tracklet_id"], 0.0)
             member_distance = _feature_distance(_tracklet_team_feature(member) or center, center)
-            goalkeeper_assignment = str(member.get("team_assignment_reason") or "").endswith("_goalkeeper_color_to_team_a") or str(
-                member.get("team_assignment_reason") or ""
-            ).endswith("_goalkeeper_color_to_team_b")
-            if not goalkeeper_assignment and (member_confidence < TEAM_COLOR_UNKNOWN_CONFIDENCE or member_distance > TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE):
+            if member_confidence < TEAM_COLOR_UNKNOWN_CONFIDENCE or member_distance > TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE:
                 continue
             member["team_cluster_id"] = cluster_doc["cluster_id"]
             member["team_label"] = cluster_doc["team_label"]
@@ -657,9 +837,12 @@ def cluster_tracklet_teams(tracklets: list[dict[str, Any]], teams: list[dict[str
         "clusters": clusters,
         "reference_tracklets_count": len(references),
         "candidate_tracklets_count": len(colored),
-        "white_reference_tracklets_count": len(white_references),
-        "bib_reference_tracklets_count": len(bib_references),
-        "goalkeeper_color_outliers_count": sum(1 for tracklet in colored if _is_goalkeeper_color_outlier(tracklet)),
+        "neutral_reference_tracklets_count": len(neutral_references),
+        "colored_reference_tracklets_count": len(colored_references),
+        "white_reference_tracklets_count": len(neutral_references),
+        "bib_reference_tracklets_count": len(colored_references),
+        "team_color_outliers_count": sum(1 for tracklet in colored if _is_team_color_outlier(tracklet)),
+        "goalkeeper_color_outliers_count": sum(1 for tracklet in colored if _is_team_color_outlier(tracklet)),
         "unknown_tracklets": [tracklet["tracklet_id"] for tracklet in tracklets if tracklet.get("team_label") == "U"],
     }
 
@@ -739,9 +922,11 @@ def _tracklet_color_profile(tracklet: dict[str, Any]) -> dict[str, float] | None
     red = float(rgb[0])
     green = float(rgb[1])
     blue = float(rgb[2])
-    saturation = float(hsv[1]) if isinstance(hsv, list) and len(hsv) >= 3 else max(red, green, blue) - min(red, green, blue)
-    value = float(hsv[2]) if isinstance(hsv, list) and len(hsv) >= 3 else max(red, green, blue)
-    channel_spread = max(red, green, blue) - min(red, green, blue)
+    max_channel = max(red, green, blue)
+    min_channel = min(red, green, blue)
+    saturation = float(hsv[1]) if isinstance(hsv, list) and len(hsv) >= 3 else (0.0 if max_channel <= 0 else (max_channel - min_channel) / max_channel * 255.0)
+    value = float(hsv[2]) if isinstance(hsv, list) and len(hsv) >= 3 else max_channel
+    channel_spread = max_channel - min_channel
     red_advantage = red - max(green, blue)
     green_advantage = green - max(red, blue)
     neutral_score = value - saturation * 0.8 - channel_spread * 0.25
@@ -771,11 +956,22 @@ def _is_bib_color(tracklet: dict[str, Any]) -> bool:
     ) or profile["bib_score"] >= 55.0
 
 
+def _is_colored_team_color(tracklet: dict[str, Any]) -> bool:
+    profile = _tracklet_color_profile(tracklet)
+    if profile is None or _is_team_color_outlier(tracklet) or _is_white_or_neutral_color(tracklet):
+        return False
+    return (
+        profile["saturation"] >= 62.0
+        and profile["value"] >= 70.0
+        and profile["channel_spread"] >= 32.0
+    )
+
+
 def _is_white_or_neutral_color(tracklet: dict[str, Any]) -> bool:
     profile = _tracklet_color_profile(tracklet)
     if profile is None:
         return False
-    if _is_goalkeeper_color_outlier(tracklet) or _is_bib_color(tracklet):
+    if _is_team_color_outlier(tracklet):
         return False
     return (
         profile["value"] >= 95.0
@@ -785,32 +981,39 @@ def _is_white_or_neutral_color(tracklet: dict[str, Any]) -> bool:
     )
 
 
-def _is_goalkeeper_color_outlier(tracklet: dict[str, Any]) -> bool:
+def _is_team_color_outlier(tracklet: dict[str, Any]) -> bool:
     profile = _tracklet_color_profile(tracklet)
     if profile is None:
         return False
-    green_outlier = profile["green_advantage"] >= 24.0 and profile["saturation"] >= 55.0
-    dark_outlier = profile["value"] <= 82.0 and profile["saturation"] >= 45.0
-    return green_outlier or dark_outlier
+    green_outlier = (
+        profile["green_advantage"] >= 24.0
+        and profile["saturation"] >= 55.0
+        and profile["value"] >= 95.0
+    )
+    fluorescent_outlier = (
+        profile["green"] >= 175.0
+        and profile["red"] >= 100.0
+        and profile["blue"] <= 120.0
+        and profile["saturation"] >= 70.0
+    )
+    dark_saturated_outlier = profile["value"] <= 82.0 and profile["saturation"] >= 80.0
+    return green_outlier or fluorescent_outlier or dark_saturated_outlier
 
 
-def _goalkeeper_outlier_team_index(tracklet: dict[str, Any]) -> int | None:
-    profile = _tracklet_color_profile(tracklet)
-    if profile is None:
-        return None
-    if profile["green_advantage"] >= 24.0 and profile["saturation"] >= 55.0:
-        return 0
-    if profile["value"] <= 82.0 and profile["saturation"] >= 45.0:
-        return 1
-    return None
+def _is_goalkeeper_color_outlier(tracklet: dict[str, Any]) -> bool:
+    return _is_team_color_outlier(tracklet)
 
 
-def _white_vs_bib_references(tracklets: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    white = [tracklet for tracklet in tracklets if _is_white_or_neutral_color(tracklet)]
-    bib = [tracklet for tracklet in tracklets if _is_bib_color(tracklet)]
-    white = sorted(white, key=_appearance_weight, reverse=True)[:24]
-    bib = sorted(bib, key=_appearance_weight, reverse=True)[:24]
-    return white, bib
+def _neutral_vs_colored_references(tracklets: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    neutral = [tracklet for tracklet in tracklets if _is_white_or_neutral_color(tracklet)]
+    colored = [tracklet for tracklet in tracklets if _is_colored_team_color(tracklet)]
+    neutral = sorted(neutral, key=_appearance_weight, reverse=True)[:32]
+    colored = sorted(colored, key=_appearance_weight, reverse=True)[:32]
+    return neutral, colored
+
+
+def _team_color_references_without_outliers(tracklets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [tracklet for tracklet in tracklets if not _is_team_color_outlier(tracklet)]
 
 
 def _weighted_feature_center(tracklets: list[dict[str, Any]]) -> list[float]:
@@ -2261,6 +2464,7 @@ def write_stable_overlay(
     output_name: str = "stable_overlay_preview.mp4",
     include_untrusted: bool = False,
     camera_motion: Any | None = None,
+    ball_tracks_doc: dict[str, Any] | None = None,
 ) -> Path:
     import cv2
     import numpy as np
@@ -2275,14 +2479,17 @@ def write_stable_overlay(
         pitch_polygon,
         fps=fps,
         include_untrusted=include_untrusted,
+        include_unmatched_raw=True,
         camera_motion=camera_motion,
     )
+    ball_positions = _ball_overlay_positions_by_frame(ball_tracks_doc)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video for stable overlay: {video_path}")
     writer = _StableOverlayWriter(match_dir, output_name, fps=fps, frame_size=frame_size)
-    max_frame = max(frame_rows) if frame_rows else int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) - 1
+    overlay_frames = set(frame_rows) | set(ball_positions)
+    max_frame = max(overlay_frames) if overlay_frames else int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) - 1
     frame_idx = 0
     trail_points: dict[str, deque[tuple[int, tuple[int, int]]]] = defaultdict(deque)
     summary = stable_doc.get("summary") or {}
@@ -2307,6 +2514,9 @@ def write_stable_overlay(
             _draw_stable_trails(overlay, trail_points, player_colors)
             for row in current_rows:
                 _draw_stable_row(overlay, row)
+            ball_position = ball_positions.get(frame_idx)
+            if ball_position is not None:
+                _draw_ball_position(overlay, ball_position)
             visual_counts = _visual_counts(current_rows)
             _draw_stable_hud(overlay, frame_idx, fps, summary, frame_counts.get(frame_idx), visual_counts)
             if camera_motion is not None:
@@ -2320,12 +2530,29 @@ def write_stable_overlay(
     return writer.close()
 
 
+def _ball_overlay_positions_by_frame(ball_tracks_doc: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    if not ball_tracks_doc:
+        return {}
+    positions = ball_tracks_doc.get("positions")
+    if not isinstance(positions, list):
+        return {}
+    frame_rows: dict[int, dict[str, Any]] = {}
+    for position in positions:
+        if not isinstance(position, dict):
+            continue
+        if position.get("source") == "unknown" or not position.get("position_px"):
+            continue
+        frame_rows[int(position.get("frame") or 0)] = position
+    return frame_rows
+
+
 def _stable_overlay_frame_rows(
     stable_doc: dict[str, Any],
     pitch_polygon: Any,
     *,
     fps: float,
     include_untrusted: bool = False,
+    include_unmatched_raw: bool = False,
     camera_motion: Any | None = None,
 ) -> dict[int, list[dict[str, Any]]]:
     frame_rows: dict[int, list[dict[str, Any]]] = {}
@@ -2355,6 +2582,16 @@ def _stable_overlay_frame_rows(
             row["risky_link_count"] = len(player.get("risky_links") or [])
             row["source"] = _overlay_position_source(position)
             row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
+            frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
+    if include_unmatched_raw:
+        for observation in stable_doc.get("unmatched_observations") or []:
+            if not isinstance(observation, dict) or not observation.get("bbox_xyxy"):
+                continue
+            row = dict(observation)
+            row["stable_player_id"] = "RAW"
+            row["source"] = "unmatched_raw"
+            row["status"] = "unmatched_raw"
+            row["visual_trusted"] = False
             frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
     return frame_rows
 
@@ -2696,9 +2933,16 @@ def _draw_stable_trails(
 def _draw_stable_row(frame: Any, row: dict[str, Any]) -> None:
     import cv2
 
+    source = row.get("source")
+    if source == "unmatched_raw":
+        color = (0, 230, 255)
+        x1, y1, x2, y2 = [int(v) for v in row["bbox_xyxy"]]
+        _draw_dashed_rectangle(frame, x1, y1, x2, y2, color, dash_length=5)
+        _draw_minimal_label(frame, "RAW?", x1, y1, color)
+        return
+
     color = _stable_bgr_color(row.get("team_label"))
     x1, y1, x2, y2 = [int(v) for v in row["bbox_xyxy"]]
-    source = row.get("source")
     is_untrusted = source in {"interpolated", "predicted", "ambiguous"}
     is_short_gap = source == "short_gap_interpolated"
     if is_untrusted:
@@ -2788,18 +3032,20 @@ def _format_score(value: Any) -> str:
 
 
 def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
-    visible_detected = sum(1 for row in rows if row.get("source") == "detected")
-    visible_predicted = sum(1 for row in rows if row.get("source") in {"predicted", "interpolated"})
-    visible_interpolated = sum(1 for row in rows if row.get("source") == "short_gap_interpolated")
-    visible_ambiguous = sum(1 for row in rows if row.get("source") == "ambiguous")
-    team_a = sum(1 for row in rows if row.get("team_label") == "A")
-    team_b = sum(1 for row in rows if row.get("team_label") == "B")
+    stable_rows = [row for row in rows if row.get("source") != "unmatched_raw"]
+    visible_detected = sum(1 for row in stable_rows if row.get("source") == "detected")
+    visible_predicted = sum(1 for row in stable_rows if row.get("source") in {"predicted", "interpolated"})
+    visible_interpolated = sum(1 for row in stable_rows if row.get("source") == "short_gap_interpolated")
+    visible_ambiguous = sum(1 for row in stable_rows if row.get("source") == "ambiguous")
+    team_a = sum(1 for row in stable_rows if row.get("team_label") == "A")
+    team_b = sum(1 for row in stable_rows if row.get("team_label") == "B")
     return {
-        "visible_boxes": len(rows),
+        "visible_boxes": len(stable_rows),
         "visible_detected": visible_detected,
         "visible_predicted": visible_predicted,
         "visible_interpolated": visible_interpolated,
         "visible_ambiguous": visible_ambiguous,
+        "visible_unmatched_raw": len(rows) - len(stable_rows),
         "visible_team_a": team_a,
         "visible_team_b": team_b,
     }
@@ -2885,7 +3131,7 @@ def _draw_stable_hud(
     visible = visual_counts or {}
     lines = [
         f"frame={frame_idx} t={time_sec:.1f}s raw={_count_value(frame_count, 'raw_detections')}",
-        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} hold={visible.get('visible_interpolated', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)}",
+        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} hold={visible.get('visible_interpolated', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)} raw?={visible.get('visible_unmatched_raw', 0)}",
         f"slots active={active_slots} det={slot_detected} amb={_count_value(frame_count, 'slot_ambiguous')} miss={slot_missing} A={_count_value(frame_count, 'active_team_a')} B={_count_value(frame_count, 'active_team_b')}",
         f"match slots={summary.get('stable_players', 0)} risky={summary.get('risky_links', 0)} low={summary.get('low_confidence_players', 0)}",
     ]
@@ -3025,6 +3271,8 @@ def stabilize_match(
     video_metadata: dict[str, Any],
     *,
     camera_motion: Any | None = None,
+    ball_tracks_doc: dict[str, Any] | None = None,
+    write_debug_overlay: bool = True,
 ) -> dict[str, Any]:
     meta_path = match_dir / "match.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
@@ -3037,6 +3285,7 @@ def stabilize_match(
     }
     tracklets, rejected = split_tracks_into_tracklets(tracks, **tracklet_parameters)
     sample_tracklet_appearance(video_path, tracklets)
+    tracklets = split_tracklets_by_appearance_changes(tracklets)
     team_clusters = cluster_tracklet_teams(tracklets, teams)
     tracklets_doc = build_tracklets_document(
         tracklets,
@@ -3097,18 +3346,23 @@ def stabilize_match(
         fps=float(video_metadata.get("fps") or 25.0),
         frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
         camera_motion=camera_motion,
+        ball_tracks_doc=ball_tracks_doc,
     )
-    write_stable_overlay(
-        video_path,
-        match_dir,
-        stable_doc,
-        pitch.polygon_np,
-        fps=float(video_metadata.get("fps") or 25.0),
-        frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
-        output_name="debug_identity_overlay.mp4",
-        include_untrusted=True,
-        camera_motion=camera_motion,
-    )
+    debug_overlay_artifacts: dict[str, str] = {}
+    if write_debug_overlay:
+        write_stable_overlay(
+            video_path,
+            match_dir,
+            stable_doc,
+            pitch.polygon_np,
+            fps=float(video_metadata.get("fps") or 25.0),
+            frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
+            output_name="debug_identity_overlay.mp4",
+            include_untrusted=True,
+            camera_motion=camera_motion,
+            ball_tracks_doc=ball_tracks_doc,
+        )
+        debug_overlay_artifacts["debug_identity_overlay"] = "debug_identity_overlay.mp4"
     public_stable_doc = _strip_overlay_positions(stable_doc)
     parameters = {
         "max_internal_gap_sec": 0.7,
@@ -3187,7 +3441,7 @@ def stabilize_match(
             "analysis_quality_report": "analysis_quality_report.json",
             "stabilization_report": "stabilization_report.json",
             "stable_overlay_preview": "stable_overlay_preview.mp4",
-            "debug_identity_overlay": "debug_identity_overlay.mp4",
+            **debug_overlay_artifacts,
             "team_clusters": "team_clusters.json",
             "frame_detection_counts": "frame_detection_counts.json",
             "movement_stats": "movement_stats.json",

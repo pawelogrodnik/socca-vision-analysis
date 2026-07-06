@@ -20,6 +20,7 @@ PUBLISH_TARGET = os.getenv("ORLIK_PUBLISH_TARGET", "local-json")  # local-json |
 PRODUCTION_API_URL = os.getenv("ORLIK_PRODUCTION_API_URL", "").rstrip("/")
 PRODUCTION_API_TOKEN = os.getenv("ORLIK_PRODUCTION_API_TOKEN", "")
 ADMIN_IMPORT_TOKEN = os.getenv("ORLIK_ADMIN_IMPORT_TOKEN", "")
+WRITE_DEBUG_VIDEO_ARTIFACTS = os.getenv("ORLIK_WRITE_DEBUG_VIDEO_ARTIFACTS", "").lower() in {"1", "true", "yes", "on"}
 
 CORS_ORIGINS = [
     origin.strip()

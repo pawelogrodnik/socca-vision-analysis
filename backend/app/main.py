@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
-from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, start_analysis_job
+from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, mark_interrupted_analysis_jobs, start_analysis_job
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
 from app.services.chunked_analysis import analyze_match_chunked_yolo
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
@@ -57,6 +57,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
+    mark_interrupted_analysis_jobs(MATCHES_DIR)
     init_publish_store()
 
 

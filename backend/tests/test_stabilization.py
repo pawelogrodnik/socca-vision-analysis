@@ -7,7 +7,10 @@ from pathlib import Path
 import numpy as np
 
 from app.services.stabilization import (
+    _ball_overlay_positions_by_frame,
     _live_movement_by_frame,
+    _stable_overlay_frame_rows,
+    _visual_counts,
     apply_stable_overlay_visual_counts,
     build_frame_detection_counts,
     build_player_heatmaps_document,
@@ -19,6 +22,7 @@ from app.services.stabilization import (
     build_tracklets_document,
     build_tracking_quality_report,
     cluster_tracklet_teams,
+    split_tracklets_by_appearance_changes,
     split_tracks_into_tracklets,
 )
 
@@ -60,6 +64,58 @@ def tracklet(tracklet_id: str, start: float, end: float, first: list[float], las
 
 
 class StabilizationTests(unittest.TestCase):
+    def test_ball_overlay_positions_ignore_unknown_rows(self) -> None:
+        rows = _ball_overlay_positions_by_frame(
+            {
+                "positions": [
+                    {"frame": 1, "position_px": [10, 20], "source": "detected"},
+                    {"frame": 2, "position_px": None, "source": "unknown"},
+                    {"frame": 3, "position_px": [12, 21], "source": "interpolated"},
+                ]
+            }
+        )
+
+        self.assertEqual(sorted(rows), [1, 3])
+
+    def test_unmatched_raw_overlay_rows_are_debug_only(self) -> None:
+        stable_doc = {
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 1,
+                            "time_sec": 1 / 30,
+                            "bbox_xyxy": [10, 10, 20, 30],
+                            "pitch_m": [1, 1],
+                            "source": "detected",
+                        }
+                    ],
+                }
+            ],
+            "unmatched_observations": [
+                {
+                    "frame": 1,
+                    "time_sec": 1 / 30,
+                    "bbox_xyxy": [30, 10, 40, 30],
+                    "pitch_m": [2, 1],
+                    "source": "unmatched_raw",
+                    "team_label": "A",
+                }
+            ],
+        }
+        rows = _stable_overlay_frame_rows(
+            stable_doc,
+            np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32),
+            fps=30,
+            include_unmatched_raw=True,
+        )[1]
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(_visual_counts(rows)["visible_boxes"], 1)
+        self.assertEqual(_visual_counts(rows)["visible_unmatched_raw"], 1)
+
     def test_split_tracks_breaks_unrealistic_jump(self) -> None:
         tracks = [
             {
@@ -80,6 +136,60 @@ class StabilizationTests(unittest.TestCase):
         )
         self.assertEqual(len(clean), 2)
         self.assertEqual(len(rejected), 0)
+
+    def test_split_tracklets_breaks_blue_to_neutral_appearance_switch(self) -> None:
+        positions = [
+            position(frame=index, time_sec=index / 10, x=float(index), y=0.0)
+            for index in range(10)
+        ]
+        source = {
+            "tracklet_id": "97:1",
+            "source_track_id": 97,
+            "segment_index": 1,
+            "start_time_sec": 0.0,
+            "end_time_sec": 0.9,
+            "duration_sec": 0.9,
+            "positions_count": len(positions),
+            "positions": positions,
+            "appearance_sample_rows": [
+                {
+                    "frame": index,
+                    "time_sec": index / 10,
+                    "position_index": index,
+                    "rgb": [52.0, 75.0, 122.0],
+                    "hsv": [112.0, 145.0, 122.0],
+                    "lab": [82.0, 134.0, 102.0],
+                    "feature": [31.0, 6.0, -22.0],
+                    "quality": 0.7,
+                }
+                for index in (0, 2, 4)
+            ]
+            + [
+                {
+                    "frame": index,
+                    "time_sec": index / 10,
+                    "position_index": index,
+                    "rgb": [196.0, 194.0, 197.0],
+                    "hsv": [125.0, 4.0, 197.0],
+                    "lab": [199.0, 128.0, 129.0],
+                    "feature": [77.0, 0.0, 1.0],
+                    "quality": 0.7,
+                }
+                for index in (5, 7, 9)
+            ],
+        }
+
+        split = split_tracklets_by_appearance_changes([source], min_run_samples=2)
+
+        self.assertEqual([item["tracklet_id"] for item in split], ["97:1", "97:2"])
+        self.assertEqual([item["positions_count"] for item in split], [5, 5])
+        self.assertLess(split[0]["appearance_rgb"][2], split[1]["appearance_rgb"][2])
+        self.assertGreater(split[1]["appearance_rgb"][0], 180)
+        self.assertEqual(split[1]["parent_tracklet_id"], "97:1")
+        self.assertEqual(split[1]["appearance_split_reason"], "torso_color_change")
+        doc = build_tracklets_document(split, [], raw_tracks_count=1, parameters={})
+        self.assertEqual(doc["tracklets"][1]["parent_tracklet_id"], "97:1")
+        self.assertEqual(doc["tracklets"][1]["appearance_split_reason"], "torso_color_change")
 
     def test_build_stable_players_links_short_gap_same_team(self) -> None:
         players = build_stable_players(
@@ -165,7 +275,31 @@ class StabilizationTests(unittest.TestCase):
         orange_labels = {item["team_label"] for item in tracklets[2:]}
         self.assertEqual(white_labels, {"A"})
         self.assertEqual(orange_labels, {"B"})
-        self.assertEqual(cluster_doc["method"], "torso_color_white_vs_bib_v3")
+        self.assertEqual(cluster_doc["method"], "torso_color_neutral_vs_colored_v1")
+
+    def test_team_clustering_separates_neutral_from_blue_without_green_outlier_seed(self) -> None:
+        neutral_team = [
+            tracklet("1:1", 0.0, 2.0, [0, 0], [1, 0], [196, 194, 197]),
+            tracklet("2:1", 0.0, 2.0, [0, 1], [1, 1], [187, 186, 186]),
+            tracklet("3:1", 0.0, 2.0, [0, 2], [1, 2], [199, 202, 212]),
+        ]
+        blue_team = [
+            tracklet("4:1", 0.0, 2.0, [0, 3], [1, 3], [52, 75, 122]),
+            tracklet("5:1", 0.0, 2.0, [0, 4], [1, 4], [47, 67, 112]),
+            tracklet("6:1", 0.0, 2.0, [0, 5], [1, 5], [60, 88, 133]),
+        ]
+        outliers = [
+            tracklet("7:1", 0.0, 2.0, [0, 6], [1, 6], [93, 216, 134]),
+        ]
+        tracklets = [*neutral_team, *blue_team, *outliers]
+
+        cluster_doc = cluster_tracklet_teams(tracklets, [])
+
+        self.assertEqual({item["team_label"] for item in neutral_team}, {"A"})
+        self.assertEqual({item["team_label"] for item in blue_team}, {"B"})
+        self.assertEqual(outliers[0]["team_label"], "U")
+        self.assertEqual(cluster_doc["method"], "torso_color_neutral_vs_colored_v1")
+        self.assertEqual(cluster_doc["team_color_outliers_count"], 1)
 
     def test_team_clustering_maps_goalkeeper_outliers_without_using_them_as_prototypes(self) -> None:
         tracklets = [
@@ -203,9 +337,9 @@ class StabilizationTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(tracklets[4]["team_label"], "A")
-        self.assertEqual(tracklets[5]["team_label"], "B")
-        self.assertEqual(cluster_doc["goalkeeper_color_outliers_count"], 2)
+        self.assertEqual(tracklets[4]["team_label"], "U")
+        self.assertEqual(tracklets[5]["team_label"], "U")
+        self.assertEqual(cluster_doc["team_color_outliers_count"], 2)
         self.assertEqual(cluster_doc["clusters"][0]["reference_tracklets_count"], 2)
         self.assertEqual(cluster_doc["clusters"][1]["reference_tracklets_count"], 2)
 
@@ -341,6 +475,10 @@ class StabilizationTests(unittest.TestCase):
         clean = [
             tracklet("1:1", 0.0, 1.0, [0, 0], [1, 0], [240, 30, 30]),
         ]
+        clean[0]["appearance_hsv"] = [10.1234, 210.5678, 240.4321]
+        clean[0]["appearance_lab"] = [130.1234, 160.5678, 170.4321]
+        clean[0]["appearance_feature"] = [45.12345, 12.56789, -8.43219]
+        clean[0]["appearance_quality"] = 0.81234
         rejected = [
             {
                 **tracklet("2:1", 0.0, 0.05, [2, 0], [2.1, 0], None),
@@ -365,6 +503,12 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(exported["frames_count"], exported["positions_count"])
         self.assertEqual(exported["missing_frames_count"], 29)
         self.assertEqual(exported["team_candidate"], "A")
+        self.assertEqual(exported["appearance_rgb"], [240.0, 30.0, 30.0])
+        self.assertEqual(exported["appearance_hsv"], [10.12, 210.57, 240.43])
+        self.assertEqual(exported["appearance_lab"], [130.12, 160.57, 170.43])
+        self.assertEqual(exported["appearance_feature"], [45.123, 12.568, -8.432])
+        self.assertEqual(exported["appearance_quality"], 0.8123)
+        self.assertEqual(exported["appearance_samples"], 3)
         self.assertIn("positions_m", exported)
         self.assertEqual(doc["rejected_tracklets"][0]["reject_reason"], "too_short")
 

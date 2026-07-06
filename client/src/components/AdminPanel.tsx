@@ -22,7 +22,7 @@ import type {
   MatchMetadataPayload,
   RuntimeInfo,
 } from '../types';
-import { applyAnalysisPreset, type AnalysisPresetId } from '../lib/analysisPreflight';
+import { applyAnalysisPreset, preferredAcceleratedDevice, type AnalysisPresetId } from '../lib/analysisPreflight';
 import { DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL } from '../lib/modelDefaults';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
 import { buildReviewReadiness, type ReviewReadiness } from '../lib/reviewReadiness';
@@ -227,6 +227,26 @@ export function AdminPanel() {
       .catch(() => setRuntimeInfo(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const recommendedDevice = preferredAcceleratedDevice(runtimeInfo);
+    if (!recommendedDevice) return;
+    setAnalysis((current) => {
+      if (current.yolo_device || current.ball_yolo_device) return current;
+      return {
+        ...current,
+        yolo_device: recommendedDevice,
+        ball_yolo_device: recommendedDevice,
+      };
+    });
+    setBallAnalysis((current) => {
+      if (current.yolo_device) return current;
+      return {
+        ...current,
+        yolo_device: recommendedDevice,
+      };
+    });
+  }, [runtimeInfo]);
 
   useEffect(() => {
     if (!selectedId) return;

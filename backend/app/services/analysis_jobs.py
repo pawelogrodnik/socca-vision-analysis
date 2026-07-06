@@ -75,6 +75,55 @@ def load_analysis_job(matches_dir: Path, job_id: str) -> dict[str, Any]:
     raise FileNotFoundError(f"Analysis job not found: {job_id}")
 
 
+def mark_interrupted_analysis_jobs(matches_dir: Path) -> int:
+    count = 0
+    for job_path in matches_dir.glob("*/analysis_jobs/*.json"):
+        current = _read_json(job_path)
+        if not current or current.get("status") not in {"queued", "running"}:
+            continue
+        current.update(
+            {
+                "status": "failed",
+                "stage": "interrupted",
+                "progress_percent": 100.0,
+                "message": "Analysis job was interrupted by backend restart.",
+                "finished_at": now_iso(),
+                "updated_at": now_iso(),
+                "error": {
+                    "type": "BackendRestart",
+                    "message": "Analysis job was interrupted by backend restart. Start analysis again to resume from completed chunks.",
+                },
+            }
+        )
+        tmp_path = job_path.with_suffix(f"{job_path.suffix}.tmp")
+        tmp_path.write_text(json.dumps(current, indent=2), encoding="utf-8")
+        tmp_path.replace(job_path)
+        count += 1
+    _sync_latest_analysis_job_statuses(matches_dir)
+    return count
+
+
+def _sync_latest_analysis_job_statuses(matches_dir: Path) -> None:
+    for meta_path in matches_dir.glob("*/match.json"):
+        meta = _read_json(meta_path)
+        if not meta:
+            continue
+        job_id = meta.get("latest_analysis_job_id")
+        if not job_id:
+            continue
+        job = _read_json(meta_path.parent / "analysis_jobs" / f"{job_id}.json")
+        if not job:
+            continue
+        status = job.get("status")
+        if not status or meta.get("analysis_job_status") == status:
+            continue
+        meta["analysis_job_status"] = status
+        meta["updated_at"] = now_iso()
+        tmp_path = meta_path.with_suffix(f"{meta_path.suffix}.tmp")
+        tmp_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        tmp_path.replace(meta_path)
+
+
 def _run_job(match_path: Path, job_id: str, runner: JobRunner) -> None:
     _update_job(
         match_path,

@@ -1,0 +1,114 @@
+{
+  "schema_version": "0.1.0",
+  "label": "macbook-m4-mps-benchmark-video-fullflow-60s",
+  "runtime": {
+    "schema_version": "0.2.0",
+    "python": {
+      "version": "3.11.15",
+      "executable": "/Users/pawelogrodnik/Documents/Projects/socca-vision-analysis/backend/.venv-mps/bin/python"
+    },
+    "platform": {
+      "system": "Darwin",
+      "release": "25.5.0",
+      "machine": "arm64",
+      "processor": "arm",
+      "platform": "macOS-26.5.2-arm64-arm-64bit"
+    },
+    "torch": {
+      "available": true,
+      "version": "2.4.1",
+      "cuda_available": false,
+      "cuda_device_count": 0,
+      "cuda_device_names": [],
+      "cuda_version": null,
+      "cudnn_version": null,
+      "active_cuda_device": null,
+      "active_cuda_device_name": null,
+      "gpu_memory_total_mb": [],
+      "gpu_memory_allocated_mb": [],
+      "gpu_memory_reserved_mb": [],
+      "mps_available": true,
+      "mps_built": true
+    },
+    "recommended_yolo_devices": [
+      "mps",
+      "cpu"
+    ]
+  },
+  "requested_device": "mps",
+  "normalized_yolo_device": "mps",
+  "cuda_available": false,
+  "cuda_device_names": [],
+  "torch_cuda_version": null,
+  "active_cuda_device": null,
+  "gpu_memory_total_mb": [],
+  "elapsed_wall_sec": 303.634,
+  "throughput": {
+    "processed_frames": 1799,
+    "processed_frames_per_wall_sec": 5.925,
+    "analyzed_video_sec": 60.0,
+    "video_seconds_per_wall_second": 0.198,
+    "estimated_40_min_wall_min": 202.42
+  },
+  "analysis_summary": {
+    "status": "completed",
+    "analysis_type": "yolo-ultralytics",
+    "run_id": "20260706T111351Z-yolo-ultralytics-10a1aef4",
+    "frames_processed": 1799,
+    "tracks_count": 128,
+    "stable_players_count": 21,
+    "warnings": [
+      "Contested frames exist and require review before player/team possession stats.",
+      "Some contact candidates use short-gap interpolated player positions and need review."
+    ]
+  },
+  "parameters": {
+    "max_seconds": 60.0,
+    "frame_stride": 1,
+    "yolo_model": "models/best-model-with-ball-and-players-500-frames.pt",
+    "yolo_model_resolved": "/Users/pawelogrodnik/Documents/Projects/socca-vision-analysis/backend/models/best-model-with-ball-and-players-500-frames.pt",
+    "yolo_conf": 0.05,
+    "yolo_iou": 0.45,
+    "yolo_imgsz": 1280,
+    "yolo_tracker": "centroid_high_recall",
+    "yolo_tracker_resolved": "internal_centroid_tracker",
+    "yolo_device": "mps",
+    "yolo_device_requested": "mps",
+    "classes": [
+      "player"
+    ],
+    "player_class_ids": [
+      1
+    ],
+    "player_class_names": [
+      "player"
+    ],
+    "player_class_resolution": "class_name_match",
+    "model_classes": {
+      "0": "ball",
+      "1": "player"
+    },
+    "pitch_mask_before_yolo": false,
+    "pitch_filter": "footpoint_in_pitch_polygon_with_margin",
+    "pitch_filter_margin_px": 60.0,
+    "clamp_positions_to_pitch": true,
+    "tracking_backend": "centroid",
+    "include_ball": true,
+    "ball_yolo_model": "models/best-balls-only-800-frames.pt",
+    "ball_yolo_conf": 0.03,
+    "ball_yolo_imgsz": 1280,
+    "ball_yolo_device": "mps",
+    "camera_motion_compensation": true,
+    "camera_motion_interval_sec": 0.5,
+    "camera_motion_min_inlier_ratio": 0.6,
+    "camera_motion_reference_frame": 0,
+    "camera_motion_reference_time_sec": 0.0
+  },
+  "artifacts": {
+    "analysis_report": "analysis_report.json",
+    "performance_report": "performance_report.json",
+    "run_directory": "analysis_runs/20260706T111351Z-yolo-ultralytics-10a1aef4",
+    "run_manifest": "analysis_runs/20260706T111351Z-yolo-ultralytics-10a1aef4/run_metadata.json",
+    "output_dir": "/Users/pawelogrodnik/Documents/Projects/socca-vision-analysis/backend/storage/benchmarks/20260706T110847Z-macbook-m4-mps-benchmark-video-fullflow-60s"
+  }
+}
