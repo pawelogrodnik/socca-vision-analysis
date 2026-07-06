@@ -10,6 +10,9 @@ client/.env
 __pycache__/
 *.py[cod]
 .venv/
+.venv*/
+.uv-cache/
+.uv-python/
 backend/.venv-cuda/
 .pytest_cache/
 .mypy_cache/
