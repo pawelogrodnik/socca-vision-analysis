@@ -13,7 +13,7 @@ import numpy as np
 from app.config import ROOT_DIR, WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.model_defaults import DEFAULT_BALL_YOLO_MODEL
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id, now_iso
-from app.services.ball_tracking import DEFAULT_BALL_CONF, detect_ball_yolo_coco
+from app.services.ball_tracking import DEFAULT_BALL_CONF, build_ball_quality_report, detect_ball_yolo_coco
 from app.services.ball_possession import build_ball_possession_analysis
 from app.services.camera_motion import (
     DEFAULT_CAMERA_MOTION_COMPENSATION,
@@ -1074,10 +1074,30 @@ def analyze_match_yolo(
             metadata,
             camera_motion=camera_motion,
             ball_tracks_doc=(ball_tracking or {}).get("ball_tracks"),
+            ball_candidates_doc=(ball_tracking or {}).get("ball_candidates"),
             write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
         )
         artifacts.update(stabilization["artifacts"])
         if ball_tracking is not None:
+            refined_ball_tracks = stabilization.get("refined_ball_tracks")
+            if refined_ball_tracks is not None:
+                ball_tracking["ball_tracks"] = refined_ball_tracks
+                ball_report = ball_tracking.get("ball_tracking_report") or {}
+                ball_report["summary"] = {
+                    **(ball_report.get("summary") or {}),
+                    **(refined_ball_tracks.get("summary") or {}),
+                }
+                ball_tracking["ball_tracking_report"] = ball_report
+                ball_tracking["ball_quality_report"] = build_ball_quality_report(
+                    refined_ball_tracks,
+                    ball_tracking.get("ball_candidates") or {},
+                    ball_report,
+                )
+                (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
+                (match_dir / "ball_quality_report.json").write_text(
+                    json.dumps(ball_tracking["ball_quality_report"], indent=2),
+                    encoding="utf-8",
+                )
             artifacts.update(ball_tracking["artifacts"])
         if WRITE_DEBUG_VIDEO_ARTIFACTS:
             try:

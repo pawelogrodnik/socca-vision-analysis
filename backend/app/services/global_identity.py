@@ -20,10 +20,19 @@ MIN_DETECTIONS_FOR_VISUAL_PREDICTION = 6
 SWITCH_CONFIRMATION_FRAMES = 10
 SWITCH_GUARD_MIN_DETECTIONS = 3
 SWITCH_CONFLICT_RADIUS_M = 2.2
+CONFIRMED_SWITCH_MAX_COST = 1.5
+CONFIRMED_SWITCH_MIN_CONFIDENCE = 0.75
+CONFIRMED_SWITCH_MAX_STEP_MPS = 12.0
 UNMATCHED_CONFIRMATION_FRAMES = 3
 UNMATCHED_MAX_FRAME_GAP = 2
 UNMATCHED_REPAIR_MAX_DISTANCE_M = 18.0
 BBOX_OUTLIER_MIN_DETECTIONS = 6
+MODERATE_BBOX_OUTLIER_MIN_CONFIDENCE = 0.75
+MODERATE_BBOX_OUTLIER_MAX_RATIO = 3.0
+MODERATE_BBOX_OUTLIER_MAX_AREA_RATIO = 4.5
+REUSE_RECENT_SLOT_MAX_GAP_SEC = 12.0
+REUSE_RECENT_SLOT_MAX_DISTANCE_M = 18.0
+REUSE_RECENT_SLOT_STRICT_DISTANCE_M = 6.0
 SHADOW_LIKE_MAX_ASPECT_RATIO = 1.35
 SHADOW_LIKE_LOW_CONFIDENCE = 0.25
 TEAM_LABELS = ("A", "B")
@@ -170,6 +179,12 @@ class SlotState:
     suspicious_assignments: list[dict[str, Any]] = field(default_factory=list)
     rejected_candidates: list[dict[str, Any]] = field(default_factory=list)
     identity_events: list[dict[str, Any]] = field(default_factory=list)
+    slot_creation_reason: str | None = None
+    slot_spawn_frame: int | None = None
+    slot_spawn_time_sec: float | None = None
+    reused_from_slot_id: str | None = None
+    slot_reuse_events: list[dict[str, Any]] = field(default_factory=list)
+    spawn_blocked_events: list[dict[str, Any]] = field(default_factory=list)
     pending_tracklet_id: str | None = None
     pending_tracklet_frames: int = 0
     pending_last_frame: int | None = None
@@ -659,6 +674,7 @@ def resolve_global_identity(
         _assign_frame(slots, frame_observations, frame, frame_time, tracklet_owner, rejected_start_candidates)
 
     repair_summary = _repair_unmatched_observations(slots, observations_by_frame, tracklet_owner)
+    merge_summary = _merge_redundant_spawned_slots(slots)
     unmatched_observations = _remaining_unmatched_observations(slots, observations_by_frame)
 
     for slot in slots:
@@ -688,6 +704,11 @@ def resolve_global_identity(
         "suspicious_assignments": sum(len(slot.get("suspicious_assignments") or []) for slot in active_slot_docs),
         "rejected_candidates": sum(len(slot.get("rejected_candidates") or []) for slot in active_slot_docs),
         "rejected_start_candidates": len(rejected_start_candidates),
+        "ambiguous_visible": sum(int(slot.get("ambiguous_frames") or 0) for slot in active_slot_docs),
+        "slot_reused": sum(len(slot.get("slot_reuse_events") or []) for slot in active_slot_docs),
+        "slot_spawned": sum(1 for slot in active_slot_docs if slot.get("slot_creation_reason")),
+        "spawn_blocked": sum(len(slot.get("spawn_blocked_events") or []) for slot in active_slot_docs),
+        "slot_merged": int(merge_summary.get("merged_slots") or 0),
         "unmatched_raw_backfilled": int(repair_summary.get("backfilled_observations") or 0),
         "unmatched_raw_backfill_tracklets": int(repair_summary.get("backfilled_tracklets") or 0),
         "unmatched_raw_remaining": len(unmatched_observations),
@@ -716,6 +737,11 @@ def resolve_global_identity(
             "substitution_gap_sec": SUBSTITUTION_GAP_SEC,
             "switch_confirmation_frames": SWITCH_CONFIRMATION_FRAMES,
             "switch_conflict_radius_m": SWITCH_CONFLICT_RADIUS_M,
+            "confirmed_switch_max_cost": CONFIRMED_SWITCH_MAX_COST,
+            "confirmed_switch_min_confidence": CONFIRMED_SWITCH_MIN_CONFIDENCE,
+            "reuse_recent_slot_max_gap_sec": REUSE_RECENT_SLOT_MAX_GAP_SEC,
+            "reuse_recent_slot_max_distance_m": REUSE_RECENT_SLOT_MAX_DISTANCE_M,
+            "reuse_recent_slot_strict_distance_m": REUSE_RECENT_SLOT_STRICT_DISTANCE_M,
             "unmatched_confirmation_frames": UNMATCHED_CONFIRMATION_FRAMES,
             "unmatched_repair_max_distance_m": UNMATCHED_REPAIR_MAX_DISTANCE_M,
             "assignment_solver": "lapjv_or_greedy_fallback",
@@ -732,6 +758,7 @@ def resolve_global_identity(
         "slots": sorted(active_slot_docs, key=lambda item: item["slot_id"]),
         "rejected_start_candidates": rejected_start_candidates[:1000],
         "unmatched_repair_summary": repair_summary,
+        "slot_merge_summary": merge_summary,
         "unmatched_observations": unmatched_observations,
         "frames": frame_rows,
     }
@@ -816,7 +843,7 @@ def _assign_frame(
             continue
         team_rebalanced = obs.team_label in TEAM_LABELS and obs.team_label != slot.team_label and obs.tracklet_id in slot.tracklet_ids
         assigned_obs = _observation_for_slot(obs, slot) if team_rebalanced else obs
-        guard = _conservative_assignment_guard(slot, assigned_obs, obs_cols)
+        guard = _conservative_assignment_guard(slot, assigned_obs, obs_cols, assignment_cost=cost)
         if guard is not None:
             slot.add_ambiguous(
                 assigned_obs,
@@ -851,11 +878,13 @@ def _assign_frame(
         if obs_index in assigned_observations:
             continue
         owner = tracklet_owner.get(obs.tracklet_id)
+        start_reason = "spawn_new_slot"
         if owner is not None:
             owner_slot = slots_by_id.get(owner)
             if owner_slot is None or owner_slot.active:
                 continue
             candidate = (owner_slot, obs.team_label in TEAM_LABELS and obs.team_label != owner_slot.team_label)
+            start_reason = "owned_tracklet_reactivated"
         else:
             spawn_rejection = _stateless_detection_rejection_reason(obs)
             if spawn_rejection is not None:
@@ -872,14 +901,25 @@ def _assign_frame(
                     }
                 )
                 continue
-            selected = _select_inactive_slot(slots, obs)
-            if selected is None:
-                continue
-            candidate = selected
+            reuse_candidate = _select_recent_reuse_slot(slots, obs)
+            if reuse_candidate is not None:
+                reuse_slot, team_rebalanced, reuse_reason = reuse_candidate
+                candidate = (reuse_slot, team_rebalanced)
+                start_reason = reuse_reason
+            else:
+                selected = _select_inactive_slot(slots, obs)
+                if selected is None:
+                    _record_spawn_blocked(slots, obs, reason="no_inactive_slot_available")
+                    continue
+                candidate = selected
+                start_reason = "spawn_new_slot"
         slot, team_rebalanced = candidate
         if slot is None:
+            _record_spawn_blocked(slots, obs, reason="no_slot_selected")
             continue
         assigned_obs = _observation_for_slot(obs, slot) if team_rebalanced else obs
+        if not slot.active:
+            _record_slot_start_decision(slot, assigned_obs, reason=start_reason)
         slot.add_detection(assigned_obs, assignment_cost=None)
         tracklet_owner[obs.tracklet_id] = slot.slot_id
         if team_rebalanced:
@@ -952,6 +992,161 @@ def _repair_unmatched_observations(
         "backfilled_tracklets": len(repaired_tracklets),
         "events": repair_events[:1000],
     }
+
+
+def _merge_redundant_spawned_slots(slots: list[SlotState]) -> dict[str, Any]:
+    events: list[dict[str, Any]] = []
+    for source in sorted(slots, key=lambda item: (item.slot_spawn_frame or 0, item.slot_id)):
+        if source.detected_frames <= 0 or source.slot_spawn_frame in {None, 0}:
+            continue
+        if _slot_roster_index(source.slot_id) <= TARGET_PLAYERS_PER_TEAM:
+            continue
+        first_row = _first_detected_history_row(source)
+        if first_row is None:
+            continue
+        target = _select_post_repair_merge_target(slots, source, first_row)
+        if target is None:
+            continue
+        event = _merge_slot_into_target(target, source, first_row)
+        events.append(event)
+    return {
+        "method": "post_repair_recent_slot_merge_v1",
+        "max_gap_sec": REUSE_RECENT_SLOT_MAX_GAP_SEC,
+        "strict_distance_m": REUSE_RECENT_SLOT_STRICT_DISTANCE_M,
+        "merged_slots": len(events),
+        "events": events[:1000],
+    }
+
+
+def _select_post_repair_merge_target(
+    slots: list[SlotState],
+    source: SlotState,
+    first_row: dict[str, Any],
+) -> SlotState | None:
+    first_time = float(first_row.get("time_sec") or 0.0)
+    first_pitch = first_row.get("pitch_m")
+    source_tracklets = set(source.tracklet_ids)
+    source_raw_ids = set(source.raw_track_ids)
+    candidates: list[tuple[float, SlotState, dict[str, Any], float, float]] = []
+    for target in slots:
+        if target is source or target.team_label != source.team_label or target.detected_frames <= 0:
+            continue
+        if target.slot_spawn_frame is not None and source.slot_spawn_frame is not None and target.slot_spawn_frame > source.slot_spawn_frame:
+            continue
+        target_row = _last_detected_history_row_before(target, first_time)
+        if target_row is None:
+            continue
+        if _has_detected_history_after(target, int(first_row.get("frame") or 0) + 2):
+            continue
+        gap_sec = first_time - float(target_row.get("time_sec") or 0.0)
+        if gap_sec < -0.001 or gap_sec > REUSE_RECENT_SLOT_MAX_GAP_SEC:
+            continue
+        distance = _distance_m(target_row.get("pitch_m"), first_pitch)
+        if distance is None:
+            continue
+        shares_identity = bool(source_tracklets.intersection(target.tracklet_ids) or source_raw_ids.intersection(target.raw_track_ids))
+        allowed_distance = REUSE_RECENT_SLOT_MAX_DISTANCE_M if shares_identity else REUSE_RECENT_SLOT_STRICT_DISTANCE_M
+        if distance > allowed_distance:
+            continue
+        score = (-1000.0 if shares_identity else 0.0) + distance + gap_sec * 0.2
+        candidates.append((score, target, target_row, gap_sec, distance))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (item[0], item[1].slot_id))[0][1]
+
+
+def _merge_slot_into_target(target: SlotState, source: SlotState, first_row: dict[str, Any]) -> dict[str, Any]:
+    first_frame = int(first_row.get("frame") or source.slot_spawn_frame or 0)
+    first_time = float(first_row.get("time_sec") or source.slot_spawn_time_sec or 0.0)
+    old_stint_ids = [stint.get("stint_id") for stint in source.stints if stint.get("stint_id")]
+    stint_id_map: dict[str, str] = {}
+    for stint in source.stints:
+        old_id = str(stint.get("stint_id") or "")
+        target.stint_index += 1
+        new_id = f"{target.slot_id}-S{target.stint_index:02d}"
+        if old_id:
+            stint_id_map[old_id] = new_id
+        target.stints.append({**stint, "stint_id": new_id, "slot_id": target.slot_id})
+    for row in source.history:
+        copied = dict(row)
+        old_stint_id = str(copied.get("stint_id") or "")
+        if old_stint_id in stint_id_map:
+            copied["stint_id"] = stint_id_map[old_stint_id]
+        copied["merged_from_slot_id"] = source.slot_id
+        target.history.append(copied)
+    target.tracklet_ids.update(source.tracklet_ids)
+    target.raw_track_ids.update(source.raw_track_ids)
+    target.team_confidences.extend(source.team_confidences)
+    target.detection_confidences.extend(source.detection_confidences)
+    target.appearance_samples.extend(source.appearance_samples)
+    event = {
+        "frame": first_frame,
+        "time_sec": round(first_time, 3),
+        "target_slot_id": target.slot_id,
+        "merged_from_slot_id": source.slot_id,
+        "source_tracklet_ids": sorted(source.tracklet_ids),
+        "source_raw_track_ids": sorted(source.raw_track_ids),
+        "source_stint_ids": old_stint_ids,
+        "reason": "post_repair_recent_slot_merge",
+    }
+    target.reused_from_slot_id = target.slot_id
+    target.slot_reuse_events.append(event)
+    target.identity_events.append({"type": "slot_reused", **event})
+    target.identity_events.append({"type": "slot_merged", **event})
+    target._recompute_history_state()
+    target.active = target.active or source.active
+    if source.active and source.current_stint_id:
+        target.current_stint_id = stint_id_map.get(source.current_stint_id, target.current_stint_id)
+
+    source.history = []
+    source.stints = []
+    source.tracklet_ids.clear()
+    source.raw_track_ids.clear()
+    source.team_confidences = []
+    source.detection_confidences = []
+    source.appearance_samples = []
+    source.active = False
+    source.status = "inactive"
+    source.current_stint_id = None
+    source.detected_frames = 0
+    source.predicted_frames = 0
+    source.missing_frames = 0
+    source.ambiguous_frames = 0
+    source.identity_events.append({"type": "slot_merged_into", **event})
+    return event
+
+
+def _first_detected_history_row(slot: SlotState) -> dict[str, Any] | None:
+    rows = [row for row in slot.history if row.get("source") == "detected" and row.get("pitch_m")]
+    if not rows:
+        return None
+    return sorted(rows, key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)))[0]
+
+
+def _last_detected_history_row_before(slot: SlotState, time_sec: float) -> dict[str, Any] | None:
+    rows = [
+        row
+        for row in slot.history
+        if row.get("source") == "detected" and row.get("pitch_m") and float(row.get("time_sec") or 0.0) <= time_sec
+    ]
+    if not rows:
+        return None
+    return sorted(rows, key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)))[-1]
+
+
+def _has_detected_history_after(slot: SlotState, frame: int) -> bool:
+    return any(
+        int(row.get("frame") or 0) > frame
+        for row in slot.history
+        if row.get("source") == "detected"
+    )
+
+
+def _slot_roster_index(slot_id: str) -> int:
+    try:
+        return int(slot_id[1:])
+    except (TypeError, ValueError):
+        return 0
 
 
 def _assigned_observation_keys_by_frame(slots: list[SlotState]) -> dict[int, set[tuple[str, int]]]:
@@ -1098,6 +1293,8 @@ def _conservative_assignment_guard(
     slot: SlotState,
     obs: Observation,
     frame_observations: list[Observation],
+    *,
+    assignment_cost: float | None = None,
 ) -> dict[str, Any] | None:
     quality_reason = _trusted_detection_rejection_reason(slot, obs)
     if quality_reason is not None:
@@ -1119,6 +1316,27 @@ def _conservative_assignment_guard(
             "conflicting_tracklet_id": conflict.tracklet_id if conflict else None,
         }
     if conflict is not None:
+        if _confirmed_switch_is_trusted(
+            slot,
+            obs,
+            pending_frames=pending_frames,
+            assignment_cost=assignment_cost,
+        ):
+            slot.identity_events.append(
+                {
+                    "type": "confirmed_switch_with_competitor_accepted",
+                    "frame": obs.frame,
+                    "time_sec": round(obs.time_sec, 3),
+                    "slot_id": slot.slot_id,
+                    "tracklet_id": obs.tracklet_id,
+                    "raw_track_id": obs.raw_track_id,
+                    "pending_frames": pending_frames,
+                    "assignment_cost": round(assignment_cost, 3) if assignment_cost is not None else None,
+                    "conflicting_tracklet_id": conflict.tracklet_id,
+                    "conflicting_raw_track_id": conflict.raw_track_id,
+                }
+            )
+            return None
         return {
             "reason": "tracklet_switch_has_nearby_competitor",
             "pending_frames": pending_frames,
@@ -1126,6 +1344,38 @@ def _conservative_assignment_guard(
             "conflicting_tracklet_id": conflict.tracklet_id,
         }
     return None
+
+
+def _confirmed_switch_is_trusted(
+    slot: SlotState,
+    obs: Observation,
+    *,
+    pending_frames: int,
+    assignment_cost: float | None,
+) -> bool:
+    if pending_frames < SWITCH_CONFIRMATION_FRAMES:
+        return False
+    if obs.team_label not in TEAM_LABELS or obs.team_label != slot.team_label:
+        return False
+    if obs.confidence < CONFIRMED_SWITCH_MIN_CONFIDENCE:
+        return False
+    if assignment_cost is not None and assignment_cost > CONFIRMED_SWITCH_MAX_COST:
+        return False
+    return _pending_run_is_stable(slot.pending_observations)
+
+
+def _pending_run_is_stable(observations: list[Observation]) -> bool:
+    if len(observations) < SWITCH_CONFIRMATION_FRAMES:
+        return False
+    recent = observations[-SWITCH_CONFIRMATION_FRAMES:]
+    for previous, current in zip(recent, recent[1:]):
+        if current.frame > previous.frame + 2:
+            return False
+        dt = max(1.0 / 30.0, current.time_sec - previous.time_sec)
+        distance = _distance_m(previous.pitch_m, current.pitch_m)
+        if distance is not None and distance / dt > CONFIRMED_SWITCH_MAX_STEP_MPS:
+            return False
+    return True
 
 
 def _trusted_detection_rejection_reason(slot: SlotState, obs: Observation) -> dict[str, Any] | None:
@@ -1158,12 +1408,39 @@ def _trusted_detection_rejection_reason(slot: SlotState, obs: Observation) -> di
     )
     if not severe_outlier:
         return None
+    if _moderate_high_confidence_bbox_outlier(
+        obs,
+        area_ratio=area_ratio,
+        inverse_area_ratio=inverse_area_ratio,
+        width_ratio=width_ratio,
+        height_ratio=height_ratio,
+    ):
+        return None
     return {
         "reason": "bbox_size_outlier",
         "bbox_area_ratio": round(area_ratio, 3),
         "bbox_width_ratio": round(width_ratio, 3),
         "bbox_height_ratio": round(height_ratio, 3),
     }
+
+
+def _moderate_high_confidence_bbox_outlier(
+    obs: Observation,
+    *,
+    area_ratio: float,
+    inverse_area_ratio: float,
+    width_ratio: float,
+    height_ratio: float,
+) -> bool:
+    if obs.confidence < MODERATE_BBOX_OUTLIER_MIN_CONFIDENCE:
+        return False
+    if area_ratio > MODERATE_BBOX_OUTLIER_MAX_AREA_RATIO or inverse_area_ratio > MODERATE_BBOX_OUTLIER_MAX_AREA_RATIO:
+        return False
+    if width_ratio > MODERATE_BBOX_OUTLIER_MAX_RATIO or height_ratio > MODERATE_BBOX_OUTLIER_MAX_RATIO:
+        return False
+    if width_ratio < 1.0 / MODERATE_BBOX_OUTLIER_MAX_RATIO or height_ratio < 1.0 / MODERATE_BBOX_OUTLIER_MAX_RATIO:
+        return False
+    return True
 
 
 def _stateless_detection_rejection_reason(obs: Observation) -> dict[str, Any] | None:
@@ -1278,6 +1555,81 @@ def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[Slo
         if slot is not None:
             return slot, obs.team_label in TEAM_LABELS and obs.team_label != team_label
     return None
+
+
+def _select_recent_reuse_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool, str] | None:
+    if obs.team_label not in TEAM_LABELS:
+        return None
+    active_count = sum(1 for slot in slots if slot.team_label == obs.team_label and slot.active)
+    unused_slot_available = _has_unused_slot(slots, obs.team_label)
+    candidates: list[tuple[float, SlotState, str]] = []
+    for slot in slots:
+        if slot.team_label != obs.team_label or slot.active or slot.detected_frames <= 0:
+            continue
+        if obs.tracklet_id in slot.tracklet_ids or obs.raw_track_id in slot.raw_track_ids:
+            candidates.append((-1000.0, slot, "owned_tracklet_reused"))
+            continue
+        if slot.last_detected_time_sec is None:
+            continue
+        gap_sec = obs.time_sec - slot.last_detected_time_sec
+        if gap_sec < -0.001 or gap_sec > REUSE_RECENT_SLOT_MAX_GAP_SEC:
+            continue
+        reference_pitch = slot.predicted_pitch(obs.time_sec) or slot.last_pitch_m
+        distance = _distance_m(reference_pitch, obs.pitch_m)
+        if distance is None:
+            continue
+        allowed_distance = min(
+            REUSE_RECENT_SLOT_MAX_DISTANCE_M,
+            max(4.0, MAX_ASSIGNMENT_SPEED_MPS * max(gap_sec, 0.5) * 0.6),
+        )
+        if unused_slot_available and active_count < TARGET_PLAYERS_PER_TEAM and gap_sec >= SUBSTITUTION_GAP_SEC:
+            allowed_distance = min(allowed_distance, REUSE_RECENT_SLOT_STRICT_DISTANCE_M)
+        if distance > allowed_distance:
+            continue
+        confidence_bonus = max(0.0, obs.confidence - 0.5)
+        score = distance + gap_sec * 0.25 - confidence_bonus
+        candidates.append((score, slot, "recent_same_team_slot_reused"))
+    if not candidates:
+        return None
+    _, slot, reason = sorted(candidates, key=lambda item: (item[0], item[1].slot_id))[0]
+    return slot, False, reason
+
+
+def _record_slot_start_decision(slot: SlotState, obs: Observation, *, reason: str) -> None:
+    row = {
+        "frame": obs.frame,
+        "time_sec": round(obs.time_sec, 3),
+        "slot_id": slot.slot_id,
+        "tracklet_id": obs.tracklet_id,
+        "raw_track_id": obs.raw_track_id,
+        "reason": reason,
+    }
+    if slot.detected_frames <= 0:
+        slot.slot_creation_reason = reason
+        slot.slot_spawn_frame = obs.frame
+        slot.slot_spawn_time_sec = obs.time_sec
+        slot.identity_events.append({"type": "slot_spawned", **row})
+        return
+    slot.reused_from_slot_id = slot.slot_id
+    slot.slot_reuse_events.append(row)
+    slot.identity_events.append({"type": "slot_reused", **row})
+
+
+def _record_spawn_blocked(slots: list[SlotState], obs: Observation, *, reason: str) -> None:
+    preferred = obs.team_label if obs.team_label in TEAM_LABELS else _least_loaded_team(slots)
+    event = {
+        "frame": obs.frame,
+        "time_sec": round(obs.time_sec, 3),
+        "reason": reason,
+        "tracklet_id": obs.tracklet_id,
+        "raw_track_id": obs.raw_track_id,
+        "team_label": obs.team_label,
+        "confidence": round(obs.confidence, 4),
+    }
+    for slot in slots:
+        if slot.team_label == preferred:
+            slot.spawn_blocked_events.append(event)
+            break
 
 
 def _first_inactive_slot(slots: list[SlotState], team_label: str, *, prefer_unused: bool) -> SlotState | None:
@@ -1431,6 +1783,12 @@ def _slot_to_doc(slot: SlotState, fps: float) -> dict[str, Any]:
         "overlay_positions": _overlay_positions(overlay_rows),
         "stints": stints,
         "stint_count": len(stints),
+        "slot_creation_reason": slot.slot_creation_reason,
+        "slot_spawn_frame": slot.slot_spawn_frame,
+        "slot_spawn_time_sec": round(slot.slot_spawn_time_sec, 3) if slot.slot_spawn_time_sec is not None else None,
+        "reused_from_slot_id": slot.reused_from_slot_id,
+        "slot_reuse_events": slot.slot_reuse_events,
+        "spawn_blocked_events": slot.spawn_blocked_events[:100],
         "blocked_team_switches": slot.blocked_team_switches,
         "blocked_identity_switches": slot.blocked_identity_switches,
         "suspicious_assignments": slot.suspicious_assignments,
@@ -1442,7 +1800,7 @@ def _slot_to_doc(slot: SlotState, fps: float) -> dict[str, Any]:
 
 def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str, Any]:
     rows = sorted(history, key=lambda item: (int(item.get("frame") or 0), float(item.get("time_sec") or 0.0)))
-    active_rows = [row for row in rows if row.get("source") in {"detected", "missing", "ambiguous", "predicted"}]
+    active_rows = [row for row in rows if _counts_as_playing_time(row)]
     detected_rows = [row for row in rows if row.get("source") == "detected" and row.get("pitch_m")]
     fps_safe = max(float(fps or 0.0), 0.001)
     active_frames = len(active_rows)
@@ -1560,6 +1918,18 @@ def _slot_movement_stats(history: list[dict[str, Any]], fps: float) -> dict[str,
         "intensity": intensity,
         "stats_note": "distance uses trusted detected pitch positions; top_speed is peak_sustained_speed over a conservative window; short gaps are counted separately as estimated_gap_distance_m; sprint/high-intensity metrics use trusted short-gap detected segments only",
     }
+
+
+def _counts_as_playing_time(row: dict[str, Any]) -> bool:
+    source = row.get("source")
+    if source in {"detected", "ambiguous", "predicted"}:
+        return True
+    if source != "missing":
+        return False
+    short_gap_sec = row.get("short_gap_sec")
+    if short_gap_sec is None:
+        return False
+    return float(short_gap_sec or 0.0) <= MAX_STATS_ESTIMATED_GAP_SEC
 
 
 def _peak_sustained_speed_mps(
@@ -1994,6 +2364,7 @@ def build_global_identity_report(
             "slot_ambiguous": frame.get("slot_ambiguous"),
             "visible_stable_boxes": frame.get("visible_stable_boxes"),
             "predicted_visible_boxes": frame.get("predicted_visible_boxes"),
+            "ambiguous_visible_boxes": frame.get("ambiguous_visible_boxes"),
         }
         for frame in frame_detection_counts.get("frames", [])
         if int(frame.get("visible_stable_boxes") or 0) < TARGET_ACTIVE_PLAYERS
@@ -2013,6 +2384,10 @@ def build_global_identity_report(
             "predicted_frames": slot.get("predicted_frames"),
             "missing_frames": slot.get("missing_frames"),
             "ambiguous_frames": slot.get("ambiguous_frames"),
+            "slot_creation_reason": slot.get("slot_creation_reason"),
+            "reused_from_slot_id": slot.get("reused_from_slot_id"),
+            "slot_reuse_events": slot.get("slot_reuse_events"),
+            "spawn_blocked_events": slot.get("spawn_blocked_events"),
         }
         for slot in identity_doc.get("slots", [])
         if slot.get("confidence") == "low"
@@ -2058,6 +2433,8 @@ def build_global_identity_report(
             "frames_with_predictions": frame_summary.get("frames_with_predictions"),
             "frames_with_missing_slots": frame_summary.get("frames_with_missing_slots"),
             "frames_with_ambiguous_slots": frame_summary.get("frames_with_ambiguous_slots"),
+            "ambiguous_visible": frame_summary.get("ambiguous_visible_boxes"),
+            "ambiguous_visible_frames": frame_summary.get("ambiguous_visible_frames"),
             "predicted_visible_boxes": frame_summary.get("predicted_visible_boxes"),
             "ghost_bbox_count": frame_summary.get("ghost_bbox_count"),
         },

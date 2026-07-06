@@ -453,8 +453,26 @@ def analyze_match_chunked_yolo(
         metadata,
         camera_motion=camera_motion,
         ball_tracks_doc=ball_tracks_doc,
+        ball_candidates_doc=ball_candidates_doc,
         write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
     )
+    refined_ball_tracks = stabilization.get("refined_ball_tracks")
+    if refined_ball_tracks is not None:
+        ball_tracks_doc = refined_ball_tracks
+        if ball_tracking is not None:
+            ball_tracking["ball_tracks"] = refined_ball_tracks
+        if ball_report is not None:
+            ball_report["summary"] = {
+                **(ball_report.get("summary") or {}),
+                **(refined_ball_tracks.get("summary") or {}),
+            }
+            if ball_tracking is not None:
+                ball_tracking["ball_tracking_report"] = ball_report
+        if ball_tracking is not None and ball_report is not None:
+            ball_quality_report = build_ball_quality_report(refined_ball_tracks, ball_candidates_doc, ball_report)
+            ball_tracking["ball_quality_report"] = ball_quality_report
+            (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
+            (match_dir / "ball_quality_report.json").write_text(json.dumps(ball_quality_report, indent=2), encoding="utf-8")
     artifacts.update(stabilization["artifacts"])
     artifacts["analysis_chunk_manifest"] = "analysis_chunk_manifest.json"
     if WRITE_DEBUG_VIDEO_ARTIFACTS:

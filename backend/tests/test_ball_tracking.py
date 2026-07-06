@@ -10,6 +10,7 @@ from app.services.ball_tracking import (
     build_ball_positions,
     build_ball_tracks_document,
     extract_ball_candidates,
+    refine_ball_tracks_against_players,
     select_ball_detections,
     _ball_result,
     _draw_ball_position,
@@ -176,6 +177,83 @@ class BallTrackingTests(unittest.TestCase):
 
         self.assertIn(0, selected)
         self.assertNotIn(1, selected)
+
+    def test_ball_tracks_filters_short_recovery_segment_after_gap(self) -> None:
+        doc = build_ball_tracks_document(
+            [
+                {"frame": 0, "candidates": [candidate(0, 0.0, 0.0, confidence=0.7)]},
+                {"frame": 45, "candidates": [candidate(45, 10.0, 10.0, confidence=0.3)]},
+                {"frame": 46, "candidates": [candidate(46, 10.1, 10.0, confidence=0.3)]},
+            ],
+            processed_frames=[0, 45, 46],
+            fps=30,
+            parameters={
+                "max_link_speed_mps": 2.0,
+                "min_start_conf": 0.08,
+                "max_interpolation_gap_sec": 0.5,
+                "max_interpolation_speed_mps": 22.0,
+                "recovery_segment_min_detections": 3,
+                "recovery_segment_min_duration_sec": 0.15,
+            },
+        )
+
+        self.assertEqual([item["source"] for item in doc["positions"]], ["detected", "unknown", "unknown"])
+
+    def test_select_ball_detections_restarts_after_low_confidence_hijack(self) -> None:
+        selected = select_ball_detections(
+            [
+                {"frame": 0, "candidates": [candidate(0, 0.0, 0.0, confidence=0.1)]},
+                {"frame": 1, "candidates": [candidate(1, 0.1, 0.0, confidence=0.1)]},
+                {"frame": 2, "candidates": [candidate(2, 0.2, 0.0, confidence=0.1)]},
+                {
+                    "frame": 3,
+                    "candidates": [
+                        candidate(3, 0.3, 0.0, confidence=0.1),
+                        candidate(3, 50.0, 10.0, confidence=0.79),
+                    ],
+                },
+                {"frame": 4, "candidates": [candidate(4, 50.2, 10.0, confidence=0.8)]},
+                {"frame": 5, "candidates": [candidate(5, 50.4, 10.0, confidence=0.81)]},
+            ],
+            fps=30,
+            max_link_speed_mps=35.0,
+            min_start_conf=0.08,
+        )
+
+        self.assertEqual(selected[3]["position_m"], [50.0, 10.0])
+        self.assertEqual(selected[3]["segment_start_reason"], "after_low_confidence_hijack")
+
+    def test_refine_ball_tracks_suppresses_player_bbox_false_positive_after_gap(self) -> None:
+        ball_doc = {
+            "parameters": {
+                "max_interpolation_gap_sec": 0.5,
+                "max_interpolation_speed_mps": 22.0,
+                "recovery_segment_min_detections": 1,
+                "recovery_segment_min_duration_sec": 0.0,
+            },
+            "summary": {},
+            "positions": [
+                candidate(0, 0.0, 0.0, confidence=0.7),
+                candidate(30, 10.0, 10.0, confidence=0.3),
+            ],
+            "interpolation_gaps": [],
+        }
+        stable_doc = {
+            "players": [
+                {
+                    "stable_player_id": "B01",
+                    "team_label": "B",
+                    "overlay_positions": [
+                        {"frame": 30, "bbox_xyxy": [8, 8, 12, 14], "source": "detected"}
+                    ],
+                }
+            ]
+        }
+
+        refined = refine_ball_tracks_against_players(ball_doc, stable_doc, fps=30)
+
+        self.assertEqual([item["source"] for item in refined["positions"]], ["detected", "unknown"])
+        self.assertEqual(refined["summary"]["player_overlap_suppressed_detections"], 1)
 
     def test_ball_tracks_document_exports_required_position_fields(self) -> None:
         doc = build_ball_tracks_document(

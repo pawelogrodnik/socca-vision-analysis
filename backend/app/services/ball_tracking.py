@@ -17,11 +17,20 @@ BALL_CUSTOM_SOURCE = "ultralytics_yolo_custom_ball_v1"
 DEFAULT_BALL_CONF = 0.03
 DEFAULT_BALL_IOU = 0.45
 DEFAULT_MAX_INTERPOLATION_GAP_SEC = 0.5
-DEFAULT_MAX_LINK_SPEED_MPS = 35.0
-DEFAULT_MAX_INTERPOLATION_SPEED_MPS = 35.0
-DEFAULT_MIN_START_CONF = 0.02
+DEFAULT_MAX_LINK_SPEED_MPS = 22.0
+DEFAULT_MAX_INTERPOLATION_SPEED_MPS = 22.0
+DEFAULT_MIN_START_CONF = 0.08
+DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS = 3
+DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC = 0.15
+DEFAULT_PLAYER_OVERLAP_MAX_CONFIDENCE = 0.5
+DEFAULT_PLAYER_OVERLAP_MAX_GAP_SEC = 0.5
+DEFAULT_PLAYER_OVERLAP_MAX_LINK_SPEED_MPS = 18.0
 DEFAULT_MIN_BALL_AREA_PX = 4.0
 DEFAULT_MAX_BALL_AREA_RATIO = 0.003
+HIGH_CONF_RESTART_MIN_CONFIDENCE = 0.55
+LOW_CONF_TRACK_MAX_CONFIDENCE = 0.18
+HIGH_CONF_RESTART_MIN_DETECTIONS = 3
+HIGH_CONF_RESTART_SCAN_FRAMES = 8
 
 
 def now_iso() -> str:
@@ -64,6 +73,8 @@ def detect_ball_yolo_coco(
         "max_link_speed_mps": DEFAULT_MAX_LINK_SPEED_MPS,
         "max_interpolation_speed_mps": DEFAULT_MAX_INTERPOLATION_SPEED_MPS,
         "min_start_conf": DEFAULT_MIN_START_CONF,
+        "recovery_segment_min_detections": DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS,
+        "recovery_segment_min_duration_sec": DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC,
         "pitch_filter": "center_in_pitch_polygon",
         "size_filter": {
             "min_area_px": DEFAULT_MIN_BALL_AREA_PX,
@@ -419,6 +430,8 @@ def ball_tracking_parameters(
         "max_link_speed_mps": DEFAULT_MAX_LINK_SPEED_MPS,
         "max_interpolation_speed_mps": DEFAULT_MAX_INTERPOLATION_SPEED_MPS,
         "min_start_conf": DEFAULT_MIN_START_CONF,
+        "recovery_segment_min_detections": DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS,
+        "recovery_segment_min_duration_sec": DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC,
         "pitch_filter": "center_in_pitch_polygon",
         "size_filter": {
             "min_area_px": DEFAULT_MIN_BALL_AREA_PX,
@@ -542,6 +555,13 @@ def build_ball_tracks_document(
         max_link_speed_mps=float(parameters.get("max_link_speed_mps") or DEFAULT_MAX_LINK_SPEED_MPS),
         min_start_conf=float(parameters.get("min_start_conf") or DEFAULT_MIN_START_CONF),
     )
+    selected = filter_recovery_ball_segments(
+        selected,
+        fps=fps,
+        min_detections=int(parameters.get("recovery_segment_min_detections") or DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS),
+        min_duration_sec=float(parameters.get("recovery_segment_min_duration_sec") or DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC),
+    )
+    segment_diagnostics = _ball_segment_diagnostics(selected, fps=fps)
     positions, interpolation_gaps = build_ball_positions(
         selected,
         processed_frames=processed_frames,
@@ -576,9 +596,14 @@ def build_ball_tracks_document(
             "known_coverage": _ratio(detected_frames + interpolated_frames, total_frames),
             "mean_detected_confidence": round(sum(detected_confidences) / len(detected_confidences), 4) if detected_confidences else None,
             "interpolation_gaps": len(interpolation_gaps),
+            "ball_segment_count": len(segment_diagnostics),
         },
         "positions": positions,
         "interpolation_gaps": interpolation_gaps,
+        "selection_diagnostics": {
+            "method": "coherent_high_confidence_restart_v1",
+            "segments": segment_diagnostics,
+        },
     }
 
 
@@ -591,7 +616,9 @@ def select_ball_detections(
 ) -> dict[int, dict[str, Any]]:
     selected: dict[int, dict[str, Any]] = {}
     last: dict[str, Any] | None = None
-    for frame in frames:
+    has_selected = False
+    sorted_frames = sorted(frames, key=lambda item: int(item.get("frame") or 0))
+    for frame_index, frame in enumerate(sorted_frames):
         frame_idx = int(frame.get("frame") or 0)
         candidates = sorted(frame.get("candidates") or [], key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
         if not candidates:
@@ -600,8 +627,25 @@ def select_ball_detections(
         if last is None:
             best = candidates[0]
             if float(best.get("confidence") or 0.0) >= min_start_conf:
+                if has_selected:
+                    best = {**best, "segment_start_reason": "after_gap"}
                 selected[frame_idx] = best
                 last = best
+                has_selected = True
+            continue
+
+        high_conf_restart = _coherent_high_conf_ball_candidate(
+            sorted_frames,
+            frame_index,
+            fps=fps,
+            max_link_speed_mps=max_link_speed_mps,
+            min_confidence=max(min_start_conf, HIGH_CONF_RESTART_MIN_CONFIDENCE),
+        )
+        if high_conf_restart is not None and _should_restart_ball_segment(last, high_conf_restart):
+            best = {**high_conf_restart, "segment_start_reason": "after_low_confidence_hijack"}
+            selected[frame_idx] = best
+            last = best
+            has_selected = True
             continue
 
         scored: list[tuple[float, dict[str, Any], float]] = []
@@ -623,13 +667,227 @@ def select_ball_detections(
             last = best
             continue
 
-        if dt > 1.0 and float(candidates[0].get("confidence") or 0.0) >= min_start_conf:
+        if high_conf_restart is not None:
+            best = {**high_conf_restart, "segment_start_reason": "after_impossible_high_conf_run"}
+            selected[frame_idx] = best
+            last = best
+            has_selected = True
+        elif dt > 1.0 and float(candidates[0].get("confidence") or 0.0) >= min_start_conf:
             best = {**candidates[0], "segment_start_reason": "after_impossible_or_long_gap"}
             selected[frame_idx] = best
             last = best
+            has_selected = True
         elif dt > 1.0:
             last = None
     return selected
+
+
+def _should_restart_ball_segment(last: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    last_confidence = float(last.get("confidence") or 0.0)
+    candidate_confidence = float(candidate.get("confidence") or 0.0)
+    if last_confidence <= LOW_CONF_TRACK_MAX_CONFIDENCE and candidate_confidence >= HIGH_CONF_RESTART_MIN_CONFIDENCE:
+        return True
+    return False
+
+
+def _coherent_high_conf_ball_candidate(
+    frames: list[dict[str, Any]],
+    start_index: int,
+    *,
+    fps: float,
+    max_link_speed_mps: float,
+    min_confidence: float,
+) -> dict[str, Any] | None:
+    current_candidates = sorted(
+        frames[start_index].get("candidates") or [],
+        key=lambda item: float(item.get("confidence") or 0.0),
+        reverse=True,
+    )
+    if not current_candidates:
+        return None
+    first = current_candidates[0]
+    if float(first.get("confidence") or 0.0) < min_confidence:
+        return None
+
+    detections = 1
+    last = first
+    last_frame = int(first.get("frame") or frames[start_index].get("frame") or 0)
+    for next_frame in frames[start_index + 1 : start_index + 1 + HIGH_CONF_RESTART_SCAN_FRAMES]:
+        frame_idx = int(next_frame.get("frame") or 0)
+        candidates = sorted(
+            [
+                candidate
+                for candidate in (next_frame.get("candidates") or [])
+                if float(candidate.get("confidence") or 0.0) >= min_confidence
+            ],
+            key=lambda item: float(item.get("confidence") or 0.0),
+            reverse=True,
+        )
+        if not candidates:
+            continue
+        dt = max((frame_idx - last_frame) / max(fps, 0.001), 1.0 / max(fps, 0.001))
+        linked: dict[str, Any] | None = None
+        for candidate in candidates:
+            distance = _distance_m(last.get("position_m"), candidate.get("position_m"))
+            if distance is None:
+                continue
+            if distance / dt <= max_link_speed_mps:
+                linked = candidate
+                break
+        if linked is None:
+            continue
+        detections += 1
+        last = linked
+        last_frame = frame_idx
+        if detections >= HIGH_CONF_RESTART_MIN_DETECTIONS:
+            return first
+    return None
+
+
+def filter_recovery_ball_segments(
+    selected_by_frame: dict[int, dict[str, Any]],
+    *,
+    fps: float,
+    min_detections: int = DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS,
+    min_duration_sec: float = DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC,
+) -> dict[int, dict[str, Any]]:
+    if not selected_by_frame:
+        return {}
+    selected = dict(selected_by_frame)
+    frames = sorted(selected)
+    segments: list[list[int]] = []
+    current: list[int] = []
+    max_gap_frames = max(1, int(round(DEFAULT_MAX_INTERPOLATION_GAP_SEC * max(fps, 0.001))))
+    for frame in frames:
+        if current and frame > current[-1] + max_gap_frames:
+            segments.append(current)
+            current = []
+        current.append(frame)
+    if current:
+        segments.append(current)
+
+    filtered: dict[int, dict[str, Any]] = {}
+    for segment in segments:
+        first = selected[segment[0]]
+        start_reason = str(first.get("segment_start_reason") or "")
+        is_recovery = start_reason in {"after_gap", "after_impossible_or_long_gap", "after_impossible_high_conf_run", "after_low_confidence_hijack"}
+        duration_sec = (segment[-1] - segment[0]) / max(fps, 0.001)
+        if is_recovery and (len(segment) < min_detections or duration_sec < min_duration_sec):
+            for frame in segment:
+                selected[frame]["suppressed_reason"] = "short_recovery_ball_segment"
+            continue
+        for frame in segment:
+            filtered[frame] = selected[frame]
+    return filtered
+
+
+def _ball_segment_diagnostics(selected_by_frame: dict[int, dict[str, Any]], *, fps: float) -> list[dict[str, Any]]:
+    if not selected_by_frame:
+        return []
+    frames = sorted(selected_by_frame)
+    max_gap_frames = max(1, int(round(DEFAULT_MAX_INTERPOLATION_GAP_SEC * max(fps, 0.001))))
+    segments: list[list[int]] = []
+    current: list[int] = []
+    for frame in frames:
+        if current and frame > current[-1] + max_gap_frames:
+            segments.append(current)
+            current = []
+        current.append(frame)
+    if current:
+        segments.append(current)
+    rows: list[dict[str, Any]] = []
+    for segment in segments:
+        first = selected_by_frame[segment[0]]
+        rows.append(
+            {
+                "start_frame": segment[0],
+                "end_frame": segment[-1],
+                "duration_sec": round((segment[-1] - segment[0]) / max(fps, 0.001), 3),
+                "detections": len(segment),
+                "start_reason": first.get("segment_start_reason") or "initial_or_continuation",
+                "start_confidence": round(float(first.get("confidence") or 0.0), 4),
+            }
+        )
+    return rows
+
+
+def refine_ball_tracks_against_players(
+    ball_tracks_doc: dict[str, Any] | None,
+    stable_doc: dict[str, Any] | None,
+    *,
+    fps: float,
+) -> dict[str, Any] | None:
+    if not ball_tracks_doc or not stable_doc:
+        return ball_tracks_doc
+    positions = ball_tracks_doc.get("positions")
+    if not isinstance(positions, list):
+        return ball_tracks_doc
+    player_boxes = _player_boxes_by_frame(stable_doc)
+    if not player_boxes:
+        return ball_tracks_doc
+
+    parameters = dict(ball_tracks_doc.get("parameters") or {})
+    processed_frames = [int(position.get("frame") or 0) for position in positions]
+    selected: dict[int, dict[str, Any]] = {}
+    suppressed: list[dict[str, Any]] = []
+    last_kept: dict[str, Any] | None = None
+    for position in sorted(positions, key=lambda item: int(item.get("frame") or 0)):
+        if position.get("source") != "detected":
+            continue
+        frame = int(position.get("frame") or 0)
+        overlap = _overlapping_player_box(position, player_boxes.get(frame, []))
+        rejection = _player_overlap_ball_rejection(position, last_kept, overlap, fps=fps)
+        if rejection is not None:
+            suppressed.append({**rejection, "frame": frame, "time_sec": position.get("time_sec"), "candidate_id": position.get("candidate_id")})
+            continue
+        selected[frame] = position
+        last_kept = position
+
+    selected = filter_recovery_ball_segments(
+        selected,
+        fps=fps,
+        min_detections=int(parameters.get("recovery_segment_min_detections") or DEFAULT_RECOVERY_SEGMENT_MIN_DETECTIONS),
+        min_duration_sec=float(parameters.get("recovery_segment_min_duration_sec") or DEFAULT_RECOVERY_SEGMENT_MIN_DURATION_SEC),
+    )
+    refined_positions, interpolation_gaps = build_ball_positions(
+        selected,
+        processed_frames=processed_frames,
+        fps=fps,
+        max_interpolation_gap_sec=float(parameters.get("max_interpolation_gap_sec") or DEFAULT_MAX_INTERPOLATION_GAP_SEC),
+        max_interpolation_speed_mps=float(parameters.get("max_interpolation_speed_mps") or DEFAULT_MAX_INTERPOLATION_SPEED_MPS),
+    )
+    detected_frames = sum(1 for item in refined_positions if item["source"] == "detected")
+    interpolated_frames = sum(1 for item in refined_positions if item["source"] == "interpolated")
+    unknown_frames = sum(1 for item in refined_positions if item["source"] == "unknown")
+    detected_confidences = [float(item["confidence"]) for item in refined_positions if item["source"] == "detected"]
+    refined = {
+        **ball_tracks_doc,
+        "positions": refined_positions,
+        "interpolation_gaps": interpolation_gaps,
+        "summary": {
+            **(ball_tracks_doc.get("summary") or {}),
+            "processed_frames": len(refined_positions),
+            "detected_frames": detected_frames,
+            "interpolated_frames": interpolated_frames,
+            "unknown_frames": unknown_frames,
+            "detected_coverage": _ratio(detected_frames, len(refined_positions)),
+            "interpolated_coverage": _ratio(interpolated_frames, len(refined_positions)),
+            "known_coverage": _ratio(detected_frames + interpolated_frames, len(refined_positions)),
+            "mean_detected_confidence": round(sum(detected_confidences) / len(detected_confidences), 4) if detected_confidences else None,
+            "interpolation_gaps": len(interpolation_gaps),
+            "player_overlap_suppressed_detections": len(suppressed),
+        },
+        "post_filter": {
+            "method": "player_bbox_overlap_temporal_v1",
+            "suppressed_detections": len(suppressed),
+            "suppressed_examples": suppressed[:100],
+        },
+        "selection_diagnostics": {
+            **(ball_tracks_doc.get("selection_diagnostics") or {}),
+            "post_filter_segments": _ball_segment_diagnostics(selected, fps=fps),
+        },
+    }
+    return refined
 
 
 def build_ball_positions(
@@ -1001,6 +1259,96 @@ def _candidate_to_position(candidate: dict[str, Any], *, source: str) -> dict[st
         "confidence": candidate.get("confidence"),
         "candidate_id": candidate.get("candidate_id"),
         "segment_start_reason": candidate.get("segment_start_reason"),
+    }
+
+
+def _player_boxes_by_frame(stable_doc: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    boxes: dict[int, list[dict[str, Any]]] = {}
+    for player in stable_doc.get("players") or []:
+        for position in player.get("overlay_positions") or []:
+            bbox = position.get("bbox_xyxy")
+            if not bbox or len(bbox) != 4:
+                continue
+            frame = int(position.get("frame") or 0)
+            boxes.setdefault(frame, []).append(
+                {
+                    "bbox_xyxy": [float(value) for value in bbox],
+                    "stable_player_id": player.get("stable_player_id"),
+                    "team_label": player.get("team_label"),
+                    "source": position.get("source"),
+                }
+            )
+    return boxes
+
+
+def _overlapping_player_box(position: dict[str, Any], player_boxes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    point = position.get("position_px")
+    if not point or len(point) != 2:
+        return None
+    x, y = float(point[0]), float(point[1])
+    best: tuple[float, dict[str, Any]] | None = None
+    for player in player_boxes:
+        bbox = player.get("bbox_xyxy")
+        if not bbox or len(bbox) != 4:
+            continue
+        x1, y1, x2, y2 = [float(value) for value in bbox]
+        if not (x1 <= x <= x2 and y1 <= y <= y2):
+            continue
+        width = max(1.0, x2 - x1)
+        height = max(1.0, y2 - y1)
+        center_distance = ((x - (x1 + x2) / 2.0) ** 2 + (y - (y1 + y2) / 2.0) ** 2) ** 0.5
+        normalized_distance = center_distance / max(width, height)
+        overlap = {
+            **player,
+            "player_bbox_vertical_ratio": round((y - y1) / height, 3),
+            "player_bbox_normalized_distance": round(normalized_distance, 3),
+        }
+        if best is None or normalized_distance < best[0]:
+            best = (normalized_distance, overlap)
+    return best[1] if best else None
+
+
+def _player_overlap_ball_rejection(
+    position: dict[str, Any],
+    last_kept: dict[str, Any] | None,
+    overlap: dict[str, Any] | None,
+    *,
+    fps: float,
+) -> dict[str, Any] | None:
+    if overlap is None:
+        return None
+    confidence = float(position.get("confidence") or 0.0)
+    if confidence >= DEFAULT_PLAYER_OVERLAP_MAX_CONFIDENCE:
+        return None
+    reason = str(position.get("segment_start_reason") or "")
+    if last_kept is None:
+        if reason in {"after_gap", "after_impossible_or_long_gap"}:
+            return {
+                "reason": "ball_inside_player_bbox_after_gap",
+                "confidence": round(confidence, 4),
+                **_player_overlap_public_fields(overlap),
+            }
+        return None
+    dt = max((int(position.get("frame") or 0) - int(last_kept.get("frame") or 0)) / max(fps, 0.001), 1.0 / max(fps, 0.001))
+    distance = _distance_m(last_kept.get("position_m"), position.get("position_m"))
+    speed = distance / dt if distance is not None else None
+    if dt <= DEFAULT_PLAYER_OVERLAP_MAX_GAP_SEC and (speed is None or speed <= DEFAULT_PLAYER_OVERLAP_MAX_LINK_SPEED_MPS):
+        return None
+    return {
+        "reason": "ball_inside_player_bbox_after_unstable_link",
+        "confidence": round(confidence, 4),
+        "gap_sec": round(dt, 3),
+        "required_speed_mps": round(speed, 3) if speed is not None else None,
+        **_player_overlap_public_fields(overlap),
+    }
+
+
+def _player_overlap_public_fields(overlap: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stable_player_id": overlap.get("stable_player_id"),
+        "team_label": overlap.get("team_label"),
+        "player_bbox_vertical_ratio": overlap.get("player_bbox_vertical_ratio"),
+        "player_bbox_normalized_distance": overlap.get("player_bbox_normalized_distance"),
     }
 
 

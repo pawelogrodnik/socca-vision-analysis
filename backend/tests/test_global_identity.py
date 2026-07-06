@@ -119,6 +119,36 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(a08["tracklet_ids"], ["8:1"])
         self.assertEqual(identity["summary"]["team_counts"]["A"], 8)
 
+    def test_stable_players_view_keeps_extra_roster_candidates(self) -> None:
+        tracklets = [
+            tracklet("1:1", "A", [position(frame, 1 + frame * 0.01, 1) for frame in range(6)])
+        ]
+        for index in range(2, 8):
+            tracklets.append(
+                tracklet(
+                    f"{index}:1",
+                    "A",
+                    [
+                        position(0, index, 2),
+                        position(120, index + 0.1, 2),
+                        position(240, index + 0.2, 2),
+                        position(300, index + 0.3, 2),
+                    ],
+                )
+            )
+        tracklets.append(tracklet("8:1", "A", [position(300, 20, 2), position(301, 20.1, 2)]))
+
+        identity = self.resolve(tracklets)
+        stable_doc = build_stable_players_from_global_identity(identity)
+
+        self.assertEqual(identity["summary"]["team_counts"]["A"], 8)
+        self.assertEqual(stable_doc["summary"]["team_counts"]["A"], 8)
+        self.assertEqual(stable_doc["summary"]["stable_players"], 8)
+        self.assertEqual(stable_doc["summary"]["stable_player_candidates"], 8)
+        self.assertEqual(stable_doc["summary"]["suppressed_extra_candidates"], 0)
+        self.assertEqual([player["stable_player_id"] for player in stable_doc["players"]], [f"A{index:02d}" for index in range(1, 9)])
+        self.assertEqual(stable_doc["suppressed_candidates"], [])
+
     def test_outputs_slot_frame_counts(self) -> None:
         identity = self.resolve(
             [
@@ -179,6 +209,36 @@ class GlobalIdentityTests(unittest.TestCase):
             if row.get("source") == "ambiguous"
         ]
         self.assertGreater(len(ambiguous_rows), 0)
+
+    def test_confirmed_switch_with_nearby_competitor_becomes_detected(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet("1:1", "A", [position(frame, 4 + frame * 0.05, 4) for frame in range(6)]),
+                tracklet("2:1", "A", [position(frame, 4 + frame * 0.05, 4) for frame in range(6, 21)]),
+                tracklet("3:1", "A", [position(frame, 4.25 + frame * 0.05, 4.1) for frame in range(6, 21)]),
+            ]
+        )
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        self.assertIn("2:1", a01["tracklet_ids"])
+        self.assertTrue(
+            any(event.get("type") == "confirmed_switch_with_competitor_accepted" for event in a01["identity_events"])
+        )
+        self.assertGreater(a01["ambiguous_frames"], 0)
+
+    def test_recent_missing_same_team_slot_is_reused_before_spawn(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet("1:1", "A", [position(frame, 1 + frame * 0.01, 1) for frame in range(3)]),
+                tracklet("2:1", "A", [position(frame, 1.4 + (frame - 270) * 0.01, 1) for frame in range(270, 273)]),
+            ]
+        )
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        self.assertEqual(a01["tracklet_ids"], ["1:1", "2:1"])
+        self.assertEqual(a01["reused_from_slot_id"], "A01")
+        self.assertEqual(a01["slot_reuse_events"][0]["reason"], "recent_same_team_slot_reused")
+        self.assertEqual([slot["slot_id"] for slot in identity["slots"]], ["A01"])
 
     def test_confirmed_unmatched_raw_backfills_missing_active_slot(self) -> None:
         tracklets = [
@@ -279,6 +339,29 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertAlmostEqual(stats["estimated_gap_distance_m"], 3.0, places=2)
         self.assertAlmostEqual(stats["total_distance_m"], 3.1, places=2)
         self.assertEqual(stats["estimated_gap_segments"], 1)
+
+    def test_movement_stats_do_not_count_long_missing_gap_as_playing_time(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet(
+                    "1:1",
+                    "A",
+                    [
+                        position(0, 0, 0),
+                        position(1, 0.1, 0),
+                        position(300, 0.2, 0),
+                        position(301, 0.3, 0),
+                    ],
+                ),
+            ]
+        )
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        stats = a01["movement_stats"]
+        self.assertGreater(a01["missing_frames"], 200)
+        self.assertLess(stats["playing_time_sec"], 5.0)
+        self.assertLess(stats["missing_time_sec"], 2.1)
+        self.assertGreater(len(a01["stints"]), 1)
 
     def test_movement_stats_skip_unrealistic_speed_segments(self) -> None:
         stats = _slot_movement_stats(

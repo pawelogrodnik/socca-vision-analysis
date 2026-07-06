@@ -11,7 +11,7 @@ from statistics import median
 from typing import Any
 
 from app.services.analysis_quality import build_analysis_quality_report
-from app.services.ball_tracking import _draw_ball_position
+from app.services.ball_tracking import _draw_ball_position, build_ball_tracks_document, refine_ball_tracks_against_players
 from app.services.change_candidates import write_change_candidate_artifacts
 from app.services.conservative_identity import (
     build_frame_detection_counts_from_global_identity,
@@ -2587,13 +2587,25 @@ def _stable_overlay_frame_rows(
         for observation in stable_doc.get("unmatched_observations") or []:
             if not isinstance(observation, dict) or not observation.get("bbox_xyxy"):
                 continue
+            frame = int(observation.get("frame") or 0)
+            if not _should_draw_unmatched_raw(frame_rows.get(frame, []), observation):
+                continue
             row = dict(observation)
             row["stable_player_id"] = "RAW"
             row["source"] = "unmatched_raw"
             row["status"] = "unmatched_raw"
             row["visual_trusted"] = False
-            frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
+            frame_rows.setdefault(frame, []).append(row)
     return frame_rows
+
+
+def _should_draw_unmatched_raw(existing_rows: list[dict[str, Any]], observation: dict[str, Any]) -> bool:
+    team_label = str(observation.get("team_label") or "U")
+    stable_rows = [row for row in existing_rows if row.get("source") != "unmatched_raw"]
+    if team_label in {"A", "B"}:
+        visible_same_team = sum(1 for row in stable_rows if row.get("team_label") == team_label)
+        return visible_same_team < DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP
+    return len(stable_rows) < DEFAULT_ACTIVE_PLAYERS_CAP
 
 
 def _stable_overlay_visual_positions(
@@ -2625,13 +2637,15 @@ def _stable_overlay_visual_positions(
             visual_by_frame[int(row.get("frame") or 0)] = row
             trusted_detected.append(row)
             continue
+        if source == "ambiguous":
+            if not _bbox_is_visual_candidate(position, bbox_stats):
+                continue
+            visual_by_frame.setdefault(frame, dict(position, source=source))
+            continue
         if not include_untrusted:
             continue
         if source in {"predicted", "interpolated", "short_gap_interpolated"}:
             if not _overlay_bbox_is_safe(position, bbox_stats, frame_pitch_polygon):
-                continue
-        elif source == "ambiguous":
-            if not _bbox_is_visual_candidate(position, bbox_stats):
                 continue
         else:
             continue
@@ -3031,6 +3045,41 @@ def _format_score(value: Any) -> str:
         return "--"
 
 
+def _rebuild_ball_tracks_from_candidates(
+    ball_tracks_doc: dict[str, Any] | None,
+    ball_candidates_doc: dict[str, Any] | None,
+    *,
+    fps: float,
+) -> dict[str, Any] | None:
+    if not ball_candidates_doc:
+        return ball_tracks_doc
+    candidate_frames = ball_candidates_doc.get("frames")
+    if not isinstance(candidate_frames, list):
+        return ball_tracks_doc
+    processed_frames = [
+        int(position.get("frame") or 0)
+        for position in (ball_tracks_doc or {}).get("positions", [])
+        if isinstance(position, dict)
+    ]
+    if not processed_frames:
+        processed_frames = [
+            int(frame.get("frame") or 0)
+            for frame in candidate_frames
+            if isinstance(frame, dict) and frame.get("frame") is not None
+        ]
+    parameters = {
+        **(ball_candidates_doc.get("parameters") or {}),
+        **((ball_tracks_doc or {}).get("parameters") or {}),
+        "candidate_recovery_source": "ball_candidates",
+    }
+    return build_ball_tracks_document(
+        candidate_frames,
+        processed_frames=processed_frames,
+        fps=fps,
+        parameters=parameters,
+    )
+
+
 def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     stable_rows = [row for row in rows if row.get("source") != "unmatched_raw"]
     visible_detected = sum(1 for row in stable_rows if row.get("source") == "detected")
@@ -3072,6 +3121,7 @@ def apply_stable_overlay_visual_counts(
     stable_values: list[int] = []
     predicted_visible_values: list[int] = []
     visual_interpolated_values: list[int] = []
+    ambiguous_visible_values: list[int] = []
     target_players = int(frame_detection_counts.get("target_players") or DEFAULT_ACTIVE_PLAYERS_CAP)
     for frame in frame_detection_counts.get("frames", []):
         frame_index = int(frame.get("frame") or 0)
@@ -3080,6 +3130,7 @@ def apply_stable_overlay_visual_counts(
         trusted_detected = int(visual.get("visible_detected") or 0)
         visual_interpolated = int(visual.get("visible_interpolated") or 0)
         predicted_visible = int(visual.get("visible_predicted") or 0)
+        ambiguous_visible = int(visual.get("visible_ambiguous") or 0)
         updated = {
             **frame,
             "stable_detected": trusted_detected,
@@ -3087,6 +3138,7 @@ def apply_stable_overlay_visual_counts(
             "stable_total": visible,
             "trusted_detected": trusted_detected,
             "visible_stable_boxes": visible,
+            "ambiguous_visible_boxes": ambiguous_visible,
             "visual_interpolated_boxes": visual_interpolated,
             "predicted_visible_boxes": predicted_visible,
             "stable_missing_vs_target": max(0, target_players - visible),
@@ -3095,6 +3147,7 @@ def apply_stable_overlay_visual_counts(
         stable_values.append(visible)
         predicted_visible_values.append(predicted_visible)
         visual_interpolated_values.append(visual_interpolated)
+        ambiguous_visible_values.append(ambiguous_visible)
 
     summary = dict(frame_detection_counts.get("summary") or {})
     summary.update(
@@ -3105,6 +3158,8 @@ def apply_stable_overlay_visual_counts(
             "stable_frames_below_target": sum(1 for value in stable_values if value < target_players),
             "stable_frames_at_or_above_target": sum(1 for value in stable_values if value >= target_players),
             "predicted_visible_boxes": sum(predicted_visible_values),
+            "ambiguous_visible_boxes": sum(ambiguous_visible_values),
+            "ambiguous_visible_frames": sum(1 for value in ambiguous_visible_values if value > 0),
             "visual_interpolated_boxes": sum(visual_interpolated_values),
             "visual_interpolated_frames": sum(1 for value in visual_interpolated_values if value > 0),
             "ghost_bbox_count": sum(predicted_visible_values),
@@ -3272,6 +3327,7 @@ def stabilize_match(
     *,
     camera_motion: Any | None = None,
     ball_tracks_doc: dict[str, Any] | None = None,
+    ball_candidates_doc: dict[str, Any] | None = None,
     write_debug_overlay: bool = True,
 ) -> dict[str, Any]:
     meta_path = match_dir / "match.json"
@@ -3309,6 +3365,18 @@ def stabilize_match(
         pitch_polygon=pitch.polygon_np,
     )
     stable_doc = build_stable_players_from_global_identity(global_identity)
+    ball_tracks_for_refine = _rebuild_ball_tracks_from_candidates(
+        ball_tracks_doc,
+        ball_candidates_doc,
+        fps=float(video_metadata.get("fps") or 25.0),
+    )
+    refined_ball_tracks_doc = refine_ball_tracks_against_players(
+        ball_tracks_for_refine,
+        stable_doc,
+        fps=float(video_metadata.get("fps") or 25.0),
+    )
+    if refined_ball_tracks_doc is not None and ball_tracks_doc is not None:
+        (match_dir / "ball_tracks.json").write_text(json.dumps(refined_ball_tracks_doc, indent=2), encoding="utf-8")
     frame_detection_counts = build_frame_detection_counts_from_global_identity(
         global_identity,
         fps=float(video_metadata.get("fps") or 25.0),
@@ -3346,7 +3414,7 @@ def stabilize_match(
         fps=float(video_metadata.get("fps") or 25.0),
         frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
         camera_motion=camera_motion,
-        ball_tracks_doc=ball_tracks_doc,
+        ball_tracks_doc=refined_ball_tracks_doc,
     )
     debug_overlay_artifacts: dict[str, str] = {}
     if write_debug_overlay:
@@ -3360,7 +3428,7 @@ def stabilize_match(
             output_name="debug_identity_overlay.mp4",
             include_untrusted=True,
             camera_motion=camera_motion,
-            ball_tracks_doc=ball_tracks_doc,
+            ball_tracks_doc=refined_ball_tracks_doc,
         )
         debug_overlay_artifacts["debug_identity_overlay"] = "debug_identity_overlay.mp4"
     public_stable_doc = _strip_overlay_positions(stable_doc)
@@ -3434,6 +3502,7 @@ def stabilize_match(
         "tracklets": tracklets_doc,
         "tracking_quality_report": tracking_quality_report,
         "stabilization_report": report,
+        "refined_ball_tracks": refined_ball_tracks_doc,
         "artifacts": {
             "stable_players": "stable_players.json",
             "global_identity": "global_identity.json",

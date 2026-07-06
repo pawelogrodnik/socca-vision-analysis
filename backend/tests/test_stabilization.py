@@ -116,6 +116,82 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(_visual_counts(rows)["visible_boxes"], 1)
         self.assertEqual(_visual_counts(rows)["visible_unmatched_raw"], 1)
 
+    def test_ambiguous_overlay_rows_are_visible_but_not_trusted(self) -> None:
+        stable_doc = {
+            "players": [
+                {
+                    "stable_player_id": "A04",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 776,
+                            "time_sec": 776 / 30,
+                            "bbox_xyxy": [900, 540, 930, 605],
+                            "pitch_m": [12, 20],
+                            "confidence": 0.91,
+                            "source": "ambiguous",
+                            "status": "ambiguous",
+                            "visual_trusted": False,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        rows = _stable_overlay_frame_rows(
+            stable_doc,
+            np.array([[0, 0], [2000, 0], [2000, 1200], [0, 1200]], dtype=np.float32),
+            fps=30,
+            include_untrusted=False,
+        )[776]
+        counts = _visual_counts(rows)
+
+        self.assertEqual(rows[0]["stable_player_id"], "A04")
+        self.assertEqual(rows[0]["source"], "ambiguous")
+        self.assertEqual(counts["visible_boxes"], 1)
+        self.assertEqual(counts["visible_ambiguous"], 1)
+        self.assertEqual(counts["visible_detected"], 0)
+
+    def test_unmatched_raw_overlay_hides_extra_team_detection_when_team_full(self) -> None:
+        stable_doc = {
+            "players": [
+                {
+                    "stable_player_id": f"B{index + 1:02d}",
+                    "team_label": "B",
+                    "overlay_positions": [
+                        {
+                            "frame": 1,
+                            "time_sec": 1 / 30,
+                            "bbox_xyxy": [10 + index * 10, 10, 18 + index * 10, 30],
+                            "pitch_m": [index, 1],
+                            "source": "detected",
+                        }
+                    ],
+                }
+                for index in range(7)
+            ],
+            "unmatched_observations": [
+                {
+                    "frame": 1,
+                    "time_sec": 1 / 30,
+                    "bbox_xyxy": [90, 10, 100, 30],
+                    "pitch_m": [9, 1],
+                    "source": "unmatched_raw",
+                    "team_label": "B",
+                }
+            ],
+        }
+
+        rows = _stable_overlay_frame_rows(
+            stable_doc,
+            np.array([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32),
+            fps=30,
+            include_unmatched_raw=True,
+        )[1]
+
+        self.assertEqual(_visual_counts(rows)["visible_boxes"], 7)
+        self.assertEqual(_visual_counts(rows)["visible_unmatched_raw"], 0)
+
     def test_split_tracks_breaks_unrealistic_jump(self) -> None:
         tracks = [
             {
