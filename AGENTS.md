@@ -60,6 +60,15 @@ Do not collapse `track_id`, `tracklet_id` and `player_id` into one concept.
   - `analysis_report.json`
 - Later, large tabular outputs may move to parquet/SQLite/Postgres, but do not prematurely migrate.
 
+## Current YOLO model defaults
+
+Keep the default analysis pipeline aligned with the current local models:
+
+- Player detector: `models/best-model-with-ball-and-players-500-frames.pt`
+- Ball detector: `models/best-balls-only-800-frames.pt`
+
+These are paths resolved from `backend/models/`. When moving work to another laptop, copy `backend/models/` or restore these `.pt` files before running analysis. Treat `yolov8n.pt` and `models/best.pt` as legacy/fallback comparison models unless the user explicitly asks to benchmark them.
+
 ## Coding style
 
 - Use descriptive names. Avoid abbreviations except common CV terms such as `fps`, `bbox`, `iou`.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
+
 
 class PlayerPayload(BaseModel):
     id: str | None = None
@@ -61,14 +63,14 @@ class AnalyzePayload(BaseModel):
     include_ball: bool = False
 
     # YOLO options
-    yolo_model: str = "yolov8n.pt"
+    yolo_model: str = DEFAULT_PLAYER_YOLO_MODEL
     yolo_conf: float = 0.05
     yolo_imgsz: int = 1920
     yolo_tracker: str = "centroid_high_recall"
     yolo_device: str | None = None  # None/empty = auto, "cpu", or "0"
 
     # Ball YOLO options used by chunked analysis when include_ball=true.
-    ball_yolo_model: str = "models/best.pt"
+    ball_yolo_model: str = DEFAULT_BALL_YOLO_MODEL
     ball_yolo_conf: float = 0.03
     ball_yolo_imgsz: int = 960
     ball_yolo_device: str | None = None
@@ -82,7 +84,7 @@ class AnalyzePayload(BaseModel):
 class BallAnalyzePayload(BaseModel):
     max_seconds: float = 3.0
     frame_stride: int = 4
-    yolo_model: str = "yolov8n.pt"
+    yolo_model: str = DEFAULT_BALL_YOLO_MODEL
     yolo_conf: float = 0.05
     yolo_imgsz: int = 960
     yolo_device: str | None = None

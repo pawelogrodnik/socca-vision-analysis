@@ -23,6 +23,7 @@ import type {
   RuntimeInfo,
 } from '../types';
 import { applyAnalysisPreset, type AnalysisPresetId } from '../lib/analysisPreflight';
+import { DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL } from '../lib/modelDefaults';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
 import { buildReviewReadiness, type ReviewReadiness } from '../lib/reviewReadiness';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
@@ -52,12 +53,12 @@ const defaultAnalysis: AnalysisPayload = {
   chunk_duration_sec: 120,
   chunk_overlap_sec: 2,
   include_ball: true,
-  yolo_model: 'yolov8n.pt',
+  yolo_model: DEFAULT_PLAYER_YOLO_MODEL,
   yolo_conf: 0.05,
   yolo_imgsz: 1280,
   yolo_tracker: 'centroid_high_recall',
   yolo_device: null,
-  ball_yolo_model: 'models/best.pt',
+  ball_yolo_model: DEFAULT_BALL_YOLO_MODEL,
   ball_yolo_conf: 0.03,
   ball_yolo_imgsz: 960,
   ball_yolo_device: null,
@@ -66,12 +67,10 @@ const defaultAnalysis: AnalysisPayload = {
   camera_motion_min_inlier_ratio: 0.6,
 };
 
-const localBallModelPath = 'models/best.pt';
-
 const defaultBallAnalysis: BallAnalysisPayload = {
   max_seconds: 3,
   frame_stride: 4,
-  yolo_model: localBallModelPath,
+  yolo_model: DEFAULT_BALL_YOLO_MODEL,
   yolo_conf: 0.05,
   yolo_imgsz: 960,
   yolo_device: null,
@@ -830,7 +829,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 3,
                       frame_stride: 4,
-                      yolo_model: localBallModelPath,
+                      yolo_model: DEFAULT_BALL_YOLO_MODEL,
                       yolo_conf: 0.05,
                       yolo_imgsz: 960,
                       yolo_device: analysis.yolo_device,
@@ -847,7 +846,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 6,
                       frame_stride: 3,
-                      yolo_model: localBallModelPath,
+                      yolo_model: DEFAULT_BALL_YOLO_MODEL,
                       yolo_conf: 0.04,
                       yolo_imgsz: 1280,
                       yolo_device: analysis.yolo_device,
@@ -864,7 +863,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 12,
                       frame_stride: 2,
-                      yolo_model: localBallModelPath,
+                      yolo_model: DEFAULT_BALL_YOLO_MODEL,
                       yolo_conf: 0.03,
                       yolo_imgsz: 1280,
                       yolo_device: analysis.yolo_device,
@@ -881,7 +880,7 @@ export function AdminPanel() {
                     setBallAnalysis({
                       max_seconds: 12,
                       frame_stride: 1,
-                      yolo_model: localBallModelPath,
+                      yolo_model: DEFAULT_BALL_YOLO_MODEL,
                       yolo_conf: 0.05,
                       yolo_imgsz: 1280,
                       yolo_device: analysis.yolo_device,

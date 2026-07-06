@@ -13,6 +13,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.model_defaults import DEFAULT_PLAYER_YOLO_MODEL
 from app.services.analysis import _resolve_yolo_model_name
 from app.services.runtime import collect_runtime_info, ensure_yolo_device_available, normalize_yolo_device
 
@@ -20,7 +21,7 @@ from app.services.runtime import collect_runtime_info, ensure_yolo_device_availa
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify native CUDA runtime for Orlik Vision YOLO analysis.")
     parser.add_argument("--device", default="cuda", help="CUDA alias/index to verify, for example cuda or 0.")
-    parser.add_argument("--model", default="yolov8n.pt", help="YOLO model path/name used for a short inference.")
+    parser.add_argument("--model", default=DEFAULT_PLAYER_YOLO_MODEL, help="YOLO model path/name used for a short inference.")
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--conf", type=float, default=0.25)
     args = parser.parse_args()

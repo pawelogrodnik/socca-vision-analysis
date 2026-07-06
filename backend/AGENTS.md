@@ -55,6 +55,8 @@ Avoid placing computer-vision logic directly in FastAPI route handlers.
 - Report confidence/coverage when possible.
 - Preserve both image coordinates and pitch coordinates once homography is available.
 - Keep ball tracking separate from player tracking; ball detection will need different assumptions.
+- Current default player model: `models/best-model-with-ball-and-players-500-frames.pt`.
+- Current default ball model: `models/best-balls-only-800-frames.pt`.
 
 ## Geometry/statistics rules
 

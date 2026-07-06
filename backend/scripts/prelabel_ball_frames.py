@@ -9,6 +9,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.model_defaults import DEFAULT_BALL_YOLO_MODEL
 from app.services.ball_prelabeling import (
     DEFAULT_BALL_PRELABEL_CONF,
     DEFAULT_BALL_PRELABEL_IMGSZ,
@@ -25,7 +26,7 @@ def main() -> None:
     parser.add_argument("frames_dir", nargs="?", type=Path, help="Folder with extracted training frame images.")
     parser.add_argument("--frames-dir", dest="frames_dir_option", type=Path, help="Folder with extracted training frame images.")
     parser.add_argument("--out", "--output-dir", dest="output_dir", type=Path, default=None)
-    parser.add_argument("--model", default="models/best.pt", help="YOLO model name or path. Supports backend/models/*.pt paths.")
+    parser.add_argument("--model", default=DEFAULT_BALL_YOLO_MODEL, help="YOLO model name or path. Supports backend/models/*.pt paths.")
     parser.add_argument("--conf", type=float, default=DEFAULT_BALL_PRELABEL_CONF)
     parser.add_argument("--iou", type=float, default=DEFAULT_BALL_PRELABEL_IOU)
     parser.add_argument("--imgsz", type=int, default=DEFAULT_BALL_PRELABEL_IMGSZ)

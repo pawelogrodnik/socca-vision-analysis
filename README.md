@@ -73,6 +73,37 @@ Backend API:
 http://localhost:8000/docs
 ```
 
+## Aktualne modele YOLO
+
+Domyślny pipeline analizy jest ustawiony na lokalne modele w `backend/models/`:
+
+```text
+player model: models/best-model-with-ball-and-players-500-frames.pt
+ball model:   models/best-balls-only-800-frames.pt
+```
+
+Te pliki muszą istnieć w `backend/models/` na maszynie, na której uruchamiasz analizę. Przy przenoszeniu pracy na drugi laptop skopiuj cały katalog `backend/models/` razem z repo albo odtwórz te pliki ręcznie z backupu.
+
+Używamy ich w domyślnym UI, payloadach backendu, chunked analysis, prelabelingu i benchmarkach. `yolov8n.pt` zostaje tylko sensownym fallbackiem/testem porównawczym, a nie aktualnym domyślnym modelem produkcyjnym.
+
+Guide generowania kolejnych problematycznych klatek do doskonalenia modelu piłki:
+
+```text
+docs/BALL_ACTIVE_LEARNING_GUIDE.md
+```
+
+Guide doskonalenia modelu zawodników:
+
+```text
+docs/PLAYER_ACTIVE_LEARNING_GUIDE.md
+```
+
+Guide porównywalnego benchmarku na MacBooku/MPS:
+
+```text
+docs/MACBOOK_BENCHMARK_GUIDE.md
+```
+
 ## Test YOLO flickeringu ID
 
 1. Uploaduj video.
@@ -84,10 +115,10 @@ http://localhost:8000/docs
 7. Ustaw:
 
 ```text
-model: yolov8n.pt
-tracker: botsort.yaml albo bytetrack.yaml
-imgsz: 960 lub 1280
-conf: 0.25
+model: models/best-model-with-ball-and-players-500-frames.pt
+tracker: centroid_high_recall
+imgsz: 1280
+conf: 0.05
 max seconds: 20-60
 frame stride: 1
 ```

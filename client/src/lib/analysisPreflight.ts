@@ -1,4 +1,5 @@
 import type { AnalysisPayload, Match, RuntimeInfo } from '../types';
+import { DEFAULT_BALL_YOLO_MODEL } from './modelDefaults';
 
 export type AnalysisPresetId =
   | 'fast_debug'
@@ -105,7 +106,7 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       yolo_imgsz: 1280,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
-      ball_yolo_model: 'models/best.pt',
+      ball_yolo_model: DEFAULT_BALL_YOLO_MODEL,
       ball_yolo_conf: 0.03,
       ball_yolo_imgsz: 960,
       camera_motion_compensation: true,
@@ -128,7 +129,7 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       yolo_imgsz: 1920,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
-      ball_yolo_model: 'models/best.pt',
+      ball_yolo_model: DEFAULT_BALL_YOLO_MODEL,
       ball_yolo_conf: 0.03,
       ball_yolo_imgsz: 1280,
       camera_motion_compensation: true,

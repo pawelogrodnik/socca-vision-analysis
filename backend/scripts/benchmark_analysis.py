@@ -12,6 +12,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
 from app.services.runtime import build_performance_report, collect_runtime_info, normalize_yolo_device
 
 
@@ -51,13 +52,13 @@ def main() -> None:
     parser.add_argument("--adapter", choices=["motion", "yolo"], default="yolo")
     parser.add_argument("--max-seconds", type=float, default=60.0)
     parser.add_argument("--frame-stride", type=int, default=2)
-    parser.add_argument("--yolo-model", default="yolov8n.pt")
+    parser.add_argument("--yolo-model", default=DEFAULT_PLAYER_YOLO_MODEL)
     parser.add_argument("--yolo-conf", type=float, default=0.05)
     parser.add_argument("--yolo-imgsz", type=int, default=960)
     parser.add_argument("--yolo-tracker", default="centroid_high_recall")
     parser.add_argument("--device", "--yolo-device", dest="yolo_device", default="auto")
     parser.add_argument("--include-ball", action="store_true", help="Run ball YOLO in the same benchmark.")
-    parser.add_argument("--ball-yolo-model", default="models/best.pt")
+    parser.add_argument("--ball-yolo-model", default=DEFAULT_BALL_YOLO_MODEL)
     parser.add_argument("--ball-yolo-conf", type=float, default=0.03)
     parser.add_argument("--ball-yolo-imgsz", type=int, default=960)
     parser.add_argument("--ball-yolo-device", default=None, help="Defaults to --device when omitted.")

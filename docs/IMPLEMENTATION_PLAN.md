@@ -673,6 +673,8 @@ Jako użytkownik chcę zobaczyć coverage piłki: ile czasu wykryta, ile interpo
 - `[x]` UI pozwala zmieniać parametry ball-only testu i korzystać z presetów `Fast`, `Balanced`, `Full sample`.
 - `[x]` Root npm script `extract:frames` exports evenly sampled JPG frames and `metadata.json` to ignored `training_frames/` for Roboflow/custom dataset labeling.
 - `[x]` Ball-only analysis can use a local custom YOLO `.pt` model from mounted `backend/models/`, with automatic `ball` class resolution instead of hardcoded COCO class 32.
+- `[x]` Active-learning guide documents how to export problematic ball frames, annotate them in Roboflow, retrain in Colab and compare the next `.pt` model against current defaults.
+- `[x]` Player model guide documents how to collect difficult player frames, prelabel with current models, annotate in Roboflow and compare a next player detector before updating defaults.
 
 ## Do not do yet
 

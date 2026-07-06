@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id
 from app.services.runtime import collect_runtime_info, ensure_yolo_device_available, normalize_yolo_device, requested_device_label
 
@@ -159,13 +160,13 @@ def analyze_match_chunked_yolo(
         raise ValueError("Chunk manifest does not contain any chunks.")
     pitch = load_pitch_config(match_dir)
     frame_stride = max(1, int(payload.get("frame_stride") or 1))
-    yolo_model = str(payload.get("yolo_model") or "yolov8n.pt")
+    yolo_model = str(payload.get("yolo_model") or DEFAULT_PLAYER_YOLO_MODEL)
     yolo_tracker = str(payload.get("yolo_tracker") or "centroid_high_recall")
     yolo_device = normalize_yolo_device(payload.get("yolo_device"))
     yolo_conf = float(payload.get("yolo_conf") or 0.05)
     yolo_imgsz = int(payload.get("yolo_imgsz") or 960)
     include_ball = bool(payload.get("include_ball"))
-    ball_yolo_model = str(payload.get("ball_yolo_model") or "models/best.pt")
+    ball_yolo_model = str(payload.get("ball_yolo_model") or DEFAULT_BALL_YOLO_MODEL)
     ball_yolo_conf = float(payload.get("ball_yolo_conf") or DEFAULT_BALL_CONF)
     ball_yolo_imgsz = int(payload.get("ball_yolo_imgsz") or yolo_imgsz)
     ball_yolo_device = normalize_yolo_device(payload.get("ball_yolo_device") or payload.get("yolo_device"))

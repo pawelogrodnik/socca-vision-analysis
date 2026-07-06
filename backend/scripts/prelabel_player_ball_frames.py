@@ -13,12 +13,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
 from app.services.ball_tracking import _resolve_ball_model_classes
 
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-DEFAULT_PLAYER_MODEL = "yolov8n.pt"
-DEFAULT_BALL_MODEL = "models/best.pt"
+DEFAULT_PLAYER_MODEL = DEFAULT_PLAYER_YOLO_MODEL
+DEFAULT_BALL_MODEL = DEFAULT_BALL_YOLO_MODEL
 DEFAULT_PLAYER_CONF = 0.05
 DEFAULT_BALL_CONF = 0.03
 DEFAULT_IOU = 0.45

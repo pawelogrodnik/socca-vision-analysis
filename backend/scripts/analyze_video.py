@@ -5,6 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
+from app.model_defaults import DEFAULT_PLAYER_YOLO_MODEL
 from app.services.analysis import analyze_match
 from app.services.video import read_video_metadata
 
@@ -17,7 +18,7 @@ def main() -> None:
     parser.add_argument("--adapter", choices=["motion", "yolo"], default="yolo")
     parser.add_argument("--max-seconds", type=float, default=30)
     parser.add_argument("--frame-stride", type=int, default=1)
-    parser.add_argument("--yolo-model", default="yolov8n.pt")
+    parser.add_argument("--yolo-model", default=DEFAULT_PLAYER_YOLO_MODEL)
     parser.add_argument("--yolo-conf", type=float, default=0.25)
     parser.add_argument("--yolo-imgsz", type=int, default=960)
     parser.add_argument("--yolo-tracker", default="botsort.yaml")

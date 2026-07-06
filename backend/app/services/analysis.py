@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from app.config import ROOT_DIR
+from app.model_defaults import DEFAULT_BALL_YOLO_MODEL
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id, now_iso
 from app.services.ball_tracking import DEFAULT_BALL_CONF, detect_ball_yolo_coco
 from app.services.ball_possession import build_ball_possession_analysis
@@ -826,7 +827,7 @@ def analyze_match_yolo(
     yolo_tracker: str,
     yolo_device: str | None,
     include_ball: bool = False,
-    ball_yolo_model: str = "models/best.pt",
+    ball_yolo_model: str = DEFAULT_BALL_YOLO_MODEL,
     ball_yolo_conf: float = DEFAULT_BALL_CONF,
     ball_yolo_imgsz: int = 960,
     ball_yolo_device: str | None = None,
@@ -1302,7 +1303,7 @@ def analyze_match(
     yolo_tracker: str,
     yolo_device: str | None,
     include_ball: bool = False,
-    ball_yolo_model: str = "models/best.pt",
+    ball_yolo_model: str = DEFAULT_BALL_YOLO_MODEL,
     ball_yolo_conf: float = DEFAULT_BALL_CONF,
     ball_yolo_imgsz: int = 960,
     ball_yolo_device: str | None = None,

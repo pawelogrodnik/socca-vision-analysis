@@ -1,0 +1,20 @@
+{
+  "settings_version": "0.0.6",
+  "datasets_dir": "C:\\Users\\pawci\\Documents\\Projekty\\datasets",
+  "weights_dir": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\weights",
+  "runs_dir": "C:\\Users\\pawci\\Documents\\Projekty\\orlik-vision-app\\runs",
+  "uuid": "2a4397327c890c7244ee91c86a32baa537f7b4738e81a20148279c9ca9a09e78",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "hub": true,
+  "mlflow": true,
+  "neptune": true,
+  "raytune": true,
+  "tensorboard": true,
+  "wandb": false,
+  "vscode_msg": true
+}
