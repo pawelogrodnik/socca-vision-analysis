@@ -435,6 +435,93 @@ a { color: #93c5fd; }
 .job-status-box span {
   display: block;
 }
+.job-progress-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.job-progress-summary span {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.54);
+  font-size: 12px;
+  font-weight: 700;
+}
+.job-stale-warning {
+  margin: 0;
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #fde68a;
+  background: rgba(120, 53, 15, 0.32);
+  font-size: 13px;
+}
+.job-progress-plan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+}
+.job-progress-step {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  min-height: 36px;
+  border: 1px solid rgba(100, 116, 139, 0.42);
+  border-radius: 8px;
+  padding: 7px;
+  color: #94a3b8;
+  background: rgba(2, 6, 23, 0.34);
+  font-size: 12px;
+}
+.job-progress-step span {
+  display: block;
+}
+.job-progress-step small {
+  grid-column: 2;
+  color: #bfdbfe;
+  line-height: 1.25;
+}
+.job-progress-marker {
+  width: 9px;
+  height: 9px;
+  margin-top: 3px;
+  border: 1px solid #64748b;
+  border-radius: 999px;
+}
+.job-progress-step.completed {
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.38);
+}
+.job-progress-step.completed .job-progress-marker {
+  border-color: #22c55e;
+  background: #22c55e;
+}
+.job-progress-step.running {
+  color: #dbeafe;
+  border-color: rgba(96, 165, 250, 0.62);
+  background: rgba(30, 64, 175, 0.22);
+}
+.job-progress-step.running .job-progress-marker {
+  border-color: #bfdbfe;
+  background: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.22);
+}
+.job-progress-step.failed {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.55);
+}
+.job-progress-step.failed .job-progress-marker {
+  border-color: #f87171;
+  background: #f87171;
+}
 .preflight-panel {
   display: grid;
   gap: 12px;

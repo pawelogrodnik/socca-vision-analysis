@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import unittest
 
 import numpy as np
@@ -125,6 +126,37 @@ class CameraMotionTests(unittest.TestCase):
         )
 
         self.assertEqual(model.report()["summary"]["fallback_samples"], 1)
+
+    def test_rejects_unreasonable_camera_motion(self) -> None:
+        from app.services.camera_motion import _camera_motion_sanity_rejection_reason
+
+        translated = np.eye(3, dtype=np.float32)
+        translated[0, 2] = 50.0
+        self.assertEqual(_camera_motion_sanity_rejection_reason(translated), "motion_translation_out_of_range")
+
+        angle = math.radians(2.0)
+        rotated = np.array(
+            [[math.cos(angle), -math.sin(angle), 0.0], [math.sin(angle), math.cos(angle), 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+        self.assertEqual(_camera_motion_sanity_rejection_reason(rotated), "motion_rotation_out_of_range")
+
+        scaled = np.array([[0.97, 0.0, 0.0], [0.0, 0.97, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+        self.assertEqual(_camera_motion_sanity_rejection_reason(scaled), "motion_scale_out_of_range")
+
+    def test_stale_fallback_returns_identity(self) -> None:
+        from app.services.camera_motion import _fallback_matrix_and_reason
+
+        last_good = np.eye(3, dtype=np.float32)
+        last_good[0, 2] = 20.0
+
+        fresh_matrix, fresh_reason = _fallback_matrix_and_reason(60, 30.0, last_good, 0, "low_confidence")
+        self.assertEqual(fresh_reason, "low_confidence")
+        self.assertEqual(float(fresh_matrix[0, 2]), 20.0)
+
+        stale_matrix, stale_reason = _fallback_matrix_and_reason(120, 30.0, last_good, 0, "low_confidence")
+        self.assertEqual(stale_reason, "low_confidence_stale_last_good")
+        self.assertTrue(np.array_equal(stale_matrix, np.eye(3, dtype=np.float32)))
 
 
 if __name__ == "__main__":

@@ -26,21 +26,8 @@ dist/
 .vite/
 
 # App data - keep generated videos, analysis artifacts and DB local only
-backend/storage/*
+backend/storage/**
 !backend/storage/.gitkeep
-!backend/storage/matches/
-!backend/storage/matches/.gitkeep
-backend/storage/matches/**
-!backend/storage/matches/.gitkeep
-backend/storage/database/**
-!backend/storage/benchmarks/
-backend/storage/benchmarks/**
-!backend/storage/benchmarks/**/
-!backend/storage/benchmarks/**/benchmark_input.json
-!backend/storage/benchmarks/**/performance_report.json
-!backend/storage/benchmarks/**/machine_benchmark_summary.json
-!backend/storage/benchmarks/**/machine_benchmark_summary.md
-backend/storage/benchmarks/*-smoke-*/
 *.sqlite
 *.sqlite3
 *.db
@@ -48,7 +35,9 @@ backend/storage/benchmarks/*-smoke-*/
 *.db-shm
 
 # Video and generated media
-
+examples/*.mp4
+*.mp4.raw.avi
+*.raw.avi
 *.mov
 *.avi
 *.mkv

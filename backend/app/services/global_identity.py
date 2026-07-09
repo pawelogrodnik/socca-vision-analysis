@@ -20,9 +20,17 @@ MIN_DETECTIONS_FOR_VISUAL_PREDICTION = 6
 SWITCH_CONFIRMATION_FRAMES = 10
 SWITCH_GUARD_MIN_DETECTIONS = 3
 SWITCH_CONFLICT_RADIUS_M = 2.2
+SWITCH_PENDING_MAX_FRAME_GAP = 6
+SWITCH_CLEAR_FRAMES_AFTER_CONFLICT = 30
 CONFIRMED_SWITCH_MAX_COST = 1.5
 CONFIRMED_SWITCH_MIN_CONFIDENCE = 0.75
 CONFIRMED_SWITCH_MAX_STEP_MPS = 12.0
+CONFIRMED_SWITCH_MAX_APPEARANCE_DISTANCE = 42.0
+CONFIRMED_SWITCH_MIN_APPEARANCE_MARGIN = 12.0
+APPEARANCE_COST_MIN_RGB_DISTANCE = 28.0
+APPEARANCE_COST_MAX_RGB_DISTANCE = 64.0
+APPEARANCE_COST_MAX_PENALTY = 10.0
+APPEARANCE_RAW_CONTINUITY_MAX_RGB_DISTANCE = 46.0
 UNMATCHED_CONFIRMATION_FRAMES = 3
 UNMATCHED_MAX_FRAME_GAP = 2
 UNMATCHED_REPAIR_MAX_DISTANCE_M = 18.0
@@ -32,7 +40,15 @@ MODERATE_BBOX_OUTLIER_MAX_RATIO = 3.0
 MODERATE_BBOX_OUTLIER_MAX_AREA_RATIO = 4.5
 REUSE_RECENT_SLOT_MAX_GAP_SEC = 12.0
 REUSE_RECENT_SLOT_MAX_DISTANCE_M = 18.0
+REUSE_RECENT_STARTER_MAX_DISTANCE_M = 35.0
 REUSE_RECENT_SLOT_STRICT_DISTANCE_M = 6.0
+RELIABLE_TEAM_MIN_CONFIDENCE = 0.7
+TEAM_REBALANCE_MAX_CONFIDENCE = 0.45
+DUPLICATE_OBS_MAX_PITCH_DISTANCE_M = 1.8
+DUPLICATE_OBS_MIN_CONTAINMENT = 0.78
+DUPLICATE_OBS_MIN_IOU = 0.55
+DUPLICATE_OBS_AREA_PREFERENCE_RATIO = 1.35
+DUPLICATE_OBS_CONFIDENCE_MARGIN = 0.2
 SHADOW_LIKE_MAX_ASPECT_RATIO = 1.35
 SHADOW_LIKE_LOW_CONFIDENCE = 0.25
 TEAM_LABELS = ("A", "B")
@@ -78,6 +94,34 @@ def _bbox_size(bbox: list[float] | tuple[float, float, float, float] | None) -> 
     if not bbox or len(bbox) != 4:
         return None
     return [max(1.0, float(bbox[2]) - float(bbox[0])), max(1.0, float(bbox[3]) - float(bbox[1]))]
+
+
+def _bbox_area(bbox: list[float] | tuple[float, float, float, float] | None) -> float:
+    size = _bbox_size(bbox)
+    if not size:
+        return 0.0
+    return float(size[0]) * float(size[1])
+
+
+def _bbox_overlap_metrics(
+    a: list[float] | tuple[float, float, float, float] | None,
+    b: list[float] | tuple[float, float, float, float] | None,
+) -> dict[str, float]:
+    if not a or not b or len(a) != 4 or len(b) != 4:
+        return {"iou": 0.0, "containment": 0.0}
+    ax1, ay1, ax2, ay2 = [float(value) for value in a]
+    bx1, by1, bx2, by2 = [float(value) for value in b]
+    intersection_w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    intersection_h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    intersection = intersection_w * intersection_h
+    area_a = _bbox_area(a)
+    area_b = _bbox_area(b)
+    union = area_a + area_b - intersection
+    smaller = min(area_a, area_b)
+    return {
+        "iou": intersection / union if union > 0 else 0.0,
+        "containment": intersection / smaller if smaller > 0 else 0.0,
+    }
 
 
 def _bbox_shape_penalty(a: list[float] | None, b: list[float] | None) -> float:
@@ -140,6 +184,7 @@ class Observation:
     team_id: str | None
     team_name: str | None
     team_confidence: float
+    tracklet_positions_count: int = 0
     appearance_rgb: list[float] | None = None
 
 
@@ -189,6 +234,9 @@ class SlotState:
     pending_tracklet_frames: int = 0
     pending_last_frame: int | None = None
     pending_observations: list[Observation] = field(default_factory=list)
+    pending_conflict_observation: Observation | None = None
+    pending_conflict_frames: int = 0
+    pending_last_conflict_frame: int | None = None
     predicted_frames: int = 0
     missing_frames: int = 0
     ambiguous_frames: int = 0
@@ -476,15 +524,29 @@ class SlotState:
 
     def record_pending_tracklet(self, obs: Observation) -> int:
         if self.pending_tracklet_id != obs.tracklet_id or (
-            self.pending_last_frame is not None and obs.frame > self.pending_last_frame + 2
+            self.pending_last_frame is not None and obs.frame > self.pending_last_frame + SWITCH_PENDING_MAX_FRAME_GAP
         ):
             self.pending_tracklet_id = obs.tracklet_id
             self.pending_tracklet_frames = 0
             self.pending_observations = []
+            self.pending_conflict_observation = None
+            self.pending_conflict_frames = 0
+            self.pending_last_conflict_frame = None
         self.pending_tracklet_frames += 1
         self.pending_last_frame = obs.frame
         self.pending_observations.append(obs)
         return self.pending_tracklet_frames
+
+    def record_pending_conflict(self, obs: Observation) -> None:
+        self.pending_conflict_frames += 1
+        self.pending_last_conflict_frame = obs.frame
+        current_same_team = (
+            self.pending_conflict_observation is not None
+            and self.pending_conflict_observation.team_label == self.team_label
+        )
+        incoming_same_team = obs.team_label == self.team_label
+        if self.pending_conflict_observation is None or incoming_same_team or not current_same_team:
+            self.pending_conflict_observation = obs
 
     def clear_pending_tracklet(self, tracklet_id: str | None = None) -> None:
         if tracklet_id is not None and self.pending_tracklet_id != tracklet_id:
@@ -493,6 +555,9 @@ class SlotState:
         self.pending_tracklet_frames = 0
         self.pending_last_frame = None
         self.pending_observations = []
+        self.pending_conflict_observation = None
+        self.pending_conflict_frames = 0
+        self.pending_last_conflict_frame = None
 
     def _pitch_point_inside_play_area(self, point: list[float] | None) -> bool:
         if not point or len(point) < 2:
@@ -619,11 +684,13 @@ def build_observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[O
         tracklet_id = str(tracklet.get("tracklet_id") or "")
         if not tracklet_id:
             continue
+        positions = tracklet.get("positions") or []
+        tracklet_positions_count = int(tracklet.get("positions_count") or len(positions))
         raw_track_id = int(tracklet.get("source_track_id") or 0)
         team_label = str(tracklet.get("team_label") or "U")
         if team_label not in {"A", "B"}:
             team_label = "U"
-        for position in tracklet.get("positions") or []:
+        for position in positions:
             bbox = position.get("bbox_xyxy")
             pitch = position.get("smoothed_pitch_m") or position.get("pitch_m")
             if not bbox or len(bbox) != 4 or not pitch or len(pitch) < 2:
@@ -643,10 +710,83 @@ def build_observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[O
                     team_id=tracklet.get("team_id"),
                     team_name=tracklet.get("team_name"),
                     team_confidence=float(tracklet.get("team_confidence") or 0.0),
+                    tracklet_positions_count=tracklet_positions_count,
                     appearance_rgb=tracklet.get("appearance_rgb"),
                 )
             )
     return sorted(observations, key=lambda item: (item.frame, item.time_sec, item.raw_track_id))
+
+
+def _suppress_duplicate_observations_by_frame(
+    observations_by_frame: dict[int, list[Observation]],
+) -> tuple[dict[int, list[Observation]], list[dict[str, Any]]]:
+    filtered: dict[int, list[Observation]] = {}
+    suppressed: list[dict[str, Any]] = []
+    for frame in sorted(observations_by_frame):
+        kept: list[Observation] = []
+        for obs in sorted(observations_by_frame[frame], key=lambda item: (item.time_sec, item.raw_track_id, item.tracklet_id)):
+            duplicate_index = next(
+                (
+                    index
+                    for index, existing in enumerate(kept)
+                    if _observations_are_duplicate(existing, obs)
+                ),
+                None,
+            )
+            if duplicate_index is None:
+                kept.append(obs)
+                continue
+
+            existing = kept[duplicate_index]
+            preferred = _preferred_duplicate_observation(existing, obs)
+            discarded = obs if preferred is existing else existing
+            kept[duplicate_index] = preferred
+            suppressed.append(_suppressed_duplicate_observation_doc(discarded, preferred))
+        filtered[frame] = kept
+    return filtered, suppressed
+
+
+def _observations_are_duplicate(a: Observation, b: Observation) -> bool:
+    if a.team_label not in TEAM_LABELS or a.team_label != b.team_label:
+        return False
+    if a.tracklet_id == b.tracklet_id and a.raw_track_id == b.raw_track_id:
+        return False
+    pitch_distance = _distance_m(a.pitch_m, b.pitch_m)
+    if pitch_distance is None or pitch_distance > DUPLICATE_OBS_MAX_PITCH_DISTANCE_M:
+        return False
+    overlap = _bbox_overlap_metrics(a.bbox_xyxy, b.bbox_xyxy)
+    return overlap["containment"] >= DUPLICATE_OBS_MIN_CONTAINMENT or overlap["iou"] >= DUPLICATE_OBS_MIN_IOU
+
+
+def _preferred_duplicate_observation(a: Observation, b: Observation) -> Observation:
+    area_a = _bbox_area(a.bbox_xyxy)
+    area_b = _bbox_area(b.bbox_xyxy)
+    if area_a >= area_b * DUPLICATE_OBS_AREA_PREFERENCE_RATIO and a.confidence >= b.confidence - DUPLICATE_OBS_CONFIDENCE_MARGIN:
+        return a
+    if area_b >= area_a * DUPLICATE_OBS_AREA_PREFERENCE_RATIO and b.confidence >= a.confidence - DUPLICATE_OBS_CONFIDENCE_MARGIN:
+        return b
+    if abs(a.confidence - b.confidence) > DUPLICATE_OBS_CONFIDENCE_MARGIN:
+        return a if a.confidence > b.confidence else b
+    return a if (a.raw_track_id, a.tracklet_id) <= (b.raw_track_id, b.tracklet_id) else b
+
+
+def _suppressed_duplicate_observation_doc(suppressed: Observation, kept: Observation) -> dict[str, Any]:
+    overlap = _bbox_overlap_metrics(suppressed.bbox_xyxy, kept.bbox_xyxy)
+    return {
+        "frame": suppressed.frame,
+        "time_sec": round(suppressed.time_sec, 3),
+        "reason": "same_team_duplicate_bbox",
+        "tracklet_id": suppressed.tracklet_id,
+        "raw_track_id": suppressed.raw_track_id,
+        "kept_tracklet_id": kept.tracklet_id,
+        "kept_raw_track_id": kept.raw_track_id,
+        "team_label": suppressed.team_label,
+        "confidence": round(suppressed.confidence, 4),
+        "kept_confidence": round(kept.confidence, 4),
+        "pitch_distance_m": round(_distance_m(suppressed.pitch_m, kept.pitch_m) or 0.0, 3),
+        "bbox_iou": round(overlap["iou"], 4),
+        "bbox_containment": round(overlap["containment"], 4),
+    }
 
 
 def resolve_global_identity(
@@ -660,9 +800,10 @@ def resolve_global_identity(
     pitch_polygon: Any | None = None,
 ) -> dict[str, Any]:
     observations = build_observations_from_tracklets(tracklets)
-    observations_by_frame: dict[int, list[Observation]] = defaultdict(list)
+    raw_observations_by_frame: dict[int, list[Observation]] = defaultdict(list)
     for obs in observations:
-        observations_by_frame[obs.frame].append(obs)
+        raw_observations_by_frame[obs.frame].append(obs)
+    observations_by_frame, duplicate_suppressed = _suppress_duplicate_observations_by_frame(raw_observations_by_frame)
     max_frame = max([0] + list(observations_by_frame.keys()))
     slots = _create_slots(_team_info_from_tracklets(tracklets), pitch_width_m, pitch_length_m, pitch_polygon)
     tracklet_owner: dict[str, str] = {}
@@ -712,6 +853,7 @@ def resolve_global_identity(
         "unmatched_raw_backfilled": int(repair_summary.get("backfilled_observations") or 0),
         "unmatched_raw_backfill_tracklets": int(repair_summary.get("backfilled_tracklets") or 0),
         "unmatched_raw_remaining": len(unmatched_observations),
+        "duplicate_observations_suppressed": len(duplicate_suppressed),
         "low_confidence_players": sum(1 for slot in active_slot_docs if slot.get("confidence") == "low"),
         "risky_links": sum(len(slot.get("suspicious_assignments") or []) for slot in active_slot_docs),
         "predicted_visible_boxes": 0,
@@ -737,11 +879,21 @@ def resolve_global_identity(
             "substitution_gap_sec": SUBSTITUTION_GAP_SEC,
             "switch_confirmation_frames": SWITCH_CONFIRMATION_FRAMES,
             "switch_conflict_radius_m": SWITCH_CONFLICT_RADIUS_M,
+            "switch_pending_max_frame_gap": SWITCH_PENDING_MAX_FRAME_GAP,
+            "switch_clear_frames_after_conflict": SWITCH_CLEAR_FRAMES_AFTER_CONFLICT,
             "confirmed_switch_max_cost": CONFIRMED_SWITCH_MAX_COST,
             "confirmed_switch_min_confidence": CONFIRMED_SWITCH_MIN_CONFIDENCE,
+            "confirmed_switch_max_appearance_distance": CONFIRMED_SWITCH_MAX_APPEARANCE_DISTANCE,
+            "confirmed_switch_min_appearance_margin": CONFIRMED_SWITCH_MIN_APPEARANCE_MARGIN,
             "reuse_recent_slot_max_gap_sec": REUSE_RECENT_SLOT_MAX_GAP_SEC,
             "reuse_recent_slot_max_distance_m": REUSE_RECENT_SLOT_MAX_DISTANCE_M,
+            "reuse_recent_starter_max_distance_m": REUSE_RECENT_STARTER_MAX_DISTANCE_M,
             "reuse_recent_slot_strict_distance_m": REUSE_RECENT_SLOT_STRICT_DISTANCE_M,
+            "reliable_team_min_confidence": RELIABLE_TEAM_MIN_CONFIDENCE,
+            "team_rebalance_max_confidence": TEAM_REBALANCE_MAX_CONFIDENCE,
+            "duplicate_obs_max_pitch_distance_m": DUPLICATE_OBS_MAX_PITCH_DISTANCE_M,
+            "duplicate_obs_min_containment": DUPLICATE_OBS_MIN_CONTAINMENT,
+            "duplicate_obs_min_iou": DUPLICATE_OBS_MIN_IOU,
             "unmatched_confirmation_frames": UNMATCHED_CONFIRMATION_FRAMES,
             "unmatched_repair_max_distance_m": UNMATCHED_REPAIR_MAX_DISTANCE_M,
             "assignment_solver": "lapjv_or_greedy_fallback",
@@ -757,6 +909,7 @@ def resolve_global_identity(
         "summary": summary,
         "slots": sorted(active_slot_docs, key=lambda item: item["slot_id"]),
         "rejected_start_candidates": rejected_start_candidates[:1000],
+        "suppressed_duplicate_observations": duplicate_suppressed[:1000],
         "unmatched_repair_summary": repair_summary,
         "slot_merge_summary": merge_summary,
         "unmatched_observations": unmatched_observations,
@@ -879,13 +1032,24 @@ def _assign_frame(
             continue
         owner = tracklet_owner.get(obs.tracklet_id)
         start_reason = "spawn_new_slot"
+        candidate: tuple[SlotState, bool] | None = None
         if owner is not None:
             owner_slot = slots_by_id.get(owner)
-            if owner_slot is None or owner_slot.active:
+            if owner_slot is not None and owner_slot.active and owner_slot.slot_id not in assigned_slots:
                 continue
-            candidate = (owner_slot, obs.team_label in TEAM_LABELS and obs.team_label != owner_slot.team_label)
-            start_reason = "owned_tracklet_reactivated"
-        else:
+            if owner_slot is not None and not owner_slot.active:
+                team_rebalanced = obs.team_label in TEAM_LABELS and obs.team_label != owner_slot.team_label
+                if not team_rebalanced or _team_rebalance_allowed(obs):
+                    candidate = (owner_slot, team_rebalanced)
+                    start_reason = "owned_tracklet_reactivated"
+                else:
+                    start_reason = "owned_tracklet_team_mismatch_reassigned"
+            elif owner_slot is not None and owner_slot.active:
+                start_reason = "owned_tracklet_active_slot_conflict"
+            else:
+                start_reason = "owned_tracklet_missing_owner_reassigned"
+
+        if candidate is None:
             spawn_rejection = _stateless_detection_rejection_reason(obs)
             if spawn_rejection is not None:
                 rejected_start_candidates.append(
@@ -901,18 +1065,24 @@ def _assign_frame(
                     }
                 )
                 continue
-            reuse_candidate = _select_recent_reuse_slot(slots, obs)
-            if reuse_candidate is not None:
-                reuse_slot, team_rebalanced, reuse_reason = reuse_candidate
-                candidate = (reuse_slot, team_rebalanced)
-                start_reason = reuse_reason
+            active_missing_slot = _select_active_missing_slot(slots, obs, assigned_slots)
+            if active_missing_slot is not None:
+                _record_spawn_blocked(slots, obs, reason="active_missing_slot_pending_repair")
+                continue
             else:
-                selected = _select_inactive_slot(slots, obs)
-                if selected is None:
-                    _record_spawn_blocked(slots, obs, reason="no_inactive_slot_available")
-                    continue
-                candidate = selected
-                start_reason = "spawn_new_slot"
+                reuse_candidate = _select_recent_reuse_slot(slots, obs)
+                if reuse_candidate is not None:
+                    reuse_slot, team_rebalanced, reuse_reason = reuse_candidate
+                    candidate = (reuse_slot, team_rebalanced)
+                    start_reason = reuse_reason
+                else:
+                    selected = _select_inactive_slot(slots, obs)
+                    if selected is None:
+                        _record_spawn_blocked(slots, obs, reason=f"{start_reason}:no_inactive_slot_available")
+                        continue
+                    candidate = selected
+                    if start_reason != "spawn_new_slot":
+                        start_reason = f"{start_reason}_spawned"
         slot, team_rebalanced = candidate
         if slot is None:
             _record_spawn_blocked(slots, obs, reason="no_slot_selected")
@@ -1220,6 +1390,8 @@ def _select_unmatched_repair_slot(slots: list[SlotState], run: list[Observation]
     for slot in slots:
         if slot.team_label != team_label:
             continue
+        if _slot_has_recent_identity_conflict(slot, run):
+            continue
         missing_by_frame = _slot_missing_rows_by_frame(slot)
         overlap = [obs for obs in run if obs.frame in missing_by_frame]
         if len(overlap) < UNMATCHED_CONFIRMATION_FRAMES:
@@ -1241,6 +1413,27 @@ def _select_unmatched_repair_slot(slots: list[SlotState], run: list[Observation]
     if not candidates:
         return None
     return sorted(candidates, key=lambda item: (item[0], item[1], item[2]))[0][3]
+
+
+def _slot_has_recent_identity_conflict(slot: SlotState, run: list[Observation]) -> bool:
+    if not run:
+        return False
+    start_frame = int(run[0].frame)
+    end_frame = int(run[-1].frame)
+    window_start = start_frame - SWITCH_CONFIRMATION_FRAMES * 2
+    window_end = min(end_frame, start_frame + SWITCH_CONFIRMATION_FRAMES * 3)
+    for event in slot.identity_events:
+        if event.get("type") != "ambiguous_candidate":
+            continue
+        frame = int(event.get("frame") or -1)
+        if frame < window_start or frame > window_end:
+            continue
+        reason = str(event.get("reason") or "")
+        if reason.startswith("tracklet_switch"):
+            return True
+        if event.get("switch_block_reason"):
+            return True
+    return False
 
 
 def _slot_missing_rows_by_frame(slot: SlotState) -> dict[int, dict[str, Any]]:
@@ -1281,12 +1474,22 @@ def _assignment_cost(slot: SlotState, obs: Observation) -> float | None:
     continuity_discount = 0.0
     if obs.tracklet_id in slot.tracklet_ids:
         continuity_discount += 4.0
-    if obs.raw_track_id in slot.raw_track_ids:
+    if obs.raw_track_id in slot.raw_track_ids and _raw_continuity_is_appearance_trusted(slot, obs):
         continuity_discount += 1.0
     shape_penalty = _bbox_shape_penalty(reference_bbox, obs.bbox_xyxy)
     confidence_penalty = max(0.0, 1.0 - obs.confidence) * 2.0
     missing_penalty = min(4.0, dt / MAX_PREDICTION_SEC)
-    return max(0.0, distance * 4.0 + shape_penalty + confidence_penalty + team_penalty + missing_penalty - continuity_discount)
+    appearance_penalty = _appearance_assignment_penalty(slot, obs)
+    return max(
+        0.0,
+        distance * 4.0
+        + shape_penalty
+        + confidence_penalty
+        + team_penalty
+        + missing_penalty
+        + appearance_penalty
+        - continuity_discount,
+    )
 
 
 def _conservative_assignment_guard(
@@ -1300,7 +1503,9 @@ def _conservative_assignment_guard(
     if quality_reason is not None:
         slot.record_pending_tracklet(obs)
         return quality_reason
-    if obs.tracklet_id in slot.tracklet_ids or obs.raw_track_id in slot.raw_track_ids:
+    if obs.tracklet_id in slot.tracklet_ids or (
+        obs.raw_track_id in slot.raw_track_ids and _raw_continuity_is_appearance_trusted(slot, obs)
+    ):
         slot.clear_pending_tracklet(obs.tracklet_id)
         return None
     if slot.detected_frames < SWITCH_GUARD_MIN_DETECTIONS:
@@ -1308,20 +1513,26 @@ def _conservative_assignment_guard(
 
     pending_frames = slot.record_pending_tracklet(obs)
     conflict = _nearby_competing_observation(slot, obs, frame_observations)
+    if conflict is not None:
+        slot.record_pending_conflict(conflict)
+    effective_conflict = slot.pending_conflict_observation
     if pending_frames < SWITCH_CONFIRMATION_FRAMES:
         return {
             "reason": "tracklet_switch_needs_confirmation",
             "pending_frames": pending_frames,
             "required_frames": SWITCH_CONFIRMATION_FRAMES,
-            "conflicting_tracklet_id": conflict.tracklet_id if conflict else None,
+            "conflicting_tracklet_id": effective_conflict.tracklet_id if effective_conflict else None,
+            "pending_conflict_frames": slot.pending_conflict_frames or None,
         }
-    if conflict is not None:
-        if _confirmed_switch_is_trusted(
+    if effective_conflict is not None:
+        switch_rejection = _confirmed_switch_rejection_reason(
             slot,
             obs,
+            effective_conflict,
             pending_frames=pending_frames,
             assignment_cost=assignment_cost,
-        ):
+        )
+        if switch_rejection is None:
             slot.identity_events.append(
                 {
                     "type": "confirmed_switch_with_competitor_accepted",
@@ -1332,8 +1543,9 @@ def _conservative_assignment_guard(
                     "raw_track_id": obs.raw_track_id,
                     "pending_frames": pending_frames,
                     "assignment_cost": round(assignment_cost, 3) if assignment_cost is not None else None,
-                    "conflicting_tracklet_id": conflict.tracklet_id,
-                    "conflicting_raw_track_id": conflict.raw_track_id,
+                    "conflicting_tracklet_id": effective_conflict.tracklet_id,
+                    "conflicting_raw_track_id": effective_conflict.raw_track_id,
+                    "pending_conflict_frames": slot.pending_conflict_frames,
                 }
             )
             return None
@@ -1341,27 +1553,121 @@ def _conservative_assignment_guard(
             "reason": "tracklet_switch_has_nearby_competitor",
             "pending_frames": pending_frames,
             "required_frames": SWITCH_CONFIRMATION_FRAMES,
-            "conflicting_tracklet_id": conflict.tracklet_id,
+            "conflicting_tracklet_id": effective_conflict.tracklet_id,
+            "pending_conflict_frames": slot.pending_conflict_frames,
+            **switch_rejection,
         }
     return None
 
 
-def _confirmed_switch_is_trusted(
+def _confirmed_switch_rejection_reason(
     slot: SlotState,
     obs: Observation,
+    conflict: Observation,
     *,
     pending_frames: int,
     assignment_cost: float | None,
-) -> bool:
+) -> dict[str, Any] | None:
     if pending_frames < SWITCH_CONFIRMATION_FRAMES:
-        return False
+        return {"switch_block_reason": "pending_confirmation"}
     if obs.team_label not in TEAM_LABELS or obs.team_label != slot.team_label:
-        return False
+        return {"switch_block_reason": "team_mismatch"}
     if obs.confidence < CONFIRMED_SWITCH_MIN_CONFIDENCE:
-        return False
+        return {
+            "switch_block_reason": "low_confidence",
+            "candidate_confidence": round(obs.confidence, 4),
+        }
     if assignment_cost is not None and assignment_cost > CONFIRMED_SWITCH_MAX_COST:
-        return False
-    return _pending_run_is_stable(slot.pending_observations)
+        return {
+            "switch_block_reason": "assignment_cost_too_high",
+            "assignment_cost": round(assignment_cost, 3),
+        }
+    if conflict.team_label == slot.team_label and slot.pending_last_conflict_frame is not None:
+        frames_since_conflict = int(obs.frame) - int(slot.pending_last_conflict_frame)
+        if frames_since_conflict < SWITCH_CLEAR_FRAMES_AFTER_CONFLICT:
+            return {
+                "switch_block_reason": "recent_same_team_conflict",
+                "frames_since_conflict": frames_since_conflict,
+                "required_clear_frames": SWITCH_CLEAR_FRAMES_AFTER_CONFLICT,
+            }
+    if _appearance_assignment_penalty(slot, obs) >= APPEARANCE_COST_MAX_PENALTY * 0.5:
+        return {"switch_block_reason": "candidate_appearance_mismatch"}
+    appearance_rejection = _switch_conflict_appearance_rejection_reason(slot, obs, conflict)
+    if appearance_rejection is not None:
+        return appearance_rejection
+    if not _pending_run_is_stable(slot.pending_observations):
+        return {"switch_block_reason": "pending_run_unstable"}
+    return None
+
+
+def _switch_conflict_appearance_rejection_reason(
+    slot: SlotState,
+    obs: Observation,
+    conflict: Observation,
+) -> dict[str, Any] | None:
+    if conflict.team_label in TEAM_LABELS and conflict.team_label != slot.team_label:
+        return None
+    candidate_distance = _slot_observation_appearance_distance(slot, obs)
+    competitor_distance = _slot_observation_appearance_distance(slot, conflict)
+    if candidate_distance is None or competitor_distance is None:
+        return {
+            "switch_block_reason": "appearance_margin_unavailable",
+            "candidate_appearance_distance": round(candidate_distance, 3) if candidate_distance is not None else None,
+            "competitor_appearance_distance": round(competitor_distance, 3) if competitor_distance is not None else None,
+        }
+    margin = competitor_distance - candidate_distance
+    if candidate_distance > CONFIRMED_SWITCH_MAX_APPEARANCE_DISTANCE:
+        return {
+            "switch_block_reason": "candidate_appearance_too_far",
+            "candidate_appearance_distance": round(candidate_distance, 3),
+            "competitor_appearance_distance": round(competitor_distance, 3),
+            "appearance_margin": round(margin, 3),
+        }
+    if margin < CONFIRMED_SWITCH_MIN_APPEARANCE_MARGIN:
+        return {
+            "switch_block_reason": "appearance_margin_too_small",
+            "candidate_appearance_distance": round(candidate_distance, 3),
+            "competitor_appearance_distance": round(competitor_distance, 3),
+            "appearance_margin": round(margin, 3),
+        }
+    return None
+
+
+def _appearance_assignment_penalty(slot: SlotState, obs: Observation) -> float:
+    distance = _slot_observation_appearance_distance(slot, obs)
+    if distance is None or distance <= APPEARANCE_COST_MIN_RGB_DISTANCE:
+        return 0.0
+    span = max(1.0, APPEARANCE_COST_MAX_RGB_DISTANCE - APPEARANCE_COST_MIN_RGB_DISTANCE)
+    ratio = min(1.0, (distance - APPEARANCE_COST_MIN_RGB_DISTANCE) / span)
+    return APPEARANCE_COST_MAX_PENALTY * ratio
+
+
+def _raw_continuity_is_appearance_trusted(slot: SlotState, obs: Observation) -> bool:
+    distance = _slot_observation_appearance_distance(slot, obs)
+    if distance is None:
+        return True
+    return distance <= APPEARANCE_RAW_CONTINUITY_MAX_RGB_DISTANCE
+
+
+def _slot_observation_appearance_distance(slot: SlotState, obs: Observation) -> float | None:
+    slot_rgb = _slot_recent_appearance_rgb(slot)
+    if slot_rgb is None or not obs.appearance_rgb:
+        return None
+    return _rgb_distance(slot_rgb, obs.appearance_rgb)
+
+
+def _slot_recent_appearance_rgb(slot: SlotState, *, max_samples: int = 45) -> list[float] | None:
+    samples = [sample for sample in slot.appearance_samples[-max_samples:] if sample and len(sample) >= 3]
+    if not samples:
+        return None
+    return [
+        _mean([float(sample[channel]) for sample in samples if len(sample) > channel]) or 0.0
+        for channel in range(3)
+    ]
+
+
+def _rgb_distance(a: list[float] | tuple[float, float, float], b: list[float] | tuple[float, float, float]) -> float:
+    return math.sqrt(sum((float(a[channel]) - float(b[channel])) ** 2 for channel in range(3)))
 
 
 def _pending_run_is_stable(observations: list[Observation]) -> bool:
@@ -1538,6 +1844,52 @@ def _greedy_assignment(cost_matrix: list[list[float]], *, cost_limit: float) -> 
     return matches
 
 
+def _select_active_missing_slot(
+    slots: list[SlotState],
+    obs: Observation,
+    assigned_slots: set[str],
+) -> SlotState | None:
+    if obs.team_label not in TEAM_LABELS:
+        return None
+    if obs.tracklet_positions_count < UNMATCHED_CONFIRMATION_FRAMES:
+        return None
+    candidates: list[tuple[float, SlotState]] = []
+    for slot in slots:
+        if slot.team_label != obs.team_label or not slot.active or slot.slot_id in assigned_slots:
+            continue
+        if not _slot_has_missing_row_at_frame(slot, obs.frame):
+            continue
+        if slot.last_detected_time_sec is None:
+            continue
+        gap_sec = obs.time_sec - slot.last_detected_time_sec
+        if gap_sec < -0.001 or gap_sec > MAX_PREDICTION_SEC:
+            continue
+        reference_pitch = slot.predicted_pitch(obs.time_sec) if gap_sec <= MAX_PREDICTION_SEC else slot.last_pitch_m
+        reference_pitch = reference_pitch or slot.last_pitch_m
+        distance = _distance_m(reference_pitch, obs.pitch_m)
+        if distance is None:
+            continue
+        allowed_distance = min(
+            REUSE_RECENT_SLOT_MAX_DISTANCE_M,
+            max(4.0, MAX_ASSIGNMENT_SPEED_MPS * max(gap_sec, 0.5)),
+        )
+        if distance > allowed_distance:
+            continue
+        confidence_bonus = max(0.0, obs.confidence - 0.5)
+        score = distance + gap_sec * 0.25 - confidence_bonus
+        candidates.append((score, slot))
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: (item[0], item[1].slot_id))[0][1]
+
+
+def _slot_has_missing_row_at_frame(slot: SlotState, frame: int) -> bool:
+    return any(
+        int(row.get("frame") or -1) == frame and row.get("source") == "missing"
+        for row in slot.history
+    )
+
+
 def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool] | None:
     active_counts = {
         team_label: sum(1 for slot in slots if slot.team_label == team_label and slot.active)
@@ -1548,6 +1900,8 @@ def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[Slo
         slot = _first_inactive_slot(slots, preferred, prefer_unused=True) or _first_inactive_slot(slots, preferred, prefer_unused=False)
         if slot is not None:
             return slot, False
+    if not _team_rebalance_allowed(obs):
+        return None
     for team_label in sorted(TEAM_LABELS, key=lambda label: active_counts[label]):
         if active_counts[team_label] >= TARGET_PLAYERS_PER_TEAM:
             continue
@@ -1555,6 +1909,14 @@ def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[Slo
         if slot is not None:
             return slot, obs.team_label in TEAM_LABELS and obs.team_label != team_label
     return None
+
+
+def _team_rebalance_allowed(obs: Observation) -> bool:
+    if obs.team_label not in TEAM_LABELS:
+        return True
+    if obs.team_confidence >= RELIABLE_TEAM_MIN_CONFIDENCE:
+        return False
+    return obs.team_confidence <= TEAM_REBALANCE_MAX_CONFIDENCE
 
 
 def _select_recent_reuse_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool, str] | None:
@@ -1574,15 +1936,26 @@ def _select_recent_reuse_slot(slots: list[SlotState], obs: Observation) -> tuple
         gap_sec = obs.time_sec - slot.last_detected_time_sec
         if gap_sec < -0.001 or gap_sec > REUSE_RECENT_SLOT_MAX_GAP_SEC:
             continue
-        reference_pitch = slot.predicted_pitch(obs.time_sec) or slot.last_pitch_m
+        reference_pitch = slot.predicted_pitch(obs.time_sec) if gap_sec <= MAX_PREDICTION_SEC else slot.last_pitch_m
+        reference_pitch = reference_pitch or slot.last_pitch_m
         distance = _distance_m(reference_pitch, obs.pitch_m)
         if distance is None:
             continue
+        max_reuse_distance = (
+            REUSE_RECENT_STARTER_MAX_DISTANCE_M
+            if _slot_roster_index(slot.slot_id) <= TARGET_PLAYERS_PER_TEAM
+            else REUSE_RECENT_SLOT_MAX_DISTANCE_M
+        )
         allowed_distance = min(
-            REUSE_RECENT_SLOT_MAX_DISTANCE_M,
+            max_reuse_distance,
             max(4.0, MAX_ASSIGNMENT_SPEED_MPS * max(gap_sec, 0.5) * 0.6),
         )
-        if unused_slot_available and active_count < TARGET_PLAYERS_PER_TEAM and gap_sec >= SUBSTITUTION_GAP_SEC:
+        if (
+            unused_slot_available
+            and active_count < TARGET_PLAYERS_PER_TEAM
+            and gap_sec >= SUBSTITUTION_GAP_SEC
+            and _slot_roster_index(slot.slot_id) > TARGET_PLAYERS_PER_TEAM
+        ):
             allowed_distance = min(allowed_distance, REUSE_RECENT_SLOT_STRICT_DISTANCE_M)
         if distance > allowed_distance:
             continue

@@ -15,6 +15,10 @@ MIN_UNCERTAIN_CONFIDENCE = 0.28
 MAX_UNCERTAIN_MIN_DISTANCE_M = 1.8
 MAX_UNCERTAIN_MEAN_DISTANCE_M = 2.2
 MAX_REJECT_MIN_DISTANCE_M = 2.6
+MAX_FLY_THROUGH_CLOSE_DISTANCE_M = 0.95
+MIN_FLY_THROUGH_MEAN_SPEED_MPS = 7.5
+MIN_FLY_THROUGH_STRAIGHTNESS = 0.85
+MIN_FLY_THROUGH_PATH_DISTANCE_M = 1.5
 
 
 def auto_review_contact_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -26,6 +30,9 @@ def auto_review_contact_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     mean_confidence = float(candidate.get("mean_confidence") or 0.0)
     min_distance = _float_or_none(candidate.get("min_distance_m"))
     mean_distance = _float_or_none(candidate.get("mean_distance_m"))
+    mean_ball_speed = _float_or_none(candidate.get("mean_ball_speed_mps"))
+    ball_straightness = _float_or_none(candidate.get("ball_path_straightness"))
+    ball_path_distance = _float_or_none(candidate.get("ball_path_distance_m"))
     stable_player_id = candidate.get("stable_player_id")
 
     reject_reasons: list[str] = []
@@ -35,6 +42,8 @@ def auto_review_contact_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         reject_reasons.append("no_detected_ball_frames")
     if min_distance is not None and min_distance > MAX_REJECT_MIN_DISTANCE_M:
         reject_reasons.append("ball_too_far_from_player")
+    if _looks_like_fast_fly_through(min_distance, mean_ball_speed, ball_straightness, ball_path_distance):
+        reject_reasons.append("fly_through_without_close_control")
     if mean_confidence < 0.18:
         reject_reasons.append("very_low_confidence")
 
@@ -144,8 +153,30 @@ def _decision(review_status: str, score: float, reasons: list[str]) -> dict[str,
             "max_uncertain_min_distance_m": MAX_UNCERTAIN_MIN_DISTANCE_M,
             "max_uncertain_mean_distance_m": MAX_UNCERTAIN_MEAN_DISTANCE_M,
             "max_reject_min_distance_m": MAX_REJECT_MIN_DISTANCE_M,
+            "max_fly_through_close_distance_m": MAX_FLY_THROUGH_CLOSE_DISTANCE_M,
+            "min_fly_through_mean_speed_mps": MIN_FLY_THROUGH_MEAN_SPEED_MPS,
+            "min_fly_through_straightness": MIN_FLY_THROUGH_STRAIGHTNESS,
+            "min_fly_through_path_distance_m": MIN_FLY_THROUGH_PATH_DISTANCE_M,
         },
     }
+
+
+def _looks_like_fast_fly_through(
+    min_distance: float | None,
+    mean_ball_speed: float | None,
+    ball_straightness: float | None,
+    ball_path_distance: float | None,
+) -> bool:
+    return bool(
+        min_distance is not None
+        and min_distance > MAX_FLY_THROUGH_CLOSE_DISTANCE_M
+        and mean_ball_speed is not None
+        and mean_ball_speed >= MIN_FLY_THROUGH_MEAN_SPEED_MPS
+        and ball_straightness is not None
+        and ball_straightness >= MIN_FLY_THROUGH_STRAIGHTNESS
+        and ball_path_distance is not None
+        and ball_path_distance >= MIN_FLY_THROUGH_PATH_DISTANCE_M
+    )
 
 
 def _float_or_none(value: Any) -> float | None:

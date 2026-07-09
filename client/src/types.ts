@@ -1129,6 +1129,29 @@ export type AnalysisJob = {
     message?: string;
     traceback?: string;
   } | null;
+  progress_plan?: {
+    schema_version?: string;
+    active_step_id?: string;
+    last_heartbeat_at?: string;
+    last_artifact_at?: string | null;
+    active_step_elapsed_sec?: number;
+    current?: {
+      current?: number;
+      total?: number;
+      unit?: string;
+      label?: string;
+    } | null;
+    steps?: {
+      id: string;
+      label: string;
+      status: 'pending' | 'running' | 'completed' | 'failed' | string;
+      progress_start?: number;
+      progress_end?: number;
+      started_at?: string | null;
+      finished_at?: string | null;
+      message?: string | null;
+    }[];
+  };
 };
 
 export type AnalysisJobsDocument = {

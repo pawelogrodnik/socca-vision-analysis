@@ -18,6 +18,10 @@ DEFAULT_CAMERA_MOTION_INTERVAL_SEC = 0.5
 DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO = 0.6
 DEFAULT_CAMERA_MOTION_MIN_INLIERS = 24
 DEFAULT_CAMERA_MOTION_MAX_FEATURES = 3500
+DEFAULT_CAMERA_MOTION_MAX_TRANSLATION_PX = 35.0
+DEFAULT_CAMERA_MOTION_MAX_ROTATION_DEG = 1.0
+DEFAULT_CAMERA_MOTION_MAX_SCALE_DELTA = 0.02
+DEFAULT_CAMERA_MOTION_MAX_FALLBACK_HOLD_SEC = 3.0
 
 
 def now_iso() -> str:
@@ -135,6 +139,10 @@ class CameraMotionModel:
                 "min_inlier_ratio": self.min_inlier_ratio,
                 "min_inliers": DEFAULT_CAMERA_MOTION_MIN_INLIERS,
                 "max_features": DEFAULT_CAMERA_MOTION_MAX_FEATURES,
+                "max_translation_px": DEFAULT_CAMERA_MOTION_MAX_TRANSLATION_PX,
+                "max_rotation_deg": DEFAULT_CAMERA_MOTION_MAX_ROTATION_DEG,
+                "max_scale_delta": DEFAULT_CAMERA_MOTION_MAX_SCALE_DELTA,
+                "max_fallback_hold_sec": DEFAULT_CAMERA_MOTION_MAX_FALLBACK_HOLD_SEC,
                 "estimator": "orb_affine_partial_ransac",
             },
             "summary": {
@@ -146,6 +154,7 @@ class CameraMotionModel:
                 "max_abs_dx_px": round(max((abs(sample.dx_px) for sample in self.samples), default=0.0), 2),
                 "max_abs_dy_px": round(max((abs(sample.dy_px) for sample in self.samples), default=0.0), 2),
                 "max_abs_rotation_deg": round(max((abs(sample.rotation_deg) for sample in self.samples), default=0.0), 4),
+                "max_abs_scale_delta": round(max((abs(sample.scale - 1.0) for sample in self.samples), default=0.0), 5),
             },
             "samples": [
                 {
@@ -200,6 +209,7 @@ def build_camera_motion_model(
         reference_gray = _preprocess_frame(reference_frame_img)
         samples: list[CameraMotionSample] = []
         last_good = _identity_matrix()
+        last_good_frame = reference_frame
         sample_frames = sorted(set([reference_frame, *range(start_frame, end_frame + 1, interval_frames), end_frame]))
         for frame_idx in sample_frames:
             if frame_idx == reference_frame:
@@ -214,15 +224,16 @@ def build_camera_motion_model(
                 )
                 samples.append(sample)
                 last_good = _identity_matrix()
+                last_good_frame = frame_idx
                 continue
             frame = _read_frame(cap, frame_idx)
             if frame is None:
                 samples.append(
-                    _sample_from_matrix(
+                    _fallback_sample_from_last_good(
                         frame_idx,
                         fps,
                         last_good,
-                        status="fallback",
+                        last_good_frame,
                         reason="frame_read_failed",
                     )
                 )
@@ -230,11 +241,11 @@ def build_camera_motion_model(
             estimate = _estimate_current_to_reference(_preprocess_frame(frame), reference_gray)
             if estimate is None:
                 samples.append(
-                    _sample_from_matrix(
+                    _fallback_sample_from_last_good(
                         frame_idx,
                         fps,
                         last_good,
-                        status="fallback",
+                        last_good_frame,
                         reason="estimate_failed",
                     )
                 )
@@ -242,11 +253,11 @@ def build_camera_motion_model(
             matrix, inlier_ratio, inliers, matches = estimate
             if inliers < DEFAULT_CAMERA_MOTION_MIN_INLIERS or inlier_ratio < min_inlier_ratio:
                 samples.append(
-                    _sample_from_matrix(
+                    _fallback_sample_from_last_good(
                         frame_idx,
                         fps,
                         last_good,
-                        status="fallback",
+                        last_good_frame,
                         inlier_ratio=inlier_ratio,
                         inliers=inliers,
                         matches=matches,
@@ -254,7 +265,23 @@ def build_camera_motion_model(
                     )
                 )
                 continue
+            rejection_reason = _camera_motion_sanity_rejection_reason(matrix)
+            if rejection_reason is not None:
+                samples.append(
+                    _fallback_sample_from_last_good(
+                        frame_idx,
+                        fps,
+                        last_good,
+                        last_good_frame,
+                        inlier_ratio=inlier_ratio,
+                        inliers=inliers,
+                        matches=matches,
+                        reason=rejection_reason,
+                    )
+                )
+                continue
             last_good = matrix
+            last_good_frame = frame_idx
             samples.append(
                 _sample_from_matrix(
                     frame_idx,
@@ -419,6 +446,54 @@ def _estimate_current_to_reference(current_gray: Any, reference_gray: Any) -> tu
     return matrix, inlier_ratio, inliers, len(good)
 
 
+def _fallback_sample_from_last_good(
+    frame_idx: int,
+    fps: float,
+    last_good: np.ndarray,
+    last_good_frame: int,
+    *,
+    inlier_ratio: float | None = None,
+    inliers: int = 0,
+    matches: int = 0,
+    reason: str,
+) -> CameraMotionSample:
+    matrix, fallback_reason = _fallback_matrix_and_reason(frame_idx, fps, last_good, last_good_frame, reason)
+    return _sample_from_matrix(
+        frame_idx,
+        fps,
+        matrix,
+        status="fallback",
+        inlier_ratio=inlier_ratio,
+        inliers=inliers,
+        matches=matches,
+        reason=fallback_reason,
+    )
+
+
+def _fallback_matrix_and_reason(
+    frame_idx: int,
+    fps: float,
+    last_good: np.ndarray,
+    last_good_frame: int,
+    reason: str,
+) -> tuple[np.ndarray, str]:
+    hold_frames = int(round(DEFAULT_CAMERA_MOTION_MAX_FALLBACK_HOLD_SEC * max(fps, 0.0)))
+    if hold_frames > 0 and int(frame_idx) - int(last_good_frame) > hold_frames:
+        return _identity_matrix(), f"{reason}_stale_last_good"
+    return last_good, reason
+
+
+def _camera_motion_sanity_rejection_reason(matrix: np.ndarray) -> str | None:
+    dx, dy, rotation, scale = _camera_motion_components(matrix)
+    if max(abs(dx), abs(dy)) > DEFAULT_CAMERA_MOTION_MAX_TRANSLATION_PX:
+        return "motion_translation_out_of_range"
+    if abs(rotation) > DEFAULT_CAMERA_MOTION_MAX_ROTATION_DEG:
+        return "motion_rotation_out_of_range"
+    if abs(scale - 1.0) > DEFAULT_CAMERA_MOTION_MAX_SCALE_DELTA:
+        return "motion_scale_out_of_range"
+    return None
+
+
 def _smooth_successful_samples(samples: list[CameraMotionSample], fps: float) -> list[CameraMotionSample]:
     if len(samples) < 3:
         return samples
@@ -471,10 +546,7 @@ def _sample_from_matrix(
     reason: str | None = None,
 ) -> CameraMotionSample:
     inverse = _safe_inverse(matrix_current_to_reference)
-    dx = float(matrix_current_to_reference[0, 2])
-    dy = float(matrix_current_to_reference[1, 2])
-    rotation = math.degrees(math.atan2(float(matrix_current_to_reference[1, 0]), float(matrix_current_to_reference[0, 0])))
-    scale = math.sqrt(float(matrix_current_to_reference[0, 0]) ** 2 + float(matrix_current_to_reference[1, 0]) ** 2)
+    dx, dy, rotation, scale = _camera_motion_components(matrix_current_to_reference)
     return CameraMotionSample(
         frame=int(frame_idx),
         time_sec=round(frame_idx / max(fps, 0.001), 3),
@@ -490,6 +562,14 @@ def _sample_from_matrix(
         scale=scale,
         reason=reason,
     )
+
+
+def _camera_motion_components(matrix: np.ndarray) -> tuple[float, float, float, float]:
+    dx = float(matrix[0, 2])
+    dy = float(matrix[1, 2])
+    rotation = math.degrees(math.atan2(float(matrix[1, 0]), float(matrix[0, 0])))
+    scale = math.sqrt(float(matrix[0, 0]) ** 2 + float(matrix[1, 0]) ** 2)
+    return dx, dy, rotation, scale
 
 
 def _transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:

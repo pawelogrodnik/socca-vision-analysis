@@ -1,0 +1,32 @@
+#!/bin/sh
+
+set -eu
+
+limit_bytes=$((50 * 1024 * 1024))
+limit_label="50 MB"
+blocked_file="${TMPDIR:-/tmp}/orlik-large-file-hook-$$"
+trap 'rm -f "$blocked_file"' EXIT
+
+git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r file; do
+  [ -n "$file" ] || continue
+
+  size_bytes=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
+  case "$size_bytes" in
+    ''|*[!0-9]*) size_bytes=0 ;;
+  esac
+
+  if [ "$size_bytes" -gt "$limit_bytes" ]; then
+    size_mb=$(awk "BEGIN { printf \"%.1f\", $size_bytes / 1024 / 1024 }")
+    printf '%s\n' "pre-commit: blocked large staged file over $limit_label:"
+    printf '  %s (%s MB)\n' "$file" "$size_mb"
+    printf '%s\n' "$file" >> "$blocked_file"
+  fi
+done
+
+if [ -s "$blocked_file" ]; then
+  printf '%s\n' ""
+  printf '%s\n' "Move large generated files/videos out of git, or use Git LFS deliberately."
+  exit 1
+fi
+
+exit 0

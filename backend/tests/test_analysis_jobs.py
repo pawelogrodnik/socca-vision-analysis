@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -36,6 +37,56 @@ class AnalysisJobsTests(unittest.TestCase):
             self.assertEqual(loaded["status"], "completed")
             self.assertEqual(loaded["result"]["run_id"], "run-1")
             self.assertEqual(list_analysis_jobs(match_path)[0]["job_id"], job["job_id"])
+
+    def test_background_job_exposes_progress_plan_while_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            matches_dir = Path(tmp)
+            match_path = matches_dir / "match-1"
+            match_path.mkdir()
+            update_seen = threading.Event()
+            release = threading.Event()
+
+            def runner(job_id, update):
+                update(
+                    "chunk_analyzing",
+                    42,
+                    f"Analyzing chunk 2/5 for {job_id}",
+                    {"current": 2, "total": 5, "unit": "chunks"},
+                )
+                update_seen.set()
+                release.wait(timeout=2)
+                return {"status": "completed", "analysis_type": "test", "run_id": "run-2"}
+
+            job = start_analysis_job(
+                match_id="match-1",
+                match_path=match_path,
+                payload={"adapter": "test"},
+                runner=runner,
+            )
+
+            self.assertTrue(update_seen.wait(timeout=2))
+            loaded = load_analysis_job(matches_dir, job["job_id"])
+            plan = loaded["progress_plan"]
+            self.assertEqual(loaded["status"], "running")
+            self.assertEqual(plan["active_step_id"], "chunk_analyzing")
+            self.assertEqual(plan["current"], {"current": 2, "total": 5, "unit": "chunks"})
+            active_step = next(step for step in plan["steps"] if step["id"] == "chunk_analyzing")
+            self.assertEqual(active_step["status"], "running")
+            self.assertEqual(active_step["message"], loaded["message"])
+
+            release.set()
+            for _ in range(30):
+                loaded = load_analysis_job(matches_dir, job["job_id"])
+                if loaded["status"] == "completed":
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(loaded["status"], "completed")
+            completed_plan = loaded["progress_plan"]
+            self.assertEqual(completed_plan["active_step_id"], "completed")
+            self.assertTrue(
+                all(step["status"] == "completed" for step in completed_plan["steps"]),
+            )
 
 
 if __name__ == "__main__":

@@ -9,6 +9,10 @@ import numpy as np
 from app.services.stabilization import (
     _ball_overlay_positions_by_frame,
     _live_movement_by_frame,
+    _live_pass_counts_by_frame,
+    _live_possession_by_frame,
+    _pass_candidates_by_frame,
+    _possession_rows_by_frame,
     _stable_overlay_frame_rows,
     _visual_counts,
     apply_stable_overlay_visual_counts,
@@ -76,6 +80,79 @@ class StabilizationTests(unittest.TestCase):
         )
 
         self.assertEqual(sorted(rows), [1, 3])
+
+    def test_possession_rows_are_indexed_by_frame_for_stable_overlay(self) -> None:
+        rows = _possession_rows_by_frame(
+            {
+                "frames": [
+                    {"frame": 10, "status": "controlled", "team_label": "A"},
+                    {"frame": 11, "status": "free"},
+                ]
+            }
+        )
+
+        self.assertEqual(rows[10]["team_label"], "A")
+        self.assertEqual(rows[11]["status"], "free")
+
+    def test_live_possession_counts_increment_only_controlled_teams(self) -> None:
+        rows = _live_possession_by_frame(
+            {
+                "frames": [
+                    {"frame": 1, "status": "controlled", "team_label": "A"},
+                    {"frame": 2, "status": "free"},
+                    {"frame": 3, "status": "controlled", "team_label": "B"},
+                    {"frame": 4, "status": "contested"},
+                ]
+            }
+        )
+
+        self.assertEqual(rows[1]["team_controlled_frames"], {"A": 1, "B": 0})
+        self.assertEqual(rows[1]["action"], "+A")
+        self.assertEqual(rows[2]["team_controlled_frames"], {"A": 1, "B": 0})
+        self.assertEqual(rows[2]["action"], "skip free")
+        self.assertEqual(rows[3]["team_controlled_frames"], {"A": 1, "B": 1})
+        self.assertEqual(rows[3]["action"], "+B")
+        self.assertEqual(rows[4]["skipped_counts"]["contested"], 1)
+
+    def test_live_pass_counts_increment_same_team_pass_candidates(self) -> None:
+        rows = _live_pass_counts_by_frame(
+            {
+                "candidates": [
+                    {"end_frame": 10, "pass_type": "same_team_pass", "from_team_label": "A"},
+                    {"end_frame": 12, "pass_type": "turnover_or_interception", "from_team_label": "A"},
+                    {"end_frame": 15, "pass_type": "same_team_pass", "from_team_label": "B"},
+                ]
+            }
+        )
+
+        self.assertEqual(rows[10]["team_pass_candidates"], {"A": 1, "B": 0})
+        self.assertEqual(rows[10]["action"], "+A pass")
+        self.assertEqual(rows[12]["team_pass_candidates"], {"A": 1, "B": 0})
+        self.assertEqual(rows[12]["turnover_or_interception_candidates"], 1)
+        self.assertEqual(rows[12]["action"], "turnover?")
+        self.assertEqual(rows[15]["team_pass_candidates"], {"A": 1, "B": 1})
+        self.assertEqual(rows[15]["action"], "+B pass")
+
+    def test_pass_candidates_are_held_briefly_for_stable_overlay(self) -> None:
+        rows = _pass_candidates_by_frame(
+            {
+                "candidates": [
+                    {
+                        "candidate_id": "pass-0001",
+                        "start_frame": 30,
+                        "end_frame": 36,
+                        "from_stable_player_id": "A01",
+                        "to_stable_player_id": "A02",
+                    }
+                ]
+            },
+            fps=30,
+            hold_sec=1.0,
+        )
+
+        self.assertIn(30, rows)
+        self.assertIn(66, rows)
+        self.assertNotIn(67, rows)
 
     def test_unmatched_raw_overlay_rows_are_debug_only(self) -> None:
         stable_doc = {
@@ -266,6 +343,55 @@ class StabilizationTests(unittest.TestCase):
         doc = build_tracklets_document(split, [], raw_tracks_count=1, parameters={})
         self.assertEqual(doc["tracklets"][1]["parent_tracklet_id"], "97:1")
         self.assertEqual(doc["tracklets"][1]["appearance_split_reason"], "torso_color_change")
+
+    def test_split_tracklets_breaks_neutral_brightness_identity_switch(self) -> None:
+        positions = [
+            position(frame=index, time_sec=index / 10, x=float(index), y=0.0)
+            for index in range(12)
+        ]
+        source = {
+            "tracklet_id": "42:1",
+            "source_track_id": 42,
+            "segment_index": 1,
+            "start_time_sec": 0.0,
+            "end_time_sec": 1.1,
+            "duration_sec": 1.1,
+            "positions_count": len(positions),
+            "positions": positions,
+            "appearance_sample_rows": [
+                {
+                    "frame": index,
+                    "time_sec": index / 10,
+                    "position_index": index,
+                    "rgb": [186.0, 184.0, 190.0],
+                    "hsv": [120.0, 6.0, 190.0],
+                    "lab": [192.0, 129.0, 126.0],
+                    "feature": [70.0, 2.0, -2.0],
+                    "quality": 0.7,
+                }
+                for index in (0, 2, 4)
+            ]
+            + [
+                {
+                    "frame": index,
+                    "time_sec": index / 10,
+                    "position_index": index,
+                    "rgb": [224.0, 223.0, 226.0],
+                    "hsv": [120.0, 3.0, 226.0],
+                    "lab": [226.0, 129.0, 126.0],
+                    "feature": [78.0, 1.0, -1.0],
+                    "quality": 0.7,
+                }
+                for index in (7, 9, 11)
+            ],
+        }
+
+        split = split_tracklets_by_appearance_changes([source], min_run_samples=2)
+
+        self.assertEqual([item["tracklet_id"] for item in split], ["42:1", "42:2"])
+        self.assertEqual([item["positions_count"] for item in split], [6, 6])
+        self.assertLess(split[0]["appearance_rgb"][0], 200)
+        self.assertGreater(split[1]["appearance_rgb"][0], 220)
 
     def test_build_stable_players_links_short_gap_same_team(self) -> None:
         players = build_stable_players(

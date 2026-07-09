@@ -10,6 +10,7 @@ from app.config import STORAGE_DIR, WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.services.analysis import (
     _build_ball_possession_artifacts,
     _cleanup_debug_video_artifacts,
+    _rewrite_stable_overlay_with_possession,
     _write_outputs,
     load_pitch_config,
     write_raw_overlay_from_tracks,
@@ -20,7 +21,7 @@ from app.services.ball_tracking import (
     build_ball_tracking_report,
     build_ball_tracks_document,
 )
-from app.services.camera_motion import CameraMotionModel, write_camera_motion_report
+from app.services.camera_motion import CameraMotionModel, build_camera_motion_model, write_camera_motion_report
 from app.services.stabilization import stabilize_match
 from app.services.video import read_video_metadata
 
@@ -52,6 +53,9 @@ def reprocess_match_from_artifacts(
     build_possession: bool = True,
     write_raw_overlay: bool = False,
     write_debug_overlay: bool = WRITE_DEBUG_VIDEO_ARTIFACTS,
+    player_label_overrides: dict[str, str] | None = None,
+    start_sec: float = 0.0,
+    max_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Run all post-YOLO analysis from stored raw artifacts.
 
@@ -67,12 +71,27 @@ def reprocess_match_from_artifacts(
     _prepare_reprocess_directory(source_dir, output_dir)
 
     metadata = read_video_metadata(video_path)
+    time_window = _time_window(start_sec=start_sec, max_seconds=max_seconds)
+    if time_window is not None:
+        _trim_reprocess_artifacts(output_dir, metadata, time_window=time_window)
     pitch = load_pitch_config(output_dir)
     tracks = _load_tracks(output_dir / "tracks.json")
-    camera_motion = CameraMotionModel.disabled(
-        fps=float(metadata.get("fps") or 0.0),
-        frame_count=int(metadata.get("frame_count") or 0),
-    )
+    warnings: list[str] = []
+    try:
+        camera_motion = build_camera_motion_model(
+            video_path,
+            metadata,
+            calibration_frame_time_sec=float(getattr(pitch, "calibration_frame_time_sec", 0.0) or 0.0),
+            start_time_sec=0.0,
+            end_time_sec=_max_track_time_sec(tracks),
+            enabled=True,
+        )
+    except Exception as exc:
+        camera_motion = CameraMotionModel.disabled(
+            fps=float(metadata.get("fps") or 0.0),
+            frame_count=int(metadata.get("frame_count") or 0),
+        )
+        warnings.append(f"Camera motion compensation disabled after estimator failure: {exc}")
     write_camera_motion_report(output_dir, camera_motion)
     if not WRITE_DEBUG_VIDEO_ARTIFACTS:
         _cleanup_debug_video_artifacts(output_dir)
@@ -89,7 +108,7 @@ def reprocess_match_from_artifacts(
             metadata,
             frame_stride=_infer_frame_stride(tracks),
             max_seconds=max_seconds,
-            camera_motion=None,
+            camera_motion=camera_motion,
         )
         artifacts["overlay_preview"] = "overlay_preview.mp4"
 
@@ -103,10 +122,11 @@ def reprocess_match_from_artifacts(
         pitch,
         tracks,
         metadata,
-        camera_motion=None,
+        camera_motion=camera_motion,
         ball_tracks_doc=(ball_tracking or {}).get("ball_tracks"),
         ball_candidates_doc=(ball_tracking or {}).get("ball_candidates"),
         write_debug_overlay=write_debug_overlay,
+        player_label_overrides=player_label_overrides,
     )
     artifacts.update(stabilization["artifacts"])
 
@@ -115,7 +135,6 @@ def reprocess_match_from_artifacts(
         artifacts.update(ball_tracking["artifacts"])
 
     possession: dict[str, Any] | None = None
-    warnings: list[str] = []
     if ball_tracking is not None and build_possession:
         try:
             possession = _build_ball_possession_artifacts(
@@ -124,10 +143,23 @@ def reprocess_match_from_artifacts(
                 pitch,
                 metadata,
                 ball_tracking,
-                stable_players_doc=stabilization["stable_players"],
+                stable_players_doc=stabilization.get("stable_players_overlay_doc") or stabilization["stable_players"],
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
+            try:
+                _rewrite_stable_overlay_with_possession(
+                    output_dir,
+                    video_path,
+                    pitch,
+                    metadata,
+                    stabilization,
+                    ball_tracking,
+                    possession,
+                    camera_motion=camera_motion,
+                )
+            except Exception as exc:
+                warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
         except Exception as exc:
             warnings.append(f"Post-YOLO possession candidate layer failed: {exc}")
 
@@ -147,8 +179,15 @@ def reprocess_match_from_artifacts(
             "build_possession": bool(build_possession),
             "write_raw_overlay": bool(write_raw_overlay),
             "write_debug_overlay": bool(write_debug_overlay),
-            "camera_motion_compensation": False,
+            "camera_motion_compensation": bool(getattr(camera_motion, "enabled", False)),
+            "camera_motion_reference_frame": getattr(camera_motion, "reference_frame", None),
+            "player_label_overrides": player_label_overrides or {},
             "yolo_skipped": True,
+            "time_window": (
+                {"start_sec": time_window[0], "end_sec": time_window[1], "max_seconds": max_seconds}
+                if time_window is not None
+                else None
+            ),
         },
         "frames_processed": _count_unique_track_frames(tracks),
         "tracks_count": len(tracks),
@@ -293,6 +332,178 @@ def _merge_refined_ball_tracking(
         json.dumps(ball_tracking["ball_quality_report"], indent=2),
         encoding="utf-8",
     )
+
+
+def _time_window(*, start_sec: float, max_seconds: float | None) -> tuple[float, float | None] | None:
+    start = max(0.0, float(start_sec or 0.0))
+    duration = float(max_seconds or 0.0)
+    if start <= 0.0 and duration <= 0.0:
+        return None
+    end = start + duration if duration > 0.0 else None
+    return (start, end)
+
+
+def _trim_reprocess_artifacts(
+    output_dir: Path,
+    metadata: dict[str, Any],
+    *,
+    time_window: tuple[float, float | None],
+) -> None:
+    fps = float(metadata.get("fps") or 0.0)
+    tracks_path = output_dir / "tracks.json"
+    tracks = _load_tracks(tracks_path)
+    tracks_path.write_text(
+        json.dumps(_filter_tracks_by_time(tracks, fps=fps, time_window=time_window), indent=2),
+        encoding="utf-8",
+    )
+    _trim_ball_candidates_file(output_dir / "ball_candidates.json", fps=fps, time_window=time_window)
+    _trim_ball_tracks_file(output_dir / "ball_tracks.json", fps=fps, time_window=time_window)
+
+
+def _filter_tracks_by_time(
+    tracks: list[dict[str, Any]],
+    *,
+    fps: float,
+    time_window: tuple[float, float | None],
+) -> list[dict[str, Any]]:
+    filtered_tracks: list[dict[str, Any]] = []
+    for track in tracks:
+        positions = [
+            position
+            for position in (track.get("positions") or [])
+            if isinstance(position, dict) and _is_row_in_time_window(position, fps=fps, time_window=time_window)
+        ]
+        if not positions:
+            continue
+        next_track = dict(track)
+        next_track["positions"] = positions
+        next_track["positions_count"] = len(positions)
+        times = [_row_time_sec(position, fps=fps) for position in positions]
+        known_times = [time for time in times if time is not None]
+        if known_times:
+            next_track["start_time_sec"] = round(min(known_times), 3)
+            next_track["end_time_sec"] = round(max(known_times), 3)
+            next_track["duration_sec"] = round(max(0.0, max(known_times) - min(known_times)), 3)
+        filtered_tracks.append(next_track)
+    return filtered_tracks
+
+
+def _trim_ball_candidates_file(
+    path: Path,
+    *,
+    fps: float,
+    time_window: tuple[float, float | None],
+) -> None:
+    if not path.exists():
+        return
+    doc = _load_json(path)
+    if not isinstance(doc, dict):
+        return
+    frames = doc.get("frames") if isinstance(doc.get("frames"), list) else []
+    filtered_frames = [
+        frame
+        for frame in frames
+        if isinstance(frame, dict) and _is_row_in_time_window(frame, fps=fps, time_window=time_window)
+    ]
+    doc["frames"] = filtered_frames
+    processed_frames = doc.get("processed_frames") if isinstance(doc.get("processed_frames"), list) else []
+    doc["processed_frames"] = [
+        frame
+        for frame in processed_frames
+        if _is_processed_frame_in_time_window(frame, fps=fps, time_window=time_window)
+    ]
+    summary = dict(doc.get("summary") or {})
+    candidate_count = sum(len(frame.get("candidates") or []) for frame in filtered_frames if isinstance(frame, dict))
+    summary.update(
+        {
+            "processed_frames": len(doc["processed_frames"]) or len(filtered_frames),
+            "frames_with_candidates": sum(1 for frame in filtered_frames if frame.get("candidates")),
+            "candidate_count": candidate_count,
+        }
+    )
+    doc["summary"] = summary
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def _trim_ball_tracks_file(
+    path: Path,
+    *,
+    fps: float,
+    time_window: tuple[float, float | None],
+) -> None:
+    if not path.exists():
+        return
+    doc = _load_json(path)
+    if not isinstance(doc, dict):
+        return
+    positions = doc.get("positions") if isinstance(doc.get("positions"), list) else []
+    filtered_positions = [
+        position
+        for position in positions
+        if isinstance(position, dict) and _is_row_in_time_window(position, fps=fps, time_window=time_window)
+    ]
+    doc["positions"] = filtered_positions
+    summary = dict(doc.get("summary") or {})
+    processed = len(filtered_positions)
+    detected = sum(1 for position in filtered_positions if position.get("status") == "detected")
+    interpolated = sum(1 for position in filtered_positions if position.get("status") == "interpolated")
+    unknown = sum(1 for position in filtered_positions if position.get("status") == "unknown")
+    summary.update(
+        {
+            "processed_frames": processed,
+            "detected_frames": detected,
+            "interpolated_frames": interpolated,
+            "unknown_frames": unknown,
+            "detected_coverage": round(detected / processed, 4) if processed else 0.0,
+            "interpolated_coverage": round(interpolated / processed, 4) if processed else 0.0,
+            "known_coverage": round((detected + interpolated) / processed, 4) if processed else 0.0,
+        }
+    )
+    doc["summary"] = summary
+    path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def _is_processed_frame_in_time_window(
+    value: Any,
+    *,
+    fps: float,
+    time_window: tuple[float, float | None],
+) -> bool:
+    if isinstance(value, dict):
+        return _is_row_in_time_window(value, fps=fps, time_window=time_window)
+    if isinstance(value, (int, float)) and fps > 0:
+        return _is_time_in_window(float(value) / fps, time_window)
+    return True
+
+
+def _is_row_in_time_window(row: dict[str, Any], *, fps: float, time_window: tuple[float, float | None]) -> bool:
+    time_sec = _row_time_sec(row, fps=fps)
+    if time_sec is None:
+        return True
+    return _is_time_in_window(time_sec, time_window)
+
+
+def _row_time_sec(row: dict[str, Any], *, fps: float) -> float | None:
+    if row.get("time_sec") is not None:
+        try:
+            return float(row["time_sec"])
+        except (TypeError, ValueError):
+            return None
+    if row.get("frame") is not None and fps > 0:
+        try:
+            return float(row["frame"]) / fps
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _is_time_in_window(time_sec: float, time_window: tuple[float, float | None]) -> bool:
+    start, end = time_window
+    if time_sec < start:
+        return False
+    if end is not None and time_sec > end:
+        return False
+    return True
 
 
 def _load_tracks(path: Path) -> list[dict[str, Any]]:

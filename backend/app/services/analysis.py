@@ -26,7 +26,7 @@ from app.services.camera_motion import (
 )
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
 from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label, resolve_yolo_device
-from app.services.stabilization import stabilize_match
+from app.services.stabilization import stabilize_match, write_stable_overlay
 from app.services.tracker import CentroidTracker
 from app.services.video import read_video_metadata
 
@@ -49,6 +49,7 @@ BALL_ARTIFACT_FILENAMES = {
     "event_review_report": "event_review_report.json",
     "pass_candidates": "pass_candidates.json",
     "pass_review_report": "pass_review_report.json",
+    "restart_candidates": "restart_candidates.json",
     "possession_report": "possession_report.json",
     "possession_overlay_preview": "possession_overlay_preview.mp4",
 }
@@ -573,6 +574,41 @@ def _build_ball_possession_artifacts(
         ball_tracking.get("ball_tracks") or {},
         stable_doc,
         write_overlay_video=write_overlay_video,
+    )
+
+
+def _rewrite_stable_overlay_with_possession(
+    match_dir: Path,
+    video_path: Path,
+    pitch: PitchConfig,
+    metadata: dict[str, Any],
+    stabilization: dict[str, Any],
+    ball_tracking: dict[str, Any] | None,
+    possession: dict[str, Any] | None,
+    *,
+    camera_motion: CameraMotionModel | None = None,
+) -> None:
+    if not possession:
+        return
+    stable_doc = stabilization.get("stable_players_overlay_doc") or stabilization.get("stable_players")
+    if not isinstance(stable_doc, dict):
+        return
+    ball_tracks_doc = (
+        (ball_tracking or {}).get("ball_tracks")
+        or stabilization.get("refined_ball_tracks")
+    )
+    write_stable_overlay(
+        video_path,
+        match_dir,
+        stable_doc,
+        pitch.polygon_np,
+        fps=float(metadata.get("fps") or 25.0),
+        frame_size=(int(metadata.get("width") or 0), int(metadata.get("height") or 0)),
+        camera_motion=camera_motion,
+        ball_tracks_doc=ball_tracks_doc,
+        pitch_homography=pitch.homography(),
+        possession_doc=possession.get("possession_candidates"),
+        pass_candidates_doc=possession.get("pass_candidates"),
     )
 
 
@@ -1121,10 +1157,23 @@ def analyze_match_yolo(
                     pitch,
                     metadata,
                     ball_tracking,
-                    stable_players_doc=stabilization["stable_players"],
+                    stable_players_doc=stabilization.get("stable_players_overlay_doc") or stabilization["stable_players"],
                     write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
                 )
                 artifacts.update(possession["artifacts"])
+                try:
+                    _rewrite_stable_overlay_with_possession(
+                        match_dir,
+                        video_path,
+                        pitch,
+                        metadata,
+                        stabilization,
+                        ball_tracking,
+                        possession,
+                        camera_motion=camera_motion,
+                    )
+                except Exception as exc:
+                    warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
                 warnings.extend(possession["possession_report"].get("warnings") or [])
             except Exception as exc:
                 warnings.append(f"Experimental possession candidate layer failed: {exc}")

@@ -8,7 +8,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
-from typing import Any
+from typing import Any, Callable
 
 from app.services.analysis_quality import build_analysis_quality_report
 from app.services.ball_tracking import _draw_ball_position, build_ball_tracks_document, refine_ball_tracks_against_players
@@ -611,6 +611,15 @@ def split_tracklets_by_appearance_changes(
 
 
 def _appearance_split_cut_indices(tracklet: dict[str, Any], *, min_run_samples: int) -> list[int]:
+    return sorted(
+        set(
+            _team_color_appearance_split_cut_indices(tracklet, min_run_samples=min_run_samples)
+            + _neutral_identity_appearance_split_cut_indices(tracklet, min_run_samples=min_run_samples)
+        )
+    )
+
+
+def _team_color_appearance_split_cut_indices(tracklet: dict[str, Any], *, min_run_samples: int) -> list[int]:
     labeled = [
         {
             **sample,
@@ -638,6 +647,54 @@ def _appearance_split_cut_indices(tracklet: dict[str, Any], *, min_run_samples: 
         cut = max(previous_index + 1, (previous_index + following_index) // 2 + 1)
         cuts.append(cut)
     return sorted(set(cuts))
+
+
+def _neutral_identity_appearance_split_cut_indices(tracklet: dict[str, Any], *, min_run_samples: int) -> list[int]:
+    labeled = [
+        {
+            **sample,
+            "appearance_label": _neutral_identity_appearance_label(sample),
+        }
+        for sample in sorted(tracklet.get("appearance_sample_rows") or [], key=lambda item: int(item.get("position_index") or 0))
+    ]
+    labeled = [sample for sample in labeled if sample["appearance_label"] in {"neutral_bright", "neutral_muted"}]
+    if len(labeled) < min_run_samples * 2:
+        return []
+
+    runs: list[list[dict[str, Any]]] = []
+    for sample in labeled:
+        if not runs or runs[-1][0]["appearance_label"] != sample["appearance_label"]:
+            runs.append([sample])
+        else:
+            runs[-1].append(sample)
+
+    cuts: list[int] = []
+    for previous, following in zip(runs, runs[1:]):
+        if len(previous) < min_run_samples or len(following) < min_run_samples:
+            continue
+        previous_index = int(previous[-1].get("position_index") or 0)
+        following_index = int(following[0].get("position_index") or 0)
+        cut = max(previous_index + 1, (previous_index + following_index) // 2 + 1)
+        cuts.append(cut)
+    return sorted(set(cuts))
+
+
+def _neutral_identity_appearance_label(sample: dict[str, Any]) -> str:
+    if _appearance_sample_team_label(sample) != "neutral":
+        return "unknown"
+    if float(sample.get("quality") or 0.0) < 0.45:
+        return "unknown"
+    rgb = sample.get("rgb")
+    lab = sample.get("lab")
+    if not isinstance(rgb, list | tuple) or len(rgb) < 3:
+        return "unknown"
+    mean_rgb = sum(float(value) for value in rgb[:3]) / 3.0
+    lightness = float(lab[0]) if isinstance(lab, list | tuple) and lab else mean_rgb
+    if lightness >= 212.0 or mean_rgb >= 210.0:
+        return "neutral_bright"
+    if lightness <= 202.0 and mean_rgb <= 202.0:
+        return "neutral_muted"
+    return "unknown"
 
 
 def _appearance_sample_team_label(sample: dict[str, Any]) -> str:
@@ -2465,12 +2522,16 @@ def write_stable_overlay(
     include_untrusted: bool = False,
     camera_motion: Any | None = None,
     ball_tracks_doc: dict[str, Any] | None = None,
+    pitch_homography: Any | None = None,
+    possession_doc: dict[str, Any] | None = None,
+    pass_candidates_doc: dict[str, Any] | None = None,
 ) -> Path:
     import cv2
     import numpy as np
 
     player_colors: dict[str, tuple[int, int, int]] = {}
     stats_rows = _overlay_stats_rows(stable_doc.get("players", []))
+    player_labels = _player_display_labels(stable_doc)
     for player in stable_doc.get("players", []):
         stable_player_id = player["stable_player_id"]
         player_colors[stable_player_id] = _stable_bgr_color(player.get("team_label"))
@@ -2483,6 +2544,13 @@ def write_stable_overlay(
         camera_motion=camera_motion,
     )
     ball_positions = _ball_overlay_positions_by_frame(ball_tracks_doc)
+    possession_rows = _possession_rows_by_frame(possession_doc)
+    live_possession_rows = _live_possession_by_frame(possession_doc)
+    possession_summary = possession_doc.get("summary") if isinstance(possession_doc, dict) else {}
+    pass_rows_by_frame = _pass_candidates_by_frame(pass_candidates_doc, fps=fps)
+    live_pass_rows = _live_pass_counts_by_frame(pass_candidates_doc)
+    pass_summary = pass_candidates_doc.get("summary") if isinstance(pass_candidates_doc, dict) else {}
+    inverse_homography = _safe_inverse_homography(pitch_homography)
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -2490,6 +2558,7 @@ def write_stable_overlay(
     writer = _StableOverlayWriter(match_dir, output_name, fps=fps, frame_size=frame_size)
     overlay_frames = set(frame_rows) | set(ball_positions)
     max_frame = max(overlay_frames) if overlay_frames else int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) - 1
+    live_pass_rows = _extend_live_rows(live_pass_rows, max_frame)
     frame_idx = 0
     trail_points: dict[str, deque[tuple[int, tuple[int, int]]]] = defaultdict(deque)
     summary = stable_doc.get("summary") or {}
@@ -2517,10 +2586,29 @@ def write_stable_overlay(
             ball_position = ball_positions.get(frame_idx)
             if ball_position is not None:
                 _draw_ball_position(overlay, ball_position)
+            current_pass_rows = pass_rows_by_frame.get(frame_idx, [])
+            _draw_pass_candidate_arrows(
+                overlay,
+                current_pass_rows,
+                frame_idx=frame_idx,
+                inverse_homography=inverse_homography,
+                camera_motion=camera_motion,
+                player_labels=player_labels,
+            )
             visual_counts = _visual_counts(current_rows)
             _draw_stable_hud(overlay, frame_idx, fps, summary, frame_counts.get(frame_idx), visual_counts)
             if camera_motion is not None:
                 _draw_camera_motion_hud(overlay, camera_motion.sample_for_frame(frame_idx))
+            _draw_possession_pass_panel(
+                overlay,
+                possession_rows.get(frame_idx),
+                live_possession_rows.get(frame_idx),
+                live_pass_rows.get(frame_idx),
+                possession_summary,
+                current_pass_rows,
+                pass_summary,
+                player_labels,
+            )
             _draw_player_stats_panel(overlay, stats_rows)
             _draw_frame_stamp(overlay, frame_idx)
             writer.write(overlay)
@@ -2544,6 +2632,174 @@ def _ball_overlay_positions_by_frame(ball_tracks_doc: dict[str, Any] | None) -> 
             continue
         frame_rows[int(position.get("frame") or 0)] = position
     return frame_rows
+
+
+def _possession_rows_by_frame(possession_doc: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    if not isinstance(possession_doc, dict):
+        return {}
+    frames = possession_doc.get("frames")
+    if not isinstance(frames, list):
+        return {}
+    return {
+        int(row.get("frame") or 0): row
+        for row in frames
+        if isinstance(row, dict) and row.get("frame") is not None
+    }
+
+
+def _live_possession_by_frame(possession_doc: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    if not isinstance(possession_doc, dict):
+        return {}
+    frames = possession_doc.get("frames")
+    if not isinstance(frames, list):
+        return {}
+    summary = possession_doc.get("summary") if isinstance(possession_doc.get("summary"), dict) else {}
+    frame_interval_sec = float(summary.get("frame_interval_sec") or (1.0 / 30.0))
+    team_counts = {"A": 0, "B": 0}
+    skipped_counts = {"free": 0, "contested": 0, "unknown": 0}
+    live_rows: dict[int, dict[str, Any]] = {}
+    for row in sorted(
+        [item for item in frames if isinstance(item, dict) and item.get("frame") is not None],
+        key=lambda item: int(item.get("frame") or 0),
+    ):
+        frame_idx = int(row.get("frame") or 0)
+        status = str(row.get("status") or "unknown")
+        team = str(row.get("team_label") or "")
+        action = f"skip {status}"
+        action_team = None
+        if status == "controlled" and team in team_counts:
+            team_counts[team] += 1
+            action = f"+{team}"
+            action_team = team
+        elif status in skipped_counts:
+            skipped_counts[status] += 1
+        else:
+            skipped_counts["unknown"] += 1
+        controlled_total = team_counts["A"] + team_counts["B"]
+        live_rows[frame_idx] = {
+            "frame": frame_idx,
+            "time_sec": row.get("time_sec"),
+            "frame_interval_sec": frame_interval_sec,
+            "action": action,
+            "action_team": action_team,
+            "team_controlled_frames": dict(team_counts),
+            "controlled_frames": controlled_total,
+            "processed_frames": team_counts["A"] + team_counts["B"] + sum(skipped_counts.values()),
+            "skipped_frames": sum(skipped_counts.values()),
+            "skipped_counts": dict(skipped_counts),
+            "team_a_ratio": team_counts["A"] / controlled_total if controlled_total else None,
+            "team_b_ratio": team_counts["B"] / controlled_total if controlled_total else None,
+            "source_status": status,
+            "source_reason": row.get("reason"),
+        }
+    return live_rows
+
+
+def _live_pass_counts_by_frame(pass_candidates_doc: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    if not isinstance(pass_candidates_doc, dict):
+        return {}
+    candidates = pass_candidates_doc.get("candidates")
+    if not isinstance(candidates, list):
+        return {}
+    team_counts = {"A": 0, "B": 0}
+    turnover_count = 0
+    live_rows: dict[int, dict[str, Any]] = {}
+    for candidate in sorted(
+        [item for item in candidates if isinstance(item, dict) and item.get("end_frame") is not None],
+        key=lambda item: int(item.get("end_frame") or 0),
+    ):
+        frame_idx = int(candidate.get("end_frame") or 0)
+        pass_type = str(candidate.get("pass_type") or "unknown")
+        team = str(candidate.get("from_team_label") or "")
+        action = "skip pass?"
+        action_team = None
+        if pass_type == "same_team_pass" and team in team_counts:
+            team_counts[team] += 1
+            action = f"+{team} pass"
+            action_team = team
+        elif pass_type == "turnover_or_interception":
+            turnover_count += 1
+            action = "turnover?"
+        live_rows[frame_idx] = {
+            "frame": frame_idx,
+            "action": action,
+            "action_team": action_team,
+            "team_pass_candidates": dict(team_counts),
+            "same_team_pass_candidates": team_counts["A"] + team_counts["B"],
+            "turnover_or_interception_candidates": turnover_count,
+        }
+    return _fill_live_rows(live_rows)
+
+
+def _fill_live_rows(rows: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    if not rows:
+        return {}
+    filled: dict[int, dict[str, Any]] = {}
+    last: dict[str, Any] | None = None
+    for frame in range(max(rows) + 1):
+        if frame in rows:
+            last = rows[frame]
+        if last is not None:
+            filled[frame] = {**last, "frame": frame}
+    return filled
+
+
+def _extend_live_rows(rows: dict[int, dict[str, Any]], max_frame: int) -> dict[int, dict[str, Any]]:
+    if not rows or max_frame <= max(rows):
+        return rows
+    filled = dict(rows)
+    last = rows[max(rows)]
+    for frame in range(max(rows) + 1, max_frame + 1):
+        filled[frame] = {**last, "frame": frame, "action": "hold"}
+    return filled
+
+
+def _pass_candidates_by_frame(
+    pass_candidates_doc: dict[str, Any] | None,
+    *,
+    fps: float,
+    hold_sec: float = 1.25,
+) -> dict[int, list[dict[str, Any]]]:
+    if not isinstance(pass_candidates_doc, dict):
+        return {}
+    candidates = pass_candidates_doc.get("candidates")
+    if not isinstance(candidates, list):
+        return {}
+    hold_frames = max(1, int(round(max(0.0, hold_sec) * max(float(fps or 0.0), 1.0))))
+    rows_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        start_frame = int(candidate.get("start_frame") or 0)
+        end_frame = int(candidate.get("end_frame") or start_frame)
+        if end_frame < start_frame:
+            end_frame = start_frame
+        display_end = end_frame + hold_frames
+        for frame in range(start_frame, display_end + 1):
+            rows_by_frame[frame].append(candidate)
+    return rows_by_frame
+
+
+def _player_display_labels(stable_doc: dict[str, Any]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for player in stable_doc.get("players") or []:
+        if not isinstance(player, dict):
+            continue
+        stable_player_id = str(player.get("stable_player_id") or "")
+        if stable_player_id:
+            labels[stable_player_id] = str(player.get("display_label") or stable_player_id)
+    return labels
+
+
+def _safe_inverse_homography(homography: Any | None) -> Any | None:
+    if homography is None:
+        return None
+    try:
+        import numpy as np
+
+        return np.linalg.inv(np.asarray(homography, dtype=np.float32))
+    except Exception:
+        return None
 
 
 def _stable_overlay_frame_rows(
@@ -2579,6 +2835,7 @@ def _stable_overlay_frame_rows(
             row["mean_detection_confidence"] = player.get("mean_detection_confidence")
             row["tracklet_count"] = player.get("tracklet_count")
             row["duration_sec"] = player.get("duration_sec")
+            row["display_label"] = player.get("display_label")
             row["risky_link_count"] = len(player.get("risky_links") or [])
             row["source"] = _overlay_position_source(position)
             row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
@@ -2735,9 +2992,11 @@ def _overlay_stats_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for player in players:
         stats = player.get("movement_stats") or {}
+        stable_player_id = player.get("stable_player_id")
         rows.append(
             {
-                "stable_player_id": player.get("stable_player_id"),
+                "stable_player_id": stable_player_id,
+                "display_label": player.get("display_label") or stable_player_id,
                 "team_label": player.get("team_label"),
                 "distance_m": float(stats.get("total_distance_m") or 0.0),
                 "estimated_distance_m": float(stats.get("estimated_gap_distance_m") or 0.0),
@@ -2963,8 +3222,8 @@ def _draw_stable_row(frame: Any, row: dict[str, Any]) -> None:
         _draw_dashed_rectangle(frame, x1, y1, x2, y2, color)
     else:
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-    stable_player_id = str(row.get("stable_player_id") or "?")
-    label = f"{stable_player_id}?" if source == "ambiguous" else f"{stable_player_id}*" if is_untrusted else stable_player_id
+    display_label = str(row.get("display_label") or row.get("stable_player_id") or "?")
+    label = f"{display_label}?" if source == "ambiguous" else f"{display_label}*" if is_untrusted else display_label
     _draw_minimal_label(frame, label, x1, y1, color)
     if row.get("source") == "detected" or is_short_gap:
         _draw_live_stats_label(frame, row.get("live_movement"), x1, y1, y2, color)
@@ -3078,6 +3337,23 @@ def _rebuild_ball_tracks_from_candidates(
         fps=fps,
         parameters=parameters,
     )
+
+
+def _apply_player_label_overrides(stable_doc: dict[str, Any], label_overrides: dict[str, str] | None) -> None:
+    if not label_overrides:
+        return
+    normalized = {
+        str(key).strip(): str(value).strip()
+        for key, value in label_overrides.items()
+        if str(key).strip() and str(value).strip()
+    }
+    if not normalized:
+        return
+    for player in stable_doc.get("players") or []:
+        stable_player_id = str(player.get("stable_player_id") or "")
+        display_label = normalized.get(stable_player_id)
+        if display_label:
+            player["display_label"] = display_label
 
 
 def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
@@ -3231,6 +3507,220 @@ def _draw_camera_motion_hud(frame: Any, sample: Any) -> None:
     cv2.putText(frame, label, (x1 + 8, y1 + text_height + 6), font, font_scale, (245, 245, 245), thickness, cv2.LINE_AA)
 
 
+def _draw_possession_pass_panel(
+    frame: Any,
+    possession_row: dict[str, Any] | None,
+    live_possession_row: dict[str, Any] | None,
+    live_pass_row: dict[str, Any] | None,
+    possession_summary: Any,
+    pass_rows: list[dict[str, Any]],
+    pass_summary: Any,
+    player_labels: dict[str, str],
+) -> None:
+    if not possession_row and not pass_rows and not isinstance(pass_summary, dict):
+        return
+
+    import cv2
+
+    summary = possession_summary if isinstance(possession_summary, dict) else {}
+    pass_summary_doc = pass_summary if isinstance(pass_summary, dict) else {}
+    lines = [
+        _team_possession_line(summary),
+        _live_possession_line(live_possession_row),
+        _current_possession_line(possession_row, player_labels),
+        _live_pass_line(live_pass_row),
+        _pass_candidate_summary_line(pass_summary_doc),
+    ]
+    for candidate in pass_rows[:3]:
+        lines.append(_pass_candidate_line(candidate, player_labels))
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.42
+    thickness = 1
+    line_height = 16
+    widths = [cv2.getTextSize(line, font, font_scale, thickness)[0][0] for line in lines]
+    panel_width = max(widths, default=300) + 18
+    panel_height = line_height * len(lines) + 14
+    frame_height, frame_width = frame.shape[:2]
+    x2 = frame_width - 12
+    y1 = 12
+    x1 = max(12, x2 - panel_width)
+    y2 = min(frame_height - 12, y1 + panel_height)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (20, 20, 20), -1)
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (230, 230, 230), 1)
+    current_team = (possession_row or {}).get("team_label")
+    live_possession_team = (live_possession_row or {}).get("action_team")
+    live_pass_team = (live_pass_row or {}).get("action_team")
+    candidate_line_start = 5
+    for index, line in enumerate(lines):
+        y = y1 + 20 + index * line_height
+        color = (245, 245, 245)
+        if index == 1 and live_possession_team in {"A", "B"}:
+            color = _stable_bgr_color(live_possession_team)
+        if index == 2 and current_team in {"A", "B"}:
+            color = _stable_bgr_color(current_team)
+        if index == 3 and live_pass_team in {"A", "B"}:
+            color = _stable_bgr_color(live_pass_team)
+        if index >= candidate_line_start:
+            color = _pass_candidate_color(pass_rows[index - candidate_line_start])
+        cv2.putText(frame, line, (x1 + 8, y), font, font_scale, color, thickness, cv2.LINE_AA)
+
+
+def _draw_pass_candidate_arrows(
+    frame: Any,
+    pass_rows: list[dict[str, Any]],
+    *,
+    frame_idx: int,
+    inverse_homography: Any | None,
+    camera_motion: Any | None,
+    player_labels: dict[str, str],
+) -> None:
+    if inverse_homography is None or not pass_rows:
+        return
+
+    import cv2
+
+    for candidate in pass_rows[:3]:
+        start = _pitch_m_to_frame_px(candidate.get("start_position_m"), inverse_homography, frame_idx, camera_motion)
+        end = _pitch_m_to_frame_px(candidate.get("end_position_m"), inverse_homography, frame_idx, camera_motion)
+        if start is None or end is None:
+            continue
+        color = _pass_candidate_color(candidate)
+        cv2.arrowedLine(frame, start, end, color, 2, cv2.LINE_AA, tipLength=0.18)
+        label = _pass_candidate_arrow_label(candidate, player_labels)
+        midpoint = ((start[0] + end[0]) // 2, (start[1] + end[1]) // 2)
+        cv2.putText(frame, label, (midpoint[0] + 6, max(18, midpoint[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(frame, label, (midpoint[0] + 6, max(18, midpoint[1] - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
+
+
+def _pitch_m_to_frame_px(
+    pitch_m: Any,
+    inverse_homography: Any,
+    frame_idx: int,
+    camera_motion: Any | None,
+) -> tuple[int, int] | None:
+    if not _valid_pair(pitch_m):
+        return None
+    import cv2
+    import numpy as np
+
+    src = np.array([[[float(pitch_m[0]), float(pitch_m[1])]]], dtype=np.float32)
+    reference = cv2.perspectiveTransform(src, inverse_homography.astype(np.float32))
+    if camera_motion is not None:
+        sample = camera_motion.sample_for_frame(frame_idx)
+        matrix = np.asarray(sample.matrix_reference_to_current, dtype=np.float32)
+        reference = cv2.perspectiveTransform(reference, matrix)
+    x = int(round(float(reference[0][0][0])))
+    y = int(round(float(reference[0][0][1])))
+    return (x, y)
+
+
+def _team_possession_line(summary: dict[str, Any]) -> str:
+    counts = summary.get("team_controlled_frames") if isinstance(summary.get("team_controlled_frames"), dict) else {}
+    team_a = int(counts.get("A") or 0)
+    team_b = int(counts.get("B") or 0)
+    total = team_a + team_b
+    if total <= 0:
+        return "clip poss: A -- | B --"
+    return f"clip poss: A {team_a / total * 100:4.1f}% | B {team_b / total * 100:4.1f}%"
+
+
+def _live_possession_line(live_row: dict[str, Any] | None) -> str:
+    if not live_row:
+        return "live poss frames: A -- | B -- action=--"
+    counts = live_row.get("team_controlled_frames") if isinstance(live_row.get("team_controlled_frames"), dict) else {}
+    team_a = int(counts.get("A") or 0)
+    team_b = int(counts.get("B") or 0)
+    total = team_a + team_b
+    a_ratio = "--" if total <= 0 else f"{team_a / total * 100:4.1f}%"
+    b_ratio = "--" if total <= 0 else f"{team_b / total * 100:4.1f}%"
+    frame_interval = float(live_row.get("frame_interval_sec") or (1.0 / 30.0))
+    team_a_sec = team_a * frame_interval
+    team_b_sec = team_b * frame_interval
+    return (
+        f"live poss frames: A {team_a} ({team_a_sec:.1f}s {a_ratio}) | "
+        f"B {team_b} ({team_b_sec:.1f}s {b_ratio}) {live_row.get('action') or '--'}"
+    )
+
+
+def _current_possession_line(possession_row: dict[str, Any] | None, player_labels: dict[str, str]) -> str:
+    if not possession_row:
+        return "now: possession unavailable"
+    status = str(possession_row.get("status") or "unknown")
+    confidence = float(possession_row.get("confidence") or 0.0)
+    if status == "controlled":
+        player_id = str(possession_row.get("stable_player_id") or "")
+        player = player_labels.get(player_id, player_id or "?")
+        team = possession_row.get("team_label") or "?"
+        return f"now: {team} {player} controlled {confidence:.2f}"
+    if status == "contested":
+        return f"now: contested {confidence:.2f}"
+    if status == "free":
+        return f"now: free ball {confidence:.2f}"
+    return f"now: unknown ({possession_row.get('reason') or 'n/a'})"
+
+
+def _live_pass_line(live_row: dict[str, Any] | None) -> str:
+    if not live_row:
+        return "live pass cand: A 0 | B 0 turn=0 action=--"
+    counts = live_row.get("team_pass_candidates") if isinstance(live_row.get("team_pass_candidates"), dict) else {}
+    team_a = int(counts.get("A") or 0)
+    team_b = int(counts.get("B") or 0)
+    turnovers = int(live_row.get("turnover_or_interception_candidates") or 0)
+    return f"live pass cand: A {team_a} | B {team_b} turn={turnovers} {live_row.get('action') or '--'}"
+
+
+def _pass_candidate_summary_line(summary: dict[str, Any]) -> str:
+    type_counts = summary.get("pass_type_counts") if isinstance(summary.get("pass_type_counts"), dict) else {}
+    same = int(type_counts.get("same_team_pass") or summary.get("same_team_pass_candidates") or 0)
+    turnover = int(type_counts.get("turnover_or_interception") or summary.get("turnover_or_interception_candidates") or 0)
+    progressive = int(summary.get("progressive_pass_candidates") or 0)
+    total = int(summary.get("pass_candidates") or same + turnover)
+    return f"clip pass cand: total={total} same={same} turn={turnover} prog={progressive}"
+
+
+def _pass_candidate_line(candidate: dict[str, Any], player_labels: dict[str, str]) -> str:
+    source = _candidate_player_label(candidate.get("from_stable_player_id"), player_labels)
+    target = _candidate_player_label(candidate.get("to_stable_player_id"), player_labels)
+    kind = _pass_candidate_kind(candidate)
+    confidence = float(candidate.get("confidence") or 0.0)
+    return f"{source}->{target} {kind} {confidence:.2f}"
+
+
+def _pass_candidate_arrow_label(candidate: dict[str, Any], player_labels: dict[str, str]) -> str:
+    source = _candidate_player_label(candidate.get("from_stable_player_id"), player_labels)
+    target = _candidate_player_label(candidate.get("to_stable_player_id"), player_labels)
+    return f"{source}->{target}?"
+
+
+def _candidate_player_label(value: Any, player_labels: dict[str, str]) -> str:
+    player_id = str(value or "")
+    return player_labels.get(player_id, player_id or "?")
+
+
+def _pass_candidate_kind(candidate: dict[str, Any]) -> str:
+    pass_type = str(candidate.get("pass_type") or "unknown")
+    if pass_type == "same_team_pass":
+        return "pass?"
+    if pass_type == "turnover_or_interception":
+        return "turnover?"
+    return "unknown?"
+
+
+def _pass_candidate_color(candidate: dict[str, Any]) -> tuple[int, int, int]:
+    pass_type = str(candidate.get("pass_type") or "unknown")
+    if pass_type == "same_team_pass":
+        team = candidate.get("from_team_label")
+        return _stable_bgr_color(team) if team in {"A", "B"} else (60, 220, 60)
+    if pass_type == "turnover_or_interception":
+        return (0, 180, 255)
+    return (210, 210, 210)
+
+
+def _valid_pair(value: Any) -> bool:
+    return isinstance(value, list | tuple) and len(value) == 2 and value[0] is not None and value[1] is not None
+
+
 def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> None:
     if not stats_rows:
         return
@@ -3255,7 +3745,7 @@ def _draw_player_stats_panel(frame: Any, stats_rows: list[dict[str, Any]]) -> No
         estimated = float(row.get("estimated_distance_m") or 0.0)
         estimated_marker = "*" if estimated > 0.0 else " "
         lines.append(
-            f"{row.get('stable_player_id')}{estimated_marker} "
+            f"{row.get('display_label') or row.get('stable_player_id')}{estimated_marker} "
             f"d={float(row.get('distance_m') or 0.0):4.1f}m "
             f"avg={float(row.get('avg_speed_kmh') or 0.0):4.1f} "
             f"pk={float(row.get('peak_sustained_speed_kmh') or 0.0):4.1f} "
@@ -3329,6 +3819,8 @@ def stabilize_match(
     ball_tracks_doc: dict[str, Any] | None = None,
     ball_candidates_doc: dict[str, Any] | None = None,
     write_debug_overlay: bool = True,
+    player_label_overrides: dict[str, str] | None = None,
+    progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
     meta_path = match_dir / "match.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
@@ -3339,9 +3831,25 @@ def stabilize_match(
         "min_duration_sec": 0.2,
         "min_positions": 4,
     }
+    if progress:
+        progress("stabilization", 91.0, "Splitting raw tracks into tracklets.", {"current": len(tracks), "unit": "tracks"})
     tracklets, rejected = split_tracks_into_tracklets(tracks, **tracklet_parameters)
+    if progress:
+        progress(
+            "stabilization",
+            91.4,
+            f"Sampling visual appearance for {len(tracklets)} tracklets.",
+            {"current": len(tracklets), "unit": "tracklets"},
+        )
     sample_tracklet_appearance(video_path, tracklets)
     tracklets = split_tracklets_by_appearance_changes(tracklets)
+    if progress:
+        progress(
+            "stabilization",
+            91.8,
+            f"Clustering teams for {len(tracklets)} cleaned tracklets.",
+            {"current": len(tracklets), "unit": "tracklets"},
+        )
     team_clusters = cluster_tracklet_teams(tracklets, teams)
     tracklets_doc = build_tracklets_document(
         tracklets,
@@ -3355,6 +3863,13 @@ def stabilize_match(
         raw_tracks_count=len(tracks),
         parameters=tracklet_parameters,
     )
+    if progress:
+        progress(
+            "stabilization",
+            92.2,
+            "Resolving global player identities.",
+            {"current": len(tracklets), "unit": "tracklets"},
+        )
     global_identity = resolve_conservative_identity(
         tracklets,
         raw_tracks_count=len(tracks),
@@ -3364,7 +3879,15 @@ def stabilize_match(
         fps=float(video_metadata.get("fps") or 25.0),
         pitch_polygon=pitch.polygon_np,
     )
+    if progress:
+        progress(
+            "stabilization",
+            93.0,
+            "Building stable player stats and reports.",
+            {"current": int((global_identity.get("summary") or {}).get("stable_players") or 0), "unit": "players"},
+        )
     stable_doc = build_stable_players_from_global_identity(global_identity)
+    _apply_player_label_overrides(stable_doc, player_label_overrides)
     ball_tracks_for_refine = _rebuild_ball_tracks_from_candidates(
         ball_tracks_doc,
         ball_candidates_doc,
@@ -3406,6 +3929,13 @@ def stabilize_match(
     player_heatmaps = build_player_heatmaps_document(stable_doc, match_dir)
     stable_doc["player_heatmaps_summary"] = player_heatmaps["summary"]
     change_artifacts = write_change_candidate_artifacts(match_dir, stable_doc)
+    if progress:
+        progress(
+            "stable_overlay_render",
+            94.0,
+            "Rendering stable overlay preview.",
+            {"artifact": "stable_overlay_preview.mp4"},
+        )
     write_stable_overlay(
         video_path,
         match_dir,
@@ -3415,9 +3945,17 @@ def stabilize_match(
         frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
         camera_motion=camera_motion,
         ball_tracks_doc=refined_ball_tracks_doc,
+        pitch_homography=pitch.homography(),
     )
     debug_overlay_artifacts: dict[str, str] = {}
     if write_debug_overlay:
+        if progress:
+            progress(
+                "stable_overlay_render",
+                95.0,
+                "Rendering debug identity overlay.",
+                {"artifact": "debug_identity_overlay.mp4"},
+            )
         write_stable_overlay(
             video_path,
             match_dir,
@@ -3429,9 +3967,13 @@ def stabilize_match(
             include_untrusted=True,
             camera_motion=camera_motion,
             ball_tracks_doc=refined_ball_tracks_doc,
+            pitch_homography=pitch.homography(),
         )
         debug_overlay_artifacts["debug_identity_overlay"] = "debug_identity_overlay.mp4"
+    if progress:
+        progress("final_reports", 96.0, "Writing stable player and identity reports.", None)
     public_stable_doc = _strip_overlay_positions(stable_doc)
+    global_identity_parameters = global_identity.get("parameters") if isinstance(global_identity.get("parameters"), dict) else {}
     parameters = {
         "max_internal_gap_sec": 0.7,
         "split_speed_mps": 16.0,
@@ -3447,6 +3989,7 @@ def stabilize_match(
         "global_max_assignment_speed_mps": global_identity["parameters"]["max_assignment_speed_mps"],
         "global_max_prediction_sec": global_identity["parameters"]["max_prediction_sec"],
         "global_substitution_gap_sec": global_identity["parameters"]["substitution_gap_sec"],
+        "global_identity_parameters": global_identity_parameters,
         "camera_motion_compensation": bool(getattr(camera_motion, "enabled", False)) if camera_motion is not None else False,
         "camera_motion_reference_frame": getattr(camera_motion, "reference_frame", None) if camera_motion is not None else None,
     }
@@ -3487,6 +4030,7 @@ def stabilize_match(
     (match_dir / "stabilization_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return {
         "stable_players": public_stable_doc,
+        "stable_players_overlay_doc": stable_doc,
         "global_identity": global_identity,
         "global_identity_report": global_identity_report,
         "analysis_quality_report": analysis_quality_report,

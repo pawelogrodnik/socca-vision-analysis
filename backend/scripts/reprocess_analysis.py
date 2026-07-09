@@ -23,10 +23,19 @@ def main() -> None:
     parser.add_argument("--video", type=Path, default=None, help="Video path override. Usually inferred from match dir or benchmark_input.json.")
     parser.add_argument("--output-dir", type=Path, default=None, help="Where to write reprocessed outputs. Defaults to backend/storage/reprocess.")
     parser.add_argument("--label", default="", help="Human label for the default output directory and report.")
+    parser.add_argument("--start-sec", type=float, default=0.0, help="Start time for a trimmed post-YOLO reprocess window.")
+    parser.add_argument("--max-seconds", type=float, default=0.0, help="Limit post-YOLO reprocess to this many seconds.")
     parser.add_argument("--no-ball", action="store_true", help="Ignore stored ball artifacts even if present.")
     parser.add_argument("--no-possession", action="store_true", help="Skip possession/contact candidate rebuild.")
     parser.add_argument("--raw-overlay", action="store_true", help="Also rebuild raw P## overlay from tracks.json.")
     parser.add_argument("--debug-overlay", action="store_true", help="Also write debug_identity_overlay.mp4.")
+    parser.add_argument(
+        "--player-label",
+        action="append",
+        default=[],
+        metavar="SLOT=LABEL",
+        help="Override a stable overlay label, e.g. --player-label A06=Krzysiek. Can be repeated.",
+    )
     args = parser.parse_args()
 
     source_dir = (MATCHES_DIR / args.match_id) if args.match_id else args.source_dir
@@ -43,6 +52,9 @@ def main() -> None:
         build_possession=not args.no_possession,
         write_raw_overlay=bool(args.raw_overlay),
         write_debug_overlay=bool(args.debug_overlay),
+        player_label_overrides=_parse_player_labels(args.player_label),
+        start_sec=max(0.0, float(args.start_sec or 0.0)),
+        max_seconds=max(0.0, float(args.max_seconds or 0.0)) or None,
     )
     print(
         json.dumps(
@@ -59,6 +71,16 @@ def main() -> None:
             indent=2,
         )
     )
+
+
+def _parse_player_labels(values: list[str]) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    for value in values:
+        slot_id, sep, label = value.partition("=")
+        if not sep or not slot_id.strip() or not label.strip():
+            raise ValueError(f"Invalid --player-label value: {value!r}. Expected SLOT=LABEL.")
+        labels[slot_id.strip()] = label.strip()
+    return labels
 
 
 if __name__ == "__main__":

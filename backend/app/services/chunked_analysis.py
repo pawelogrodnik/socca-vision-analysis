@@ -128,6 +128,7 @@ def analyze_match_chunked_yolo(
         DEFAULT_PITCH_FILTER_MARGIN_PX,
         _cleanup_debug_video_artifacts,
         _load_yolo_model,
+        _rewrite_stable_overlay_with_possession,
         _write_outputs,
         collect_yolo_tracks_range,
         load_pitch_config,
@@ -191,6 +192,13 @@ def analyze_match_chunked_yolo(
         )
     analysis_end_sec = float(payload.get("max_seconds") or 0.0) or None
     camera_motion_warnings: list[str] = []
+    if progress:
+        progress(
+            "camera_motion",
+            10.0,
+            "Building camera motion compensation model.",
+            {"current": 1, "total": len(chunks), "unit": "setup"},
+        )
     try:
         camera_motion = build_camera_motion_model(
             video_path,
@@ -370,6 +378,13 @@ def analyze_match_chunked_yolo(
     if progress:
         progress("chunk_merging", 82.0, "Merging chunk tracks and generating final artifacts.", {"chunk_count": len(chunks)})
     merged_tracks = merge_completed_chunk_tracks(match_dir, manifest)
+    if progress:
+        progress(
+            "chunk_merging",
+            84.0,
+            f"Merged {len(merged_tracks)} player tracks from {len(chunks)} chunks.",
+            {"current": len(chunks), "total": len(chunks), "unit": "chunks", "artifact": "tracks.json"},
+        )
     if WRITE_DEBUG_VIDEO_ARTIFACTS:
         write_raw_overlay_from_tracks(
             match_dir,
@@ -390,9 +405,16 @@ def analyze_match_chunked_yolo(
     possession: dict[str, Any] | None = None
     if include_ball:
         if progress:
-            progress("chunk_ball_merge", 88.0, "Merging ball observations and possession candidates.", {"chunk_count": len(chunks)})
+            progress("chunk_ball_merge", 86.0, "Merging ball observations from chunks.", {"chunk_count": len(chunks)})
         ball_merge = merge_completed_chunk_ball_observations(match_dir, manifest)
         ball_parameters = ball_merge["parameters"]
+        if progress:
+            progress(
+                "ball_tracking",
+                88.0,
+                f"Building ball tracks from {len(ball_merge['frames'])} candidate frames.",
+                {"current": len(ball_merge["processed_frames"]), "total": int(metadata.get("frame_count") or 0), "unit": "frames"},
+            )
         ball_candidates_doc = build_ball_candidates_document(
             ball_merge["frames"],
             processed_frames=ball_merge["processed_frames"],
@@ -444,7 +466,21 @@ def analyze_match_chunked_yolo(
             "artifacts": ball_artifacts,
         }
         artifacts.update(ball_tracking["artifacts"])
+        if progress:
+            progress(
+                "ball_tracking",
+                90.0,
+                "Ball tracking artifacts written.",
+                {"artifact": "ball_tracks.json"},
+            )
 
+    if progress:
+        progress(
+            "stabilization",
+            91.0,
+            "Stabilizing player identities, stats, and stable overlay.",
+            {"current": len(merged_tracks), "unit": "tracks"},
+        )
     stabilization = stabilize_match(
         match_dir,
         video_path,
@@ -455,6 +491,7 @@ def analyze_match_chunked_yolo(
         ball_tracks_doc=ball_tracks_doc,
         ball_candidates_doc=ball_candidates_doc,
         write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
+        progress=progress,
     )
     refined_ball_tracks = stabilization.get("refined_ball_tracks")
     if refined_ball_tracks is not None:
@@ -491,6 +528,8 @@ def analyze_match_chunked_yolo(
             camera_motion_warnings.append(f"Camera motion debug overlay failed: {exc}")
     if ball_tracking is not None and ball_report is not None:
         try:
+            if progress:
+                progress("possession_pass_candidates", 96.0, "Building possession and pass candidate layers.", None)
             possession = build_ball_possession_analysis(
                 match_dir,
                 video_path,
@@ -501,6 +540,26 @@ def analyze_match_chunked_yolo(
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
+            try:
+                if progress:
+                    progress(
+                        "stable_overlay_possession_render",
+                        98.0,
+                        "Rendering stable overlay with possession and pass layers.",
+                        {"artifact": "stable_overlay_preview.mp4"},
+                    )
+                _rewrite_stable_overlay_with_possession(
+                    match_dir,
+                    video_path,
+                    pitch,
+                    metadata,
+                    stabilization,
+                    ball_tracking,
+                    possession,
+                    camera_motion=camera_motion,
+                )
+            except Exception as exc:
+                camera_motion_warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
         except Exception as exc:
             ball_report.setdefault("warnings", []).append(f"Chunked possession candidate layer failed: {exc}")
             (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
@@ -513,6 +572,8 @@ def analyze_match_chunked_yolo(
     warnings = list(dict.fromkeys([*camera_motion_warnings, *chunk_warnings]))
     if not include_ball:
         warnings.append("Chunked run skipped ball/possession analysis because include_ball=false.")
+    if progress:
+        progress("final_reports", 99.0, "Writing final reports and analysis metadata.", None)
     manifest["status"] = "completed"
     manifest["updated_at"] = now_iso()
     manifest["summary"]["completed_chunks"] = len(chunks)

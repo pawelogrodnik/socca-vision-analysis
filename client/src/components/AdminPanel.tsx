@@ -83,6 +83,8 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+const terminalAnalysisStatuses = new Set(['completed', 'failed', 'interrupted', 'cancelled']);
+
 const workflowCopy: Record<
   WorkflowStepId,
   { label: string; description: string }
@@ -115,6 +117,56 @@ function isPublished(match: Match | null): boolean {
 
 function hasPitchConfig(match: Match | null): boolean {
   return Boolean(match?.pitch_config);
+}
+
+function isTerminalAnalysisStatus(status: string): boolean {
+  return terminalAnalysisStatuses.has(status);
+}
+
+function formatElapsed(seconds?: number): string | null {
+  if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) return null;
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const rest = rounded % 60;
+  if (minutes <= 0) return `${rest}s`;
+  return `${minutes}m ${rest.toString().padStart(2, '0')}s`;
+}
+
+function formatRelativeAge(iso?: string | null): string | null {
+  if (!iso) return null;
+  const timestamp = Date.parse(iso);
+  if (!Number.isFinite(timestamp)) return null;
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s temu`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}m ${rest.toString().padStart(2, '0')}s temu`;
+}
+
+function progressCurrentText(job: AnalysisJob): string | null {
+  const current = job.progress_plan?.current;
+  if (!current) return null;
+  const unit = current.unit || 'items';
+  if (current.current !== undefined && current.total !== undefined) {
+    return `${current.current}/${current.total} ${unit}`;
+  }
+  if (current.total !== undefined) {
+    return `${current.total} ${unit}`;
+  }
+  return current.label || null;
+}
+
+function activeProgressStep(job: AnalysisJob) {
+  const activeStepId = job.progress_plan?.active_step_id;
+  return job.progress_plan?.steps?.find((step) => step.id === activeStepId) || null;
+}
+
+function isJobHeartbeatStale(job: AnalysisJob): boolean {
+  if (isTerminalAnalysisStatus(job.status)) return false;
+  const heartbeat = job.progress_plan?.last_heartbeat_at || job.updated_at;
+  const timestamp = Date.parse(heartbeat || '');
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp > 90_000;
 }
 
 function suggestedStep(match: Match | null): WorkflowStepId {
@@ -430,17 +482,21 @@ export function AdminPanel() {
   async function waitForAnalysisJob(jobId: string): Promise<AnalysisJob> {
     let latest = await fetchAnalysisJobWithRetry(jobId);
     setActiveAnalysisJob(latest);
-    while (!['completed', 'failed'].includes(latest.status)) {
+    while (!isTerminalAnalysisStatus(latest.status)) {
       const chunkText = latest.chunk_count ? ` chunks ${latest.chunk_count}` : '';
+      const step = activeProgressStep(latest);
+      const stepText = step ? ` etap: ${step.label}` : ` etap: ${latest.stage}`;
+      const currentText = progressCurrentText(latest);
+      const progressText = currentText ? ` (${currentText})` : '';
       setStatus(
-        `Analiza ${latest.status}: ${latest.stage} ${Math.round(latest.progress_percent || 0)}%${chunkText}. ${latest.message || ''}`,
+        `Analiza ${latest.status}:${stepText} ${Math.round(latest.progress_percent || 0)}%${progressText}${chunkText}. ${latest.message || ''}`,
       );
       await delay(2000);
       latest = await fetchAnalysisJobWithRetry(jobId);
       setActiveAnalysisJob(latest);
     }
-    if (latest.status === 'failed') {
-      throw new Error(latest.error?.message || latest.message || 'Analysis job failed');
+    if (latest.status !== 'completed') {
+      throw new Error(latest.error?.message || latest.message || `Analysis job ${latest.status}`);
     }
     return latest;
   }
@@ -555,6 +611,15 @@ export function AdminPanel() {
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
   const reviewReadiness = buildReviewReadiness(selected);
   const steps = workflowSteps(activeStep, selected);
+  const activeJobStep = activeAnalysisJob ? activeProgressStep(activeAnalysisJob) : null;
+  const activeJobCurrent = activeAnalysisJob ? progressCurrentText(activeAnalysisJob) : null;
+  const activeJobElapsed = activeAnalysisJob
+    ? formatElapsed(activeAnalysisJob.progress_plan?.active_step_elapsed_sec)
+    : null;
+  const activeJobHeartbeat = activeAnalysisJob
+    ? formatRelativeAge(activeAnalysisJob.progress_plan?.last_heartbeat_at || activeAnalysisJob.updated_at)
+    : null;
+  const activeJobStale = activeAnalysisJob ? isJobHeartbeatStale(activeAnalysisJob) : false;
 
   return (
     <main className='app'>
@@ -705,6 +770,36 @@ export function AdminPanel() {
                 )}
               </div>
               <p className='muted'>{activeAnalysisJob.message}</p>
+              {activeJobStep && (
+                <div className='job-progress-summary'>
+                  <span>Aktywny etap: {activeJobStep.label}</span>
+                  {activeJobCurrent && <span>Postep etapu: {activeJobCurrent}</span>}
+                  {activeJobElapsed && <span>Czas etapu: {activeJobElapsed}</span>}
+                  {activeJobHeartbeat && <span>Heartbeat: {activeJobHeartbeat}</span>}
+                </div>
+              )}
+              {activeJobStale && (
+                <p className='job-stale-warning'>
+                  Brak nowego heartbeatu od ponad 90 sekund. Proces moze nadal renderowac
+                  ciezki artefakt, ale ten etap wymaga sprawdzenia w logach backendu.
+                </p>
+              )}
+              {activeAnalysisJob.progress_plan?.steps && (
+                <ol className='job-progress-plan'>
+                  {activeAnalysisJob.progress_plan.steps.map((step) => (
+                    <li
+                      key={step.id}
+                      className={`job-progress-step ${step.status}`}
+                    >
+                      <span className='job-progress-marker' />
+                      <span>{step.label}</span>
+                      {step.status === 'running' && step.message && (
+                        <small>{step.message}</small>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
               {activeAnalysisJob.chunk_count && (
                 <div className='chips'>
                   <span>Chunks planned: {activeAnalysisJob.chunk_count}</span>

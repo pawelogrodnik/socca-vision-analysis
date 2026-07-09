@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 
 from app.services.global_identity import (
+    Observation,
+    SlotState,
     _slot_movement_stats,
+    _slot_has_recent_identity_conflict,
     build_frame_detection_counts_from_global_identity,
     build_stable_players_from_global_identity,
     resolve_global_identity,
@@ -91,6 +94,47 @@ class GlobalIdentityTests(unittest.TestCase):
         ]
         identity = self.resolve(tracklets)
         self.assertEqual(identity["summary"]["team_counts"]["A"], 7)
+        self.assertNotIn("B", identity["summary"]["team_counts"])
+
+    def test_extra_same_team_detection_waits_when_active_roster_is_full(self) -> None:
+        tracklets = [
+            tracklet(
+                f"{index + 1}:1",
+                "A",
+                [position(frame, index + frame * 0.01, 1) for frame in range(4)],
+            )
+            for index in range(8)
+        ]
+
+        identity = self.resolve(tracklets)
+
+        self.assertEqual(identity["summary"]["team_counts"]["A"], 7)
+        self.assertNotIn("B", identity["summary"]["team_counts"])
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 4)
+        self.assertNotIn("A08", [slot["slot_id"] for slot in identity["slots"]])
+
+    def test_nested_same_team_detection_does_not_spawn_extra_slot(self) -> None:
+        full_body = [
+            position(frame, 12.0 + frame * 0.01, 44.0, bbox=[750, 880, 795, 965])
+            for frame in range(5)
+        ]
+        nested_split = [
+            position(frame, 12.0 + frame * 0.01, 43.9, bbox=[762, 882, 792, 912])
+            for frame in range(2, 16)
+        ]
+
+        identity = self.resolve(
+            [
+                tracklet("1:1", "A", full_body),
+                tracklet("2:1", "A", nested_split),
+            ]
+        )
+
+        self.assertEqual(identity["summary"]["team_counts"]["A"], 1)
+        self.assertEqual(identity["summary"]["duplicate_observations_suppressed"], 3)
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        self.assertIn("2:1", a01["tracklet_ids"])
+        self.assertEqual([slot["slot_id"] for slot in identity["slots"]], ["A01"])
 
     def test_new_entry_after_long_absence_uses_bench_slot_instead_of_recycling_starter(self) -> None:
         tracklets = [
@@ -109,7 +153,7 @@ class GlobalIdentityTests(unittest.TestCase):
                     ],
                 )
             )
-        tracklets.append(tracklet("8:1", "A", [position(300, 20, 2), position(301, 20.1, 2)]))
+        tracklets.append(tracklet("8:1", "A", [position(300, 29, 29), position(301, 29.1, 29)]))
 
         identity = self.resolve(tracklets)
 
@@ -136,7 +180,7 @@ class GlobalIdentityTests(unittest.TestCase):
                     ],
                 )
             )
-        tracklets.append(tracklet("8:1", "A", [position(300, 20, 2), position(301, 20.1, 2)]))
+        tracklets.append(tracklet("8:1", "A", [position(300, 29, 29), position(301, 29.1, 29)]))
 
         identity = self.resolve(tracklets)
         stable_doc = build_stable_players_from_global_identity(identity)
@@ -211,6 +255,23 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertGreater(len(ambiguous_rows), 0)
 
     def test_confirmed_switch_with_nearby_competitor_becomes_detected(self) -> None:
+        starter = tracklet("1:1", "A", [position(frame, 4 + frame * 0.05, 4) for frame in range(6)])
+        candidate = tracklet("2:1", "A", [position(frame, 4 + frame * 0.05, 4) for frame in range(6, 45)])
+        competitor = tracklet("3:1", "A", [position(frame, 4.25 + frame * 0.05, 4.1) for frame in range(6, 9)])
+        starter["appearance_rgb"] = [240, 240, 240]
+        candidate["appearance_rgb"] = [239, 239, 241]
+        competitor["appearance_rgb"] = [170, 170, 170]
+
+        identity = self.resolve([starter, candidate, competitor])
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        self.assertIn("2:1", a01["tracklet_ids"])
+        self.assertTrue(
+            any(event.get("type") == "confirmed_switch_with_competitor_accepted" for event in a01["identity_events"])
+        )
+        self.assertGreater(a01["ambiguous_frames"], 0)
+
+    def test_confirmed_switch_with_same_team_competitor_requires_appearance_margin(self) -> None:
         identity = self.resolve(
             [
                 tracklet("1:1", "A", [position(frame, 4 + frame * 0.05, 4) for frame in range(6)]),
@@ -220,11 +281,90 @@ class GlobalIdentityTests(unittest.TestCase):
         )
 
         a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
-        self.assertIn("2:1", a01["tracklet_ids"])
-        self.assertTrue(
+        self.assertNotIn("2:1", a01["tracklet_ids"])
+        self.assertFalse(
             any(event.get("type") == "confirmed_switch_with_competitor_accepted" for event in a01["identity_events"])
         )
+        self.assertTrue(
+            any(
+                event.get("switch_block_reason") in {"recent_same_team_conflict", "appearance_margin_too_small"}
+                for event in a01["identity_events"]
+            )
+        )
         self.assertGreater(a01["ambiguous_frames"], 0)
+
+    def test_recent_identity_conflict_blocks_unmatched_repair_window(self) -> None:
+        slot = SlotState(
+            slot_id="A01",
+            stable_subject_id="slot-A01",
+            team_label="A",
+            pitch_width_m=30,
+            pitch_length_m=47.4,
+        )
+        slot.identity_events.append(
+            {
+                "type": "ambiguous_candidate",
+                "frame": 100,
+                "reason": "tracklet_switch_has_nearby_competitor",
+                "switch_block_reason": "appearance_margin_too_small",
+            }
+        )
+        run = [
+            Observation(
+                frame=105,
+                time_sec=3.5,
+                bbox_xyxy=[10, 10, 20, 40],
+                footpoint=None,
+                calibrated_footpoint=None,
+                pitch_m=[1.0, 1.0],
+                confidence=0.8,
+                tracklet_id="2:1",
+                raw_track_id=2,
+                team_label="A",
+                team_id=None,
+                team_name=None,
+                team_confidence=0.9,
+            )
+        ]
+
+        self.assertTrue(_slot_has_recent_identity_conflict(slot, run))
+        run[0].frame = 200
+        self.assertFalse(_slot_has_recent_identity_conflict(slot, run))
+
+    def test_same_team_crossing_prefers_appearance_over_raw_id_continuity(self) -> None:
+        bright_before = tracklet(
+            "1:1",
+            "A",
+            [position(frame, frame * 0.08, 0.0) for frame in range(6)],
+        )
+        muted_before = tracklet(
+            "2:1",
+            "A",
+            [position(frame, frame * 0.08, 1.2) for frame in range(6)],
+        )
+        muted_after_same_raw = tracklet(
+            "1:2",
+            "A",
+            [position(frame, 0.48 + (frame - 6) * 0.08, 0.0) for frame in range(6, 21)],
+        )
+        bright_after_swapped_raw = tracklet(
+            "2:2",
+            "A",
+            [position(frame, 0.48 + (frame - 6) * 0.08, 1.2) for frame in range(6, 21)],
+        )
+        for item in (bright_before, bright_after_swapped_raw):
+            item["appearance_rgb"] = [224.0, 223.0, 226.0]
+        for item in (muted_before, muted_after_same_raw):
+            item["appearance_rgb"] = [178.0, 181.0, 191.0]
+
+        identity = self.resolve([bright_before, muted_before, muted_after_same_raw, bright_after_swapped_raw])
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        a02 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A02")
+        self.assertIn("2:2", a01["tracklet_ids"])
+        self.assertNotIn("1:2", a01["tracklet_ids"])
+        self.assertIn("1:2", a02["tracklet_ids"])
+        self.assertNotIn("2:2", a02["tracklet_ids"])
 
     def test_recent_missing_same_team_slot_is_reused_before_spawn(self) -> None:
         identity = self.resolve(
