@@ -22,6 +22,7 @@ DEFAULT_CAMERA_MOTION_MAX_TRANSLATION_PX = 35.0
 DEFAULT_CAMERA_MOTION_MAX_ROTATION_DEG = 1.0
 DEFAULT_CAMERA_MOTION_MAX_SCALE_DELTA = 0.02
 DEFAULT_CAMERA_MOTION_MAX_FALLBACK_HOLD_SEC = 3.0
+DEFAULT_CAMERA_MOTION_MAX_SAMPLE_STEP_PX = 28.0
 
 
 def now_iso() -> str:
@@ -100,7 +101,27 @@ class CameraMotionModel:
         insert_at = int(np.searchsorted(self._frames, frame))
         before = self.samples[max(0, insert_at - 1)]
         after = self.samples[min(len(self.samples) - 1, insert_at)]
-        return before if abs(frame - before.frame) <= abs(after.frame - frame) else after
+        if before.frame == after.frame:
+            return before
+        ratio = (frame - before.frame) / max(1, after.frame - before.frame)
+        before_matrix = np.asarray(before.matrix_current_to_reference, dtype=np.float32)
+        after_matrix = np.asarray(after.matrix_current_to_reference, dtype=np.float32)
+        matrix = before_matrix + (after_matrix - before_matrix) * float(ratio)
+        matrix[2] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        status = "interpolated" if before.status in {"ok", "identity"} and after.status in {"ok", "identity"} else "fallback"
+        reason = None if status == "interpolated" else f"interpolated_{before.reason or before.status}_to_{after.reason or after.status}"
+        inlier_values = [value for value in (before.inlier_ratio, after.inlier_ratio) if value is not None]
+        inlier_ratio = sum(inlier_values) / len(inlier_values) if inlier_values else None
+        return _sample_from_matrix(
+            frame,
+            self.fps,
+            matrix,
+            status=status,
+            inlier_ratio=inlier_ratio,
+            inliers=min(before.inliers, after.inliers),
+            matches=min(before.matches, after.matches),
+            reason=reason,
+        )
 
     def transform_point(self, frame_idx: int, point: tuple[float, float] | list[float]) -> list[float]:
         sample = self.sample_for_frame(frame_idx)
@@ -155,6 +176,13 @@ class CameraMotionModel:
                 "max_abs_dy_px": round(max((abs(sample.dy_px) for sample in self.samples), default=0.0), 2),
                 "max_abs_rotation_deg": round(max((abs(sample.rotation_deg) for sample in self.samples), default=0.0), 4),
                 "max_abs_scale_delta": round(max((abs(sample.scale - 1.0) for sample in self.samples), default=0.0), 5),
+                "max_sample_step_px": round(_max_sample_step_px(self.samples), 2),
+                "stale_hold_samples": sum(1 for sample in self.samples if sample.reason and "stale_hold" in sample.reason),
+                "identity_fallback_samples": sum(
+                    1
+                    for sample in fallback_samples
+                    if np.allclose(np.asarray(sample.matrix_current_to_reference, dtype=np.float32), _identity_matrix())
+                ),
             },
             "samples": [
                 {
@@ -479,7 +507,7 @@ def _fallback_matrix_and_reason(
 ) -> tuple[np.ndarray, str]:
     hold_frames = int(round(DEFAULT_CAMERA_MOTION_MAX_FALLBACK_HOLD_SEC * max(fps, 0.0)))
     if hold_frames > 0 and int(frame_idx) - int(last_good_frame) > hold_frames:
-        return _identity_matrix(), f"{reason}_stale_last_good"
+        return last_good, f"{reason}_stale_hold"
     return last_good, reason
 
 
@@ -531,7 +559,36 @@ def _smooth_successful_samples(samples: list[CameraMotionSample], fps: float) ->
                 reason=sample.reason,
             )
         )
-    return smoothed
+    return _limit_camera_motion_sample_jumps(smoothed, fps)
+
+
+def _limit_camera_motion_sample_jumps(samples: list[CameraMotionSample], fps: float) -> list[CameraMotionSample]:
+    if len(samples) < 2:
+        return samples
+    limited: list[CameraMotionSample] = []
+    last_matrix: np.ndarray | None = None
+    for sample in samples:
+        matrix = np.asarray(sample.matrix_current_to_reference, dtype=np.float32)
+        if last_matrix is not None and sample.status in {"ok", "identity", "fallback"}:
+            previous_dx, previous_dy, _, _ = _camera_motion_components(last_matrix)
+            dx, dy, _, _ = _camera_motion_components(matrix)
+            step = math.hypot(dx - previous_dx, dy - previous_dy)
+            if step > DEFAULT_CAMERA_MOTION_MAX_SAMPLE_STEP_PX:
+                sample = _sample_from_matrix(
+                    sample.frame,
+                    fps,
+                    last_matrix,
+                    status="fallback",
+                    inlier_ratio=sample.inlier_ratio,
+                    inliers=sample.inliers,
+                    matches=sample.matches,
+                    reason="sample_step_out_of_range_hold",
+                )
+                matrix = last_matrix
+        limited.append(sample)
+        if sample.status in {"ok", "identity", "fallback"}:
+            last_matrix = np.asarray(sample.matrix_current_to_reference, dtype=np.float32)
+    return limited
 
 
 def _sample_from_matrix(
@@ -570,6 +627,17 @@ def _camera_motion_components(matrix: np.ndarray) -> tuple[float, float, float, 
     rotation = math.degrees(math.atan2(float(matrix[1, 0]), float(matrix[0, 0])))
     scale = math.sqrt(float(matrix[0, 0]) ** 2 + float(matrix[1, 0]) ** 2)
     return dx, dy, rotation, scale
+
+
+def _max_sample_step_px(samples: list[CameraMotionSample]) -> float:
+    max_step = 0.0
+    previous: CameraMotionSample | None = None
+    for sample in samples:
+        if previous is not None:
+            step = math.hypot(sample.dx_px - previous.dx_px, sample.dy_px - previous.dy_px)
+            max_step = max(max_step, step)
+        previous = sample
+    return max_step
 
 
 def _transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:

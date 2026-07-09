@@ -66,6 +66,7 @@ pitch_config.json
 overlay_preview*.mp4
 heatmap*.png
 frame_*.jpg
+visual_tests_comments/*.png
 
 # Local annotation/training frame exports
 training_frames/

@@ -941,6 +941,72 @@ export type PlayerIdentityReviewState = {
   };
 };
 
+export type IdentityReviewCrop = {
+  artifact: string;
+  frame: number;
+  time_sec?: number | null;
+  bbox_xyxy?: number[];
+  crop_bbox_xyxy?: number[];
+  confidence?: number | null;
+  track_id?: number | string | null;
+  source?: string | null;
+};
+
+export type IdentityReviewGalleryStint = {
+  stint_id: string;
+  slot_id?: string | null;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  start_time_sec?: number | null;
+  end_time_sec?: number | null;
+  duration_sec?: number | null;
+  status?: string | null;
+  detected_frames?: number | null;
+  predicted_frames?: number | null;
+  missing_frames?: number | null;
+  ambiguous_frames?: number | null;
+  tracklet_ids: string[];
+  raw_track_ids: number[];
+  candidate_positions: number;
+  crops: IdentityReviewCrop[];
+};
+
+export type IdentityReviewGalleryPlayer = {
+  stable_subject_id: string;
+  stable_player_id: string;
+  slot_id?: string | null;
+  team_label?: 'A' | 'B' | 'U' | string;
+  team_id?: string | null;
+  team_name?: string | null;
+  status?: string | null;
+  confidence?: string | null;
+  confidence_score?: number | null;
+  tracklet_ids: string[];
+  raw_track_ids: number[];
+  start_time_sec?: number | null;
+  end_time_sec?: number | null;
+  duration_sec?: number | null;
+  stint_count: number;
+  crop_count: number;
+  stints: IdentityReviewGalleryStint[];
+};
+
+export type IdentityReviewGalleryDocument = {
+  schema_version: string;
+  generated_at: string;
+  source: string;
+  identity_semantics?: string;
+  parameters: Record<string, unknown>;
+  summary: {
+    stable_players: number;
+    stints: number;
+    stints_with_crops: number;
+    players_with_crops: number;
+    crops: number;
+  };
+  players: IdentityReviewGalleryPlayer[];
+};
+
 export type AssignmentSummary = {
   raw_tracklets: number;
   assignments_total: number;

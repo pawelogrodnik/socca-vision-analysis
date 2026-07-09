@@ -144,7 +144,7 @@ class CameraMotionTests(unittest.TestCase):
         scaled = np.array([[0.97, 0.0, 0.0], [0.0, 0.97, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
         self.assertEqual(_camera_motion_sanity_rejection_reason(scaled), "motion_scale_out_of_range")
 
-    def test_stale_fallback_returns_identity(self) -> None:
+    def test_stale_fallback_holds_last_good_transform(self) -> None:
         from app.services.camera_motion import _fallback_matrix_and_reason
 
         last_good = np.eye(3, dtype=np.float32)
@@ -155,8 +155,47 @@ class CameraMotionTests(unittest.TestCase):
         self.assertEqual(float(fresh_matrix[0, 2]), 20.0)
 
         stale_matrix, stale_reason = _fallback_matrix_and_reason(120, 30.0, last_good, 0, "low_confidence")
-        self.assertEqual(stale_reason, "low_confidence_stale_last_good")
-        self.assertTrue(np.array_equal(stale_matrix, np.eye(3, dtype=np.float32)))
+        self.assertEqual(stale_reason, "low_confidence_stale_hold")
+        self.assertEqual(float(stale_matrix[0, 2]), 20.0)
+
+    def test_sample_for_frame_interpolates_between_motion_samples(self) -> None:
+        from app.services.camera_motion import CameraMotionModel, CameraMotionSample
+
+        start = np.eye(3, dtype=np.float32)
+        end = np.eye(3, dtype=np.float32)
+        end[0, 2] = 20.0
+        model = CameraMotionModel(
+            enabled=True,
+            reference_frame=0,
+            reference_time_sec=0.0,
+            frame_count=20,
+            fps=10.0,
+            interval_sec=1.0,
+            min_inlier_ratio=0.6,
+            samples=[
+                CameraMotionSample(
+                    frame=0,
+                    time_sec=0.0,
+                    status="identity",
+                    matrix_current_to_reference=start.tolist(),
+                    matrix_reference_to_current=start.tolist(),
+                    inlier_ratio=1.0,
+                ),
+                CameraMotionSample(
+                    frame=10,
+                    time_sec=1.0,
+                    status="ok",
+                    matrix_current_to_reference=end.tolist(),
+                    matrix_reference_to_current=np.linalg.inv(end).astype(np.float32).tolist(),
+                    inlier_ratio=0.9,
+                ),
+            ],
+        )
+
+        sample = model.sample_for_frame(5)
+
+        self.assertEqual(sample.status, "interpolated")
+        self.assertAlmostEqual(sample.dx_px, 10.0, places=2)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from app.config import STORAGE_DIR, WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.services.analysis import (
     _build_ball_possession_artifacts,
@@ -22,6 +24,7 @@ from app.services.ball_tracking import (
     build_ball_tracks_document,
 )
 from app.services.camera_motion import CameraMotionModel, build_camera_motion_model, write_camera_motion_report
+from app.services.pitch import PitchConfig, image_to_pitch_m
 from app.services.stabilization import stabilize_match
 from app.services.video import read_video_metadata
 
@@ -96,6 +99,7 @@ def reprocess_match_from_artifacts(
     if not WRITE_DEBUG_VIDEO_ARTIFACTS:
         _cleanup_debug_video_artifacts(output_dir)
 
+    tracks = _recalibrate_tracks_for_camera_motion(tracks, pitch, camera_motion)
     artifacts = _write_outputs(output_dir, pitch, tracks, include_overlay=False)
     artifacts["camera_motion_report"] = "camera_motion_report.json"
     if write_raw_overlay:
@@ -511,6 +515,55 @@ def _load_tracks(path: Path) -> list[dict[str, Any]]:
     if not isinstance(tracks, list):
         raise ValueError("tracks.json must contain a list")
     return tracks
+
+
+def _recalibrate_tracks_for_camera_motion(
+    tracks: list[dict[str, Any]],
+    pitch: PitchConfig,
+    camera_motion: CameraMotionModel,
+) -> list[dict[str, Any]]:
+    if not getattr(camera_motion, "enabled", False):
+        return tracks
+    homography = pitch.homography()
+    recalibrated: list[dict[str, Any]] = []
+    for track in tracks:
+        positions: list[dict[str, Any]] = []
+        for position in track.get("positions") or []:
+            if not isinstance(position, dict):
+                continue
+            row = dict(position)
+            footpoint = row.get("footpoint")
+            if _valid_point(footpoint):
+                frame = int(row.get("frame") or 0)
+                calibrated = camera_motion.transform_point(frame, [float(footpoint[0]), float(footpoint[1])])
+                row["calibrated_footpoint"] = calibrated
+                row["tracking_footpoint"] = calibrated
+                row.update(camera_motion.metadata_for_frame(frame))
+                mapped = image_to_pitch_m([(float(calibrated[0]), float(calibrated[1]))], homography)
+                if mapped:
+                    x_m = float(mapped[0][0])
+                    y_m = float(mapped[0][1])
+                    clamped_x = float(np.clip(x_m, 0.0, pitch.width_m))
+                    clamped_y = float(np.clip(y_m, 0.0, pitch.length_m))
+                    row["pitch_m_clamped"] = abs(clamped_x - x_m) > 1e-6 or abs(clamped_y - y_m) > 1e-6
+                    row["pitch_m"] = [round(clamped_x, 3), round(clamped_y, 3)]
+                    row["pitch_m_source"] = "reprocess_camera_motion_calibrated_footpoint"
+            positions.append(row)
+        if not positions:
+            continue
+        next_track = dict(track)
+        next_track["positions"] = positions
+        next_track["positions_count"] = len(positions)
+        times = [float(row.get("time_sec") or 0.0) for row in positions]
+        next_track["start_time_sec"] = round(min(times), 3)
+        next_track["end_time_sec"] = round(max(times), 3)
+        next_track["duration_sec"] = round(max(0.0, max(times) - min(times)), 3)
+        recalibrated.append(next_track)
+    return sorted(recalibrated, key=lambda item: int(item.get("track_id") or 0))
+
+
+def _valid_point(value: Any) -> bool:
+    return isinstance(value, list | tuple) and len(value) >= 2 and value[0] is not None and value[1] is not None
 
 
 def _load_json(path: Path) -> Any:

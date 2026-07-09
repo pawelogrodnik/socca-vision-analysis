@@ -8,6 +8,7 @@ import type {
   ChangeCandidatesDocument,
   ContactCandidateReviewUpdate,
   ContactCandidatesDocument,
+  IdentityReviewGalleryDocument,
   Match,
   MatchPhaseConfigDocument,
   MatchPhaseConfigPayload,
@@ -223,6 +224,24 @@ export async function reviewChangeCandidates(
 
 export async function getPlayerIdentityReview(matchId: string): Promise<PlayerIdentityReviewState> {
   return request<PlayerIdentityReviewState>(`/api/matches/${matchId}/player-identity`);
+}
+
+export async function getIdentityReviewGallery(matchId: string): Promise<IdentityReviewGalleryDocument> {
+  return request<IdentityReviewGalleryDocument>(`/api/matches/${matchId}/identity-review-gallery`);
+}
+
+export async function generateIdentityReviewGallery(
+  matchId: string,
+  samplesPerStint = 8,
+  force = false,
+): Promise<IdentityReviewGalleryDocument> {
+  const params = new URLSearchParams({
+    samples_per_stint: String(samplesPerStint),
+    force: force ? 'true' : 'false',
+  });
+  return request<IdentityReviewGalleryDocument>(`/api/matches/${matchId}/identity-review-gallery?${params}`, {
+    method: 'POST',
+  });
 }
 
 export async function savePlayerIdentityAssignments(

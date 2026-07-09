@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
+
+from app.services.camera_motion import CameraMotionModel, CameraMotionSample
 from app.services.post_yolo_reprocess import reprocess_match_from_artifacts, resolve_reprocess_video
 
 
@@ -65,6 +68,33 @@ def _stable_result(refined_ball_tracks=None) -> dict:
     }
 
 
+def _translated_camera_motion_model() -> CameraMotionModel:
+    current_to_reference = np.eye(3, dtype=np.float32)
+    current_to_reference[0, 2] = 10.0
+    reference_to_current = np.linalg.inv(current_to_reference).astype(np.float32)
+    return CameraMotionModel(
+        enabled=True,
+        reference_frame=0,
+        reference_time_sec=0.0,
+        frame_count=30,
+        fps=30.0,
+        interval_sec=0.5,
+        min_inlier_ratio=0.6,
+        samples=[
+            CameraMotionSample(
+                frame=0,
+                time_sec=0.0,
+                status="ok",
+                matrix_current_to_reference=current_to_reference.tolist(),
+                matrix_reference_to_current=reference_to_current.tolist(),
+                inlier_ratio=0.9,
+                inliers=30,
+                matches=40,
+            )
+        ],
+    )
+
+
 class PostYoloReprocessTests(unittest.TestCase):
     def test_resolve_video_from_benchmark_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,6 +130,28 @@ class PostYoloReprocessTests(unittest.TestCase):
             stabilize.assert_called_once()
             self.assertEqual(stabilize.call_args.args[3][0]["track_id"], 1)
             self.assertIsNone(stabilize.call_args.kwargs["ball_tracks_doc"])
+
+    def test_reprocess_recalibrates_tracks_with_camera_motion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source"
+            output_dir = Path(tmp) / "output"
+            video_path = _write_reprocess_inputs(source_dir)
+            metadata = {"fps": 30.0, "width": 100, "height": 100, "frame_count": 30, "duration_sec": 1.0}
+
+            with patch("app.services.post_yolo_reprocess.read_video_metadata", return_value=metadata), patch(
+                "app.services.post_yolo_reprocess.build_camera_motion_model",
+                return_value=_translated_camera_motion_model(),
+            ), patch(
+                "app.services.post_yolo_reprocess.stabilize_match",
+                return_value=_stable_result(),
+            ) as stabilize:
+                reprocess_match_from_artifacts(source_dir, video_path, output_dir=output_dir)
+
+            recalibrated_tracks = stabilize.call_args.args[3]
+            first_position = recalibrated_tracks[0]["positions"][0]
+            self.assertEqual(first_position["calibrated_footpoint"], [25.0, 40.0])
+            self.assertEqual(first_position["pitch_m_source"], "reprocess_camera_motion_calibrated_footpoint")
+            self.assertAlmostEqual(first_position["pitch_m"][0], 7.5, places=2)
 
     def test_reprocess_rebuilds_ball_tracks_from_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

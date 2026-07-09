@@ -78,7 +78,7 @@ class GlobalIdentityTests(unittest.TestCase):
         identity = self.resolve(
             [
                 tracklet("1:1", "A", [position(0, 0, 0)]),
-                tracklet("2:1", "A", [position(1, 20, 0)]),
+                tracklet("2:1", "A", [position(frame, 20 + frame * 0.1, 0) for frame in range(1, 4)]),
             ]
         )
 
@@ -86,6 +86,41 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(len(a_slots), 2)
         self.assertEqual(a_slots[0]["tracklet_ids"], ["1:1"])
         self.assertEqual(a_slots[1]["tracklet_ids"], ["2:1"])
+
+    def test_short_new_tracklet_waits_instead_of_spawning_slot(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet("1:1", "A", [position(frame, 0 + frame * 0.1, 0) for frame in range(3)]),
+                tracklet("2:1", "A", [position(3, 8, 8), position(4, 8.1, 8)]),
+            ]
+        )
+
+        self.assertEqual([slot["slot_id"] for slot in identity["slots"]], ["A01"])
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 2)
+
+    def test_unknown_or_outlier_team_does_not_spawn_least_loaded_slot(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet("1:1", "U", [position(frame, 10 + frame * 0.1, 8) for frame in range(5)]),
+            ]
+        )
+
+        self.assertEqual(identity["summary"]["stable_players"], 0)
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 5)
+
+    def test_low_confidence_labeled_team_does_not_rebalance_to_least_loaded_team(self) -> None:
+        tracklets = [
+            tracklet(f"{index + 1}:1", "A", [position(frame, index, 2) for frame in range(4)])
+            for index in range(6)
+        ]
+        low_confidence_b = tracklet("20:1", "B", [position(frame, 20 + frame * 0.1, 2) for frame in range(4)])
+        low_confidence_b["team_confidence"] = 0.2
+        tracklets.append(low_confidence_b)
+
+        identity = self.resolve(tracklets)
+
+        self.assertIn("B01", [slot["slot_id"] for slot in identity["slots"]])
+        self.assertNotIn("A07", [slot["slot_id"] for slot in identity["slots"]])
 
     def test_caps_active_slots_to_seven_per_team(self) -> None:
         tracklets = [
@@ -153,7 +188,7 @@ class GlobalIdentityTests(unittest.TestCase):
                     ],
                 )
             )
-        tracklets.append(tracklet("8:1", "A", [position(300, 29, 29), position(301, 29.1, 29)]))
+        tracklets.append(tracklet("8:1", "A", [position(frame, 29 + (frame - 300) * 0.1, 29) for frame in range(300, 303)]))
 
         identity = self.resolve(tracklets)
 
@@ -180,7 +215,7 @@ class GlobalIdentityTests(unittest.TestCase):
                     ],
                 )
             )
-        tracklets.append(tracklet("8:1", "A", [position(300, 29, 29), position(301, 29.1, 29)]))
+        tracklets.append(tracklet("8:1", "A", [position(frame, 29 + (frame - 300) * 0.1, 29) for frame in range(300, 303)]))
 
         identity = self.resolve(tracklets)
         stable_doc = build_stable_players_from_global_identity(identity)

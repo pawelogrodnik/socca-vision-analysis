@@ -19,6 +19,7 @@ import type {
   Team,
 } from '../types';
 import { errorMessage } from '../lib/helpers';
+import { IdentityReviewGalleryPanel } from './IdentityReviewGalleryPanel';
 
 interface StablePlayersPanelProps {
   match: Match;
@@ -479,6 +480,12 @@ export function StablePlayersPanel({
           <span>Ghost boxes: {numberFrom(frameSummary, 'ghost_bbox_count') ?? 'n/a'}</span>
         </div>
       )}
+
+      <IdentityReviewGalleryPanel
+        match={match}
+        onStatus={onStatus}
+        onSaved={onSaved}
+      />
 
       {teamClusters && (
         <div className='chips'>

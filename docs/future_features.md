@@ -55,3 +55,9 @@ Acceptance idea:
   them, the overlay shows a passing option line;
 - when an opponent's lower bbox/footpoint crosses the lane, that option is not
   shown as open.
+
+
+
+## Possession graph
+
+- I want to have a graph where we track possesion in atleast 40 points thorough the video (so if the video is 40 minutes long i want to have possesion stamp each minute so i can build a chart with recharts library based on possession through the match); if the video is 5 minutes long 10 stampps are enough; lets do atleast 10 stamps per match with 40 stamps max based on video length; it would use https://recharts.github.io/en-US/examples/PercentAreaChart/

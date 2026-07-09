@@ -21,6 +21,7 @@ from app.services.change_candidates import load_change_candidates_review, save_c
 from app.services.chunked_analysis import analyze_match_chunked_yolo
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
 from app.services.identity import build_identity_review, save_identity_assignments
+from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -882,6 +883,38 @@ def review_player_identity(match_id: str, payload: dict[str, Any] = Body(...)) -
     return doc
 
 
+@app.get("/api/matches/{match_id}/identity-review-gallery")
+def get_identity_review_gallery(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_identity_review_gallery(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/matches/{match_id}/identity-review-gallery")
+def generate_identity_review_gallery(
+    match_id: str,
+    samples_per_stint: int = Query(8, ge=1, le=24),
+    force: bool = Query(False),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    video_path = match_video_path(path)
+    try:
+        return build_identity_review_gallery(
+            path,
+            video_path,
+            samples_per_stint=samples_per_stint,
+            force=force,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/matches/{match_id}/resolved-player-stats")
 def get_resolved_player_stats(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -1131,6 +1164,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "identity_candidates": None,
         "identity_assignments": None,
         "player_identity_assignments": None,
+        "identity_review_gallery": None,
         "stable_players": None,
         "global_identity": None,
         "global_identity_report": None,
@@ -1176,6 +1210,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         ("identity_candidates", "identity_candidates.json"),
         ("identity_assignments", "identity_assignments.json"),
         ("player_identity_assignments", "player_identity_assignments.json"),
+        ("identity_review_gallery", "identity_review_gallery.json"),
         ("stable_players", "stable_players.json"),
         ("global_identity", "global_identity.json"),
         ("global_identity_report", "global_identity_report.json"),
@@ -1232,6 +1267,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["identity_assignments_json"] = "identity_assignments.json"
     if (path / "player_identity_assignments.json").exists():
         package["assets"]["player_identity_assignments_json"] = "player_identity_assignments.json"
+    if (path / "identity_review_gallery.json").exists():
+        package["assets"]["identity_review_gallery_json"] = "identity_review_gallery.json"
     if (path / "stable_players.json").exists():
         package["assets"]["stable_players_json"] = "stable_players.json"
     if (path / "global_identity.json").exists():
@@ -1428,6 +1465,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "identity_candidates.json": "application/json",
         "identity_assignments.json": "application/json",
         "player_identity_assignments.json": "application/json",
+        "identity_review_gallery.json": "application/json",
         "stable_players.json": "application/json",
         "global_identity.json": "application/json",
         "global_identity_report.json": "application/json",
@@ -1476,6 +1514,13 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         and artifact_basename.lower().endswith(".png")
     ):
         allowed[artifact_basename] = "image/png"
+    if (
+        len(artifact_rel.parts) >= 4
+        and artifact_rel.parts[0] == "identity_review"
+        and artifact_rel.parts[1] == "crops"
+        and artifact_basename.lower().endswith((".jpg", ".jpeg"))
+    ):
+        allowed[artifact_basename] = "image/jpeg"
     if artifact_basename not in allowed:
         raise HTTPException(status_code=404, detail="Artifact not available")
     artifact_path = (path / artifact_rel).resolve()

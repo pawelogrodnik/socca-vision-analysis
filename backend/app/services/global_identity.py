@@ -34,6 +34,8 @@ APPEARANCE_RAW_CONTINUITY_MAX_RGB_DISTANCE = 46.0
 UNMATCHED_CONFIRMATION_FRAMES = 3
 UNMATCHED_MAX_FRAME_GAP = 2
 UNMATCHED_REPAIR_MAX_DISTANCE_M = 18.0
+NEW_SLOT_MIN_TRACKLET_POSITIONS = UNMATCHED_CONFIRMATION_FRAMES
+INITIAL_NEW_SLOT_GRACE_FRAMES = 2
 BBOX_OUTLIER_MIN_DETECTIONS = 6
 MODERATE_BBOX_OUTLIER_MIN_CONFIDENCE = 0.75
 MODERATE_BBOX_OUTLIER_MAX_RATIO = 3.0
@@ -896,6 +898,8 @@ def resolve_global_identity(
             "duplicate_obs_min_iou": DUPLICATE_OBS_MIN_IOU,
             "unmatched_confirmation_frames": UNMATCHED_CONFIRMATION_FRAMES,
             "unmatched_repair_max_distance_m": UNMATCHED_REPAIR_MAX_DISTANCE_M,
+            "new_slot_min_tracklet_positions": NEW_SLOT_MIN_TRACKLET_POSITIONS,
+            "initial_new_slot_grace_frames": INITIAL_NEW_SLOT_GRACE_FRAMES,
             "assignment_solver": "lapjv_or_greedy_fallback",
             "stats_max_speed_mps": MAX_STATS_SPEED_MPS,
             "stats_max_sustained_speed_mps": MAX_STATS_SUSTAINED_SPEED_MPS,
@@ -1076,6 +1080,10 @@ def _assign_frame(
                     candidate = (reuse_slot, team_rebalanced)
                     start_reason = reuse_reason
                 else:
+                    spawn_rejection = _new_slot_candidate_rejection_reason(slots, obs)
+                    if spawn_rejection is not None:
+                        _record_spawn_blocked(slots, obs, reason=spawn_rejection)
+                        continue
                     selected = _select_inactive_slot(slots, obs)
                     if selected is None:
                         _record_spawn_blocked(slots, obs, reason=f"{start_reason}:no_inactive_slot_available")
@@ -1891,32 +1899,32 @@ def _slot_has_missing_row_at_frame(slot: SlotState, frame: int) -> bool:
 
 
 def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool] | None:
+    if obs.team_label not in TEAM_LABELS:
+        return None
     active_counts = {
         team_label: sum(1 for slot in slots if slot.team_label == team_label and slot.active)
         for team_label in TEAM_LABELS
     }
-    preferred = obs.team_label if obs.team_label in TEAM_LABELS else _least_loaded_team(slots)
+    preferred = obs.team_label
     if active_counts.get(preferred, 0) < TARGET_PLAYERS_PER_TEAM:
         slot = _first_inactive_slot(slots, preferred, prefer_unused=True) or _first_inactive_slot(slots, preferred, prefer_unused=False)
         if slot is not None:
             return slot, False
-    if not _team_rebalance_allowed(obs):
-        return None
-    for team_label in sorted(TEAM_LABELS, key=lambda label: active_counts[label]):
-        if active_counts[team_label] >= TARGET_PLAYERS_PER_TEAM:
-            continue
-        slot = _first_inactive_slot(slots, team_label, prefer_unused=True) or _first_inactive_slot(slots, team_label, prefer_unused=False)
-        if slot is not None:
-            return slot, obs.team_label in TEAM_LABELS and obs.team_label != team_label
     return None
 
 
 def _team_rebalance_allowed(obs: Observation) -> bool:
+    return obs.team_label not in TEAM_LABELS
+
+
+def _new_slot_candidate_rejection_reason(slots: list[SlotState], obs: Observation) -> str | None:
     if obs.team_label not in TEAM_LABELS:
-        return True
-    if obs.team_confidence >= RELIABLE_TEAM_MIN_CONFIDENCE:
-        return False
-    return obs.team_confidence <= TEAM_REBALANCE_MAX_CONFIDENCE
+        return "unknown_or_outlier_team_not_spawned"
+    if obs.frame <= INITIAL_NEW_SLOT_GRACE_FRAMES:
+        return None
+    if obs.tracklet_positions_count < NEW_SLOT_MIN_TRACKLET_POSITIONS:
+        return "new_slot_tracklet_needs_confirmation"
+    return None
 
 
 def _select_recent_reuse_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool, str] | None:
