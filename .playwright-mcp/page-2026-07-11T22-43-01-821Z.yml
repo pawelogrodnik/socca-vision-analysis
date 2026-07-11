@@ -1,0 +1,11 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - paragraph [ref=e5]: Published match report
+    - heading "Raport meczu" [level=1] [ref=e6]
+    - paragraph [ref=e7]: "Publiczny raport meczowy dla zawodnikow: statystyki druzyn, potwierdzeni gracze i heatmapy bez technicznego review."
+    - generic [ref=e8]:
+      - link "Lista meczow" [ref=e9] [cursor=pointer]:
+        - /url: /
+      - link "Panel admin" [ref=e10] [cursor=pointer]:
+        - /url: /admin-panel
+  - paragraph [ref=e11]: Laduje publiczny raport...

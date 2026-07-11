@@ -1425,6 +1425,20 @@ export type PublicReportPlayer = {
     samples: number;
     detected_samples: number;
     quality: string;
+    interactive?: {
+      method: string;
+      width: number;
+      height: number;
+      grid_width: number;
+      grid_length: number;
+      radius: number;
+      max_value: number;
+      points: Array<{
+        x: number;
+        y: number;
+        value: number;
+      }>;
+    };
   };
 };
 

@@ -695,6 +695,38 @@ a { color: #93c5fd; }
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 14px;
 }
+.public-heatmap-visual {
+  position: relative;
+  width: min(360px, 100%);
+  aspect-ratio: 1 / 2;
+  overflow: hidden;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    #123f2b;
+  background-size: 100% 12.5%, 12.5% 100%, auto;
+}
+.public-heatmap-canvas,
+.public-heatmap-pitch-lines {
+  position: absolute;
+  inset: 0;
+}
+.public-heatmap-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+.public-heatmap-pitch-lines {
+  pointer-events: none;
+}
+.public-heatmap-pitch-lines rect,
+.public-heatmap-pitch-lines line {
+  fill: none;
+  stroke: rgba(248, 250, 252, 0.9);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
 .public-chart {
   width: 100%;
   height: 320px;

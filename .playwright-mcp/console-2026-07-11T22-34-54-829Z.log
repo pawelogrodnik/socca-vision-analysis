@@ -1,0 +1,124 @@
+[     127ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-A4PLE5AR.js?v=0805af98:21550
+[     143ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=0805af98:4426
+[     143ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=0805af98:4426
+[     678ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     688ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     690ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     693ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     695ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     702ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     705ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     708ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     710ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     712ms] TypeError: Cannot assign to read only property 'data' of object '#<ImageData>'
+    at Canvas2dRenderer2._colorize (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:442:22)
+    at Canvas2dRenderer2.renderAll (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:318:20)
+    at http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:495:33
+    at Coordinator2.emit (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:504:19)
+    at Store3.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:150:31)
+    at Heatmap2.setData (http://localhost:5173/node_modules/.vite/deps/heatmap__js.js?v=0805af98:555:33)
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx:57:23)
+[     717ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:5173/favicon.ico:0
+[  255991ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256004ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256020ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256037ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256054ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256071ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256087ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256103ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256120ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256137ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)
+[  256140ms] RangeError: Failed to execute 'getImageData' on 'CanvasRenderingContext2D': Out of memory at ImageData creation
+    at renderHeatmap (http://localhost:5173/src/components/PublicPlayerHeatmap.tsx?t=1783809506828:93:30)

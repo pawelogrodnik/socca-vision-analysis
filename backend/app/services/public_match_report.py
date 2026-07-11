@@ -304,6 +304,53 @@ def _real_player_heatmap_rows(player: dict[str, Any], stable_players: dict[str, 
     return rows
 
 
+def _public_heatmap_points(
+    rows: list[dict[str, Any]],
+    *,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    width_px: int,
+    length_px: int,
+    grid_width: int = 48,
+    grid_length: int = 96,
+) -> dict[str, Any]:
+    import numpy as np
+
+    bins: dict[tuple[int, int], int] = {}
+    cell_width = width_px / max(1, grid_width)
+    cell_height = length_px / max(1, grid_length)
+    for row in rows:
+        pitch_m = row.get("pitch_m")
+        if not pitch_m or len(pitch_m) < 2:
+            continue
+        x_m, y_m = float(pitch_m[0]), float(pitch_m[1])
+        x = int(np.clip(x_m / max(pitch_width_m, 0.001) * (width_px - 1), 0, width_px - 1))
+        y = int(np.clip(y_m / max(pitch_length_m, 0.001) * (length_px - 1), 0, length_px - 1))
+        bin_x = min(grid_width - 1, max(0, int(x / cell_width)))
+        bin_y = min(grid_length - 1, max(0, int(y / cell_height)))
+        bins[(bin_x, bin_y)] = bins.get((bin_x, bin_y), 0) + 1
+
+    max_value = max(bins.values(), default=0)
+    points = [
+        {
+            "x": int(round((bin_x + 0.5) * cell_width)),
+            "y": int(round((bin_y + 0.5) * cell_height)),
+            "value": value,
+        }
+        for (bin_x, bin_y), value in sorted(bins.items(), key=lambda item: (item[0][1], item[0][0]))
+    ]
+    return {
+        "method": "pitch_meter_binned_canvas_heatmap_v1",
+        "width": width_px,
+        "height": length_px,
+        "grid_width": grid_width,
+        "grid_length": grid_length,
+        "radius": max(14, int(round(max(cell_width, cell_height) * 2.2))),
+        "max_value": max_value,
+        "points": points,
+    }
+
+
 def _write_public_player_heatmap(
     player: dict[str, Any],
     stable_players: dict[str, dict[str, Any]],
@@ -316,14 +363,16 @@ def _write_public_player_heatmap(
     rows = _real_player_heatmap_rows(player, stable_players)
     player_id = str(player.get("player_id") or player.get("player_name") or "player")
     filename = f"player_{_safe_artifact_id(player_id)}.png"
+    width_px = 360
+    length_px = 720
     heatmap_dir.mkdir(parents=True, exist_ok=True)
     _write_player_heatmap_png(
         heatmap_dir / filename,
         rows,
         pitch_width_m=pitch_width_m,
         pitch_length_m=pitch_length_m,
-        width_px=360,
-        length_px=720,
+        width_px=width_px,
+        length_px=length_px,
     )
     detected_samples = sum(1 for row in rows if row.get("source") == "detected")
     frames = _nested(player, "frames")
@@ -338,6 +387,13 @@ def _write_public_player_heatmap(
         "samples": len(rows),
         "detected_samples": detected_samples,
         "quality": quality,
+        "interactive": _public_heatmap_points(
+            rows,
+            pitch_width_m=pitch_width_m,
+            pitch_length_m=pitch_length_m,
+            width_px=width_px,
+            length_px=length_px,
+        ),
     }
 
 

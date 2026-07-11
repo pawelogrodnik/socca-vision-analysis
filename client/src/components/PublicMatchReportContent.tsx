@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
+import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
 
 type PublicMatchReportContentProps = {
   report: PublicMatchReport;
@@ -430,13 +431,11 @@ export function PublicMatchReportContent({
         <div className='player-heatmap-grid'>
           {report.players.map((player) => (
             <figure className='player-heatmap' key={`${player.player_id}-heatmap`}>
-              {player.heatmap?.path ? (
-                <img src={assetHref(player.heatmap.path)} alt={`Heatmapa ${playerLabel(player)}`} />
-              ) : (
-                <div className='player-heatmap-placeholder'>
-                  <span>Brak heatmapy.</span>
-                </div>
-              )}
+              <PublicPlayerHeatmap
+                alt={`Heatmapa ${playerLabel(player)}`}
+                fallbackSrc={player.heatmap?.path ? assetHref(player.heatmap.path) : undefined}
+                heatmap={player.heatmap}
+              />
               <figcaption>
                 {playerLabel(player)}
                 <br />
