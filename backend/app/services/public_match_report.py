@@ -205,8 +205,8 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
                 "team_label": team_label,
                 "team_id": resolved_team.get("team_id") or team_id,
                 "team_name": resolved_team.get("team_name")
-                or team.get("team_name")
                 or display_row.get("team_name")
+                or team.get("team_name")
                 or f"Team {team_label}",
                 "display_color": display_row.get("display_color") or team.get("display_color"),
                 "playing_time_sec": match_duration_sec,

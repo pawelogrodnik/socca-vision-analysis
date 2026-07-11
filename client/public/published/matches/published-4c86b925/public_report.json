@@ -489,7 +489,7 @@
     "progressive_pass_candidates": 7,
     "same_team_pass_candidates": 11
   },
-  "generated_at": "2026-07-10T19:28:01.438484+00:00",
+  "generated_at": "2026-07-11T21:59:07.739185+00:00",
   "id": "published-4c86b925",
   "match": {
     "duration_sec": 1156.32,
@@ -763,7 +763,7 @@
       "sprint_count": 0,
       "team_id": null,
       "team_label": "B",
-      "team_name": "Team B",
+      "team_name": "Verisk",
       "total_distance_m": 12076.15,
       "turnover_or_interception_candidates": 4
     }
