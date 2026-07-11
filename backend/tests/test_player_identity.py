@@ -252,6 +252,121 @@ class PlayerIdentityTests(unittest.TestCase):
             self.assertEqual(doc["summary"]["sprint_candidate_count"], 2)
             self.assertTrue((path / "resolved_player_stats.json").exists())
 
+    def test_resolved_player_stats_clip_repeated_slot_stint_assignments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            stable = stable_doc()
+            stable["players"][0]["stints"] = [
+                {
+                    "stint_id": "slot-a01-stint-001",
+                    "start_frame": 0,
+                    "end_frame": 99,
+                    "detected_frames": 80,
+                    "missing_frames": 15,
+                    "ambiguous_frames": 5,
+                    "predicted_frames": 0,
+                    "tracklet_ids": ["1:1"],
+                    "raw_track_ids": [1],
+                },
+                {
+                    "stint_id": "slot-a01-stint-002",
+                    "start_frame": 100,
+                    "end_frame": 299,
+                    "detected_frames": 160,
+                    "missing_frames": 30,
+                    "ambiguous_frames": 10,
+                    "predicted_frames": 0,
+                    "tracklet_ids": ["2:1"],
+                    "raw_track_ids": [2],
+                },
+            ]
+            (path / "stable_players.json").write_text(json.dumps(stable), encoding="utf-8")
+            (path / "player_stats.json").write_text(json.dumps(player_stats_doc()), encoding="utf-8")
+            save_player_identity_assignments(
+                path,
+                match_meta(),
+                [
+                    {
+                        "stable_subject_id": "slot-a01",
+                        "stint_id": "slot-a01-stint-001",
+                        "status": "assigned",
+                        "player_id": "p-a-1",
+                    },
+                    {
+                        "stable_subject_id": "slot-a01",
+                        "stint_id": "slot-a01-stint-002",
+                        "status": "assigned",
+                        "player_id": "p-a-1",
+                    },
+                ],
+            )
+
+            doc = build_resolved_player_stats_from_files(path, persist=True)
+
+            self.assertEqual(doc["summary"]["assigned_stints"], 2)
+            self.assertEqual(doc["players"][0]["player_id"], "p-a-1")
+            self.assertEqual(len(doc["players"][0]["source_stable_slots"]), 2)
+            self.assertEqual(doc["players"][0]["time"]["playing_time_sec"], 10.0)
+            self.assertEqual(doc["players"][0]["time"]["detected_time_sec"], 8.0)
+            self.assertEqual(doc["players"][0]["distance"]["total_distance_m"], 23.0)
+            self.assertEqual(doc["summary"]["total_distance_m"], 23.0)
+
+    def test_resolved_player_stats_do_not_double_count_overlapping_stints_for_one_player(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            stable = stable_doc()
+            stable["players"][0]["stints"] = [
+                {
+                    "stint_id": "slot-a01-stint-001",
+                    "start_time_sec": 0.0,
+                    "end_time_sec": 20.0,
+                    "start_frame": 0,
+                    "end_frame": 199,
+                    "detected_frames": 200,
+                    "missing_frames": 0,
+                    "ambiguous_frames": 0,
+                    "predicted_frames": 0,
+                },
+                {
+                    "stint_id": "slot-a01-stint-002",
+                    "start_time_sec": 10.0,
+                    "end_time_sec": 30.0,
+                    "start_frame": 100,
+                    "end_frame": 299,
+                    "detected_frames": 200,
+                    "missing_frames": 0,
+                    "ambiguous_frames": 0,
+                    "predicted_frames": 0,
+                },
+            ]
+            (path / "stable_players.json").write_text(json.dumps(stable), encoding="utf-8")
+            (path / "player_stats.json").write_text(json.dumps(player_stats_doc()), encoding="utf-8")
+            save_player_identity_assignments(
+                path,
+                match_meta(),
+                [
+                    {
+                        "stable_subject_id": "slot-a01",
+                        "stint_id": "slot-a01-stint-001",
+                        "status": "assigned",
+                        "player_id": "p-a-1",
+                    },
+                    {
+                        "stable_subject_id": "slot-a01",
+                        "stint_id": "slot-a01-stint-002",
+                        "status": "assigned",
+                        "player_id": "p-a-1",
+                    },
+                ],
+            )
+
+            doc = build_resolved_player_stats_from_files(path, persist=True)
+
+            self.assertEqual(doc["summary"]["overlapping_stint_assignments_clipped"], 1)
+            self.assertEqual(doc["players"][0]["time"]["playing_time_sec"], 10.0)
+            self.assertEqual(doc["players"][0]["distance"]["total_distance_m"], 23.0)
+            self.assertIn("overlapping_stint_clipped", doc["players"][0]["review_warnings"])
+
 
 if __name__ == "__main__":
     unittest.main()

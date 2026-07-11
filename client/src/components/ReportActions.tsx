@@ -125,12 +125,12 @@ export function ReportActions({
           )}
           {onPublish && (
             <button type='button' onClick={onPublish} disabled={isBusy}>
-              {busyAction === 'publish' ? 'Publikuje...' : 'Publikuj do SQLite'}
+              {busyAction === 'publish' ? 'Publikuje...' : 'Publikuj raport'}
             </button>
           )}
           {onReplacePublish && (
             <button type='button' className='secondary' onClick={onReplacePublish} disabled={isBusy}>
-              {busyAction === 'replace' ? 'Nadpisuje...' : 'Nadpisz w SQLite'}
+              {busyAction === 'replace' ? 'Nadpisuje...' : 'Nadpisz publikacje'}
             </button>
           )}
         </div>

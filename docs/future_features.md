@@ -8,6 +8,8 @@ current tracking/statistics foundation work.
 When the possession layer identifies the current ball carrier, the stable
 overlay should draw a clear visual marker above that player's bbox.
 
+Implementation status: baseline implemented for `stable_overlay_preview.mp4`.
+
 Proposed first version:
 
 - draw a small red triangle above the center of the player's bbox, similar to
@@ -29,6 +31,10 @@ Acceptance idea:
 
 When a player has controlled possession, the stable overlay should optionally
 draw passing-lane lines from that player to teammates who appear to be open.
+
+Implementation status: baseline implemented only inside stable overlay rendering.
+Passing lanes are not persisted as tactical stats and are not computed outside
+`stable_overlay_preview.mp4` generation.
 
 Proposed first version:
 
@@ -61,3 +67,7 @@ Acceptance idea:
 ## Possession graph
 
 - I want to have a graph where we track possesion in atleast 40 points thorough the video (so if the video is 40 minutes long i want to have possesion stamp each minute so i can build a chart with recharts library based on possession through the match); if the video is 5 minutes long 10 stampps are enough; lets do atleast 10 stamps per match with 40 stamps max based on video length; it would use https://recharts.github.io/en-US/examples/PercentAreaChart/
+
+Implementation status: baseline implemented without Recharts. The backend writes
+`possession_timeline` into `possession_report.json`; the frontend renders a
+lightweight stacked timeline chart from that data.

@@ -65,7 +65,7 @@ export function MatchReportPage() {
   async function publish(replace = false) {
     if (!matchId || busyAction) return;
     setBusyAction(replace ? 'replace' : 'publish');
-    setActionStatus(replace ? 'Nadpisuje snapshot w SQLite...' : 'Publikuje snapshot do SQLite...');
+    setActionStatus(replace ? 'Nadpisuje opublikowany raport...' : 'Publikuje raport...');
     try {
       const published = await publishLocalMatch(matchId, replace);
       await refreshMatch();

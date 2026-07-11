@@ -20,6 +20,7 @@ export type MatchReportSource = {
   playerStats?: GenericRow;
   teamStats?: GenericRow;
   resolvedPlayerStats?: GenericRow;
+  playerHeatmaps?: GenericRow;
   changeCandidates?: GenericRow;
   possessionReport?: GenericRow;
   passCandidates?: GenericRow;
@@ -52,6 +53,7 @@ export function sourceFromLocalMatch(match: MatchPackage['match']): MatchReportS
     playerStats: match.player_stats as GenericRow | undefined,
     teamStats: match.team_stats as GenericRow | undefined,
     resolvedPlayerStats: match.resolved_player_stats as GenericRow | undefined,
+    playerHeatmaps: match.player_heatmaps as GenericRow | undefined,
     changeCandidates: match.change_candidates as GenericRow | undefined,
     possessionReport: match.possession_report as GenericRow | undefined,
     passCandidates: match.pass_candidates as GenericRow | undefined,
@@ -81,6 +83,7 @@ export function sourceFromPublishedPackage(packageData: MatchPackage): MatchRepo
     playerStats: packageData.player_stats as GenericRow | undefined,
     teamStats: packageData.team_stats as GenericRow | undefined,
     resolvedPlayerStats: packageData.resolved_player_stats as GenericRow | undefined,
+    playerHeatmaps: packageData.player_heatmaps as GenericRow | undefined,
     changeCandidates: packageData.change_candidates as GenericRow | undefined,
     possessionReport: packageData.possession_report as GenericRow | undefined,
     passCandidates: packageData.pass_candidates as GenericRow | undefined,
@@ -325,6 +328,10 @@ function isAcceptedPass(candidate: GenericRow): boolean {
   );
 }
 
+function isSameTeamPassCandidate(candidate: GenericRow): boolean {
+  return recordText(candidate, 'pass_type', '') === 'same_team_pass';
+}
+
 function comparisonRowsForTeams(
   source: MatchReportSource,
   leftTeam: GenericRow,
@@ -410,6 +417,13 @@ function comparisonRowsForTeams(
       { experimental: true, highlightHigher: true },
     ),
     makeMetric(
+      'Podania teamowe cand.*',
+      teamPassCount(source, leftLabel, isSameTeamPassCandidate),
+      teamPassCount(source, rightLabel, isSameTeamPassCandidate),
+      formatInteger,
+      { experimental: true, highlightHigher: true },
+    ),
+    makeMetric(
       'Kandydaci podan*',
       teamPassCount(source, leftLabel, () => true),
       teamPassCount(source, rightLabel, () => true),
@@ -455,6 +469,18 @@ function changeRows(source: MatchReportSource): GenericRow[] {
   return asRows(source.changeCandidates?.candidates);
 }
 
+function heatmapRows(source: MatchReportSource): GenericRow[] {
+  return asRows(source.playerHeatmaps?.heatmaps);
+}
+
+function possessionSummary(source: MatchReportSource): GenericRow {
+  return maybeNestedRecord(source.possessionReport, 'summary') || {};
+}
+
+function passSummary(source: MatchReportSource): GenericRow {
+  return maybeNestedRecord(source.passCandidates, 'summary') || {};
+}
+
 function visibleMetricSummary(source: MatchReportSource): GenericRow {
   return (
     maybeNestedRecord(source.frameDetectionCounts, 'summary') ||
@@ -490,6 +516,7 @@ export function MatchReportContent({
   const resolvedPlayers = resolvedPlayerRows(source);
   const teams = teamRows(source);
   const changes = changeRows(source);
+  const heatmaps = heatmapRows(source);
   const frameSummary = visibleMetricSummary(source);
   const movementSummary =
     maybeNestedRecord(source.playerStats, 'summary') ||
@@ -510,6 +537,9 @@ export function MatchReportContent({
   const rightTeam = comparisonTeams[1];
   const comparisonMetrics =
     leftTeam && rightTeam ? comparisonRowsForTeams(source, leftTeam, rightTeam) : [];
+  const ballSummary = possessionSummary(source);
+  const passesSummary = passSummary(source);
+  const hasBallStats = source.possessionReport || source.passCandidates;
 
   return (
     <>
@@ -548,6 +578,35 @@ export function MatchReportContent({
           <span>Warnings: {source.analysisReport?.warnings?.length || 0}</span>
         </div>
       </section>
+
+      {hasBallStats && (
+        <section className='card ball-stats-card'>
+          <div className='row between'>
+            <div>
+              <h2>Posiadanie i podania</h2>
+              <p className='muted'>
+                Warstwa eksperymentalna z pilki: dobra do trendow i review, nie
+                traktuj jej jeszcze jak oficjalnych statystyk.
+              </p>
+            </div>
+            <span className='confidence-pill'>experimental</span>
+          </div>
+          <div className='chips'>
+            <span>
+              Known possession:{' '}
+              {formatPercent(recordNumber(ballSummary, 'known_possession_coverage') * 100)}
+            </span>
+            <span>Controlled frames: {recordNumber(ballSummary, 'controlled_frames')}</span>
+            <span>Free frames: {recordNumber(ballSummary, 'free_frames')}</span>
+            <span>Unknown frames: {recordNumber(ballSummary, 'unknown_frames')}</span>
+            <span>Pass candidates: {recordNumber(passesSummary, 'pass_candidates')}</span>
+            <span>Same-team candidates: {recordNumber(passesSummary, 'same_team_pass_candidates')}</span>
+            <span>Turnovers/interceptions: {recordNumber(passesSummary, 'turnover_or_interception_candidates')}</span>
+            <span>Progressive candidates: {recordNumber(passesSummary, 'progressive_pass_candidates')}</span>
+            <span>Final accepted: {recordNumber(passesSummary, 'final_stat_passes')}</span>
+          </div>
+        </section>
+      )}
 
       {qualityReport && (
         <section className='card analysis-quality-card'>
@@ -818,6 +877,47 @@ export function MatchReportContent({
           </div>
         )}
       </section>
+
+      {heatmaps.length > 0 && (
+        <section className='card'>
+          <h2>Heatmapy zawodnikow</h2>
+          <p className='muted'>
+            Heatmapy bazuja na stable slotach. Po przypisaniu stintow do realnych
+            zawodnikow traktuj je jako material pomocniczy do review pokrycia.
+          </p>
+          <div className='player-heatmap-grid'>
+            {heatmaps.map((heatmap) => {
+              const path = recordText(
+                heatmap,
+                'path',
+                recordText(heatmap, 'heatmap_path', ''),
+              );
+              const label = recordText(
+                heatmap,
+                'stable_player_id',
+                recordText(heatmap, 'slot_id', 'slot'),
+              );
+              return (
+                <figure className='player-heatmap' key={`${label}-${path}`}>
+                  {path && artifactHref ? (
+                    <img src={artifactHref(path)} alt={`Heatmapa ${label}`} />
+                  ) : (
+                    <div className='player-heatmap-placeholder'>
+                      <span>Brak podgladu heatmapy.</span>
+                    </div>
+                  )}
+                  <figcaption>
+                    {label} - {recordText(heatmap, 'team_name', recordText(heatmap, 'team_label', 'Team'))}
+                    <br />
+                    {recordNumber(heatmap, 'samples')} probek -{' '}
+                    {recordText(heatmap, 'quality', 'unknown')}
+                  </figcaption>
+                </figure>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className='card'>
         <h2>Wszyscy stable zawodnicy w meczu</h2>

@@ -239,6 +239,7 @@ def run_match_analysis_and_update_meta(
             camera_motion_compensation=payload.camera_motion_compensation,
             camera_motion_interval_sec=payload.camera_motion_interval_sec,
             camera_motion_min_inlier_ratio=payload.camera_motion_min_inlier_ratio,
+            render_stable_overlay=payload.render_stable_overlay,
         )
     elapsed_wall_sec = time.perf_counter() - started_at
     report_runtime = report.get("runtime") if isinstance(report.get("runtime"), dict) else collect_runtime_info()
@@ -380,6 +381,188 @@ PACKAGE_DEBUG_KEYS = [
     "tracking_quality_report",
 ]
 
+PACKAGE_EMBEDDED_JSON_FILES = [
+    ("pitch_config", "pitch_config.json"),
+    ("analysis_report", "analysis_report.json"),
+    ("performance_report", "performance_report.json"),
+    ("camera_motion_report", "camera_motion_report.json"),
+    ("analysis_chunk_manifest", "analysis_chunk_manifest.json"),
+    ("player_identity_assignments", "player_identity_assignments.json"),
+    ("identity_review_gallery", "identity_review_gallery.json"),
+    ("stable_players", "stable_players.json"),
+    ("global_identity_report", "global_identity_report.json"),
+    ("analysis_quality_report", "analysis_quality_report.json"),
+    ("stabilization_report", "stabilization_report.json"),
+    ("frame_detection_counts", "frame_detection_counts.json"),
+    ("team_clusters", "team_clusters.json"),
+    ("movement_stats", "movement_stats.json"),
+    ("player_stats", "player_stats.json"),
+    ("resolved_player_stats", "resolved_player_stats.json"),
+    ("player_heatmaps", "player_heatmaps.json"),
+    ("team_config", "team_config.json"),
+    ("team_stats", "team_stats.json"),
+    ("change_candidates", "change_candidates.json"),
+    ("change_review_report", "change_review_report.json"),
+    ("ball_analysis_report", "ball_analysis_report.json"),
+    ("ball_tracking_report", "ball_tracking_report.json"),
+    ("ball_quality_report", "ball_quality_report.json"),
+    ("match_phase_config", "match_phase_config.json"),
+    ("pass_candidates", "pass_candidates.json"),
+    ("pass_review_report", "pass_review_report.json"),
+    ("possession_report", "possession_report.json"),
+]
+
+STABLE_PLAYER_PACKAGE_FIELDS = {
+    "slot_id",
+    "stable_subject_id",
+    "stable_player_id",
+    "identity_semantics",
+    "status",
+    "team_label",
+    "team_id",
+    "team_name",
+    "team_confidence",
+    "confidence",
+    "confidence_score",
+    "duration_sec",
+    "start_time_sec",
+    "end_time_sec",
+    "tracklet_ids",
+    "raw_track_ids",
+    "tracklet_count",
+    "positions_count",
+    "real_positions_count",
+    "overlay_positions_count",
+    "trusted_overlay_positions_count",
+    "detected_frames",
+    "predicted_frames",
+    "missing_frames",
+    "ambiguous_frames",
+    "interpolated_positions_count",
+    "interpolated_gaps_count",
+    "mean_detection_confidence",
+    "jersey_color_hex",
+    "movement_stats",
+    "stints",
+    "stint_count",
+    "slot_creation_reason",
+    "slot_spawn_frame",
+    "slot_spawn_time_sec",
+    "reused_from_slot_id",
+    "blocked_team_switches",
+    "blocked_identity_switches",
+    "source",
+    "heatmap_path",
+    "heatmap_samples",
+    "heatmap_quality",
+}
+
+STABLE_PLAYER_STINT_FIELDS = {
+    "stint_id",
+    "start_frame",
+    "end_frame",
+    "start_time_sec",
+    "end_time_sec",
+    "duration_sec",
+    "detected_frames",
+    "missing_frames",
+    "ambiguous_frames",
+    "source",
+}
+
+
+def _compact_row(row: dict[str, Any], allowed_keys: set[str]) -> dict[str, Any]:
+    return {key: row[key] for key in allowed_keys if key in row}
+
+
+def _slim_stable_players_doc(doc: dict[str, Any]) -> dict[str, Any]:
+    players = doc.get("players") if isinstance(doc.get("players"), list) else []
+    slim_players: list[dict[str, Any]] = []
+    for player in players:
+        if not isinstance(player, dict):
+            continue
+        slim_player = _compact_row(player, STABLE_PLAYER_PACKAGE_FIELDS)
+        stints = player.get("stints") if isinstance(player.get("stints"), list) else []
+        slim_player["stints"] = [
+            _compact_row(stint, STABLE_PLAYER_STINT_FIELDS)
+            for stint in stints
+            if isinstance(stint, dict)
+        ]
+        slim_players.append(slim_player)
+
+    slim_doc: dict[str, Any] = {
+        key: doc[key]
+        for key in [
+            "schema_version",
+            "generated_at",
+            "source",
+            "identity_semantics",
+            "pitch_dimensions_m",
+            "summary",
+            "frame_detection_summary",
+            "movement_stats_summary",
+            "player_stats_summary",
+            "team_stats_summary",
+            "player_heatmaps_summary",
+        ]
+        if key in doc
+    }
+    slim_doc["players"] = slim_players
+    slim_doc["package_note"] = "Stable players are compacted for report publishing; full debug data remains available as stable_players.json asset."
+    return slim_doc
+
+
+def _summary_only_doc(doc: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    return {key: doc[key] for key in keys if key in doc}
+
+
+def _load_package_json_doc(key: str, file_path: Path) -> dict[str, Any]:
+    doc = json.loads(file_path.read_text(encoding="utf-8"))
+    if not isinstance(doc, dict):
+        return doc
+    if key == "stable_players":
+        return _slim_stable_players_doc(doc)
+    if key == "frame_detection_counts":
+        return _summary_only_doc(doc, ["schema_version", "generated_at", "source", "target_players", "summary"])
+    if key == "global_identity_report":
+        return _summary_only_doc(
+            doc,
+            [
+                "schema_version",
+                "generated_at",
+                "status",
+                "resolver_version",
+                "identity_semantics",
+                "summary",
+                "frame_detection_summary",
+            ],
+        )
+    if key == "stabilization_report":
+        return _summary_only_doc(
+            doc,
+            [
+                "schema_version",
+                "generated_at",
+                "status",
+                "summary",
+                "frame_detection_summary",
+                "movement_stats_summary",
+                "team_clusters_summary",
+            ],
+        )
+    return doc
+
+
+def _package_key_available(package: dict[str, Any], key: str) -> bool:
+    if package.get(key) is not None:
+        return True
+    assets = package.get("assets") if isinstance(package.get("assets"), dict) else {}
+    return f"{key}_json" in assets or key in assets
+
+
+def _package_presence_map(package: dict[str, Any], keys: list[str]) -> dict[str, bool]:
+    return {key: _package_key_available(package, key) for key in keys}
+
 
 def _has_assigned_real_player(identity_doc: dict[str, Any] | None) -> bool:
     if not isinstance(identity_doc, dict):
@@ -393,7 +576,7 @@ def _has_assigned_real_player(identity_doc: dict[str, Any] | None) -> bool:
 
 
 def build_package_validation(package: dict[str, Any]) -> dict[str, Any]:
-    missing_required = [key for key in PACKAGE_REQUIRED_KEYS if package.get(key) is None]
+    missing_required = [key for key in PACKAGE_REQUIRED_KEYS if not _package_key_available(package, key)]
     warnings: list[str] = []
     analysis_report = package.get("analysis_report") if isinstance(package.get("analysis_report"), dict) else None
     if analysis_report and analysis_report.get("status") != "completed":
@@ -410,8 +593,8 @@ def build_package_validation(package: dict[str, Any]) -> dict[str, Any]:
         "status": status,
         "missing_required": missing_required,
         "warnings": warnings,
-        "optional_available": [key for key in PACKAGE_OPTIONAL_KEYS if package.get(key) is not None],
-        "debug_available": [key for key in PACKAGE_DEBUG_KEYS if package.get(key) is not None],
+        "optional_available": [key for key in PACKAGE_OPTIONAL_KEYS if _package_key_available(package, key)],
+        "debug_available": [key for key in PACKAGE_DEBUG_KEYS if _package_key_available(package, key)],
     }
 
 
@@ -599,6 +782,7 @@ def get_match(match_id: str) -> dict[str, Any]:
         "movement_stats.json",
         "player_stats.json",
         "resolved_player_stats.json",
+        "player_heatmaps.json",
         "team_config.json",
         "team_stats.json",
         "change_candidates.json",
@@ -1200,51 +1384,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "assets": {},
         "publish_status": "draft-package",
     }
-    for key, filename in [
-        ("pitch_config", "pitch_config.json"),
-        ("analysis_report", "analysis_report.json"),
-        ("performance_report", "performance_report.json"),
-        ("camera_motion_report", "camera_motion_report.json"),
-        ("analysis_chunk_manifest", "analysis_chunk_manifest.json"),
-        ("player_assignments", "player_assignments.json"),
-        ("identity_candidates", "identity_candidates.json"),
-        ("identity_assignments", "identity_assignments.json"),
-        ("player_identity_assignments", "player_identity_assignments.json"),
-        ("identity_review_gallery", "identity_review_gallery.json"),
-        ("stable_players", "stable_players.json"),
-        ("global_identity", "global_identity.json"),
-        ("global_identity_report", "global_identity_report.json"),
-        ("analysis_quality_report", "analysis_quality_report.json"),
-        ("stabilization_report", "stabilization_report.json"),
-        ("team_clusters", "team_clusters.json"),
-        ("frame_detection_counts", "frame_detection_counts.json"),
-        ("movement_stats", "movement_stats.json"),
-        ("player_stats", "player_stats.json"),
-        ("resolved_player_stats", "resolved_player_stats.json"),
-        ("player_heatmaps", "player_heatmaps.json"),
-        ("team_config", "team_config.json"),
-        ("team_stats", "team_stats.json"),
-        ("change_candidates", "change_candidates.json"),
-        ("change_review_report", "change_review_report.json"),
-        ("tracklets", "tracklets.json"),
-        ("tracking_quality_report", "tracking_quality_report.json"),
-        ("ball_tracks", "ball_tracks.json"),
-        ("ball_analysis_report", "ball_analysis_report.json"),
-        ("ball_tracking_report", "ball_tracking_report.json"),
-        ("ball_quality_report", "ball_quality_report.json"),
-        ("possession_candidates", "possession_candidates.json"),
-        ("possession_segments", "possession_segments.json"),
-        ("contact_candidates", "contact_candidates.json"),
-        ("match_phase_config", "match_phase_config.json"),
-        ("event_candidates", "event_candidates.json"),
-        ("event_review_report", "event_review_report.json"),
-        ("pass_candidates", "pass_candidates.json"),
-        ("pass_review_report", "pass_review_report.json"),
-        ("possession_report", "possession_report.json"),
-    ]:
+    for key, filename in PACKAGE_EMBEDDED_JSON_FILES:
         file_path = path / filename
         if file_path.exists():
-            package[key] = json.loads(file_path.read_text(encoding="utf-8"))
+            package[key] = _load_package_json_doc(key, file_path)
     if (path / "heatmap_all_tracks.png").exists():
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
@@ -1339,10 +1482,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["possession_report_json"] = "possession_report.json"
     if (path / "possession_overlay_preview.mp4").exists():
         package["assets"]["possession_overlay_preview"] = "possession_overlay_preview.mp4"
-    package["required"] = {key: package.get(key) for key in PACKAGE_REQUIRED_KEYS}
-    package["optional"] = {key: package.get(key) for key in PACKAGE_OPTIONAL_KEYS}
+    package["required"] = _package_presence_map(package, PACKAGE_REQUIRED_KEYS)
+    package["optional"] = _package_presence_map(package, PACKAGE_OPTIONAL_KEYS)
     package["debug"] = {
-        **{key: package.get(key) for key in PACKAGE_DEBUG_KEYS},
+        "available": _package_presence_map(package, PACKAGE_DEBUG_KEYS),
         "assets": {
             key: value
             for key, value in package["assets"].items()
@@ -1372,8 +1515,7 @@ def create_match_package(match_id: str) -> dict[str, Any]:
 @app.post("/api/matches/{match_id}/publish")
 def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
     path = match_dir(match_id)
-    package_path = path / "match_package.json"
-    package = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else build_match_package(path)
+    package = build_match_package(path)
     ensure_package_publishable(package)
     try:
         published = publish_match_package(package, replace=replace)
@@ -1393,8 +1535,7 @@ def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]
 @app.post("/api/matches/{match_id}/publish-local")
 def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
     path = match_dir(match_id)
-    package_path = path / "match_package.json"
-    package = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else build_match_package(path)
+    package = build_match_package(path)
     ensure_package_publishable(package)
     try:
         published = import_match_package(package, replace=replace)

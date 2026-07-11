@@ -57,13 +57,15 @@ def _write_reprocess_inputs(source_dir: Path) -> Path:
     return video_path
 
 
-def _stable_result(refined_ball_tracks=None) -> dict:
+def _stable_result(refined_ball_tracks=None, *, include_stable_overlay: bool = True) -> dict:
+    artifacts = {
+        "stable_players": "stable_players.json",
+    }
+    if include_stable_overlay:
+        artifacts["stable_overlay_preview"] = "stable_overlay_preview.mp4"
     return {
         "stable_players": {"summary": {"stable_players": 1}, "players": []},
-        "artifacts": {
-            "stable_players": "stable_players.json",
-            "stable_overlay_preview": "stable_overlay_preview.mp4",
-        },
+        "artifacts": artifacts,
         "refined_ball_tracks": refined_ball_tracks,
     }
 
@@ -130,6 +132,28 @@ class PostYoloReprocessTests(unittest.TestCase):
             stabilize.assert_called_once()
             self.assertEqual(stabilize.call_args.args[3][0]["track_id"], 1)
             self.assertIsNone(stabilize.call_args.kwargs["ball_tracks_doc"])
+
+    def test_reprocess_can_skip_stable_overlay_render(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source"
+            output_dir = Path(tmp) / "output"
+            video_path = _write_reprocess_inputs(source_dir)
+            metadata = {"fps": 30.0, "width": 100, "height": 100, "frame_count": 30, "duration_sec": 1.0}
+
+            with patch("app.services.post_yolo_reprocess.read_video_metadata", return_value=metadata), patch(
+                "app.services.post_yolo_reprocess.stabilize_match",
+                return_value=_stable_result(include_stable_overlay=False),
+            ) as stabilize:
+                report = reprocess_match_from_artifacts(
+                    source_dir,
+                    video_path,
+                    output_dir=output_dir,
+                    render_stable_overlay=False,
+                )
+
+            self.assertFalse(report["parameters"]["render_stable_overlay"])
+            self.assertNotIn("stable_overlay_preview", report["artifacts"])
+            self.assertFalse(stabilize.call_args.kwargs["render_stable_overlay"])
 
     def test_reprocess_recalibrates_tracks_with_camera_motion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

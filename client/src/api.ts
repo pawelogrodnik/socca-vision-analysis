@@ -19,6 +19,7 @@ import type {
   PlayerIdentityAssignment,
   PlayerIdentityReviewState,
   PlayerProfileStatsDocument,
+  PublicMatchReport,
   ResolvedPlayerStatsDocument,
   RuntimeInfo,
   TeamProfileStatsDocument,
@@ -339,6 +340,14 @@ export async function listPublishedMatches(): Promise<PublishedMatch[]> {
 
 export async function getPublishedMatch(matchId: string): Promise<PublishedMatchDetail> {
   return request<PublishedMatchDetail>(`/api/published/matches/${matchId}`);
+}
+
+export async function getStaticPublicMatchReport(matchId: string): Promise<PublicMatchReport> {
+  const res = await fetch(`/published/matches/${encodeURIComponent(matchId)}/public_report.json`);
+  if (!res.ok) {
+    throw new Error(`${res.status}: Public report not found`);
+  }
+  return res.json() as Promise<PublicMatchReport>;
 }
 
 export async function deletePublishedMatch(matchId: string): Promise<{ status: string; match: PublishedMatch }> {

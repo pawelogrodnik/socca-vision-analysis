@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import math
-from typing import Any
+from typing import Any, Callable
 
 
 TARGET_PLAYERS_PER_TEAM = 7
@@ -221,6 +221,9 @@ class SlotState:
     previous_pitch_m: list[float] | None = None
     last_bbox_xyxy: list[int] | None = None
     previous_bbox_xyxy: list[int] | None = None
+    previous_detected_time_sec: float | None = None
+    detected_bbox_sizes: list[tuple[float, float, float]] = field(default_factory=list)
+    missing_rows_by_frame: dict[int, dict[str, Any]] = field(default_factory=dict)
     blocked_team_switches: int = 0
     blocked_identity_switches: int = 0
     suspicious_assignments: list[dict[str, Any]] = field(default_factory=list)
@@ -321,10 +324,9 @@ class SlotState:
         return _shift_bbox(self.last_bbox_xyxy, dx, dy)
 
     def _previous_time_sec(self) -> float:
-        detected = [row for row in self.history if row.get("source") == "detected"]
-        if len(detected) < 2:
-            return self.last_detected_time_sec or 0.0
-        return float(detected[-2].get("time_sec") or self.last_detected_time_sec or 0.0)
+        if self.previous_detected_time_sec is not None:
+            return self.previous_detected_time_sec
+        return self.last_detected_time_sec or 0.0
 
     def add_detection(self, obs: Observation, *, assignment_cost: float | None = None) -> None:
         if not self.active:
@@ -352,10 +354,14 @@ class SlotState:
         self.last_time_sec = obs.time_sec if self.last_time_sec is None else max(self.last_time_sec, obs.time_sec)
         self.previous_pitch_m = self.last_pitch_m
         self.previous_bbox_xyxy = self.last_bbox_xyxy
+        self.previous_detected_time_sec = self.last_detected_time_sec
         self.last_pitch_m = list(obs.pitch_m)
         self.last_bbox_xyxy = list(obs.bbox_xyxy)
         self.last_detected_frame = obs.frame
         self.last_detected_time_sec = obs.time_sec
+        size = _bbox_size(obs.bbox_xyxy)
+        if size:
+            self.detected_bbox_sizes.append((float(size[0]), float(size[1]), float(size[0]) * float(size[1])))
         self.tracklet_ids.add(obs.tracklet_id)
         self.raw_track_ids.add(obs.raw_track_id)
         self.detection_confidences.append(obs.confidence)
@@ -419,6 +425,7 @@ class SlotState:
                 "missing_since_frame": None,
                 "short_gap_sec": None,
             }
+            self.missing_rows_by_frame.pop(obs.frame, None)
             self.tracklet_ids.add(obs.tracklet_id)
             self.raw_track_ids.add(obs.raw_track_id)
             if obs.team_confidence:
@@ -522,6 +529,7 @@ class SlotState:
             "short_gap_sec": round(gap_sec, 3) if gap_sec <= MAX_PREDICTION_SEC else None,
         }
         self.history.append(row)
+        self.missing_rows_by_frame[int(frame)] = row
         self._update_current_stint(frame, time_sec, "missing", None, None)
 
     def record_pending_tracklet(self, obs: Observation) -> int:
@@ -631,6 +639,13 @@ class SlotState:
         self.tracklet_ids = {str(row.get("tracklet_id")) for row in detected_rows if row.get("tracklet_id")}
         self.raw_track_ids = {int(row.get("raw_track_id")) for row in detected_rows if row.get("raw_track_id") is not None}
         self.detection_confidences = [float(row.get("confidence") or 0.0) for row in detected_rows]
+        self.missing_rows_by_frame = {int(row.get("frame") or 0): row for row in missing_rows}
+        self.detected_bbox_sizes = [
+            (float(size[0]), float(size[1]), float(size[0]) * float(size[1]))
+            for row in detected_rows
+            for size in [_bbox_size(row.get("bbox_xyxy"))]
+            if size
+        ]
 
         if active_rows:
             self.first_frame = int(active_rows[0].get("frame") or 0)
@@ -641,6 +656,9 @@ class SlotState:
         if detected_rows:
             self.previous_pitch_m = detected_rows[-2].get("pitch_m") if len(detected_rows) >= 2 else None
             self.previous_bbox_xyxy = detected_rows[-2].get("bbox_xyxy") if len(detected_rows) >= 2 else None
+            self.previous_detected_time_sec = (
+                float(detected_rows[-2].get("time_sec") or 0.0) if len(detected_rows) >= 2 else None
+            )
             self.last_pitch_m = detected_rows[-1].get("pitch_m")
             self.last_bbox_xyxy = detected_rows[-1].get("bbox_xyxy")
             self.last_detected_frame = int(detected_rows[-1].get("frame") or 0)
@@ -800,6 +818,7 @@ def resolve_global_identity(
     pitch_length_m: float,
     fps: float,
     pitch_polygon: Any | None = None,
+    progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
     observations = build_observations_from_tracklets(tracklets)
     raw_observations_by_frame: dict[int, list[Observation]] = defaultdict(list)
@@ -811,11 +830,32 @@ def resolve_global_identity(
     tracklet_owner: dict[str, str] = {}
     rejected_start_candidates: list[dict[str, Any]] = []
 
+    progress_interval = max(1, int(max(float(fps or 0.0), 1.0) * 10.0))
     for frame in range(max_frame + 1):
         frame_time = frame / max(fps, 0.001)
         frame_observations = observations_by_frame.get(frame, [])
         _assign_frame(slots, frame_observations, frame, frame_time, tracklet_owner, rejected_start_candidates)
+        if progress and (frame == 0 or frame == max_frame or frame % progress_interval == 0):
+            ratio = frame / max(1, max_frame)
+            progress(
+                "stabilization",
+                92.2 + min(0.6, ratio * 0.6),
+                f"Resolving global player identities ({frame}/{max_frame} frames).",
+                {
+                    "current": frame,
+                    "total": max_frame,
+                    "unit": "frames",
+                    "observations": len(observations),
+                },
+            )
 
+    if progress:
+        progress(
+            "stabilization",
+            92.82,
+            "Repairing unmatched detections and merging stable slots.",
+            {"current": len(slots), "unit": "slots"},
+        )
     repair_summary = _repair_unmatched_observations(slots, observations_by_frame, tracklet_owner)
     merge_summary = _merge_redundant_spawned_slots(slots)
     unmatched_observations = _remaining_unmatched_observations(slots, observations_by_frame)
@@ -824,6 +864,13 @@ def resolve_global_identity(
         if slot.active:
             slot.close_stint(slot.last_frame or max_frame, slot.last_time_sec or (max_frame / max(fps, 0.001)), "end_of_analysis")
 
+    if progress:
+        progress(
+            "stabilization",
+            92.9,
+            "Building per-frame identity diagnostics.",
+            {"current": max_frame + 1, "unit": "frames"},
+        )
     frame_rows = _build_identity_frame_rows(slots, observations_by_frame, max_frame, fps)
     slot_docs = [_slot_to_doc(slot, fps) for slot in slots]
     active_slot_docs = [slot for slot in slot_docs if slot["detected_frames"] > 0 or slot["predicted_frames"] > 0]
@@ -1283,6 +1330,9 @@ def _merge_slot_into_target(target: SlotState, source: SlotState, first_row: dic
     source.team_confidences = []
     source.detection_confidences = []
     source.appearance_samples = []
+    source.detected_bbox_sizes = []
+    source.missing_rows_by_frame = {}
+    source.previous_detected_time_sec = None
     source.active = False
     source.status = "inactive"
     source.current_stint_id = None
@@ -1445,11 +1495,7 @@ def _slot_has_recent_identity_conflict(slot: SlotState, run: list[Observation]) 
 
 
 def _slot_missing_rows_by_frame(slot: SlotState) -> dict[int, dict[str, Any]]:
-    return {
-        int(row.get("frame") or 0): row
-        for row in slot.history
-        if row.get("source") == "missing"
-    }
+    return slot.missing_rows_by_frame
 
 
 def _assignment_cost(slot: SlotState, obs: Observation) -> float | None:
@@ -1774,19 +1820,12 @@ def _stateless_detection_rejection_reason(obs: Observation) -> dict[str, Any] | 
 
 
 def _recent_detected_bbox_stats(slot: SlotState) -> dict[str, float] | None:
-    rows = [row for row in slot.history if row.get("status") == "detected" and row.get("bbox_xyxy")]
-    if len(rows) < BBOX_OUTLIER_MIN_DETECTIONS:
+    recent_sizes = slot.detected_bbox_sizes[-30:]
+    if len(recent_sizes) < BBOX_OUTLIER_MIN_DETECTIONS:
         return None
-    widths: list[float] = []
-    heights: list[float] = []
-    areas: list[float] = []
-    for row in rows[-30:]:
-        size = _bbox_size(row.get("bbox_xyxy"))
-        if not size:
-            continue
-        widths.append(size[0])
-        heights.append(size[1])
-        areas.append(size[0] * size[1])
+    widths = [item[0] for item in recent_sizes]
+    heights = [item[1] for item in recent_sizes]
+    areas = [item[2] for item in recent_sizes]
     if len(areas) < BBOX_OUTLIER_MIN_DETECTIONS:
         return None
     widths_sorted = sorted(widths)
@@ -1892,10 +1931,7 @@ def _select_active_missing_slot(
 
 
 def _slot_has_missing_row_at_frame(slot: SlotState, frame: int) -> bool:
-    return any(
-        int(row.get("frame") or -1) == frame and row.get("source") == "missing"
-        for row in slot.history
-    )
+    return int(frame) in slot.missing_rows_by_frame
 
 
 def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool] | None:

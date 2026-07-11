@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from app.services.global_identity import (
     build_frame_detection_counts_from_global_identity,
@@ -19,6 +19,7 @@ def resolve_conservative_identity(
     pitch_length_m: float,
     fps: float,
     pitch_polygon: Any | None = None,
+    progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
     return resolve_global_identity(
         tracklets,
@@ -28,4 +29,5 @@ def resolve_conservative_identity(
         pitch_length_m=pitch_length_m,
         fps=fps,
         pitch_polygon=pitch_polygon,
+        progress=progress,
     )

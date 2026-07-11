@@ -63,6 +63,7 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       chunk_duration_sec: 45,
       chunk_overlap_sec: 2,
       include_ball: false,
+      render_stable_overlay: true,
       yolo_imgsz: 960,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
@@ -83,6 +84,7 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       chunk_duration_sec: 120,
       chunk_overlap_sec: 2,
       include_ball: false,
+      render_stable_overlay: false,
       yolo_imgsz: 1280,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
@@ -103,6 +105,7 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       chunk_duration_sec: 120,
       chunk_overlap_sec: 2,
       include_ball: true,
+      render_stable_overlay: false,
       yolo_imgsz: 1280,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
@@ -126,6 +129,7 @@ export const ANALYSIS_PRESETS: AnalysisPreset[] = [
       chunk_duration_sec: 90,
       chunk_overlap_sec: 3,
       include_ball: true,
+      render_stable_overlay: true,
       yolo_imgsz: 1920,
       yolo_conf: 0.05,
       yolo_tracker: 'centroid_high_recall',
@@ -327,6 +331,19 @@ function buildPreflightChecks(input: {
       });
     }
   }
+  if (input.analysis.render_stable_overlay) {
+    checks.push({
+      level: 'info',
+      label: 'Stable overlay',
+      detail: 'Zostanie wyrenderowane MP4 do wizualnego review stable ID i possession/pass overlay.',
+    });
+  } else {
+    checks.push({
+      level: 'info',
+      label: 'Stable overlay',
+      detail: 'MP4 stable overlay zostanie pominiete; JSON-y, statystyki i cropy identity review nadal beda dostepne.',
+    });
+  }
 
   const accelerated = preferredAcceleratedDevice(input.runtimeInfo);
   const requestedDevices = selectedAnalysisDevices(input.analysis);
@@ -409,10 +426,13 @@ function estimateWallTimeSec(
   const previousImgSize = Math.max(320, Number(previousParameters.yolo_imgsz) || analysis.yolo_imgsz || 960);
   const currentImgSize = Math.max(320, Number(analysis.yolo_imgsz) || 960);
   const previousIncludedBall = Boolean(previousParameters.include_ball);
+  const previousRenderedStableOverlay = previousParameters.render_stable_overlay !== false;
   let multiplier = previousStride / currentStride;
   multiplier *= Math.pow(currentImgSize / previousImgSize, 1.6);
   if (analysis.include_ball && !previousIncludedBall) multiplier *= 1.8;
   if (!analysis.include_ball && previousIncludedBall) multiplier *= 0.65;
+  if (!analysis.render_stable_overlay && previousRenderedStableOverlay) multiplier *= 0.8;
+  if (analysis.render_stable_overlay && !previousRenderedStableOverlay) multiplier *= 1.25;
   const estimated = (processedVideoSecIncludingOverlap / throughput) * Math.max(0.1, multiplier);
   return {
     seconds: Number.isFinite(estimated) ? estimated : null,

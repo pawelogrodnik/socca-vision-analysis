@@ -5,6 +5,7 @@ import { ChangeCandidatesReview } from './ChangeCandidatesReview';
 import { ContactCandidatesReview } from './ContactCandidatesReview';
 import { MatchPhaseConfigPanel } from './MatchPhaseConfigPanel';
 import { PassCandidatesReview } from './PassCandidatesReview';
+import { PossessionTimelineChart } from './PossessionTimelineChart';
 
 interface AnalysisArtifactsProps {
   match: Match;
@@ -14,6 +15,7 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const report = match.analysis_report;
   const heatmap = report?.artifacts?.heatmap_all_tracks;
   const stableOverlay = report?.artifacts?.stable_overlay_preview;
+  const stableOverlaySkipped = report?.parameters?.render_stable_overlay === false;
   const analysisChunkManifest = report?.artifacts?.analysis_chunk_manifest || (match.analysis_chunk_manifest ? 'analysis_chunk_manifest.json' : undefined);
   const debugIdentityOverlay = report?.artifacts?.debug_identity_overlay;
   const rawOverlay = report?.artifacts?.overlay_preview;
@@ -78,7 +80,13 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
               className='video'
             />
           )}
-          {!stableOverlay && rawOverlay && (
+          {!stableOverlay && stableOverlaySkipped && (
+            <p className='muted'>
+              Stable overlay video zostal pominiety w tym runie. Stable ID,
+              statystyki i dane do identity review sa dostepne w artefaktach JSON.
+            </p>
+          )}
+          {!stableOverlay && !stableOverlaySkipped && rawOverlay && (
             <p className='muted'>
               Brak stable overlay. Uruchom ponownie analize, zeby wygenerowac
               stabilne ID zawodnikow.
@@ -253,31 +261,34 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
                 </div>
               )}
               {possessionSummary && (
-                <div className='chips'>
-                  <span>
-                    Controlled:{' '}
-                    {formatPercent(possessionSummary.controlled_coverage)}
-                  </span>
-                  <span>
-                    Contested:{' '}
-                    {formatPercent(possessionSummary.contested_coverage)}
-                  </span>
-                  <span>
-                    Free: {formatPercent(possessionSummary.free_coverage)}
-                  </span>
-                  <span>
-                    Unknown:{' '}
-                    {formatPercent(possessionSummary.unknown_coverage)}
-                  </span>
-                  <span>
-                    Contacts:{' '}
-                    {formatCount(possessionSummary.contact_candidates)}
-                  </span>
-                  <span>
-                    Player interp:{' '}
-                    {formatCount(possessionSummary.interpolated_player_position_frames)}
-                  </span>
-                </div>
+                <>
+                  <div className='chips'>
+                    <span>
+                      Controlled:{' '}
+                      {formatPercent(possessionSummary.controlled_coverage)}
+                    </span>
+                    <span>
+                      Contested:{' '}
+                      {formatPercent(possessionSummary.contested_coverage)}
+                    </span>
+                    <span>
+                      Free: {formatPercent(possessionSummary.free_coverage)}
+                    </span>
+                    <span>
+                      Unknown:{' '}
+                      {formatPercent(possessionSummary.unknown_coverage)}
+                    </span>
+                    <span>
+                      Contacts:{' '}
+                      {formatCount(possessionSummary.contact_candidates)}
+                    </span>
+                    <span>
+                      Player interp:{' '}
+                      {formatCount(possessionSummary.interpolated_player_position_frames)}
+                    </span>
+                  </div>
+                  <PossessionTimelineChart report={match.possession_report} />
+                </>
               )}
               {eventSummary && (
                 <div className='quality-alert'>

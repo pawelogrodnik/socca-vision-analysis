@@ -53,6 +53,7 @@ const defaultAnalysis: AnalysisPayload = {
   chunk_duration_sec: 120,
   chunk_overlap_sec: 2,
   include_ball: true,
+  render_stable_overlay: true,
   yolo_model: DEFAULT_PLAYER_YOLO_MODEL,
   yolo_conf: 0.05,
   yolo_imgsz: 1280,
@@ -609,6 +610,7 @@ export function AdminPanel() {
   const savedPitchConfig = hasPitchConfig(selected);
   const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || savedPitchConfig));
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
+  const reviewStableOverlaySkipped = selected?.analysis_report?.parameters?.render_stable_overlay === false;
   const reviewReadiness = buildReviewReadiness(selected);
   const steps = workflowSteps(activeStep, selected);
   const activeJobStep = activeAnalysisJob ? activeProgressStep(activeAnalysisJob) : null;
@@ -898,6 +900,11 @@ export function AdminPanel() {
                 src={artifactUrl(selected.id, reviewStableOverlay)}
                 className='video'
               />
+            ) : reviewStableOverlaySkipped ? (
+              <p className='muted'>
+                Stable overlay video zostal pominiety w tym runie. Do przypisania
+                zawodnikow uzyj identity crop review albo uruchom reprocess z overlayem.
+              </p>
             ) : (
               <p className='muted'>
                 Brak stable_overlay_preview.mp4 dla tego meczu. Uruchom

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +70,17 @@ def _player_stats_by_subject(player_stats: dict[str, Any]) -> dict[str, dict[str
     }
 
 
+def _stable_players_by_subject(stable_players: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(stable_players, dict):
+        return {}
+    rows = stable_players.get("players") if isinstance(stable_players.get("players"), list) else []
+    return {
+        str(row.get("stable_subject_id") or ""): row
+        for row in rows
+        if isinstance(row, dict) and row.get("stable_subject_id")
+    }
+
+
 def _quality_rank(quality: str | None) -> int:
     return {"high": 0, "medium": 1, "low": 2}.get(str(quality or "unknown"), 3)
 
@@ -77,6 +89,273 @@ def _worst_quality(values: list[str]) -> str:
     if not values:
         return "unknown"
     return max(values, key=_quality_rank)
+
+
+def _stint_frame_count(stint: dict[str, Any]) -> int:
+    counted = sum(
+        _int(stint.get(key))
+        for key in ["detected_frames", "missing_frames", "ambiguous_frames", "predicted_frames"]
+    )
+    if counted > 0:
+        return counted
+    start = stint.get("start_frame")
+    end = stint.get("end_frame")
+    if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end >= start:
+        return int(end - start + 1)
+    return 0
+
+
+def _slot_frame_count(slot_stats: dict[str, Any], stable_player: dict[str, Any] | None) -> int:
+    frames = slot_stats.get("frames") if isinstance(slot_stats.get("frames"), dict) else {}
+    active = _int(frames.get("active_frames"))
+    if active > 0:
+        return active
+    movement = stable_player.get("movement_stats") if isinstance(stable_player, dict) else {}
+    active = _int(_record(movement).get("active_frames"))
+    if active > 0:
+        return active
+    if isinstance(stable_player, dict):
+        return sum(_stint_frame_count(stint) for stint in stable_player.get("stints") or [] if isinstance(stint, dict))
+    return 0
+
+
+def _stint_for_assignment(stable_player: dict[str, Any] | None, assignment: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(stable_player, dict) or not assignment.get("stint_id"):
+        return None
+    stint_id = str(assignment.get("stint_id"))
+    return next(
+        (
+            stint
+            for stint in stable_player.get("stints") or []
+            if isinstance(stint, dict) and str(stint.get("stint_id") or "") == stint_id
+        ),
+        None,
+    )
+
+
+def _scale_value(value: Any, ratio: float, *, integer: bool = False) -> int | float:
+    scaled = _number(value) * ratio
+    return int(round(scaled)) if integer else scaled
+
+
+def _scale_stats_for_unique_coverage(stats: dict[str, Any], ratio: float) -> dict[str, Any]:
+    if ratio >= 0.999:
+        return stats
+    ratio = max(0.0, min(1.0, ratio))
+    scaled = copy.deepcopy(stats)
+    for group, integer in [
+        ("time", False),
+        ("distance", False),
+        ("frames", True),
+        ("segments", True),
+    ]:
+        source = stats.get(group) if isinstance(stats.get(group), dict) else {}
+        scaled[group] = {
+            key: _scale_value(value, ratio, integer=integer)
+            if isinstance(value, (int, float))
+            else value
+            for key, value in _record(source).items()
+        }
+
+    source_intensity = stats.get("intensity") if isinstance(stats.get("intensity"), dict) else {}
+    scaled_intensity = copy.deepcopy(_record(source_intensity))
+    for key in [
+        "high_intensity_time_sec",
+        "high_intensity_distance_m",
+        "sprint_time_sec",
+        "sprint_distance_m",
+    ]:
+        scaled_intensity[key] = _scale_value(source_intensity.get(key), ratio)
+    for key in [
+        "high_intensity_segments",
+        "sprint_count",
+        "trusted_speed_segments",
+        "sprint_candidate_count",
+        "rejected_sprint_candidate_count",
+    ]:
+        scaled_intensity[key] = _scale_value(source_intensity.get(key), ratio, integer=True)
+    scaled["intensity"] = scaled_intensity
+    scaled["stats_note"] = f"{stats.get('stats_note') or 'stats'}; clipped to unique non-overlapping player time"
+    return scaled
+
+
+def _clip_slot_stats_to_stint(
+    slot_stats: dict[str, Any],
+    stable_player: dict[str, Any] | None,
+    assignment: dict[str, Any],
+) -> dict[str, Any]:
+    stint = _stint_for_assignment(stable_player, assignment)
+    if not stint:
+        return slot_stats
+
+    denominator = _slot_frame_count(slot_stats, stable_player)
+    stint_frames = _stint_frame_count(stint)
+    if denominator <= 0 or stint_frames <= 0:
+        return slot_stats
+    ratio = max(0.0, min(1.0, stint_frames / denominator))
+
+    clipped = copy.deepcopy(slot_stats)
+    clipped["tracklet_ids"] = list(stint.get("tracklet_ids") or [])
+    clipped["raw_track_ids"] = list(stint.get("raw_track_ids") or [])
+    clipped["stats_note"] = "stint-level estimate clipped from stable slot stats by stint frame coverage"
+
+    source_time = slot_stats.get("time") if isinstance(slot_stats.get("time"), dict) else {}
+    source_frames = slot_stats.get("frames") if isinstance(slot_stats.get("frames"), dict) else {}
+    seconds_per_active_frame = (
+        _number(source_time.get("playing_time_sec")) / denominator
+        if denominator > 0 and _number(source_time.get("playing_time_sec")) > 0
+        else 0.0
+    )
+
+    detected_frames = _int(stint.get("detected_frames"))
+    missing_frames = _int(stint.get("missing_frames"))
+    ambiguous_frames = _int(stint.get("ambiguous_frames"))
+    predicted_frames = _int(stint.get("predicted_frames"))
+    active_frames = detected_frames + missing_frames + ambiguous_frames + predicted_frames
+    if active_frames <= 0:
+        active_frames = stint_frames
+
+    clipped["frames"] = {
+        **_record(source_frames),
+        "active_frames": active_frames,
+        "detected_frames": detected_frames,
+        "missing_frames": missing_frames,
+        "ambiguous_frames": ambiguous_frames,
+        "predicted_frames": predicted_frames,
+        "samples_used": int(round(_int(source_frames.get("samples_used")) * ratio)),
+    }
+
+    if seconds_per_active_frame > 0:
+        clipped["time"] = {
+            **_record(source_time),
+            "playing_time_sec": active_frames * seconds_per_active_frame,
+            "detected_time_sec": detected_frames * seconds_per_active_frame,
+            "missing_time_sec": missing_frames * seconds_per_active_frame,
+            "ambiguous_time_sec": ambiguous_frames * seconds_per_active_frame,
+        }
+    else:
+        clipped["time"] = {
+            **_record(source_time),
+            "playing_time_sec": _scale_value(source_time.get("playing_time_sec"), ratio),
+            "detected_time_sec": _scale_value(source_time.get("detected_time_sec"), ratio),
+            "missing_time_sec": _scale_value(source_time.get("missing_time_sec"), ratio),
+            "ambiguous_time_sec": _scale_value(source_time.get("ambiguous_time_sec"), ratio),
+        }
+
+    source_distance = slot_stats.get("distance") if isinstance(slot_stats.get("distance"), dict) else {}
+    clipped["distance"] = {
+        **_record(source_distance),
+        "observed_distance_m": _scale_value(source_distance.get("observed_distance_m"), ratio),
+        "estimated_short_gap_distance_m": _scale_value(source_distance.get("estimated_short_gap_distance_m"), ratio),
+        "total_distance_m": _scale_value(source_distance.get("total_distance_m"), ratio),
+    }
+
+    source_segments = slot_stats.get("segments") if isinstance(slot_stats.get("segments"), dict) else {}
+    clipped["segments"] = {
+        key: _scale_value(value, ratio, integer=True)
+        for key, value in _record(source_segments).items()
+    }
+
+    source_intensity = slot_stats.get("intensity") if isinstance(slot_stats.get("intensity"), dict) else {}
+    clipped_intensity = copy.deepcopy(_record(source_intensity))
+    for key in [
+        "high_intensity_time_sec",
+        "high_intensity_distance_m",
+        "sprint_time_sec",
+        "sprint_distance_m",
+    ]:
+        clipped_intensity[key] = _scale_value(source_intensity.get(key), ratio)
+    for key in [
+        "high_intensity_segments",
+        "sprint_count",
+        "trusted_speed_segments",
+        "sprint_candidate_count",
+        "rejected_sprint_candidate_count",
+    ]:
+        clipped_intensity[key] = _scale_value(source_intensity.get(key), ratio, integer=True)
+    clipped["intensity"] = clipped_intensity
+    return clipped
+
+
+def _assignment_interval(
+    assignment: dict[str, Any],
+    stable_by_subject: dict[str, dict[str, Any]],
+) -> tuple[float, float] | None:
+    stint = _stint_for_assignment(
+        stable_by_subject.get(str(assignment.get("stable_subject_id") or "")),
+        assignment,
+    )
+    if not stint:
+        return None
+    start = stint.get("start_time_sec")
+    end = stint.get("end_time_sec")
+    if isinstance(start, (int, float)) and isinstance(end, (int, float)) and end > start:
+        return float(start), float(end)
+    duration = _number(stint.get("duration_sec"))
+    if isinstance(start, (int, float)) and duration > 0:
+        return float(start), float(start) + duration
+    return None
+
+
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if not intervals:
+        return []
+    ordered = sorted((start, end) for start, end in intervals if end > start)
+    merged: list[tuple[float, float]] = []
+    for start, end in ordered:
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _unique_interval_length(
+    start: float,
+    end: float,
+    covered: list[tuple[float, float]],
+) -> float:
+    if end <= start:
+        return 0.0
+    overlap = 0.0
+    for covered_start, covered_end in covered:
+        overlap += max(0.0, min(end, covered_end) - max(start, covered_start))
+    return max(0.0, (end - start) - overlap)
+
+
+def _assignment_runtime_key(assignment: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(assignment.get("player_id") or ""),
+        str(assignment.get("stable_subject_id") or ""),
+        str(assignment.get("stint_id") or ""),
+    )
+
+
+def _assignment_unique_ratios(
+    assignments: list[dict[str, Any]],
+    stable_by_subject: dict[str, dict[str, Any]],
+) -> dict[tuple[str, str, str], float]:
+    by_player: dict[str, list[tuple[float, float, dict[str, Any]]]] = {}
+    ratios: dict[tuple[str, str, str], float] = {}
+    for assignment in assignments:
+        if assignment.get("status") != "assigned" or not assignment.get("player_id") or not assignment.get("stint_id"):
+            continue
+        interval = _assignment_interval(assignment, stable_by_subject)
+        if not interval:
+            continue
+        by_player.setdefault(str(assignment["player_id"]), []).append((interval[0], interval[1], assignment))
+
+    for rows in by_player.values():
+        covered: list[tuple[float, float]] = []
+        for start, end, assignment in sorted(rows, key=lambda item: (item[0], item[1])):
+            duration = max(0.0, end - start)
+            if duration <= 0:
+                ratios[_assignment_runtime_key(assignment)] = 1.0
+                continue
+            unique = _unique_interval_length(start, end, covered)
+            ratios[_assignment_runtime_key(assignment)] = max(0.0, min(1.0, unique / duration))
+            covered = _merge_intervals([*covered, (start, end)])
+    return ratios
 
 
 def _empty_player_row(assignment: dict[str, Any]) -> dict[str, Any]:
@@ -174,6 +453,7 @@ def _merge_slot_stats(row: dict[str, Any], assignment: dict[str, Any], slot_stat
             "stint_id": assignment.get("stint_id"),
             "stint_ids": assignment.get("stint_ids") or [],
             "assignment_scope": assignment.get("assignment_scope") or "stable_slot",
+            "unique_time_ratio": assignment.get("unique_time_ratio", 1.0),
             "review_warnings": assignment.get("review_warnings") or [],
         }
     )
@@ -365,13 +645,17 @@ def build_resolved_player_stats_document(
     *,
     player_stats: dict[str, Any],
     identity_assignments: dict[str, Any],
+    stable_players: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     slot_stats_by_subject = _player_stats_by_subject(player_stats)
+    stable_by_subject = _stable_players_by_subject(stable_players)
     assignments = identity_assignments.get("assignments") if isinstance(identity_assignments.get("assignments"), list) else []
+    unique_ratios = _assignment_unique_ratios(assignments, stable_by_subject)
     rows_by_player: dict[str, dict[str, Any]] = {}
     distance_qualities: dict[str, list[str]] = {}
     speed_qualities: dict[str, list[str]] = {}
     skipped_assignments = []
+    clipped_overlap_assignments = 0
 
     for assignment in assignments:
         if not isinstance(assignment, dict):
@@ -383,11 +667,29 @@ def build_resolved_player_stats_document(
         if not slot_stats:
             skipped_assignments.append({"stable_subject_id": stable_subject_id, "reason": "missing_player_stats"})
             continue
+        effective_stats = _clip_slot_stats_to_stint(
+            slot_stats,
+            stable_by_subject.get(stable_subject_id),
+            assignment,
+        )
+        assignment_for_merge = assignment
+        unique_ratio = unique_ratios.get(_assignment_runtime_key(assignment), 1.0)
+        if unique_ratio < 0.999:
+            clipped_overlap_assignments += 1
+            effective_stats = _scale_stats_for_unique_coverage(effective_stats, unique_ratio)
+            warnings = list(assignment.get("review_warnings") or [])
+            if "overlapping_stint_clipped" not in warnings:
+                warnings.append("overlapping_stint_clipped")
+            assignment_for_merge = {
+                **assignment,
+                "review_warnings": warnings,
+                "unique_time_ratio": round(unique_ratio, 4),
+            }
         player_id = str(assignment["player_id"])
         row = rows_by_player.setdefault(player_id, _empty_player_row(assignment))
-        _merge_slot_stats(row, assignment, slot_stats)
-        distance = slot_stats.get("distance") if isinstance(slot_stats.get("distance"), dict) else {}
-        speed = slot_stats.get("speed") if isinstance(slot_stats.get("speed"), dict) else {}
+        _merge_slot_stats(row, assignment_for_merge, effective_stats)
+        distance = effective_stats.get("distance") if isinstance(effective_stats.get("distance"), dict) else {}
+        speed = effective_stats.get("speed") if isinstance(effective_stats.get("speed"), dict) else {}
         distance_qualities.setdefault(player_id, []).append(str(distance.get("quality") or "unknown"))
         speed_qualities.setdefault(player_id, []).append(str(speed.get("quality") or "unknown"))
 
@@ -402,6 +704,7 @@ def build_resolved_player_stats_document(
         "assigned_stints": int((identity_assignments.get("summary") or {}).get("assigned_stints") or 0),
         "unresolved_slots": int((identity_assignments.get("summary") or {}).get("unassigned_slots") or 0),
         "skipped_assignments": len(skipped_assignments),
+        "overlapping_stint_assignments_clipped": clipped_overlap_assignments,
         "players_with_warnings": sum(1 for player in players if player.get("review_warnings")),
         "total_distance_m": round(sum(_number(player["distance"].get("total_distance_m")) for player in players), 2),
         "observed_distance_m": round(sum(_number(player["distance"].get("observed_distance_m")) for player in players), 2),
@@ -445,9 +748,11 @@ def build_resolved_player_stats_document(
 def build_resolved_player_stats_from_files(path: Path, *, persist: bool = False) -> dict[str, Any]:
     player_stats = _load_json(path, "player_stats.json")
     identity_assignments = _load_json(path, "player_identity_assignments.json")
+    stable_players = _load_json(path, "stable_players.json") if (path / "stable_players.json").exists() else None
     doc = build_resolved_player_stats_document(
         player_stats=player_stats,
         identity_assignments=identity_assignments,
+        stable_players=stable_players,
     )
     if persist:
         (path / "resolved_player_stats.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")

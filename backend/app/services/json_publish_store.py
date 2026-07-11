@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.config import PUBLISHED_DIR
+from app.config import MATCHES_DIR, PUBLISHED_DIR
+from app.services.public_match_report import write_public_match_report_bundle
 
 
 PUBLISHED_MATCHES_DIR = PUBLISHED_DIR / "matches"
@@ -162,6 +163,8 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
 
     generated = now_iso()
     created_at = str(existing_summary.get("created_at") or generated)
+    source_match = package.get("match") if isinstance(package.get("match"), dict) else {}
+    source_match_id = str(source_match.get("id") or "unknown")
     summary = _summary_from_package(
         package,
         published_id=published_id,
@@ -169,8 +172,15 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
         updated_at=generated,
     )
     _atomic_write_json(target_dir / "package.json", package)
+    public_report = write_public_match_report_bundle(
+        package,
+        target_dir=target_dir,
+        source_match_dir=MATCHES_DIR / source_match_id,
+    )
     _atomic_write_json(summary_path, summary)
-    return get_published_match(published_id)
+    result = get_published_match(published_id)
+    result["public_report"] = public_report
+    return result
 
 
 def list_published_matches() -> list[dict[str, Any]]:
@@ -200,6 +210,8 @@ def get_published_match(match_id: str) -> dict[str, Any]:
         raise KeyError(match_id)
     summary = _load_json_object(summary_path)
     package = _load_json_object(package_path)
+    public_report_path = target_dir / "public_report.json"
+    public_report = _load_json_object(public_report_path) if public_report_path.exists() else None
     teams = [
         {
             "id": str(team.get("id") or f"team-{index + 1}"),
@@ -213,6 +225,7 @@ def get_published_match(match_id: str) -> dict[str, Any]:
     return {
         **summary,
         "package": package,
+        "public_report": public_report,
         "teams": teams,
         "players": _match_players(package),
         "stable_players": _stable_players(package),

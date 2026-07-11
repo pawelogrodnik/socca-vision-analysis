@@ -39,6 +39,11 @@ LIVE_STATS_SPEED_MAX_WINDOW_SEC = 1.25
 STABLE_OVERLAY_VISUAL_HOLD_MAX_GAP_FRAMES = 6
 STABLE_OVERLAY_VISUAL_HOLD_MAX_GAP_SEC = 0.35
 STABLE_OVERLAY_VISUAL_HOLD_MAX_SPEED_MPS = 8.5
+POSSESSION_INDICATOR_MIN_CONFIDENCE = 0.65
+PASSING_LANE_MIN_POSSESSION_CONFIDENCE = 0.68
+PASSING_LANE_MAX_OPTIONS = 5
+PASSING_LANE_MIN_LENGTH_PX = 32.0
+PASSING_LANE_CORRIDOR_PX = 20.0
 
 
 def now_iso() -> str:
@@ -2581,8 +2586,11 @@ def write_stable_overlay(
                     trail_points[row["stable_player_id"]].append((frame_idx, center))
             _trim_trails(trail_points, frame_idx, trail_frame_window=45)
             _draw_stable_trails(overlay, trail_points, player_colors)
+            current_possession_row = possession_rows.get(frame_idx)
+            _draw_open_passing_lanes(overlay, current_possession_row, current_rows, player_labels)
             for row in current_rows:
                 _draw_stable_row(overlay, row)
+            _draw_possession_indicator(overlay, current_possession_row, current_rows)
             ball_position = ball_positions.get(frame_idx)
             if ball_position is not None:
                 _draw_ball_position(overlay, ball_position)
@@ -2601,7 +2609,7 @@ def write_stable_overlay(
                 _draw_camera_motion_hud(overlay, camera_motion.sample_for_frame(frame_idx))
             _draw_possession_pass_panel(
                 overlay,
-                possession_rows.get(frame_idx),
+                current_possession_row,
                 live_possession_rows.get(frame_idx),
                 live_pass_rows.get(frame_idx),
                 possession_summary,
@@ -3295,6 +3303,280 @@ def _draw_live_stats_label(
     cv2.putText(frame, label, (x1, y), font, font_scale, color, thickness, cv2.LINE_AA)
 
 
+def _draw_possession_indicator(
+    frame: Any,
+    possession_row: dict[str, Any] | None,
+    current_rows: list[dict[str, Any]],
+) -> None:
+    owner = _possession_owner_row(
+        possession_row,
+        current_rows,
+        min_confidence=POSSESSION_INDICATOR_MIN_CONFIDENCE,
+    )
+    if not owner:
+        return
+
+    import cv2
+    import numpy as np
+
+    x1, y1, x2, _y2 = [int(round(float(value))) for value in owner["bbox_xyxy"]]
+    center_x = (x1 + x2) // 2
+    bbox_width = max(12, x2 - x1)
+    half_width = int(max(7, min(14, bbox_width * 0.28)))
+    tip_y = max(6, y1 - 5)
+    base_y = max(1, tip_y - int(half_width * 1.25))
+    points = np.array(
+        [
+            [center_x, tip_y],
+            [center_x - half_width, base_y],
+            [center_x + half_width, base_y],
+        ],
+        dtype=np.int32,
+    )
+    cv2.fillConvexPoly(frame, points, (35, 35, 245), cv2.LINE_AA)
+    cv2.polylines(frame, [points.reshape((-1, 1, 2))], isClosed=True, color=(0, 0, 0), thickness=2, lineType=cv2.LINE_AA)
+
+
+def _draw_open_passing_lanes(
+    frame: Any,
+    possession_row: dict[str, Any] | None,
+    current_rows: list[dict[str, Any]],
+    player_labels: dict[str, str],
+) -> None:
+    lanes = _open_passing_lanes(possession_row, current_rows, player_labels)
+    if not lanes:
+        return
+
+    import cv2
+
+    layer = frame.copy()
+    for lane in lanes:
+        color = _passing_lane_color(lane.get("team_label"))
+        start = lane["start_px"]
+        end = lane["end_px"]
+        cv2.line(layer, start, end, color, 1, cv2.LINE_AA)
+        cv2.circle(layer, end, 4, color, 1, cv2.LINE_AA)
+    cv2.addWeighted(layer, 0.42, frame, 0.58, 0, dst=frame)
+
+
+def _open_passing_lanes(
+    possession_row: dict[str, Any] | None,
+    current_rows: list[dict[str, Any]],
+    player_labels: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    owner = _possession_owner_row(
+        possession_row,
+        current_rows,
+        min_confidence=PASSING_LANE_MIN_POSSESSION_CONFIDENCE,
+    )
+    if not owner:
+        return []
+    owner_team = str(owner.get("team_label") or "")
+    if owner_team not in {"A", "B"}:
+        return []
+    start = _row_footpoint(owner)
+    if start is None:
+        return []
+
+    trusted_rows = [row for row in current_rows if _row_is_trusted_for_overlay(row) and _valid_bbox(row.get("bbox_xyxy"))]
+    receivers = [
+        row
+        for row in trusted_rows
+        if row.get("stable_player_id") != owner.get("stable_player_id") and row.get("team_label") == owner_team
+    ]
+    opponents = [
+        row
+        for row in trusted_rows
+        if row.get("team_label") in {"A", "B"} and row.get("team_label") != owner_team
+    ]
+    lanes: list[dict[str, Any]] = []
+    labels = player_labels or {}
+    for receiver in receivers:
+        end = _row_footpoint(receiver)
+        if end is None:
+            continue
+        length = _point_distance(start, end)
+        if length < PASSING_LANE_MIN_LENGTH_PX:
+            continue
+        blocker = next(
+            (
+                opponent
+                for opponent in opponents
+                if _row_blocks_passing_lane(opponent, start, end, corridor_px=PASSING_LANE_CORRIDOR_PX)
+            ),
+            None,
+        )
+        if blocker is not None:
+            continue
+        receiver_id = str(receiver.get("stable_player_id") or "")
+        lanes.append(
+            {
+                "from_stable_player_id": owner.get("stable_player_id"),
+                "to_stable_player_id": receiver_id,
+                "to_label": labels.get(receiver_id, receiver_id),
+                "team_label": owner_team,
+                "start_px": (int(round(start[0])), int(round(start[1]))),
+                "end_px": (int(round(end[0])), int(round(end[1]))),
+                "distance_px": round(length, 2),
+            }
+        )
+    return sorted(lanes, key=lambda lane: float(lane.get("distance_px") or 0.0))[:PASSING_LANE_MAX_OPTIONS]
+
+
+def _possession_owner_row(
+    possession_row: dict[str, Any] | None,
+    current_rows: list[dict[str, Any]],
+    *,
+    min_confidence: float,
+) -> dict[str, Any] | None:
+    if not isinstance(possession_row, dict):
+        return None
+    if str(possession_row.get("status") or "") != "controlled":
+        return None
+    if float(possession_row.get("confidence") or 0.0) < min_confidence:
+        return None
+    stable_player_id = str(possession_row.get("stable_player_id") or "")
+    if not stable_player_id:
+        return None
+    for row in current_rows:
+        if str(row.get("stable_player_id") or "") != stable_player_id:
+            continue
+        if _row_is_trusted_for_overlay(row) and _valid_bbox(row.get("bbox_xyxy")):
+            return row
+    return None
+
+
+def _row_is_trusted_for_overlay(row: dict[str, Any]) -> bool:
+    source = str(row.get("source") or "")
+    if source == "detected":
+        return True
+    return source == "short_gap_interpolated" and row.get("visual_trusted") is True
+
+
+def _row_footpoint(row: dict[str, Any]) -> tuple[float, float] | None:
+    bbox = row.get("bbox_xyxy")
+    if not _valid_bbox(bbox):
+        return None
+    x1, _y1, x2, y2 = [float(value) for value in bbox]
+    return ((x1 + x2) / 2.0, y2)
+
+
+def _row_lower_bbox_segment(row: dict[str, Any]) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    bbox = row.get("bbox_xyxy")
+    if not _valid_bbox(bbox):
+        return None
+    x1, _y1, x2, y2 = [float(value) for value in bbox]
+    return (x1, y2), (x2, y2)
+
+
+def _row_blocks_passing_lane(
+    row: dict[str, Any],
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    corridor_px: float,
+) -> bool:
+    footpoint = _row_footpoint(row)
+    if footpoint is not None and _point_to_segment_distance(footpoint, start, end) <= corridor_px:
+        projection = _segment_projection_ratio(footpoint, start, end)
+        if 0.05 <= projection <= 0.95:
+            return True
+    lower_segment = _row_lower_bbox_segment(row)
+    if lower_segment is None:
+        return False
+    return _segment_to_segment_distance(start, end, lower_segment[0], lower_segment[1]) <= corridor_px
+
+
+def _point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+
+def _point_to_segment_distance(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float:
+    px, py = point
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    denom = dx * dx + dy * dy
+    if denom <= 1e-9:
+        return _point_distance(point, start)
+    ratio = max(0.0, min(1.0, ((px - sx) * dx + (py - sy) * dy) / denom))
+    closest = (sx + ratio * dx, sy + ratio * dy)
+    return _point_distance(point, closest)
+
+
+def _segment_projection_ratio(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float:
+    sx, sy = start
+    ex, ey = end
+    dx = ex - sx
+    dy = ey - sy
+    denom = dx * dx + dy * dy
+    if denom <= 1e-9:
+        return 0.0
+    return ((point[0] - sx) * dx + (point[1] - sy) * dy) / denom
+
+
+def _segment_to_segment_distance(
+    a1: tuple[float, float],
+    a2: tuple[float, float],
+    b1: tuple[float, float],
+    b2: tuple[float, float],
+) -> float:
+    if _segments_intersect(a1, a2, b1, b2):
+        return 0.0
+    return min(
+        _point_to_segment_distance(a1, b1, b2),
+        _point_to_segment_distance(a2, b1, b2),
+        _point_to_segment_distance(b1, a1, a2),
+        _point_to_segment_distance(b2, a1, a2),
+    )
+
+
+def _segments_intersect(
+    a1: tuple[float, float],
+    a2: tuple[float, float],
+    b1: tuple[float, float],
+    b2: tuple[float, float],
+) -> bool:
+    def orientation(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> float:
+        return (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+
+    def on_segment(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> bool:
+        return (
+            min(p[0], r[0]) - 1e-9 <= q[0] <= max(p[0], r[0]) + 1e-9
+            and min(p[1], r[1]) - 1e-9 <= q[1] <= max(p[1], r[1]) + 1e-9
+        )
+
+    o1 = orientation(a1, a2, b1)
+    o2 = orientation(a1, a2, b2)
+    o3 = orientation(b1, b2, a1)
+    o4 = orientation(b1, b2, a2)
+    if o1 * o2 < 0 and o3 * o4 < 0:
+        return True
+    return (
+        abs(o1) <= 1e-9 and on_segment(a1, b1, a2)
+        or abs(o2) <= 1e-9 and on_segment(a1, b2, a2)
+        or abs(o3) <= 1e-9 and on_segment(b1, a1, b2)
+        or abs(o4) <= 1e-9 and on_segment(b1, a2, b2)
+    )
+
+
+def _passing_lane_color(team_label: Any) -> tuple[int, int, int]:
+    if team_label == "A":
+        return (70, 190, 255)
+    if team_label == "B":
+        return (255, 210, 90)
+    return (120, 220, 120)
+
+
 def _format_score(value: Any) -> str:
     if value is None:
         return "--"
@@ -3819,6 +4101,7 @@ def stabilize_match(
     ball_tracks_doc: dict[str, Any] | None = None,
     ball_candidates_doc: dict[str, Any] | None = None,
     write_debug_overlay: bool = True,
+    render_stable_overlay: bool = True,
     player_label_overrides: dict[str, str] | None = None,
     progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
@@ -3878,6 +4161,7 @@ def stabilize_match(
         pitch_length_m=float(pitch.length_m),
         fps=float(video_metadata.get("fps") or 25.0),
         pitch_polygon=pitch.polygon_np,
+        progress=progress,
     )
     if progress:
         progress(
@@ -3929,24 +4213,34 @@ def stabilize_match(
     player_heatmaps = build_player_heatmaps_document(stable_doc, match_dir)
     stable_doc["player_heatmaps_summary"] = player_heatmaps["summary"]
     change_artifacts = write_change_candidate_artifacts(match_dir, stable_doc)
-    if progress:
+    stable_overlay_artifacts: dict[str, str] = {}
+    if render_stable_overlay and progress:
         progress(
             "stable_overlay_render",
             94.0,
             "Rendering stable overlay preview.",
             {"artifact": "stable_overlay_preview.mp4"},
         )
-    write_stable_overlay(
-        video_path,
-        match_dir,
-        stable_doc,
-        pitch.polygon_np,
-        fps=float(video_metadata.get("fps") or 25.0),
-        frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
-        camera_motion=camera_motion,
-        ball_tracks_doc=refined_ball_tracks_doc,
-        pitch_homography=pitch.homography(),
-    )
+    if render_stable_overlay:
+        write_stable_overlay(
+            video_path,
+            match_dir,
+            stable_doc,
+            pitch.polygon_np,
+            fps=float(video_metadata.get("fps") or 25.0),
+            frame_size=(int(video_metadata.get("width") or 0), int(video_metadata.get("height") or 0)),
+            camera_motion=camera_motion,
+            ball_tracks_doc=refined_ball_tracks_doc,
+            pitch_homography=pitch.homography(),
+        )
+        stable_overlay_artifacts["stable_overlay_preview"] = "stable_overlay_preview.mp4"
+    elif progress:
+        progress(
+            "stable_overlay_render",
+            94.0,
+            "Skipping stable overlay preview render.",
+            {"artifact": "stable_overlay_preview.mp4", "skipped": True},
+        )
     debug_overlay_artifacts: dict[str, str] = {}
     if write_debug_overlay:
         if progress:
@@ -3992,6 +4286,7 @@ def stabilize_match(
         "global_identity_parameters": global_identity_parameters,
         "camera_motion_compensation": bool(getattr(camera_motion, "enabled", False)) if camera_motion is not None else False,
         "camera_motion_reference_frame": getattr(camera_motion, "reference_frame", None) if camera_motion is not None else None,
+        "render_stable_overlay": bool(render_stable_overlay),
     }
     report = build_stabilization_report(
         stable_doc=public_stable_doc,
@@ -4053,7 +4348,7 @@ def stabilize_match(
             "global_identity_report": "global_identity_report.json",
             "analysis_quality_report": "analysis_quality_report.json",
             "stabilization_report": "stabilization_report.json",
-            "stable_overlay_preview": "stable_overlay_preview.mp4",
+            **stable_overlay_artifacts,
             **debug_overlay_artifacts,
             "team_clusters": "team_clusters.json",
             "frame_detection_counts": "frame_detection_counts.json",

@@ -228,6 +228,17 @@ export function AnalysisForm({
           />
           Analizuj pilke w tym samym jobie
         </label>
+        <label className='checkbox-row'>
+          <input
+            type='checkbox'
+            checked={analysis.render_stable_overlay}
+            disabled={disabled}
+            onChange={(event) =>
+              onChange({ ...analysis, render_stable_overlay: event.target.checked })
+            }
+          />
+          Generuj stable overlay video
+        </label>
         <div className='grid two compact'>
           <label>
             Chunk duration sec
@@ -300,8 +311,9 @@ export function AnalysisForm({
         <p className='muted'>
           Chunked mode analizuje zakresy osobno, zapisuje status kazdego
           chunka i przy ponownym uruchomieniu pomija juz ukonczone chunki.
-          Opcja pilki dodaje drugi model YOLO w tym samym jobie. W trybie
-          chunked korzysta ze wspolnego retry/resume.
+          Opcja pilki dodaje drugi model YOLO w tym samym jobie. Stable overlay
+          jest potrzebny do wizualnej walidacji, ale mozna go pominac przy
+          dlugich runach i pracowac na JSON-ach oraz cropach identity review.
         </p>
       </div>
       {showRunButton && (

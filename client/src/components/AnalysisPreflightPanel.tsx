@@ -44,9 +44,12 @@ export function AnalysisPreflightPanel({
   });
   const canStart = canRun && preflight.canStart && !disabled;
   const runtimeDevice = analysis.yolo_device || 'auto';
+  const stableOverlayNote = analysis.render_stable_overlay
+    ? 'stable overlay MP4'
+    : 'bez stable overlay MP4';
   const storageNote = analysis.include_ball
-    ? 'Artefakty beda zawieraly stable/raw/debug overlay oraz ball/possession overlay. Przy pelnym meczu pilka wyraznie zwieksza czas i rozmiar outputu.'
-    : 'Artefakty beda zawieraly stable/raw/debug overlay i JSON-y trackingowe. To jest najbezpieczniejszy pierwszy run pelnego meczu.';
+    ? `Artefakty beda zawieraly JSON-y trackingowe i pilki (${stableOverlayNote}). Przy pelnym meczu pilka wyraznie zwieksza czas i rozmiar outputu.`
+    : `Artefakty beda zawieraly JSON-y trackingowe (${stableOverlayNote}). To jest najbezpieczniejszy pierwszy run pelnego meczu.`;
 
   return (
     <div className='preflight-panel'>

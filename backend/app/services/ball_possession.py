@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1042,6 +1043,7 @@ def build_possession_report(
     summary = dict(candidates_doc.get("summary") or {})
     warnings = list(summary.pop("warnings", []) or [])
     restart_summary = dict((restart_doc or {}).get("summary") or {})
+    possession_timeline = build_possession_timeline(candidates_doc)
     if float(summary.get("known_possession_coverage") or 0.0) < 0.5:
         warnings.append("Known possession coverage is below 50%; do not use this as a final possession statistic.")
     if int(summary.get("contested_frames") or 0) > 0:
@@ -1072,12 +1074,116 @@ def build_possession_report(
             "restart_turnover_or_interception_candidates": restart_summary.get(
                 "restart_turnover_or_interception_candidates", 0
             ),
+            "possession_timeline_points": len(possession_timeline),
         },
+        "possession_timeline": possession_timeline,
         "warnings": warnings,
         "notes": [
             "This is a conservative candidate layer, not a final possession or pass statistic.",
             "Unknown means the ball or trusted player position was missing; it is intentionally not guessed.",
         ],
+    }
+
+
+def build_possession_timeline(candidates_doc: dict[str, Any]) -> list[dict[str, Any]]:
+    frames = [
+        frame
+        for frame in candidates_doc.get("frames") or []
+        if isinstance(frame, dict) and frame.get("frame") is not None
+    ]
+    if not frames:
+        return []
+    frames.sort(key=lambda frame: (float(frame.get("time_sec") or 0.0), int(frame.get("frame") or 0)))
+    summary = candidates_doc.get("summary") if isinstance(candidates_doc.get("summary"), dict) else {}
+    interval_sec = float(summary.get("frame_interval_sec") or _frame_interval_sec(frames, fps=30.0) or (1.0 / 30.0))
+    start_time = _timeline_frame_time_sec(frames[0], interval_sec)
+    end_time = _timeline_frame_time_sec(frames[-1], interval_sec)
+    duration_sec = max(interval_sec, end_time - start_time + interval_sec)
+    target_points = max(10, min(40, int(math.ceil(duration_sec / 60.0))))
+    if len(frames) < target_points:
+        target_points = max(1, len(frames))
+    bucket_sec = duration_sec / max(target_points, 1)
+    timeline: list[dict[str, Any]] = []
+    cursor = 0
+    for index in range(target_points):
+        bucket_start = start_time + index * bucket_sec
+        bucket_end = start_time + (index + 1) * bucket_sec
+        bucket_frames: list[dict[str, Any]] = []
+        while cursor < len(frames):
+            current_time = _timeline_frame_time_sec(frames[cursor], interval_sec)
+            if current_time < bucket_start and index > 0:
+                cursor += 1
+                continue
+            if current_time >= bucket_end and index < target_points - 1:
+                break
+            bucket_frames.append(frames[cursor])
+            cursor += 1
+            if index == target_points - 1:
+                continue
+        if not bucket_frames:
+            timeline.append(_empty_possession_timeline_point(index, bucket_start, bucket_end))
+            continue
+        timeline.append(_possession_timeline_point(index, bucket_start, bucket_end, bucket_frames))
+    return timeline
+
+
+def _timeline_frame_time_sec(frame: dict[str, Any], interval_sec: float) -> float:
+    if frame.get("time_sec") is not None:
+        return float(frame.get("time_sec") or 0.0)
+    return int(frame.get("frame") or 0) * interval_sec
+
+
+def _empty_possession_timeline_point(index: int, start_time: float, end_time: float) -> dict[str, Any]:
+    return {
+        "index": index,
+        "time_sec": round((start_time + end_time) / 2.0, 3),
+        "start_time_sec": round(start_time, 3),
+        "end_time_sec": round(end_time, 3),
+        "frames": 0,
+        "controlled_frames": 0,
+        "contested_frames": 0,
+        "free_frames": 0,
+        "unknown_frames": 0,
+        "team_controlled_frames": {"A": 0, "B": 0},
+        "team_a_share": None,
+        "team_b_share": None,
+        "controlled_coverage": 0.0,
+        "unknown_coverage": 1.0,
+    }
+
+
+def _possession_timeline_point(
+    index: int,
+    start_time: float,
+    end_time: float,
+    frames: list[dict[str, Any]],
+) -> dict[str, Any]:
+    status_counts = Counter(str(frame.get("status") or "unknown") for frame in frames)
+    team_counts = Counter(
+        str(frame.get("team_label"))
+        for frame in frames
+        if frame.get("status") == "controlled" and frame.get("team_label") in {"A", "B"}
+    )
+    total = len(frames)
+    controlled = int(status_counts.get("controlled", 0))
+    team_a = int(team_counts.get("A", 0))
+    team_b = int(team_counts.get("B", 0))
+    team_total = team_a + team_b
+    return {
+        "index": index,
+        "time_sec": round((start_time + end_time) / 2.0, 3),
+        "start_time_sec": round(start_time, 3),
+        "end_time_sec": round(end_time, 3),
+        "frames": total,
+        "controlled_frames": controlled,
+        "contested_frames": int(status_counts.get("contested", 0)),
+        "free_frames": int(status_counts.get("free", 0)),
+        "unknown_frames": int(status_counts.get("unknown", 0)),
+        "team_controlled_frames": {"A": team_a, "B": team_b},
+        "team_a_share": round(team_a / team_total, 4) if team_total else None,
+        "team_b_share": round(team_b / team_total, 4) if team_total else None,
+        "controlled_coverage": round(controlled / max(total, 1), 4),
+        "unknown_coverage": round(int(status_counts.get("unknown", 0)) / max(total, 1), 4),
     }
 
 

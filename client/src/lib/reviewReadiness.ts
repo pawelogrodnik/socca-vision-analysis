@@ -41,6 +41,7 @@ export function buildReviewReadiness(match: Match | null): ReviewReadiness {
   const stableOverlay = Boolean(
     match.analysis_report?.artifacts?.stable_overlay_preview || match.match_package?.assets?.stable_overlay_preview,
   );
+  const stableOverlaySkipped = match.analysis_report?.parameters?.render_stable_overlay === false;
   const checks: ReviewReadinessCheck[] = [
     {
       key: 'analysis_report',
@@ -74,9 +75,9 @@ export function buildReviewReadiness(match: Match | null): ReviewReadiness {
     },
     {
       key: 'stable_overlay_preview',
-      label: 'Stable overlay preview',
-      ready: stableOverlay,
-      required: true,
+      label: stableOverlaySkipped ? 'Stable overlay skipped' : 'Stable overlay preview',
+      ready: stableOverlay || stableOverlaySkipped,
+      required: !stableOverlaySkipped,
     },
   ];
   const missingRequired = checks

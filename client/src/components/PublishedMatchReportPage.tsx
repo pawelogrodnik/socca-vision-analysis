@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, getPublishedMatch } from '../api';
+import { artifactUrl, getPublishedMatch, getStaticPublicMatchReport } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { PublishedMatchDetail } from '../types';
+import type { PublicMatchReport, PublishedMatchDetail } from '../types';
 import {
   MatchReportContent,
   sourceFromPublishedPackage,
 } from './MatchReportContent';
+import { PublicMatchReportContent } from './PublicMatchReportContent';
 import { ReportActions } from './ReportActions';
 
 export function PublishedMatchReportPage() {
   const { matchId } = useParams();
   const [match, setMatch] = useState<PublishedMatchDetail | null>(null);
+  const [publicReport, setPublicReport] = useState<PublicMatchReport | null>(null);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -24,12 +26,22 @@ export function PublishedMatchReportPage() {
     getPublishedMatch(matchId)
       .then((data) => {
         setMatch(data);
+        setPublicReport(data.public_report || null);
         setStatus('');
       })
-      .catch((error) => {
-        setMatch(null);
-        setStatus(errorMessage(error));
-      })
+      .catch(() =>
+        getStaticPublicMatchReport(matchId)
+          .then((data) => {
+            setMatch(null);
+            setPublicReport(data);
+            setStatus('');
+          })
+          .catch((error) => {
+            setMatch(null);
+            setPublicReport(null);
+            setStatus(errorMessage(error));
+          }),
+      )
       .finally(() => setLoading(false));
   }, [matchId]);
 
@@ -42,10 +54,10 @@ export function PublishedMatchReportPage() {
     <main className='app'>
       <section className='hero compact-hero'>
         <p className='eyebrow'>Published match report</p>
-        <h1>{match?.title || 'Raport meczu'}</h1>
+        <h1>{publicReport?.match.title || match?.title || 'Raport meczu'}</h1>
         <p>
-          Publiczny snapshot raportu z bazy SQLite. Pokazuje realnie przypisanych
-          zawodnikow oraz anonimowe stable sloty tylko w kontekscie tego meczu.
+          Publiczny raport meczowy dla zawodnikow: statystyki druzyn,
+          potwierdzeni gracze i heatmapy bez technicznego review.
         </p>
         <div className='row'>
           <Link to='/'>Lista meczow</Link>
@@ -61,18 +73,23 @@ export function PublishedMatchReportPage() {
       )}
       {status && <p className='status'>{status}</p>}
 
-      {match && (
+      {(match || publicReport) && (
         <ReportActions
           mode='published'
           jsonDownload={{
-            label: 'Pobierz snapshot JSON',
-            filename: `${match.id}.json`,
-            data: match.package,
+            label: 'Pobierz public report JSON',
+            filename: `${publicReport?.id || match?.id || 'public-report'}.json`,
+            data: publicReport || match?.package,
           }}
         />
       )}
 
-      {reportSource && (
+      {publicReport ? (
+        <PublicMatchReportContent
+          report={publicReport}
+          assetHref={(path) => (path.startsWith('http') || path.startsWith('/') ? path : `/${path}`)}
+        />
+      ) : reportSource ? (
         <MatchReportContent
           source={reportSource}
           mode='published'
@@ -80,7 +97,7 @@ export function PublishedMatchReportPage() {
             artifactUrl(reportSource.artifactMatchId || reportSource.id, artifactName)
           }
         />
-      )}
+      ) : null}
     </main>
   );
 }

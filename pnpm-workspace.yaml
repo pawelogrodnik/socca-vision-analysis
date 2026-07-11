@@ -1,0 +1,10 @@
+packages:
+  - client
+
+allowBuilds:
+  esbuild: true
+
+verifyDepsBeforeRun: false
+
+onlyBuiltDependencies:
+  - esbuild

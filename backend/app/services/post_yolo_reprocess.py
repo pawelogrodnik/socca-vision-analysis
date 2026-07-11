@@ -4,7 +4,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -56,9 +56,11 @@ def reprocess_match_from_artifacts(
     build_possession: bool = True,
     write_raw_overlay: bool = False,
     write_debug_overlay: bool = WRITE_DEBUG_VIDEO_ARTIFACTS,
+    render_stable_overlay: bool = True,
     player_label_overrides: dict[str, str] | None = None,
     start_sec: float = 0.0,
     max_seconds: float | None = None,
+    progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
     """Run all post-YOLO analysis from stored raw artifacts.
 
@@ -130,7 +132,9 @@ def reprocess_match_from_artifacts(
         ball_tracks_doc=(ball_tracking or {}).get("ball_tracks"),
         ball_candidates_doc=(ball_tracking or {}).get("ball_candidates"),
         write_debug_overlay=write_debug_overlay,
+        render_stable_overlay=render_stable_overlay,
         player_label_overrides=player_label_overrides,
+        progress=progress,
     )
     artifacts.update(stabilization["artifacts"])
 
@@ -151,19 +155,20 @@ def reprocess_match_from_artifacts(
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
-            try:
-                _rewrite_stable_overlay_with_possession(
-                    output_dir,
-                    video_path,
-                    pitch,
-                    metadata,
-                    stabilization,
-                    ball_tracking,
-                    possession,
-                    camera_motion=camera_motion,
-                )
-            except Exception as exc:
-                warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
+            if render_stable_overlay:
+                try:
+                    _rewrite_stable_overlay_with_possession(
+                        output_dir,
+                        video_path,
+                        pitch,
+                        metadata,
+                        stabilization,
+                        ball_tracking,
+                        possession,
+                        camera_motion=camera_motion,
+                    )
+                except Exception as exc:
+                    warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
         except Exception as exc:
             warnings.append(f"Post-YOLO possession candidate layer failed: {exc}")
 
@@ -183,6 +188,7 @@ def reprocess_match_from_artifacts(
             "build_possession": bool(build_possession),
             "write_raw_overlay": bool(write_raw_overlay),
             "write_debug_overlay": bool(write_debug_overlay),
+            "render_stable_overlay": bool(render_stable_overlay),
             "camera_motion_compensation": bool(getattr(camera_motion, "enabled", False)),
             "camera_motion_reference_frame": getattr(camera_motion, "reference_frame", None),
             "player_label_overrides": player_label_overrides or {},

@@ -171,6 +171,7 @@ def analyze_match_chunked_yolo(
     yolo_conf = float(payload.get("yolo_conf") or 0.05)
     yolo_imgsz = int(payload.get("yolo_imgsz") or 960)
     include_ball = bool(payload.get("include_ball"))
+    render_stable_overlay = bool(payload.get("render_stable_overlay", True))
     ball_yolo_model = str(payload.get("ball_yolo_model") or DEFAULT_BALL_YOLO_MODEL)
     ball_yolo_conf = float(payload.get("ball_yolo_conf") or DEFAULT_BALL_CONF)
     ball_yolo_imgsz = int(payload.get("ball_yolo_imgsz") or yolo_imgsz)
@@ -234,6 +235,7 @@ def analyze_match_chunked_yolo(
     manifest["parameters"]["camera_motion_min_inlier_ratio"] = camera_motion_min_inlier_ratio
     manifest["parameters"]["camera_motion_reference_frame"] = camera_motion.reference_frame
     manifest["parameters"]["include_ball"] = include_ball
+    manifest["parameters"]["render_stable_overlay"] = render_stable_overlay
     if include_ball:
         manifest["parameters"]["ball_yolo_model"] = ball_yolo_model
         manifest["parameters"]["ball_yolo_conf"] = ball_yolo_conf
@@ -491,6 +493,7 @@ def analyze_match_chunked_yolo(
         ball_tracks_doc=ball_tracks_doc,
         ball_candidates_doc=ball_candidates_doc,
         write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
+        render_stable_overlay=render_stable_overlay,
         progress=progress,
     )
     refined_ball_tracks = stabilization.get("refined_ball_tracks")
@@ -540,26 +543,34 @@ def analyze_match_chunked_yolo(
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
-            try:
-                if progress:
-                    progress(
-                        "stable_overlay_possession_render",
-                        98.0,
-                        "Rendering stable overlay with possession and pass layers.",
-                        {"artifact": "stable_overlay_preview.mp4"},
+            if render_stable_overlay:
+                try:
+                    if progress:
+                        progress(
+                            "stable_overlay_possession_render",
+                            98.0,
+                            "Rendering stable overlay with possession and pass layers.",
+                            {"artifact": "stable_overlay_preview.mp4"},
+                        )
+                    _rewrite_stable_overlay_with_possession(
+                        match_dir,
+                        video_path,
+                        pitch,
+                        metadata,
+                        stabilization,
+                        ball_tracking,
+                        possession,
+                        camera_motion=camera_motion,
                     )
-                _rewrite_stable_overlay_with_possession(
-                    match_dir,
-                    video_path,
-                    pitch,
-                    metadata,
-                    stabilization,
-                    ball_tracking,
-                    possession,
-                    camera_motion=camera_motion,
+                except Exception as exc:
+                    camera_motion_warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
+            elif progress:
+                progress(
+                    "stable_overlay_possession_render",
+                    98.0,
+                    "Skipping stable overlay possession/pass render.",
+                    {"artifact": "stable_overlay_preview.mp4", "skipped": True},
                 )
-            except Exception as exc:
-                camera_motion_warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
         except Exception as exc:
             ball_report.setdefault("warnings", []).append(f"Chunked possession candidate layer failed: {exc}")
             (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
@@ -625,6 +636,7 @@ def analyze_match_chunked_yolo(
             "chunk_duration_sec": manifest["parameters"]["chunk_duration_sec"],
             "chunk_overlap_sec": manifest["parameters"]["chunk_overlap_sec"],
             "include_ball": include_ball,
+            "render_stable_overlay": render_stable_overlay,
             "yolo_model": yolo_model,
             "yolo_conf": yolo_conf,
             "yolo_iou": 0.45,

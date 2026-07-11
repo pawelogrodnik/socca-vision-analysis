@@ -61,6 +61,7 @@ class AnalyzePayload(BaseModel):
     chunk_duration_sec: float = 120.0
     chunk_overlap_sec: float = 2.0
     include_ball: bool = False
+    render_stable_overlay: bool = True
 
     # YOLO options
     yolo_model: str = DEFAULT_PLAYER_YOLO_MODEL

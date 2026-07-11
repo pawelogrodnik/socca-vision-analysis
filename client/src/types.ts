@@ -685,8 +685,26 @@ export type PossessionReport = {
   status?: string;
   experimental?: boolean;
   summary?: Record<string, unknown>;
+  possession_timeline?: PossessionTimelinePoint[];
   warnings?: string[];
   notes?: string[];
+};
+
+export type PossessionTimelinePoint = {
+  index: number;
+  time_sec: number;
+  start_time_sec: number;
+  end_time_sec: number;
+  frames: number;
+  controlled_frames: number;
+  contested_frames: number;
+  free_frames: number;
+  unknown_frames: number;
+  team_controlled_frames: Record<'A' | 'B', number>;
+  team_a_share?: number | null;
+  team_b_share?: number | null;
+  controlled_coverage?: number;
+  unknown_coverage?: number;
 };
 
 export type ContactCandidateReviewStatus = 'needs_review' | 'accepted' | 'rejected' | 'uncertain';
@@ -1067,6 +1085,7 @@ export type Match = MatchMetadataPayload & {
   movement_stats?: MovementStatsDocument;
   player_stats?: PlayerStatsDocument;
   resolved_player_stats?: ResolvedPlayerStatsDocument;
+  player_heatmaps?: PlayerHeatmapsDocument | null;
   tracklets?: Record<string, unknown>;
   tracking_quality_report?: TrackingQualityReport;
   ball_analysis_report?: Record<string, unknown>;
@@ -1092,6 +1111,7 @@ export type AnalysisPayload = {
   chunk_duration_sec: number;
   chunk_overlap_sec: number;
   include_ball: boolean;
+  render_stable_overlay: boolean;
   yolo_model: string;
   yolo_conf: number;
   yolo_imgsz: number;
@@ -1244,6 +1264,7 @@ export type AnalysisReport = {
   run_directory?: string;
   run_manifest?: string;
   performance_report?: PerformanceReport;
+  parameters?: Record<string, unknown>;
   note?: string;
   frames_processed?: number;
   detections_kept?: number;
@@ -1365,6 +1386,100 @@ export type MatchPackage = {
   [key: string]: unknown;
 };
 
+export type PublicReportTeam = {
+  team_label?: string;
+  team_id?: string | null;
+  team_name: string;
+  display_color?: string | null;
+  playing_time_sec: number;
+  total_distance_m: number;
+  high_intensity_distance_m: number;
+  sprint_count: number;
+  avg_speed_kmh: number;
+  peak_speed_kmh: number;
+  possession_share_percent?: number | null;
+  pass_candidates: number;
+  same_team_pass_candidates: number;
+  turnover_or_interception_candidates: number;
+  progressive_pass_candidates: number;
+  accepted_passes: number;
+};
+
+export type PublicReportPlayer = {
+  player_id: string;
+  player_name: string;
+  player_number?: string | null;
+  player_role?: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
+  team_label?: string | null;
+  playing_time_sec: number;
+  detected_time_sec: number;
+  total_distance_m: number;
+  avg_speed_kmh: number;
+  peak_speed_kmh: number;
+  high_intensity_distance_m: number;
+  sprint_count: number;
+  heatmap?: {
+    path: string;
+    samples: number;
+    detected_samples: number;
+    quality: string;
+  };
+};
+
+export type PublicMatchReport = {
+  schema_version: string;
+  generated_at: string;
+  id: string;
+  source_match_id: string;
+  report_type: 'public_match_report' | string;
+  stats_semantics?: Record<string, string>;
+  match: {
+    id: string;
+    title: string;
+    match_date?: string | null;
+    season?: string | null;
+    venue?: string | null;
+    format?: string | null;
+    duration_sec?: number;
+  };
+  teams: PublicReportTeam[];
+  players: PublicReportPlayer[];
+  ball?: {
+    known_possession_coverage?: number;
+    controlled_coverage?: number;
+    pass_candidates?: number;
+    same_team_pass_candidates?: number;
+    progressive_pass_candidates?: number;
+    accepted_passes?: number;
+    possession_timeline?: Array<{
+      index: number;
+      minute: number;
+      label: string;
+      start_time_sec: number;
+      end_time_sec: number;
+      team_a_frames: number;
+      team_b_frames: number;
+      known_team_frames: number;
+      team_a_percent: number;
+      team_b_percent: number;
+      cumulative_team_a_frames: number;
+      cumulative_team_b_frames: number;
+      cumulative_known_team_frames: number;
+      cumulative_team_a_percent: number;
+      cumulative_team_b_percent: number;
+      free_frames: number;
+      unknown_frames: number;
+      team_a_share: number;
+      team_b_share: number;
+      controlled_coverage: number;
+      controlled_coverage_percent: number;
+      unknown_coverage: number;
+    }>;
+  };
+};
+
 export type PublishedMatch = {
   id: string;
   source_match_id: string;
@@ -1387,6 +1502,7 @@ export type PublishedMatch = {
 
 export type PublishedMatchDetail = PublishedMatch & {
   package: MatchPackage;
+  public_report?: PublicMatchReport | null;
   teams: Array<Record<string, unknown>>;
   players: Array<Record<string, unknown>>;
   stable_players?: Array<Record<string, unknown>>;

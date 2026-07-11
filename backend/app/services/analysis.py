@@ -403,7 +403,14 @@ def _validate_common_video_params(metadata: dict[str, Any], frame_stride: int) -
     return fps, width, height
 
 
-def analyze_match_motion(match_dir: Path, video_path: Path, *, max_seconds: float, frame_stride: int) -> dict[str, Any]:
+def analyze_match_motion(
+    match_dir: Path,
+    video_path: Path,
+    *,
+    max_seconds: float,
+    frame_stride: int,
+    render_stable_overlay: bool = True,
+) -> dict[str, Any]:
     adapter_name = "motion-baseline"
     try:
         metadata = read_video_metadata(video_path)
@@ -459,7 +466,14 @@ def analyze_match_motion(match_dir: Path, video_path: Path, *, max_seconds: floa
         raw_tracks = [{"track_id": t.id, "positions": t.positions} for t in tracker.all_tracks()]
         tracks_json = _tracks_with_pitch_positions(raw_tracks, H)
         artifacts = _write_outputs(match_dir, pitch, tracks_json)
-        stabilization = stabilize_match(match_dir, video_path, pitch, tracks_json, metadata)
+        stabilization = stabilize_match(
+            match_dir,
+            video_path,
+            pitch,
+            tracks_json,
+            metadata,
+            render_stable_overlay=render_stable_overlay,
+        )
         artifacts.update(stabilization["artifacts"])
 
         report = {
@@ -467,7 +481,13 @@ def analyze_match_motion(match_dir: Path, video_path: Path, *, max_seconds: floa
             "analysis_type": adapter_name,
             "note": "Fallback detector. Use yolo for real player ID flickering checks.",
             "video": metadata,
-            "parameters": {"max_seconds": max_seconds, "frame_stride": frame_stride, "min_area_px": min_area, "max_area_px": max_area},
+            "parameters": {
+                "max_seconds": max_seconds,
+                "frame_stride": frame_stride,
+                "min_area_px": min_area,
+                "max_area_px": max_area,
+                "render_stable_overlay": bool(render_stable_overlay),
+            },
             "frames_processed": processed,
             "tracks_count": len(tracks_json),
             "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
@@ -894,6 +914,7 @@ def analyze_match_yolo(
     camera_motion_compensation: bool = DEFAULT_CAMERA_MOTION_COMPENSATION,
     camera_motion_interval_sec: float = DEFAULT_CAMERA_MOTION_INTERVAL_SEC,
     camera_motion_min_inlier_ratio: float = DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO,
+    render_stable_overlay: bool = True,
 ) -> dict[str, Any]:
     adapter_name = "yolo-ultralytics"
     try:
@@ -1112,6 +1133,7 @@ def analyze_match_yolo(
             ball_tracks_doc=(ball_tracking or {}).get("ball_tracks"),
             ball_candidates_doc=(ball_tracking or {}).get("ball_candidates"),
             write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
+            render_stable_overlay=render_stable_overlay,
         )
         artifacts.update(stabilization["artifacts"])
         if ball_tracking is not None:
@@ -1161,19 +1183,20 @@ def analyze_match_yolo(
                     write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
                 )
                 artifacts.update(possession["artifacts"])
-                try:
-                    _rewrite_stable_overlay_with_possession(
-                        match_dir,
-                        video_path,
-                        pitch,
-                        metadata,
-                        stabilization,
-                        ball_tracking,
-                        possession,
-                        camera_motion=camera_motion,
-                    )
-                except Exception as exc:
-                    warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
+                if render_stable_overlay:
+                    try:
+                        _rewrite_stable_overlay_with_possession(
+                            match_dir,
+                            video_path,
+                            pitch,
+                            metadata,
+                            stabilization,
+                            ball_tracking,
+                            possession,
+                            camera_motion=camera_motion,
+                        )
+                    except Exception as exc:
+                        warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
                 warnings.extend(possession["possession_report"].get("warnings") or [])
             except Exception as exc:
                 warnings.append(f"Experimental possession candidate layer failed: {exc}")
@@ -1181,7 +1204,11 @@ def analyze_match_yolo(
         report = {
             "status": "completed",
             "analysis_type": adapter_name,
-            "note": "Overlay labels are raw tracker IDs from the selected tracking backend. Stable A##/B## IDs are generated in stable_overlay_preview.mp4.",
+            "note": (
+                "Overlay labels are raw tracker IDs from the selected tracking backend. Stable A##/B## IDs are generated in stable_overlay_preview.mp4."
+                if render_stable_overlay
+                else "Stable overlay video was skipped; stable A##/B## IDs and stats are available in JSON artifacts."
+            ),
             "video": metadata,
             "parameters": {
                 "max_seconds": max_seconds,
@@ -1210,6 +1237,7 @@ def analyze_match_yolo(
                 "ball_yolo_conf": ball_yolo_conf if include_ball else None,
                 "ball_yolo_imgsz": ball_yolo_imgsz if include_ball else None,
                 "ball_yolo_device": (normalized_ball_yolo_device or "auto") if include_ball else None,
+                "render_stable_overlay": bool(render_stable_overlay),
                 "camera_motion_compensation": camera_motion.enabled,
                 "camera_motion_interval_sec": camera_motion_interval_sec,
                 "camera_motion_min_inlier_ratio": camera_motion_min_inlier_ratio,
@@ -1423,9 +1451,16 @@ def analyze_match(
     camera_motion_compensation: bool = DEFAULT_CAMERA_MOTION_COMPENSATION,
     camera_motion_interval_sec: float = DEFAULT_CAMERA_MOTION_INTERVAL_SEC,
     camera_motion_min_inlier_ratio: float = DEFAULT_CAMERA_MOTION_MIN_INLIER_RATIO,
+    render_stable_overlay: bool = True,
 ) -> dict[str, Any]:
     if adapter == "motion":
-        return analyze_match_motion(match_dir, video_path, max_seconds=max_seconds, frame_stride=frame_stride)
+        return analyze_match_motion(
+            match_dir,
+            video_path,
+            max_seconds=max_seconds,
+            frame_stride=frame_stride,
+            render_stable_overlay=render_stable_overlay,
+        )
     if adapter == "yolo":
         return analyze_match_yolo(
             match_dir,
@@ -1445,5 +1480,6 @@ def analyze_match(
             camera_motion_compensation=camera_motion_compensation,
             camera_motion_interval_sec=camera_motion_interval_sec,
             camera_motion_min_inlier_ratio=camera_motion_min_inlier_ratio,
+            render_stable_overlay=render_stable_overlay,
         )
     raise ValueError(f"Unknown analysis adapter: {adapter}")
