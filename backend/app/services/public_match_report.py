@@ -129,8 +129,9 @@ def _public_possession_timeline(package: dict[str, Any]) -> list[dict[str, Any]]
         rows.append(
             {
                 "index": int(item.get("index") or len(rows)),
-                "minute": start_minute + 1,
-                "label": f"{start_minute}-{end_minute}m",
+                "minute": end_minute,
+                "label": str(end_minute),
+                "window_label": f"{start_minute}-{end_minute}m",
                 "start_time_sec": start_time_sec,
                 "end_time_sec": end_time_sec,
                 "team_a_frames": team_a_frames,

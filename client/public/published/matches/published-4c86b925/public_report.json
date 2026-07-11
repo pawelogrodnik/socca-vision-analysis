@@ -17,7 +17,7 @@
         "free_frames": 183,
         "index": 0,
         "known_team_frames": 12,
-        "label": "0-1m",
+        "label": "1",
         "minute": 1,
         "start_time_sec": 0.0,
         "team_a_frames": 6,
@@ -27,7 +27,8 @@
         "team_b_percent": 50.0,
         "team_b_share": 0.5,
         "unknown_coverage": 0.8875,
-        "unknown_frames": 1538
+        "unknown_frames": 1538,
+        "window_label": "0-1m"
       },
       {
         "controlled_coverage": 0.0121,
@@ -41,8 +42,8 @@
         "free_frames": 175,
         "index": 1,
         "known_team_frames": 21,
-        "label": "0-2m",
-        "minute": 1,
+        "label": "2",
+        "minute": 2,
         "start_time_sec": 57.81,
         "team_a_frames": 4,
         "team_a_percent": 19.0,
@@ -51,7 +52,8 @@
         "team_b_percent": 81.0,
         "team_b_share": 0.8095,
         "unknown_coverage": 0.8869,
-        "unknown_frames": 1537
+        "unknown_frames": 1537,
+        "window_label": "0-2m"
       },
       {
         "controlled_coverage": 0.004,
@@ -65,8 +67,8 @@
         "free_frames": 183,
         "index": 2,
         "known_team_frames": 7,
-        "label": "1-3m",
-        "minute": 2,
+        "label": "3",
+        "minute": 3,
         "start_time_sec": 115.63,
         "team_a_frames": 3,
         "team_a_percent": 42.9,
@@ -75,7 +77,8 @@
         "team_b_percent": 57.1,
         "team_b_share": 0.5714,
         "unknown_coverage": 0.8904,
-        "unknown_frames": 1543
+        "unknown_frames": 1543,
+        "window_label": "1-3m"
       },
       {
         "controlled_coverage": 0.0023,
@@ -89,8 +92,8 @@
         "free_frames": 134,
         "index": 3,
         "known_team_frames": 4,
-        "label": "2-4m",
-        "minute": 3,
+        "label": "4",
+        "minute": 4,
         "start_time_sec": 173.44,
         "team_a_frames": 0,
         "team_a_percent": 0.0,
@@ -99,7 +102,8 @@
         "team_b_percent": 100.0,
         "team_b_share": 1.0,
         "unknown_coverage": 0.9203,
-        "unknown_frames": 1594
+        "unknown_frames": 1594,
+        "window_label": "2-4m"
       },
       {
         "controlled_coverage": 0.0017,
@@ -113,8 +117,8 @@
         "free_frames": 97,
         "index": 4,
         "known_team_frames": 3,
-        "label": "3-5m",
-        "minute": 4,
+        "label": "5",
+        "minute": 5,
         "start_time_sec": 231.26,
         "team_a_frames": 1,
         "team_a_percent": 33.3,
@@ -123,7 +127,8 @@
         "team_b_percent": 66.7,
         "team_b_share": 0.6667,
         "unknown_coverage": 0.9423,
-        "unknown_frames": 1633
+        "unknown_frames": 1633,
+        "window_label": "3-5m"
       },
       {
         "controlled_coverage": 0.0029,
@@ -137,8 +142,8 @@
         "free_frames": 84,
         "index": 5,
         "known_team_frames": 5,
-        "label": "4-6m",
-        "minute": 5,
+        "label": "6",
+        "minute": 6,
         "start_time_sec": 289.07,
         "team_a_frames": 2,
         "team_a_percent": 40.0,
@@ -147,7 +152,8 @@
         "team_b_percent": 60.0,
         "team_b_share": 0.6,
         "unknown_coverage": 0.9486,
-        "unknown_frames": 1644
+        "unknown_frames": 1644,
+        "window_label": "4-6m"
       },
       {
         "controlled_coverage": 0.0035,
@@ -161,8 +167,8 @@
         "free_frames": 65,
         "index": 6,
         "known_team_frames": 6,
-        "label": "5-7m",
-        "minute": 6,
+        "label": "7",
+        "minute": 7,
         "start_time_sec": 346.89,
         "team_a_frames": 4,
         "team_a_percent": 66.7,
@@ -171,7 +177,8 @@
         "team_b_percent": 33.3,
         "team_b_share": 0.3333,
         "unknown_coverage": 0.959,
-        "unknown_frames": 1661
+        "unknown_frames": 1661,
+        "window_label": "5-7m"
       },
       {
         "controlled_coverage": 0.0029,
@@ -185,8 +192,8 @@
         "free_frames": 94,
         "index": 7,
         "known_team_frames": 5,
-        "label": "6-8m",
-        "minute": 7,
+        "label": "8",
+        "minute": 8,
         "start_time_sec": 404.7,
         "team_a_frames": 2,
         "team_a_percent": 40.0,
@@ -195,7 +202,8 @@
         "team_b_percent": 60.0,
         "team_b_share": 0.6,
         "unknown_coverage": 0.9429,
-        "unknown_frames": 1634
+        "unknown_frames": 1634,
+        "window_label": "6-8m"
       },
       {
         "controlled_coverage": 0.0006,
@@ -209,8 +217,8 @@
         "free_frames": 41,
         "index": 8,
         "known_team_frames": 1,
-        "label": "7-9m",
-        "minute": 8,
+        "label": "9",
+        "minute": 9,
         "start_time_sec": 462.52,
         "team_a_frames": 0,
         "team_a_percent": 0.0,
@@ -219,7 +227,8 @@
         "team_b_percent": 100.0,
         "team_b_share": 1.0,
         "unknown_coverage": 0.9758,
-        "unknown_frames": 1691
+        "unknown_frames": 1691,
+        "window_label": "7-9m"
       },
       {
         "controlled_coverage": 0.0006,
@@ -233,8 +242,8 @@
         "free_frames": 89,
         "index": 9,
         "known_team_frames": 1,
-        "label": "8-10m",
-        "minute": 9,
+        "label": "10",
+        "minute": 10,
         "start_time_sec": 520.33,
         "team_a_frames": 1,
         "team_a_percent": 100.0,
@@ -243,7 +252,8 @@
         "team_b_percent": 0.0,
         "team_b_share": 0.0,
         "unknown_coverage": 0.948,
-        "unknown_frames": 1642
+        "unknown_frames": 1642,
+        "window_label": "8-10m"
       },
       {
         "controlled_coverage": 0.0035,
@@ -257,8 +267,8 @@
         "free_frames": 102,
         "index": 10,
         "known_team_frames": 6,
-        "label": "9-11m",
-        "minute": 10,
+        "label": "11",
+        "minute": 11,
         "start_time_sec": 578.14,
         "team_a_frames": 4,
         "team_a_percent": 66.7,
@@ -267,7 +277,8 @@
         "team_b_percent": 33.3,
         "team_b_share": 0.3333,
         "unknown_coverage": 0.9377,
-        "unknown_frames": 1625
+        "unknown_frames": 1625,
+        "window_label": "9-11m"
       },
       {
         "controlled_coverage": 0.0046,
@@ -281,8 +292,8 @@
         "free_frames": 121,
         "index": 11,
         "known_team_frames": 8,
-        "label": "10-12m",
-        "minute": 11,
+        "label": "12",
+        "minute": 12,
         "start_time_sec": 635.96,
         "team_a_frames": 3,
         "team_a_percent": 37.5,
@@ -291,7 +302,8 @@
         "team_b_percent": 62.5,
         "team_b_share": 0.625,
         "unknown_coverage": 0.9256,
-        "unknown_frames": 1604
+        "unknown_frames": 1604,
+        "window_label": "10-12m"
       },
       {
         "controlled_coverage": 0.0035,
@@ -305,8 +317,8 @@
         "free_frames": 101,
         "index": 12,
         "known_team_frames": 6,
-        "label": "11-13m",
-        "minute": 12,
+        "label": "13",
+        "minute": 13,
         "start_time_sec": 693.77,
         "team_a_frames": 5,
         "team_a_percent": 83.3,
@@ -315,7 +327,8 @@
         "team_b_percent": 16.7,
         "team_b_share": 0.1667,
         "unknown_coverage": 0.9383,
-        "unknown_frames": 1626
+        "unknown_frames": 1626,
+        "window_label": "11-13m"
       },
       {
         "controlled_coverage": 0.0023,
@@ -329,8 +342,8 @@
         "free_frames": 129,
         "index": 13,
         "known_team_frames": 4,
-        "label": "12-14m",
-        "minute": 13,
+        "label": "14",
+        "minute": 14,
         "start_time_sec": 751.59,
         "team_a_frames": 3,
         "team_a_percent": 75.0,
@@ -339,7 +352,8 @@
         "team_b_percent": 25.0,
         "team_b_share": 0.25,
         "unknown_coverage": 0.9232,
-        "unknown_frames": 1599
+        "unknown_frames": 1599,
+        "window_label": "12-14m"
       },
       {
         "controlled_coverage": 0.0023,
@@ -353,8 +367,8 @@
         "free_frames": 139,
         "index": 14,
         "known_team_frames": 4,
-        "label": "13-15m",
-        "minute": 14,
+        "label": "15",
+        "minute": 15,
         "start_time_sec": 809.4,
         "team_a_frames": 2,
         "team_a_percent": 50.0,
@@ -363,7 +377,8 @@
         "team_b_percent": 50.0,
         "team_b_share": 0.5,
         "unknown_coverage": 0.9175,
-        "unknown_frames": 1590
+        "unknown_frames": 1590,
+        "window_label": "13-15m"
       },
       {
         "controlled_coverage": 0.0017,
@@ -377,8 +392,8 @@
         "free_frames": 108,
         "index": 15,
         "known_team_frames": 3,
-        "label": "14-16m",
-        "minute": 15,
+        "label": "16",
+        "minute": 16,
         "start_time_sec": 867.22,
         "team_a_frames": 0,
         "team_a_percent": 0.0,
@@ -387,7 +402,8 @@
         "team_b_percent": 100.0,
         "team_b_share": 1.0,
         "unknown_coverage": 0.9359,
-        "unknown_frames": 1622
+        "unknown_frames": 1622,
+        "window_label": "14-16m"
       },
       {
         "controlled_coverage": 0.0029,
@@ -401,8 +417,8 @@
         "free_frames": 121,
         "index": 16,
         "known_team_frames": 5,
-        "label": "15-17m",
-        "minute": 16,
+        "label": "17",
+        "minute": 17,
         "start_time_sec": 925.03,
         "team_a_frames": 1,
         "team_a_percent": 20.0,
@@ -411,7 +427,8 @@
         "team_b_percent": 80.0,
         "team_b_share": 0.8,
         "unknown_coverage": 0.9273,
-        "unknown_frames": 1606
+        "unknown_frames": 1606,
+        "window_label": "15-17m"
       },
       {
         "controlled_coverage": 0.0023,
@@ -425,8 +442,8 @@
         "free_frames": 75,
         "index": 17,
         "known_team_frames": 4,
-        "label": "16-18m",
-        "minute": 17,
+        "label": "18",
+        "minute": 18,
         "start_time_sec": 982.85,
         "team_a_frames": 3,
         "team_a_percent": 75.0,
@@ -435,7 +452,8 @@
         "team_b_percent": 25.0,
         "team_b_share": 0.25,
         "unknown_coverage": 0.9544,
-        "unknown_frames": 1654
+        "unknown_frames": 1654,
+        "window_label": "16-18m"
       },
       {
         "controlled_coverage": 0.0017,
@@ -449,8 +467,8 @@
         "free_frames": 95,
         "index": 18,
         "known_team_frames": 3,
-        "label": "17-19m",
-        "minute": 18,
+        "label": "19",
+        "minute": 19,
         "start_time_sec": 1040.66,
         "team_a_frames": 0,
         "team_a_percent": 0.0,
@@ -459,7 +477,8 @@
         "team_b_percent": 100.0,
         "team_b_share": 1.0,
         "unknown_coverage": 0.9435,
-        "unknown_frames": 1635
+        "unknown_frames": 1635,
+        "window_label": "17-19m"
       },
       {
         "controlled_coverage": 0.0029,
@@ -473,8 +492,8 @@
         "free_frames": 121,
         "index": 19,
         "known_team_frames": 5,
-        "label": "18-20m",
-        "minute": 19,
+        "label": "20",
+        "minute": 20,
         "start_time_sec": 1098.47,
         "team_a_frames": 2,
         "team_a_percent": 40.0,
@@ -483,13 +502,14 @@
         "team_b_percent": 60.0,
         "team_b_share": 0.6,
         "unknown_coverage": 0.9273,
-        "unknown_frames": 1606
+        "unknown_frames": 1606,
+        "window_label": "18-20m"
       }
     ],
     "progressive_pass_candidates": 7,
     "same_team_pass_candidates": 11
   },
-  "generated_at": "2026-07-11T21:59:07.739185+00:00",
+  "generated_at": "2026-07-11T22:11:26.946565+00:00",
   "id": "published-4c86b925",
   "match": {
     "duration_sec": 1156.32,

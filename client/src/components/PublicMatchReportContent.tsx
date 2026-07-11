@@ -36,6 +36,20 @@ type PlayerChartMetricConfig = {
   tooltipFormatter: (value: number) => string;
 };
 
+type PublicTooltipItem = {
+  color?: string;
+  name?: string | number;
+  value?: unknown;
+};
+
+type PublicChartTooltipProps = {
+  active?: boolean;
+  label?: string | number;
+  payload?: readonly PublicTooltipItem[];
+  titleFormatter: (label: string | number | undefined) => string;
+  valueFormatter: (value: unknown, name?: string | number) => string;
+};
+
 const PLAYER_CHART_METRICS: PlayerChartMetricConfig[] = [
   {
     key: 'minutes',
@@ -139,6 +153,34 @@ function metricRows(left: PublicReportTeam, right: PublicReportTeam) {
 
 function chartPercent(value: number): string {
   return `${Math.round(value)}%`;
+}
+
+function PublicChartTooltip({
+  active,
+  label,
+  payload,
+  titleFormatter,
+  valueFormatter,
+}: PublicChartTooltipProps) {
+  if (!active || !payload?.length) return null;
+
+  return (
+    <div className='public-chart-tooltip'>
+      <div className='public-chart-tooltip-title'>{titleFormatter(label)}</div>
+      <div className='public-chart-tooltip-list'>
+        {payload.map((item) => (
+          <div className='public-chart-tooltip-row' key={`${String(item.name)}-${String(item.value)}`}>
+            <span
+              className='public-chart-tooltip-dot'
+              style={{ background: item.color || '#94a3b8' }}
+            />
+            <span className='public-chart-tooltip-name'>{item.name}</span>
+            <strong>{valueFormatter(item.value, item.name)}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function playerChartRows(players: PublicReportPlayer[]) {
@@ -250,8 +292,15 @@ export function PublicMatchReportContent({
                 <XAxis dataKey='label' stroke='#94a3b8' />
                 <YAxis domain={[0, 100]} stroke='#94a3b8' tickFormatter={chartPercent} />
                 <Tooltip
-                  formatter={(value, name) => [`${Number(value || 0).toFixed(1)}%`, String(name)]}
-                  labelFormatter={(label) => `Minuta ${label}`}
+                  content={({ active, label, payload }) => (
+                    <PublicChartTooltip
+                      active={active}
+                      label={typeof label === 'number' || typeof label === 'string' ? label : undefined}
+                      payload={payload as readonly PublicTooltipItem[] | undefined}
+                      titleFormatter={(value) => `Minuta ${value || '-'}`}
+                      valueFormatter={(value) => `${Number(value || 0).toFixed(1)}%`}
+                    />
+                  )}
                 />
                 <Legend />
                 <Area
@@ -318,10 +367,15 @@ export function PublicMatchReportContent({
                 width={120}
               />
               <Tooltip
-                formatter={(value) => [
-                  playerMetricConfig.tooltipFormatter(Number(value || 0)),
-                  playerMetricConfig.label,
-                ]}
+                content={({ active, label, payload }) => (
+                  <PublicChartTooltip
+                    active={active}
+                    label={typeof label === 'number' || typeof label === 'string' ? label : undefined}
+                    payload={payload as readonly PublicTooltipItem[] | undefined}
+                    titleFormatter={(value) => String(value || 'Zawodnik')}
+                    valueFormatter={(value) => playerMetricConfig.tooltipFormatter(Number(value || 0))}
+                  />
+                )}
               />
               <Bar
                 dataKey={playerChartMetric}

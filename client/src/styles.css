@@ -725,6 +725,49 @@ a { color: #93c5fd; }
   background: #0f172a;
   color: #f8fafc;
 }
+.public-chart-tooltip {
+  min-width: 180px;
+  max-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.96);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.35);
+  color: #f8fafc;
+}
+.public-chart-tooltip-title {
+  margin-bottom: 8px;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 800;
+}
+.public-chart-tooltip-list {
+  display: grid;
+  gap: 7px;
+}
+.public-chart-tooltip-row {
+  display: grid;
+  grid-template-columns: 10px minmax(72px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+.public-chart-tooltip-dot {
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(248, 250, 252, 0.65);
+  border-radius: 999px;
+}
+.public-chart-tooltip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.public-chart-tooltip-row strong {
+  color: #ffffff;
+  font-weight: 800;
+}
 .player-heatmap img {
   width: min(360px, 100%);
   aspect-ratio: 1 / 2;

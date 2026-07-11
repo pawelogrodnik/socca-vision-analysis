@@ -1457,6 +1457,7 @@ export type PublicMatchReport = {
       index: number;
       minute: number;
       label: string;
+      window_label?: string;
       start_time_sec: number;
       end_time_sec: number;
       team_a_frames: number;
