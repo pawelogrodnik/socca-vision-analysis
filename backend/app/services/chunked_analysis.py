@@ -210,6 +210,7 @@ def analyze_match_chunked_yolo(
             interval_sec=camera_motion_interval_sec,
             min_inlier_ratio=camera_motion_min_inlier_ratio,
             enabled=camera_motion_compensation,
+            reference_pitch_polygon=pitch_polygon,
         )
     except Exception as exc:
         camera_motion = CameraMotionModel.disabled(

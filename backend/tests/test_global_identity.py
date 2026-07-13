@@ -26,6 +26,15 @@ def position(frame: int, x: float, y: float, bbox: list[int] | None = None) -> d
     }
 
 
+def outside_position(frame: int, x: float, y: float) -> dict:
+    row = position(frame, max(0.0, min(30.0, x)), max(0.0, min(47.4, y)))
+    row["pitch_m_raw"] = [x, y]
+    row["pitch_m_clamped"] = True
+    row["pitch_boundary_distance_m"] = max(abs(row["pitch_m"][0] - x), abs(row["pitch_m"][1] - y))
+    row["play_area_status"] = "outside_play"
+    return row
+
+
 def tracklet(tracklet_id: str, team_label: str, rows: list[dict]) -> dict:
     return {
         "tracklet_id": tracklet_id,
@@ -491,8 +500,22 @@ class GlobalIdentityTests(unittest.TestCase):
         shadow["confidence"] = 0.09
         identity = self.resolve([tracklet("1:1", "A", [shadow])])
         self.assertEqual(identity["summary"]["stable_players"], 0)
-        self.assertEqual(identity["summary"]["rejected_start_candidates"], 1)
-        self.assertEqual(identity["rejected_start_candidates"][0]["reason"], "shadow_like_wide_low_confidence_bbox")
+
+    def test_outside_play_detection_does_not_start_slot(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet(
+                    "1:1",
+                    "A",
+                    [outside_position(frame, 32.5, 10.0) for frame in range(4)],
+                )
+            ]
+        )
+
+        self.assertEqual(identity["summary"]["stable_players"], 0)
+        self.assertEqual(identity["summary"]["spawn_blocked"], 0)
+        self.assertEqual(identity["summary"]["rejected_start_candidates"], 4)
+        self.assertEqual(identity["rejected_start_candidates"][0]["reason"], "outside_play_area")
 
     def test_movement_stats_count_short_gap_as_estimated_distance(self) -> None:
         identity = self.resolve(

@@ -531,6 +531,7 @@ def build_ball_candidates_document(
         "generated_at": now_iso(),
         "source": parameters.get("detector") or BALL_SOURCE,
         "parameters": parameters,
+        "processed_frames": [int(frame) for frame in processed_frames],
         "summary": {
             "processed_frames": len(processed_frames),
             "frames_with_candidates": frames_with_candidates,
@@ -539,6 +540,142 @@ def build_ball_candidates_document(
             "rejected_summary": rejected_summary,
         },
         "frames": frames,
+    }
+
+
+def reprocess_ball_candidates_document(
+    candidates_doc: dict[str, Any],
+    *,
+    pitch_polygon: Any,
+    homography: Any,
+    frame_size: tuple[int, int],
+    fps: float,
+    camera_motion: Any | None = None,
+) -> dict[str, Any]:
+    frames: list[dict[str, Any]] = []
+    rejected_summary: Counter[str] = Counter()
+    processed_frames: list[int] = []
+    for frame_doc in sorted(candidates_doc.get("frames") or [], key=lambda item: int(item.get("frame") or 0)):
+        if not isinstance(frame_doc, dict):
+            continue
+        frame_idx = int(frame_doc.get("frame") or 0)
+        processed_frames.append(frame_idx)
+        seen_ids: set[str] = set()
+        raw_items: list[tuple[dict[str, Any], str]] = []
+        for status, key in (("accepted", "candidates"), ("rejected", "rejected_candidates")):
+            for candidate in frame_doc.get(key) or []:
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_id = str(candidate.get("candidate_id") or f"ball-f{frame_idx:06d}-{len(raw_items):02d}")
+                if candidate_id in seen_ids:
+                    continue
+                seen_ids.add(candidate_id)
+                raw_items.append((candidate, status))
+
+        accepted: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
+        for candidate, original_status in raw_items:
+            normalized = _reprocess_single_ball_candidate(
+                candidate,
+                frame_idx=frame_idx,
+                fps=fps,
+                pitch_polygon=pitch_polygon,
+                homography=homography,
+                frame_size=frame_size,
+                camera_motion=camera_motion,
+                original_status=original_status,
+            )
+            if normalized.get("reason"):
+                rejected.append(normalized)
+                rejected_summary[str(normalized.get("reason") or "unknown")] += 1
+            else:
+                accepted.append(normalized)
+        frames.append(
+            {
+                "frame": frame_idx,
+                "time_sec": round(frame_idx / max(fps, 0.001), 3),
+                "candidates": accepted,
+                "rejected_candidates": rejected,
+                "rejected_counts": dict(Counter(str(item.get("reason") or "unknown") for item in rejected)),
+            }
+        )
+
+    parameters = dict(candidates_doc.get("parameters") or {})
+    parameters["reprocessed_from_frozen_candidates"] = True
+    parameters["pitch_filter"] = "reprocessed_calibrated_center_in_pitch_polygon"
+    return build_ball_candidates_document(
+        frames,
+        processed_frames=processed_frames or [int(frame.get("frame") or 0) for frame in candidates_doc.get("frames") or []],
+        rejected_summary=dict(rejected_summary),
+        parameters=parameters,
+    )
+
+
+def _reprocess_single_ball_candidate(
+    candidate: dict[str, Any],
+    *,
+    frame_idx: int,
+    fps: float,
+    pitch_polygon: Any,
+    homography: Any,
+    frame_size: tuple[int, int],
+    camera_motion: Any | None,
+    original_status: str,
+) -> dict[str, Any]:
+    bbox = candidate.get("bbox_xyxy") if isinstance(candidate.get("bbox_xyxy"), list) else None
+    if bbox and len(bbox) >= 4:
+        x1, y1, x2, y2 = [float(value) for value in bbox[:4]]
+        center = [float((x1 + x2) / 2.0), float((y1 + y2) / 2.0)]
+        box_width = max(0.0, x2 - x1)
+        box_height = max(0.0, y2 - y1)
+    else:
+        center_value = candidate.get("position_px")
+        center = [float(center_value[0]), float(center_value[1])] if isinstance(center_value, list) and len(center_value) >= 2 else [0.0, 0.0]
+        box_width = float(candidate.get("width_px") or 0.0)
+        box_height = float(candidate.get("height_px") or 0.0)
+        x1, y1 = center[0] - box_width / 2.0, center[1] - box_height / 2.0
+        x2, y2 = center[0] + box_width / 2.0, center[1] + box_height / 2.0
+    calibrated_center = (
+        camera_motion.transform_point(frame_idx, center)
+        if camera_motion is not None
+        else [round(center[0], 2), round(center[1], 2)]
+    )
+    motion_fields = camera_motion.metadata_for_frame(frame_idx) if camera_motion is not None else {}
+    base = {
+        **candidate,
+        "candidate_id": candidate.get("candidate_id") or f"ball-f{frame_idx:06d}-reprocessed",
+        "frame": frame_idx,
+        "time_sec": round(frame_idx / max(fps, 0.001), 3),
+        "bbox_xyxy": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
+        "position_px": [round(center[0], 2), round(center[1], 2)],
+        "calibrated_position_px": [round(float(calibrated_center[0]), 2), round(float(calibrated_center[1]), 2)],
+        **motion_fields,
+        "confidence": round(float(candidate.get("confidence") or 0.0), 4),
+        "width_px": round(box_width, 2),
+        "height_px": round(box_height, 2),
+        "area_px": round(box_width * box_height, 2),
+        "original_filter_status": original_status,
+        "original_filter_reason": candidate.get("reason"),
+    }
+    reject_reason = _ball_candidate_reject_reason(
+        base,
+        pitch_polygon=pitch_polygon,
+        frame_size=frame_size,
+        pitch_point_px=calibrated_center,
+    )
+    if reject_reason:
+        return {
+            **base,
+            "reason": reject_reason,
+            "reprocessed_filter_status": "rejected",
+        }
+    pitch_m = _image_to_pitch_m(float(calibrated_center[0]), float(calibrated_center[1]), homography)
+    return {
+        **base,
+        "reason": None,
+        "position_m": [round(float(pitch_m[0]), 3), round(float(pitch_m[1]), 3)],
+        "source": "detected",
+        "reprocessed_filter_status": "accepted",
     }
 
 

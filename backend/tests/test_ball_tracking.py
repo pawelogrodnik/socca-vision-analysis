@@ -11,6 +11,7 @@ from app.services.ball_tracking import (
     build_ball_tracks_document,
     extract_ball_candidates,
     refine_ball_tracks_against_players,
+    reprocess_ball_candidates_document,
     select_ball_detections,
     _ball_result,
     _draw_ball_position,
@@ -130,6 +131,46 @@ class BallTrackingTests(unittest.TestCase):
         self.assertEqual(candidates[0]["position_px"], [110.0, 10.0])
         self.assertEqual(candidates[0]["calibrated_position_px"], [90.0, 10.0])
         self.assertEqual(candidates[0]["position_m"], [90.0, 10.0])
+
+    def test_reprocess_ball_candidates_recovers_previously_rejected_candidate(self) -> None:
+        doc = {
+            "frames": [
+                {
+                    "frame": 0,
+                    "candidates": [],
+                    "rejected_candidates": [
+                        {
+                            "candidate_id": "ball-f000000-c00",
+                            "frame": 0,
+                            "time_sec": 0.0,
+                            "bbox_xyxy": [105.0, 8.0, 109.0, 12.0],
+                            "position_px": [107.0, 10.0],
+                            "confidence": 0.81,
+                            "width_px": 4.0,
+                            "height_px": 4.0,
+                            "area_px": 16.0,
+                            "reason": "outside_pitch",
+                        }
+                    ],
+                }
+            ],
+            "parameters": {},
+        }
+
+        reprocessed = reprocess_ball_candidates_document(
+            doc,
+            pitch_polygon=np.asarray([[0, 0], [100, 0], [100, 100], [0, 100]], dtype=np.float32),
+            homography=np.eye(3, dtype=np.float32),
+            frame_size=(120, 120),
+            fps=30.0,
+            camera_motion=FakeCameraMotion(),
+        )
+
+        frame = reprocessed["frames"][0]
+        self.assertEqual(len(frame["candidates"]), 1)
+        self.assertEqual(frame["candidates"][0]["original_filter_status"], "rejected")
+        self.assertEqual(frame["candidates"][0]["reprocessed_filter_status"], "accepted")
+        self.assertEqual(frame["candidates"][0]["calibrated_position_px"], [87.0, 10.0])
 
     def test_ball_positions_interpolate_short_gap(self) -> None:
         selected = {

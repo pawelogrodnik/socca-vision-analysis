@@ -22,6 +22,7 @@ from app.services.ball_tracking import (
     build_ball_quality_report,
     build_ball_tracking_report,
     build_ball_tracks_document,
+    reprocess_ball_candidates_document,
 )
 from app.services.camera_motion import CameraMotionModel, build_camera_motion_model, write_camera_motion_report
 from app.services.pitch import PitchConfig, image_to_pitch_m
@@ -90,6 +91,7 @@ def reprocess_match_from_artifacts(
             start_time_sec=0.0,
             end_time_sec=_max_track_time_sec(tracks),
             enabled=True,
+            reference_pitch_polygon=pitch.polygon_np,
         )
     except Exception as exc:
         camera_motion = CameraMotionModel.disabled(
@@ -118,7 +120,13 @@ def reprocess_match_from_artifacts(
         )
         artifacts["overlay_preview"] = "overlay_preview.mp4"
 
-    ball_tracking = _load_or_rebuild_ball_tracking(output_dir, metadata, include_ball=include_ball)
+    ball_tracking = _load_or_rebuild_ball_tracking(
+        output_dir,
+        metadata,
+        include_ball=include_ball,
+        pitch=pitch,
+        camera_motion=camera_motion,
+    )
     if ball_tracking is not None:
         artifacts.update(ball_tracking["artifacts"])
 
@@ -264,6 +272,8 @@ def _load_or_rebuild_ball_tracking(
     metadata: dict[str, Any],
     *,
     include_ball: bool | None,
+    pitch: PitchConfig | None = None,
+    camera_motion: CameraMotionModel | None = None,
 ) -> dict[str, Any] | None:
     candidates_path = output_dir / "ball_candidates.json"
     tracks_path = output_dir / "ball_tracks.json"
@@ -277,6 +287,16 @@ def _load_or_rebuild_ball_tracking(
     input_source = "ball_tracks"
 
     if candidates_path.exists():
+        if pitch is not None:
+            candidates_doc = reprocess_ball_candidates_document(
+                candidates_doc,
+                pitch_polygon=pitch.polygon_np,
+                homography=pitch.homography(),
+                frame_size=(int(metadata.get("width") or 0), int(metadata.get("height") or 0)),
+                fps=float(metadata.get("fps") or 0.0),
+                camera_motion=camera_motion,
+            )
+            candidates_path.write_text(json.dumps(candidates_doc, indent=2), encoding="utf-8")
         parameters = _ball_parameters(candidates_doc, existing_report)
         tracks_doc = build_ball_tracks_document(
             candidates_doc.get("frames") if isinstance(candidates_doc.get("frames"), list) else [],
@@ -551,7 +571,16 @@ def _recalibrate_tracks_for_camera_motion(
                     y_m = float(mapped[0][1])
                     clamped_x = float(np.clip(x_m, 0.0, pitch.width_m))
                     clamped_y = float(np.clip(y_m, 0.0, pitch.length_m))
-                    row["pitch_m_clamped"] = abs(clamped_x - x_m) > 1e-6 or abs(clamped_y - y_m) > 1e-6
+                    outside_distance_m = max(abs(clamped_x - x_m), abs(clamped_y - y_m))
+                    row["pitch_m_raw"] = [round(x_m, 3), round(y_m, 3)]
+                    row["pitch_m_clamped"] = outside_distance_m > 1e-6
+                    row["pitch_boundary_distance_m"] = round(outside_distance_m, 3)
+                    if outside_distance_m <= 0.35:
+                        row["play_area_status"] = "inside_play"
+                    elif outside_distance_m <= 1.25:
+                        row["play_area_status"] = "boundary_transient"
+                    else:
+                        row["play_area_status"] = "outside_play"
                     row["pitch_m"] = [round(clamped_x, 3), round(clamped_y, 3)]
                     row["pitch_m_source"] = "reprocess_camera_motion_calibrated_footpoint"
             positions.append(row)

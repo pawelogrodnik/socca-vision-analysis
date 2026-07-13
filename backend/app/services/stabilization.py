@@ -280,6 +280,11 @@ def _tracklet_public_doc(tracklet: dict[str, Any], *, status: str, include_posit
         "team_id": tracklet.get("team_id"),
         "team_name": tracklet.get("team_name"),
         "team_cluster_id": tracklet.get("team_cluster_id"),
+        "team_assignment_reason": tracklet.get("team_assignment_reason"),
+        "role": tracklet.get("role") or "field_player",
+        "role_confidence": round(float(tracklet.get("role_confidence") or 0.0), 4),
+        "goal_end": tracklet.get("goal_end"),
+        "goal_zone_ratio": tracklet.get("goal_zone_ratio"),
         "appearance_rgb": _round_vector(tracklet.get("appearance_rgb"), digits=2),
         "appearance_hsv": _round_vector(tracklet.get("appearance_hsv"), digits=2),
         "appearance_lab": _round_vector(tracklet.get("appearance_lab"), digits=2),
@@ -301,6 +306,9 @@ def _tracklet_public_doc(tracklet: dict[str, Any], *, status: str, include_posit
                 "frame": int(position.get("frame") or 0),
                 "time_sec": round(float(position.get("time_sec") or 0.0), 3),
                 "pitch_m": _round_point(position.get("pitch_m")),
+                "pitch_m_raw": _round_point(position.get("pitch_m_raw")),
+                "play_area_status": position.get("play_area_status") or "inside_play",
+                "pitch_boundary_distance_m": round(float(position.get("pitch_boundary_distance_m") or 0.0), 3),
                 "smoothed_pitch_m": _round_point(position.get("smoothed_pitch_m") or position.get("pitch_m")),
                 "bbox_xyxy": position.get("bbox_xyxy"),
                 "confidence": round(float(position.get("confidence") or 0.0), 4),
@@ -1183,6 +1191,92 @@ def _map_clusters_to_teams(
                 return {0: usable_refs[1][0], 1: usable_refs[0][0]}
             return {0: usable_refs[0][0], 1: usable_refs[1][0]}
     return {0: usable_refs[0][0], 1: usable_refs[1][0]}
+
+
+def apply_goalkeeper_role_adjustments(tracklets: list[dict[str, Any]], *, pitch_length_m: float) -> dict[str, Any]:
+    adjusted: list[dict[str, Any]] = []
+    for tracklet in tracklets:
+        candidate = _goalkeeper_role_candidate(tracklet, pitch_length_m=pitch_length_m)
+        if candidate is None:
+            continue
+        tracklet["role"] = "goalkeeper"
+        tracklet["role_confidence"] = candidate["role_confidence"]
+        tracklet["goal_end"] = candidate["goal_end"]
+        tracklet["goal_zone_ratio"] = candidate["goal_zone_ratio"]
+        previous_team = tracklet.get("team_label")
+        color_is_unreliable = bool(candidate.get("color_outlier") or candidate.get("dark_goalkeeper_color"))
+        if color_is_unreliable:
+            tracklet["team_label"] = "U"
+            tracklet["team_id"] = None
+            tracklet["team_name"] = "Unknown"
+            tracklet["team_confidence"] = 0.0
+            tracklet["team_assignment_reason"] = "goalkeeper_outlier_requires_review"
+        else:
+            tracklet["team_assignment_reason"] = tracklet.get("team_assignment_reason") or "goalkeeper_role_detected"
+        adjusted.append(
+            {
+                "tracklet_id": tracklet.get("tracklet_id"),
+                "raw_track_id": tracklet.get("source_track_id"),
+                "goal_end": candidate["goal_end"],
+                "role_confidence": candidate["role_confidence"],
+                "goal_zone_ratio": candidate["goal_zone_ratio"],
+                "previous_team_label": previous_team,
+                "team_label": tracklet.get("team_label"),
+                "team_assignment_reason": tracklet.get("team_assignment_reason"),
+            }
+        )
+    return {
+        "method": "goal_zone_color_outlier_v1",
+        "goal_zone_edge_ratio": 0.18,
+        "adjusted_tracklets": len(adjusted),
+        "review_required_tracklets": sum(1 for row in adjusted if row.get("team_label") == "U"),
+        "examples": adjusted[:100],
+    }
+
+
+def _goalkeeper_role_candidate(tracklet: dict[str, Any], *, pitch_length_m: float) -> dict[str, Any] | None:
+    positions = [
+        position
+        for position in (tracklet.get("positions") or [])
+        if isinstance(position, dict) and isinstance(position.get("pitch_m"), list) and len(position.get("pitch_m") or []) >= 2
+    ]
+    if len(positions) < 8:
+        return None
+    edge_m = max(2.5, float(pitch_length_m) * 0.18)
+    near = sum(1 for position in positions if float(position["pitch_m"][1]) <= edge_m)
+    far = sum(1 for position in positions if float(position["pitch_m"][1]) >= float(pitch_length_m) - edge_m)
+    count = max(1, len(positions))
+    near_ratio = near / count
+    far_ratio = far / count
+    goal_zone_ratio = max(near_ratio, far_ratio)
+    if goal_zone_ratio < 0.72:
+        return None
+    duration_sec = float(tracklet.get("duration_sec") or 0.0)
+    color_outlier = _is_goalkeeper_color_outlier(tracklet)
+    dark_goalkeeper_color = _is_dark_goalkeeper_color(tracklet)
+    if not (color_outlier or dark_goalkeeper_color or (goal_zone_ratio >= 0.92 and duration_sec >= 4.0)):
+        return None
+    confidence = min(
+        1.0,
+        0.35
+        + goal_zone_ratio * 0.45
+        + min(duration_sec / 10.0, 1.0) * 0.1
+        + (0.1 if color_outlier or dark_goalkeeper_color else 0.0),
+    )
+    return {
+        "goal_end": "near" if near_ratio >= far_ratio else "far",
+        "role_confidence": round(confidence, 4),
+        "goal_zone_ratio": round(goal_zone_ratio, 4),
+        "color_outlier": color_outlier,
+        "dark_goalkeeper_color": dark_goalkeeper_color,
+    }
+
+
+def _is_dark_goalkeeper_color(tracklet: dict[str, Any]) -> bool:
+    profile = _tracklet_color_profile(tracklet)
+    if profile is None:
+        return False
+    return profile["value"] <= 92.0 and profile["saturation"] <= 115.0
 
 
 def build_stable_players(
@@ -4132,8 +4226,9 @@ def stabilize_match(
             91.8,
             f"Clustering teams for {len(tracklets)} cleaned tracklets.",
             {"current": len(tracklets), "unit": "tracklets"},
-        )
+    )
     team_clusters = cluster_tracklet_teams(tracklets, teams)
+    goalkeeper_role_summary = apply_goalkeeper_role_adjustments(tracklets, pitch_length_m=float(pitch.length_m))
     tracklets_doc = build_tracklets_document(
         tracklets,
         rejected,
@@ -4275,6 +4370,7 @@ def stabilize_match(
         "max_link_speed_mps": 9.5,
         "max_link_distance_m": 12.0,
         "team_method": "torso_color_kmeans",
+        "goalkeeper_role_adjustment": goalkeeper_role_summary,
         "max_interpolation_gap_frames": MAX_INTERPOLATION_GAP_FRAMES,
         "max_interpolation_gap_sec": MAX_INTERPOLATION_GAP_SEC,
         "max_interpolation_speed_mps": MAX_INTERPOLATION_SPEED_MPS,

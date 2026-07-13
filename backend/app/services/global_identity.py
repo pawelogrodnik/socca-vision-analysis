@@ -188,6 +188,10 @@ class Observation:
     team_confidence: float
     tracklet_positions_count: int = 0
     appearance_rgb: list[float] | None = None
+    pitch_m_raw: list[float] | None = None
+    pitch_m_clamped: bool = False
+    play_area_status: str = "inside_play"
+    pitch_boundary_distance_m: float = 0.0
 
 
 @dataclass
@@ -392,6 +396,7 @@ class SlotState:
             "tracklet_id": obs.tracklet_id,
             "raw_track_id": obs.raw_track_id,
             "confidence": round(obs.confidence, 4),
+            **_observation_play_area_fields(obs),
             "source": "detected",
             "status": "detected",
             "visual_trusted": True,
@@ -417,6 +422,7 @@ class SlotState:
                 "tracklet_id": obs.tracklet_id,
                 "raw_track_id": obs.raw_track_id,
                 "confidence": round(obs.confidence, 4),
+                **_observation_play_area_fields(obs),
                 "source": "detected",
                 "status": "detected",
                 "visual_trusted": True,
@@ -489,6 +495,7 @@ class SlotState:
             "candidate_tracklet_id": obs.tracklet_id,
             "candidate_raw_track_id": obs.raw_track_id,
             "confidence": round(obs.confidence, 4),
+            **_observation_play_area_fields(obs),
             "source": "ambiguous",
             "status": "ambiguous",
             "visual_trusted": False,
@@ -732,6 +739,10 @@ def build_observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[O
                     team_confidence=float(tracklet.get("team_confidence") or 0.0),
                     tracklet_positions_count=tracklet_positions_count,
                     appearance_rgb=tracklet.get("appearance_rgb"),
+                    pitch_m_raw=position.get("pitch_m_raw"),
+                    pitch_m_clamped=bool(position.get("pitch_m_clamped") or False),
+                    play_area_status=str(position.get("play_area_status") or "inside_play"),
+                    pitch_boundary_distance_m=float(position.get("pitch_boundary_distance_m") or 0.0),
                 )
             )
     return sorted(observations, key=lambda item: (item.frame, item.time_sec, item.raw_track_id))
@@ -1417,6 +1428,7 @@ def _unmatched_observation_doc(obs: Observation) -> dict[str, Any]:
         "tracklet_id": obs.tracklet_id,
         "raw_track_id": obs.raw_track_id,
         "confidence": round(obs.confidence, 4),
+        **_observation_play_area_fields(obs),
         "team_label": obs.team_label,
         "team_id": obs.team_id,
         "team_name": obs.team_name,
@@ -1424,6 +1436,15 @@ def _unmatched_observation_doc(obs: Observation) -> dict[str, Any]:
         "source": "unmatched_raw",
         "status": "unmatched_raw",
         "visual_trusted": False,
+    }
+
+
+def _observation_play_area_fields(obs: Observation) -> dict[str, Any]:
+    return {
+        "pitch_m_raw": _round_point(obs.pitch_m_raw),
+        "pitch_m_clamped": bool(obs.pitch_m_clamped),
+        "play_area_status": obs.play_area_status,
+        "pitch_boundary_distance_m": round(float(obs.pitch_boundary_distance_m or 0.0), 3),
     }
 
 
@@ -1804,6 +1825,12 @@ def _moderate_high_confidence_bbox_outlier(
 
 
 def _stateless_detection_rejection_reason(obs: Observation) -> dict[str, Any] | None:
+    if obs.play_area_status == "outside_play":
+        return {
+            "reason": "outside_play_area",
+            "play_area_status": obs.play_area_status,
+            "pitch_boundary_distance_m": round(float(obs.pitch_boundary_distance_m or 0.0), 3),
+        }
     size = _bbox_size(obs.bbox_xyxy)
     if not size:
         return {"reason": "invalid_bbox"}
@@ -1937,6 +1964,8 @@ def _slot_has_missing_row_at_frame(slot: SlotState, frame: int) -> bool:
 def _select_inactive_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool] | None:
     if obs.team_label not in TEAM_LABELS:
         return None
+    if obs.play_area_status != "inside_play":
+        return None
     active_counts = {
         team_label: sum(1 for slot in slots if slot.team_label == team_label and slot.active)
         for team_label in TEAM_LABELS
@@ -1956,6 +1985,8 @@ def _team_rebalance_allowed(obs: Observation) -> bool:
 def _new_slot_candidate_rejection_reason(slots: list[SlotState], obs: Observation) -> str | None:
     if obs.team_label not in TEAM_LABELS:
         return "unknown_or_outlier_team_not_spawned"
+    if obs.play_area_status != "inside_play":
+        return f"{obs.play_area_status}_not_allowed_to_spawn_slot"
     if obs.frame <= INITIAL_NEW_SLOT_GRACE_FRAMES:
         return None
     if obs.tracklet_positions_count < NEW_SLOT_MIN_TRACKLET_POSITIONS:
@@ -1965,6 +1996,8 @@ def _new_slot_candidate_rejection_reason(slots: list[SlotState], obs: Observatio
 
 def _select_recent_reuse_slot(slots: list[SlotState], obs: Observation) -> tuple[SlotState, bool, str] | None:
     if obs.team_label not in TEAM_LABELS:
+        return None
+    if obs.play_area_status != "inside_play":
         return None
     active_count = sum(1 for slot in slots if slot.team_label == obs.team_label and slot.active)
     unused_slot_available = _has_unused_slot(slots, obs.team_label)
