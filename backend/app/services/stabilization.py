@@ -4196,6 +4196,7 @@ def stabilize_match(
     ball_candidates_doc: dict[str, Any] | None = None,
     write_debug_overlay: bool = True,
     render_stable_overlay: bool = True,
+    defer_stable_overlay_render: bool = False,
     player_label_overrides: dict[str, str] | None = None,
     progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
@@ -4309,14 +4310,15 @@ def stabilize_match(
     stable_doc["player_heatmaps_summary"] = player_heatmaps["summary"]
     change_artifacts = write_change_candidate_artifacts(match_dir, stable_doc)
     stable_overlay_artifacts: dict[str, str] = {}
-    if render_stable_overlay and progress:
+    should_render_stable_overlay = bool(render_stable_overlay and not defer_stable_overlay_render)
+    if should_render_stable_overlay and progress:
         progress(
             "stable_overlay_render",
             94.0,
             "Rendering stable overlay preview.",
             {"artifact": "stable_overlay_preview.mp4"},
         )
-    if render_stable_overlay:
+    if should_render_stable_overlay:
         write_stable_overlay(
             video_path,
             match_dir,
@@ -4329,7 +4331,7 @@ def stabilize_match(
             pitch_homography=pitch.homography(),
         )
         stable_overlay_artifacts["stable_overlay_preview"] = "stable_overlay_preview.mp4"
-    elif progress:
+    elif not render_stable_overlay and progress:
         progress(
             "stable_overlay_render",
             94.0,
@@ -4360,7 +4362,7 @@ def stabilize_match(
         )
         debug_overlay_artifacts["debug_identity_overlay"] = "debug_identity_overlay.mp4"
     if progress:
-        progress("final_reports", 96.0, "Writing stable player and identity reports.", None)
+        progress("stabilization", 93.0, "Writing stable player and identity reports.", None)
     public_stable_doc = _strip_overlay_positions(stable_doc)
     global_identity_parameters = global_identity.get("parameters") if isinstance(global_identity.get("parameters"), dict) else {}
     parameters = {
@@ -4383,6 +4385,7 @@ def stabilize_match(
         "camera_motion_compensation": bool(getattr(camera_motion, "enabled", False)) if camera_motion is not None else False,
         "camera_motion_reference_frame": getattr(camera_motion, "reference_frame", None) if camera_motion is not None else None,
         "render_stable_overlay": bool(render_stable_overlay),
+        "stable_overlay_render_deferred": bool(render_stable_overlay and defer_stable_overlay_render),
     }
     report = build_stabilization_report(
         stable_doc=public_stable_doc,

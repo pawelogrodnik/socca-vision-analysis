@@ -597,7 +597,7 @@ def _build_ball_possession_artifacts(
     )
 
 
-def _rewrite_stable_overlay_with_possession(
+def _render_final_stable_overlay(
     match_dir: Path,
     video_path: Path,
     pitch: PitchConfig,
@@ -607,16 +607,23 @@ def _rewrite_stable_overlay_with_possession(
     possession: dict[str, Any] | None,
     *,
     camera_motion: CameraMotionModel | None = None,
-) -> None:
-    if not possession:
-        return
+    progress: Any | None = None,
+    progress_percent: float = 98.0,
+) -> dict[str, str]:
     stable_doc = stabilization.get("stable_players_overlay_doc") or stabilization.get("stable_players")
     if not isinstance(stable_doc, dict):
-        return
+        return {}
     ball_tracks_doc = (
         (ball_tracking or {}).get("ball_tracks")
         or stabilization.get("refined_ball_tracks")
     )
+    if progress:
+        progress(
+            "stable_overlay_render",
+            progress_percent,
+            "Rendering final stable overlay preview.",
+            {"artifact": "stable_overlay_preview.mp4", "with_possession": bool(possession)},
+        )
     write_stable_overlay(
         video_path,
         match_dir,
@@ -627,9 +634,10 @@ def _rewrite_stable_overlay_with_possession(
         camera_motion=camera_motion,
         ball_tracks_doc=ball_tracks_doc,
         pitch_homography=pitch.homography(),
-        possession_doc=possession.get("possession_candidates"),
-        pass_candidates_doc=possession.get("pass_candidates"),
+        possession_doc=(possession or {}).get("possession_candidates"),
+        pass_candidates_doc=(possession or {}).get("pass_candidates"),
     )
+    return {"stable_overlay_preview": "stable_overlay_preview.mp4"}
 
 
 def _resolve_yolo_tracker_config(tracker_name: str) -> str:
@@ -1135,6 +1143,7 @@ def analyze_match_yolo(
             ball_candidates_doc=(ball_tracking or {}).get("ball_candidates"),
             write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
             render_stable_overlay=render_stable_overlay,
+            defer_stable_overlay_render=render_stable_overlay,
         )
         artifacts.update(stabilization["artifacts"])
         if ball_tracking is not None:
@@ -1184,23 +1193,25 @@ def analyze_match_yolo(
                     write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
                 )
                 artifacts.update(possession["artifacts"])
-                if render_stable_overlay:
-                    try:
-                        _rewrite_stable_overlay_with_possession(
-                            match_dir,
-                            video_path,
-                            pitch,
-                            metadata,
-                            stabilization,
-                            ball_tracking,
-                            possession,
-                            camera_motion=camera_motion,
-                        )
-                    except Exception as exc:
-                        warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
                 warnings.extend(possession["possession_report"].get("warnings") or [])
             except Exception as exc:
                 warnings.append(f"Experimental possession candidate layer failed: {exc}")
+        if render_stable_overlay and "stable_overlay_preview" not in artifacts:
+            try:
+                artifacts.update(
+                    _render_final_stable_overlay(
+                        match_dir,
+                        video_path,
+                        pitch,
+                        metadata,
+                        stabilization,
+                        ball_tracking,
+                        possession,
+                        camera_motion=camera_motion,
+                    )
+                )
+            except Exception as exc:
+                warnings.append(f"Stable overlay render failed: {exc}")
 
         report = {
             "status": "completed",

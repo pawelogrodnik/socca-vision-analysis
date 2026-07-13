@@ -12,7 +12,7 @@ from app.config import STORAGE_DIR, WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.services.analysis import (
     _build_ball_possession_artifacts,
     _cleanup_debug_video_artifacts,
-    _rewrite_stable_overlay_with_possession,
+    _render_final_stable_overlay,
     _write_outputs,
     load_pitch_config,
     write_raw_overlay_from_tracks,
@@ -141,6 +141,7 @@ def reprocess_match_from_artifacts(
         ball_candidates_doc=(ball_tracking or {}).get("ball_candidates"),
         write_debug_overlay=write_debug_overlay,
         render_stable_overlay=render_stable_overlay,
+        defer_stable_overlay_render=render_stable_overlay,
         player_label_overrides=player_label_overrides,
         progress=progress,
     )
@@ -153,6 +154,8 @@ def reprocess_match_from_artifacts(
     possession: dict[str, Any] | None = None
     if ball_tracking is not None and build_possession:
         try:
+            if progress:
+                progress("possession_pass_candidates", 96.0, "Building possession and pass candidate layers.", None)
             possession = _build_ball_possession_artifacts(
                 output_dir,
                 video_path,
@@ -163,22 +166,28 @@ def reprocess_match_from_artifacts(
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
-            if render_stable_overlay:
-                try:
-                    _rewrite_stable_overlay_with_possession(
-                        output_dir,
-                        video_path,
-                        pitch,
-                        metadata,
-                        stabilization,
-                        ball_tracking,
-                        possession,
-                        camera_motion=camera_motion,
-                    )
-                except Exception as exc:
-                    warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
         except Exception as exc:
             warnings.append(f"Post-YOLO possession candidate layer failed: {exc}")
+    if render_stable_overlay and "stable_overlay_preview" not in artifacts:
+        try:
+            artifacts.update(
+                _render_final_stable_overlay(
+                    output_dir,
+                    video_path,
+                    pitch,
+                    metadata,
+                    stabilization,
+                    ball_tracking,
+                    possession,
+                    camera_motion=camera_motion,
+                    progress=progress,
+                    progress_percent=98.0 if possession is not None else 94.0,
+                )
+            )
+        except Exception as exc:
+            warnings.append(f"Stable overlay render failed: {exc}")
+    if progress:
+        progress("final_reports", 99.0, "Writing final reprocess report.", None)
 
     report = {
         "schema_version": "0.1.0",

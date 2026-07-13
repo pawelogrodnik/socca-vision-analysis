@@ -13,7 +13,7 @@ from typing import Any, Callable
 JobUpdater = Callable[[str, float, str, dict[str, Any] | None], None]
 JobRunner = Callable[[str, JobUpdater], dict[str, Any]]
 
-PROGRESS_PLAN_VERSION = "0.1.0"
+PROGRESS_PLAN_VERSION = "0.2.0"
 PROGRESS_STEPS: list[tuple[str, str, float, float]] = [
     ("queued", "Queued", 0.0, 5.0),
     ("starting", "Starting analysis", 5.0, 8.0),
@@ -23,9 +23,8 @@ PROGRESS_STEPS: list[tuple[str, str, float, float]] = [
     ("chunk_ball_merge", "Merge ball observations", 86.0, 88.0),
     ("ball_tracking", "Build ball tracks", 88.0, 90.0),
     ("stabilization", "Player identity and stats", 90.0, 94.0),
-    ("stable_overlay_render", "Render stable overlay", 94.0, 96.0),
-    ("possession_pass_candidates", "Possession and pass candidates", 96.0, 98.0),
-    ("stable_overlay_possession_render", "Render possession overlay", 98.0, 99.0),
+    ("possession_pass_candidates", "Possession and pass candidates", 94.0, 96.0),
+    ("stable_overlay_render", "Render final stable overlay", 96.0, 99.0),
     ("final_reports", "Final reports", 99.0, 100.0),
     ("completed", "Completed", 100.0, 100.0),
 ]
@@ -36,9 +35,9 @@ STAGE_TO_STEP_ID = {
     "chunk_ball_merge": "chunk_ball_merge",
     "ball_tracking": "ball_tracking",
     "stabilization": "stabilization",
-    "stable_overlay_render": "stable_overlay_render",
     "possession_pass_candidates": "possession_pass_candidates",
-    "stable_overlay_possession_render": "stable_overlay_possession_render",
+    "stable_overlay_render": "stable_overlay_render",
+    "stable_overlay_possession_render": "stable_overlay_render",
     "final_reports": "final_reports",
 }
 

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 from app.services.chunked_analysis import (
+    analyze_match_chunked_yolo,
     build_analysis_chunk_manifest,
     merge_completed_chunk_ball_observations,
     merge_completed_chunk_tracks,
@@ -159,6 +164,100 @@ class ChunkedAnalysisTests(unittest.TestCase):
             self.assertEqual(merged["processed_frames"], [30, 60, 75])
             self.assertEqual(merged["rejected_summary"], {"outside_pitch": 1, "too_small": 2})
             self.assertEqual(merged["warnings"], ["low coverage"])
+
+    def test_chunked_camera_motion_uses_pitch_polygon_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            video_path = path / "video.mp4"
+            video_path.write_bytes(b"not a real video in this unit test")
+            pitch_points = [[0, 0], [100, 0], [100, 100], [0, 100]]
+            (path / "pitch_config.json").write_text(
+                json.dumps(
+                    {
+                        "image_points": pitch_points,
+                        "pitch_dimensions_m": {"width_m": 30, "length_m": 47.4},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (path / "match.json").write_text(json.dumps({"teams": []}), encoding="utf-8")
+            payload = {
+                "max_seconds": 1.0,
+                "frame_stride": 1,
+                "chunk_duration_sec": 1.0,
+                "chunk_overlap_sec": 0.0,
+                "camera_motion_compensation": True,
+                "camera_motion_interval_sec": 0.5,
+                "camera_motion_min_inlier_ratio": 0.6,
+                "yolo_tracker": "bytetrack.yaml",
+                "render_stable_overlay": False,
+                "include_ball": False,
+            }
+            manifest = build_analysis_chunk_manifest(
+                video_metadata={"fps": 30.0, "frame_count": 30, "duration_sec": 1.0},
+                payload=payload,
+            )
+            manifest["parameters"]["camera_motion_compensation"] = True
+            manifest["parameters"]["camera_motion_interval_sec"] = 0.5
+            manifest["parameters"]["camera_motion_min_inlier_ratio"] = 0.6
+            manifest["parameters"]["include_ball"] = False
+            manifest["parameters"]["yolo_tracker"] = "bytetrack.yaml"
+            manifest["chunks"][0]["status"] = "completed"
+            chunk_dir = path / "analysis_chunks" / "chunk-0001"
+            chunk_dir.mkdir(parents=True)
+            (chunk_dir / "chunk_analysis_report.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            (chunk_dir / "tracks.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "track_id": 1,
+                            "positions": [
+                                {
+                                    "frame": 0,
+                                    "time_sec": 0.0,
+                                    "bbox_xyxy": [10, 10, 20, 40],
+                                    "footpoint": [15, 40],
+                                    "pitch_m": [4.0, 8.0],
+                                    "confidence": 0.9,
+                                }
+                            ],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            from app.services.camera_motion import CameraMotionModel
+
+            camera_motion = CameraMotionModel.disabled(fps=30.0, frame_count=30)
+            stable_result = {
+                "stable_players": {"summary": {"stable_players": 0}, "players": []},
+                "artifacts": {"stable_players": "stable_players.json"},
+                "refined_ball_tracks": None,
+            }
+
+            with patch("app.services.video.read_video_metadata", return_value={"fps": 30.0, "width": 100, "height": 100, "frame_count": 30, "duration_sec": 1.0}), patch(
+                "app.services.chunked_analysis._load_or_create_real_manifest",
+                return_value=manifest,
+            ), patch(
+                "app.services.chunked_analysis.collect_runtime_info",
+                return_value={},
+            ), patch(
+                "app.services.chunked_analysis.resolve_yolo_device",
+                return_value=None,
+            ), patch(
+                "app.services.camera_motion.build_camera_motion_model",
+                return_value=camera_motion,
+            ) as build_motion, patch(
+                "app.services.stabilization.stabilize_match",
+                return_value=stable_result,
+            ):
+                analyze_match_chunked_yolo(path, video_path, payload=payload)
+
+            build_motion.assert_called_once()
+            np.testing.assert_array_equal(
+                build_motion.call_args.kwargs["reference_pitch_polygon"],
+                np.asarray(pitch_points, dtype=np.float32),
+            )
 
 
 if __name__ == "__main__":

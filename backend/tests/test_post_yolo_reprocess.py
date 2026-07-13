@@ -154,6 +154,51 @@ class PostYoloReprocessTests(unittest.TestCase):
             self.assertFalse(report["parameters"]["render_stable_overlay"])
             self.assertNotIn("stable_overlay_preview", report["artifacts"])
             self.assertFalse(stabilize.call_args.kwargs["render_stable_overlay"])
+            self.assertFalse(stabilize.call_args.kwargs["defer_stable_overlay_render"])
+
+    def test_reprocess_renders_final_stable_overlay_once_after_possession(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source"
+            output_dir = Path(tmp) / "output"
+            video_path = _write_reprocess_inputs(source_dir)
+            metadata = {"fps": 30.0, "width": 100, "height": 100, "frame_count": 30, "duration_sec": 1.0}
+            ball_tracking = {
+                "input_source": "ball_tracks",
+                "ball_tracks": {"positions": [], "summary": {}},
+                "ball_candidates": {"frames": [], "summary": {}},
+                "ball_tracking_report": {"summary": {}},
+                "ball_quality_report": {"summary": {}},
+                "artifacts": {"ball_tracks": "ball_tracks.json"},
+            }
+            possession = {
+                "possession_candidates": {"frames": [], "summary": {}},
+                "pass_candidates": {"candidates": [], "summary": {}},
+                "possession_report": {"summary": {}, "warnings": []},
+                "artifacts": {"possession_candidates": "possession_candidates.json"},
+            }
+
+            with patch("app.services.post_yolo_reprocess.read_video_metadata", return_value=metadata), patch(
+                "app.services.post_yolo_reprocess._load_or_rebuild_ball_tracking",
+                return_value=ball_tracking,
+            ), patch(
+                "app.services.post_yolo_reprocess.stabilize_match",
+                return_value=_stable_result(include_stable_overlay=False),
+            ) as stabilize, patch(
+                "app.services.post_yolo_reprocess._build_ball_possession_artifacts",
+                return_value=possession,
+            ) as build_possession, patch(
+                "app.services.post_yolo_reprocess._render_final_stable_overlay",
+                return_value={"stable_overlay_preview": "stable_overlay_preview.mp4"},
+            ) as render:
+                report = reprocess_match_from_artifacts(source_dir, video_path, output_dir=output_dir)
+
+            self.assertIn("stable_overlay_preview", report["artifacts"])
+            self.assertEqual(report["artifacts"]["stable_overlay_preview"], "stable_overlay_preview.mp4")
+            self.assertTrue(stabilize.call_args.kwargs["render_stable_overlay"])
+            self.assertTrue(stabilize.call_args.kwargs["defer_stable_overlay_render"])
+            build_possession.assert_called_once()
+            render.assert_called_once()
+            self.assertIs(render.call_args.args[6], possession)
 
     def test_reprocess_recalibrates_tracks_with_camera_motion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

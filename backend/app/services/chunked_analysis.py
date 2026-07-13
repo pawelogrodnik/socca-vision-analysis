@@ -128,7 +128,7 @@ def analyze_match_chunked_yolo(
         DEFAULT_PITCH_FILTER_MARGIN_PX,
         _cleanup_debug_video_artifacts,
         _load_yolo_model,
-        _rewrite_stable_overlay_with_possession,
+        _render_final_stable_overlay,
         _write_outputs,
         collect_yolo_tracks_range,
         load_pitch_config,
@@ -210,7 +210,7 @@ def analyze_match_chunked_yolo(
             interval_sec=camera_motion_interval_sec,
             min_inlier_ratio=camera_motion_min_inlier_ratio,
             enabled=camera_motion_compensation,
-            reference_pitch_polygon=pitch_polygon,
+            reference_pitch_polygon=pitch.polygon_np,
         )
     except Exception as exc:
         camera_motion = CameraMotionModel.disabled(
@@ -404,6 +404,7 @@ def analyze_match_chunked_yolo(
     artifacts["camera_motion_report"] = "camera_motion_report.json"
     ball_tracking: dict[str, Any] | None = None
     ball_tracks_doc: dict[str, Any] | None = None
+    ball_candidates_doc: dict[str, Any] | None = None
     ball_report: dict[str, Any] | None = None
     possession: dict[str, Any] | None = None
     if include_ball:
@@ -495,6 +496,7 @@ def analyze_match_chunked_yolo(
         ball_candidates_doc=ball_candidates_doc,
         write_debug_overlay=WRITE_DEBUG_VIDEO_ARTIFACTS,
         render_stable_overlay=render_stable_overlay,
+        defer_stable_overlay_render=render_stable_overlay,
         progress=progress,
     )
     refined_ball_tracks = stabilization.get("refined_ball_tracks")
@@ -540,41 +542,31 @@ def analyze_match_chunked_yolo(
                 pitch,
                 metadata,
                 ball_tracks_doc,
-                stabilization["stable_players"],
+                stabilization.get("stable_players_overlay_doc") or stabilization["stable_players"],
                 write_overlay_video=WRITE_DEBUG_VIDEO_ARTIFACTS,
             )
             artifacts.update(possession["artifacts"])
-            if render_stable_overlay:
-                try:
-                    if progress:
-                        progress(
-                            "stable_overlay_possession_render",
-                            98.0,
-                            "Rendering stable overlay with possession and pass layers.",
-                            {"artifact": "stable_overlay_preview.mp4"},
-                        )
-                    _rewrite_stable_overlay_with_possession(
-                        match_dir,
-                        video_path,
-                        pitch,
-                        metadata,
-                        stabilization,
-                        ball_tracking,
-                        possession,
-                        camera_motion=camera_motion,
-                    )
-                except Exception as exc:
-                    camera_motion_warnings.append(f"Stable overlay possession/pass layer failed: {exc}")
-            elif progress:
-                progress(
-                    "stable_overlay_possession_render",
-                    98.0,
-                    "Skipping stable overlay possession/pass render.",
-                    {"artifact": "stable_overlay_preview.mp4", "skipped": True},
-                )
         except Exception as exc:
             ball_report.setdefault("warnings", []).append(f"Chunked possession candidate layer failed: {exc}")
             (match_dir / "ball_tracking_report.json").write_text(json.dumps(ball_report, indent=2), encoding="utf-8")
+    if render_stable_overlay and "stable_overlay_preview" not in artifacts:
+        try:
+            artifacts.update(
+                _render_final_stable_overlay(
+                    match_dir,
+                    video_path,
+                    pitch,
+                    metadata,
+                    stabilization,
+                    ball_tracking,
+                    possession,
+                    camera_motion=camera_motion,
+                    progress=progress,
+                    progress_percent=98.0 if possession is not None else 94.0,
+                )
+            )
+        except Exception as exc:
+            camera_motion_warnings.append(f"Stable overlay render failed: {exc}")
     chunk_warnings = [
         warning
         for chunk in manifest.get("chunks", [])
