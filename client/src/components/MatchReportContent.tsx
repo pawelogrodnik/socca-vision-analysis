@@ -317,19 +317,24 @@ function teamPassCount(
   if (candidates.length === 0) return undefined;
   return candidates.filter(
     (candidate) =>
-      recordText(candidate, 'from_team_label', '') === teamLabel && predicate(candidate),
+      (recordText(candidate, 'count_for_team_label', '') ||
+        recordText(candidate, 'from_team_label', '')) === teamLabel && predicate(candidate),
   ).length;
 }
 
-function isAcceptedPass(candidate: GenericRow): boolean {
-  return (
-    candidate.final_stat_eligible === true ||
-    recordText(candidate, 'review_status', '') === 'accepted'
-  );
+function isPassAttempt(candidate: GenericRow): boolean {
+  const outcome = recordText(candidate, 'outcome', '');
+  if (outcome === 'completed_pass' || outcome === 'failed_pass') return true;
+  if (outcome === 'excluded_non_pass') return false;
+  return ['same_team_pass', 'turnover_or_interception'].includes(recordText(candidate, 'pass_type', ''));
 }
 
-function isSameTeamPassCandidate(candidate: GenericRow): boolean {
-  return recordText(candidate, 'pass_type', '') === 'same_team_pass';
+function isCompletedPass(candidate: GenericRow): boolean {
+  return candidate.completed === true || recordText(candidate, 'outcome', '') === 'completed_pass';
+}
+
+function isFailedPass(candidate: GenericRow): boolean {
+  return candidate.failed === true || recordText(candidate, 'outcome', '') === 'failed_pass';
 }
 
 function comparisonRowsForTeams(
@@ -410,30 +415,30 @@ function comparisonRowsForTeams(
       { experimental: true, highlightHigher: true },
     ),
     makeMetric(
-      'Podania zaakc.*',
-      teamPassCount(source, leftLabel, isAcceptedPass),
-      teamPassCount(source, rightLabel, isAcceptedPass),
+      'Podania completed*',
+      teamPassCount(source, leftLabel, (candidate) => isPassAttempt(candidate) && isCompletedPass(candidate)),
+      teamPassCount(source, rightLabel, (candidate) => isPassAttempt(candidate) && isCompletedPass(candidate)),
       formatInteger,
       { experimental: true, highlightHigher: true },
     ),
     makeMetric(
-      'Podania teamowe cand.*',
-      teamPassCount(source, leftLabel, isSameTeamPassCandidate),
-      teamPassCount(source, rightLabel, isSameTeamPassCandidate),
+      'Podania failed*',
+      teamPassCount(source, leftLabel, (candidate) => isPassAttempt(candidate) && isFailedPass(candidate)),
+      teamPassCount(source, rightLabel, (candidate) => isPassAttempt(candidate) && isFailedPass(candidate)),
       formatInteger,
-      { experimental: true, highlightHigher: true },
+      { experimental: true },
     ),
     makeMetric(
-      'Kandydaci podan*',
-      teamPassCount(source, leftLabel, () => true),
-      teamPassCount(source, rightLabel, () => true),
+      'Proby podan*',
+      teamPassCount(source, leftLabel, isPassAttempt),
+      teamPassCount(source, rightLabel, isPassAttempt),
       formatInteger,
       { experimental: true, highlightHigher: true },
     ),
     makeMetric(
       'Progresywne*',
-      teamPassCount(source, leftLabel, (candidate) => candidate.is_progressive === true),
-      teamPassCount(source, rightLabel, (candidate) => candidate.is_progressive === true),
+      teamPassCount(source, leftLabel, (candidate) => isPassAttempt(candidate) && candidate.is_progressive === true),
+      teamPassCount(source, rightLabel, (candidate) => isPassAttempt(candidate) && candidate.is_progressive === true),
       formatInteger,
       { experimental: true, highlightHigher: true },
     ),
@@ -600,10 +605,11 @@ export function MatchReportContent({
             <span>Free frames: {recordNumber(ballSummary, 'free_frames')}</span>
             <span>Unknown frames: {recordNumber(ballSummary, 'unknown_frames')}</span>
             <span>Pass candidates: {recordNumber(passesSummary, 'pass_candidates')}</span>
-            <span>Same-team candidates: {recordNumber(passesSummary, 'same_team_pass_candidates')}</span>
-            <span>Turnovers/interceptions: {recordNumber(passesSummary, 'turnover_or_interception_candidates')}</span>
-            <span>Progressive candidates: {recordNumber(passesSummary, 'progressive_pass_candidates')}</span>
-            <span>Final accepted: {recordNumber(passesSummary, 'final_stat_passes')}</span>
+            <span>Pass attempts: {recordNumber(passesSummary, 'pass_attempts')}</span>
+            <span>Completed: {recordNumber(passesSummary, 'completed_passes')}</span>
+            <span>Failed: {recordNumber(passesSummary, 'failed_passes')}</span>
+            <span>Restart passes: {recordNumber(passesSummary, 'restart_pass_attempts')}</span>
+            <span>Progressive: {recordNumber(passesSummary, 'progressive_pass_candidates')}</span>
           </div>
         </section>
       )}

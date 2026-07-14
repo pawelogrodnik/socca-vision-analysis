@@ -179,8 +179,10 @@ export function PassCandidatesReview({ match, enabled }: PassCandidatesReviewPro
                       <tr key={candidate.candidate_id}>
                         <td>
                           <strong>{candidate.candidate_id}</strong>
-                          <span>{candidate.pass_type || 'unknown'}</span>
+                          <span>{candidate.outcome || candidate.pass_type || 'unknown'}</span>
                           <span>{candidate.final_stat_eligible ? 'final eligible' : 'candidate only'}</span>
+                          {candidate.from_restart && <span>restart</span>}
+                          {candidate.excluded_reason && <span>{candidate.excluded_reason}</span>}
                         </td>
                         <td>
                           <strong>

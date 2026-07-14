@@ -818,6 +818,12 @@ export type PassCandidate = {
   candidate_id: string;
   event_type?: string;
   pass_type?: string;
+  outcome?: string;
+  count_for_team_label?: string | null;
+  completed?: boolean;
+  failed?: boolean;
+  from_restart?: boolean;
+  excluded_reason?: string | null;
   source_event_id?: string | null;
   target_event_id?: string | null;
   from_stable_player_id?: string | null;
@@ -847,6 +853,10 @@ export type PassCandidate = {
   review_notes?: string;
   reviewed_at?: string;
   final_stat_eligible?: boolean;
+  release_evidence?: Record<string, unknown>;
+  receiver_evidence?: Record<string, unknown>;
+  trajectory_evidence?: Record<string, unknown>;
+  rejection_reasons?: string[];
 };
 
 export type PassCandidateReviewUpdate = {
@@ -1399,6 +1409,11 @@ export type PublicReportTeam = {
   peak_speed_kmh: number;
   possession_share_percent?: number | null;
   pass_candidates: number;
+  pass_attempts?: number;
+  completed_passes?: number;
+  failed_passes?: number;
+  completion_rate?: number;
+  restart_passes?: number;
   same_team_pass_candidates: number;
   turnover_or_interception_candidates: number;
   progressive_pass_candidates: number;
@@ -1464,6 +1479,11 @@ export type PublicMatchReport = {
     known_possession_coverage?: number;
     controlled_coverage?: number;
     pass_candidates?: number;
+    pass_attempts?: number;
+    completed_passes?: number;
+    failed_passes?: number;
+    completion_rate?: number;
+    restart_passes?: number;
     same_team_pass_candidates?: number;
     progressive_pass_candidates?: number;
     accepted_passes?: number;

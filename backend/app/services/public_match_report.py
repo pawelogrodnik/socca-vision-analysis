@@ -79,21 +79,39 @@ def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
     team_candidates = [
         item
         for item in candidates
-        if isinstance(item, dict) and str(item.get("from_team_label") or "") == team_label
+        if isinstance(item, dict)
+        and str(item.get("count_for_team_label") or item.get("from_team_label") or "") == team_label
     ]
+    pass_attempts = [item for item in team_candidates if _is_public_pass_attempt(item)]
+    completed = [item for item in pass_attempts if item.get("completed") is True or item.get("outcome") == "completed_pass"]
+    failed = [item for item in pass_attempts if item.get("failed") is True or item.get("outcome") == "failed_pass"]
     return {
         "pass_candidates": len(team_candidates),
+        "pass_attempts": len(pass_attempts),
+        "completed_passes": len(completed),
+        "failed_passes": len(failed),
+        "completion_rate": _round(len(completed) / len(pass_attempts) * 100.0, 1) if pass_attempts else 0.0,
+        "restart_passes": sum(1 for item in pass_attempts if item.get("from_restart") is True),
         "same_team_pass_candidates": sum(1 for item in team_candidates if item.get("pass_type") == "same_team_pass"),
         "turnover_or_interception_candidates": sum(
             1 for item in team_candidates if item.get("pass_type") == "turnover_or_interception"
         ),
-        "progressive_pass_candidates": sum(1 for item in team_candidates if item.get("is_progressive") is True),
+        "progressive_pass_candidates": sum(1 for item in pass_attempts if item.get("is_progressive") is True),
         "accepted_passes": sum(
             1
             for item in team_candidates
             if item.get("final_stat_eligible") is True or item.get("review_status") == "accepted"
         ),
     }
+
+
+def _is_public_pass_attempt(candidate: dict[str, Any]) -> bool:
+    outcome = str(candidate.get("outcome") or "")
+    if outcome in {"completed_pass", "failed_pass"}:
+        return True
+    if outcome == "excluded_non_pass":
+        return False
+    return str(candidate.get("pass_type") or "") in {"same_team_pass", "turnover_or_interception"}
 
 
 def _public_possession_timeline(package: dict[str, Any]) -> list[dict[str, Any]]:
@@ -483,8 +501,15 @@ def build_public_match_report(
             "known_possession_coverage": _round(possession_summary.get("known_possession_coverage"), 4),
             "controlled_coverage": _round(possession_summary.get("controlled_coverage"), 4),
             "pass_candidates": int(pass_summary.get("pass_candidates") or 0),
+            "pass_attempts": int(pass_summary.get("pass_attempts") or 0),
+            "completed_passes": int(pass_summary.get("completed_passes") or 0),
+            "failed_passes": int(pass_summary.get("failed_passes") or 0),
+            "completion_rate": _round(float(pass_summary.get("completion_rate") or 0.0) * 100.0, 1),
+            "restart_passes": int(pass_summary.get("restart_pass_attempts") or 0),
             "same_team_pass_candidates": int(pass_summary.get("same_team_pass_candidates") or 0),
-            "progressive_pass_candidates": int(pass_summary.get("progressive_pass_candidates") or 0),
+            "progressive_pass_candidates": int(
+                pass_summary.get("progressive_passes") or pass_summary.get("progressive_pass_candidates") or 0
+            ),
             "accepted_passes": int(pass_summary.get("final_stat_passes") or 0),
             "possession_timeline": _public_possession_timeline(package),
         },

@@ -153,10 +153,11 @@ def build_event_review_report(event_candidates_doc: dict[str, Any]) -> dict[str,
 def build_event_candidate_artifacts(
     contact_candidates_doc: dict[str, Any],
     match_phase_config_doc: dict[str, Any] | None = None,
+    possession_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     event_candidates = build_event_candidates_document(contact_candidates_doc)
     event_review_report = build_event_review_report(event_candidates)
-    pass_artifacts = build_pass_candidate_artifacts(event_candidates, match_phase_config_doc)
+    pass_artifacts = build_pass_candidate_artifacts(event_candidates, match_phase_config_doc, possession_doc)
     return {
         "event_candidates": event_candidates,
         "event_review_report": event_review_report,
@@ -174,8 +175,9 @@ def write_event_candidate_artifacts(
     match_path: Path,
     contact_candidates_doc: dict[str, Any],
     match_phase_config_doc: dict[str, Any] | None = None,
+    possession_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    artifacts = build_event_candidate_artifacts(contact_candidates_doc, match_phase_config_doc)
+    artifacts = build_event_candidate_artifacts(contact_candidates_doc, match_phase_config_doc, possession_doc)
     (match_path / "event_candidates.json").write_text(
         json.dumps(artifacts["event_candidates"], indent=2),
         encoding="utf-8",

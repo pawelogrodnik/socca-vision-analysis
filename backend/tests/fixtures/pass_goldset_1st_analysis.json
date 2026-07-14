@@ -1,0 +1,430 @@
+{
+  "schema_version": "0.1.0",
+  "source": "visual_tests_comments/passes/1st_analysis/passess_analysis.md",
+  "frame_tolerance_default": 60,
+  "notes": [
+    "Frames are approximate manual annotations from visual review.",
+    "This fixture is a regression guide, not production logic.",
+    "Some actor ids are overlay ids from the reviewed video and may include known tracker swaps."
+  ],
+  "events": [
+    {
+      "id": "gold-0107",
+      "frame": 107,
+      "team_label": "A",
+      "from_player": "A03",
+      "to_player": "B02",
+      "expected_outcome": "failed_pass",
+      "notes": "Opening pass to opponent; count as failed pass."
+    },
+    {
+      "id": "gold-0330",
+      "frame": 330,
+      "team_label": "B",
+      "from_player": "B02",
+      "to_player": "B01",
+      "expected_outcome": "completed_pass",
+      "notes": "B02 attempts toward B04, ball stays with B and reaches B01."
+    },
+    {
+      "id": "gold-0470",
+      "frame": 470,
+      "team_label": "B",
+      "from_player": "B01",
+      "to_player": "B06",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-0570",
+      "frame": 570,
+      "team_label": "B",
+      "from_player": "B06",
+      "to_player": "B02",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-0660",
+      "frame": 660,
+      "team_label": "B",
+      "from_player": "B02",
+      "to_player": "B05",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-0790",
+      "frame": 790,
+      "team_label": "B",
+      "from_player": "B05",
+      "to_player": "A04",
+      "expected_outcome": "failed_pass",
+      "notes": "B05 tries to B03, A04 intercepts."
+    },
+    {
+      "id": "gold-0813",
+      "frame": 813,
+      "team_label": "A",
+      "from_player": "A06",
+      "to_player": "A04",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-0870",
+      "frame": 870,
+      "team_label": "A",
+      "from_player": "A04",
+      "to_player": "B02",
+      "expected_outcome": "failed_pass",
+      "notes": "A04 tries to A03, B02 intercepts."
+    },
+    {
+      "id": "gold-0943",
+      "frame": 943,
+      "team_label": "B",
+      "from_player": "B02",
+      "to_player": "A06",
+      "expected_outcome": "failed_pass",
+      "notes": "B02 tries to B04, A06 intercepts."
+    },
+    {
+      "id": "gold-0985",
+      "frame": 985,
+      "team_label": "A",
+      "from_player": "A06",
+      "to_player": "A01",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-1230",
+      "frame": 1230,
+      "team_label": "B",
+      "from_player": "B02",
+      "to_player": "B06",
+      "expected_outcome": "completed_pass",
+      "from_restart": true,
+      "notes": "Kick-in restart; actor may be outside overlay."
+    },
+    {
+      "id": "gold-1330",
+      "frame": 1330,
+      "team_label": "B",
+      "from_player": "B06",
+      "to_player": "A02",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-1880",
+      "frame": 1880,
+      "team_label": "B",
+      "from_player": "B08",
+      "to_player": "A01",
+      "expected_outcome": "failed_pass",
+      "from_restart": true,
+      "notes": "Corner restart intercepted/cleared by A01."
+    },
+    {
+      "id": "gold-2450",
+      "frame": 2450,
+      "team_label": "B",
+      "from_player": "B09",
+      "to_player": "A01",
+      "expected_outcome": "failed_pass",
+      "from_restart": true
+    },
+    {
+      "id": "gold-2533",
+      "frame": 2533,
+      "team_label": "A",
+      "from_player": "A01",
+      "to_player": "A04",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-2620",
+      "frame": 2620,
+      "team_label": "A",
+      "from_player": "A04",
+      "to_player": "A01",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-2720",
+      "frame": 2720,
+      "team_label": "A",
+      "from_player": "A01",
+      "to_player": "A06",
+      "expected_outcome": "completed_pass",
+      "notes": "A06 later loses the ball in control; that loss is not a failed pass."
+    },
+    {
+      "id": "gold-2833",
+      "frame": 2833,
+      "team_label": "B",
+      "from_player": "B10",
+      "to_player": "B08",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-2903",
+      "frame": 2903,
+      "team_label": "B",
+      "from_player": "B08",
+      "to_player": "B01",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-2961",
+      "frame": 2961,
+      "team_label": "B",
+      "from_player": "B01",
+      "to_player": "B09",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-3050",
+      "frame": 3050,
+      "team_label": "B",
+      "from_player": "B09",
+      "to_player": "B04",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-3150",
+      "frame": 3150,
+      "team_label": "B",
+      "from_player": "B04",
+      "to_player": "B10",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-3700",
+      "frame": 3700,
+      "team_label": "B",
+      "from_player": "B06",
+      "to_player": "B01",
+      "expected_outcome": "completed_pass",
+      "notes": "B01 receives and shoots."
+    },
+    {
+      "id": "gold-3920",
+      "frame": 3920,
+      "team_label": "A",
+      "from_player": "A07",
+      "to_player": "A02",
+      "expected_outcome": "completed_pass",
+      "notes": "Goalkeeper distribution; included as a known future-sensitive case."
+    },
+    {
+      "id": "gold-4100",
+      "frame": 4100,
+      "team_label": "A",
+      "from_player": "A02",
+      "to_player": "B06",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-4250",
+      "frame": 4250,
+      "team_label": "A",
+      "from_player": "A07",
+      "to_player": "A05",
+      "expected_outcome": "completed_pass",
+      "notes": "Goalkeeper catches shot and quickly distributes."
+    },
+    {
+      "id": "gold-4490",
+      "frame": 4490,
+      "team_label": "A",
+      "from_player": "A04",
+      "to_player": "A03",
+      "expected_outcome": "completed_pass",
+      "notes": "A03 later suffers ID issue and loses ball."
+    },
+    {
+      "id": "gold-4700",
+      "frame": 4700,
+      "team_label": "B",
+      "from_player": "B01",
+      "to_player": "A02",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-4735",
+      "frame": 4735,
+      "team_label": "A",
+      "from_player": "A02",
+      "to_player": "A03",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-4990",
+      "frame": 4990,
+      "team_label": "A",
+      "from_player": "A04",
+      "to_player": "A01",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-5100",
+      "frame": 5100,
+      "team_label": "A",
+      "from_player": "A01",
+      "to_player": "B06",
+      "expected_outcome": "failed_pass",
+      "notes": "Failed pass/clearance goes to opponent and out."
+    },
+    {
+      "id": "gold-5600",
+      "frame": 5600,
+      "team_label": "B",
+      "from_player": "B01",
+      "to_player": "out",
+      "expected_outcome": "failed_pass",
+      "from_restart": true
+    },
+    {
+      "id": "gold-6050",
+      "frame": 6050,
+      "team_label": "A",
+      "from_player": "A07",
+      "to_player": "B05",
+      "expected_outcome": "failed_pass",
+      "notes": "Goalkeeper restart/pass is inaccurate and opponent goalkeeper collects."
+    },
+    {
+      "id": "gold-6300",
+      "frame": 6300,
+      "team_label": "B",
+      "from_player": "B05",
+      "to_player": "B02",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-6450",
+      "frame": 6450,
+      "team_label": "B",
+      "from_player": "B02",
+      "to_player": "A07",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-6600",
+      "frame": 6600,
+      "team_label": "A",
+      "from_player": "A07",
+      "to_player": "A01",
+      "expected_outcome": "completed_pass",
+      "notes": "Overlay may relabel goalkeeper as B10; real team is A."
+    },
+    {
+      "id": "gold-6650",
+      "frame": 6650,
+      "team_label": "A",
+      "from_player": "A01",
+      "to_player": "B06",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-7100",
+      "frame": 7100,
+      "team_label": "A",
+      "from_player": "A07",
+      "to_player": "B05",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-7315",
+      "frame": 7315,
+      "team_label": "B",
+      "from_player": "B05",
+      "to_player": "B12",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-7500",
+      "frame": 7500,
+      "team_label": "B",
+      "from_player": "B12",
+      "to_player": "B01",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-7650",
+      "frame": 7650,
+      "team_label": "B",
+      "from_player": "B12",
+      "to_player": "B14",
+      "expected_outcome": "completed_pass",
+      "notes": "ID swap around B12/B01, ball owner should stay same player before pass."
+    },
+    {
+      "id": "gold-7880",
+      "frame": 7880,
+      "team_label": "B",
+      "from_player": "B14",
+      "to_player": "B01",
+      "expected_outcome": "completed_pass"
+    },
+    {
+      "id": "gold-8400",
+      "frame": 8400,
+      "team_label": "B",
+      "from_player": "B01",
+      "to_player": "A02",
+      "expected_outcome": "failed_pass",
+      "from_restart": true,
+      "notes": "Corner restart cleared by A02."
+    },
+    {
+      "id": "gold-8600",
+      "frame": 8600,
+      "team_label": "B",
+      "from_player": "B08",
+      "to_player": "B01",
+      "expected_outcome": "completed_pass",
+      "from_restart": true
+    },
+    {
+      "id": "gold-8750",
+      "frame": 8750,
+      "team_label": "A",
+      "from_player": "A02",
+      "to_player": "A09",
+      "expected_outcome": "completed_pass",
+      "notes": "Small scramble; ball moves through A02/A09/A06."
+    },
+    {
+      "id": "gold-8820",
+      "frame": 8820,
+      "team_label": "A",
+      "from_player": "A09",
+      "to_player": "A06",
+      "expected_outcome": "completed_pass",
+      "notes": "Approximate second A pass in scramble."
+    },
+    {
+      "id": "gold-9000",
+      "frame": 9000,
+      "team_label": "B",
+      "from_player": "B02",
+      "to_player": "A02",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-9150",
+      "frame": 9150,
+      "team_label": "B",
+      "from_player": "B12",
+      "to_player": "A09",
+      "expected_outcome": "failed_pass"
+    },
+    {
+      "id": "gold-9350",
+      "frame": 9350,
+      "team_label": "B",
+      "from_player": "B12",
+      "to_player": "A02",
+      "expected_outcome": "failed_pass",
+      "from_restart": true
+    }
+  ]
+}

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from app.services.pass_candidates import build_pass_candidates_document
+from app.services.pass_quality import evaluate_pass_candidates_against_gold, load_pass_goldset
 
 
 MATCH_PHASE_CONFIG = {
@@ -53,6 +55,22 @@ def event(
     }
 
 
+def possession_frames(rows: list[tuple[int, float, float, str, str | None, str | None]]) -> dict:
+    return {
+        "frames": [
+            {
+                "frame": frame,
+                "time_sec": round(frame / 30, 3),
+                "ball_position_m": [x, y],
+                "status": status,
+                "stable_player_id": player_id,
+                "team_label": team,
+            }
+            for frame, x, y, status, player_id, team in rows
+        ]
+    }
+
+
 class PassCandidatesTests(unittest.TestCase):
     def test_builds_same_team_pass_candidate_from_consecutive_contacts(self) -> None:
         document = build_pass_candidates_document(
@@ -66,6 +84,11 @@ class PassCandidatesTests(unittest.TestCase):
 
         self.assertEqual(document["summary"]["pass_candidates"], 1)
         self.assertEqual(document["candidates"][0]["pass_type"], "same_team_pass")
+        self.assertEqual(document["candidates"][0]["outcome"], "completed_pass")
+        self.assertTrue(document["candidates"][0]["completed"])
+        self.assertFalse(document["candidates"][0]["failed"])
+        self.assertEqual(document["summary"]["pass_attempts"], 1)
+        self.assertEqual(document["summary"]["completed_passes"], 1)
         self.assertEqual(document["candidates"][0]["auto_review_status"], "strong_candidate")
         self.assertEqual(document["candidates"][0]["review_status"], "needs_review")
         self.assertEqual(document["candidates"][0]["start_position_m"], [2.5, 10.4])
@@ -119,8 +142,92 @@ class PassCandidatesTests(unittest.TestCase):
         )
 
         self.assertEqual(document["summary"]["turnover_or_interception_candidates"], 1)
+        self.assertEqual(document["summary"]["failed_passes"], 1)
+        self.assertEqual(document["candidates"][0]["outcome"], "failed_pass")
         self.assertEqual(document["candidates"][0]["auto_review_status"], "uncertain")
         self.assertEqual(document["candidates"][0]["review_status"], "uncertain")
+
+    def test_excludes_non_pass_turnover_when_ball_never_releases(self) -> None:
+        first = event("event-0001", "A01", "A", 1.0, 1.1)
+        second = event("event-0002", "B01", "B", 1.16, 1.2)
+        first["end_position_m"] = [10.0, 10.0]
+        first["end_player_position_m"] = [10.1, 10.0]
+        second["start_position_m"] = [10.35, 10.1]
+        doc = build_pass_candidates_document(
+            {"events": [first, second]},
+            possession_doc=possession_frames(
+                [
+                    (33, 10.0, 10.0, "controlled", "A01", "A"),
+                    (34, 10.2, 10.0, "contested", None, None),
+                    (35, 10.35, 10.1, "controlled", "B01", "B"),
+                ]
+            ),
+        )
+
+        candidate = doc["candidates"][0]
+        self.assertEqual(candidate["outcome"], "excluded_non_pass")
+        self.assertEqual(candidate["review_status"], "rejected")
+        self.assertIn("ball_displacement_too_short", candidate["rejection_reasons"])
+        self.assertEqual(doc["summary"]["pass_attempts"], 0)
+        self.assertEqual(doc["summary"]["excluded_non_pass_candidates"], 1)
+
+    def test_uses_possession_frames_to_accept_real_release(self) -> None:
+        first = event("event-0001", "A01", "A", 1.0, 1.1)
+        second = event("event-0002", "A02", "A", 1.8, 1.9)
+        first["end_position_m"] = [10.0, 10.0]
+        first["end_player_position_m"] = [10.0, 10.1]
+        second["start_position_m"] = [14.0, 10.0]
+        doc = build_pass_candidates_document(
+            {"events": [first, second]},
+            possession_doc=possession_frames(
+                [
+                    (33, 10.0, 10.0, "controlled", "A01", "A"),
+                    (42, 12.0, 10.0, "free", None, None),
+                    (51, 14.0, 10.0, "controlled", "A02", "A"),
+                ]
+            ),
+        )
+
+        candidate = doc["candidates"][0]
+        self.assertEqual(candidate["outcome"], "completed_pass")
+        self.assertEqual(candidate["count_for_team_label"], "A")
+        self.assertGreater(candidate["trajectory_evidence"]["ball_path_distance_m"], 3.5)
+        self.assertEqual(doc["summary"]["team_completed_passes"]["A"], 1)
+
+    def test_goldset_evaluator_reports_match_miss_and_false_positive(self) -> None:
+        pass_doc = {
+            "candidates": [
+                {
+                    "candidate_id": "pass-0001",
+                    "end_frame": 110,
+                    "outcome": "failed_pass",
+                    "count_for_team_label": "A",
+                },
+                {
+                    "candidate_id": "pass-0002",
+                    "end_frame": 900,
+                    "outcome": "completed_pass",
+                    "count_for_team_label": "B",
+                },
+            ]
+        }
+        gold = {
+            "events": [
+                {"id": "gold-1", "frame": 107, "team_label": "A", "expected_outcome": "failed_pass"},
+                {"id": "gold-2", "frame": 470, "team_label": "B", "expected_outcome": "completed_pass"},
+            ]
+        }
+
+        report = evaluate_pass_candidates_against_gold(pass_doc, gold, tolerance_frames=45)
+
+        self.assertEqual(report["summary"]["true_positives"], 1)
+        self.assertEqual(report["summary"]["missed_passes"], 1)
+        self.assertEqual(report["summary"]["false_positives"], 0)
+
+    def test_manual_first_analysis_goldset_loads(self) -> None:
+        goldset = load_pass_goldset(Path(__file__).parent / "fixtures" / "pass_goldset_1st_analysis.json")
+
+        self.assertGreaterEqual(len(goldset["events"]), 8)
 
     def test_skips_same_player_consecutive_contacts(self) -> None:
         document = build_pass_candidates_document(

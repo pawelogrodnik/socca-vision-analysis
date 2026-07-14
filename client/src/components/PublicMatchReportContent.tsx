@@ -130,9 +130,24 @@ function metricRows(left: PublicReportTeam, right: PublicReportTeam) {
       right: formatPercent(right.possession_share_percent),
     },
     {
-      label: 'Podania kand.',
-      left: String(left.same_team_pass_candidates || 0),
-      right: String(right.same_team_pass_candidates || 0),
+      label: 'Proby podan',
+      left: String(left.pass_attempts || 0),
+      right: String(right.pass_attempts || 0),
+    },
+    {
+      label: 'Podania celne',
+      left: String(left.completed_passes || 0),
+      right: String(right.completed_passes || 0),
+    },
+    {
+      label: 'Podania niecelne',
+      left: String(left.failed_passes || 0),
+      right: String(right.failed_passes || 0),
+    },
+    {
+      label: 'Skutecznosc podan',
+      left: formatPercent(left.completion_rate),
+      right: formatPercent(right.completion_rate),
     },
     {
       label: 'Progresywne kand.',
@@ -227,7 +242,9 @@ export function PublicMatchReportContent({
           <span>Czas wideo: {formatSeconds(report.match.duration_sec)}</span>
           <span>Zawodnicy: {report.players.length}</span>
           <span>Known ball: {formatPercent((report.ball?.known_possession_coverage || 0) * 100)}</span>
-          <span>Pass candidates: {report.ball?.pass_candidates || 0}</span>
+          <span>Pass attempts: {report.ball?.pass_attempts || 0}</span>
+          <span>Completed: {report.ball?.completed_passes || 0}</span>
+          <span>Failed: {report.ball?.failed_passes || 0}</span>
         </div>
       </section>
 

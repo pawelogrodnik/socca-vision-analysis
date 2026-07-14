@@ -2803,32 +2803,53 @@ def _live_pass_counts_by_frame(pass_candidates_doc: dict[str, Any] | None) -> di
     candidates = pass_candidates_doc.get("candidates")
     if not isinstance(candidates, list):
         return {}
-    team_counts = {"A": 0, "B": 0}
-    turnover_count = 0
+    team_attempts = {"A": 0, "B": 0}
+    team_completed = {"A": 0, "B": 0}
+    team_failed = {"A": 0, "B": 0}
+    excluded_count = 0
+    legacy_turnover_count = 0
     live_rows: dict[int, dict[str, Any]] = {}
     for candidate in sorted(
         [item for item in candidates if isinstance(item, dict) and item.get("end_frame") is not None],
         key=lambda item: int(item.get("end_frame") or 0),
     ):
         frame_idx = int(candidate.get("end_frame") or 0)
-        pass_type = str(candidate.get("pass_type") or "unknown")
-        team = str(candidate.get("from_team_label") or "")
+        has_explicit_outcome = candidate.get("outcome") is not None
+        outcome = str(candidate.get("outcome") or _legacy_pass_outcome(candidate))
+        team = str(candidate.get("count_for_team_label") or candidate.get("from_team_label") or "")
         action = "skip pass?"
         action_team = None
-        if pass_type == "same_team_pass" and team in team_counts:
-            team_counts[team] += 1
-            action = f"+{team} pass"
+        if outcome == "completed_pass" and team in team_attempts:
+            team_attempts[team] += 1
             action_team = team
-        elif pass_type == "turnover_or_interception":
-            turnover_count += 1
-            action = "turnover?"
+            team_completed[team] += 1
+            action = f"+{team} completed" if has_explicit_outcome else f"+{team} pass"
+        elif outcome == "failed_pass":
+            if has_explicit_outcome and team in team_attempts:
+                team_attempts[team] += 1
+                team_failed[team] += 1
+                action_team = team
+                action = f"+{team} failed"
+            else:
+                legacy_turnover_count += 1
+                action = "turnover?"
+        elif outcome == "excluded_non_pass":
+            excluded_count += 1
+            action = "excluded"
         live_rows[frame_idx] = {
             "frame": frame_idx,
             "action": action,
             "action_team": action_team,
-            "team_pass_candidates": dict(team_counts),
-            "same_team_pass_candidates": team_counts["A"] + team_counts["B"],
-            "turnover_or_interception_candidates": turnover_count,
+            "team_pass_candidates": dict(team_completed),
+            "same_team_pass_candidates": team_completed["A"] + team_completed["B"],
+            "turnover_or_interception_candidates": team_failed["A"] + team_failed["B"] + legacy_turnover_count,
+            "team_pass_attempts": dict(team_attempts),
+            "team_completed_passes": dict(team_completed),
+            "team_failed_passes": dict(team_failed),
+            "pass_attempts": team_attempts["A"] + team_attempts["B"],
+            "completed_passes": team_completed["A"] + team_completed["B"],
+            "failed_passes": team_failed["A"] + team_failed["B"],
+            "excluded_non_pass_candidates": excluded_count,
         }
     return _fill_live_rows(live_rows)
 
@@ -4038,21 +4059,25 @@ def _current_possession_line(possession_row: dict[str, Any] | None, player_label
 
 def _live_pass_line(live_row: dict[str, Any] | None) -> str:
     if not live_row:
-        return "live pass cand: A 0 | B 0 turn=0 action=--"
-    counts = live_row.get("team_pass_candidates") if isinstance(live_row.get("team_pass_candidates"), dict) else {}
+        return "live pass: A 0/0 | B 0/0 failed=0 action=--"
+    counts = live_row.get("team_pass_attempts") if isinstance(live_row.get("team_pass_attempts"), dict) else {}
+    completed = live_row.get("team_completed_passes") if isinstance(live_row.get("team_completed_passes"), dict) else {}
     team_a = int(counts.get("A") or 0)
     team_b = int(counts.get("B") or 0)
-    turnovers = int(live_row.get("turnover_or_interception_candidates") or 0)
-    return f"live pass cand: A {team_a} | B {team_b} turn={turnovers} {live_row.get('action') or '--'}"
+    comp_a = int(completed.get("A") or 0)
+    comp_b = int(completed.get("B") or 0)
+    failed = int(live_row.get("failed_passes") or 0)
+    return f"live pass: A {comp_a}/{team_a} | B {comp_b}/{team_b} failed={failed} {live_row.get('action') or '--'}"
 
 
 def _pass_candidate_summary_line(summary: dict[str, Any]) -> str:
-    type_counts = summary.get("pass_type_counts") if isinstance(summary.get("pass_type_counts"), dict) else {}
-    same = int(type_counts.get("same_team_pass") or summary.get("same_team_pass_candidates") or 0)
-    turnover = int(type_counts.get("turnover_or_interception") or summary.get("turnover_or_interception_candidates") or 0)
-    progressive = int(summary.get("progressive_pass_candidates") or 0)
-    total = int(summary.get("pass_candidates") or same + turnover)
-    return f"clip pass cand: total={total} same={same} turn={turnover} prog={progressive}"
+    attempts = int(summary.get("pass_attempts") or 0)
+    completed = int(summary.get("completed_passes") or 0)
+    failed = int(summary.get("failed_passes") or 0)
+    excluded = int(summary.get("excluded_non_pass_candidates") or 0)
+    progressive = int(summary.get("progressive_passes") or summary.get("progressive_pass_candidates") or 0)
+    total = int(summary.get("pass_candidates") or attempts + excluded)
+    return f"clip pass: att={attempts} comp={completed} fail={failed} excl={excluded} cand={total} prog={progressive}"
 
 
 def _pass_candidate_line(candidate: dict[str, Any], player_labels: dict[str, str]) -> str:
@@ -4075,6 +4100,13 @@ def _candidate_player_label(value: Any, player_labels: dict[str, str]) -> str:
 
 
 def _pass_candidate_kind(candidate: dict[str, Any]) -> str:
+    outcome = str(candidate.get("outcome") or "")
+    if outcome == "completed_pass":
+        return "pass"
+    if outcome == "failed_pass":
+        return "failed"
+    if outcome == "excluded_non_pass":
+        return "no-pass"
     pass_type = str(candidate.get("pass_type") or "unknown")
     if pass_type == "same_team_pass":
         return "pass?"
@@ -4084,6 +4116,14 @@ def _pass_candidate_kind(candidate: dict[str, Any]) -> str:
 
 
 def _pass_candidate_color(candidate: dict[str, Any]) -> tuple[int, int, int]:
+    outcome = str(candidate.get("outcome") or "")
+    if outcome == "completed_pass":
+        team = candidate.get("count_for_team_label") or candidate.get("from_team_label")
+        return _stable_bgr_color(team) if team in {"A", "B"} else (60, 220, 60)
+    if outcome == "failed_pass":
+        return (0, 180, 255)
+    if outcome == "excluded_non_pass":
+        return (130, 130, 130)
     pass_type = str(candidate.get("pass_type") or "unknown")
     if pass_type == "same_team_pass":
         team = candidate.get("from_team_label")
@@ -4091,6 +4131,15 @@ def _pass_candidate_color(candidate: dict[str, Any]) -> tuple[int, int, int]:
     if pass_type == "turnover_or_interception":
         return (0, 180, 255)
     return (210, 210, 210)
+
+
+def _legacy_pass_outcome(candidate: dict[str, Any]) -> str:
+    pass_type = str(candidate.get("pass_type") or "")
+    if pass_type == "same_team_pass":
+        return "completed_pass"
+    if pass_type == "turnover_or_interception":
+        return "failed_pass"
+    return "unknown_pass_attempt"
 
 
 def _valid_pair(value: Any) -> bool:

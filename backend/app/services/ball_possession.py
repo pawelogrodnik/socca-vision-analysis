@@ -105,7 +105,7 @@ def build_ball_possession_analysis(
     segments_doc = build_possession_segments_document(candidates_doc, fps=fps)
     contact_doc = build_contact_candidates_document(candidates_doc, segments_doc)
     match_phase_config = load_match_phase_config(match_dir, {"video": video_metadata})
-    event_docs = build_event_candidate_artifacts(contact_doc, match_phase_config)
+    event_docs = build_event_candidate_artifacts(contact_doc, match_phase_config, candidates_doc)
     restart_doc = build_restart_candidates_document(
         ball_tracks_doc,
         candidates_doc,
@@ -580,6 +580,7 @@ def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart
         if restart.get("actor_stable_player_id") and restart.get("actor_stable_player_id") == receiver_player:
             continue
         pass_type = "same_team_pass" if actor_team == receiver_team else "turnover_or_interception"
+        outcome = "completed_pass" if pass_type == "same_team_pass" else "failed_pass"
         start_position = restart.get("setup_position_m") or restart.get("release_position_m")
         end_position = restart.get("receiver_ball_position_m") or restart.get("release_position_m")
         start_time = restart.get("start_time_sec")
@@ -588,6 +589,12 @@ def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart
             "candidate_id": f"pass-{next_index:04d}",
             "event_type": "pass_candidate",
             "pass_type": pass_type,
+            "outcome": outcome,
+            "count_for_team_label": actor_team,
+            "completed": outcome == "completed_pass",
+            "failed": outcome == "failed_pass",
+            "from_restart": True,
+            "excluded_reason": None,
             "source": "ground_restart_candidates_to_pass_candidates_v1",
             "source_event_id": restart.get("candidate_id"),
             "target_event_id": f"{restart.get('candidate_id')}:receiver",
@@ -628,6 +635,25 @@ def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart
             "restart_type": restart.get("restart_type"),
             "restart_boundary_line": restart.get("boundary_line"),
             "restart_actor_source": restart.get("actor_source"),
+            "release_evidence": {
+                "method": "ground_restart",
+                "stationary_frames": restart.get("stationary_frames"),
+                "stationary_duration_sec": restart.get("stationary_duration_sec"),
+                "release_speed_mps": restart.get("release_speed_mps"),
+                "release_displacement_m": restart.get("release_displacement_m"),
+            },
+            "receiver_evidence": {
+                "stable_player_id": receiver_player,
+                "team_label": receiver_team,
+                "confidence": restart.get("receiver_confidence"),
+            },
+            "trajectory_evidence": {
+                "ball_path_distance_m": restart.get("ball_path_distance_m"),
+                "ball_displacement_m": restart.get("ball_displacement_m"),
+                "mean_ball_speed_mps": restart.get("mean_ball_speed_mps"),
+                "ball_path_straightness": restart.get("ball_path_straightness"),
+            },
+            "rejection_reasons": [],
             "source_event_review_statuses": [restart.get("review_status")],
             "notes": [
                 "Candidate generated from a detected ground restart. Do not count as final pass statistic until reviewed.",

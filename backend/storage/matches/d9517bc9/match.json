@@ -9,5 +9,110 @@
     "width": 1920,
     "height": 1080,
     "duration_sec": 11.267
-  }
+  },
+  "match_date": null,
+  "season": null,
+  "venue": null,
+  "format": "7v7",
+  "status": "uploaded",
+  "teams": [
+    {
+      "id": "team-corgi-1fc405",
+      "name": "Corgi",
+      "color": "#64748b",
+      "players": [
+        {
+          "id": "team-corgi-1fc405-player-1-pawel",
+          "name": "Pawel",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-2-krzysiek",
+          "name": "Krzysiek",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-3-przemek",
+          "name": "Przemek",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-4-kuba",
+          "name": "Kuba",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-5-mateusz",
+          "name": "Mateusz",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-6-mati-gk",
+          "name": "Mati GK",
+          "number": "goalkeeper",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-7-andrzej",
+          "name": "Andrzej",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-8-tomek",
+          "name": "Tomek",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-9-piotrek",
+          "name": "Piotrek",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-10-roman",
+          "name": "Roman",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-11-marcin",
+          "name": "Marcin",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        },
+        {
+          "id": "team-corgi-1fc405-player-12-patryk",
+          "name": "Patryk",
+          "number": "player",
+          "role": "player",
+          "is_guest": false
+        }
+      ]
+    },
+    {
+      "id": "team-verisk",
+      "name": "Verisk",
+      "color": "#64748b",
+      "players": []
+    }
+  ],
+  "updated_at": "2026-07-13T18:18:33.297237+00:00"
 }

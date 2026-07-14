@@ -12,6 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.config import MATCHES_DIR
+from app.services.pass_quality import evaluate_pass_candidates_against_gold, load_pass_goldset
 from app.services.post_yolo_reprocess import default_reprocess_output_dir, reprocess_match_from_artifacts
 
 
@@ -32,6 +33,8 @@ def main() -> None:
     parser.add_argument("--raw-overlay", action="store_true", help="Also rebuild raw P## overlay from tracks.json.")
     parser.add_argument("--debug-overlay", action="store_true", help="Also write debug_identity_overlay.mp4.")
     parser.add_argument("--no-stable-overlay", action="store_true", help="Skip stable_overlay_preview.mp4 render.")
+    parser.add_argument("--pass-goldset", type=Path, default=None, help="Optional manual pass goldset JSON for quality evaluation.")
+    parser.add_argument("--pass-gold-tolerance-frames", type=int, default=45, help="Frame tolerance for pass goldset matching.")
     parser.add_argument(
         "--player-label",
         action="append",
@@ -61,6 +64,10 @@ def main() -> None:
         max_seconds=max(0.0, float(args.max_seconds or 0.0)) or None,
         progress=_print_progress,
     )
+    pass_quality_report = None
+    if args.pass_goldset:
+        pass_quality_report = _evaluate_pass_quality(output_dir, args.pass_goldset, args.pass_gold_tolerance_frames)
+
     print(
         json.dumps(
             {
@@ -71,6 +78,7 @@ def main() -> None:
                 "tracks_count": report.get("tracks_count"),
                 "stable_players_count": report.get("stable_players_count"),
                 "ball_tracking_summary": report.get("ball_tracking_summary"),
+                "pass_quality_summary": (pass_quality_report or {}).get("summary"),
                 "warnings": report.get("warnings") or [],
             },
             indent=2,
@@ -98,6 +106,23 @@ def _print_progress(stage: str, progress_percent: float, message: str, extra: di
     if extra:
         payload["extra"] = extra
     print(json.dumps(payload, ensure_ascii=True), flush=True)
+
+
+def _evaluate_pass_quality(output_dir: Path, goldset_path: Path, tolerance_frames: int) -> dict[str, Any]:
+    pass_path = output_dir / "pass_candidates.json"
+    if not pass_path.exists():
+        raise FileNotFoundError(f"Cannot evaluate passes; missing {pass_path}")
+    pass_doc = json.loads(pass_path.read_text(encoding="utf-8"))
+    report = evaluate_pass_candidates_against_gold(
+        pass_doc,
+        load_pass_goldset(goldset_path),
+        tolerance_frames=max(0, int(tolerance_frames)),
+    )
+    (output_dir / "pass_quality_report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return report
 
 
 if __name__ == "__main__":
