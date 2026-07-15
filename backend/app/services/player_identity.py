@@ -13,6 +13,7 @@ ASSIGNMENT_STATUSES = {
     "ignore",
     "referee",
     "false_positive",
+    "wrong_target",
 }
 
 
@@ -28,6 +29,22 @@ def _load_stable_doc(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("stable_players.json must contain an object")
     return data
+
+
+def _load_effective_stable_doc(path: Path) -> dict[str, Any]:
+    gallery_path = path / "identity_review_gallery.json"
+    if not gallery_path.exists():
+        return _load_stable_doc(path)
+    gallery = json.loads(gallery_path.read_text(encoding="utf-8"))
+    gallery_players = gallery.get("players") if isinstance(gallery, dict) else None
+    if not isinstance(gallery_players, list):
+        return _load_stable_doc(path)
+    return {
+        "schema_version": gallery.get("schema_version"),
+        "identity_semantics": gallery.get("identity_semantics") or "stint_first",
+        "source": "identity_review_gallery",
+        "players": [player for player in gallery_players if isinstance(player, dict)],
+    }
 
 
 def _load_existing_doc(path: Path) -> dict[str, Any] | None:
@@ -88,7 +105,7 @@ def _slot_defaults(player: dict[str, Any]) -> dict[str, Any]:
     stable_subject_id = _stable_subject_id(player)
     stints = [stint for stint in player.get("stints") or [] if isinstance(stint, dict)]
     player_status = str(player.get("status") or "active")
-    default_status = player_status if player_status in {"ignore", "referee", "false_positive", "unknown"} else "unassigned"
+    default_status = player_status if player_status in {"ignore", "referee", "false_positive", "wrong_target", "unknown"} else "unassigned"
     return {
         "stable_subject_id": stable_subject_id,
         "stable_player_id": player.get("stable_player_id") or stable_subject_id,
@@ -135,12 +152,38 @@ def _normalize_assignment(
     normalized = _slot_defaults(stable_player)
     stint_id = item.get("stint_id") or None
     if stint_id is not None:
-        valid_stints = {str(stint.get("stint_id")) for stint in stable_player.get("stints") or [] if isinstance(stint, dict)}
-        if str(stint_id) not in valid_stints:
+        valid_stints = {
+            str(stint.get("stint_id")): stint
+            for stint in stable_player.get("stints") or []
+            if isinstance(stint, dict)
+        }
+        selected_stint = valid_stints.get(str(stint_id))
+        if selected_stint is None and item.get("assignment_source") == "identity_crop_gallery":
+            if isinstance(item.get("start_time_sec"), (int, float)) and isinstance(
+                item.get("end_time_sec"), (int, float)
+            ):
+                selected_stint = item
+        if selected_stint is None:
             raise ValueError(f"Unknown stint_id={stint_id!r} for stable_subject_id={stable_subject_id!r}")
         normalized["stint_id"] = str(stint_id)
         normalized["stint_ids"] = [str(stint_id)]
         normalized["assignment_scope"] = "stint"
+        normalized["assignment_source"] = item.get("assignment_source")
+        normalized["anchor_artifacts"] = list(item.get("anchor_artifacts") or [])
+        normalized["anchor_confidence"] = item.get("anchor_confidence")
+        for key in [
+            "parent_stint_id",
+            "start_frame",
+            "end_frame",
+            "start_time_sec",
+            "end_time_sec",
+            "duration_sec",
+            "detected_frames",
+            "predicted_frames",
+            "missing_frames",
+            "ambiguous_frames",
+        ]:
+            normalized[key] = selected_stint.get(key)
 
     status = str(item.get("status") or normalized["status"] or "unassigned")
     if status not in ASSIGNMENT_STATUSES:
@@ -184,6 +227,8 @@ def _expanded_stint_assignments(assignments: list[dict[str, Any]], stable_by_sub
         stints = [stint for stint in stable_player.get("stints") or [] if isinstance(stint, dict)]
         if assignment.get("stint_id"):
             stints = [stint for stint in stints if str(stint.get("stint_id")) == str(assignment["stint_id"])]
+            if not stints and assignment.get("assignment_source") == "identity_crop_gallery":
+                stints = [assignment]
         if not stints:
             stints = [{"stint_id": None}]
         for stint in stints:
@@ -211,7 +256,7 @@ def _expanded_stint_assignments(assignments: list[dict[str, Any]], stable_by_sub
 
 def _summary(meta: dict[str, Any], assignments: list[dict[str, Any]], expanded: list[dict[str, Any]]) -> dict[str, Any]:
     assigned = [item for item in assignments if item.get("status") == "assigned" and item.get("player_id")]
-    ignored = [item for item in assignments if item.get("status") in {"ignore", "referee", "false_positive"}]
+    ignored = [item for item in assignments if item.get("status") in {"ignore", "referee", "false_positive", "wrong_target"}]
     unassigned = [item for item in assignments if item.get("status") in {"unassigned", "unknown", None, ""}]
     assigned_stints = [item for item in expanded if item.get("status") == "assigned" and item.get("player_id")]
     assigned_by_team: dict[str, int] = {}
@@ -233,11 +278,12 @@ def _summary(meta: dict[str, Any], assignments: list[dict[str, Any]], expanded: 
         "unique_players_by_team": {team_id: len(players) for team_id, players in players_by_team.items()},
         "roster": _roster_summary(meta),
         "conflicts_total": sum(1 for item in assignments if item.get("review_warnings")),
+        "overlap_conflicts_total": len(_assignment_overlap_conflicts(expanded)),
     }
 
 
 def build_player_identity_review(path: Path, meta: dict[str, Any]) -> dict[str, Any]:
-    stable_doc = _load_stable_doc(path)
+    stable_doc = _load_effective_stable_doc(path)
     stable_by_subject = _stable_lookup(stable_doc)
     roster_by_player = _roster_players(meta)
     existing = _load_existing_doc(path)
@@ -276,11 +322,14 @@ def _build_doc(
     for item in assignment_items:
         if not isinstance(item, dict):
             continue
-        normalized = _normalize_assignment(
-            item,
-            stable_by_subject=stable_by_subject,
-            roster_by_player=roster_by_player,
-        )
+        try:
+            normalized = _normalize_assignment(
+                item,
+                stable_by_subject=stable_by_subject,
+                roster_by_player=roster_by_player,
+            )
+        except ValueError:
+            normalized = None
         if normalized:
             merged[_assignment_key(normalized)] = normalized
 
@@ -299,7 +348,7 @@ def _build_doc(
 
 
 def save_player_identity_assignments(path: Path, meta: dict[str, Any], assignments: list[dict[str, Any]]) -> dict[str, Any]:
-    stable_doc = _load_stable_doc(path)
+    stable_doc = _load_effective_stable_doc(path)
     stable_by_subject = _stable_lookup(stable_doc)
     roster_by_player = _roster_players(meta)
     existing = _load_existing_doc(path)
@@ -327,6 +376,13 @@ def save_player_identity_assignments(path: Path, meta: dict[str, Any], assignmen
         merged_items,
         updated_at=now_iso(),
     )
+    conflicts = _assignment_overlap_conflicts(doc["expanded_stint_assignments"])
+    if conflicts:
+        preview = "; ".join(
+            f"{item['player_name'] or item['player_id']}: {item['left_stint_id']} overlaps {item['right_stint_id']}"
+            for item in conflicts[:4]
+        )
+        raise ValueError(f"One player cannot have overlapping stints. {preview}")
     (path / "player_identity_assignments.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
     return {
         "player_identity_assignments": doc,
@@ -335,3 +391,69 @@ def save_player_identity_assignments(path: Path, meta: dict[str, Any], assignmen
             "summary": _roster_summary(meta),
         },
     }
+
+
+def reset_player_identity_assignments(path: Path, meta: dict[str, Any]) -> dict[str, Any]:
+    stable_doc = _load_effective_stable_doc(path)
+    stable_by_subject = _stable_lookup(stable_doc)
+    doc = _build_doc(
+        meta,
+        stable_doc,
+        stable_by_subject,
+        _roster_players(meta),
+        [],
+        updated_at=now_iso(),
+    )
+    (path / "player_identity_assignments.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    return doc
+
+
+def replace_player_identity_assignments(
+    path: Path,
+    meta: dict[str, Any],
+    assignments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    stable_doc = _load_effective_stable_doc(path)
+    stable_by_subject = _stable_lookup(stable_doc)
+    doc = _build_doc(
+        meta,
+        stable_doc,
+        stable_by_subject,
+        _roster_players(meta),
+        assignments,
+        updated_at=now_iso(),
+    )
+    conflicts = _assignment_overlap_conflicts(doc["expanded_stint_assignments"])
+    if conflicts:
+        raise ValueError("Generated crop-derived stints overlap for the same player")
+    (path / "player_identity_assignments.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    return doc
+
+
+def _assignment_overlap_conflicts(expanded: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_player: dict[str, list[dict[str, Any]]] = {}
+    for item in expanded:
+        if item.get("status") != "assigned" or not item.get("player_id"):
+            continue
+        start = item.get("start_time_sec")
+        end = item.get("end_time_sec")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or end <= start:
+            continue
+        by_player.setdefault(str(item["player_id"]), []).append(item)
+    conflicts: list[dict[str, Any]] = []
+    for player_id, rows in by_player.items():
+        ordered = sorted(rows, key=lambda item: float(item["start_time_sec"]))
+        for left, right in zip(ordered, ordered[1:]):
+            overlap = float(left["end_time_sec"]) - float(right["start_time_sec"])
+            if overlap <= 0.5:
+                continue
+            conflicts.append(
+                {
+                    "player_id": player_id,
+                    "player_name": left.get("player_name") or right.get("player_name"),
+                    "left_stint_id": left.get("stint_id"),
+                    "right_stint_id": right.get("stint_id"),
+                    "overlap_sec": round(overlap, 3),
+                }
+            )
+    return conflicts

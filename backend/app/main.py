@@ -21,7 +21,13 @@ from app.services.change_candidates import load_change_candidates_review, save_c
 from app.services.chunked_analysis import analyze_match_chunked_yolo
 from app.services.contact_review import load_contact_candidates_review, save_contact_candidate_reviews
 from app.services.identity import build_identity_review, save_identity_assignments
+from app.services.identity_crop_review import (
+    build_identity_crop_review,
+    refresh_identity_crop_assignments,
+    save_identity_crop_assignments,
+)
 from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
+from app.services.identity_review_segments import save_identity_review_splits
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -398,6 +404,7 @@ PACKAGE_EMBEDDED_JSON_FILES = [
     ("movement_stats", "movement_stats.json"),
     ("player_stats", "player_stats.json"),
     ("resolved_player_stats", "resolved_player_stats.json"),
+    ("resolved_stats_quality_report", "resolved_stats_quality_report.json"),
     ("player_heatmaps", "player_heatmaps.json"),
     ("team_config", "team_config.json"),
     ("team_stats", "team_stats.json"),
@@ -782,6 +789,7 @@ def get_match(match_id: str) -> dict[str, Any]:
         "movement_stats.json",
         "player_stats.json",
         "resolved_player_stats.json",
+        "resolved_stats_quality_report.json",
         "player_heatmaps.json",
         "team_config.json",
         "team_stats.json",
@@ -1087,12 +1095,69 @@ def generate_identity_review_gallery(
     path = match_dir(match_id)
     video_path = match_video_path(path)
     try:
-        return build_identity_review_gallery(
+        gallery = build_identity_review_gallery(
             path,
             video_path,
             samples_per_stint=samples_per_stint,
             force=force,
         )
+        refresh_identity_crop_assignments(path, read_match_meta(path))
+        return gallery
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/identity-review-gallery/splits")
+def split_identity_review_gallery(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    splits = payload.get("splits")
+    if not isinstance(splits, list):
+        raise HTTPException(status_code=400, detail="splits must be a list")
+    samples_per_stint = payload.get("samples_per_stint") or 8
+    if not isinstance(samples_per_stint, int) or not 1 <= samples_per_stint <= 24:
+        raise HTTPException(status_code=400, detail="samples_per_stint must be between 1 and 24")
+    try:
+        save_identity_review_splits(path, splits)
+        gallery = build_identity_review_gallery(
+            path,
+            match_video_path(path),
+            samples_per_stint=samples_per_stint,
+            force=True,
+        )
+        refresh_identity_crop_assignments(path, read_match_meta(path))
+        return gallery
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/identity-crop-review")
+def get_identity_crop_review(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_identity_crop_review(path, read_match_meta(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/identity-crop-review")
+def review_identity_crops(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    try:
+        result = save_identity_crop_assignments(path, read_match_meta(path), updates)
+        try:
+            result["resolved_player_stats"] = build_resolved_player_stats_from_files(path, persist=True)
+        except FileNotFoundError:
+            result["resolved_player_stats"] = None
+        return result
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1332,7 +1397,29 @@ def save_player_assignments(match_id: str, payload: dict[str, Any] = Body(...)) 
     return doc
 
 
+def _refresh_resolved_player_stats_if_stale(path: Path) -> None:
+    identity_path = path / "player_identity_assignments.json"
+    player_stats_path = path / "player_stats.json"
+    if not identity_path.exists() or not player_stats_path.exists():
+        return
+    identity = _load_package_json_doc("player_identity_assignments", identity_path)
+    resolved_path = path / "resolved_player_stats.json"
+    resolved = _load_package_json_doc("resolved_player_stats", resolved_path) if resolved_path.exists() else {}
+    expected_method = "exact_identity_coverage" if (path / "global_identity.json").exists() else None
+    identity_updated_at = str(identity.get("updated_at") or "")
+    resolved_generated_at = str(resolved.get("generated_at") or "")
+    stale = (
+        not resolved
+        or bool(resolved.get("is_stale"))
+        or (identity_updated_at and resolved_generated_at < identity_updated_at)
+        or (expected_method and resolved.get("calculation_method") != expected_method)
+    )
+    if stale:
+        build_resolved_player_stats_from_files(path, persist=True)
+
+
 def build_match_package(path: Path) -> dict[str, Any]:
+    _refresh_resolved_player_stats_if_stale(path)
     meta = read_match_meta(path)
     package = {
         "schema_version": "0.2.0",
@@ -1436,6 +1523,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["player_stats_json"] = "player_stats.json"
     if (path / "resolved_player_stats.json").exists():
         package["assets"]["resolved_player_stats_json"] = "resolved_player_stats.json"
+    if (path / "resolved_stats_quality_report.json").exists():
+        package["assets"]["resolved_stats_quality_report_json"] = "resolved_stats_quality_report.json"
     if (path / "player_heatmaps.json").exists():
         package["assets"]["player_heatmaps_json"] = "player_heatmaps.json"
     if (path / "team_config.json").exists():
@@ -1617,6 +1706,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "movement_stats.json": "application/json",
         "player_stats.json": "application/json",
         "resolved_player_stats.json": "application/json",
+        "resolved_stats_quality_report.json": "application/json",
         "player_heatmaps.json": "application/json",
         "team_config.json": "application/json",
         "team_stats.json": "application/json",

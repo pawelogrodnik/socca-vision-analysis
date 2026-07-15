@@ -61,6 +61,33 @@ class PitchRoiTests(unittest.TestCase):
         position = tracks[0]["positions"][0]
         self.assertEqual(position["pitch_m"], [30.0, 47.4])
         self.assertTrue(position["pitch_m_clamped"])
+        self.assertEqual(position["play_area_status"], "outside_play")
+        self.assertGreater(position["pitch_boundary_distance_m"], 0.0)
+
+    def test_classifies_near_line_position_as_boundary_transient(self) -> None:
+        from app.services.play_area import classify_pitch_position
+
+        result = classify_pitch_position(
+            [0.2, 20.0],
+            pitch_width_m=30.0,
+            pitch_length_m=47.4,
+        )
+
+        self.assertEqual(result["play_area_status"], "boundary_transient")
+        self.assertFalse(result["pitch_m_clamped"])
+        self.assertEqual(result["pitch_boundary_distance_m"], 0.0)
+
+    def test_classifies_clear_interior_position_as_inside_play(self) -> None:
+        from app.services.play_area import classify_pitch_position
+
+        result = classify_pitch_position(
+            [5.0, 20.0],
+            pitch_width_m=30.0,
+            pitch_length_m=47.4,
+        )
+
+        self.assertEqual(result["play_area_status"], "inside_play")
+        self.assertFalse(result["pitch_m_clamped"])
 
 
 if __name__ == "__main__":

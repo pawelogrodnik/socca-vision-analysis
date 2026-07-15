@@ -311,7 +311,7 @@ class PlayerIdentityTests(unittest.TestCase):
             self.assertEqual(doc["players"][0]["distance"]["total_distance_m"], 23.0)
             self.assertEqual(doc["summary"]["total_distance_m"], 23.0)
 
-    def test_resolved_player_stats_do_not_double_count_overlapping_stints_for_one_player(self) -> None:
+    def test_save_blocks_overlapping_stints_for_one_player(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)
             stable = stable_doc()
@@ -341,31 +341,25 @@ class PlayerIdentityTests(unittest.TestCase):
             ]
             (path / "stable_players.json").write_text(json.dumps(stable), encoding="utf-8")
             (path / "player_stats.json").write_text(json.dumps(player_stats_doc()), encoding="utf-8")
-            save_player_identity_assignments(
-                path,
-                match_meta(),
-                [
-                    {
-                        "stable_subject_id": "slot-a01",
-                        "stint_id": "slot-a01-stint-001",
-                        "status": "assigned",
-                        "player_id": "p-a-1",
-                    },
-                    {
-                        "stable_subject_id": "slot-a01",
-                        "stint_id": "slot-a01-stint-002",
-                        "status": "assigned",
-                        "player_id": "p-a-1",
-                    },
-                ],
-            )
-
-            doc = build_resolved_player_stats_from_files(path, persist=True)
-
-            self.assertEqual(doc["summary"]["overlapping_stint_assignments_clipped"], 1)
-            self.assertEqual(doc["players"][0]["time"]["playing_time_sec"], 10.0)
-            self.assertEqual(doc["players"][0]["distance"]["total_distance_m"], 23.0)
-            self.assertIn("overlapping_stint_clipped", doc["players"][0]["review_warnings"])
+            with self.assertRaisesRegex(ValueError, "overlapping stints"):
+                save_player_identity_assignments(
+                    path,
+                    match_meta(),
+                    [
+                        {
+                            "stable_subject_id": "slot-a01",
+                            "stint_id": "slot-a01-stint-001",
+                            "status": "assigned",
+                            "player_id": "p-a-1",
+                        },
+                        {
+                            "stable_subject_id": "slot-a01",
+                            "stint_id": "slot-a01-stint-002",
+                            "status": "assigned",
+                            "player_id": "p-a-1",
+                        },
+                    ],
+                )
 
 
 if __name__ == "__main__":

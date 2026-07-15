@@ -5,6 +5,7 @@ import unittest
 from app.services.global_identity import (
     Observation,
     SlotState,
+    _select_inactive_slot,
     _slot_movement_stats,
     _slot_has_recent_identity_conflict,
     build_frame_detection_counts_from_global_identity,
@@ -35,6 +36,15 @@ def outside_position(frame: int, x: float, y: float) -> dict:
     return row
 
 
+def boundary_position(frame: int, x: float, y: float) -> dict:
+    row = position(frame, max(0.0, min(30.0, x)), max(0.0, min(47.4, y)))
+    row["pitch_m_raw"] = [x, y]
+    row["pitch_m_clamped"] = x < 0.0 or x > 30.0 or y < 0.0 or y > 47.4
+    row["pitch_boundary_distance_m"] = max(abs(row["pitch_m"][0] - x), abs(row["pitch_m"][1] - y))
+    row["play_area_status"] = "boundary_transient"
+    return row
+
+
 def tracklet(tracklet_id: str, team_label: str, rows: list[dict]) -> dict:
     return {
         "tracklet_id": tracklet_id,
@@ -58,7 +68,7 @@ def tracklet(tracklet_id: str, team_label: str, rows: list[dict]) -> dict:
 
 
 class GlobalIdentityTests(unittest.TestCase):
-    def resolve(self, tracklets: list[dict]) -> dict:
+    def resolve(self, tracklets: list[dict], *, match_phase_config: dict | None = None) -> dict:
         return resolve_global_identity(
             tracklets,
             raw_tracks_count=len(tracklets),
@@ -66,6 +76,7 @@ class GlobalIdentityTests(unittest.TestCase):
             pitch_width_m=30,
             pitch_length_m=47.4,
             fps=30,
+            match_phase_config=match_phase_config,
         )
 
     def test_short_gap_keeps_same_slot_without_team_switch(self) -> None:
@@ -117,6 +128,165 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(identity["summary"]["stable_players"], 0)
         self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 5)
 
+    def test_unknown_team_tracklet_cannot_take_over_existing_team_slot(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet("1:1", "B", [position(frame, 10 + frame * 0.1, 8) for frame in range(3)]),
+                tracklet("2:1", "U", [position(frame, 10.3 + frame * 0.1, 8) for frame in range(3, 8)]),
+            ]
+        )
+
+        b01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B01")
+        self.assertEqual(b01["tracklet_ids"], ["1:1"])
+        self.assertEqual(b01["ambiguous_frames"], 0)
+        self.assertEqual(b01["movement_stats"]["ambiguous_time_sec"], 0.0)
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 5)
+
+    def test_confirmed_unknown_team_tracklet_recovers_matching_active_slot(self) -> None:
+        known = tracklet(
+            "1:1",
+            "B",
+            [position(frame, 10 + frame * 0.05, 8) for frame in range(6)],
+        )
+        unknown = tracklet(
+            "2:1",
+            "U",
+            [position(frame, 10 + frame * 0.05, 8) for frame in range(6, 18)],
+        )
+        unknown["appearance_rgb"] = list(known["appearance_rgb"])
+
+        identity = self.resolve([known, unknown])
+
+        b01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B01")
+        self.assertIn("2:1", b01["tracklet_ids"])
+        recovered = [
+            row
+            for row in b01["overlay_positions"]
+            if row.get("tracklet_id") == "2:1"
+        ]
+        self.assertEqual(len(recovered), 12)
+        self.assertTrue(any(row.get("repair_reason") == "unknown_team_confirmed" for row in recovered))
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 0)
+
+    def test_unknown_team_appearance_outlier_remains_unmatched(self) -> None:
+        known = tracklet(
+            "1:1",
+            "B",
+            [position(frame, 10 + frame * 0.05, 8) for frame in range(6)],
+        )
+        referee = tracklet(
+            "2:1",
+            "U",
+            [position(frame, 10 + frame * 0.05, 8) for frame in range(6, 18)],
+        )
+        referee["appearance_rgb"] = [245, 245, 20]
+
+        identity = self.resolve([known, referee])
+
+        b01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B01")
+        self.assertNotIn("2:1", b01["tracklet_ids"])
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 12)
+
+    def test_goalkeeper_goal_end_anchor_blocks_wrong_team_swap(self) -> None:
+        initial = tracklet(
+            "1:1",
+            "B",
+            [position(frame, 15.0, 1.5) for frame in range(6)],
+        )
+        initial.update({"role": "goalkeeper", "role_confidence": 0.95, "goal_end": "near"})
+        relabeled = tracklet(
+            "2:1",
+            "A",
+            [position(frame, 15.0, 1.5) for frame in range(6, 28)],
+        )
+        relabeled.update(
+            {
+                "role": "goalkeeper",
+                "role_confidence": 0.94,
+                "goal_end": "near",
+                "appearance_rgb": list(initial["appearance_rgb"]),
+            }
+        )
+
+        identity = self.resolve([initial, relabeled])
+
+        self.assertNotIn("A", identity["summary"]["team_counts"])
+        b01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B01")
+        self.assertEqual(b01["role"], "goalkeeper")
+        self.assertEqual(b01["goal_end"], "near")
+        self.assertIn("2:1", b01["tracklet_ids"])
+        anchored_rows = [
+            row
+            for row in b01["overlay_positions"]
+            if row.get("tracklet_id") == "2:1"
+        ]
+        self.assertTrue(anchored_rows)
+        self.assertTrue(
+            all(row.get("team_assignment_reason") == "goalkeeper_goal_end_anchor" for row in anchored_rows)
+        )
+
+    def test_match_phase_goalkeeper_anchor_corrects_initial_wrong_team(self) -> None:
+        wrong = tracklet(
+            "1:1",
+            "A",
+            [position(frame, 15.0, 1.5) for frame in range(12)],
+        )
+        wrong.update({"role": "goalkeeper", "role_confidence": 0.95, "goal_end": "near"})
+        phase_config = {
+            "periods": [
+                {
+                    "start_time_sec": 0.0,
+                    "end_time_sec": 10.0,
+                    "team_attack_directions": {
+                        "A": "towards_y_min",
+                        "B": "towards_y_max",
+                    },
+                }
+            ]
+        }
+
+        identity = self.resolve([wrong], match_phase_config=phase_config)
+
+        self.assertNotIn("A", identity["summary"]["team_counts"])
+        b01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "B01")
+        self.assertEqual(b01["role"], "goalkeeper")
+        self.assertTrue(
+            all(
+                row.get("team_assignment_reason") == "goalkeeper_match_phase_anchor"
+                for row in b01["overlay_positions"]
+                if row.get("source") == "detected"
+            )
+        )
+
+    def test_boundary_only_tracklet_does_not_spawn_player_slot(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet("1:1", "A", [boundary_position(frame, -0.4, 8.0) for frame in range(8)]),
+            ]
+        )
+
+        self.assertEqual(identity["summary"]["stable_players"], 0)
+        self.assertEqual(identity["summary"]["boundary_transient_observations"], 8)
+        self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 0)
+
+    def test_known_player_boundary_continuation_is_ambiguous_and_not_counted(self) -> None:
+        rows = [position(frame, 0.5, 8.0) for frame in range(3)]
+        rows.extend(boundary_position(frame, 0.25, 8.0) for frame in range(3, 6))
+
+        identity = self.resolve([tracklet("1:1", "A", rows)])
+
+        a01 = next(slot for slot in identity["slots"] if slot["slot_id"] == "A01")
+        self.assertEqual(a01["detected_frames"], 3)
+        self.assertEqual(a01["ambiguous_frames"], 3)
+        self.assertEqual(a01["movement_stats"]["active_frames"], 3)
+        self.assertTrue(
+            all(
+                row.get("play_area_status") == "boundary_transient"
+                for row in a01["overlay_positions"]
+                if row.get("source") == "ambiguous"
+            )
+        )
+
     def test_low_confidence_labeled_team_does_not_rebalance_to_least_loaded_team(self) -> None:
         tracklets = [
             tracklet(f"{index + 1}:1", "A", [position(frame, index, 2) for frame in range(4)])
@@ -156,6 +326,37 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertNotIn("B", identity["summary"]["team_counts"])
         self.assertEqual(identity["summary"]["unmatched_raw_remaining"], 4)
         self.assertNotIn("A08", [slot["slot_id"] for slot in identity["slots"]])
+
+    def test_inactive_owner_cannot_reactivate_as_eighth_active_player(self) -> None:
+        tracklets = [
+            tracklet(
+                "1:1",
+                "A",
+                [position(0, 1.0, 2.0), position(1, 1.05, 2.0), position(300, 1.1, 2.0)],
+            )
+        ]
+        for index in range(2, 8):
+            tracklets.append(
+                tracklet(
+                    f"{index}:1",
+                    "A",
+                    [position(frame, float(index), 3.0) for frame in range(301)],
+                )
+            )
+        tracklets.append(
+            tracklet(
+                "8:1",
+                "A",
+                [position(frame, 20.0, 20.0) for frame in range(250, 301)],
+            )
+        )
+
+        identity = self.resolve(tracklets)
+
+        self.assertLessEqual(max(frame["active_team_a"] for frame in identity["frames"]), 7)
+        frame_300 = identity["frames"][300]
+        self.assertEqual(frame_300["active_team_a"], 7)
+        self.assertGreaterEqual(frame_300["unmatched_raw_detections"], 1)
 
     def test_nested_same_team_detection_does_not_spawn_extra_slot(self) -> None:
         full_body = [
@@ -423,6 +624,36 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(a01["reused_from_slot_id"], "A01")
         self.assertEqual(a01["slot_reuse_events"][0]["reason"], "recent_same_team_slot_reused")
         self.assertEqual([slot["slot_id"] for slot in identity["slots"]], ["A01"])
+
+    def test_inactive_field_slot_is_not_reused_for_goalkeeper(self) -> None:
+        field_slot = SlotState("A01", "slot-A01", "A", 30.0, 47.4)
+        field_slot.role = "field_player"
+        field_slot.detected_frames = 120
+        unused_slot = SlotState("A02", "slot-A02", "A", 30.0, 47.4)
+        goalkeeper = Observation(
+            frame=300,
+            time_sec=10.0,
+            bbox_xyxy=[10, 10, 20, 40],
+            footpoint=[15.0, 40.0],
+            calibrated_footpoint=[15.0, 40.0],
+            pitch_m=[15.0, 45.0],
+            confidence=0.92,
+            tracklet_id="9:1",
+            raw_track_id=9,
+            team_label="A",
+            team_id="team-a",
+            team_name="Team A",
+            team_confidence=0.95,
+            role="goalkeeper",
+            role_confidence=0.95,
+            goal_end="far",
+            tracklet_positions_count=30,
+        )
+
+        selected = _select_inactive_slot([field_slot, unused_slot], goalkeeper)
+
+        self.assertIsNotNone(selected)
+        self.assertIs(selected[0], unused_slot)
 
     def test_confirmed_unmatched_raw_backfills_missing_active_slot(self) -> None:
         tracklets = [

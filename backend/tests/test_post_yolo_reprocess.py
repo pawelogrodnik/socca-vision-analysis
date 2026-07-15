@@ -116,6 +116,16 @@ class PostYoloReprocessTests(unittest.TestCase):
             source_dir = Path(tmp) / "source"
             output_dir = Path(tmp) / "output"
             video_path = _write_reprocess_inputs(source_dir)
+            match_phase_config = {
+                "teams": {
+                    "A": {"attacking_direction": "towards_y_min"},
+                    "B": {"attacking_direction": "towards_y_max"},
+                }
+            }
+            (source_dir / "match_phase_config.json").write_text(
+                json.dumps(match_phase_config),
+                encoding="utf-8",
+            )
             metadata = {"fps": 30.0, "width": 100, "height": 100, "frame_count": 30, "duration_sec": 1.0}
 
             with patch("app.services.post_yolo_reprocess.read_video_metadata", return_value=metadata), patch(
@@ -128,6 +138,10 @@ class PostYoloReprocessTests(unittest.TestCase):
             self.assertTrue(report["parameters"]["yolo_skipped"])
             self.assertEqual(report["frames_processed"], 2)
             self.assertTrue((output_dir / "tracks.json").exists())
+            self.assertEqual(
+                json.loads((output_dir / "match_phase_config.json").read_text(encoding="utf-8")),
+                match_phase_config,
+            )
             self.assertTrue((output_dir / "analysis_report.json").exists())
             stabilize.assert_called_once()
             self.assertEqual(stabilize.call_args.args[3][0]["track_id"], 1)
@@ -221,6 +235,8 @@ class PostYoloReprocessTests(unittest.TestCase):
             self.assertEqual(first_position["calibrated_footpoint"], [25.0, 40.0])
             self.assertEqual(first_position["pitch_m_source"], "reprocess_camera_motion_calibrated_footpoint")
             self.assertAlmostEqual(first_position["pitch_m"][0], 7.5, places=2)
+            self.assertEqual(first_position["play_area_status"], "inside_play")
+            self.assertFalse(first_position["pitch_m_clamped"])
 
     def test_reprocess_rebuilds_ball_tracks_from_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

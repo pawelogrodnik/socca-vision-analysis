@@ -26,6 +26,7 @@ from app.services.ball_tracking import (
 )
 from app.services.camera_motion import CameraMotionModel, build_camera_motion_model, write_camera_motion_report
 from app.services.pitch import PitchConfig, image_to_pitch_m
+from app.services.play_area import classify_pitch_position
 from app.services.stabilization import stabilize_match
 from app.services.video import read_video_metadata
 
@@ -33,6 +34,7 @@ from app.services.video import read_video_metadata
 REPROCESS_OPTIONAL_INPUTS = (
     "match.json",
     "team_config.json",
+    "match_phase_config.json",
     "benchmark_input.json",
     "ball_candidates.json",
     "ball_tracks.json",
@@ -576,21 +578,13 @@ def _recalibrate_tracks_for_camera_motion(
                 row.update(camera_motion.metadata_for_frame(frame))
                 mapped = image_to_pitch_m([(float(calibrated[0]), float(calibrated[1]))], homography)
                 if mapped:
-                    x_m = float(mapped[0][0])
-                    y_m = float(mapped[0][1])
-                    clamped_x = float(np.clip(x_m, 0.0, pitch.width_m))
-                    clamped_y = float(np.clip(y_m, 0.0, pitch.length_m))
-                    outside_distance_m = max(abs(clamped_x - x_m), abs(clamped_y - y_m))
-                    row["pitch_m_raw"] = [round(x_m, 3), round(y_m, 3)]
-                    row["pitch_m_clamped"] = outside_distance_m > 1e-6
-                    row["pitch_boundary_distance_m"] = round(outside_distance_m, 3)
-                    if outside_distance_m <= 0.35:
-                        row["play_area_status"] = "inside_play"
-                    elif outside_distance_m <= 1.25:
-                        row["play_area_status"] = "boundary_transient"
-                    else:
-                        row["play_area_status"] = "outside_play"
-                    row["pitch_m"] = [round(clamped_x, 3), round(clamped_y, 3)]
+                    row.update(
+                        classify_pitch_position(
+                            mapped[0],
+                            pitch_width_m=pitch.width_m,
+                            pitch_length_m=pitch.length_m,
+                        )
+                    )
                     row["pitch_m_source"] = "reprocess_camera_motion_calibrated_footpoint"
             positions.append(row)
         if not positions:

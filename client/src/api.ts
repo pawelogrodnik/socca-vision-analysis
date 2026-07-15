@@ -9,6 +9,8 @@ import type {
   ContactCandidateReviewUpdate,
   ContactCandidatesDocument,
   IdentityReviewGalleryDocument,
+  IdentityCropReviewDocument,
+  IdentityCropReviewUpdate,
   Match,
   MatchPhaseConfigDocument,
   MatchPhaseConfigPayload,
@@ -233,15 +235,40 @@ export async function getIdentityReviewGallery(matchId: string): Promise<Identit
 
 export async function generateIdentityReviewGallery(
   matchId: string,
-  samplesPerStint = 8,
+  samplesPerStint?: number,
   force = false,
 ): Promise<IdentityReviewGalleryDocument> {
-  const params = new URLSearchParams({
-    samples_per_stint: String(samplesPerStint),
-    force: force ? 'true' : 'false',
-  });
+  const params = new URLSearchParams({ force: force ? 'true' : 'false' });
+  if (typeof samplesPerStint === 'number') params.set('samples_per_stint', String(samplesPerStint));
   return request<IdentityReviewGalleryDocument>(`/api/matches/${matchId}/identity-review-gallery?${params}`, {
     method: 'POST',
+  });
+}
+
+export async function splitIdentityReviewGallery(
+  matchId: string,
+  splits: Array<{ stable_subject_id: string; parent_stint_id: string; frame: number; reason?: string }>,
+  samplesPerStint = 8,
+): Promise<IdentityReviewGalleryDocument> {
+  return request<IdentityReviewGalleryDocument>(`/api/matches/${matchId}/identity-review-gallery/splits`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ splits, samples_per_stint: samplesPerStint }),
+  });
+}
+
+export async function getIdentityCropReview(matchId: string): Promise<IdentityCropReviewDocument> {
+  return request<IdentityCropReviewDocument>(`/api/matches/${matchId}/identity-crop-review`);
+}
+
+export async function saveIdentityCropReview(
+  matchId: string,
+  updates: IdentityCropReviewUpdate[],
+): Promise<IdentityCropReviewDocument> {
+  return request<IdentityCropReviewDocument>(`/api/matches/${matchId}/identity-crop-review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates }),
   });
 }
 

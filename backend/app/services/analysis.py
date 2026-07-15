@@ -25,6 +25,7 @@ from app.services.camera_motion import (
     write_camera_motion_report,
 )
 from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m, point_in_polygon
+from app.services.play_area import classify_pitch_position
 from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label, resolve_yolo_device
 from app.services.stabilization import stabilize_match, write_stable_overlay
 from app.services.tracker import CentroidTracker
@@ -308,15 +309,19 @@ def _tracks_with_pitch_positions(
             row.pop("tracking_footpoint", None)
             if p.get("calibrated_footpoint"):
                 row["pitch_m_source"] = "calibrated_footpoint"
-            x_m = float(pitch_m[0])
-            y_m = float(pitch_m[1])
-            if pitch is not None and clamp_positions_to_pitch:
-                clamped_x = float(np.clip(x_m, 0.0, pitch.width_m))
-                clamped_y = float(np.clip(y_m, 0.0, pitch.length_m))
-                if abs(clamped_x - x_m) > 1e-6 or abs(clamped_y - y_m) > 1e-6:
-                    row["pitch_m_clamped"] = True
-                x_m, y_m = clamped_x, clamped_y
-            row["pitch_m"] = [round(x_m, 3), round(y_m, 3)]
+            if pitch is not None:
+                play_area = classify_pitch_position(
+                    pitch_m,
+                    pitch_width_m=pitch.width_m,
+                    pitch_length_m=pitch.length_m,
+                )
+                if clamp_positions_to_pitch:
+                    row.update(play_area)
+                else:
+                    row.update({key: value for key, value in play_area.items() if key != "pitch_m"})
+                    row["pitch_m"] = [round(float(pitch_m[0]), 3), round(float(pitch_m[1]), 3)]
+            else:
+                row["pitch_m"] = [round(float(pitch_m[0]), 3), round(float(pitch_m[1]), 3)]
             positions.append(row)
         if positions:
             tracks_json.append(

@@ -539,6 +539,9 @@ export type ResolvedPlayerStatsDocument = {
   generated_at: string;
   source: string;
   stats_source: string;
+  calculation_method?: string;
+  identity_assignments_updated_at?: string | null;
+  is_stale?: boolean;
   identity_semantics: string;
   scope: 'resolved_player_tracking_only_no_ball' | string;
   units: Record<string, string>;
@@ -546,6 +549,7 @@ export type ResolvedPlayerStatsDocument = {
   teams: Array<Record<string, unknown>>;
   players: Array<Record<string, unknown>>;
   skipped_assignments?: Array<Record<string, unknown>>;
+  quality_report?: string;
 };
 
 export type PlayerProfileStatsDocument = {
@@ -928,7 +932,8 @@ export type PlayerIdentityAssignmentStatus =
   | 'unknown'
   | 'ignore'
   | 'referee'
-  | 'false_positive';
+  | 'false_positive'
+  | 'wrong_target';
 
 export type PlayerIdentityAssignment = {
   stable_subject_id: string;
@@ -947,6 +952,12 @@ export type PlayerIdentityAssignment = {
   player_role?: string | null;
   notes?: string;
   review_warnings?: string[];
+  parent_stint_id?: string | null;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  start_time_sec?: number | null;
+  end_time_sec?: number | null;
+  duration_sec?: number | null;
 };
 
 export type PlayerIdentityAssignmentsDocument = {
@@ -978,10 +989,26 @@ export type IdentityReviewCrop = {
   confidence?: number | null;
   track_id?: number | string | null;
   source?: string | null;
+  appearance_change_from_previous?: number | null;
+  coverage_intervals?: Array<{
+    start_frame: number;
+    end_frame: number;
+    start_time_sec?: number | null;
+    end_time_sec?: number | null;
+  }>;
+  coverage_frames?: number;
+  representative_reason?: string | null;
+  appearance_cluster_id?: string | null;
+  appearance_signature?: number[];
+  similarity_descriptor?: number[];
 };
 
 export type IdentityReviewGalleryStint = {
   stint_id: string;
+  parent_stint_id?: string | null;
+  review_segment_index?: number | null;
+  review_segment_count?: number | null;
+  split_reasons?: string[];
   slot_id?: string | null;
   start_frame?: number | null;
   end_frame?: number | null;
@@ -996,7 +1023,12 @@ export type IdentityReviewGalleryStint = {
   tracklet_ids: string[];
   raw_track_ids: number[];
   candidate_positions: number;
+  representative_clusters?: number;
+  represented_intervals?: number;
   crops: IdentityReviewCrop[];
+  appearance_purity?: 'consistent' | 'review' | 'mixed' | string;
+  appearance_max_change?: number | null;
+  appearance_change_candidates?: Array<{ frame?: number | null; score?: number | null }>;
 };
 
 export type IdentityReviewGalleryPlayer = {
@@ -1031,8 +1063,61 @@ export type IdentityReviewGalleryDocument = {
     stints_with_crops: number;
     players_with_crops: number;
     crops: number;
+    automatic_splits?: number;
+    manual_splits?: number;
+    mixed_segments?: number;
   };
   players: IdentityReviewGalleryPlayer[];
+};
+
+export type IdentityCropAssignmentStatus =
+  | 'unassigned'
+  | 'assigned'
+  | 'unknown'
+  | 'wrong_team'
+  | 'false_positive';
+
+export type IdentityCropReviewCrop = IdentityReviewCrop & {
+  stable_subject_id: string;
+  stable_player_id: string;
+  slot_id?: string | null;
+  team_label: 'A' | 'B' | 'U' | string;
+  team_id?: string | null;
+  team_name?: string | null;
+  stint_id: string;
+  parent_stint_id?: string | null;
+  stint_start_frame?: number | null;
+  stint_end_frame?: number | null;
+  status: IdentityCropAssignmentStatus;
+  player_id?: string | null;
+  player_name?: string | null;
+  updated_at?: string | null;
+};
+
+export type IdentityCropReviewUpdate = {
+  artifact: string;
+  status: IdentityCropAssignmentStatus;
+  player_id?: string | null;
+};
+
+export type IdentityCropReviewDocument = {
+  schema_version: string;
+  updated_at?: string | null;
+  source: string;
+  summary: {
+    crops_total: number;
+    reviewed: number;
+    remaining: number;
+    by_status: Record<string, number>;
+    by_player: Record<string, number>;
+    derived_stints?: number;
+    assigned_crops?: number;
+    overlap_clipped?: number;
+    covered_frames?: number;
+  };
+  crops: IdentityCropReviewCrop[];
+  roster: Team[];
+  resolved_player_stats?: ResolvedPlayerStatsDocument | null;
 };
 
 export type AssignmentSummary = {
@@ -1313,6 +1398,7 @@ export type AnalysisReport = {
     movement_stats?: string;
     player_stats?: string;
     resolved_player_stats?: string;
+    resolved_stats_quality_report?: string;
     player_heatmaps?: string;
     tracklets?: string;
     tracking_quality_report?: string;
@@ -1430,6 +1516,11 @@ export type PublicReportPlayer = {
   team_label?: string | null;
   playing_time_sec: number;
   detected_time_sec: number;
+  certain_playing_time_sec?: number;
+  possible_playing_time_sec?: number;
+  ambiguous_playing_time_sec?: number;
+  continuity_gap_time_sec?: number;
+  playing_time_method?: string | null;
   total_distance_m: number;
   avg_speed_kmh: number;
   peak_speed_kmh: number;

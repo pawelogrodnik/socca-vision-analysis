@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import MATCHES_DIR
+from app.services.resolved_player_timeline import build_resolved_player_timeline_from_files
 from app.services.stabilization import _heatmap_quality, _safe_artifact_id, _write_player_heatmap_png
 
 
@@ -293,6 +294,7 @@ def _stint_window(stable_player: dict[str, Any], stint_id: str | None) -> tuple[
 
 def _real_player_heatmap_rows(player: dict[str, Any], stable_players: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    seen_frames: set[int] = set()
     for source in player.get("source_stable_slots") or []:
         if not isinstance(source, dict):
             continue
@@ -301,13 +303,18 @@ def _real_player_heatmap_rows(player: dict[str, Any], stable_players: dict[str, 
         )
         if not stable_player:
             continue
-        start_frame, end_frame = _stint_window(stable_player, source.get("stint_id"))
+        stint_id = source.get("stint_id")
+        start_frame, end_frame = _stint_window(stable_player, stint_id)
+        if stint_id and start_frame is None and end_frame is None:
+            continue
         for position in stable_player.get("trajectory_m") or []:
             if not isinstance(position, dict):
                 continue
             frame = position.get("frame")
             if isinstance(frame, (int, float)):
                 frame_int = int(frame)
+                if frame_int in seen_frames:
+                    continue
                 if start_frame is not None and frame_int < start_frame:
                     continue
                 if end_frame is not None and frame_int > end_frame:
@@ -318,7 +325,31 @@ def _real_player_heatmap_rows(player: dict[str, Any], stable_players: dict[str, 
             pitch_m = position.get("pitch_m")
             if not pitch_m or len(pitch_m) < 2:
                 continue
-            rows.append({"pitch_m": pitch_m, "source": source_status})
+            if isinstance(frame, (int, float)):
+                seen_frames.add(int(frame))
+            rows.append({"frame": int(frame) if isinstance(frame, (int, float)) else None, "pitch_m": pitch_m, "source": source_status})
+    return rows
+
+
+def _exact_player_heatmap_rows(timeline_player: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(timeline_player, dict):
+        return []
+    rows = []
+    seen_frames: set[int] = set()
+    for position in timeline_player.get("rows") or []:
+        if not isinstance(position, dict) or position.get("source") != "detected":
+            continue
+        if position.get("play_area_status", "inside_play") != "inside_play":
+            continue
+        pitch_m = position.get("pitch_m")
+        frame = position.get("frame")
+        if not isinstance(frame, (int, float)) or not isinstance(pitch_m, (list, tuple)) or len(pitch_m) < 2:
+            continue
+        frame_int = int(frame)
+        if frame_int in seen_frames:
+            continue
+        seen_frames.add(frame_int)
+        rows.append({"frame": frame_int, "pitch_m": list(pitch_m), "source": "detected"})
     return rows
 
 
@@ -373,12 +404,17 @@ def _write_public_player_heatmap(
     player: dict[str, Any],
     stable_players: dict[str, dict[str, Any]],
     *,
+    timeline_player: dict[str, Any] | None = None,
     heatmap_dir: Path,
     public_heatmap_base: str,
     pitch_width_m: float,
     pitch_length_m: float,
 ) -> dict[str, Any]:
-    rows = _real_player_heatmap_rows(player, stable_players)
+    rows = (
+        _exact_player_heatmap_rows(timeline_player)
+        if timeline_player is not None
+        else _real_player_heatmap_rows(player, stable_players)
+    )
     player_id = str(player.get("player_id") or player.get("player_name") or "player")
     filename = f"player_{_safe_artifact_id(player_id)}.png"
     width_px = 360
@@ -428,6 +464,13 @@ def _public_players(
     pitch_width_m = float(pitch.get("width_m") or 30.0)
     pitch_length_m = float(pitch.get("length_m") or 47.4)
     stable_players = _load_stable_players(source_match_dir)
+    timeline_players: dict[str, dict[str, Any]] = {}
+    if source_match_dir is not None and (source_match_dir / "global_identity.json").exists():
+        try:
+            timeline = build_resolved_player_timeline_from_files(source_match_dir)
+            timeline_players = timeline.get("players") if isinstance(timeline.get("players"), dict) else {}
+        except (FileNotFoundError, ValueError, json.JSONDecodeError):
+            timeline_players = {}
     rows = []
     for player in resolved.get("players") or []:
         if not isinstance(player, dict):
@@ -435,6 +478,7 @@ def _public_players(
         heatmap = _write_public_player_heatmap(
             player,
             stable_players,
+            timeline_player=timeline_players.get(str(player.get("player_id") or "")),
             heatmap_dir=heatmap_dir,
             public_heatmap_base=public_heatmap_base,
             pitch_width_m=pitch_width_m,
@@ -455,11 +499,19 @@ def _public_players(
                 "team_label": player.get("team_label"),
                 "playing_time_sec": _round(time.get("playing_time_sec")),
                 "detected_time_sec": _round(time.get("detected_time_sec")),
+                "certain_playing_time_sec": _round(time.get("detected_time_sec")),
+                "possible_playing_time_sec": _round(time.get("inferred_playing_time_sec")),
+                "ambiguous_playing_time_sec": _round(time.get("ambiguous_time_sec")),
+                "continuity_gap_time_sec": _round(time.get("missing_time_sec")),
+                "playing_time_method": player.get("playing_time_method"),
                 "total_distance_m": _round(distance.get("total_distance_m")),
                 "avg_speed_kmh": _round(speed.get("avg_speed_kmh")),
                 "peak_speed_kmh": _round(speed.get("peak_sustained_speed_kmh") or speed.get("top_speed_kmh")),
                 "high_intensity_distance_m": _round(intensity.get("high_intensity_distance_m")),
                 "sprint_count": int(intensity.get("sprint_count") or 0),
+                "calculation_method": player.get("calculation_method") or resolved.get("calculation_method"),
+                "coverage_ratio": _round(player.get("coverage_ratio"), 4),
+                "quality_flags": player.get("quality_flags") or [],
                 "heatmap": heatmap,
             }
         )

@@ -5,6 +5,7 @@ import {
   getIdentityReviewGallery,
   getPlayerIdentityReview,
   savePlayerIdentityAssignments,
+  splitIdentityReviewGallery,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type {
@@ -17,6 +18,11 @@ import type {
   PlayerIdentityReviewState,
   Team,
 } from '../types';
+import {
+  selectedCropFrames,
+  splitFramesForSelection,
+  type CropFrameRange,
+} from '../utils/identityReview';
 
 interface IdentityReviewGalleryPanelProps {
   match: Match;
@@ -54,6 +60,7 @@ const identityStatuses: Array<{ value: PlayerIdentityAssignmentStatus; label: st
   { value: 'ignore', label: 'Ignoruj' },
   { value: 'referee', label: 'Sedzia / techniczny' },
   { value: 'false_positive', label: 'Falszywa detekcja' },
+  { value: 'wrong_target', label: 'Bledny bbox / inna osoba' },
 ];
 
 function teamLabelForIndex(index: number): 'A' | 'B' | 'U' {
@@ -162,6 +169,7 @@ export function IdentityReviewGalleryPanel({
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchIndex, setBatchIndex] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, AssignmentDraft>>({});
+  const [cropRange, setCropRange] = useState<CropFrameRange | null>(null);
 
   const targets = useMemo<ReviewTarget[]>(() => {
     if (!gallery) return [];
@@ -212,6 +220,69 @@ export function IdentityReviewGalleryPanel({
     const draft = drafts[target.key] || draftFromAssignment(targetAssignment(identityReview, target));
     return draft.status !== 'unassigned' || Boolean(draft.player_id);
   }).length;
+  const selectedFrames = useMemo(
+    () => selectedCropFrames(selectedTarget?.stint.crops || [], cropRange),
+    [cropRange, selectedTarget],
+  );
+  const batchSelectedFrames = useMemo(
+    () => selectedCropFrames(currentBatchTarget?.stint.crops || [], cropRange),
+    [cropRange, currentBatchTarget],
+  );
+
+  function selectCrop(frame: number) {
+    setCropRange((current) => {
+      if (!current || current.anchorFrame !== current.focusFrame) {
+        return { anchorFrame: frame, focusFrame: frame };
+      }
+      if (current.anchorFrame === frame) return null;
+      return { ...current, focusFrame: frame };
+    });
+  }
+
+  async function splitCropRange(target: ReviewTarget) {
+    const targetSelectedFrames = selectedCropFrames(target.stint.crops, cropRange);
+    const frames = splitFramesForSelection(target.stint, target.stint.crops, cropRange);
+    if (frames.length === 0) {
+      onStatus('Zaznacz crop albo zakres, ktory nie obejmuje calego stintu.');
+      return;
+    }
+    setGenerating(true);
+    try {
+      const parentStintId = target.stint.parent_stint_id || target.stint.stint_id;
+      const updatedGallery = await splitIdentityReviewGallery(
+        match.id,
+        frames.map((frame) => ({
+          stable_subject_id: target.player.stable_subject_id,
+          parent_stint_id: parentStintId,
+          frame,
+          reason: 'manual_crop_range',
+        })),
+        samplesPerStint,
+      );
+      const updatedIdentity = await getPlayerIdentityReview(match.id).catch(() => null);
+      setGallery(updatedGallery);
+      setIdentityReview(updatedIdentity);
+      const midpoint = targetSelectedFrames[Math.floor(targetSelectedFrames.length / 2)] || frames[0];
+      const updatedPlayer = updatedGallery.players.find(
+        (player) => player.stable_subject_id === target.player.stable_subject_id,
+      );
+      const updatedStint = updatedPlayer?.stints.find(
+        (stint) =>
+          typeof stint.start_frame === 'number' &&
+          typeof stint.end_frame === 'number' &&
+          stint.start_frame <= midpoint &&
+          stint.end_frame >= midpoint,
+      );
+      if (updatedPlayer && updatedStint) setSelectedKey(targetKey(updatedPlayer, updatedStint));
+      setCropRange(null);
+      setBatchOpen(false);
+      onStatus(`Wydzielono zakres w ${parentStintId}. Galeria zostala przebudowana.`);
+    } catch (error) {
+      onStatus(`Nie udalo sie przeciac stintu: ${errorMessage(error)}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -252,6 +323,7 @@ export function IdentityReviewGalleryPanel({
         player.stints.map((stint) => targetKey(player, stint)),
       )[0];
       setSelectedKey(firstTarget || '');
+      setCropRange(null);
       onStatus(
         `Gotowe: ${galleryData.summary.crops} cropow dla ${galleryData.summary.stints_with_crops}/${galleryData.summary.stints} stintow.`,
       );
@@ -420,6 +492,7 @@ export function IdentityReviewGalleryPanel({
               onChange={(event) => {
                 setTeamFilter(event.target.value as TeamFilter);
                 setSelectedKey('');
+                setCropRange(null);
                 setBatchIndex(0);
               }}
             >
@@ -467,6 +540,9 @@ export function IdentityReviewGalleryPanel({
             <span>Stints: {gallery.summary.stints}</span>
             <span>With crops: {gallery.summary.stints_with_crops}</span>
             <span>Crops: {gallery.summary.crops}</span>
+            <span>Auto split: {gallery.summary.automatic_splits || 0}</span>
+            <span>Manual split: {gallery.summary.manual_splits || 0}</span>
+            <span>Mixed: {gallery.summary.mixed_segments || 0}</span>
             <span>Widoczne: {visibleTargets.length}</span>
             <span>Generated: {new Date(gallery.generated_at).toLocaleString()}</span>
           </div>
@@ -484,7 +560,10 @@ export function IdentityReviewGalleryPanel({
                         : 'match-item stable-player-item'
                     }
                     key={target.key}
-                    onClick={() => setSelectedKey(target.key)}
+                    onClick={() => {
+                      setSelectedKey(target.key);
+                      setCropRange(null);
+                    }}
                   >
                     <strong>
                       {target.player.stable_player_id} / {target.stint.stint_id}
@@ -517,6 +596,13 @@ export function IdentityReviewGalleryPanel({
                       {selectedTarget.stint.crops.length} crops
                     </span>
                   </div>
+
+                  {selectedTarget.stint.appearance_purity !== 'consistent' && (
+                    <p className='identity-review-warning'>
+                      Wyglad celu zmienia sie w tym segmencie ({selectedTarget.stint.appearance_purity}).
+                      Sprawdz zaznaczony bbox i w razie potrzeby wydziel zakres cropow.
+                    </p>
+                  )}
 
                   <div className='grid two compact'>
                     <label>
@@ -568,12 +654,29 @@ export function IdentityReviewGalleryPanel({
                     <span>Slot default: {inheritedAssignment?.player_name || inheritedAssignment?.status || 'none'}</span>
                     <span>Raw IDs: {selectedTarget.stint.raw_track_ids.join(', ') || 'n/a'}</span>
                     <span>Tracklets: {selectedTarget.stint.tracklet_ids.join(', ') || 'n/a'}</span>
+                    <span>Parent: {selectedTarget.stint.parent_stint_id || selectedTarget.stint.stint_id}</span>
+                  </div>
+
+                  <div className='row between identity-crop-actions'>
+                    <span className='muted'>Kliknij pierwszy i ostatni crop osoby, ktora chcesz wydzielic.</span>
+                    <button
+                      type='button'
+                      className='secondary'
+                      disabled={generating || selectedFrames.length === 0}
+                      onClick={() => void splitCropRange(selectedTarget)}
+                    >
+                      Wydziel zakres ({selectedFrames.length})
+                    </button>
                   </div>
 
                   {selectedTarget.stint.crops.length > 0 ? (
                     <div className='identity-crop-grid'>
                       {selectedTarget.stint.crops.map((crop) => (
-                        <figure className='identity-crop' key={crop.artifact}>
+                        <figure
+                          className={selectedFrames.includes(crop.frame) ? 'identity-crop selected' : 'identity-crop'}
+                          key={crop.artifact}
+                          onClick={() => selectCrop(crop.frame)}
+                        >
                           <img
                             src={artifactUrl(match.id, crop.artifact)}
                             alt={`${selectedTarget.stint.stint_id} frame ${crop.frame}`}
@@ -639,7 +742,10 @@ export function IdentityReviewGalleryPanel({
                       type='button'
                       key={target.key}
                       className={index === batchIndex ? 'match-item active stable-player-item' : 'match-item stable-player-item'}
-                      onClick={() => setBatchIndex(index)}
+                      onClick={() => {
+                        setBatchIndex(index);
+                        setCropRange(null);
+                      }}
                     >
                       <strong>
                         {index + 1}. {target.player.stable_player_id} / {target.stint.stint_id}
@@ -722,10 +828,26 @@ export function IdentityReviewGalleryPanel({
                   <span>Amb: {currentBatchTarget.stint.ambiguous_frames ?? 'n/a'}</span>
                 </div>
 
+                <div className='row between identity-crop-actions'>
+                  <span className='muted'>Zaznacz crop lub zakres, jesli stint zawiera inna osobe.</span>
+                  <button
+                    type='button'
+                    className='secondary'
+                    disabled={generating || batchSelectedFrames.length === 0}
+                    onClick={() => void splitCropRange(currentBatchTarget)}
+                  >
+                    Wydziel zakres ({batchSelectedFrames.length})
+                  </button>
+                </div>
+
                 {currentBatchTarget.stint.crops.length > 0 ? (
                   <div className='identity-crop-grid identity-modal-crop-grid'>
                     {currentBatchTarget.stint.crops.map((crop) => (
-                      <figure className='identity-crop' key={crop.artifact}>
+                      <figure
+                        className={batchSelectedFrames.includes(crop.frame) ? 'identity-crop selected' : 'identity-crop'}
+                        key={crop.artifact}
+                        onClick={() => selectCrop(crop.frame)}
+                      >
                         <img
                           src={artifactUrl(match.id, crop.artifact)}
                           alt={`${currentBatchTarget.stint.stint_id} frame ${crop.frame}`}

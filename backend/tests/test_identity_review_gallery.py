@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.services.identity_review_gallery import build_identity_review_gallery
+from app.services.identity_review_gallery import _migrate_crop_assignments, build_identity_review_gallery
+from app.services.identity_review_segments import review_segments_for_player, save_identity_review_splits
 
 
 class IdentityReviewGalleryTests(unittest.TestCase):
@@ -65,11 +66,171 @@ class IdentityReviewGalleryTests(unittest.TestCase):
 
             self.assertEqual(gallery["summary"]["stable_players"], 1)
             self.assertEqual(gallery["summary"]["stints"], 1)
-            self.assertEqual(gallery["summary"]["crops"], 2)
+            self.assertEqual(gallery["summary"]["crops"], 1)
             crops = gallery["players"][0]["stints"][0]["crops"]
-            self.assertEqual([crop["frame"] for crop in crops], [0, 20])
+            self.assertEqual(len(crops), 1)
+            self.assertEqual(crops[0]["coverage_intervals"][0]["start_frame"], 0)
+            self.assertEqual(crops[0]["coverage_intervals"][0]["end_frame"], 20)
             self.assertTrue((path / crops[0]["artifact"]).exists())
             self.assertTrue((path / "identity_review_gallery.json").exists())
+            self.assertNotIn("_appearance_signature", crops[0])
+            self.assertEqual(len(crops[0]["appearance_signature"]), 32)
+            self.assertEqual(len(crops[0]["similarity_descriptor"]), 96)
+
+    def test_splits_stint_at_confirmed_switch_and_manual_crop_boundary(self) -> None:
+        player = {
+            "stable_subject_id": "slot-a01",
+            "stable_player_id": "A01",
+            "stints": [
+                {
+                    "stint_id": "A01-S01",
+                    "start_frame": 0,
+                    "end_frame": 99,
+                    "start_time_sec": 0.0,
+                    "end_time_sec": 3.3,
+                }
+            ],
+            "identity_events": [
+                {"type": "confirmed_switch_with_competitor_accepted", "frame": 40}
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            split_doc = save_identity_review_splits(
+                path,
+                [
+                    {
+                        "stable_subject_id": "slot-a01",
+                        "parent_stint_id": "A01-S01",
+                        "frame": 70,
+                    }
+                ],
+            )
+
+            segments = review_segments_for_player(player, split_doc)
+
+            self.assertEqual([segment["stint_id"] for segment in segments], ["A01-S01-R01", "A01-S01-R02", "A01-S01-R03"])
+            self.assertEqual([(segment["start_frame"], segment["end_frame"]) for segment in segments], [(0, 39), (40, 69), (70, 99)])
+            self.assertEqual(segments[1]["split_reasons"], ["confirmed_identity_switch"])
+            self.assertEqual(segments[2]["split_reasons"], ["manual_crop_range"])
+
+    def test_splits_stint_into_atomic_tracklet_fragments(self) -> None:
+        player = {
+            "stable_subject_id": "slot-a01",
+            "stable_player_id": "A01",
+            "stints": [
+                {
+                    "stint_id": "A01-S01",
+                    "start_frame": 0,
+                    "end_frame": 89,
+                    "start_time_sec": 0.0,
+                    "end_time_sec": 2.967,
+                }
+            ],
+            "overlay_positions": [
+                *[
+                    {
+                        "frame": frame,
+                        "source": "detected",
+                        "tracklet_id": "1:1",
+                        "raw_track_id": 1,
+                    }
+                    for frame in range(0, 30)
+                ],
+                *[
+                    {
+                        "frame": frame,
+                        "source": "detected",
+                        "tracklet_id": "2:1",
+                        "raw_track_id": 2,
+                    }
+                    for frame in range(30, 60)
+                ],
+                *[
+                    {
+                        "frame": frame,
+                        "source": "detected",
+                        "tracklet_id": "3:1",
+                        "raw_track_id": 3,
+                    }
+                    for frame in range(60, 90)
+                ],
+            ],
+        }
+
+        segments = review_segments_for_player(player)
+
+        self.assertEqual(
+            [(segment["start_frame"], segment["end_frame"]) for segment in segments],
+            [(0, 29), (30, 59), (60, 89)],
+        )
+        self.assertEqual(segments[0]["tracklet_ids"], ["1:1"])
+        self.assertEqual(segments[1]["tracklet_ids"], ["2:1"])
+        self.assertEqual(segments[2]["tracklet_ids"], ["3:1"])
+        self.assertEqual(segments[1]["split_reasons"], ["tracklet_boundary"])
+
+    def test_migrates_assignment_with_track_when_stable_slot_changes(self) -> None:
+        old_crop = {
+            "artifact": "identity_review/crops/slot-A01/old.jpg",
+            "frame": 100,
+            "time_sec": 3.333,
+            "track_id": 42,
+        }
+        previous_gallery = {
+            "players": [
+                {
+                    "stable_subject_id": "slot-A01",
+                    "stable_player_id": "A01",
+                    "stints": [{"stint_id": "A01-S01", "crops": [old_crop]}],
+                }
+            ]
+        }
+        previous_assignments = {
+            "assignments": [
+                {
+                    "artifact": old_crop["artifact"],
+                    "status": "assigned",
+                    "player_id": "player-andrzej",
+                    "player_name": "Andrzej",
+                }
+            ]
+        }
+        gallery = {
+            "players": [
+                {
+                    "stable_subject_id": "slot-A02",
+                    "stable_player_id": "A02",
+                    "team_label": "A",
+                    "stints": [
+                        {
+                            "stint_id": "A02-S03",
+                            "crops": [
+                                {
+                                    "artifact": "identity_review/crops/slot-A02/new.jpg",
+                                    "frame": 140,
+                                    "time_sec": 4.667,
+                                    "track_id": 42,
+                                    "coverage_intervals": [{"start_frame": 90, "end_frame": 160}],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = _migrate_crop_assignments(
+                Path(tmp),
+                previous_gallery=previous_gallery,
+                previous_assignments=previous_assignments,
+                gallery=gallery,
+            )
+            migrated = json.loads((Path(tmp) / "identity_crop_assignments.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(result, {"migrated": 1, "unmatched": 0})
+        self.assertEqual(migrated["assignments"][0]["stable_player_id"], "A02")
+        self.assertEqual(migrated["assignments"][0]["player_name"], "Andrzej")
 
 
 def write_test_video(path: Path) -> None:

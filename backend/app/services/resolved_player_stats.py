@@ -6,6 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.global_identity import calculate_movement_stats
+from app.services.resolved_player_timeline import (
+    build_resolved_player_timeline_from_files,
+    calculate_timeline_presence,
+    trusted_stats_rows,
+)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -120,17 +127,25 @@ def _slot_frame_count(slot_stats: dict[str, Any], stable_player: dict[str, Any] 
 
 
 def _stint_for_assignment(stable_player: dict[str, Any] | None, assignment: dict[str, Any]) -> dict[str, Any] | None:
-    if not isinstance(stable_player, dict) or not assignment.get("stint_id"):
+    if not assignment.get("stint_id"):
         return None
-    stint_id = str(assignment.get("stint_id"))
-    return next(
-        (
-            stint
-            for stint in stable_player.get("stints") or []
-            if isinstance(stint, dict) and str(stint.get("stint_id") or "") == stint_id
-        ),
-        None,
-    )
+    if isinstance(stable_player, dict):
+        stint_id = str(assignment.get("stint_id"))
+        stint = next(
+            (
+                item
+                for item in stable_player.get("stints") or []
+                if isinstance(item, dict) and str(item.get("stint_id") or "") == stint_id
+            ),
+            None,
+        )
+        if stint is not None:
+            return stint
+    if isinstance(assignment.get("start_time_sec"), (int, float)) and isinstance(
+        assignment.get("end_time_sec"), (int, float)
+    ):
+        return assignment
+    return None
 
 
 def _scale_value(value: Any, ratio: float, *, integer: bool = False) -> int | float:
@@ -377,6 +392,7 @@ def _empty_player_row(assignment: dict[str, Any]) -> dict[str, Any]:
             "detected_time_sec": 0.0,
             "missing_time_sec": 0.0,
             "ambiguous_time_sec": 0.0,
+            "inferred_playing_time_sec": 0.0,
         },
         "distance": {
             "observed_distance_m": 0.0,
@@ -453,6 +469,8 @@ def _merge_slot_stats(row: dict[str, Any], assignment: dict[str, Any], slot_stat
             "stint_id": assignment.get("stint_id"),
             "stint_ids": assignment.get("stint_ids") or [],
             "assignment_scope": assignment.get("assignment_scope") or "stable_slot",
+            "start_frame": assignment.get("start_frame"),
+            "end_frame": assignment.get("end_frame"),
             "unique_time_ratio": assignment.get("unique_time_ratio", 1.0),
             "review_warnings": assignment.get("review_warnings") or [],
         }
@@ -583,6 +601,7 @@ def _team_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "detected_time_sec": 0.0,
                 "missing_time_sec": 0.0,
                 "ambiguous_time_sec": 0.0,
+                "inferred_playing_time_sec": 0.0,
                 "total_distance_m": 0.0,
                 "observed_distance_m": 0.0,
                 "estimated_short_gap_distance_m": 0.0,
@@ -610,6 +629,7 @@ def _team_rows(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
         row["detected_time_sec"] += _number(player["time"].get("detected_time_sec"))
         row["missing_time_sec"] += _number(player["time"].get("missing_time_sec"))
         row["ambiguous_time_sec"] += _number(player["time"].get("ambiguous_time_sec"))
+        row["inferred_playing_time_sec"] += _number(player["time"].get("inferred_playing_time_sec"))
         row["total_distance_m"] += _number(player["distance"].get("total_distance_m"))
         row["observed_distance_m"] += _number(player["distance"].get("observed_distance_m"))
         row["estimated_short_gap_distance_m"] += _number(player["distance"].get("estimated_short_gap_distance_m"))
@@ -748,12 +768,330 @@ def build_resolved_player_stats_document(
 def build_resolved_player_stats_from_files(path: Path, *, persist: bool = False) -> dict[str, Any]:
     player_stats = _load_json(path, "player_stats.json")
     identity_assignments = _load_json(path, "player_identity_assignments.json")
-    stable_players = _load_json(path, "stable_players.json") if (path / "stable_players.json").exists() else None
-    doc = build_resolved_player_stats_document(
+    if (path / "identity_review_gallery.json").exists():
+        stable_players = _load_json(path, "identity_review_gallery.json")
+    else:
+        stable_players = _load_json(path, "stable_players.json") if (path / "stable_players.json").exists() else None
+    legacy_doc = build_resolved_player_stats_document(
         player_stats=player_stats,
         identity_assignments=identity_assignments,
         stable_players=stable_players,
     )
+    doc = legacy_doc
+    quality_report = None
+    if (path / "global_identity.json").exists():
+        timeline = build_resolved_player_timeline_from_files(path)
+        match = _load_json(path, "match.json") if (path / "match.json").exists() else {}
+        doc, quality_report = _build_exact_resolved_player_stats_document(
+            timeline=timeline,
+            identity_assignments=identity_assignments,
+            player_stats=player_stats,
+            match=match,
+            legacy_doc=legacy_doc,
+        )
     if persist:
         (path / "resolved_player_stats.json").write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        if quality_report is not None:
+            (path / "resolved_stats_quality_report.json").write_text(
+                json.dumps(quality_report, indent=2),
+                encoding="utf-8",
+            )
     return doc
+
+
+def _movement_slot_stats(fragment: dict[str, Any], fps: float) -> tuple[dict[str, Any], dict[str, Any]]:
+    rows = trusted_stats_rows(fragment.get("rows") or [])
+    movement = calculate_movement_stats(rows, fps)
+    tracklet_ids = sorted(
+        {
+            str(row.get("tracklet_id"))
+            for row in rows
+            if row.get("tracklet_id") is not None
+        }
+    )
+    raw_track_ids = sorted(
+        {
+            int(row.get("raw_track_id"))
+            for row in rows
+            if isinstance(row.get("raw_track_id"), int)
+        }
+    )
+    slot_stats = {
+        "tracklet_ids": tracklet_ids,
+        "raw_track_ids": raw_track_ids,
+        "time": {
+            "playing_time_sec": movement.get("playing_time_sec", 0.0),
+            "detected_time_sec": movement.get("detected_time_sec", 0.0),
+            "missing_time_sec": movement.get("missing_time_sec", 0.0),
+            "ambiguous_time_sec": movement.get("ambiguous_time_sec", 0.0),
+        },
+        "distance": {
+            "observed_distance_m": movement.get("observed_distance_m", 0.0),
+            "estimated_short_gap_distance_m": movement.get("estimated_gap_distance_m", 0.0),
+            "total_distance_m": movement.get("total_distance_m", 0.0),
+            "estimated_distance_ratio": movement.get("estimated_distance_ratio", 0.0),
+            "quality": movement.get("distance_quality", "unknown"),
+        },
+        "speed": {
+            "avg_speed_mps": movement.get("avg_speed_mps", 0.0),
+            "avg_speed_kmh": movement.get("avg_speed_kmh", 0.0),
+            "observed_avg_speed_mps": movement.get("observed_avg_speed_mps", 0.0),
+            "peak_sustained_speed_mps": movement.get("peak_sustained_speed_mps", 0.0),
+            "peak_sustained_speed_kmh": movement.get("peak_sustained_speed_kmh", 0.0),
+            "top_speed_mps": movement.get("top_speed_mps", 0.0),
+            "top_speed_kmh": movement.get("top_speed_kmh", 0.0),
+            "raw_segment_top_speed_mps": movement.get("raw_segment_top_speed_mps", 0.0),
+            "raw_segment_top_speed_kmh": movement.get("raw_segment_top_speed_kmh", 0.0),
+            "quality": movement.get("speed_quality", "unknown"),
+        },
+        "intensity": movement.get("intensity") if isinstance(movement.get("intensity"), dict) else {},
+        "frames": {
+            "active_frames": movement.get("active_frames", 0),
+            "detected_frames": movement.get("detected_frames", 0),
+            "missing_frames": movement.get("missing_frames", 0),
+            "ambiguous_frames": movement.get("ambiguous_frames", 0),
+            "predicted_frames": movement.get("predicted_frames", 0),
+            "samples_used": movement.get("samples_used", 0),
+        },
+        "segments": {
+            "observed_segments": movement.get("observed_segments", 0),
+            "estimated_gap_segments": movement.get("estimated_gap_segments", 0),
+            "skipped_outlier_segments": movement.get("skipped_outlier_segments", 0),
+            "skipped_speed_outlier_segments": movement.get("skipped_speed_outlier_segments", 0),
+            "skipped_long_gap_segments": movement.get("skipped_long_gap_segments", 0),
+            "sustained_speed_windows": movement.get("sustained_speed_windows", 0),
+        },
+        "stats_note": movement.get("stats_note"),
+    }
+    return slot_stats, movement
+
+
+def _video_duration(match: dict[str, Any], timeline: dict[str, Any]) -> float:
+    video = match.get("video") if isinstance(match.get("video"), dict) else {}
+    duration = _number(video.get("duration_sec"))
+    if duration > 0:
+        return duration
+    fps = max(_number(timeline.get("fps")), 0.001)
+    frames = [
+        int(row.get("frame") or 0)
+        for player in (timeline.get("players") or {}).values()
+        for row in player.get("rows") or []
+    ]
+    return (max(frames) + 1) / fps if frames else 0.0
+
+
+def _detected_position_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    points = [
+        row.get("pitch_m")
+        for row in rows
+        if row.get("source") == "detected"
+        and row.get("play_area_status", "inside_play") == "inside_play"
+        and isinstance(row.get("pitch_m"), (list, tuple))
+        and len(row.get("pitch_m")) >= 2
+    ]
+    if not points:
+        return {"samples": 0}
+    xs = sorted(float(point[0]) for point in points)
+    ys = sorted(float(point[1]) for point in points)
+
+    def percentile(values: list[float], ratio: float) -> float:
+        return values[min(len(values) - 1, int(round((len(values) - 1) * ratio)))]
+
+    return {
+        "samples": len(points),
+        "median_x_m": round(percentile(xs, 0.5), 3),
+        "median_y_m": round(percentile(ys, 0.5), 3),
+        "y_p10_m": round(percentile(ys, 0.1), 3),
+        "y_p90_m": round(percentile(ys, 0.9), 3),
+    }
+
+
+def _legacy_comparison(exact_players: list[dict[str, Any]], legacy_doc: dict[str, Any]) -> list[dict[str, Any]]:
+    legacy_by_player = {
+        str(player.get("player_id")): player
+        for player in legacy_doc.get("players") or []
+        if isinstance(player, dict) and player.get("player_id")
+    }
+    rows = []
+    for player in exact_players:
+        player_id = str(player.get("player_id") or "")
+        legacy = legacy_by_player.get(player_id)
+        if not legacy:
+            continue
+        exact_time = _number(_record(player.get("time")).get("playing_time_sec"))
+        legacy_time = _number(_record(legacy.get("time")).get("playing_time_sec"))
+        exact_distance = _number(_record(player.get("distance")).get("total_distance_m"))
+        legacy_distance = _number(_record(legacy.get("distance")).get("total_distance_m"))
+        rows.append(
+            {
+                "player_id": player_id,
+                "player_name": player.get("player_name"),
+                "playing_time_delta_sec": round(exact_time - legacy_time, 3),
+                "distance_delta_m": round(exact_distance - legacy_distance, 2),
+            }
+        )
+    return rows
+
+
+def _build_exact_resolved_player_stats_document(
+    *,
+    timeline: dict[str, Any],
+    identity_assignments: dict[str, Any],
+    player_stats: dict[str, Any],
+    match: dict[str, Any],
+    legacy_doc: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    fps = max(_number(timeline.get("fps")), 0.001)
+    duration = _video_duration(match, timeline)
+    rows_by_player: dict[str, dict[str, Any]] = {}
+    distance_qualities: dict[str, list[str]] = {}
+    speed_qualities: dict[str, list[str]] = {}
+    player_quality: list[dict[str, Any]] = []
+    assigned_fragments = 0
+    presence = calculate_timeline_presence(timeline, duration_sec=duration)
+
+    for player_id, timeline_player in (timeline.get("players") or {}).items():
+        metadata = timeline_player.get("metadata") if isinstance(timeline_player.get("metadata"), dict) else {}
+        row = rows_by_player.setdefault(str(player_id), _empty_player_row(metadata))
+        quality_flags = list(timeline_player.get("quality_flags") or [])
+        for fragment in timeline_player.get("fragments") or []:
+            if fragment.get("excluded_reason"):
+                continue
+            fragment_rows = fragment.get("rows") or []
+            if not fragment_rows:
+                continue
+            assignment = dict(fragment.get("assignment") or metadata)
+            slot_stats, movement = _movement_slot_stats(fragment, fps)
+            _merge_slot_stats(row, assignment, slot_stats)
+            distance_qualities.setdefault(str(player_id), []).append(str(movement.get("distance_quality") or "unknown"))
+            speed_qualities.setdefault(str(player_id), []).append(str(movement.get("speed_quality") or "unknown"))
+            assigned_fragments += 1
+
+        player_presence = (presence.get("players") or {}).get(str(player_id)) or {}
+        presence_frames = _int(player_presence.get("presence_frames"))
+        inferred_presence_frames = _int(player_presence.get("inferred_presence_frames"))
+        ambiguous_presence_frames = _int(player_presence.get("ambiguous_presence_frames"))
+        inferred_non_ambiguous_frames = max(0, inferred_presence_frames - ambiguous_presence_frames)
+        if presence_frames > 0:
+            row["time"]["playing_time_sec"] = presence_frames / fps
+            row["time"]["ambiguous_time_sec"] = ambiguous_presence_frames / fps
+            row["time"]["missing_time_sec"] = inferred_non_ambiguous_frames / fps
+            row["time"]["inferred_playing_time_sec"] = inferred_presence_frames / fps
+            row["frames"]["active_frames"] = presence_frames
+            row["frames"]["ambiguous_frames"] = ambiguous_presence_frames
+            row["frames"]["missing_frames"] = inferred_non_ambiguous_frames
+
+        finalized = _finalize_player_row(
+            row,
+            distance_qualities.get(str(player_id), []),
+            speed_qualities.get(str(player_id), []),
+        )
+        detected_rows = [
+            item
+            for item in timeline_player.get("rows") or []
+            if item.get("source") == "detected" and item.get("play_area_status", "inside_play") == "inside_play"
+        ]
+        excluded_frames = sum(
+            int(item.get("excluded_frames") or 0)
+            for item in (timeline.get("quality") or {}).get("goalkeeper_anomalous_fragments_excluded") or []
+            if str(item.get("player_id")) == str(player_id)
+        )
+        finalized["calculation_method"] = "exact_identity_coverage"
+        finalized["playing_time_method"] = str(presence.get("method") or "exact_detected_only")
+        finalized["unique_detected_frames"] = len({int(item.get("frame") or 0) for item in detected_rows})
+        finalized["trusted_playing_seconds"] = finalized["time"]["playing_time_sec"]
+        finalized["inferred_playing_seconds"] = round(inferred_presence_frames / fps, 3)
+        finalized["presence_frames"] = presence_frames
+        finalized["presence_evidence"] = player_presence.get("evidence_counts") or {}
+        finalized["coverage_ratio"] = round(
+            min(1.0, _number(finalized["time"].get("playing_time_sec")) / duration),
+            4,
+        ) if duration > 0 else 0.0
+        finalized["excluded_frames"] = excluded_frames
+        finalized["quality_flags"] = sorted({*quality_flags, *finalized.get("review_warnings", [])})
+        rows_by_player[str(player_id)] = finalized
+        player_quality.append(
+            {
+                "player_id": player_id,
+                "player_name": finalized.get("player_name"),
+                "assignments": len(timeline_player.get("fragments") or []),
+                "unique_detected_frames": finalized["unique_detected_frames"],
+                "trusted_playing_seconds": finalized["trusted_playing_seconds"],
+                "inferred_playing_seconds": finalized["inferred_playing_seconds"],
+                "presence_frames": finalized["presence_frames"],
+                "presence_evidence": finalized["presence_evidence"],
+                "coverage_ratio": finalized["coverage_ratio"],
+                "excluded_frames": excluded_frames,
+                "position": _detected_position_summary(timeline_player.get("rows") or []),
+                "quality_flags": finalized["quality_flags"],
+            }
+        )
+
+    players = sorted(rows_by_player.values(), key=lambda item: str(item.get("player_name") or item.get("player_id") or ""))
+    teams = _team_rows(players)
+    expected_players = 7
+    for team in teams:
+        theoretical = duration * expected_players
+        team["video_duration_sec"] = round(duration, 3)
+        team["theoretical_player_time_sec"] = round(theoretical, 3)
+        team["coverage_ratio"] = round(min(1.0, _number(team.get("playing_time_sec")) / theoretical), 4) if theoretical > 0 else 0.0
+
+    quality = timeline.get("quality") if isinstance(timeline.get("quality"), dict) else {}
+    summary = {
+        "players": len(players),
+        "assigned_slots": sum(len(player.get("source_stable_slots") or []) for player in players),
+        "assigned_stints": assigned_fragments,
+        "unresolved_slots": int((identity_assignments.get("summary") or {}).get("unassigned_slots") or 0),
+        "skipped_assignments": int(quality.get("assignments_unresolved") or 0),
+        "overlapping_stint_assignments_clipped": int(quality.get("duplicate_frames_removed") or 0),
+        "players_with_warnings": sum(1 for player in players if player.get("quality_flags")),
+        "total_distance_m": round(sum(_number(player["distance"].get("total_distance_m")) for player in players), 2),
+        "observed_distance_m": round(sum(_number(player["distance"].get("observed_distance_m")) for player in players), 2),
+        "estimated_short_gap_distance_m": round(sum(_number(player["distance"].get("estimated_short_gap_distance_m")) for player in players), 2),
+        "playing_time_sec": round(sum(_number(player["time"].get("playing_time_sec")) for player in players), 2),
+        "detected_time_sec": round(sum(_number(player["time"].get("detected_time_sec")) for player in players), 2),
+        "missing_time_sec": round(sum(_number(player["time"].get("missing_time_sec")) for player in players), 2),
+        "ambiguous_time_sec": round(sum(_number(player["time"].get("ambiguous_time_sec")) for player in players), 2),
+        "inferred_playing_time_sec": round(sum(_number(player["time"].get("inferred_playing_time_sec")) for player in players), 2),
+        "unique_detected_frames": sum(_int(player.get("unique_detected_frames")) for player in players),
+        "video_duration_sec": round(duration, 3),
+        "calculation_method": "exact_identity_coverage",
+        "peak_sustained_speed_kmh": round(max([_number(player["speed"].get("peak_sustained_speed_kmh")) for player in players] or [0.0]), 2),
+        "top_speed_kmh": round(max([_number(player["speed"].get("top_speed_kmh")) for player in players] or [0.0]), 2),
+        "high_intensity_time_sec": round(sum(_number(_record(player.get("intensity")).get("high_intensity_time_sec")) for player in players), 2),
+        "high_intensity_distance_m": round(sum(_number(_record(player.get("intensity")).get("high_intensity_distance_m")) for player in players), 2),
+        "sprint_count": sum(_int(_record(player.get("intensity")).get("sprint_count")) for player in players),
+        "sprint_time_sec": round(sum(_number(_record(player.get("intensity")).get("sprint_time_sec")) for player in players), 2),
+        "sprint_distance_m": round(sum(_number(_record(player.get("intensity")).get("sprint_distance_m")) for player in players), 2),
+        "sprint_candidate_count": sum(_int(_record(player.get("intensity")).get("sprint_candidate_count")) for player in players),
+        "rejected_sprint_candidate_count": sum(_int(_record(player.get("intensity")).get("rejected_sprint_candidate_count")) for player in players),
+    }
+    doc = {
+        "schema_version": "0.2.0",
+        "generated_at": now_iso(),
+        "source": "player_identity_assignments",
+        "stats_source": "global_identity_exact_frames",
+        "calculation_method": "exact_identity_coverage",
+        "identity_assignments_updated_at": identity_assignments.get("updated_at"),
+        "is_stale": False,
+        "identity_semantics": identity_assignments.get("identity_semantics") or player_stats.get("identity_semantics") or "stint_first",
+        "scope": "resolved_player_tracking_only_no_ball",
+        "units": player_stats.get("units") or {"distance": "meters", "speed": "mps_and_kmh", "time": "seconds"},
+        "summary": summary,
+        "teams": teams,
+        "players": players,
+        "skipped_assignments": quality.get("unresolved_assignments") or [],
+        "quality_report": "resolved_stats_quality_report.json",
+    }
+    quality_report = {
+        "schema_version": "0.1.0",
+        "generated_at": now_iso(),
+        "calculation_method": "exact_identity_coverage",
+        "video_duration_sec": round(duration, 3),
+        "timeline": quality,
+        "presence": presence.get("quality") or {},
+        "players": player_quality,
+        "teams": teams,
+        "legacy_estimate_comparison": _legacy_comparison(players, legacy_doc),
+    }
+    return doc, quality_report

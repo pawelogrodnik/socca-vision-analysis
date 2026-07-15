@@ -20,6 +20,7 @@ import type {
 } from '../types';
 import { errorMessage } from '../lib/helpers';
 import { IdentityReviewGalleryPanel } from './IdentityReviewGalleryPanel';
+import { IdentityCropReviewPanel } from './IdentityCropReviewPanel';
 
 interface StablePlayersPanelProps {
   match: Match;
@@ -282,6 +283,8 @@ export function StablePlayersPanel({
   const identityConflicts = numberFrom(identitySummary, 'conflicts_total') ?? 0;
   const resolvedPlayerCount = numberFrom(resolvedStats?.summary, 'players') ?? 0;
   const resolvedDistance = numberFrom(resolvedStats?.summary, 'total_distance_m') ?? 0;
+  const resolvedCoverage = numberFrom(resolvedStats?.summary, 'playing_time_sec') ?? 0;
+  const unresolvedExactAssignments = numberFrom(resolvedStats?.summary, 'skipped_assignments') ?? 0;
 
   async function saveUpdate(player: StablePlayer, patch: Record<string, unknown>) {
     const updated = await reviewStablePlayers(match.id, {
@@ -453,7 +456,15 @@ export function StablePlayersPanel({
             <span>Identity warnings: {identityConflicts}</span>
             <span>Resolved players: {resolvedPlayerCount}</span>
             <span>Resolved dist: {resolvedDistance} m</span>
+            <span>Stats: {resolvedStats?.calculation_method || 'legacy estimate'}</span>
+            <span>Trusted player time: {resolvedCoverage.toFixed(1)} s</span>
+            <span>Unresolved assignments: {unresolvedExactAssignments}</span>
           </div>
+          {unresolvedExactAssignments > 0 && (
+            <p className='warning-text'>
+              Czesc przypisan nie ma dokladnego zakresu klatek i zostala pominieta w statystykach.
+            </p>
+          )}
         </>
       )}
 
@@ -481,11 +492,20 @@ export function StablePlayersPanel({
         </div>
       )}
 
-      <IdentityReviewGalleryPanel
+      <IdentityCropReviewPanel
         match={match}
         onStatus={onStatus}
         onSaved={onSaved}
       />
+
+      <details className='identity-advanced-review'>
+        <summary>Zaawansowane dzielenie stintow</summary>
+        <IdentityReviewGalleryPanel
+          match={match}
+          onStatus={onStatus}
+          onSaved={onSaved}
+        />
+      </details>
 
       {teamClusters && (
         <div className='chips'>

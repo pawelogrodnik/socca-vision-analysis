@@ -10,7 +10,15 @@ export function MatchList({ matches, selectedId, onSelect }: MatchListProps) {
   if (!matches.length) return <p className='muted'>Brak meczów.</p>;
   return (
     <div className='match-list'>
-      {matches.map((match) => (
+      {matches.sort((a, b) => {
+        if (!a.match_date) return 1;
+        if (!b.match_date) return -1;
+
+        return (
+          new Date(b.match_date).getTime() -
+          new Date(a.match_date).getTime()
+        );
+      }).map((match) => (
         <button
           type='button'
           className={

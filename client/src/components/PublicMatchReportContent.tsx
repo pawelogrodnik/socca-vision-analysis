@@ -94,6 +94,10 @@ function formatSeconds(value: number | undefined): string {
   return `${minutes}m ${seconds}s`;
 }
 
+function formatAdditionalSeconds(value: number | undefined): string {
+  return `+${formatSeconds(value)}`;
+}
+
 function formatPercent(value: number | null | undefined): string {
   return value == null ? '--' : `${value.toFixed(1)}%`;
 }
@@ -414,7 +418,9 @@ export function PublicMatchReportContent({
               <tr>
                 <th>Zawodnik</th>
                 <th>Druzyna</th>
-                <th>Czas</th>
+                <th title='Unikalne, przypisane detekcje zawodnika'>Czas pewny</th>
+                <th title='Klatki niepewne i bezpiecznie domkniete luki ciaglosci'>Mozliwy +</th>
+                <th title='Czas pewny powiekszony o mozliwy dodatkowy czas'>Szacowany</th>
                 <th>Dystans</th>
                 <th>HI dist</th>
                 <th>Sprinty</th>
@@ -430,6 +436,14 @@ export function PublicMatchReportContent({
                     <span>{player.player_role || 'player'}</span>
                   </td>
                   <td>{player.team_name || player.team_label || 'Team'}</td>
+                  <td>{formatSeconds(player.certain_playing_time_sec ?? player.detected_time_sec)}</td>
+                  <td>
+                    <strong>{formatAdditionalSeconds(player.possible_playing_time_sec)}</strong>
+                    <span>
+                      ?: {formatSeconds(player.ambiguous_playing_time_sec)} | luki:{' '}
+                      {formatSeconds(player.continuity_gap_time_sec)}
+                    </span>
+                  </td>
                   <td>{formatSeconds(player.playing_time_sec)}</td>
                   <td>{formatMeters(player.total_distance_m)}</td>
                   <td>{formatMeters(player.high_intensity_distance_m)}</td>

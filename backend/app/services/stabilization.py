@@ -4298,6 +4298,12 @@ def stabilize_match(
             "Resolving global player identities.",
             {"current": len(tracklets), "unit": "tracklets"},
         )
+    match_phase_config_path = match_dir / "match_phase_config.json"
+    match_phase_config = (
+        json.loads(match_phase_config_path.read_text(encoding="utf-8"))
+        if match_phase_config_path.exists()
+        else None
+    )
     global_identity = resolve_conservative_identity(
         tracklets,
         raw_tracks_count=len(tracks),
@@ -4306,6 +4312,7 @@ def stabilize_match(
         pitch_length_m=float(pitch.length_m),
         fps=float(video_metadata.get("fps") or 25.0),
         pitch_polygon=pitch.polygon_np,
+        match_phase_config=match_phase_config,
         progress=progress,
     )
     if progress:
