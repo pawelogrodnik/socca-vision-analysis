@@ -23,7 +23,7 @@ PROGRESS_STEPS: list[tuple[str, str, float, float]] = [
     ("chunk_ball_merge", "Merge ball observations", 86.0, 88.0),
     ("ball_tracking", "Build ball tracks", 88.0, 90.0),
     ("stabilization", "Player identity and stats", 90.0, 94.0),
-    ("possession_pass_candidates", "Possession and pass candidates", 94.0, 96.0),
+    ("possession_pass_candidates", "Possession, passes and attacking momentum", 94.0, 96.0),
     ("stable_overlay_render", "Render final stable overlay", 96.0, 99.0),
     ("final_reports", "Final reports", 99.0, 100.0),
     ("completed", "Completed", 100.0, 100.0),

@@ -51,6 +51,7 @@ BALL_ARTIFACT_FILENAMES = {
     "pass_candidates": "pass_candidates.json",
     "pass_review_report": "pass_review_report.json",
     "restart_candidates": "restart_candidates.json",
+    "attacking_momentum": "attacking_momentum.json",
     "possession_report": "possession_report.json",
     "possession_overlay_preview": "possession_overlay_preview.mp4",
 }
@@ -1280,6 +1281,7 @@ def analyze_match_yolo(
             "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
             "ball_quality_summary": (ball_tracking or {}).get("ball_quality_report", {}).get("summary"),
             "possession_summary": (possession or {}).get("possession_report", {}).get("summary"),
+            "attacking_momentum_summary": (possession or {}).get("attacking_momentum", {}).get("summary"),
             "warnings": warnings,
             "artifacts": artifacts,
         }
@@ -1372,6 +1374,7 @@ def analyze_match_ball_yolo(
             "ball_quality_summary": ball_tracking["ball_quality_report"]["summary"],
             "ball_quality_recommendation": ball_tracking["ball_quality_report"]["recommendation"],
             "possession_summary": possession["possession_report"]["summary"],
+            "attacking_momentum_summary": possession.get("attacking_momentum", {}).get("summary"),
             "warnings": [
                 *(ball_tracking["ball_tracking_report"].get("warnings") or []),
                 *(possession["possession_report"].get("warnings") or []),

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import type { AnalysisReport, MatchPackage } from '../types';
+import type { AnalysisReport, AttackingMomentumDocument, MatchPackage } from '../types';
+import { AttackingMomentumChart } from './AttackingMomentumChart';
 
 type GenericRow = Record<string, unknown>;
 
@@ -25,6 +26,7 @@ export type MatchReportSource = {
   possessionReport?: GenericRow;
   passCandidates?: GenericRow;
   passReviewReport?: GenericRow;
+  attackingMomentum?: AttackingMomentumDocument;
   artifactMatchId?: string;
   stableOverlay?: string;
 };
@@ -58,6 +60,7 @@ export function sourceFromLocalMatch(match: MatchPackage['match']): MatchReportS
     possessionReport: match.possession_report as GenericRow | undefined,
     passCandidates: match.pass_candidates as GenericRow | undefined,
     passReviewReport: match.pass_review_report as GenericRow | undefined,
+    attackingMomentum: match.attacking_momentum,
     artifactMatchId: match.id,
     stableOverlay: match.analysis_report?.artifacts?.stable_overlay_preview,
   };
@@ -88,6 +91,7 @@ export function sourceFromPublishedPackage(packageData: MatchPackage): MatchRepo
     possessionReport: packageData.possession_report as GenericRow | undefined,
     passCandidates: packageData.pass_candidates as GenericRow | undefined,
     passReviewReport: packageData.pass_review_report as GenericRow | undefined,
+    attackingMomentum: packageData.attacking_momentum || undefined,
     artifactMatchId: match.id,
     stableOverlay: analysisReport?.artifacts?.stable_overlay_preview,
   };
@@ -545,6 +549,12 @@ export function MatchReportContent({
   const ballSummary = possessionSummary(source);
   const passesSummary = passSummary(source);
   const hasBallStats = source.possessionReport || source.passCandidates;
+  const momentumSummary = source.attackingMomentum?.summary;
+  const momentumQuality = momentumSummary && typeof momentumSummary.quality === 'string'
+    ? momentumSummary.quality
+    : undefined;
+  const teamA = teams.find((team) => recordText(team, 'team_label', '') === 'A');
+  const teamB = teams.find((team) => recordText(team, 'team_label', '') === 'B');
 
   return (
     <>
@@ -611,6 +621,20 @@ export function MatchReportContent({
             <span>Restart passes: {recordNumber(passesSummary, 'restart_pass_attempts')}</span>
             <span>Progressive: {recordNumber(passesSummary, 'progressive_pass_candidates')}</span>
           </div>
+        </section>
+      )}
+
+      {source.attackingMomentum && source.attackingMomentum.points.length > 0 && (
+        <section className='card momentum-report-card'>
+          <AttackingMomentumChart
+            points={source.attackingMomentum.points}
+            teamAName={recordText(teamA, 'team_name', 'Team A')}
+            teamBName={recordText(teamB, 'team_name', 'Team B')}
+            teamAColor={recordText(teamA, 'display_color', '#f8fafc')}
+            teamBColor={recordText(teamB, 'display_color', '#38bdf8')}
+            quality={momentumQuality}
+            warnings={source.attackingMomentum.warnings}
+          />
         </section>
       )}
 

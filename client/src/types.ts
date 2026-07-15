@@ -711,6 +711,47 @@ export type PossessionTimelinePoint = {
   unknown_coverage?: number;
 };
 
+export type AttackingMomentumPoint = {
+  index: number;
+  time_sec: number;
+  start_time_sec: number;
+  end_time_sec: number;
+  all_samples?: number;
+  team_a_controlled_samples?: number;
+  team_b_controlled_samples?: number;
+  team_a_positional_raw?: number;
+  team_b_positional_raw?: number;
+  team_a_event_bonus?: number;
+  team_b_event_bonus?: number;
+  team_a_raw?: number;
+  team_b_raw?: number;
+  signed_raw?: number;
+  smoothed_signed_raw?: number;
+  signed_score: number;
+  team_a_value: number;
+  team_b_value: number;
+  dominant_team_label?: 'A' | 'B' | null;
+  confidence?: number;
+  controlled_coverage?: number;
+  direction_coverage?: number;
+  intensity?: number;
+  evidence?: Record<string, number>;
+};
+
+export type AttackingMomentumDocument = {
+  schema_version?: string;
+  generated_at?: string;
+  source?: string;
+  status?: string;
+  experimental?: boolean;
+  semantics?: string;
+  parameters?: Record<string, unknown>;
+  summary?: Record<string, unknown>;
+  points: AttackingMomentumPoint[];
+  warnings?: string[];
+  notes?: string[];
+};
+
 export type ContactCandidateReviewStatus = 'needs_review' | 'accepted' | 'rejected' | 'uncertain';
 
 export type ContactCandidate = {
@@ -1192,6 +1233,7 @@ export type Match = MatchMetadataPayload & {
   event_review_report?: EventReviewReport;
   pass_candidates?: PassCandidatesDocument;
   pass_review_report?: PassReviewReport;
+  attacking_momentum?: AttackingMomentumDocument;
   possession_report?: PossessionReport;
   match_package?: MatchPackage;
   player_assignments?: PlayerAssignmentsDocument;
@@ -1369,6 +1411,7 @@ export type AnalysisReport = {
   ball_quality_summary?: Record<string, unknown>;
   ball_quality_recommendation?: BallQualityReport['recommendation'];
   possession_summary?: Record<string, unknown>;
+  attacking_momentum_summary?: Record<string, unknown>;
   warnings?: string[];
   error?: {
     type?: string;
@@ -1416,6 +1459,7 @@ export type AnalysisReport = {
     event_review_report?: string;
     pass_candidates?: string;
     pass_review_report?: string;
+    attacking_momentum?: string;
     possession_report?: string;
     possession_overlay_preview?: string;
   };
@@ -1478,6 +1522,7 @@ export type MatchPackage = {
   event_review_report?: EventReviewReport | null;
   pass_candidates?: PassCandidatesDocument | null;
   pass_review_report?: PassReviewReport | null;
+  attacking_momentum?: AttackingMomentumDocument | null;
   possession_report?: PossessionReport | null;
   [key: string]: unknown;
 };
@@ -1603,6 +1648,26 @@ export type PublicMatchReport = {
       controlled_coverage_percent: number;
       unknown_coverage: number;
     }>;
+    attacking_momentum?: {
+      experimental: boolean;
+      quality: string;
+      warnings: string[];
+      timeline: Array<{
+        index: number;
+        minute: number;
+        label: string;
+        time_sec: number;
+        start_time_sec: number;
+        end_time_sec: number;
+        signed_score: number;
+        team_a_value: number;
+        team_b_value: number;
+        dominant_team_label?: 'A' | 'B' | null;
+        confidence?: number;
+        controlled_coverage?: number;
+        intensity?: number;
+      }>;
+    };
   };
 };
 

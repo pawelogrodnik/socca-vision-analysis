@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.attacking_momentum import build_attacking_momentum_document
 from app.services.ball_tracking import _BallOverlayWriter, _draw_ball_position, _draw_frame_stamp
 from app.services.contact_auto_review import apply_auto_contact_review
 from app.services.event_candidates import build_event_candidate_artifacts
@@ -117,14 +118,31 @@ def build_ball_possession_analysis(
     event_docs["pass_review_report"] = build_pass_review_report(event_docs["pass_candidates"])
     event_docs["restart_candidates"] = restart_doc
     event_docs.setdefault("artifacts", {})["restart_candidates"] = "restart_candidates.json"
+    momentum_doc = build_attacking_momentum_document(
+        candidates_doc,
+        match_phase_config,
+        pitch_width_m=parameters["pitch_width_m"],
+        pitch_length_m=parameters["pitch_length_m"],
+        pass_candidates_doc=event_docs["pass_candidates"],
+        restart_candidates_doc=restart_doc,
+    )
     report_doc = build_possession_report(candidates_doc, segments_doc, contact_doc, restart_doc)
-    _write_possession_artifacts(match_dir, candidates_doc, segments_doc, contact_doc, event_docs, report_doc)
+    _write_possession_artifacts(
+        match_dir,
+        candidates_doc,
+        segments_doc,
+        contact_doc,
+        event_docs,
+        momentum_doc,
+        report_doc,
+    )
     artifacts = {
         "possession_candidates": "possession_candidates.json",
         "possession_segments": "possession_segments.json",
         "contact_candidates": "contact_candidates.json",
         "match_phase_config": "match_phase_config.json",
         **event_docs["artifacts"],
+        "attacking_momentum": "attacking_momentum.json",
         "possession_report": "possession_report.json",
     }
     if write_overlay_video:
@@ -148,6 +166,7 @@ def build_ball_possession_analysis(
         "restart_candidates": restart_doc,
         "pass_candidates": event_docs["pass_candidates"],
         "pass_review_report": event_docs["pass_review_report"],
+        "attacking_momentum": momentum_doc,
         "possession_report": report_doc,
         "artifacts": artifacts,
     }
@@ -1739,6 +1758,7 @@ def _write_possession_artifacts(
     segments_doc: dict[str, Any],
     contact_doc: dict[str, Any],
     event_docs: dict[str, Any],
+    momentum_doc: dict[str, Any],
     report_doc: dict[str, Any],
 ) -> None:
     (match_dir / "possession_candidates.json").write_text(json.dumps(candidates_doc, indent=2), encoding="utf-8")
@@ -1747,6 +1767,7 @@ def _write_possession_artifacts(
     for doc_key, filename in event_docs.get("artifacts", {}).items():
         if doc_key in event_docs:
             (match_dir / filename).write_text(json.dumps(event_docs[doc_key], indent=2), encoding="utf-8")
+    (match_dir / "attacking_momentum.json").write_text(json.dumps(momentum_doc, indent=2), encoding="utf-8")
     (match_dir / "possession_report.json").write_text(json.dumps(report_doc, indent=2), encoding="utf-8")
 
 

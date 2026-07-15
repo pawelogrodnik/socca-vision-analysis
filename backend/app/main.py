@@ -376,6 +376,7 @@ PACKAGE_OPTIONAL_KEYS = [
     "event_review_report",
     "pass_candidates",
     "pass_review_report",
+    "attacking_momentum",
     "possession_report",
 ]
 
@@ -416,6 +417,7 @@ PACKAGE_EMBEDDED_JSON_FILES = [
     ("match_phase_config", "match_phase_config.json"),
     ("pass_candidates", "pass_candidates.json"),
     ("pass_review_report", "pass_review_report.json"),
+    ("attacking_momentum", "attacking_momentum.json"),
     ("possession_report", "possession_report.json"),
 ]
 
@@ -808,6 +810,7 @@ def get_match(match_id: str) -> dict[str, Any]:
         "event_review_report.json",
         "pass_candidates.json",
         "pass_review_report.json",
+        "attacking_momentum.json",
         "possession_report.json",
     ]:
         optional_path = path / optional
@@ -1465,6 +1468,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "event_review_report": None,
         "pass_candidates": None,
         "pass_review_report": None,
+        "attacking_momentum": None,
         "possession_report": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
@@ -1567,6 +1571,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["pass_candidates_json"] = "pass_candidates.json"
     if (path / "pass_review_report.json").exists():
         package["assets"]["pass_review_report_json"] = "pass_review_report.json"
+    if (path / "attacking_momentum.json").exists():
+        package["assets"]["attacking_momentum_json"] = "attacking_momentum.json"
     if (path / "possession_report.json").exists():
         package["assets"]["possession_report_json"] = "possession_report.json"
     if (path / "possession_overlay_preview.mp4").exists():
@@ -1727,6 +1733,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "event_review_report.json": "application/json",
         "pass_candidates.json": "application/json",
         "pass_review_report.json": "application/json",
+        "attacking_momentum.json": "application/json",
         "possession_report.json": "application/json",
         "run_metadata.json": "application/json",
         "stable_overlay_preview.mp4": "video/mp4",

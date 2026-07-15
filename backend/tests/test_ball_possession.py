@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 from app.services.ball_possession import (
     _append_restart_pass_candidates,
+    build_ball_possession_analysis,
     build_contact_candidates_document,
     build_possession_candidates_document,
     build_restart_candidates_document,
@@ -95,6 +99,23 @@ def stable_player_with_overlay_and_sparse_trajectory(player_id: str, team: str) 
 
 
 class BallPossessionTests(unittest.TestCase):
+    def test_full_analysis_writes_attacking_momentum_artifact(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            match_dir = Path(temp_dir)
+            result = build_ball_possession_analysis(
+                match_dir,
+                match_dir / "video.mp4",
+                SimpleNamespace(width_m=30.0, length_m=47.4),
+                {"fps": 30.0, "width": 1920, "height": 1080, "duration_sec": 1.0},
+                {"positions": [ball(0, 15.0, 20.0)]},
+                {"players": [stable_player("A01", "A", [(0, 15.0, 20.0)])]},
+                write_overlay_video=False,
+            )
+
+            self.assertIn("attacking_momentum", result)
+            self.assertEqual(result["artifacts"]["attacking_momentum"], "attacking_momentum.json")
+            self.assertTrue((match_dir / "attacking_momentum.json").exists())
+
     def test_possession_marks_controlled_when_one_player_is_close(self) -> None:
         doc = build_possession_candidates_document(
             {"positions": [ball(10, 5.0, 5.0)]},

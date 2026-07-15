@@ -50,6 +50,7 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
   const eventReviewReport = report?.artifacts?.event_review_report || (match.event_review_report ? 'event_review_report.json' : undefined);
   const passCandidates = report?.artifacts?.pass_candidates || (match.pass_candidates ? 'pass_candidates.json' : undefined);
   const passReviewReport = report?.artifacts?.pass_review_report || (match.pass_review_report ? 'pass_review_report.json' : undefined);
+  const attackingMomentum = report?.artifacts?.attacking_momentum || (match.attacking_momentum ? 'attacking_momentum.json' : undefined);
   const possessionReport = report?.artifacts?.possession_report;
   const ballSummary = match.ball_tracking_report?.summary;
   const ballQuality = match.ball_quality_report;
@@ -396,6 +397,11 @@ export function AnalysisArtifacts({ match }: AnalysisArtifactsProps) {
                 {passCandidates && (
                   <a href={artifactUrl(match.id, passCandidates)}>
                     Pobierz pass_candidates.json
+                  </a>
+                )}
+                {attackingMomentum && (
+                  <a href={artifactUrl(match.id, attackingMomentum)}>
+                    Pobierz attacking_momentum.json
                   </a>
                 )}
                 {passReviewReport && (

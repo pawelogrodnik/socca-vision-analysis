@@ -535,7 +535,12 @@ def analyze_match_chunked_yolo(
     if ball_tracking is not None and ball_report is not None:
         try:
             if progress:
-                progress("possession_pass_candidates", 96.0, "Building possession and pass candidate layers.", None)
+                progress(
+                    "possession_pass_candidates",
+                    96.0,
+                    "Building possession, pass and attacking momentum candidate layers.",
+                    None,
+                )
             possession = build_ball_possession_analysis(
                 match_dir,
                 video_path,
@@ -676,6 +681,7 @@ def analyze_match_chunked_yolo(
         "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
         "ball_quality_summary": (ball_tracking or {}).get("ball_quality_report", {}).get("summary"),
         "possession_summary": (possession or {}).get("possession_report", {}).get("summary"),
+        "attacking_momentum_summary": (possession or {}).get("attacking_momentum", {}).get("summary"),
         "warnings": warnings,
         "artifacts": artifacts,
     }

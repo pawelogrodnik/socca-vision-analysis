@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
+import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
 
 type PublicMatchReportContentProps = {
@@ -302,7 +303,7 @@ export function PublicMatchReportContent({
       )}
 
       <section className='card public-charts-card'>
-        <h2>Przebieg meczu</h2>
+        <h2>Posiadanie w czasie</h2>
         {possessionTimeline.length > 0 ? (
           <div className='public-chart'>
             <ResponsiveContainer width='100%' height='100%'>
@@ -352,6 +353,20 @@ export function PublicMatchReportContent({
           do danego momentu. Minuty z mala liczba probek possession sa orientacyjne.
         </p>
       </section>
+
+      {report.ball?.attacking_momentum?.timeline.length ? (
+        <section className='card public-charts-card'>
+          <AttackingMomentumChart
+            points={report.ball.attacking_momentum.timeline}
+            teamAName={leftTeam?.team_name || 'Team A'}
+            teamBName={rightTeam?.team_name || 'Team B'}
+            teamAColor={leftTeam ? teamColor(leftTeam, '#f8fafc') : '#f8fafc'}
+            teamBColor={rightTeam ? teamColor(rightTeam, '#38bdf8') : '#38bdf8'}
+            quality={report.ball.attacking_momentum.quality}
+            warnings={report.ball.attacking_momentum.warnings}
+          />
+        </section>
+      ) : null}
 
       <section className='card public-charts-card'>
         <h2>Porownanie graczy</h2>

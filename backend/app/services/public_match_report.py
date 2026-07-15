@@ -175,6 +175,41 @@ def _public_possession_timeline(package: dict[str, Any]) -> list[dict[str, Any]]
     return rows
 
 
+def _public_momentum_timeline(package: dict[str, Any]) -> list[dict[str, Any]]:
+    momentum = package.get("attacking_momentum") if isinstance(package.get("attacking_momentum"), dict) else {}
+    points = momentum.get("points") if isinstance(momentum.get("points"), list) else []
+    rows: list[dict[str, Any]] = []
+    for item in points:
+        if not isinstance(item, dict):
+            continue
+        end_time_sec = _round(item.get("end_time_sec"), 3)
+        rows.append(
+            {
+                "index": int(item.get("index") or len(rows)),
+                "minute": max(1, int(ceil(end_time_sec / 60.0))),
+                "label": _clock_label(end_time_sec),
+                "time_sec": _round(item.get("time_sec"), 3),
+                "start_time_sec": _round(item.get("start_time_sec"), 3),
+                "end_time_sec": end_time_sec,
+                "signed_score": _round(item.get("signed_score"), 3),
+                "team_a_value": _round(item.get("team_a_value"), 3),
+                "team_b_value": _round(item.get("team_b_value"), 3),
+                "dominant_team_label": item.get("dominant_team_label")
+                if item.get("dominant_team_label") in {"A", "B"}
+                else None,
+                "confidence": _round(item.get("confidence"), 4),
+                "controlled_coverage": _round(item.get("controlled_coverage"), 4),
+                "intensity": _round(item.get("intensity"), 4),
+            }
+        )
+    return rows
+
+
+def _clock_label(time_sec: float) -> str:
+    total_seconds = max(0, int(round(time_sec)))
+    return f"{total_seconds // 60}:{total_seconds % 60:02d}"
+
+
 def _resolved_team_names(package: dict[str, Any]) -> dict[str, dict[str, Any]]:
     resolved = package.get("resolved_player_stats") if isinstance(package.get("resolved_player_stats"), dict) else {}
     names: dict[str, dict[str, Any]] = {}
@@ -530,6 +565,8 @@ def build_public_match_report(
     possession_summary = possession.get("summary") if isinstance(possession.get("summary"), dict) else {}
     pass_doc = package.get("pass_candidates") if isinstance(package.get("pass_candidates"), dict) else {}
     pass_summary = pass_doc.get("summary") if isinstance(pass_doc.get("summary"), dict) else {}
+    momentum = package.get("attacking_momentum") if isinstance(package.get("attacking_momentum"), dict) else {}
+    momentum_summary = momentum.get("summary") if isinstance(momentum.get("summary"), dict) else {}
     return {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
@@ -564,6 +601,12 @@ def build_public_match_report(
             ),
             "accepted_passes": int(pass_summary.get("final_stat_passes") or 0),
             "possession_timeline": _public_possession_timeline(package),
+            "attacking_momentum": {
+                "experimental": True,
+                "quality": str(momentum_summary.get("quality") or "unavailable"),
+                "warnings": [str(item) for item in momentum.get("warnings") or []],
+                "timeline": _public_momentum_timeline(package),
+            },
         },
     }
 

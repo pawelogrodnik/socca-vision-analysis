@@ -71,3 +71,34 @@ tracker_id != player_id
 ```
 
 A real player may be composed of many tracklets.
+
+## Attacking momentum
+
+`attacking_momentum.json` is an optional, derived match artifact built after
+possession, pass and restart candidates are finalized. It does not require a
+second video render and can be regenerated from frozen post-YOLO artifacts.
+
+The public contract exposes a compact timeline with one causal sample per
+five-second bin:
+
+```json
+{
+  "experimental": true,
+  "quality": "medium",
+  "warnings": [],
+  "timeline": [
+    {
+      "start_sec": 30.0,
+      "end_sec": 35.0,
+      "clock_label": "0:30",
+      "team_a_value": 42.5,
+      "team_b_value": 0.0,
+      "signed_value": 42.5
+    }
+  ]
+}
+```
+
+Positive signed values represent Team A pressure and negative values Team B.
+Quality and warnings must be displayed because sparse possession or unknown
+attack direction can materially reduce confidence.

@@ -46,6 +46,71 @@ class MatchPackageTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ensure_package_publishable(package)
 
+    def test_attacking_momentum_is_optional_and_embedded_when_present(self) -> None:
+        from app.main import build_match_package
+
+        with tempfile.TemporaryDirectory() as tmp:
+            match_dir = Path(tmp)
+            write_ready_match_fixture(match_dir)
+            legacy_package = build_match_package(match_dir)
+            self.assertIsNone(legacy_package["attacking_momentum"])
+            self.assertFalse(legacy_package["optional"]["attacking_momentum"])
+
+            write_json(
+                match_dir / "attacking_momentum.json",
+                {
+                    "experimental": True,
+                    "summary": {"quality": "medium"},
+                    "warnings": [],
+                    "points": [{"index": 0, "time_sec": 2.5, "start_time_sec": 0.0, "end_time_sec": 5.0, "signed_score": 25.0, "team_a_value": 25.0, "team_b_value": 0.0}],
+                },
+            )
+            package = build_match_package(match_dir)
+            self.assertTrue(package["optional"]["attacking_momentum"])
+            self.assertEqual(package["attacking_momentum"]["summary"]["quality"], "medium")
+
+    def test_public_report_contains_simplified_momentum_timeline(self) -> None:
+        from app.services.public_match_report import build_public_match_report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            package = {
+                "match": {"id": "match-1", "title": "Test", "video": {"duration_sec": 5.0}},
+                "team_stats": {"teams": []},
+                "resolved_player_stats": {"players": []},
+                "attacking_momentum": {
+                    "summary": {"quality": "medium"},
+                    "warnings": ["review direction"],
+                    "points": [
+                        {
+                            "index": 0,
+                            "time_sec": 2.5,
+                            "start_time_sec": 0.0,
+                            "end_time_sec": 5.0,
+                            "signed_score": 25.0,
+                            "team_a_value": 25.0,
+                            "team_b_value": 0.0,
+                            "dominant_team_label": "A",
+                            "confidence": 0.7,
+                            "controlled_coverage": 0.5,
+                            "intensity": 0.25,
+                            "signed_raw": 999.0,
+                        }
+                    ],
+                },
+            }
+            report = build_public_match_report(
+                package,
+                published_id="published-test",
+                source_match_dir=None,
+                heatmap_dir=output_dir,
+                public_heatmap_base="heatmaps",
+            )
+            momentum = report["ball"]["attacking_momentum"]
+            self.assertEqual(momentum["quality"], "medium")
+            self.assertEqual(momentum["timeline"][0]["label"], "0:05")
+            self.assertNotIn("signed_raw", momentum["timeline"][0])
+
 
 def write_ready_match_fixture(match_dir: Path) -> None:
     write_json(
