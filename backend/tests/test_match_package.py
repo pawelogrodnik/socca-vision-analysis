@@ -48,6 +48,7 @@ class MatchPackageTests(unittest.TestCase):
 
     def test_attacking_momentum_is_optional_and_embedded_when_present(self) -> None:
         from app.main import build_match_package
+        from app.services.artifact_lineage import canonical_json_sha256
 
         with tempfile.TemporaryDirectory() as tmp:
             match_dir = Path(tmp)
@@ -56,12 +57,21 @@ class MatchPackageTests(unittest.TestCase):
             self.assertIsNone(legacy_package["attacking_momentum"])
             self.assertFalse(legacy_package["optional"]["attacking_momentum"])
 
+            possession = {"frames": [{"frame": 0, "time_sec": 0.0}]}
+            write_json(match_dir / "possession_candidates.json", possession)
             write_json(
                 match_dir / "attacking_momentum.json",
                 {
+                    "status": "completed",
                     "experimental": True,
                     "summary": {"quality": "medium"},
                     "warnings": [],
+                    "generated_from": [
+                        {
+                            "artifact": "possession_candidates.json",
+                            "sha256": canonical_json_sha256(possession),
+                        }
+                    ],
                     "points": [{"index": 0, "time_sec": 2.5, "start_time_sec": 0.0, "end_time_sec": 5.0, "signed_score": 25.0, "team_a_value": 25.0, "team_b_value": 0.0}],
                 },
             )

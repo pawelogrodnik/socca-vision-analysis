@@ -198,8 +198,11 @@ def _public_momentum_timeline(package: dict[str, Any]) -> list[dict[str, Any]]:
                 if item.get("dominant_team_label") in {"A", "B"}
                 else None,
                 "confidence": _round(item.get("confidence"), 4),
+                "positional_confidence": _round(item.get("positional_confidence"), 4),
+                "event_confidence": _round(item.get("event_confidence"), 4),
                 "controlled_coverage": _round(item.get("controlled_coverage"), 4),
                 "intensity": _round(item.get("intensity"), 4),
+                "evidence": item.get("evidence") if isinstance(item.get("evidence"), dict) else {},
             }
         )
     return rows
@@ -567,6 +570,9 @@ def build_public_match_report(
     pass_summary = pass_doc.get("summary") if isinstance(pass_doc.get("summary"), dict) else {}
     momentum = package.get("attacking_momentum") if isinstance(package.get("attacking_momentum"), dict) else {}
     momentum_summary = momentum.get("summary") if isinstance(momentum.get("summary"), dict) else {}
+    legacy_momentum_available = isinstance(momentum.get("points"), list) and bool(momentum.get("points"))
+    momentum_status = str(momentum.get("status") or ("completed" if legacy_momentum_available else "not_available"))
+    momentum_available = momentum_status not in {"not_available", "stale", "missing_inputs"}
     return {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
@@ -603,12 +609,29 @@ def build_public_match_report(
             "possession_timeline": _public_possession_timeline(package),
             "attacking_momentum": {
                 "experimental": True,
-                "quality": str(momentum_summary.get("quality") or "unavailable"),
-                "warnings": [str(item) for item in momentum.get("warnings") or []],
-                "timeline": _public_momentum_timeline(package),
+                "status": momentum_status if momentum_available else "not_available",
+                "signal_quality": str(
+                    momentum.get("signal_quality")
+                    or momentum_summary.get("signal_quality")
+                    or momentum_summary.get("quality")
+                    or "unavailable"
+                ),
+                "product_readiness": str(momentum.get("product_readiness") or "not_available"),
+                "quality": str(momentum.get("quality") or momentum_summary.get("quality") or "unavailable"),
+                "warnings": [_public_warning(item) for item in momentum.get("warnings") or []],
+                "timeline": _public_momentum_timeline(package) if momentum_available else [],
             },
         },
     }
+
+
+def _public_warning(value: Any) -> dict[str, str]:
+    if isinstance(value, dict):
+        return {
+            "code": str(value.get("code") or "momentum_warning"),
+            "message": str(value.get("message") or value.get("detail") or value.get("code") or "Momentum warning"),
+        }
+    return {"code": "legacy_warning", "message": str(value)}
 
 
 def write_public_match_report_bundle(

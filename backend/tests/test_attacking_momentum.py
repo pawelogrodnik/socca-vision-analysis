@@ -152,13 +152,87 @@ class AttackingMomentumTests(unittest.TestCase):
     def test_missing_optional_event_documents_are_supported(self) -> None:
         result = self._build([self._frame(0.0, "A", [15.0, 5.0])])
         self.assertEqual(len(result["points"]), 1)
-        self.assertIn("Pass candidates were missing", " ".join(result["warnings"]))
+        self.assertIn("Pass candidates were missing", " ".join(item["message"] for item in result["warnings"]))
 
     def test_empty_input_returns_low_quality_warning(self) -> None:
         result = self._build([])
         self.assertEqual(result["points"], [])
         self.assertEqual(result["summary"]["quality"], "low")
         self.assertTrue(result["warnings"])
+
+    def test_progression_resets_across_free_ball(self) -> None:
+        result = self._build(
+            [
+                self._frame(0.0, "A", [15.0, 35.0]),
+                self._free(0.5),
+                self._frame(1.0, "A", [15.0, 25.0]),
+            ]
+        )
+        static = self._build(
+            [self._frame(0.0, "A", [15.0, 25.0]), self._frame(1.0, "A", [15.0, 25.0])]
+        )
+        self.assertLessEqual(result["points"][0]["team_a_positional_raw"], static["points"][0]["team_a_positional_raw"])
+
+    def test_failed_progressive_pass_uses_reduced_multiplier(self) -> None:
+        completed = self._build([], passes=[self._pass("completed_pass", forward_progress_m=10.0)])
+        failed = self._build([], passes=[self._pass("failed_pass", forward_progress_m=10.0)])
+        self.assertLess(failed["points"][0]["team_a_event_bonus"], completed["points"][0]["team_a_event_bonus"])
+
+    def test_restart_review_multiplier_and_supported_type(self) -> None:
+        accepted = self._build([], restarts=[self._restart("accepted", "kick_in")])
+        uncertain = self._build([], restarts=[self._restart("uncertain", "kick_in")])
+        ignored = self._build([], restarts=[self._restart("accepted", "ignored_goal_line_restart")])
+        self.assertGreater(accepted["points"][0]["team_a_event_bonus"], uncertain["points"][0]["team_a_event_bonus"])
+        self.assertEqual(ignored["points"][0]["team_a_event_bonus"], 0.0)
+
+    def test_event_only_bin_has_event_confidence(self) -> None:
+        point = self._build([], passes=[self._pass("completed_pass")])["points"][0]
+        self.assertEqual(point["positional_confidence"], 0.0)
+        self.assertGreater(point["event_confidence"], 0.0)
+        self.assertGreater(point["confidence"], 0.0)
+
+    def test_event_bonus_is_capped_per_five_second_bin(self) -> None:
+        result = self._build(
+            [], passes=[self._pass("completed_pass", forward_progress_m=20.0) for _ in range(20)]
+        )
+        self.assertLessEqual(result["points"][0]["team_a_event_bonus"], 0.4)
+        self.assertGreater(result["points"][0]["team_a_event_bonus_uncapped"], 0.4)
+
+    def test_timeline_uses_explicit_duration_and_half_open_boundary(self) -> None:
+        phase = {
+            "periods": [
+                {
+                    "period_id": "full",
+                    "start_time_sec": 0.0,
+                    "end_time_sec": 10.0,
+                    "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"},
+                }
+            ],
+            "summary": {"needs_review": False},
+        }
+        at_boundary = self._pass("completed_pass")
+        at_boundary["end_time_sec"] = 10.0
+        result = self._build([], passes=[at_boundary], phase=phase)
+        self.assertEqual(len(result["points"]), 2)
+        self.assertEqual(sum(point["evidence"]["completed_passes"] for point in result["points"]), 0)
+
+    def test_ema_resets_after_twenty_second_data_gap(self) -> None:
+        first = self._pass("completed_pass")
+        first["end_time_sec"] = 0.0
+        second = self._pass("completed_pass")
+        second["end_time_sec"] = 25.0
+        result = build_attacking_momentum_document(
+            {"frames": []},
+            {"periods": [], "summary": {"needs_review": False}},
+            pitch_width_m=PITCH_WIDTH_M,
+            pitch_length_m=PITCH_LENGTH_M,
+            pass_candidates_doc={"candidates": [first, second]},
+            match_duration_sec=30.0,
+        )
+        self.assertAlmostEqual(
+            result["points"][0]["smoothed_signed_raw"],
+            result["points"][5]["smoothed_signed_raw"],
+        )
 
     def _build(
         self,
@@ -186,7 +260,6 @@ class AttackingMomentumTests(unittest.TestCase):
                 {
                     "period_id": "full",
                     "start_time_sec": 0.0,
-                    "end_time_sec": 120.0,
                     "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"},
                 }
             ],
@@ -230,6 +303,17 @@ class AttackingMomentumTests(unittest.TestCase):
             "is_progressive": forward_progress_m >= 5.0,
             "start_time_sec": 0.0,
             "end_time_sec": 0.5,
+        }
+
+    @staticmethod
+    def _restart(review_status: str, restart_type: str) -> dict:
+        return {
+            "candidate_id": f"restart-{review_status}-{restart_type}",
+            "actor_team_label": "A",
+            "confidence": 1.0,
+            "review_status": review_status,
+            "restart_type": restart_type,
+            "start_time_sec": 0.0,
         }
 
 

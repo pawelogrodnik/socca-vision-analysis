@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.pass_candidates import write_pass_candidate_artifacts
-
 MATCH_PHASE_SOURCE = "match_phase_config_v1"
 ATTACK_DIRECTIONS = {"towards_y_min", "towards_y_max", "towards_x_min", "towards_x_max", "unknown"}
 DEFAULT_TEAM_A_FIRST_HALF_DIRECTION = "towards_y_min"
@@ -150,8 +148,13 @@ def save_match_phase_config(match_path: Path, meta: dict[str, Any], payload: dic
     else:
         document = normalize_match_phase_config(dict(payload), meta)
     document["updated_at"] = now_iso()
-    (match_path / "match_phase_config.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
-    _refresh_pass_candidates(match_path, document)
+    from app.services.ball_event_rebuild import rebuild_ball_event_artifacts
+
+    rebuild_ball_event_artifacts(
+        match_path,
+        trigger="match_phase_review",
+        match_phase_config_doc=document,
+    )
     return document
 
 
@@ -166,7 +169,7 @@ def direction_for_team_at_time(config: dict[str, Any] | None, team_label: Any, t
         start = float(period.get("start_time_sec") or 0.0)
         end = period.get("end_time_sec")
         end_value = float(end) if end is not None else float("inf")
-        if start <= time_value <= end_value:
+        if start <= time_value < end_value:
             directions = period.get("team_attack_directions") if isinstance(period.get("team_attack_directions"), dict) else {}
             return {
                 "period_id": period.get("period_id"),
@@ -277,12 +280,3 @@ def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     return float(value)
-
-
-def _refresh_pass_candidates(match_path: Path, match_phase_config: dict[str, Any]) -> None:
-    event_path = match_path / "event_candidates.json"
-    if not event_path.exists():
-        return
-    event_candidates = json.loads(event_path.read_text(encoding="utf-8"))
-    if isinstance(event_candidates, dict):
-        write_pass_candidate_artifacts(match_path, event_candidates, match_phase_config)

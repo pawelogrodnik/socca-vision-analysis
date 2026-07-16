@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.pass_candidates import build_pass_candidate_artifacts
+from app.services.candidate_keys import contact_candidate_key
 
 EVENT_SOURCE = "contact_candidates_to_event_candidates_v1"
 EVENT_REVIEW_STATUSES = {"needs_review", "accepted", "rejected", "uncertain"}
@@ -55,6 +56,7 @@ def build_event_candidates_document(contact_candidates_doc: dict[str, Any]) -> d
                 "event_type": "ball_contact",
                 "source": EVENT_SOURCE,
                 "source_candidate_id": candidate.get("candidate_id"),
+                "source_candidate_key": candidate.get("candidate_key") or contact_candidate_key(candidate),
                 "review_status": review_status,
                 "final_stat_eligible": review_status == "accepted",
                 "confidence": _event_confidence(candidate, review_status),

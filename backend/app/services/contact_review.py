@@ -6,8 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.event_candidates import write_event_candidate_artifacts
-from app.services.match_phase_config import load_match_phase_config
+from app.services.candidate_keys import ensure_contact_candidate_keys
 
 CONTACT_REVIEW_STATUSES = {"needs_review", "accepted", "rejected", "uncertain"}
 
@@ -77,12 +76,25 @@ def load_contact_candidates_review(match_path: Path) -> dict[str, Any]:
         candidate["review_status"] = status
         candidate["status"] = status
         candidate.setdefault("review_notes", "")
+    ensure_contact_candidate_keys(document)
     _update_summary(document)
     return document
 
 
 def save_contact_candidate_reviews(match_path: Path, updates: list[dict[str, Any]]) -> dict[str, Any]:
     document = load_contact_candidates_review(match_path)
+    apply_contact_candidate_reviews(document, updates)
+    from app.services.ball_event_rebuild import rebuild_ball_event_artifacts
+
+    rebuild_ball_event_artifacts(
+        match_path,
+        trigger="contact_review",
+        contact_candidates_doc=document,
+    )
+    return document
+
+
+def apply_contact_candidate_reviews(document: dict[str, Any], updates: list[dict[str, Any]]) -> dict[str, Any]:
     candidates = document.get("candidates") or []
     candidates_by_id = {
         str(candidate.get("candidate_id")): candidate
@@ -113,13 +125,6 @@ def save_contact_candidate_reviews(match_path: Path, updates: list[dict[str, Any
         candidate["reviewed_at"] = _now_iso()
 
     document["updated_at"] = _now_iso()
+    ensure_contact_candidate_keys(document)
     _update_summary(document)
-    _contact_candidates_path(match_path).write_text(json.dumps(document, indent=2), encoding="utf-8")
-    write_event_candidate_artifacts(match_path, document, _load_phase_config_for_match(match_path))
     return document
-
-
-def _load_phase_config_for_match(match_path: Path) -> dict[str, Any]:
-    meta_path = match_path / "match.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-    return load_match_phase_config(match_path, meta)

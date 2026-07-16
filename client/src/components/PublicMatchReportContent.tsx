@@ -362,7 +362,7 @@ export function PublicMatchReportContent({
             teamBName={rightTeam?.team_name || 'Team B'}
             teamAColor={leftTeam ? teamColor(leftTeam, '#f8fafc') : '#f8fafc'}
             teamBColor={rightTeam ? teamColor(rightTeam, '#38bdf8') : '#38bdf8'}
-            quality={report.ball.attacking_momentum.quality}
+            quality={report.ball.attacking_momentum.signal_quality || report.ball.attacking_momentum.quality}
             warnings={report.ball.attacking_momentum.warnings}
           />
         </section>

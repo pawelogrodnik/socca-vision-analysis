@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from app.services.attacking_momentum import build_attacking_momentum_document
+from app.services.candidate_keys import (
+    contact_candidate_key,
+    restart_candidate_key,
+    restart_pass_candidate_key,
+)
 from app.services.ball_tracking import _BallOverlayWriter, _draw_ball_position, _draw_frame_stamp
 from app.services.contact_auto_review import apply_auto_contact_review
 from app.services.event_candidates import build_event_candidate_artifacts
@@ -114,7 +119,7 @@ def build_ball_possession_analysis(
         fps=fps,
         parameters=parameters,
     )
-    _append_restart_pass_candidates(event_docs["pass_candidates"], restart_doc)
+    append_restart_pass_candidates(event_docs["pass_candidates"], restart_doc)
     event_docs["pass_review_report"] = build_pass_review_report(event_docs["pass_candidates"])
     event_docs["restart_candidates"] = restart_doc
     event_docs.setdefault("artifacts", {})["restart_candidates"] = "restart_candidates.json"
@@ -125,6 +130,8 @@ def build_ball_possession_analysis(
         pitch_length_m=parameters["pitch_length_m"],
         pass_candidates_doc=event_docs["pass_candidates"],
         restart_candidates_doc=restart_doc,
+        possession_segments_doc=segments_doc,
+        match_duration_sec=video_metadata.get("duration_sec"),
     )
     report_doc = build_possession_report(candidates_doc, segments_doc, contact_doc, restart_doc)
     _write_possession_artifacts(
@@ -397,8 +404,7 @@ def build_contact_candidates_document(
         end_detected = detected_frames[-1]
         stable_player_id = segment.get("stable_player_id")
         candidate_id = f"contact-{len(candidates) + 1:04d}"
-        candidates.append(
-            {
+        candidate = {
                 "candidate_id": candidate_id,
                 "stable_player_id": stable_player_id,
                 "stable_subject_id": segment.get("stable_subject_id"),
@@ -428,7 +434,8 @@ def build_contact_candidates_document(
                 "source": "controlled_ball_nearest_player",
                 "status": "needs_review",
             }
-        )
+        candidate["candidate_key"] = contact_candidate_key(candidate)
+        candidates.append(candidate)
     document = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
@@ -547,6 +554,7 @@ def build_restart_candidates_document(
                 "Ground restart candidate only. Goal kicks are intentionally ignored in this detector.",
             ],
         }
+        candidate["candidate_key"] = restart_candidate_key(candidate)
         candidates.append(candidate)
         skip_until_frame = max(release_frame, int(candidate["end_frame"] or release_frame))
 
@@ -581,7 +589,7 @@ def build_restart_candidates_document(
     }
 
 
-def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart_doc: dict[str, Any]) -> None:
+def append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart_doc: dict[str, Any]) -> None:
     candidates = pass_candidates_doc.setdefault("candidates", [])
     if not isinstance(candidates, list):
         pass_candidates_doc["candidates"] = []
@@ -651,6 +659,7 @@ def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart
             "review_notes": "",
             "final_stat_eligible": False,
             "restart_candidate_id": restart.get("candidate_id"),
+            "restart_candidate_key": restart.get("candidate_key") or restart_candidate_key(restart),
             "restart_type": restart.get("restart_type"),
             "restart_boundary_line": restart.get("boundary_line"),
             "restart_actor_source": restart.get("actor_source"),
@@ -678,6 +687,7 @@ def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart
                 "Candidate generated from a detected ground restart. Do not count as final pass statistic until reviewed.",
             ],
         }
+        candidate["candidate_key"] = restart_pass_candidate_key(candidate["restart_candidate_key"])
         candidates.append(candidate)
         next_index += 1
         appended += 1
@@ -686,6 +696,10 @@ def _append_restart_pass_candidates(pass_candidates_doc: dict[str, Any], restart
         summary["restart_pass_candidates_appended"] = int(summary.get("restart_pass_candidates_appended") or 0) + appended
         restart_doc["summary"] = summary
     update_pass_candidate_summary(pass_candidates_doc)
+
+
+# Kept for older callers and frozen-artifact tests while the public helper is adopted.
+_append_restart_pass_candidates = append_restart_pass_candidates
 
 
 def _restart_ball_rows(ball_tracks_doc: dict[str, Any]) -> list[dict[str, Any]]:

@@ -377,6 +377,7 @@ PACKAGE_OPTIONAL_KEYS = [
     "pass_candidates",
     "pass_review_report",
     "attacking_momentum",
+    "analytics_readiness",
     "possession_report",
 ]
 
@@ -418,6 +419,7 @@ PACKAGE_EMBEDDED_JSON_FILES = [
     ("pass_candidates", "pass_candidates.json"),
     ("pass_review_report", "pass_review_report.json"),
     ("attacking_momentum", "attacking_momentum.json"),
+    ("analytics_readiness", "analytics_readiness.json"),
     ("possession_report", "possession_report.json"),
 ]
 
@@ -1423,6 +1425,9 @@ def _refresh_resolved_player_stats_if_stale(path: Path) -> None:
 
 def build_match_package(path: Path) -> dict[str, Any]:
     _refresh_resolved_player_stats_if_stale(path)
+    from app.services.ball_event_rebuild import ensure_ball_event_artifacts_fresh
+
+    analytics_readiness = ensure_ball_event_artifacts_fresh(path)
     meta = read_match_meta(path)
     package = {
         "schema_version": "0.2.0",
@@ -1469,6 +1474,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "pass_candidates": None,
         "pass_review_report": None,
         "attacking_momentum": None,
+        "analytics_readiness": analytics_readiness,
         "possession_report": None,
         "team_count": len(meta.get("teams") or []),
         "player_count": sum(len(team.get("players") or []) for team in meta.get("teams") or []),
@@ -1478,7 +1484,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
     for key, filename in PACKAGE_EMBEDDED_JSON_FILES:
         file_path = path / filename
         if file_path.exists():
-            package[key] = _load_package_json_doc(key, file_path)
+            document = _load_package_json_doc(key, file_path)
+            if key == "attacking_momentum" and document.get("status") == "not_available":
+                continue
+            package[key] = document
     if (path / "heatmap_all_tracks.png").exists():
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
@@ -1571,8 +1580,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["pass_candidates_json"] = "pass_candidates.json"
     if (path / "pass_review_report.json").exists():
         package["assets"]["pass_review_report_json"] = "pass_review_report.json"
-    if (path / "attacking_momentum.json").exists():
+    if package.get("attacking_momentum") is not None:
         package["assets"]["attacking_momentum_json"] = "attacking_momentum.json"
+    if (path / "analytics_readiness.json").exists():
+        package["assets"]["analytics_readiness_json"] = "analytics_readiness.json"
     if (path / "possession_report.json").exists():
         package["assets"]["possession_report_json"] = "possession_report.json"
     if (path / "possession_overlay_preview.mp4").exists():
@@ -1734,6 +1745,7 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         "pass_candidates.json": "application/json",
         "pass_review_report.json": "application/json",
         "attacking_momentum.json": "application/json",
+        "analytics_readiness.json": "application/json",
         "possession_report.json": "application/json",
         "run_metadata.json": "application/json",
         "stable_overlay_preview.mp4": "video/mp4",

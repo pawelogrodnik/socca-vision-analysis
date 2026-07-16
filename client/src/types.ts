@@ -732,10 +732,17 @@ export type AttackingMomentumPoint = {
   team_b_value: number;
   dominant_team_label?: 'A' | 'B' | null;
   confidence?: number;
+  positional_confidence?: number;
+  event_confidence?: number;
   controlled_coverage?: number;
   direction_coverage?: number;
   intensity?: number;
   evidence?: Record<string, number>;
+};
+
+export type AnalyticsWarning = {
+  code: string;
+  message: string;
 };
 
 export type AttackingMomentumDocument = {
@@ -743,12 +750,15 @@ export type AttackingMomentumDocument = {
   generated_at?: string;
   source?: string;
   status?: string;
+  signal_quality?: string;
+  product_readiness?: string;
+  quality?: string;
   experimental?: boolean;
   semantics?: string;
   parameters?: Record<string, unknown>;
   summary?: Record<string, unknown>;
   points: AttackingMomentumPoint[];
-  warnings?: string[];
+  warnings?: Array<string | AnalyticsWarning>;
   notes?: string[];
 };
 
@@ -1650,8 +1660,11 @@ export type PublicMatchReport = {
     }>;
     attacking_momentum?: {
       experimental: boolean;
+      status?: string;
+      signal_quality?: string;
+      product_readiness?: string;
       quality: string;
-      warnings: string[];
+      warnings: Array<string | AnalyticsWarning>;
       timeline: Array<{
         index: number;
         minute: number;
@@ -1664,8 +1677,11 @@ export type PublicMatchReport = {
         team_b_value: number;
         dominant_team_label?: 'A' | 'B' | null;
         confidence?: number;
+        positional_confidence?: number;
+        event_confidence?: number;
         controlled_coverage?: number;
         intensity?: number;
+        evidence?: Record<string, number>;
       }>;
     };
   };

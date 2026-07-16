@@ -42,6 +42,18 @@ def load_pass_candidates_review(match_path: Path) -> dict[str, Any]:
 
 def save_pass_candidate_reviews(match_path: Path, updates: list[dict[str, Any]]) -> dict[str, Any]:
     document = load_pass_candidates_review(match_path)
+    apply_pass_candidate_reviews(document, updates)
+    from app.services.ball_event_rebuild import rebuild_ball_event_artifacts
+
+    rebuild_ball_event_artifacts(
+        match_path,
+        trigger="pass_review",
+        pass_candidates_doc=document,
+    )
+    return document
+
+
+def apply_pass_candidate_reviews(document: dict[str, Any], updates: list[dict[str, Any]]) -> dict[str, Any]:
     candidates = document.get("candidates") or []
     candidates_by_id = {
         str(candidate.get("candidate_id")): candidate
@@ -72,10 +84,4 @@ def save_pass_candidate_reviews(match_path: Path, updates: list[dict[str, Any]])
 
     document["updated_at"] = _now_iso()
     update_pass_candidate_summary(document)
-    path = _pass_candidates_path(match_path)
-    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
-    (match_path / "pass_review_report.json").write_text(
-        json.dumps(build_pass_review_report(document), indent=2),
-        encoding="utf-8",
-    )
     return document

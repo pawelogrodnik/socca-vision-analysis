@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useRef } from 'react';
 import type { AnalysisReport, AttackingMomentumDocument, MatchPackage } from '../types';
 import { AttackingMomentumChart } from './AttackingMomentumChart';
 
@@ -521,6 +522,7 @@ export function MatchReportContent({
   mode,
   artifactHref,
 }: MatchReportContentProps) {
+  const stableOverlayRef = useRef<HTMLVideoElement>(null);
   const stablePlayers = stablePlayerRows(source);
   const resolvedPlayers = resolvedPlayerRows(source);
   const teams = teamRows(source);
@@ -550,9 +552,9 @@ export function MatchReportContent({
   const passesSummary = passSummary(source);
   const hasBallStats = source.possessionReport || source.passCandidates;
   const momentumSummary = source.attackingMomentum?.summary;
-  const momentumQuality = momentumSummary && typeof momentumSummary.quality === 'string'
-    ? momentumSummary.quality
-    : undefined;
+  const momentumQuality = source.attackingMomentum?.signal_quality
+    || source.attackingMomentum?.quality
+    || (momentumSummary && typeof momentumSummary.quality === 'string' ? momentumSummary.quality : undefined);
   const teamA = teams.find((team) => recordText(team, 'team_label', '') === 'A');
   const teamB = teams.find((team) => recordText(team, 'team_label', '') === 'B');
 
@@ -634,6 +636,11 @@ export function MatchReportContent({
             teamBColor={recordText(teamB, 'display_color', '#38bdf8')}
             quality={momentumQuality}
             warnings={source.attackingMomentum.warnings}
+            onPointSelect={(point) => {
+              if (!stableOverlayRef.current) return;
+              stableOverlayRef.current.currentTime = Math.max(0, point.time_sec - 5);
+              stableOverlayRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }}
           />
         </section>
       )}
@@ -722,7 +729,7 @@ export function MatchReportContent({
       {stableOverlayHref && (
         <section className='card'>
           <h2>Stable overlay</h2>
-          <video controls src={stableOverlayHref} className='video' />
+          <video ref={stableOverlayRef} controls src={stableOverlayHref} className='video' />
         </section>
       )}
 

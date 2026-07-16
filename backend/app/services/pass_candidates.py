@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.candidate_keys import regular_pass_candidate_key
+
 PASS_SOURCE = "ball_contact_events_to_pass_candidates_v1"
 PASS_EVENT_STATUSES = {"accepted", "uncertain"}
 PASS_REVIEW_STATUSES = {"needs_review", "accepted", "rejected", "uncertain"}
@@ -58,9 +60,12 @@ def build_pass_candidates_document(
         auto_review_status = _pass_auto_review_status(source_event, target_event, outcome)
         review_status = _initial_pass_review_status(auto_review_status)
         candidate_id = f"pass-{len(candidates) + 1:04d}"
+        source_candidate_key = source_event.get("source_candidate_key")
+        target_candidate_key = target_event.get("source_candidate_key")
         candidates.append(
             {
                 "candidate_id": candidate_id,
+                "candidate_key": regular_pass_candidate_key(source_candidate_key, target_candidate_key),
                 "event_type": "pass_candidate",
                 "pass_type": pass_type,
                 "outcome": outcome["outcome"],
@@ -74,6 +79,8 @@ def build_pass_candidates_document(
                 "target_event_id": target_event.get("event_id"),
                 "source_candidate_id": source_event.get("source_candidate_id"),
                 "target_candidate_id": target_event.get("source_candidate_id"),
+                "source_candidate_key": source_candidate_key,
+                "target_candidate_key": target_candidate_key,
                 "from_stable_player_id": source_event.get("stable_player_id"),
                 "from_stable_subject_id": source_event.get("stable_subject_id"),
                 "from_team_label": source_event.get("team_label"),
@@ -191,9 +198,9 @@ def write_pass_candidate_artifacts(
     match_phase_config_doc: dict[str, Any] | None = None,
     possession_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    existing_reviews = _load_existing_pass_reviews(match_path)
+    existing_document = _load_existing_pass_document(match_path)
     artifacts = build_pass_candidate_artifacts(event_candidates_doc, match_phase_config_doc, possession_doc)
-    _apply_existing_pass_reviews(artifacts["pass_candidates"], existing_reviews)
+    apply_existing_pass_reviews(artifacts["pass_candidates"], existing_document)
     artifacts["pass_review_report"] = build_pass_review_report(artifacts["pass_candidates"])
     (match_path / "pass_candidates.json").write_text(
         json.dumps(artifacts["pass_candidates"], indent=2),
@@ -598,45 +605,105 @@ def _ratio(numerator: int, denominator: int) -> float:
     return _round(float(numerator) / float(denominator), 4)
 
 
-def _load_existing_pass_reviews(match_path: Path) -> dict[tuple[Any, Any], dict[str, Any]]:
+def _load_existing_pass_document(match_path: Path) -> dict[str, Any] | None:
     path = match_path / "pass_candidates.json"
     if not path.exists():
-        return {}
+        return None
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {}
+        return None
     if not isinstance(document, dict):
-        return {}
-    reviews: dict[tuple[Any, Any], dict[str, Any]] = {}
-    for candidate in document.get("candidates") or []:
-        if not isinstance(candidate, dict):
-            continue
-        key = _candidate_pair_key(candidate)
-        if key == (None, None):
-            continue
-        reviews[key] = candidate
-    return reviews
+        return None
+    return document
 
 
-def _apply_existing_pass_reviews(document: dict[str, Any], existing_reviews: dict[tuple[Any, Any], dict[str, Any]]) -> None:
-    if not existing_reviews:
+def apply_existing_pass_reviews(document: dict[str, Any], existing_document: dict[str, Any] | None) -> None:
+    existing_rows = [
+        candidate
+        for candidate in (existing_document or {}).get("candidates") or []
+        if isinstance(candidate, dict) and _has_persisted_review(candidate)
+    ]
+    if not existing_rows:
         update_pass_candidate_summary(document)
         return
+    indexes = _review_indexes(existing_rows)
     for candidate in document.get("candidates") or []:
         if not isinstance(candidate, dict):
             continue
-        existing = existing_reviews.get(_candidate_pair_key(candidate))
-        if not existing:
+        matches, matched_by = _review_matches(candidate, indexes)
+        if len(matches) > 1:
+            candidate["review_status"] = "needs_review"
+            candidate["review_source"] = "generated"
+            candidate["review_notes"] = ""
+            candidate["final_stat_eligible"] = False
+            candidate["review_migration_status"] = "ambiguous_existing_review"
+            candidate["review_migration_matched_by"] = matched_by
+            candidate["review_migration_candidate_ids"] = sorted(
+                str(row.get("candidate_id") or "") for row in matches
+            )
             continue
+        if not matches:
+            continue
+        existing = matches[0]
         for key in ["review_status", "review_source", "review_notes", "reviewed_at"]:
             if key in existing:
                 candidate[key] = existing.get(key)
+        candidate["review_migration_status"] = "restored"
+        candidate["review_migration_matched_by"] = matched_by
+        candidate["final_stat_eligible"] = is_final_stat_pass_candidate(candidate)
     update_pass_candidate_summary(document)
 
 
 def _candidate_pair_key(candidate: dict[str, Any]) -> tuple[Any, Any]:
     return (candidate.get("source_event_id"), candidate.get("target_event_id"))
+
+
+def _has_persisted_review(candidate: dict[str, Any]) -> bool:
+    return str(candidate.get("review_source") or "") in {"manual", "manual_legacy"} or bool(candidate.get("reviewed_at"))
+
+
+def _review_indexes(rows: list[dict[str, Any]]) -> dict[str, dict[Any, list[dict[str, Any]]]]:
+    indexes: dict[str, dict[Any, list[dict[str, Any]]]] = {
+        "candidate_key": {},
+        "candidate_key_pair": {},
+        "restart_candidate_key": {},
+        "legacy_event_pair": {},
+        "legacy_candidate_id": {},
+    }
+    for row in rows:
+        values = {
+            "candidate_key": row.get("candidate_key"),
+            "candidate_key_pair": (row.get("source_candidate_key"), row.get("target_candidate_key")),
+            "restart_candidate_key": row.get("restart_candidate_key"),
+            "legacy_event_pair": _candidate_pair_key(row),
+            "legacy_candidate_id": row.get("candidate_id"),
+        }
+        for name, value in values.items():
+            if value in {None, "", (None, None)}:
+                continue
+            indexes[name].setdefault(value, []).append(row)
+    return indexes
+
+
+def _review_matches(
+    candidate: dict[str, Any],
+    indexes: dict[str, dict[Any, list[dict[str, Any]]]],
+) -> tuple[list[dict[str, Any]], str | None]:
+    ordered = [
+        ("candidate_key", candidate.get("candidate_key")),
+        ("candidate_key_pair", (candidate.get("source_candidate_key"), candidate.get("target_candidate_key"))),
+        ("restart_candidate_key", candidate.get("restart_candidate_key")),
+        ("legacy_event_pair", _candidate_pair_key(candidate)),
+        ("legacy_candidate_id", candidate.get("candidate_id")),
+    ]
+    for name, value in ordered:
+        if value in {None, "", (None, None)}:
+            continue
+        matches = indexes[name].get(value) or []
+        if matches:
+            return matches, name
+    return [], None
 
 
 def _direction_for_team_at_time(
