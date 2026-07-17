@@ -18,6 +18,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.config import STORAGE_DIR
 from app.services.identity_diagnostics import build_identity_diagnostics
+from app.services.identity_offline_resolver_shadow import build_shadow_offline_identity
 from app.services.identity_occlusion_assignment_shadow import build_shadow_occlusion_assignments
 from app.services.identity_stitching_shadow import build_shadow_stitching_candidates
 from app.services.post_yolo_reprocess import reprocess_match_from_artifacts
@@ -140,6 +141,8 @@ def run_benchmark_case(
     occlusions = _load_json(candidate_dir / "identity_occlusion_events.json")
     stitching = _load_json(candidate_dir / "identity_stitching_candidates.json")
     joint_assignments = _load_json(candidate_dir / "identity_occlusion_assignments.json")
+    offline_shadow = _load_json(candidate_dir / "identity_offline_shadow.json")
+    offline_report = _load_json(candidate_dir / "identity_offline_shadow_report.json")
     end_to_end_delta_percent = (
         ((candidate_seconds - baseline_seconds) / baseline_seconds) * 100.0
         if baseline_seconds > 0
@@ -169,6 +172,8 @@ def run_benchmark_case(
             "identity_fragmentation_report.json",
             "identity_stitching_candidates.json",
             "identity_occlusion_assignments.json",
+            "identity_offline_shadow.json",
+            "identity_offline_shadow_report.json",
         )
     )
     stable_subject_gate = all(row.get("occlusion_event_ids") or row.get("conflict_evidence") for row in verified_switches)
@@ -183,12 +188,24 @@ def run_benchmark_case(
         if verified_aliases
         & set((row.get("source_stable_subject_ids") or []) + (row.get("target_stable_subject_ids") or []))
     ]
+    verified_offline_cross_subject_edges = [
+        row
+        for row in offline_shadow.get("accepted_edges") or []
+        if row.get("current_identity_relation") == "different_subjects"
+        and verified_aliases
+        & set(
+            (row.get("current_source_subject_ids") or [])
+            + (row.get("current_target_subject_ids") or [])
+        )
+    ]
     overhead_gate = overhead_percent <= max_overhead_percent
     gates = {
         "identity_outputs_unchanged": no_impact,
         "diagnostic_artifacts_present": diagnostics_present,
         "verified_subject_switches_have_evidence": stable_subject_gate,
         "verified_subjects_have_no_conflicting_stitch_recommendations": not verified_stitching_conflicts,
+        "verified_subjects_have_no_cross_subject_offline_links": not verified_offline_cross_subject_edges,
+        "offline_graph_safety_gates_pass": all((offline_report.get("gates") or {}).values()),
         "runtime_overhead_within_limit": overhead_gate,
     }
     report = {
@@ -218,8 +235,11 @@ def run_benchmark_case(
             "occlusions": occlusions.get("summary") or {},
             "stitching": stitching.get("summary") or {},
             "joint_occlusion_assignments": joint_assignments.get("summary") or {},
+            "offline_shadow": offline_shadow.get("summary") or {},
+            "offline_shadow_comparison": offline_report.get("summary") or {},
             "verified_subject_suspected_switches": len(verified_switches),
             "verified_subject_conflicting_stitch_recommendations": len(verified_stitching_conflicts),
+            "verified_subject_cross_subject_offline_links": len(verified_offline_cross_subject_edges),
         },
         "outputs": {
             "baseline": str(baseline_dir),
@@ -246,7 +266,7 @@ def _measure_diagnostics_runtime(candidate_dir: Path, *, fps: float, repeats: in
             manual_assignments_doc=assignments,
             generated_at="benchmark-runtime-measurement",
         )
-        build_shadow_stitching_candidates(
+        stitching = build_shadow_stitching_candidates(
             list(tracklets_doc.get("tracklets") or []),
             documents["identity_tracklet_quality"],
             documents["identity_occlusion_events"],
@@ -254,12 +274,22 @@ def _measure_diagnostics_runtime(candidate_dir: Path, *, fps: float, repeats: in
             fps=fps,
             generated_at="benchmark-runtime-measurement",
         )
-        build_shadow_occlusion_assignments(
+        joint_assignments = build_shadow_occlusion_assignments(
             list(tracklets_doc.get("tracklets") or []),
             documents["identity_tracklet_quality"],
             documents["identity_occlusion_events"],
             global_identity,
             fps=fps,
+            generated_at="benchmark-runtime-measurement",
+        )
+        build_shadow_offline_identity(
+            list(tracklets_doc.get("tracklets") or []),
+            documents["identity_tracklet_quality"],
+            stitching,
+            joint_assignments,
+            global_identity,
+            fps=fps,
+            fragmentation_doc=documents.get("identity_fragmentation_report"),
             generated_at="benchmark-runtime-measurement",
         )
         durations.append(time.perf_counter() - started)

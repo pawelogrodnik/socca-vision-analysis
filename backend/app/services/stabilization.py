@@ -20,6 +20,7 @@ from app.services.conservative_identity import (
     resolve_conservative_identity,
 )
 from app.services.identity_diagnostics import build_identity_diagnostics
+from app.services.identity_offline_resolver_shadow import build_shadow_offline_identity
 from app.services.identity_occlusion_assignment_shadow import build_shadow_occlusion_assignments
 from app.services.identity_stitching_shadow import build_shadow_stitching_candidates
 
@@ -4587,6 +4588,20 @@ def _build_identity_diagnostics_safely(
         )
     except Exception as exc:
         return documents, f"Shadow joint occlusion assignment failed without affecting identity outputs: {exc}"
+    try:
+        documents.update(
+            build_shadow_offline_identity(
+                tracklets,
+                documents["identity_tracklet_quality"],
+                documents["identity_stitching_candidates"],
+                documents["identity_occlusion_assignments"],
+                global_identity,
+                fps=fps,
+                fragmentation_doc=documents.get("identity_fragmentation_report"),
+            )
+        )
+    except Exception as exc:
+        return documents, f"Shadow offline identity resolver failed without affecting identity outputs: {exc}"
     return documents, None
 
 

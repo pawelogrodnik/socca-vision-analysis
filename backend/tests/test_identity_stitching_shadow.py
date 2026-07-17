@@ -296,6 +296,27 @@ class ShadowStitchingTests(unittest.TestCase):
         self.assertNotIn("identity_occlusion_assignments", documents)
         self.assertIn("joint assignment boom", warning or "")
 
+    def test_offline_resolver_failure_keeps_all_p0_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "app.services.stabilization.build_shadow_offline_identity",
+                side_effect=RuntimeError("offline resolver boom"),
+            ):
+                documents, warning = _build_identity_diagnostics_safely(
+                    Path(directory),
+                    [],
+                    [],
+                    empty_identity(),
+                    fps=FPS,
+                    enabled=True,
+                )
+
+        self.assertIn("identity_stitching_candidates", documents)
+        self.assertIn("identity_occlusion_assignments", documents)
+        self.assertNotIn("identity_offline_shadow", documents)
+        self.assertNotIn("identity_offline_shadow_report", documents)
+        self.assertIn("offline resolver boom", warning or "")
+
 
 if __name__ == "__main__":
     unittest.main()

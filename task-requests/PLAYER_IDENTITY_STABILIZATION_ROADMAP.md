@@ -419,19 +419,101 @@ Opis uruchamiania i gate'ów znajduje się w:
 docs/PLAYER_IDENTITY_P0_BENCHMARK.md
 ```
 
-### Następny krok: P1 OFFLINE RESOLVER SHADOW
+### P1.1 — OFFLINE RESOLVER SHADOW: DONE
 
-Gate P0 jest zaliczony. Następny etap to zbudowanie alternatywnego timeline'u identity,
-który wykorzysta wyłącznie rekomendacje przechodzące istniejące goldset gates:
+Gate P0 jest zaliczony. Zaimplementowano pierwszy produkcyjnie pasywny etap P1, który
+buduje alternatywny timeline identity wyłącznie z rekomendacji przechodzących
+istniejące goldset gates:
 
-1. zastosować zaakceptowane krawędzie prostego stitchingu i joint assignment do kopii
+1. stosuje zaakceptowane krawędzie prostego stitchingu i joint assignment do kopii
    grafu trackletów;
-2. zachować abstentions jako jawne przerwy, bez zgadywania tożsamości;
-3. wygenerować równoległe stable subjects i timeline, bez podmiany produkcyjnych plików;
-4. porównać coverage, RAW/ambiguous time, switches, duplicate conflicts, liczbę subjectów
-   oraz przewidywany nakład manualnego review;
-5. zablokować rollout, jeśli easy90 traci stabilność A02/A03/A05 albo hard3m zyskuje
-   nowe suspected switches.
+2. zachowuje abstentions jako jawne przerwy, bez zgadywania tożsamości;
+3. generuje równoległe stable subjects i timeline, bez podmiany produkcyjnych plików;
+4. porównuje coverage, konflikty, liczbę subjectów i przewidywany nakład manualnego review;
+5. odrzuca atomowo całe joint assignment, gdy choć jedna para łamie constraints;
+6. blokuje cykle, temporal overlap, różne drużyny, podwójnego następcę/poprzednika
+   oraz równoległe tracklety w jednym shadow subject.
+
+Nowe artefakty:
+
+```text
+identity_offline_shadow.json
+identity_offline_shadow_report.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_offline_resolver_shadow.py
+backend/tests/test_identity_offline_resolver_shadow.py
+```
+
+Benchmark frozen YOLO:
+
+```text
+backend/storage/benchmarks/player_identity/p1-offline-shadow-20260717-v1/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+117 testów identity/stabilization passed
+produkcyjne identity/stats/heatmap artifacts unchanged: true
+easy90 verified A02/A03/A05 cross-subject links: 0
+offline safety gates: true
+isolated overhead: 0.06% easy, 0.04% hard
+accepted edges: 12/124 eligible tracklets easy, 22/431 hard
+```
+
+P1.1 jest celowo konserwatywnym szkieletem grafu. Nie jest jeszcze kandydatem do
+produkcji: budowanie subjectów wyłącznie z zaakceptowanych nowych krawędzi daje
+112 subjectów dla easy90 i 409 dla hard3m. To potwierdza bezpieczeństwo, ale jeszcze
+nie poprawia pokrycia.
+
+### P1.2 — SAFE BASELINE CONTINUITY: DONE / LOW YIELD
+
+Dodano konserwatywną klasę krawędzi bazowych opartą na istniejącej ciągłości
+produkcyjnego subjectu:
+
+1. dodaje do grafu bezpieczne istniejące ciągłości produkcyjnego subjectu jako osobną,
+   niżej uprzywilejowaną klasę krawędzi;
+2. odrzuca takie krawędzie przy suspected switch, overlap conflict, różnej drużynie,
+   niepewnym footpoincie lub konflikcie z rekomendacją P0;
+3. pozwala zaakceptowanym joint/stitching edges zastąpić błędną lokalną ciągłość;
+4. zapisuje audyt wszystkich pominiętych par i powodów odrzucenia.
+
+Benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p12-safe-baseline-20260717-v1/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+identity outputs unchanged: true
+easy90 verified A02/A03/A05 cross-subject links: 0
+safe baseline edges: 2 easy, 1 hard
+shadow subjects: 110 easy, 408 hard
+```
+
+Ten etap wykazał, że produkcyjne sloty nie są wystarczająco czystym źródłem baseline:
+większość sąsiednich par odpada przez suspected switch albo temporal overlap. Celowe
+poluzowanie tych zabezpieczeń przywróciłoby ryzyko trwałych ID swapów, dlatego P1.2
+pozostaje w kodzie jako bezpieczny fallback, ale nie rozwiązuje fragmentacji.
+
+### Następny krok: P1.3 GLOBAL TEMPORAL PATH SELECTION
+
+Kolejny etap powinien:
+
+1. wykorzystać pełną pulę scored stitching candidates, nie tylko lokalne rekomendacje;
+2. rozwiązywać deterministic minimum-cost path cover osobno per team i temporal window;
+3. traktować zaakceptowane joint assignments jako forced atomic constraints;
+4. pozostawiać orphan/abstention zamiast wymuszać słabą krawędź;
+5. porównać redukcję subjectów i manual review z liczbą nowych cross-subject links;
+6. utrzymać dotychczasowe gate'y easy90 A02/A03/A05 i brak produkcyjnego wpływu.
 
 P1 nadal nie powinien podmieniać produkcyjnego identity. Ma wygenerować równoległy
 timeline i raport delta: coverage, RAW/ambiguous time, switches, duplicate conflicts,
@@ -1075,10 +1157,10 @@ ReID nie może samodzielnie przebić:
 
 # 10. P1 — offline tracklet graph
 
-**Status: PARTIAL / SHADOW.** Zaimplementowano deterministyczną ekstrakcję i scoring
-krawędzi, twarde constraints oraz wizualny audyt rekomendacji. Nie ma jeszcze globalnego
-optimizera, joint outgoing assignment, stable subject rebuild ani podmiany produkcyjnego
-resolvera.
+**Status: P1.2 DONE / SHADOW.** Zaimplementowano deterministyczną ekstrakcję i scoring
+krawędzi, twarde constraints, wizualny audyt rekomendacji, pierwszy offline stable
+subject rebuild oraz konserwatywny safe baseline continuity. Nie ma jeszcze pełnego
+globalnego optimizera ani podmiany produkcyjnego resolvera.
 
 To jest najważniejszy długoterminowy element stabilizacji identity.
 
