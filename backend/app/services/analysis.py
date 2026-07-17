@@ -498,7 +498,14 @@ def analyze_match_motion(
             "tracks_count": len(tracks_json),
             "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
             "artifacts": artifacts,
-            "warnings": [] if tracks_json else ["No tracks were detected. Check pitch polygon, video quality, and adapter settings."],
+            "warnings": [
+                *([] if tracks_json else ["No tracks were detected. Check pitch polygon, video quality, and adapter settings."]),
+                *(
+                    [str(stabilization["identity_diagnostics_warning"])]
+                    if stabilization.get("identity_diagnostics_warning")
+                    else []
+                ),
+            ],
         }
         return finalize_analysis_report(match_dir, report)
     except Exception as exc:
@@ -1152,6 +1159,8 @@ def analyze_match_yolo(
             defer_stable_overlay_render=render_stable_overlay,
         )
         artifacts.update(stabilization["artifacts"])
+        if stabilization.get("identity_diagnostics_warning"):
+            warnings.append(str(stabilization["identity_diagnostics_warning"]))
         if ball_tracking is not None:
             refined_ball_tracks = stabilization.get("refined_ball_tracks")
             if refined_ball_tracks is not None:

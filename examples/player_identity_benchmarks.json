@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1.0",
+  "benchmarks": [
+    {
+      "benchmark_id": "player-identity-easy-90s-v1",
+      "label": "easy90",
+      "source_type": "analysis_run",
+      "source_path": "backend/storage/matches/46904e8c/analysis_runs/20260715T111009Z-yolo-ultralytics-chunked-598d1dee",
+      "video_path": "examples/90s-sample.mp4",
+      "pitch_config_path": "examples/90s-sample_pitch_config.json",
+      "start_sec": 0.0,
+      "max_seconds": 0.0,
+      "verified_stable_subjects": ["A02", "A03", "A05"]
+    },
+    {
+      "benchmark_id": "player-identity-hard-3m-v1",
+      "label": "hard3m",
+      "source_type": "match_window",
+      "source_path": "backend/storage/matches/7655bf7c",
+      "video_path": null,
+      "visual_clip_path": "examples/player_identity_benchmark_hard_3m_1st_half_04m30s_07m30s.mp4",
+      "pitch_config_path": "examples/player_identity_benchmark_hard_3m_1st_half_04m30s_07m30s_pitch_config.json",
+      "start_sec": 270.0,
+      "max_seconds": 180.0,
+      "verified_stable_subjects": []
+    }
+  ]
+}

@@ -33,6 +33,7 @@ def main() -> None:
     parser.add_argument("--raw-overlay", action="store_true", help="Also rebuild raw P## overlay from tracks.json.")
     parser.add_argument("--debug-overlay", action="store_true", help="Also write debug_identity_overlay.mp4.")
     parser.add_argument("--no-stable-overlay", action="store_true", help="Skip stable_overlay_preview.mp4 render.")
+    parser.add_argument("--no-identity-diagnostics", action="store_true", help="Disable read-only P0 identity diagnostics.")
     parser.add_argument("--pass-goldset", type=Path, default=None, help="Optional manual pass goldset JSON for quality evaluation.")
     parser.add_argument("--pass-gold-tolerance-frames", type=int, default=45, help="Frame tolerance for pass goldset matching.")
     parser.add_argument(
@@ -59,6 +60,7 @@ def main() -> None:
         write_raw_overlay=bool(args.raw_overlay),
         write_debug_overlay=bool(args.debug_overlay),
         render_stable_overlay=not args.no_stable_overlay,
+        enable_identity_diagnostics=not args.no_identity_diagnostics,
         player_label_overrides=_parse_player_labels(args.player_label),
         start_sec=max(0.0, float(args.start_sec or 0.0)),
         max_seconds=max(0.0, float(args.max_seconds or 0.0)) or None,

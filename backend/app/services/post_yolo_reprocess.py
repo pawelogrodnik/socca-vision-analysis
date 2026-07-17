@@ -60,6 +60,7 @@ def reprocess_match_from_artifacts(
     write_raw_overlay: bool = False,
     write_debug_overlay: bool = WRITE_DEBUG_VIDEO_ARTIFACTS,
     render_stable_overlay: bool = True,
+    enable_identity_diagnostics: bool = True,
     player_label_overrides: dict[str, str] | None = None,
     start_sec: float = 0.0,
     max_seconds: float | None = None,
@@ -144,10 +145,13 @@ def reprocess_match_from_artifacts(
         write_debug_overlay=write_debug_overlay,
         render_stable_overlay=render_stable_overlay,
         defer_stable_overlay_render=render_stable_overlay,
+        enable_identity_diagnostics=enable_identity_diagnostics,
         player_label_overrides=player_label_overrides,
         progress=progress,
     )
     artifacts.update(stabilization["artifacts"])
+    if stabilization.get("identity_diagnostics_warning"):
+        warnings.append(str(stabilization["identity_diagnostics_warning"]))
 
     if ball_tracking is not None:
         _merge_refined_ball_tracking(output_dir, ball_tracking, stabilization)

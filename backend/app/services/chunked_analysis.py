@@ -579,6 +579,8 @@ def analyze_match_chunked_yolo(
         if isinstance(warning, str)
     ]
     warnings = list(dict.fromkeys([*camera_motion_warnings, *chunk_warnings]))
+    if stabilization.get("identity_diagnostics_warning"):
+        warnings.append(str(stabilization["identity_diagnostics_warning"]))
     if not include_ball:
         warnings.append("Chunked run skipped ball/possession analysis because include_ball=false.")
     if progress:

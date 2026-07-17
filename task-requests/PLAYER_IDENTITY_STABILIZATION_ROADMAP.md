@@ -37,6 +37,416 @@ manual review time < 15 minut na mecz
 
 przy jednoczesnym zachowaniu konserwatywnego podejścia do niepewnych danych.
 
+## 0.1. Status realizacji — 2026-07-16
+
+Legenda:
+
+```text
+DONE    — wdrożone i zweryfikowane benchmarkiem
+SHADOW  — działa pasywnie i nie zmienia produkcyjnego identity
+PARTIAL — wdrożona jest diagnostyka lub kontrakt, ale nie produkcyjna decyzja
+TODO    — jeszcze niewdrożone
+```
+
+### P0 — shadow diagnostics: DONE
+
+Wdrożono pasywną diagnostykę uruchamianą po `conservative_identity_v2`:
+
+- klasyfikację trackletów: `trusted`, `recoverable`, `ambiguous`, `duplicate`, `noise`;
+- reliability trackletów: occlusion, footpoint, appearance i inside-pitch ratios;
+- grupowanie overlapów w explicit occlusion events;
+- raport fragmentacji, RAW/ambiguous time, suspected switches i duplicate conflicts;
+- bezpieczny tryb best-effort: błąd diagnostyki nie przerywa analizy;
+- deterministyczne artefakty i test braku mutacji wejść.
+
+Nowe artefakty:
+
+```text
+identity_tracklet_quality.json
+identity_occlusion_events.json
+identity_fragmentation_report.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_diagnostics.py
+backend/tests/test_identity_diagnostics.py
+```
+
+### P0.5 — shadow stitching candidates: DONE / SHADOW
+
+Wdrożono pasywny scorer możliwych kontynuacji trackletów:
+
+- kierunkowe krawędzie `source tracklet -> target tracklet`;
+- twarde blokady dla konfliktu czasu, drużyny, roli, niemożliwej prędkości,
+  zbyt dużej odległości i trackletów głównie poza boiskiem;
+- explainable cost components dla czasu, pozycji, ruchu, appearance, bbox profile
+  i jakości trackletu;
+- bonus za ciągłość raw tracker ID i wspólny occlusion event;
+- konserwatywne rekomendacje, alternatywy i margin confidence;
+- ewaluację względem aktualnego stable subjectu wyłącznie jako diagnostykę.
+
+Nowy artefakt:
+
+```text
+identity_stitching_candidates.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_stitching_shadow.py
+backend/tests/test_identity_stitching_shadow.py
+```
+
+Scorer nie zmienia obecnych slotów, stintów, statusów `detected/ambiguous/RAW`,
+statystyk, heatmap ani crop review. Nie jest jeszcze produkcyjnym offline resolverem.
+
+### P0.6 — visual stitching audit: DONE
+
+Dodano deterministyczny generator wizualnego audytu rekomendowanych krawędzi:
+
+- karta zawiera source endpoint, klatkę transition i target endpoint;
+- source i target mają osobne powiększone cropy z ponownie narysowanym bboxem
+  i strzałką wskazującą dokładnie ocenianą osobę;
+- karta ma rozdzielczość `2400x1080`, a kliknięcie obrazu otwiera pełnoekranowy lightbox;
+- karta pokazuje stable subjects, quality classes, team, koszt, confidence, gap,
+  odległość, wymaganą prędkość, appearance, velocity residual i evidence;
+- statyczna galeria pozwala oznaczyć `Same person`, `Different people` lub `Uncertain`;
+- reviewed decisions można wyeksportować jako JSON gotowy do użycia jako goldset;
+- brak endpointu nie uruchamia fallbacku: przypadek jest jawnie zapisywany jako `skipped`.
+
+Implementacja:
+
+```text
+backend/app/services/identity_stitching_audit.py
+backend/scripts/generate_identity_stitching_audit.py
+backend/tests/test_identity_stitching_audit.py
+```
+
+Wygenerowany audyt:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p05-stitching-20260716-final-v3/visual-stitching-audit-v4/
+```
+
+Wynik generacji:
+
+```text
+easy90: 12 kart, 0 skipped
+hard3m: 20 kart, 0 skipped
+łącznie: 32 karty, 8 contact sheets, 2 interaktywne galerie HTML
+```
+
+Obserwacje techniczne:
+
+```text
+27/32 rekomendacje mają same_raw_tracker evidence
+0/32 rekomendacje mają shared occlusion event evidence
+easy90: 7 same_subject, 4 unresolved, 1 different_subjects
+hard3m: 13 same_subject, 7 unresolved, 0 different_subjects
+```
+
+Jedyny przypadek `different_subjects` (`easy90`, karta 11,
+`100044:2 -> 100044:3`) wygląda we wstępnej inspekcji jak ciągłość tego samego
+niebieskiego zawodnika. Jest to wartościowy kandydat na potwierdzony false split, ale
+formalny status pozostaje `pending`, dopóki audyt nie zostanie zapisany przez operatora.
+
+Wniosek: P0.5 jest konserwatywny i dobrze znajduje proste splity raw trackera, ale nie
+rozwiązuje jeszcze najważniejszej klasy problemu — zmian identity po realnym overlapie.
+
+### P0.7 — versioned goldset i precision gate: DONE
+
+Dodano kanoniczny kontrakt goldsetu oraz evaluator shadow recommendations:
+
+- goldset używa złożonego klucza `benchmark_id + candidate_key`, a nie numeru karty;
+- `confirmed_same` i `confirmed_different` są etykietami benchmarkowymi;
+- `uncertain` i `pending` pozostają jawnie poza metrykami;
+- sprzeczne duplikaty review zatrzymują budowę goldsetu;
+- digest wersji jest deterministyczny i ignoruje techniczne timestampy review;
+- CLI odmawia nadpisania istniejącej wersji goldsetu lub raportu;
+- evaluator raportuje `TP`, `FP`, `FN`, `TN`, precision, recall i konkretne błędne krawędzie;
+- konserwatywny gate domyślnie wymaga precision `>= 0.95`, minimum 10 etykiet
+  i 0 false positives;
+- brak predykcji albo za mało etykiet daje `not_ready`, nigdy fałszywe `passed`.
+
+Implementacja:
+
+```text
+backend/app/services/identity_stitching_goldset.py
+backend/scripts/build_identity_stitching_goldset.py
+backend/tests/test_identity_stitching_goldset.py
+```
+
+Wygenerowano również niezmienny draft wejściowy:
+
+```text
+backend/storage/benchmarks/player_identity/goldsets/
+  player-identity-stitching-0.1.0-draft.json
+  player-identity-stitching-0.1.0-draft-evaluation.json
+```
+
+Po ręcznym audycie zbudowano finalny goldset `v1`:
+
+```text
+backend/storage/benchmarks/player_identity/goldsets/
+  player-identity-stitching-1.0.0.json
+  player-identity-stitching-1.0.0-evaluation.json
+```
+
+Wynik gate'a:
+
+```text
+32/32 labeled
+32 confirmed_same
+precision=1.0, recall=1.0
+status=passed
+```
+
+Ograniczenie: goldset nie zawiera jeszcze żadnego `confirmed_different`, więc potwierdza
+wysoką jakość prostych pozytywnych połączeń, ale nie mierzy false-positive rate na
+negatywnych parach. Przed produkcyjnym włączeniem stitchingu trzeba dodać takie przypadki.
+
+### P0.8 — joint outgoing assignment po occlusion: DONE / SHADOW
+
+Dodano wspólną ocenę dwóch możliwych przypisań dla zdarzeń, w których dwóch zawodników
+tej samej drużyny przechodzi przez overlap:
+
+- scorer buduje lokalne endpointy tuż przed i tuż po occlusion;
+- porównuje obie permutacje 2x2 jako całość, zamiast wybierać każdą krawędź osobno;
+- raportuje `keep_current`, `suspected_swap`, `unresolved_current`,
+  `identity_contradiction`, `ambiguous` albo `blocked`;
+- wynik jest wyłącznie diagnostyczny i nie zmienia produkcyjnych slotów, stintów,
+  team labels, statystyk ani heatmap;
+- sąsiednie eventy opisujące tę samą czwórkę trackletów są deduplikowane;
+- awaria etapu nie przerywa analizy i zachowuje wcześniejsze artefakty P0/P0.5.
+
+Nowy artefakt:
+
+```text
+identity_occlusion_assignments.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_occlusion_assignment_shadow.py
+backend/tests/test_identity_occlusion_assignment_shadow.py
+```
+
+Zaakceptowany frozen benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p08-joint-occlusion-20260716-v2/identity_benchmark_report.json
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+production identity/stats/heatmap artifacts unchanged: true
+easy90: 10 joint cases, 6 recommendations, 3 keep_current, 0 suspected_swap
+hard3m: 36 joint cases, 17 recommendations, 6 keep_current,
+         9 unresolved_current, 2 identity_contradiction, 6 ambiguous
+```
+
+Pierwszy prototyp porównujący pełne tracklety był nadmiernie blokowany przez naturalny
+overlap czasowy. Finalna wersja ocenia przycięte endpointy wokół eventu, dzięki czemu
+porównuje właściwy moment potencjalnej zamiany.
+
+### P0.9 — visual joint assignment audit: DONE
+
+Dodano deterministyczny audyt wizualny decyzji 2x2 po okluzji:
+
+- każda karta pokazuje duży kontekst `before / event / after`;
+- cztery osobne cropy `S1`, `S2`, `T1`, `T2` wskazują dokładnie oceniane osoby;
+- cienki bbox i strzałka nie zasłaniają sylwetki zawodnika;
+- operator wybiera `Assignment A`, `Assignment B`, jedną z czterech częściowych
+  kontynuacji `Only Sx -> Ty`, `Neither` albo `Uncertain`;
+- częściowa kontynuacja zapisuje jedną pozytywną i trzy negatywne krawędzie, dzięki
+  czemu przypadek z jednym znikającym i jednym kontynuowanym zawodnikiem nie jest
+  błędnie oznaczany jako pełne `Neither`;
+- kontrolna próbka `keep_current` jest prezentowana obok trudnych przypadków
+  `ambiguous` i `identity_contradiction`;
+- galeria eksportuje reviewed manifest bez modyfikowania produkcyjnego identity.
+
+Implementacja:
+
+```text
+backend/app/services/identity_occlusion_assignment_audit.py
+backend/scripts/generate_identity_occlusion_assignment_audit.py
+backend/tests/test_identity_occlusion_assignment_audit.py
+```
+
+Wygenerowany audyt:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p08-joint-occlusion-20260716-v2/visual-joint-occlusion-audit-v3/
+```
+
+Zakres audytu:
+
+```text
+easy90: 3 kontrolne przypadki keep_current
+hard3m: 8 trudnych przypadków + 3 kontrolne keep_current
+łącznie: 14 kart, 0 skipped
+```
+
+### P0.10 — joint assignment goldset i regression gate: DONE
+
+Dodano wersjonowany kontrakt goldsetu i evaluator decyzji po okluzji:
+
+- jednostką oceny jest `benchmark_id + case_key`;
+- etykiety to `assignment_a`, `assignment_b`, `partial`, `neither`, `uncertain`
+  i `pending`;
+- wybór A lub B generuje dwie pozytywne i dwie negatywne etykiety krawędzi;
+- wybór `neither` generuje cztery negatywne etykiety krawędzi;
+- evaluator raportuje poprawne, błędne i wstrzymane decyzje oraz edge-level
+  `TP`, `FP`, `FN`, `TN`;
+- gate wymaga minimalnej liczby etykiet, kompletności predykcji, minimalnej accuracy
+  oraz limitu błędnych wspólnych przypisań;
+- CLI nie nadpisuje istniejących wersji goldsetu ani raportów.
+
+Implementacja:
+
+```text
+backend/app/services/identity_occlusion_assignment_goldset.py
+backend/scripts/build_identity_occlusion_assignment_goldset.py
+backend/tests/test_identity_occlusion_assignment_goldset.py
+```
+
+Niezmienny goldset z ręcznego review:
+
+```text
+backend/storage/benchmarks/player_identity/goldsets/
+  player-identity-joint-occlusion-1.0.0.json
+```
+
+Goldset obejmuje:
+
+```text
+14 cases
+14 labeled
+1 assignment_a
+5 assignment_b
+8 partial
+20 positive edge labels
+36 negative edge labels
+```
+
+Manifesty `easy90` i `hard3m` zostały w całości oznaczone. Wynik bazowego P0.8 przed
+dostrojeniem wynosił `5/14`, z trzema błędnymi pełnymi przypisaniami. Review pokazało,
+że głównym brakującym stanem nie jest kolejna permutacja 2x2, lecz częściowa kontynuacja,
+gdy tylko jeden tracklet po okluzji reprezentuje prawdziwego zawodnika.
+
+### P0.11 — partial-aware joint assignment: DONE / SHADOW
+
+Scorer P0.8 został rozszerzony bez wpływu na produkcyjne identity:
+
+- zapisuje reliability endpointów źródłowych i docelowych;
+- rozpoznaje małe, niskoconfidence fragmenty bboxa przy wyjściu z okluzji;
+- może zwrócić `partial_continuation` z dokładnie jedną rekomendowaną parą;
+- nie wymusza pełnego przypisania, jeśli druga krawędź opiera się na niewiarygodnym
+  endpointcie;
+- przy uciętym endpointcie długiego trackletu zachowuje pełne przypisanie, jeśli obie
+  krawędzie nadal mają mocne i spójne evidence;
+- evaluator porównuje dokładną rekomendowaną parę częściową, a nie tylko etykietę
+  `partial`.
+
+Implementacja:
+
+```text
+backend/app/services/identity_occlusion_assignment_shadow.py
+backend/app/services/identity_occlusion_assignment_goldset.py
+backend/tests/test_identity_occlusion_assignment_shadow.py
+backend/tests/test_identity_occlusion_assignment_goldset.py
+```
+
+Frozen wynik po dostrojeniu:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p08-joint-occlusion-20260717-partial-v1/
+```
+
+```text
+status=passed
+13/14 correct
+0 wrong
+1 abstained
+accuracy=0.928571
+edge TP=18 FP=0 FN=2 TN=36
+```
+
+Jedyny abstention dotyczy pełnego `assignment_b` w hard3m. Jest zachowany celowo:
+shadow scorer nie ma jeszcze dostatecznego evidence, aby podnieść recall bez ryzyka
+ponownego wprowadzenia false-positive assignment. Priorytetem tego etapu jest
+`0 wrong`, nie wymuszanie decyzji dla każdej okluzji.
+
+### Benchmarki frozen YOLO: DONE
+
+Dodano dwa benchmarki uruchamiające wyłącznie post-processing identity:
+
+- `easy90`: 90-sekundowa próbka z A02, A03 i A05 jako ręcznie zweryfikowanymi
+  stabilnymi subjectami;
+- `hard3m`: trudny zakres 04:30–07:30 pierwszej połowy z zachowaniem oryginalnych
+  numerów klatek i camera motion.
+
+Ostatni zaakceptowany run:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p05-stitching-20260716-final-v3/identity_benchmark_report.json
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+identity/stats/heatmap artifacts unchanged: true
+easy90 verified A02/A03/A05 conflicting recommendations: 0
+diagnostics overhead: 0.04% easy, 0.02% hard
+shadow recommendations: 12 easy, 20 hard
+```
+
+Opis uruchamiania i gate'ów znajduje się w:
+
+```text
+docs/PLAYER_IDENTITY_P0_BENCHMARK.md
+```
+
+### Następny krok: P1 OFFLINE RESOLVER SHADOW
+
+Gate P0 jest zaliczony. Następny etap to zbudowanie alternatywnego timeline'u identity,
+który wykorzysta wyłącznie rekomendacje przechodzące istniejące goldset gates:
+
+1. zastosować zaakceptowane krawędzie prostego stitchingu i joint assignment do kopii
+   grafu trackletów;
+2. zachować abstentions jako jawne przerwy, bez zgadywania tożsamości;
+3. wygenerować równoległe stable subjects i timeline, bez podmiany produkcyjnych plików;
+4. porównać coverage, RAW/ambiguous time, switches, duplicate conflicts, liczbę subjectów
+   oraz przewidywany nakład manualnego review;
+5. zablokować rollout, jeśli easy90 traci stabilność A02/A03/A05 albo hard3m zyskuje
+   nowe suspected switches.
+
+P1 nadal nie powinien podmieniać produkcyjnego identity. Ma wygenerować równoległy
+timeline i raport delta: coverage, RAW/ambiguous time, switches, duplicate conflicts,
+liczbę subjectów i przewidywany nakład manualnego review.
+
+Nadal otwarte są między innymi:
+
+- produkcyjny offline graph optimizer i stable subject rebuild;
+- joint assignment outgoing trackletów po overlapie;
+- jawny stan `occluded` w produkcyjnym resolved timeline;
+- event-level UI review i orphan review;
+- anchor assignment per stable subject;
+- same-match ReID embeddings;
+- wpływ quality/reliability na statystyki i crop review.
+
 ---
 
 # 1. Baseline repozytorium
@@ -190,6 +600,9 @@ Ma rozstrzygać tylko niepewne miejsca, a nie rekonstruować cały mecz ręcznie
 
 # 4. P0 — diagnostyka zanim zmienimy model
 
+**Status: DONE w trybie `shadow_read_only`.** Implementacja generuje raport bez wpływu
+na produkcyjny resolver. Szczegóły i benchmarki opisano w sekcji 0.1.
+
 Przed dużym refactorem należy mierzyć problem.
 
 ## 4.1. Nowy raport fragmentacji
@@ -267,6 +680,9 @@ Optymalizowanie tylko `tracks_count` jest niedopuszczalne.
 
 # 5. P0 — tracklet quality classification
 
+**Status: DONE w trybie `shadow_read_only`.** Klasy i reason codes są zapisywane w
+`identity_tracklet_quality.json`; nie filtrują jeszcze produkcyjnego crop review.
+
 Każdy raw tracklet powinien otrzymać klasę jakości:
 
 ```text
@@ -333,6 +749,10 @@ Przykłady:
 ---
 
 # 6. P0 — footpoint reliability i occlusion awareness
+
+**Status: PARTIAL / SHADOW.** Zagregowane reliability ratios i niewiarygodne zakresy
+klatek są raportowane per tracklet. Produkcyjna pozycja, status obserwacji i naliczanie
+dystansu nie zostały przez P0 zmienione.
 
 ## 6.1. Problem
 
@@ -426,6 +846,10 @@ Przykład:
 ---
 
 # 7. P0 — explicit occlusion events
+
+**Status: PARTIAL / SHADOW.** Explicit events i incoming/outgoing candidates są
+generowane diagnostycznie. Joint assignment, stan `occluded` i UI review eventu
+pozostają niewdrożone.
 
 ## 7.1. Początek zdarzenia
 
@@ -650,6 +1074,11 @@ ReID nie może samodzielnie przebić:
 ---
 
 # 10. P1 — offline tracklet graph
+
+**Status: PARTIAL / SHADOW.** Zaimplementowano deterministyczną ekstrakcję i scoring
+krawędzi, twarde constraints oraz wizualny audyt rekomendacji. Nie ma jeszcze globalnego
+optimizera, joint outgoing assignment, stable subject rebuild ani podmiany produkcyjnego
+resolvera.
 
 To jest najważniejszy długoterminowy element stabilizacji identity.
 
@@ -1532,15 +1961,16 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 
 # 27. Acceptance Criteria całej roadmapy
 
-- [ ] system mierzy track fragmentation;
-- [ ] raw track count nie jest traktowany jako liczba zawodników;
-- [ ] tracklety mają klasy jakości;
+- [x] system mierzy track fragmentation (`identity_fragmentation_report.json`);
+- [x] raw track count jest raportowany oddzielnie od stable subjects;
+- [x] tracklety mają klasy jakości w warstwie shadow;
 - [ ] noise i duplicate tracklety nie zaśmiecają review;
 - [ ] obserwacje posiadają `occlusion_score`;
 - [ ] obserwacje posiadają `footpoint_reliable`;
 - [ ] niewiarygodny partial bbox nie aktualizuje pozycji jako pewny footpoint;
 - [ ] istnieje jawny stan `occluded`;
-- [ ] overlap tworzy reviewable event;
+- [x] overlap tworzy explicit shadow event z evidence;
+- [ ] overlap event ma operator review UI;
 - [ ] outgoing tracklety są rozwiązywane wspólnie;
 - [ ] roster assignment działa per stable subject;
 - [ ] system automatycznie wybiera najlepsze anchor cropy;
@@ -1548,12 +1978,15 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [ ] orphan review pokazuje tylko istotne tracklety;
 - [ ] same-match ReID używa tylko reliable cropów;
 - [ ] ReID nie przebija twardych constraintów;
-- [ ] offline graph ma explainable edge costs;
+- [x] shadow stitching candidates mają explainable edge costs i hard constraints;
+- [x] rekomendowane krawędzie mają karty source/transition/target i eksport review JSON;
+- [ ] offline graph ma globalny optimizer i przebudowuje stable subjects;
 - [ ] persistent gallery przyjmuje tylko zatwierdzone próbki;
 - [ ] resolved timeline odróżnia detected, predicted i occluded;
 - [ ] predicted positions nie są liczone jako observed distance;
 - [ ] player-level readiness blokuje nierzetelne statystyki;
-- [ ] istnieje identity goldset;
+- [x] istnieją frozen benchmarki easy90 i hard3m z no-impact gates;
+- [ ] istnieje pełny ręcznie opisany identity goldset z expected mappings;
 - [ ] mierzone są false merges i false splits;
 - [ ] manual review time jest mierzone;
 - [ ] docelowo operator wykonuje około 14 anchor assignments i kilka/kilkanaście decyzji wyjątków;

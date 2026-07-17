@@ -1,0 +1,24 @@
+{
+  "benchmark_id": "player-identity-hard-3m-v1",
+  "video_file": "player_identity_benchmark_hard_3m_1st_half_04m30s_07m30s.mp4",
+  "source_match_id": "7655bf7c",
+  "source_published_match_id": "published-7655bf7c",
+  "source_video_time": {
+    "start_sec": 270.0,
+    "end_sec": 450.0,
+    "start_label": "04:30",
+    "end_label": "07:30"
+  },
+  "duration_sec": 180.0,
+  "selection": {
+    "purpose": "Hard player identity stabilization regression benchmark",
+    "camera_motion_quality": "stable",
+    "observed_challenges": [
+      "frequent ambiguous stable-slot assignments",
+      "unmatched raw player detections",
+      "crowded player interactions",
+      "tracklet continuity under close player proximity"
+    ]
+  },
+  "comparison_baseline": "90s-sample.mp4"
+}

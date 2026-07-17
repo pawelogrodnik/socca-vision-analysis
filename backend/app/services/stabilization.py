@@ -19,6 +19,9 @@ from app.services.conservative_identity import (
     build_stable_players_from_global_identity,
     resolve_conservative_identity,
 )
+from app.services.identity_diagnostics import build_identity_diagnostics
+from app.services.identity_occlusion_assignment_shadow import build_shadow_occlusion_assignments
+from app.services.identity_stitching_shadow import build_shadow_stitching_candidates
 
 
 MAX_INTERPOLATION_GAP_FRAMES = 15
@@ -4246,6 +4249,7 @@ def stabilize_match(
     write_debug_overlay: bool = True,
     render_stable_overlay: bool = True,
     defer_stable_overlay_render: bool = False,
+    enable_identity_diagnostics: bool = True,
     player_label_overrides: dict[str, str] | None = None,
     progress: Callable[[str, float, str, dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
@@ -4464,6 +4468,15 @@ def stabilize_match(
         team_stats=team_stats,
     )
 
+    identity_diagnostics, identity_diagnostics_warning = _build_identity_diagnostics_safely(
+        match_dir,
+        tracklets,
+        rejected,
+        global_identity,
+        fps=float(video_metadata.get("fps") or 25.0),
+        enabled=enable_identity_diagnostics,
+    )
+
     (match_dir / "stable_players.json").write_text(json.dumps(public_stable_doc, indent=2), encoding="utf-8")
     (match_dir / "global_identity.json").write_text(json.dumps(global_identity, indent=2), encoding="utf-8")
     (match_dir / "global_identity_report.json").write_text(json.dumps(global_identity_report, indent=2), encoding="utf-8")
@@ -4478,6 +4491,11 @@ def stabilize_match(
     (match_dir / "tracklets.json").write_text(json.dumps(tracklets_doc, indent=2), encoding="utf-8")
     (match_dir / "tracking_quality_report.json").write_text(json.dumps(tracking_quality_report, indent=2), encoding="utf-8")
     (match_dir / "stabilization_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    identity_diagnostics_artifacts: dict[str, str] = {}
+    for artifact_name, document in identity_diagnostics.items():
+        filename = f"{artifact_name}.json"
+        (match_dir / filename).write_text(json.dumps(document, indent=2), encoding="utf-8")
+        identity_diagnostics_artifacts[artifact_name] = filename
     return {
         "stable_players": public_stable_doc,
         "stable_players_overlay_doc": stable_doc,
@@ -4496,6 +4514,8 @@ def stabilize_match(
         "tracklets": tracklets_doc,
         "tracking_quality_report": tracking_quality_report,
         "stabilization_report": report,
+        "identity_diagnostics": identity_diagnostics,
+        "identity_diagnostics_warning": identity_diagnostics_warning,
         "refined_ball_tracks": refined_ball_tracks_doc,
         "artifacts": {
             "stable_players": "stable_players.json",
@@ -4515,8 +4535,59 @@ def stabilize_match(
             **change_artifacts["artifacts"],
             "tracklets": "tracklets.json",
             "tracking_quality_report": "tracking_quality_report.json",
+            **identity_diagnostics_artifacts,
         },
     }
+
+
+def _build_identity_diagnostics_safely(
+    match_dir: Path,
+    tracklets: list[dict[str, Any]],
+    rejected_tracklets: list[dict[str, Any]],
+    global_identity: dict[str, Any],
+    *,
+    fps: float,
+    enabled: bool,
+) -> tuple[dict[str, dict[str, Any]], str | None]:
+    if not enabled:
+        return {}, None
+    try:
+        manual_assignments_path = match_dir / "player_identity_assignments.json"
+        manual_assignments_doc = (
+            json.loads(manual_assignments_path.read_text(encoding="utf-8"))
+            if manual_assignments_path.exists()
+            else None
+        )
+        documents = build_identity_diagnostics(
+            tracklets,
+            rejected_tracklets,
+            global_identity,
+            fps=fps,
+            manual_assignments_doc=manual_assignments_doc,
+        )
+    except Exception as exc:
+        return {}, f"Shadow identity diagnostics failed without affecting identity outputs: {exc}"
+    try:
+        documents["identity_stitching_candidates"] = build_shadow_stitching_candidates(
+            tracklets,
+            documents["identity_tracklet_quality"],
+            documents["identity_occlusion_events"],
+            global_identity,
+            fps=fps,
+        )
+    except Exception as exc:
+        return documents, f"Shadow identity stitching candidates failed without affecting identity outputs: {exc}"
+    try:
+        documents["identity_occlusion_assignments"] = build_shadow_occlusion_assignments(
+            tracklets,
+            documents["identity_tracklet_quality"],
+            documents["identity_occlusion_events"],
+            global_identity,
+            fps=fps,
+        )
+    except Exception as exc:
+        return documents, f"Shadow joint occlusion assignment failed without affecting identity outputs: {exc}"
+    return documents, None
 
 
 def load_stable_review(match_path: Path) -> dict[str, Any]:
