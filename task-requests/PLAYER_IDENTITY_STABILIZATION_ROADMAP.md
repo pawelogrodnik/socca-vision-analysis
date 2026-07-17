@@ -504,20 +504,174 @@ większość sąsiednich par odpada przez suspected switch albo temporal overlap
 poluzowanie tych zabezpieczeń przywróciłoby ryzyko trwałych ID swapów, dlatego P1.2
 pozostaje w kodzie jako bezpieczny fallback, ale nie rozwiązuje fragmentacji.
 
-### Następny krok: P1.3 GLOBAL TEMPORAL PATH SELECTION
+### P1.3 — GLOBAL TEMPORAL PATH SELECTION: DONE / SHADOW / MANUALLY VALIDATED
 
-Kolejny etap powinien:
+Zaimplementowano deterministyczny globalny wybór ścieżek bez podmiany produkcyjnego
+identity:
 
-1. wykorzystać pełną pulę scored stitching candidates, nie tylko lokalne rekomendacje;
-2. rozwiązywać deterministic minimum-cost path cover osobno per team i temporal window;
-3. traktować zaakceptowane joint assignments jako forced atomic constraints;
-4. pozostawiać orphan/abstention zamiast wymuszać słabą krawędź;
-5. porównać redukcję subjectów i manual review z liczbą nowych cross-subject links;
-6. utrzymać dotychczasowe gate'y easy90 A02/A03/A05 i brak produkcyjnego wpływu.
+1. solver ocenia pełną pulę scored stitching candidates, a nie tylko lokalne
+   rekomendacje;
+2. rozwiązuje minimum-cost bipartite path cover osobno per team i temporal window,
+   łącząc ponownie partycje współdzielące endpoint;
+3. traktuje zaakceptowane joint assignments jako forced atomic constraints i audytuje
+   sprzeczne constrainty;
+4. posiada jawny unmatched cost, minimalny link value i blocking evidence guards,
+   dzięki czemu słaby kandydat pozostaje orphanem;
+5. po wyborze globalnym ponownie sprawdza constraints na narastającym grafie;
+6. raportuje pulę kandydatów, partycje, zaakceptowane cross-production links i
+   rzeczywiste konflikty równoległych detekcji bez nazywania merge'u automatycznie
+   identity switchem.
 
-P1 nadal nie powinien podmieniać produkcyjnego identity. Ma wygenerować równoległy
-timeline i raport delta: coverage, RAW/ambiguous time, switches, duplicate conflicts,
-liczbę subjectów i przewidywany nakład manualnego review.
+Benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p13-global-path-20260717-v2/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+identity outputs unchanged: true
+easy90 verified A02/A03/A05 cross-subject links: 0
+offline safety gates: true
+candidate pool: 138 easy, 750 hard
+accepted edges: 15 easy, 31 hard
+cross-production edges requiring review: 1 easy, 1 hard
+parallel detected conflicts: 0 easy, 0 hard
+shadow subjects: 109 easy, 400 hard
+P1.2 baseline shadow subjects: 110 easy, 408 hard
+estimated manual review subjects: 53 easy, 194 hard
+baseline manual review items: 148 easy, 636 hard
+isolated overhead: 0.09% easy, 0.05% hard
+```
+
+Manualna walidacja cross-production links:
+
+```text
+audit: visual-cross-production-audit-v1
+reviewed cases: 2/2
+easy90 stitching: 100044:2 -> 100044:3 = ta sama osoba
+hard3m joint occlusion: assignment_b = poprawne mapowanie
+stitching precision/recall: 1.0 / 1.0
+joint assignment accuracy: 1.0
+wrong assignments: 0
+```
+
+Artefakty walidacji:
+
+```text
+backend/storage/benchmarks/player_identity/p13-global-path-20260717-v2/
+  visual-cross-production-audit-v1/validation/
+```
+
+P1.3 pozostaje shadow-only. Same krawędzie nie są używane do sztucznego estymowania
+coverage, RAW/ambiguous time ani liczby identity switchy. Te porównania są teraz
+możliwe na poziomie eventów i stanów dzięki P1.4, nadal bez podmiany produkcyjnego
+resolvera.
+
+### P1.4 — SHADOW RESOLVED TIMELINE: DONE / SHADOW / BENCHMARKED
+
+Dodano osobny artefakt `identity_offline_shadow_timeline.json`, rozwijający graf P1.3
+do audytowalnej osi czasu subjectów:
+
+1. każda rzeczywista obserwacja trackletu ma stan `detected`;
+2. krótka luka z wiarygodnymi endpointami może mieć stan `predicted`;
+3. krótka luka wsparta zaakceptowanym occlusion eventem ma stan `occluded`;
+4. luka bez wystarczającego evidence pozostaje `missing`;
+5. bezpośrednie i nakładające się przejścia trackletów są zapisywane jako osobne
+   `direct_transition` lub `overlap_transition`, nawet gdy nie tworzą luki w klatkach;
+6. tylko wiarygodny `detected` wewnątrz boiska jest oznaczany jako potencjalnie
+   kwalifikujący się do dystansu i heatmapy;
+7. `predicted`, `occluded` i `missing` nigdy nie są traktowane jako observed distance;
+8. timeline oraz raport comparison pozostają wyłącznie warstwą shadow.
+
+Benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p14-shadow-timeline-20260717-v2/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+identity outputs unchanged: true
+offline safety gates: true
+
+easy90:
+  transition events: 15
+  detected / predicted / missing: 1252.085 s / 0.300 s / 29.796 s
+  trusted detected ratio: 94.12%
+  cross-production direct transition: 100044:2 -> 100044:3
+  isolated diagnostics overhead: 0.23%
+
+hard3m:
+  transition events: 31
+  detected / predicted / occluded / missing:
+    2566.867 s / 2.536 s / 1.168 s / 111.545 s
+  trusted detected ratio: 88.92%
+  isolated diagnostics overhead: 0.14%
+```
+
+P1.4 nie zmienia produkcyjnych `global_identity.json`, stable slotów, stintów,
+team labels, statystyk ani crop review. Metryki coverage dotyczą sumy osi czasu
+shadow subjectów i nie są jeszcze rosterowym czasem gry 7v7.
+
+Audyt wizualny event-level został wygenerowany i oczekuje na ręczną walidację:
+
+```text
+backend/storage/benchmarks/player_identity/p14-shadow-timeline-20260717-v2/
+  visual-shadow-timeline-audit-v1/
+
+easy90: 14 przypadków
+hard3m: 30 przypadków
+razem: 44 przypadki, 0 pominiętych
+```
+
+Zestaw obejmuje wszystkie przejścia `predicted`, `occluded` i wybrane `missing`,
+cross-production links oraz ograniczoną próbkę bezpośrednich przejść kontrolnych.
+Każdy przypadek wymaga dwóch niezależnych decyzji: ciągłość realnej osoby oraz
+poprawność stanu timeline. Benchmark nie zawiera obecnie przykładu
+`overlap_transition`; pozostaje on otwartym elementem goldsetu.
+
+Prowizoryczny audyt wizualny Codexa został ukończony dla wszystkich 44 kart i
+zapisany oddzielnie od ludzkiego goldsetu:
+
+```text
+visual-shadow-timeline-audit-v1/
+  codex_visual_audit_decisions.json
+  codex_visual_audit_summary.json
+  easy90/identity_shadow_timeline_audit_reviewed_easy90_codex.json
+  hard3m/identity_shadow_timeline_audit_reviewed_hard3m_codex.json
+```
+
+Wstępny wynik:
+
+```text
+easy90:
+  13 same person, 1 uncertain
+  9 correct, 2 should be predicted, 2 should be occluded, 1 uncertain
+
+hard3m:
+  28 same person, 1 different people, 1 uncertain
+  15 correct, 4 should be predicted, 9 should be occluded,
+  1 invalid identity link, 1 uncertain
+```
+
+Najważniejszy sygnał z audytu to niedostateczne rozpoznawanie krótkich zasłonięć:
+część luk oznaczonych jako `predicted` lub `missing` powinna być `occluded`.
+W hard3m wykryto również jeden jawny link blue -> white, który nie może zostać
+zaakceptowany jako ciągłość osoby. Ten wynik jest pomocniczą oceną modelową, a nie
+ludzkim ground truth; dwa przypadki pozostają celowo nierozstrzygnięte.
+
+### Następny krok po P1.4
+
+Przed podmianą produkcyjnego resolvera należy rozszerzyć goldset event-level o
+przypadki `predicted`, `occluded`, `missing`, direct transition i overlap transition.
+Następny candidate może używać timeline do porównania RAW/ambiguous i coverage, ale
+każda zmiana produkcyjnego identity nadal wymaga osobnego benchmarku oraz ręcznej
+walidacji nowych cross-production links.
 
 Nadal otwarte są między innymi:
 
@@ -1157,10 +1311,12 @@ ReID nie może samodzielnie przebić:
 
 # 10. P1 — offline tracklet graph
 
-**Status: P1.2 DONE / SHADOW.** Zaimplementowano deterministyczną ekstrakcję i scoring
+**Status: P1.4 DONE / SHADOW / BENCHMARKED.** Zaimplementowano deterministyczną ekstrakcję i scoring
 krawędzi, twarde constraints, wizualny audyt rekomendacji, pierwszy offline stable
-subject rebuild oraz konserwatywny safe baseline continuity. Nie ma jeszcze pełnego
-globalnego optimizera ani podmiany produkcyjnego resolvera.
+subject rebuild, konserwatywny safe baseline continuity oraz global temporal path
+selection z abstention. Dwa nowe cross-production links potwierdzono ręcznie 2/2,
+a graf rozwinięto do event-level shadow timeline ze stanami `detected`, `predicted`,
+`occluded` i `missing`. Produkcyjny resolver nadal nie jest podmieniany.
 
 To jest najważniejszy długoterminowy element stabilizacji identity.
 
@@ -2050,7 +2206,7 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [ ] obserwacje posiadają `occlusion_score`;
 - [ ] obserwacje posiadają `footpoint_reliable`;
 - [ ] niewiarygodny partial bbox nie aktualizuje pozycji jako pewny footpoint;
-- [ ] istnieje jawny stan `occluded`;
+- [x] istnieje jawny stan `occluded` w shadow timeline; wdrożenie produkcyjne pozostaje otwarte;
 - [x] overlap tworzy explicit shadow event z evidence;
 - [ ] overlap event ma operator review UI;
 - [ ] outgoing tracklety są rozwiązywane wspólnie;
@@ -2064,8 +2220,8 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [x] rekomendowane krawędzie mają karty source/transition/target i eksport review JSON;
 - [ ] offline graph ma globalny optimizer i przebudowuje stable subjects;
 - [ ] persistent gallery przyjmuje tylko zatwierdzone próbki;
-- [ ] resolved timeline odróżnia detected, predicted i occluded;
-- [ ] predicted positions nie są liczone jako observed distance;
+- [x] shadow resolved timeline odróżnia detected, predicted, occluded i missing;
+- [x] predicted/occluded positions w shadow timeline nie są liczone jako observed distance;
 - [ ] player-level readiness blokuje nierzetelne statystyki;
 - [x] istnieją frozen benchmarki easy90 i hard3m z no-impact gates;
 - [ ] istnieje pełny ręcznie opisany identity goldset z expected mappings;

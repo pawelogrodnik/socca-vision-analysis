@@ -142,6 +142,7 @@ def run_benchmark_case(
     stitching = _load_json(candidate_dir / "identity_stitching_candidates.json")
     joint_assignments = _load_json(candidate_dir / "identity_occlusion_assignments.json")
     offline_shadow = _load_json(candidate_dir / "identity_offline_shadow.json")
+    offline_timeline = _load_json(candidate_dir / "identity_offline_shadow_timeline.json")
     offline_report = _load_json(candidate_dir / "identity_offline_shadow_report.json")
     end_to_end_delta_percent = (
         ((candidate_seconds - baseline_seconds) / baseline_seconds) * 100.0
@@ -173,6 +174,7 @@ def run_benchmark_case(
             "identity_stitching_candidates.json",
             "identity_occlusion_assignments.json",
             "identity_offline_shadow.json",
+            "identity_offline_shadow_timeline.json",
             "identity_offline_shadow_report.json",
         )
     )
@@ -236,6 +238,7 @@ def run_benchmark_case(
             "stitching": stitching.get("summary") or {},
             "joint_occlusion_assignments": joint_assignments.get("summary") or {},
             "offline_shadow": offline_shadow.get("summary") or {},
+            "offline_shadow_timeline": offline_timeline.get("summary") or {},
             "offline_shadow_comparison": offline_report.get("summary") or {},
             "verified_subject_suspected_switches": len(verified_switches),
             "verified_subject_conflicting_stitch_recommendations": len(verified_stitching_conflicts),
