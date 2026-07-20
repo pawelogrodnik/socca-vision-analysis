@@ -1661,13 +1661,65 @@ assignments, statystyk i heatmap pozostały bez zmian. Ręczny spot-check cropó
 znanych osób (Pawel, Mati GK, Andrzej) potwierdził, że v2 usuwa widoczne przypadki
 dwóch osób w anchor cropie lepiej niż pierwszy wariant.
 
-### Następny krok po P1.16
+### P1.17 — WHOLE-SUBJECT REVIEW CONTRACT: DONE / READ-ONLY
 
-P1.17 powinien zbudować kontrakt UI/operator review dla całego stable subjectu
-na bazie kart P1.15 i cropów P1.16. Nadal nie należy podłączać P1.14–P1.16 do
-produkcyjnego merge ani statystyk. Warunkiem promocji pozostaje goldset z nowych
-meczów, zero false merge, mniej review oraz brak regresji coverage na easy90 i
-hard3m.
+Dodano shadow kontrakt operator review dla całego candidate stable subjectu. P1.17
+łączy kartę roster anchor z P1.15 z wizualnymi anchor cropami z P1.16 i opisuje
+jedną decyzję operatora dla całego subjectu, nie dla pojedynczego cropa.
+
+Implementacja:
+
+```text
+backend/app/services/identity_roster_subject_review_shadow.py
+backend/scripts/evaluate_identity_roster_subject_review_shadow.py
+backend/tests/test_identity_roster_subject_review_shadow.py
+backend/tests/test_evaluate_identity_roster_subject_review_shadow.py
+```
+
+Kontrakt zapisuje dla każdej karty:
+
+- `review_unit=candidate_stable_subject`;
+- status review (`ready_for_operator_review`, `blocked_conflict`,
+  `needs_more_visual_evidence`, `no_visual_evidence`);
+- rekomendowanego zawodnika, jeżeli istnieje manual anchor lub bezpieczna sugestia;
+- listę roster candidates;
+- anchor cropy jako visual evidence;
+- blockery i dozwolone akcje;
+- `decision_contract`, którego scope jest całym stable subjectem.
+
+Konflikty rosterowe są widoczne, ale blokują akcję `confirm_recommended_player`.
+Żadna karta nie posiada akcji `assign_single_crop`, a wszystkie decyzje są opisane
+jako przyszły review/persistence target, bez zapisu w tym etapie.
+
+Benchmark frozen easy90:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p117-subject-review-20260720-v1/
+
+cards:                         109
+ready for operator review:      74
+blocked conflicts:              13
+needs more visual evidence:      5
+no visual evidence:             17
+selected crops referenced:     437
+cards with recommended player:  12
+automatic assignments:           0
+eligible for stats/heatmaps:     0
+```
+
+Wszystkie safety gate'y przeszły: kontrakt pozostaje shadow/read-only,
+deterministyczny, używa całego stable subjectu jako jednostki pracy, blokuje
+potwierdzanie konfliktów i nie zmienia produkcyjnych artefaktów identity,
+assignments, statystyk ani heatmap.
+
+### Następny krok po P1.17
+
+P1.18 powinien przygotować minimalny operator-facing review flow albo adapter API
+dla P1.17, nadal bez podłączania decyzji do produkcyjnego merge. Sensownym
+kolejnym krokiem jest sprawdzenie kontraktu na hard3m i dopiero potem decyzja,
+czy budujemy lokalny UI review, czy najpierw dodajemy więcej shadow jakości
+(`orphan review`, `event review`, quality wpływające na kolejność kart).
 
 Nadal otwarte są między innymi:
 
@@ -3209,6 +3261,7 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [x] shadow roster anchor działa per candidate stable subject i blokuje konflikty;
 - [ ] produkcyjny roster assignment działa per stable subject;
 - [x] system automatycznie wybiera najlepsze anchor cropy w warstwie shadow;
+- [x] shadow review contract opisuje decyzję dla całego candidate stable subjectu;
 - [ ] manual decision aktualizuje cały fragment, nie jeden crop;
 - [ ] orphan review pokazuje tylko istotne tracklety;
 - [x] same-match ReID używa tylko reliable cropów;
