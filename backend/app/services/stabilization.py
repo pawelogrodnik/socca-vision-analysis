@@ -20,6 +20,11 @@ from app.services.conservative_identity import (
     resolve_conservative_identity,
 )
 from app.services.identity_diagnostics import build_identity_diagnostics
+from app.services.identity_candidate_shadow import build_identity_candidate_shadow
+from app.services.identity_active_roster_shadow import build_identity_active_roster_shadow
+from app.services.identity_fragment_consolidation_shadow import (
+    build_identity_fragment_consolidation_shadow,
+)
 from app.services.identity_offline_resolver_shadow import build_shadow_offline_identity
 from app.services.identity_occlusion_assignment_shadow import build_shadow_occlusion_assignments
 from app.services.identity_stitching_shadow import build_shadow_stitching_candidates
@@ -4597,11 +4602,37 @@ def _build_identity_diagnostics_safely(
                 documents["identity_occlusion_assignments"],
                 global_identity,
                 fps=fps,
+                occlusion_doc=documents["identity_occlusion_events"],
                 fragmentation_doc=documents.get("identity_fragmentation_report"),
             )
         )
     except Exception as exc:
         return documents, f"Shadow offline identity resolver failed without affecting identity outputs: {exc}"
+    try:
+        candidate_documents = build_identity_candidate_shadow(
+            documents["identity_offline_shadow"],
+            documents["identity_offline_shadow_timeline"],
+            global_identity,
+            fps=fps,
+            include_overlay=True,
+        )
+        candidate_overlay = candidate_documents.pop("identity_candidate_shadow_overlay")
+        documents.update(candidate_documents)
+        active_roster_documents = build_identity_active_roster_shadow(
+            documents["identity_candidate_shadow"],
+            candidate_overlay,
+        )
+        documents.update(active_roster_documents)
+        documents.update(
+            build_identity_fragment_consolidation_shadow(
+                documents["identity_candidate_shadow"],
+                candidate_overlay,
+                active_roster_documents["identity_active_roster_shadow"],
+                fps=fps,
+            )
+        )
+    except Exception as exc:
+        return documents, f"Shadow identity candidate/active roster/consolidation failed without affecting identity outputs: {exc}"
     return documents, None
 
 

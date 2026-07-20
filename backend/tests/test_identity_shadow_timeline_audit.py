@@ -10,6 +10,7 @@ import numpy as np
 from app.services.identity_shadow_timeline import build_shadow_resolved_timeline
 from app.services.identity_shadow_timeline_audit import (
     build_shadow_timeline_audit_manifest,
+    build_shadow_timeline_delta_audit_manifest,
     render_shadow_timeline_audit,
 )
 
@@ -79,6 +80,55 @@ def _quality(*tracklet_ids: str) -> dict:
 
 
 class IdentityShadowTimelineAuditTests(unittest.TestCase):
+    def test_delta_manifest_matches_internal_gap_by_subject_and_range(self) -> None:
+        manifest = {
+            "benchmark": {"benchmark_id": "hard", "label": "hard"},
+            "source": {},
+            "items": [
+                {
+                    "audit_index": 1,
+                    "audit_key": "candidate-key",
+                    "audit_kind": "internal_gap",
+                    "shadow_subject_id": "subject-1",
+                    "card_filename": "old.jpg",
+                    "timeline_state": {"status": "predicted", "start_frame": 10, "end_frame": 12},
+                    "manual_review": {"status": "reviewed"},
+                }
+            ],
+        }
+        goldset = {
+            "goldset_id": "gold",
+            "version": "1",
+            "goldset_digest": "digest",
+            "items": [
+                {
+                    "benchmark_id": "hard",
+                    "audit_key": "baseline-key",
+                    "audit_kind": "internal_gap",
+                    "shadow_subject_id": "subject-1",
+                    "start_frame": 10,
+                    "end_frame": 12,
+                    "expected_same_person": True,
+                    "expected_state": "occluded",
+                }
+            ],
+        }
+        evaluation = {
+            "algorithm": {"name": "test", "version": "1"},
+            "errors": [{"benchmark_id": "hard", "audit_key": "baseline-key"}],
+        }
+
+        result = build_shadow_timeline_delta_audit_manifest(
+            manifest,
+            goldset,
+            evaluation,
+            generated_at="fixed",
+        )
+
+        self.assertEqual(result["summary"]["review_items"], 1)
+        self.assertEqual(result["items"][0]["reference_expectation"]["expected_state"], "occluded")
+        self.assertEqual(result["items"][0]["manual_review"]["status"], "pending")
+
     def test_manifest_selects_non_direct_transition_and_maps_clip_offset(self) -> None:
         tracklets = [_tracklet("s1", 2700, 2704), _tracklet("t1", 2708, 2712)]
         timeline = build_shadow_resolved_timeline(

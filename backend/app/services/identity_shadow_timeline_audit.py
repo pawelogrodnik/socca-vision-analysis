@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from datetime import datetime, timezone
 from html import escape
 import hashlib
@@ -171,6 +172,116 @@ def build_shadow_timeline_audit_manifest(
         "items": items,
         "skipped": skipped,
     }
+
+
+def build_shadow_timeline_delta_audit_manifest(
+    manifest: dict[str, Any],
+    goldset: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Select only reviewed mismatches and conservative identity abstentions."""
+    benchmark_id = str((manifest.get("benchmark") or {}).get("benchmark_id") or "")
+    error_keys = {
+        (str(row.get("benchmark_id") or ""), str(row.get("audit_key") or ""))
+        for row in evaluation.get("errors") or []
+    }
+    references = [
+        row
+        for row in goldset.get("items") or []
+        if str(row.get("benchmark_id") or "") == benchmark_id
+        and (
+            (benchmark_id, str(row.get("audit_key") or "")) in error_keys
+            or row.get("expected_same_person") is False
+        )
+    ]
+    references_by_event = {
+        str(row.get("audit_key") or ""): row
+        for row in references
+        if row.get("audit_kind") == "accepted_transition"
+    }
+    references_by_range = {
+        (
+            str(row.get("shadow_subject_id") or ""),
+            int(row.get("start_frame") or 0),
+            int(row.get("end_frame") or 0),
+        ): row
+        for row in references
+        if row.get("audit_kind") != "accepted_transition"
+    }
+
+    selected: list[dict[str, Any]] = []
+    matched_reference_keys: set[str] = set()
+    for source_item in manifest.get("items") or []:
+        state = source_item.get("timeline_state") or {}
+        reference = (
+            references_by_event.get(str(source_item.get("audit_key") or ""))
+            if source_item.get("audit_kind") == "accepted_transition"
+            else references_by_range.get(
+                (
+                    str(source_item.get("shadow_subject_id") or ""),
+                    int(state.get("start_frame") or 0),
+                    int(state.get("end_frame") or 0),
+                )
+            )
+        )
+        if reference is None:
+            continue
+        item = deepcopy(source_item)
+        item["reference_expectation"] = {
+            "source_audit_key": reference.get("audit_key"),
+            "expected_same_person": reference.get("expected_same_person"),
+            "expected_state": reference.get("expected_state"),
+            "reviewer": reference.get("reviewer"),
+        }
+        selected.append(item)
+        matched_reference_keys.add(str(reference.get("audit_key") or ""))
+
+    selected.sort(
+        key=lambda row: (
+            int((row.get("timeline_state") or {}).get("start_frame") or 0),
+            str(row.get("audit_key") or ""),
+        )
+    )
+    for index, item in enumerate(selected, start=1):
+        item["audit_index"] = index
+        item["card_filename"] = f"{index:03d}-{_short_key(str(item['audit_key']))}.jpg"
+        item["manual_review"] = {
+            "status": "pending",
+            "identity_continuity": None,
+            "state_assessment": None,
+            "reviewer": None,
+            "reviewed_at": None,
+            "notes": "",
+        }
+
+    result = deepcopy(manifest)
+    result["generated_at"] = generated_at or now_iso()
+    result["mode"] = "developer_visual_delta_audit"
+    result["source"]["delta_goldset"] = {
+        "goldset_id": goldset.get("goldset_id"),
+        "version": goldset.get("version"),
+        "digest": goldset.get("goldset_digest"),
+    }
+    result["source"]["delta_evaluation_algorithm"] = evaluation.get("algorithm") or {}
+    result["summary"] = {
+        "review_items": len(selected),
+        "pending": len(selected),
+        "reviewed": 0,
+        "skipped": len(references) - len(matched_reference_keys),
+        "timeline_statuses": dict(
+            sorted(Counter(str((row.get("timeline_state") or {}).get("status")) for row in selected).items())
+        ),
+        "audit_kinds": dict(sorted(Counter(str(row.get("audit_kind")) for row in selected).items())),
+    }
+    result["items"] = selected
+    result["skipped"] = [
+        {"source_audit_key": row.get("audit_key"), "reason": "candidate_item_not_found"}
+        for row in references
+        if str(row.get("audit_key") or "") not in matched_reference_keys
+    ]
+    return result
 
 
 def render_shadow_timeline_audit(

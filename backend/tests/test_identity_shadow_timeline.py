@@ -8,17 +8,24 @@ from app.services.identity_shadow_timeline import build_shadow_resolved_timeline
 FPS = 10.0
 
 
-def tracklet(tracklet_id: str, start: int, end: int) -> dict:
+def tracklet(
+    tracklet_id: str,
+    start: int,
+    end: int,
+    *,
+    team_label: str = "A",
+    bbox_xyxy: list[int] | None = None,
+) -> dict:
     return {
         "tracklet_id": tracklet_id,
-        "team_label": "A",
+        "team_label": team_label,
         "positions_m": [
             {
                 "frame": frame,
                 "time_sec": frame / FPS,
                 "pitch_m": [float(frame), 5.0],
                 "smoothed_pitch_m": [float(frame), 5.0],
-                "bbox_xyxy": [10, 10, 30, 70],
+                "bbox_xyxy": bbox_xyxy or [10, 10, 30, 70],
                 "confidence": 0.9,
                 "play_area_status": "inside_play",
             }
@@ -110,6 +117,69 @@ class ShadowResolvedTimelineTests(unittest.TestCase):
         gap = next(row for row in result["subjects"][0]["state_runs"] if row["status"] == "predicted")
         self.assertEqual((gap["start_frame"], gap["end_frame"]), (5, 6))
         self.assertFalse(gap["eligible_for_heatmap"])
+
+    def test_cross_team_spatial_blocker_marks_short_gap_as_occluded(self) -> None:
+        rows = [
+            tracklet("s1", 0, 4),
+            tracklet("t1", 7, 10),
+            tracklet("blocker", 4, 7, team_label="B"),
+        ]
+        result = build_shadow_resolved_timeline(
+            offline("s1", "t1"),
+            rows,
+            quality("s1", "t1", "blocker"),
+            fps=FPS,
+            generated_at="fixed",
+        )
+
+        gap = next(row for row in result["subjects"][0]["state_runs"] if row["status"] == "occluded")
+        self.assertEqual(gap["reason"], "gap_with_local_contact_occlusion_evidence")
+        self.assertEqual(
+            gap["local_occlusion_evidence"]["blocker_tracklet_ids"],
+            ["blocker"],
+        )
+        self.assertEqual(
+            gap["local_occlusion_evidence"]["cross_team_overlap_frame_count"],
+            2,
+        )
+        self.assertEqual(
+            gap["local_occlusion_evidence"]["endpoint_blocker_tracklet_ids"],
+            ["blocker"],
+        )
+
+    def test_cross_team_overlap_without_endpoint_contact_remains_predicted(self) -> None:
+        rows = [
+            tracklet("s1", 0, 4),
+            tracklet("t1", 7, 10),
+            tracklet("blocker", 5, 6, team_label="B"),
+        ]
+        result = build_shadow_resolved_timeline(
+            offline("s1", "t1"),
+            rows,
+            quality("s1", "t1", "blocker"),
+            fps=FPS,
+            generated_at="fixed",
+        )
+
+        gap = next(row for row in result["subjects"][0]["state_runs"] if row["status"] == "predicted")
+        self.assertFalse(gap["local_occlusion_evidence"]["supported"])
+
+    def test_same_team_overlap_without_event_remains_predicted(self) -> None:
+        rows = [
+            tracklet("s1", 0, 4),
+            tracklet("t1", 7, 10),
+            tracklet("duplicate", 5, 6, team_label="A"),
+        ]
+        result = build_shadow_resolved_timeline(
+            offline("s1", "t1"),
+            rows,
+            quality("s1", "t1", "duplicate"),
+            fps=FPS,
+            generated_at="fixed",
+        )
+
+        gap = next(row for row in result["subjects"][0]["state_runs"] if row["status"] == "predicted")
+        self.assertFalse(gap["local_occlusion_evidence"]["supported"])
 
     def test_long_gap_abstains_as_missing(self) -> None:
         rows = [tracklet("s1", 0, 4), tracklet("t1", 30, 35)]

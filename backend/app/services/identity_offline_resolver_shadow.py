@@ -51,6 +51,7 @@ def build_shadow_offline_identity(
     global_identity: dict[str, Any],
     *,
     fps: float,
+    occlusion_doc: dict[str, Any] | None = None,
     fragmentation_doc: dict[str, Any] | None = None,
     generated_at: str | None = None,
     parameters: dict[str, Any] | None = None,
@@ -131,6 +132,7 @@ def build_shadow_offline_identity(
         tracklets,
         quality_doc,
         fps=fps,
+        occlusion_doc=occlusion_doc,
         generated_at=generated,
     )
     report = _comparison_report(

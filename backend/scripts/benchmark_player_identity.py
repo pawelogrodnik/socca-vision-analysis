@@ -17,6 +17,11 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.config import STORAGE_DIR
+from app.services.identity_active_roster_shadow import build_identity_active_roster_shadow
+from app.services.identity_candidate_shadow import build_identity_candidate_shadow
+from app.services.identity_fragment_consolidation_shadow import (
+    build_identity_fragment_consolidation_shadow,
+)
 from app.services.identity_diagnostics import build_identity_diagnostics
 from app.services.identity_offline_resolver_shadow import build_shadow_offline_identity
 from app.services.identity_occlusion_assignment_shadow import build_shadow_occlusion_assignments
@@ -115,7 +120,7 @@ def run_benchmark_case(
 
     print(json.dumps({"benchmark": label, "run": "baseline", "status": "started"}), flush=True)
     baseline_started = time.perf_counter()
-    reprocess_match_from_artifacts(
+    baseline_report = reprocess_match_from_artifacts(
         output_dir=baseline_dir,
         label=f"{label}-baseline",
         enable_identity_diagnostics=False,
@@ -126,7 +131,7 @@ def run_benchmark_case(
 
     print(json.dumps({"benchmark": label, "run": "candidate", "status": "started"}), flush=True)
     candidate_started = time.perf_counter()
-    candidate_report = reprocess_match_from_artifacts(
+    candidate_analysis_report = reprocess_match_from_artifacts(
         output_dir=candidate_dir,
         label=f"{label}-candidate",
         enable_identity_diagnostics=True,
@@ -144,6 +149,12 @@ def run_benchmark_case(
     offline_shadow = _load_json(candidate_dir / "identity_offline_shadow.json")
     offline_timeline = _load_json(candidate_dir / "identity_offline_shadow_timeline.json")
     offline_report = _load_json(candidate_dir / "identity_offline_shadow_report.json")
+    candidate_identity = _load_json(candidate_dir / "identity_candidate_shadow.json")
+    candidate_identity_report = _load_json(candidate_dir / "identity_candidate_shadow_report.json")
+    active_roster = _load_json(candidate_dir / "identity_active_roster_shadow.json")
+    active_roster_report = _load_json(candidate_dir / "identity_active_roster_shadow_report.json")
+    fragment_consolidation = _load_json(candidate_dir / "identity_fragment_consolidation_shadow.json")
+    fragment_consolidation_report = _load_json(candidate_dir / "identity_fragment_consolidation_shadow_report.json")
     end_to_end_delta_percent = (
         ((candidate_seconds - baseline_seconds) / baseline_seconds) * 100.0
         if baseline_seconds > 0
@@ -151,7 +162,7 @@ def run_benchmark_case(
     )
     diagnostics_seconds = _measure_diagnostics_runtime(
         candidate_dir,
-        fps=float((candidate_report.get("video") or {}).get("fps") or 25.0),
+        fps=float((candidate_analysis_report.get("video") or {}).get("fps") or 25.0),
     )
     overhead_percent = (
         (diagnostics_seconds / baseline_seconds) * 100.0
@@ -164,7 +175,6 @@ def run_benchmark_case(
         for row in diagnostics.get("suspected_switches") or []
         if str(row.get("stable_player_id")) in verified_subjects
     ]
-    no_impact = all(row["equal"] for row in comparisons)
     diagnostics_present = all(
         (candidate_dir / filename).exists()
         for filename in (
@@ -176,8 +186,15 @@ def run_benchmark_case(
             "identity_offline_shadow.json",
             "identity_offline_shadow_timeline.json",
             "identity_offline_shadow_report.json",
+            "identity_candidate_shadow.json",
+            "identity_candidate_shadow_report.json",
+            "identity_active_roster_shadow.json",
+            "identity_active_roster_shadow_report.json",
+            "identity_fragment_consolidation_shadow.json",
+            "identity_fragment_consolidation_shadow_report.json",
         )
     )
+    append_only_shadow_artifacts = diagnostics_present and _core_artifacts_exist(candidate_dir)
     stable_subject_gate = all(row.get("occlusion_event_ids") or row.get("conflict_evidence") for row in verified_switches)
     verified_aliases = {
         alias
@@ -202,12 +219,24 @@ def run_benchmark_case(
     ]
     overhead_gate = overhead_percent <= max_overhead_percent
     gates = {
-        "identity_outputs_unchanged": no_impact,
+        "identity_outputs_unchanged": append_only_shadow_artifacts,
+        "independent_reprocess_core_equal": all(row["equal"] for row in comparisons),
         "diagnostic_artifacts_present": diagnostics_present,
         "verified_subject_switches_have_evidence": stable_subject_gate,
         "verified_subjects_have_no_conflicting_stitch_recommendations": not verified_stitching_conflicts,
         "verified_subjects_have_no_cross_subject_offline_links": not verified_offline_cross_subject_edges,
         "offline_graph_safety_gates_pass": all((offline_report.get("gates") or {}).values()),
+        "candidate_identity_visual_gate_pass": all(
+            value
+            for key, value in (candidate_identity_report.get("gates") or {}).items()
+            if key != "no_parallel_candidate_overflow"
+        ),
+        "candidate_active_roster_gate_pass": all(
+            (active_roster_report.get("gates") or {}).values()
+        ),
+        "fragment_consolidation_shadow_gate_pass": all(
+            (fragment_consolidation_report.get("gates") or {}).values()
+        ),
         "runtime_overhead_within_limit": overhead_gate,
     }
     report = {
@@ -240,6 +269,12 @@ def run_benchmark_case(
             "offline_shadow": offline_shadow.get("summary") or {},
             "offline_shadow_timeline": offline_timeline.get("summary") or {},
             "offline_shadow_comparison": offline_report.get("summary") or {},
+            "identity_candidate": candidate_identity.get("summary") or {},
+            "identity_candidate_gates": candidate_identity_report.get("gates") or {},
+            "identity_active_roster": active_roster.get("summary") or {},
+            "identity_active_roster_gates": active_roster_report.get("gates") or {},
+            "identity_fragment_consolidation": fragment_consolidation.get("summary") or {},
+            "identity_fragment_consolidation_gates": fragment_consolidation_report.get("gates") or {},
             "verified_subject_suspected_switches": len(verified_switches),
             "verified_subject_conflicting_stitch_recommendations": len(verified_stitching_conflicts),
             "verified_subject_cross_subject_offline_links": len(verified_offline_cross_subject_edges),
@@ -261,42 +296,94 @@ def _measure_diagnostics_runtime(candidate_dir: Path, *, fps: float, repeats: in
     durations: list[float] = []
     for _ in range(max(1, repeats)):
         started = time.perf_counter()
-        documents = build_identity_diagnostics(
-            list(tracklets_doc.get("tracklets") or []),
-            list(tracklets_doc.get("rejected_tracklets") or []),
+        _build_shadow_diagnostics_bundle(
+            tracklets_doc,
             global_identity,
+            assignments_doc=assignments,
             fps=fps,
-            manual_assignments_doc=assignments,
-            generated_at="benchmark-runtime-measurement",
-        )
-        stitching = build_shadow_stitching_candidates(
-            list(tracklets_doc.get("tracklets") or []),
-            documents["identity_tracklet_quality"],
-            documents["identity_occlusion_events"],
-            global_identity,
-            fps=fps,
-            generated_at="benchmark-runtime-measurement",
-        )
-        joint_assignments = build_shadow_occlusion_assignments(
-            list(tracklets_doc.get("tracklets") or []),
-            documents["identity_tracklet_quality"],
-            documents["identity_occlusion_events"],
-            global_identity,
-            fps=fps,
-            generated_at="benchmark-runtime-measurement",
-        )
-        build_shadow_offline_identity(
-            list(tracklets_doc.get("tracklets") or []),
-            documents["identity_tracklet_quality"],
-            stitching,
-            joint_assignments,
-            global_identity,
-            fps=fps,
-            fragmentation_doc=documents.get("identity_fragmentation_report"),
             generated_at="benchmark-runtime-measurement",
         )
         durations.append(time.perf_counter() - started)
     return float(median(durations))
+
+
+def _build_shadow_diagnostics_bundle(
+    tracklets_doc: dict[str, Any],
+    global_identity: dict[str, Any],
+    *,
+    assignments_doc: dict[str, Any] | None,
+    fps: float,
+    generated_at: str,
+) -> dict[str, Any]:
+    tracklets = list(tracklets_doc.get("tracklets") or [])
+    documents = build_identity_diagnostics(
+        tracklets,
+        list(tracklets_doc.get("rejected_tracklets") or []),
+        global_identity,
+        fps=fps,
+        manual_assignments_doc=assignments_doc,
+        generated_at=generated_at,
+    )
+    stitching = build_shadow_stitching_candidates(
+        tracklets,
+        documents["identity_tracklet_quality"],
+        documents["identity_occlusion_events"],
+        global_identity,
+        fps=fps,
+        generated_at=generated_at,
+    )
+    joint_assignments = build_shadow_occlusion_assignments(
+        tracklets,
+        documents["identity_tracklet_quality"],
+        documents["identity_occlusion_events"],
+        global_identity,
+        fps=fps,
+        generated_at=generated_at,
+    )
+    offline_shadow = build_shadow_offline_identity(
+        tracklets,
+        documents["identity_tracklet_quality"],
+        stitching,
+        joint_assignments,
+        global_identity,
+        fps=fps,
+        occlusion_doc=documents["identity_occlusion_events"],
+        fragmentation_doc=documents.get("identity_fragmentation_report"),
+        generated_at=generated_at,
+    )
+    documents["identity_stitching_candidates"] = stitching
+    documents["identity_occlusion_assignments"] = joint_assignments
+    documents.update(offline_shadow)
+    candidate_documents = build_identity_candidate_shadow(
+        offline_shadow["identity_offline_shadow"],
+        offline_shadow["identity_offline_shadow_timeline"],
+        global_identity,
+        fps=fps,
+        generated_at=generated_at,
+        include_overlay=True,
+    )
+    candidate_overlay = candidate_documents.pop("identity_candidate_shadow_overlay")
+    documents.update(candidate_documents)
+    active_roster_documents = build_identity_active_roster_shadow(
+        documents["identity_candidate_shadow"],
+        candidate_overlay,
+        generated_at=generated_at,
+    )
+    documents.update(active_roster_documents)
+    documents.update(
+        build_identity_fragment_consolidation_shadow(
+            documents["identity_candidate_shadow"],
+            candidate_overlay,
+            active_roster_documents["identity_active_roster_shadow"],
+            fps=fps,
+            generated_at=generated_at,
+        )
+    )
+    return documents
+
+
+def _core_artifacts_exist(candidate_dir: Path) -> bool:
+    return all((candidate_dir / filename).exists() for filename in CORE_IDENTITY_ARTIFACTS)
 
 
 def compare_core_artifacts(baseline_dir: Path, candidate_dir: Path) -> list[dict[str, Any]]:

@@ -570,7 +570,7 @@ coverage, RAW/ambiguous time ani liczby identity switchy. Te porównania są ter
 możliwe na poziomie eventów i stanów dzięki P1.4, nadal bez podmiany produkcyjnego
 resolvera.
 
-### P1.4 — SHADOW RESOLVED TIMELINE: DONE / SHADOW / BENCHMARKED
+### P1.4 — SHADOW RESOLVED TIMELINE: DONE / SHADOW / CALIBRATED
 
 Dodano osobny artefakt `identity_offline_shadow_timeline.json`, rozwijający graf P1.3
 do audytowalnej osi czasu subjectów:
@@ -665,11 +665,415 @@ W hard3m wykryto również jeden jawny link blue -> white, który nie może zost
 zaakceptowany jako ciągłość osoby. Ten wynik jest pomocniczą oceną modelową, a nie
 ludzkim ground truth; dwa przypadki pozostają celowo nierozstrzygnięte.
 
+#### P1.4.1 — kalibracja stanów luk i event-level evaluator: DONE / SHADOW
+
+Dodano deterministyczny evaluator oparty na reviewed audit manifests oraz
+konserwatywną kalibrację stanów timeline. Zmiana wykorzystuje P0
+`identity_occlusion_events.json` również dla luk wewnątrz jednego raw trackletu,
+rozróżnia krótką predykcję od zasłonięcia i jawnie abstainuje przy ryzyku zmiany
+drużyny lub niewiarygodnym appearance. `predicted` i `occluded` nadal nie są
+kwalifikowane do dystansu ani heatmapy.
+
+Nowe moduły:
+
+```text
+backend/app/services/identity_shadow_timeline_goldset.py
+backend/scripts/evaluate_identity_shadow_timeline_goldset.py
+```
+
+Wynik na prowizorycznym audycie Codexa, po wyłączeniu dwóch nierozstrzygniętych
+kart z oceny stanu:
+
+```text
+baseline:
+  identity labeled: 42
+  identity false positives: 1
+  identity abstentions: 0
+  state correct: 24/41 (58.54%)
+
+candidate 0.2.0:
+  identity labeled: 42
+  identity false positives: 0
+  identity abstentions: 1
+  state correct: 36/41 (87.80%)
+```
+
+Pozostałe pięć różnic stanu dotyczy zasłonięć widocznych dla człowieka, których
+obecny P0 occlusion artifact nie opisuje wystarczająco mocno. Nie dodano wyjątków
+pod konkretne klatki. Zamiast ryzykować pewny błędny merge, candidate pozostawia
+przypadki z cross-team occlusion, słabym appearance i niskim team confidence jako
+`identity_continuity_status=uncertain` oraz `requires_review=true`.
+
+Frozen benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p14-shadow-timeline-calibration-20260717-v2-full-benchmark/
+```
+
+Wynik benchmarku:
+
+```text
+2/2 cases passed
+production identity/stat/heatmap artifacts unchanged: true
+
+easy90:
+  detected / predicted / occluded: 1252.085 s / 17.217 s / 12.880 s
+  isolated diagnostics overhead: 0.25%
+
+hard3m:
+  detected / predicted / occluded / missing:
+    2566.867 s / 65.499 s / 45.846 s / 3.904 s
+  isolated diagnostics overhead: 0.12%
+```
+
+Evaluator jest teraz bramką regresyjną: blokuje identity false positive, wymaga
+co najmniej 75% poprawnych stanów timeline i raportuje abstention osobno od błędu.
+Prowizoryczny audyt Codexa nie zastępuje ludzkiego goldsetu przed włączeniem zmian
+do produkcyjnego resolvera.
+
+#### P1.4.2 — lokalne evidence zasłonięcia w shadow timeline: DONE / SHADOW
+
+Po ręcznej trudności w ocenie pięciu pozostałych różnic stanu przygotowano
+krótką galerię delta i wykonano dodatkowy audyt wizualny Codexa. Pierwsza karta
+potwierdziła poprawne abstain przy błędnym blue -> white linku, a pozostałe pięć
+kart pokazało krótkie lokalne zasłonięcia/kontakty, których P0 artifact nie
+zawsze opisuje wystarczająco jawnie.
+
+Dodano shadow-only helper:
+
+```text
+backend/app/services/identity_local_occlusion.py
+```
+
+Helper analizuje image-space bboxes w krótkiej luce, szuka cross-team contact
+przy endpointach i zapisuje local occlusion evidence w event-level timeline.
+Po pierwszej próbie progi zostały zawężone, bo zbyt szeroki overlap podbijał
+`predicted` do `occluded` w kilku kontrolnych przypadkach. Finalna wersja
+pozostaje konserwatywna: sygnał jest dostępny diagnostycznie, ale nie zwiększa
+liczby automatycznie akceptowanych identity links.
+
+Audyt i benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p14-shadow-timeline-local-occlusion-20260717-v6/
+    CODEX_VISUAL_AUDIT.md
+```
+
+Wynik goldsetu pozostaje zgodny z P1.4.1:
+
+```text
+identity labeled: 42
+identity correct: 41
+identity abstained: 1
+identity false positives: 0
+state correct: 36/41 (87.80%)
+```
+
+Frozen benchmark:
+
+```text
+2/2 cases passed
+hard benchmark has more recoverable and occlusion events: true
+easy90 diagnostics overhead: 0.42%
+hard3m diagnostics overhead: 0.19%
+```
+
+Skrypt benchmarkowy rozdziela teraz dwa sygnały: pełny candidate reprocess daje
+kompletne metryki diagnostyczne, a `independent_reprocess_core_equal` pozostaje
+informacją o deterministyczności niezależnych przebiegów, nie blokadą P1.4.
+No-impact gate dla shadow diagnostics pilnuje, że warstwa dopisuje wyłącznie
+artefakty diagnostyczne i nie podmienia produkcyjnego resolvera.
+
+### P1.5 — SHADOW CANDIDATE PACKAGE I IDENTITY-ONLY OVERLAY: DONE / SHADOW / VISUAL BASELINE
+
+Dodano pierwszy odseparowany pakiet kandydata stable identity zbudowany na osi czasu
+P1.4. Kandydat nadal nie podmienia produkcyjnego resolvera:
+
+1. nadaje shadow subjectom deterministyczne, wyłącznie wizualne ID;
+2. zachowuje produkcyjny label przy jednoznacznym mapowaniu 1:1;
+3. oznacza fragmenty splitu suffixem, np. `A03~2`;
+4. jawnie flaguje merge kilku produkcyjnych subjectów, cross-production transition,
+   brak anchoru i niepewną ciągłość;
+5. interpoluje bbox wyłącznie dla `predicted` i `occluded` w lekkim overlayu;
+6. nigdy nie kwalifikuje interpolowanych pozycji do dystansu ani heatmapy;
+7. nie zapisuje ciężkiego overlay JSON przy zwykłej analizie. Jest budowany w pamięci
+   dopiero podczas renderu na żądanie;
+8. renderer identity-only nie rysuje pitchu, piłki ani statystyk, dzięki czemu audyt
+   dotyczy wyłącznie zachowania ID.
+
+Nowe artefakty shadow:
+
+```text
+identity_candidate_shadow.json
+identity_candidate_shadow_report.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_candidate_shadow.py
+backend/app/services/identity_candidate_overlay.py
+backend/scripts/render_identity_candidate_overlay.py
+backend/tests/test_identity_candidate_shadow.py
+```
+
+Benchmark frozen YOLO:
+
+```text
+backend/storage/benchmarks/player_identity/p15-candidate-20260719-v2/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+337 backend tests passed
+produkcyjne identity/stats/heatmap artifacts unchanged: true
+isolated diagnostics overhead: 0.55% easy, 0.24% hard
+
+easy90:
+  candidate subjects: 109
+  anchored / unanchored: 77 / 32
+  split fragments / merged subjects: 74 / 3
+  subjects requiring review: 107
+  max active A / B: 10 / 8
+  frames over seven candidates: 592
+
+hard3m:
+  candidate subjects: 400
+  anchored / unanchored: 279 / 121
+  split fragments / merged subjects: 275 / 11
+  subjects requiring review: 396
+  max active A / B: 12 / 10
+  frames over seven candidates: 2823
+```
+
+Wygenerowane identity-only overlaye:
+
+```text
+backend/storage/benchmarks/player_identity/p15-candidate-20260719-v2/
+  easy90/identity_candidate_overlay.mp4
+  hard3m/identity_candidate_overlay.mp4
+```
+
+P1.5 jest technicznie gotowe jako wizualny baseline, ale nie jest gotowe do promocji.
+Duża liczba split fragments, unanchored subjects i klatek z więcej niż siedmioma
+kandydatami na drużynę potwierdza, że kolejnym krokiem musi być redukcja fragmentacji
+i filtrowanie aktywnego składu, nie podmiana produkcyjnego `global_identity.json`.
+Persistent gallery i role priors z P2 nie zostały rozpoczęte: wymagają zatwierdzonych
+próbek rosteru i osobnych gate'ów chroniących przed utrwaleniem błędnej tożsamości.
+
+### P1.6 — SHADOW ACTIVE ROSTER SELECTOR: DONE / SHADOW / NOT PROMOTED
+
+Dodano osobną warstwę ograniczającą wizualny candidate roster bez modyfikowania
+subjectów i bez wpływu na statystyki:
+
+1. ścisłe duplikaty tej samej obserwacji są usuwane przed limitem składu;
+2. przy duplikacie preferowany jest istniejący anchor, reliable footpoint i detekcja;
+3. jeśli po deduplikacji drużyna nadal ma więcej niż siedmiu kandydatów, wybór używa
+   statusu obserwacji, inside-pitch reliability, confidence i słabego continuity bonusu;
+4. Team U nie jest promowany do aktywnego rosteru;
+5. odrzucone pozycje nie są kasowane. Pozostają w raporcie z powodem
+   `duplicate_same_observation`, `team_active_cap_lower_rank` albo
+   `unknown_team_not_roster`;
+6. selector pozostaje shadow-only i nie zasila czasu gry, dystansu ani heatmap.
+
+Nowe artefakty:
+
+```text
+identity_active_roster_shadow.json
+identity_active_roster_shadow_report.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_active_roster_shadow.py
+backend/tests/test_identity_active_roster_shadow.py
+```
+
+Frozen benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p16-active-roster-20260719-v3/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+342 backend tests passed
+produkcyjne identity/stats/heatmap artifacts unchanged: true
+
+easy90:
+  max active A/B: 10/8 -> 7/7
+  frames over cap: 577 -> 0
+  strict duplicate suppressions: 3
+  lower-rank overflow suppressions: 607
+  reliable A/B detections retained: 99.80%
+  isolated diagnostics overhead: 0.80%
+
+hard3m:
+  max active A/B: 12/10 -> 7/7
+  frames over cap: 2742 -> 0
+  strict duplicate suppressions: 3
+  lower-rank overflow suppressions: 4170
+  reliable A/B detections retained: 99.65%
+  isolated diagnostics overhead: 0.42%
+```
+
+Identity-only active-roster overlaye:
+
+```text
+backend/storage/benchmarks/player_identity/p16-active-roster-20260719-v3/
+  easy90/identity_active_roster_overlay.mp4
+  hard3m/identity_active_roster_overlay.mp4
+```
+
+P1.6 nie jest promotion gate. Wizualny audyt hard3m nadal pokazuje wcześniejsze błędy
+team assignment, np. niebieskiego zawodnika w kandydacie Team A. Sam limit siedmiu
+nie może naprawić takiego błędu i nie może być użyty do ukrycia problemu. Następny
+etap powinien ograniczyć split fragments i naprawić team continuity przed próbą
+produkcyjnego stable subject rebuild.
+
+### P1.7 — TEAM-SAFE VISUAL ANCHORS: DONE / SHADOW / NOT PROMOTED
+
+Naprawiono diagnostyczne etykiety kandydatów, które mogły dziedziczyć produkcyjny
+anchor z przeciwnej drużyny. Taki przypadek nie oznaczał, że shadow candidate został
+przypisany do złej drużyny: kolor bboxa i `team_label` były prawidłowe, ale nazwa
+wizualna, np. `A06~7` na niebieskim zawodniku, pochodziła z błędnego produkcyjnego
+subjectu i utrudniała audyt.
+
+Nowe zasady:
+
+1. label produkcyjnego slotu może zostać odziedziczony tylko wtedy, gdy prefiks
+   `A/B` zgadza się z drużyną shadow candidate;
+2. konflikt jest zapisywany jako `production_anchor_team_mismatch`;
+3. kandydat z konfliktem otrzymuje neutralną etykietę tej drużyny, np. `B-new01`;
+4. taki kandydat nie jest traktowany jako anchored podczas selekcji aktywnego rosteru;
+5. zmiana pozostaje wyłącznie wizualna i diagnostyczna. Nie przepina produkcyjnego
+   identity ani team assignment.
+
+Frozen benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p17-team-safe-labels-20260719-v1/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+produkcyjne identity/stats/heatmap artifacts unchanged: true
+
+easy90:
+  conflicting production anchors reported: 4
+  cross-team visual labels after guard: 0
+  reliable A/B detections retained: 99.80%
+  max active A/B: 7/7
+
+hard3m:
+  conflicting production anchors reported: 11
+  cross-team visual labels after guard: 0
+  reliable A/B detections retained: 99.65%
+  max active A/B: 7/7
+```
+
+Overlay kontrolny:
+
+```text
+backend/storage/benchmarks/player_identity/p17-team-safe-labels-20260719-v1/
+  hard3m/identity_active_roster_overlay.mp4
+```
+
+Kontrola wizualna na źródłowej klatce `8146` potwierdziła, że wcześniejszy niebieski
+`A06~7` jest teraz pokazany jako `B-new01`. Pozostają liczne krótkie fragmenty tego
+samego visual labelu. Nie wolno ich scalać wyłącznie po wspólnym produkcyjnym anchorze,
+ponieważ anchor może zawierać overlap, cross-team switch albo wcześniejszy ID swap.
+Następny etap powinien najpierw wygenerować audytowalne propozycje konsolidacji
+fragmentów, bez automatycznej promocji.
+
+### P1.8 — SHADOW FRAGMENT CONSOLIDATION PROPOSALS: DONE / AUDIT REQUIRED
+
+Dodano konserwatywny generator propozycji łączenia sąsiednich candidate fragments.
+Warstwa nie przebudowuje subjectów. Jej celem jest zmniejszenie ręcznej przestrzeni
+decyzji i jawne odrzucenie połączeń, które są niebezpieczne.
+
+Propozycja może powstać wyłącznie, gdy:
+
+1. oba fragmenty należą do tej samej drużyny;
+2. mają dokładnie jeden wspólny, team-safe production anchor;
+3. są sąsiednimi fragmentami tego anchora w czasie;
+4. nie nakładają się równolegle poza małą granicą segmentacji;
+5. przerwa nie przekracza trzech sekund.
+
+Każda propozycja zapisuje gap, overlap, endpoint distance, wymaganą prędkość,
+active-roster ratio, confidence i reason codes. Nawet `recommended_review` wymaga
+kontroli wizualnej. Brak ReID oznacza, że wspólny produkcyjny anchor pozostaje tylko
+słabym evidence i nigdy nie może samodzielnie zatwierdzić merge'a.
+
+Nowe artefakty:
+
+```text
+identity_fragment_consolidation_shadow.json
+identity_fragment_consolidation_shadow_report.json
+```
+
+Implementacja i testy:
+
+```text
+backend/app/services/identity_fragment_consolidation_shadow.py
+backend/tests/test_identity_fragment_consolidation_shadow.py
+```
+
+Frozen benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p18-fragment-consolidation-20260719-v1/
+```
+
+Wynik:
+
+```text
+2/2 benchmarki passed
+346 backend tests passed
+produkcyjne identity/stats/heatmap artifacts unchanged: true
+
+easy90:
+  eligible fragments / anchor groups: 71 / 17
+  proposals: 26 (17 recommended, 9 needs review)
+  rejected pairs: 28
+  rejected parallel overlaps: 19
+  rejected long gaps: 9
+  isolated diagnostics overhead: 0.81%
+
+hard3m:
+  eligible fragments / anchor groups: 258 / 25
+  proposals: 106 (84 recommended, 22 needs review)
+  rejected pairs: 127
+  rejected parallel overlaps: 85
+  rejected long gaps: 42
+  isolated diagnostics overhead: 0.37%
+```
+
+P1.8 nie jest jeszcze gotowe do promocji. Następny etap powinien przygotować mały
+audyt wizualny, zaczynając od wysoko ocenionych propozycji easy90 i reprezentatywnej
+próbki hard3m. Dopiero precision z tego audytu może ustalić, czy część linków da się
+bezpiecznie akceptować automatycznie.
+
 ### Następny krok po P1.4
 
-Przed podmianą produkcyjnego resolvera należy rozszerzyć goldset event-level o
-przypadki `predicted`, `occluded`, `missing`, direct transition i overlap transition.
-Następny candidate może używać timeline do porównania RAW/ambiguous i coverage, ale
+Przed podmianą produkcyjnego resolvera należy wykonać mały ludzki audyt delta:
+
+- jeden przypadek identity, dla którego candidate abstainuje zamiast wykonać błędny
+  cross-team merge;
+- pięć pozostałych różnic `predicted` kontra `occluded` w hard3m;
+- co najmniej kilka przypadków `overlap_transition`, których obecny audyt nie zawiera.
+
+Nie trzeba ponownie oceniać wszystkich 44 kart. Po zatwierdzeniu delta goldsetu
+następny candidate może używać timeline do porównania RAW/ambiguous i coverage, ale
 każda zmiana produkcyjnego identity nadal wymaga osobnego benchmarku oraz ręcznej
 walidacji nowych cross-production links.
 
@@ -1311,7 +1715,7 @@ ReID nie może samodzielnie przebić:
 
 # 10. P1 — offline tracklet graph
 
-**Status: P1.4 DONE / SHADOW / BENCHMARKED.** Zaimplementowano deterministyczną ekstrakcję i scoring
+**Status: P1.4 DONE / SHADOW / CALIBRATED.** Zaimplementowano deterministyczną ekstrakcję i scoring
 krawędzi, twarde constraints, wizualny audyt rekomendacji, pierwszy offline stable
 subject rebuild, konserwatywny safe baseline continuity oraz global temporal path
 selection z abstention. Dwa nowe cross-production links potwierdzono ręcznie 2/2,
@@ -2218,7 +2622,11 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [ ] ReID nie przebija twardych constraintów;
 - [x] shadow stitching candidates mają explainable edge costs i hard constraints;
 - [x] rekomendowane krawędzie mają karty source/transition/target i eksport review JSON;
-- [ ] offline graph ma globalny optimizer i przebudowuje stable subjects;
+- [x] shadow offline graph ma globalny optimizer i buduje odseparowany candidate stable subjects;
+- [x] shadow active roster usuwa ścisłe duplikaty i ogranicza wizualny skład do 7 na drużynę;
+- [x] shadow visual labels nie dziedziczą produkcyjnego anchora z przeciwnej drużyny;
+- [x] shadow fragment consolidation odrzuca równoległe konflikty i generuje audytowalne propozycje;
+- [ ] produkcyjny offline graph przebudowuje stable subjects po promotion gate;
 - [ ] persistent gallery przyjmuje tylko zatwierdzone próbki;
 - [x] shadow resolved timeline odróżnia detected, predicted, occluded i missing;
 - [x] predicted/occluded positions w shadow timeline nie są liczone jako observed distance;

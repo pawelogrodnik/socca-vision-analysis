@@ -4,16 +4,31 @@ from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from typing import Any
 
+from app.services.identity_local_occlusion import (
+    assess_local_occlusion,
+    build_local_occlusion_context,
+)
 
-SCHEMA_VERSION = "0.1.0"
+
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "offline_identity_shadow_timeline"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.3.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
-    "predicted_max_gap_sec": 0.5,
+    "predicted_max_gap_sec": 0.6,
+    "predicted_single_reliable_endpoint_max_gap_sec": 0.5,
+    "predicted_max_required_speed_mps": 15.0,
     "occluded_max_gap_sec": 1.5,
+    "occlusion_nearby_context_frames": 2,
+    "occlusion_low_appearance_context_frames": 6,
+    "occlusion_low_appearance_ratio": 0.7,
+    "local_occlusion_min_predicted_bbox_coverage": 0.2,
+    "local_occlusion_short_gap_max_frames": 4,
+    "local_occlusion_longer_gap_min_cross_team_ratio": 0.5,
+    "identity_risk_max_team_confidence": 0.7,
     "detected_status": "detected",
     "non_observed_statuses": ["predicted", "occluded", "missing"],
 }
@@ -29,6 +44,7 @@ def build_shadow_resolved_timeline(
     quality_doc: dict[str, Any],
     *,
     fps: float,
+    occlusion_doc: dict[str, Any] | None = None,
     generated_at: str | None = None,
     parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -49,6 +65,12 @@ def build_shadow_resolved_timeline(
         (str(row.get("source_tracklet_id")), str(row.get("target_tracklet_id"))): row
         for row in offline_identity_doc.get("accepted_edges") or []
     }
+    occlusions_by_tracklet = _occlusions_by_tracklet(occlusion_doc or {})
+    local_occlusion_context = build_local_occlusion_context(
+        tracklets,
+        offline_identity_doc,
+        occlusion_doc or {},
+    )
 
     subjects: list[dict[str, Any]] = []
     transition_events: list[dict[str, Any]] = []
@@ -59,6 +81,8 @@ def build_shadow_resolved_timeline(
             tracklet_by_id=tracklet_by_id,
             quality_by_id=quality_by_id,
             edge_by_pair=edge_by_pair,
+            occlusions_by_tracklet=occlusions_by_tracklet,
+            local_occlusion_context=local_occlusion_context,
             fps=safe_fps,
             parameters=params,
         )
@@ -73,6 +97,12 @@ def build_shadow_resolved_timeline(
         trusted_detected_frames += int(subject.get("trusted_detected_frames") or 0)
     detected_frames = int(status_frames["detected"])
     active_frames = sum(int(value) for value in status_frames.values())
+    continuity_statuses = Counter(
+        str(run.get("identity_continuity_status") or "supported")
+        for subject in subjects
+        for run in subject.get("state_runs") or []
+        if run.get("status") != "detected"
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at or now_iso(),
@@ -120,6 +150,8 @@ def build_shadow_resolved_timeline(
                 4,
             ) if active_frames else None,
             "duplicate_observation_frames_resolved": duplicate_observation_frames,
+            "gap_identity_continuity": dict(sorted(continuity_statuses.items())),
+            "gap_identity_reviews_required": int(continuity_statuses["uncertain"]),
             "statistics_eligible_statuses": ["detected"],
         },
         "transition_events": sorted(
@@ -147,6 +179,8 @@ def _build_subject_timeline(
     tracklet_by_id: dict[str, dict[str, Any]],
     quality_by_id: dict[str, dict[str, Any]],
     edge_by_pair: dict[tuple[str, str], dict[str, Any]],
+    occlusions_by_tracklet: dict[str, list[dict[str, Any]]],
+    local_occlusion_context: dict[str, Any],
     fps: float,
     parameters: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
@@ -182,6 +216,9 @@ def _build_subject_timeline(
                 "bbox_xyxy": position.get("bbox_xyxy"),
                 "confidence": round(confidence, 4),
                 "quality_class": quality.get("quality_class"),
+                "quality_reasons": quality.get("reasons") or [],
+                "team_confidence": quality.get("team_confidence"),
+                "appearance_reliable_ratio": quality.get("appearance_reliable_ratio"),
                 "footpoint_reliable": footpoint_reliable,
                 "appearance_reliable": appearance_reliable,
                 "play_area_status": position.get("play_area_status"),
@@ -210,6 +247,10 @@ def _build_subject_timeline(
                 previous=previous,
                 following=observation,
                 edge=edge,
+                occlusions_by_tracklet=occlusions_by_tracklet,
+                local_occlusion_context=local_occlusion_context,
+                shadow_subject_id=str(subject.get("shadow_subject_id") or ""),
+                team_label=str(subject.get("team_label") or "U"),
                 fps=fps,
                 parameters=parameters,
             )
@@ -234,6 +275,8 @@ def _build_subject_timeline(
         tracklet_ids=tracklet_ids,
         observations_by_tracklet=observations_by_tracklet,
         edge_by_pair=edge_by_pair,
+        occlusions_by_tracklet=occlusions_by_tracklet,
+        local_occlusion_context=local_occlusion_context,
         fps=fps,
         parameters=parameters,
     )
@@ -271,22 +314,98 @@ def _gap_run(
     previous: dict[str, Any],
     following: dict[str, Any],
     edge: dict[str, Any] | None,
+    occlusions_by_tracklet: dict[str, list[dict[str, Any]]],
+    local_occlusion_context: dict[str, Any],
+    shadow_subject_id: str,
+    team_label: str,
     fps: float,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     frame_count = end_frame - start_frame + 1
     duration_sec = frame_count / fps
-    endpoints_reliable = bool(
-        previous.get("footpoint_reliable")
-        and following.get("footpoint_reliable")
-        and previous.get("pitch_m") is not None
+    endpoint_reliability = (
+        bool(previous.get("footpoint_reliable")),
+        bool(following.get("footpoint_reliable")),
+    )
+    positions_available = bool(
+        previous.get("pitch_m") is not None
         and following.get("pitch_m") is not None
     )
-    has_occlusion = bool(edge and edge.get("occlusion_event_ids"))
+    endpoints_reliable = bool(
+        all(endpoint_reliability)
+        and positions_available
+    )
+    occlusion = _occlusion_support(
+        start_frame,
+        end_frame,
+        previous=previous,
+        following=following,
+        edge=edge,
+        occlusions_by_tracklet=occlusions_by_tracklet,
+        nearby_context_frames=int(parameters["occlusion_nearby_context_frames"]),
+        low_appearance_context_frames=int(parameters["occlusion_low_appearance_context_frames"]),
+        low_appearance_ratio=float(parameters["occlusion_low_appearance_ratio"]),
+    )
+    local_occlusion = assess_local_occlusion(
+        start_frame,
+        end_frame,
+        previous=previous,
+        following=following,
+        shadow_subject_id=shadow_subject_id,
+        team_label=team_label,
+        context=local_occlusion_context,
+        min_predicted_bbox_coverage=float(
+            parameters["local_occlusion_min_predicted_bbox_coverage"]
+        ),
+        short_gap_max_frames=int(parameters["local_occlusion_short_gap_max_frames"]),
+        longer_gap_min_cross_team_ratio=float(
+            parameters["local_occlusion_longer_gap_min_cross_team_ratio"]
+        ),
+    )
+    occlusion["event_ids"] = sorted(
+        set(occlusion["event_ids"]) | set(local_occlusion["event_ids"])
+    )
+    occlusion["evidence"] = sorted(
+        set(occlusion["evidence"]) | set(local_occlusion["evidence"])
+    )
+    occlusion["cross_team"] = bool(
+        occlusion["cross_team"] or local_occlusion["cross_team"]
+    )
+    identity_continuity = _identity_continuity_assessment(
+        previous,
+        following,
+        occlusion=occlusion,
+        parameters=parameters,
+    )
+    endpoint_distance_m = _distance(previous.get("pitch_m"), following.get("pitch_m"))
+    required_speed_mps = endpoint_distance_m / max(duration_sec, 1e-6) if endpoint_distance_m is not None else None
+    same_raw_tracklet = previous.get("tracklet_id") == following.get("tracklet_id")
+    endpoints_predictable = bool(
+        positions_available
+        and identity_continuity["identity_continuity_status"] == "supported"
+        and required_speed_mps is not None
+        and required_speed_mps <= float(parameters["predicted_max_required_speed_mps"])
+        and (
+            endpoints_reliable
+            or (
+                edge is not None
+                and any(endpoint_reliability)
+                and duration_sec <= float(parameters["predicted_single_reliable_endpoint_max_gap_sec"])
+            )
+            or same_raw_tracklet
+        )
+    )
+    has_occlusion = bool(
+        occlusion["event_ids"] or local_occlusion["supported"]
+    )
     if has_occlusion and duration_sec <= float(parameters["occluded_max_gap_sec"]):
         status = "occluded"
-        reason = "accepted_link_with_occlusion_evidence"
-    elif endpoints_reliable and duration_sec <= float(parameters["predicted_max_gap_sec"]):
+        reason = (
+            "gap_with_local_contact_occlusion_evidence"
+            if local_occlusion["supported"]
+            else "gap_with_nearby_occlusion_evidence"
+        )
+    elif endpoints_predictable and duration_sec <= float(parameters["predicted_max_gap_sec"]):
         status = "predicted"
         reason = "short_gap_with_reliable_endpoints"
     else:
@@ -300,10 +419,15 @@ def _gap_run(
         "duration_sec": round(duration_sec, 4),
         "reason": reason,
         "edge_key": edge.get("edge_key") if edge else None,
-        "occlusion_event_ids": (edge.get("occlusion_event_ids") or []) if edge else [],
-        "position_source": "linear_endpoint_prediction" if status in {"predicted", "occluded"} and endpoints_reliable else None,
-        "start_pitch_m": previous.get("pitch_m") if status in {"predicted", "occluded"} and endpoints_reliable else None,
-        "end_pitch_m": following.get("pitch_m") if status in {"predicted", "occluded"} and endpoints_reliable else None,
+        "occlusion_event_ids": occlusion["event_ids"],
+        "occlusion_evidence": occlusion["evidence"],
+        "cross_team_occlusion": occlusion["cross_team"],
+        "local_occlusion_evidence": local_occlusion,
+        **identity_continuity,
+        "required_speed_mps": round(required_speed_mps, 4) if required_speed_mps is not None else None,
+        "position_source": "linear_endpoint_prediction" if status in {"predicted", "occluded"} and positions_available else None,
+        "start_pitch_m": previous.get("pitch_m") if status in {"predicted", "occluded"} and positions_available else None,
+        "end_pitch_m": following.get("pitch_m") if status in {"predicted", "occluded"} and positions_available else None,
         "eligible_for_distance": False,
         "eligible_for_heatmap": False,
     }
@@ -333,9 +457,14 @@ def _transition_event(
         "current_source_subject_ids": edge.get("current_source_subject_ids") or [],
         "current_target_subject_ids": edge.get("current_target_subject_ids") or [],
         "current_identity_relation": edge.get("current_identity_relation"),
+        "identity_continuity_status": gap_run.get("identity_continuity_status", "supported"),
+        "identity_risk_reasons": gap_run.get("identity_risk_reasons") or [],
         "source_frame": previous.get("frame"),
         "target_frame": following.get("frame"),
-        "requires_review": edge.get("current_identity_relation") == "different_subjects",
+        "requires_review": bool(
+            edge.get("current_identity_relation") == "different_subjects"
+            or gap_run.get("identity_continuity_status") == "uncertain"
+        ),
     }
 
 
@@ -345,6 +474,8 @@ def _subject_transition_events(
     tracklet_ids: list[str],
     observations_by_tracklet: dict[str, list[dict[str, Any]]],
     edge_by_pair: dict[tuple[str, str], dict[str, Any]],
+    occlusions_by_tracklet: dict[str, list[dict[str, Any]]],
+    local_occlusion_context: dict[str, Any],
     fps: float,
     parameters: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -368,6 +499,10 @@ def _subject_transition_events(
                 previous=previous,
                 following=following,
                 edge=edge,
+                occlusions_by_tracklet=occlusions_by_tracklet,
+                local_occlusion_context=local_occlusion_context,
+                shadow_subject_id=str(subject.get("shadow_subject_id") or ""),
+                team_label=str(subject.get("team_label") or "U"),
                 fps=fps,
                 parameters=parameters,
             )
@@ -376,6 +511,8 @@ def _subject_transition_events(
                 "status": "direct_transition" if frame_delta == 1 else "overlap_transition",
                 "start_frame": int(previous["frame"]),
                 "end_frame": int(following["frame"]),
+                "identity_continuity_status": "supported",
+                "identity_risk_reasons": [],
             }
         event = _transition_event(
             subject,
@@ -410,6 +547,7 @@ def _runs_compatible(left: dict[str, Any], right: dict[str, Any]) -> bool:
         "reason",
         "edge_key",
         "position_source",
+        "identity_continuity_status",
     )
     return all(left.get(key) == right.get(key) for key in comparable)
 
@@ -439,10 +577,142 @@ def _frame_in_ranges(frame: int, ranges: list[dict[str, Any]]) -> bool:
     )
 
 
+def _occlusions_by_tracklet(occlusion_doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+    for event in occlusion_doc.get("events") or []:
+        for tracklet_id in event.get("tracklet_ids") or []:
+            result.setdefault(str(tracklet_id), []).append(event)
+    for events in result.values():
+        events.sort(
+            key=lambda row: (
+                int(row.get("start_frame") or 0),
+                str(row.get("event_id") or ""),
+            )
+        )
+    return result
+
+
+def _occlusion_support(
+    start_frame: int,
+    end_frame: int,
+    *,
+    previous: dict[str, Any],
+    following: dict[str, Any],
+    edge: dict[str, Any] | None,
+    occlusions_by_tracklet: dict[str, list[dict[str, Any]]],
+    nearby_context_frames: int,
+    low_appearance_context_frames: int,
+    low_appearance_ratio: float,
+) -> dict[str, Any]:
+    edge_ids = set(str(value) for value in (edge or {}).get("occlusion_event_ids") or [])
+    tracklet_ids = {
+        str(previous.get("tracklet_id") or ""),
+        str(following.get("tracklet_id") or ""),
+    }
+    events_by_id: dict[str, dict[str, Any]] = {}
+    appearance_ratios = [
+        float(value)
+        for value in (
+            previous.get("appearance_reliable_ratio"),
+            following.get("appearance_reliable_ratio"),
+        )
+        if value is not None
+    ]
+    weak_appearance = bool(appearance_ratios) and min(appearance_ratios) <= low_appearance_ratio
+    same_raw_tracklet = previous.get("tracklet_id") == following.get("tracklet_id")
+    endpoint_confidence = min(
+        float(previous.get("confidence") or 0.0),
+        float(following.get("confidence") or 0.0),
+    )
+    for tracklet_id in tracklet_ids:
+        for event in occlusions_by_tracklet.get(tracklet_id) or []:
+            event_start = int(event.get("start_frame") or 0)
+            event_end = int(event.get("end_frame") or event_start)
+            distance = max(start_frame - event_end, event_start - end_frame, 0)
+            event_id = str(event.get("event_id") or "")
+            cross_team = len(set(str(value) for value in event.get("team_labels") or [])) > 1
+            qualifies = bool(
+                event_id in edge_ids
+                or (
+                    same_raw_tracklet
+                    and (
+                        (cross_team and distance <= nearby_context_frames)
+                        or (weak_appearance and distance <= low_appearance_context_frames)
+                    )
+                )
+                or (
+                    not same_raw_tracklet
+                    and cross_team
+                    and distance <= nearby_context_frames
+                    and endpoint_confidence < 0.35
+                )
+            )
+            if qualifies:
+                events_by_id[event_id] = event
+    evidence = sorted(
+        {
+            str(value)
+            for event in events_by_id.values()
+            for value in event.get("evidence") or []
+        }
+    )
+    cross_team = any(
+        len(set(str(value) for value in event.get("team_labels") or [])) > 1
+        for event in events_by_id.values()
+    )
+    return {
+        "event_ids": sorted(set(events_by_id) | edge_ids),
+        "evidence": evidence,
+        "cross_team": cross_team,
+    }
+
+
+def _identity_continuity_assessment(
+    previous: dict[str, Any],
+    following: dict[str, Any],
+    *,
+    occlusion: dict[str, Any],
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    team_confidences = [
+        float(value)
+        for value in (previous.get("team_confidence"), following.get("team_confidence"))
+        if value is not None
+    ]
+    risky = bool(
+        previous.get("tracklet_id") == following.get("tracklet_id")
+        and (not previous.get("appearance_reliable") or not following.get("appearance_reliable"))
+        and occlusion.get("cross_team")
+        and team_confidences
+        and min(team_confidences) < float(parameters["identity_risk_max_team_confidence"])
+    )
+    reasons = (
+        [
+            "same_raw_tracklet_crosses_cross_team_occlusion",
+            "unreliable_endpoint_appearance",
+            "low_tracklet_team_confidence",
+        ]
+        if risky
+        else []
+    )
+    return {
+        "identity_continuity_status": "uncertain" if risky else "supported",
+        "identity_risk_reasons": reasons,
+    }
+
+
 def _point(value: Any) -> list[float] | None:
     if not isinstance(value, (list, tuple)) or len(value) < 2:
         return None
     return [round(float(value[0]), 3), round(float(value[1]), 3)]
+
+
+def _distance(left: Any, right: Any) -> float | None:
+    left_point = _point(left)
+    right_point = _point(right)
+    if left_point is None or right_point is None:
+        return None
+    return math.hypot(right_point[0] - left_point[0], right_point[1] - left_point[1])
 
 
 def _event_key(edge_key: str, subject_id: str) -> str:
