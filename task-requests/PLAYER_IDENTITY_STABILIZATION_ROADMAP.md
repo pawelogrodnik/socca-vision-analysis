@@ -995,7 +995,7 @@ ponieważ anchor może zawierać overlap, cross-team switch albo wcześniejszy I
 Następny etap powinien najpierw wygenerować audytowalne propozycje konsolidacji
 fragmentów, bez automatycznej promocji.
 
-### P1.8 — SHADOW FRAGMENT CONSOLIDATION PROPOSALS: DONE / AUDIT REQUIRED
+### P1.8 — SHADOW FRAGMENT CONSOLIDATION PROPOSALS: DONE / AUDITED / NOT PROMOTED
 
 Dodano konserwatywny generator propozycji łączenia sąsiednich candidate fragments.
 Warstwa nie przebudowuje subjectów. Jej celem jest zmniejszenie ręcznej przestrzeni
@@ -1058,10 +1058,327 @@ hard3m:
   isolated diagnostics overhead: 0.37%
 ```
 
-P1.8 nie jest jeszcze gotowe do promocji. Następny etap powinien przygotować mały
-audyt wizualny, zaczynając od wysoko ocenionych propozycji easy90 i reprezentatywnej
-próbki hard3m. Dopiero precision z tego audytu może ustalić, czy część linków da się
-bezpiecznie akceptować automatycznie.
+P1.8 nie jest jeszcze gotowe do promocji. Przygotowano interaktywny audyt wizualny
+wszystkich wygenerowanych propozycji:
+
+```text
+backend/storage/benchmarks/player_identity/p18-fragment-consolidation-20260719-v1/
+  visual-fragment-consolidation-audit-v2/
+```
+
+Audyt zawiera 26 kart `easy90` i 106 kart `hard3m`. Każda karta pokazuje końcową
+obserwację fragmentu źródłowego, kontekst przejścia, początkową obserwację fragmentu
+docelowego oraz powiększone cropy obu osób. Operator wybiera wyłącznie:
+`same_person`, `different_people` albo `uncertain`. Eksportowane manifesty zachowują
+stabilny `proposal_key` i mogą zostać użyte jako goldset precision P1.8.
+
+Dwa kompletne manifesty zostały zaimportowane do wersjonowanego goldsetu. Wynik
+ręcznego audytu:
+
+```text
+easy90:
+  confirmed same: 23
+  confirmed different: 3
+  uncertain: 0
+
+hard3m:
+  confirmed same: 76
+  confirmed different: 10
+  uncertain: 20
+
+łącznie:
+  132 propozycje
+  99 same / 13 different / 20 uncertain / 0 pending
+```
+
+Audyt wykazał, że niski koszt lub `recommended_review` nie wystarcza do
+automatycznego merge'a. Szczególnie ryzykowne są propozycje `gap=0`, które często
+łączą prawidłową sylwetkę z partial bboxem nogi, buta, pustego pola albo piłki.
+Wynik audytu został zapisany jako goldset P1.9. Produkcyjne i candidate identity
+pozostają bez zmian.
+
+### P1.9 — FRAGMENT CONSOLIDATION GOLDSET I STRICT PROMOTION GATE: DONE / SHADOW
+
+Dodano deterministyczny, trzywartościowy goldset oraz evaluator rozróżniający:
+
+- `confirmed_same`;
+- `confirmed_different`;
+- `uncertain`, które nie jest zgadywane ani traktowane jak negatywna etykieta.
+
+Goldset:
+
+```text
+backend/tests/fixtures/player_identity/
+  identity_fragment_consolidation_goldset_v1.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_fragment_consolidation_goldset.py
+backend/scripts/build_identity_fragment_consolidation_goldset.py
+backend/tests/test_identity_fragment_consolidation_goldset.py
+```
+
+Polityka `strict_v1` oznacza link jako `auto_accept_shadow` tylko przy jednoczesnym
+spełnieniu wszystkich warunków:
+
+1. istnieje rzeczywista dodatnia luka czasowa; `gap=0` zawsze wymaga review;
+2. luka nie przekracza `0.7 s`;
+3. confidence wynosi co najmniej `0.8`;
+4. endpoint distance nie przekracza `1.5 m`;
+5. wymagana prędkość nie przekracza `4.0 m/s`;
+6. oba fragmenty mają active ratio co najmniej `0.9`;
+7. drużyna i team-safe anchor są zgodne;
+8. propozycja nie ma overlapu ani reason codes.
+
+Frozen evaluation:
+
+```text
+backend/storage/benchmarks/player_identity/p18-fragment-consolidation-20260719-v1/
+  identity_fragment_consolidation_goldset_v1_evaluation.json
+```
+
+Wynik:
+
+```text
+status: passed
+labeled: 112
+unlabeled uncertain: 20
+auto_accept_shadow: 5
+  easy90: 1
+  hard3m: 4
+precision: 100%
+false merges: 0
+uncertain auto-accepts: 0
+recall: 5.05%
+```
+
+Gate jest celowo bardzo wąski. Przejście benchmarku nie uruchamia jeszcze merge'a:
+`auto_accept_shadow` pozostaje advisory, nie przebudowuje candidate subjectów i nie
+dotyka produkcyjnego identity ani statystyk. Przed rozszerzeniem coverage trzeba
+dodać niezależną ocenę jakości endpoint bboxa, aby odróżnić pełną sylwetkę od
+partial fragmentu, piłki i pustego bboxa bez uczenia progów pod te dwa materiały.
+
+Sprawdzono proste cechy endpointów: aspect ratio, powierzchnię bboxa, wzajemny ratio
+powierzchni oraz detector confidence. Ich rozkłady dla `same`, `different` i
+`uncertain` silnie się pokrywają. Nie dodano progów dopasowanych do easy90/hard3m,
+ponieważ dawałyby pozorny progres i ryzyko regresji na nowym meczu. Następne
+rozszerzenie coverage wymaga observation-level evidence, np. spójności maski osoby,
+widoczności torso/footpoint albo reliable appearance crop, a nie kolejnego progu na
+samej geometrii bboxa.
+
+### P1.10 — LOCAL ENDPOINT OBSERVATION RELIABILITY: DONE / SHADOW / NOT A REID SIGNAL
+
+Dodano pasywną ocenę lokalnej jakości obserwacji na końcach fragmentów. Scorer
+porównuje endpoint z maksymalnie dziesięcioma sąsiednimi obserwacjami tego samego
+fragmentu i zapisuje:
+
+- liczbę dostępnych obserwacji kontekstowych;
+- ratio powierzchni i proporcji bboxa względem lokalnej mediany;
+- lokalną prędkość w układzie boiska;
+- istniejące flagi reliability footpointu i appearance;
+- jawne `visual_content_verified: false`.
+
+Klasy `locally_consistent`, `review` i `invalid` opisują wyłącznie jakość lokalnej
+obserwacji. Nie są dowodem `same person` i nigdy nie autoryzują merge'a. Każda para
+endpointów ma `safe_for_automatic_identity_merge: false`.
+
+Implementacja:
+
+```text
+backend/app/services/identity_fragment_endpoint_reliability.py
+backend/scripts/evaluate_identity_fragment_endpoint_reliability.py
+backend/tests/test_identity_fragment_endpoint_reliability.py
+```
+
+`identity_fragment_consolidation_shadow.json` został rozszerzony o:
+
+```text
+source_endpoint_reliability
+target_endpoint_reliability
+endpoint_reliability
+summary.endpoint_quality_counts
+gates.endpoint_quality_is_advisory_only
+```
+
+Wersja kontraktu i algorytmu consolidation shadow została podniesiona do `0.2.0`.
+Strict gate P1.9 pozostaje bez zmian: nadal ma pięć advisory auto-acceptów i nie
+wykonuje produkcyjnych merge'ów.
+
+Frozen benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/p110-endpoint-reliability-20260720-v2/
+  identity_benchmark_report.json
+  identity_fragment_endpoint_reliability_evaluation.json
+```
+
+Wynik no-impact:
+
+```text
+easy90: passed
+hard3m: passed
+identity outputs unchanged: true
+independent reprocess core equal: true
+isolated diagnostics overhead:
+  easy90: 0.79%
+  hard3m: 0.37%
+```
+
+Macierz na 132 ręcznie ocenionych propozycjach:
+
+```text
+confirmed same:      locally consistent 34 | review 65 | invalid 0
+confirmed different: locally consistent  4 | review  9 | invalid 0
+uncertain:           locally consistent  7 | review 13 | invalid 0
+```
+
+Wszystkie endpointy użyte przez generator propozycji były strukturalnie poprawne,
+więc żaden nie otrzymał klasy `invalid`. Jednocześnie cztery ręcznie potwierdzone
+błędne pary przeszły jako `locally_consistent`. Przypadek hard3m `#93`, w którym
+oba endpointy przedstawiają piłkę zamiast zawodnika, również jest lokalnie spójny.
+To potwierdza, że ciągłość bboxa i ruchu nie potrafi zweryfikować zawartości obrazu.
+
+P1.10 nie zwiększa zatem recall auto-merge. Zamyka natomiast ryzykowną ścieżkę
+strojenia kolejnych progów geometrycznych pod dwa benchmarki. Następny krok powinien
+dodać niezależne image-content evidence: person/foreground occupancy endpoint cropa,
+widoczność torso i footpointu oraz lokalną spójność appearance. Taki sygnał najpierw
+pozostaje shadow i wymaga walidacji na większej liczbie meczów.
+
+### P1.11 — ENDPOINT VISUAL-CONTENT EVIDENCE CONTRACT: DONE / SHADOW / AUDITED
+
+Dodano jawny kontrakt zawartości wizualnej endpointu, niezależny od oceny ciągłości
+tożsamości. Każdy unikalny endpoint posiada stabilny `endpoint_key` oraz jeden ze
+stanów:
+
+- `person` — bbox zawiera rozpoznawalną sylwetkę osoby;
+- `partial_person` — bbox zawiera rozpoznawalny fragment osoby;
+- `not_person` — bbox przedstawia piłkę, tło albo inny obiekt;
+- `unclear` — obraz nie pozwala na bezpieczną ocenę;
+- `pending` albo `unavailable` — brak zakończonego evidence.
+
+Status `not_person` blokuje połączenie wyłącznie w warstwie diagnostycznej. Statusy
+`person` i `partial_person` potwierdzają tylko zawartość bboxa i nigdy nie są
+dowodem, że dwa endpointy przedstawiają tę samą osobę. Cały etap pozostaje advisory:
+nie zmienia candidate identity, produkcyjnego resolvera, slotów, stintów ani statystyk.
+
+Implementacja:
+
+```text
+backend/app/services/identity_fragment_visual_content.py
+backend/app/services/identity_fragment_visual_content_audit.py
+backend/scripts/generate_identity_fragment_visual_content_audit.py
+backend/scripts/build_identity_fragment_visual_content_evidence.py
+backend/tests/test_identity_fragment_visual_content.py
+backend/tests/test_identity_fragment_visual_content_audit.py
+```
+
+Nowe artefakty:
+
+```text
+identity_fragment_visual_content.json
+identity_fragment_visual_content_report.json
+```
+
+Selektywny audyt obejmuje endpointy z ręcznie potwierdzonych par
+`confirmed_different`, par `uncertain` oraz pięciu kandydatów strict shadow
+auto-accept. Wygenerowano 76 unikalnych kart:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p111-endpoint-content-audit-20260720-v2/
+
+easy90: 8 endpointów
+hard3m: 68 endpointów
+```
+
+Każda karta rozdziela trzy widoki:
+
+1. pełną klatkę z pozycją endpointu;
+2. dokładny crop `EXACT BBOX`, który jest przedmiotem klasyfikacji;
+3. szerszy `EXPANDED CONTEXT`, używany tylko do interpretacji sceny.
+
+Rozdzielenie jest konieczne, ponieważ padding cropa może pokazać sąsiedniego
+zawodnika mimo że właściwy bbox zawiera tylko piłkę, kończynę albo puste tło.
+Nie dodano heurystyk HSV, edge density ani ponownej inferencji tym samym modelem
+player YOLO: nie są niezależnym evidence i mogłyby nauczyć gate błędów obecnego
+detektora. Lokalny zestaw modeli nie zawiera niezależnego person verifiera/ReID.
+
+Selektywny zestaw został następnie oceniony wizualnie. Zapisano reviewed manifesty
+z provenance `codex_visual_review` oraz zbudowano pełne evidence dla obu benchmarków:
+
+```text
+easy90: 7 person, 1 partial_person
+hard3m: 42 person, 24 partial_person, 1 unclear, 1 not_person
+```
+
+Po zmapowaniu etykiet na wszystkie 132 propozycje goldsetu otrzymano:
+
+```text
+person_content_supported: 36 par
+invalid_content:           1 para
+unclear:                   1 para
+unavailable:              94 pary
+```
+
+Przypadek `invalid_content` to hard3m `A07~3 -> A07~5`, w którym jeden endpoint
+przedstawia piłkę zamiast zawodnika. Wszystkie pięć kandydatów strict P1.9 ma
+potwierdzoną zawartość osoby. Audyt potwierdza więc przydatność content evidence
+jako blokady oczywistych błędów detektora, ale nie jako dowodu `same person`.
+
+Reviewed evidence:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p111-endpoint-content-audit-20260720-v2/reviewed-evidence/
+```
+
+### P1.12 — STRICT VISUAL-CONTENT SHADOW GATE: DONE / SHADOW / PASSED
+
+Dodano fail-closed gate komponujący rygorystyczną politykę P1.9 z evidence P1.11:
+
+- `not_person` blokuje kandydaturę;
+- `unavailable`, `pending`, `unclear` oraz brak dokumentu powodują abstencję;
+- `person` i `partial_person` jedynie przepuszczają kandydaturę do istniejącej
+  polityki strict i nigdy samodzielnie nie autoryzują połączenia;
+- nieudany strict gate nie może zostać nadpisany pozytywnym content evidence;
+- wszystkie decyzje pozostają advisory i nie zmieniają produkcyjnego identity.
+
+Implementacja:
+
+```text
+backend/app/services/identity_fragment_visual_content_gate.py
+backend/scripts/evaluate_identity_fragment_visual_content_gate.py
+backend/tests/test_identity_fragment_visual_content_gate.py
+```
+
+Raport benchmarkowy:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p111-endpoint-content-audit-20260720-v2/
+    identity_fragment_visual_content_gate_evaluation.json
+```
+
+Wynik na pełnym goldsecie:
+
+```text
+132/132 propozycje mają prediction i content-pair contract
+strict auto-accepts: 5
+gated auto-accepts:  5
+true positive:       5
+false positive:      0
+uncertain accepted:  0
+precision:           1.000000
+recall:              0.050505
+status:              passed
+```
+
+P1.12 wzmacnia granicę bezpieczeństwa i zachowuje wszystkie dotychczasowe bezpieczne
+kandydatury, ale zgodnie z projektem nie zwiększa recall. Następny wzrost coverage
+wymaga niezależnego evidence tożsamości, np. same-match ReID z reliable cropów lub
+manualnego potwierdzenia pary. Dalsze strojenie geometrii bboxa nie jest uzasadnione.
 
 ### Następny krok po P1.4
 

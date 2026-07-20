@@ -7,10 +7,15 @@ import json
 import math
 from typing import Any
 
+from app.services.identity_fragment_endpoint_reliability import (
+    assess_fragment_endpoint_reliability,
+    summarize_endpoint_pair,
+)
 
-SCHEMA_VERSION = "0.1.0"
+
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_fragment_consolidation_shadow"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "max_gap_seconds": 3.0,
@@ -92,6 +97,10 @@ def build_identity_fragment_consolidation_shadow(
 
     proposals.sort(key=lambda row: (int(row["source_end_frame"]), str(row["proposal_key"])))
     rejected_pairs.sort(key=lambda row: (int(row["source_end_frame"]), str(row["pair_key"])))
+    endpoint_quality_counts = Counter(
+        str((row.get("endpoint_reliability") or {}).get("quality") or "missing")
+        for row in proposals
+    )
     summary = {
         "candidate_subjects": len(candidate_doc.get("subjects") or []),
         "eligible_fragment_subjects": sum(len(rows) for rows in eligible_groups.values()),
@@ -103,6 +112,7 @@ def build_identity_fragment_consolidation_shadow(
         "rejected_pairs": len(rejected_pairs),
         "rejection_counts": dict(sorted(rejection_counts.items())),
         "excluded_subjects": len(excluded_subjects),
+        "endpoint_quality_counts": dict(sorted(endpoint_quality_counts.items())),
         "promotion_readiness": "blocked_pending_visual_audit",
     }
     proposal_doc = {
@@ -136,12 +146,17 @@ def build_identity_fragment_consolidation_shadow(
             "no_cross_team_proposals": all(row["source_team_label"] == row["target_team_label"] for row in proposals),
             "no_parallel_fragment_proposals": all(int(row["overlap_frames"]) <= int(params["max_boundary_overlap_frames"]) for row in proposals),
             "all_proposals_require_visual_review": all(bool(row["requires_visual_review"]) for row in proposals),
+            "endpoint_quality_is_advisory_only": all(
+                not bool((row.get("endpoint_reliability") or {}).get("safe_for_automatic_identity_merge"))
+                for row in proposals
+            ),
         },
         "excluded_subjects": excluded_subjects,
         "rejected_pairs": rejected_pairs[:500],
         "limitations": [
             "A shared production anchor is weak evidence and never authorizes an automatic merge.",
             "Appearance ReID is not available in this stage, so every proposal requires visual review.",
+            "Local endpoint consistency cannot distinguish a person from a consistently tracked ball or background fragment.",
             "Rejected and excluded fragments remain unchanged in the candidate identity artifacts.",
         ],
     }
@@ -221,6 +236,16 @@ def _evaluate_pair(
 
     source_position = _endpoint_position(source_overlay, at_end=True)
     target_position = _endpoint_position(target_overlay, at_end=False)
+    source_reliability = assess_fragment_endpoint_reliability(
+        source_overlay,
+        at_end=True,
+        fps=fps,
+    )
+    target_reliability = assess_fragment_endpoint_reliability(
+        target_overlay,
+        at_end=False,
+        fps=fps,
+    )
     distance = _pitch_distance(
         source_position.get("pitch_m") if source_position else None,
         target_position.get("pitch_m") if target_position else None,
@@ -263,6 +288,9 @@ def _evaluate_pair(
         "required_speed_mps": round(required_speed, 4) if required_speed is not None else None,
         "source_endpoint": _compact_endpoint(source_position),
         "target_endpoint": _compact_endpoint(target_position),
+        "source_endpoint_reliability": source_reliability,
+        "target_endpoint_reliability": target_reliability,
+        "endpoint_reliability": summarize_endpoint_pair(source_reliability, target_reliability),
         "evidence": evidence,
         "reason_codes": sorted(set(reasons)),
         "requires_visual_review": True,
@@ -292,6 +320,10 @@ def _compact_endpoint(position: dict[str, Any] | None) -> dict[str, Any] | None:
         "pitch_m": [round(float(value), 3) for value in position.get("pitch_m")[:2]],
         "bbox_xyxy": position.get("bbox_xyxy"),
         "confidence": position.get("confidence"),
+        "footpoint_reliable": bool(position.get("footpoint_reliable")),
+        "appearance_reliable": bool(position.get("appearance_reliable")),
+        "play_area_status": position.get("play_area_status"),
+        "quality_class": position.get("quality_class"),
     }
 
 

@@ -28,6 +28,12 @@ class IdentityFragmentConsolidationShadowTests(unittest.TestCase):
         self.assertEqual(proposals[0]["decision"], "recommended_review")
         self.assertTrue(proposals[0]["requires_visual_review"])
         self.assertEqual(proposals[0]["shared_production_anchor"], "slot-A01")
+        self.assertEqual(proposals[0]["endpoint_reliability"]["quality"], "review")
+        self.assertFalse(proposals[0]["endpoint_reliability"]["safe_for_automatic_identity_merge"])
+        self.assertEqual(
+            documents["identity_fragment_consolidation_shadow"]["summary"]["endpoint_quality_counts"],
+            {"review": 1},
+        )
 
     def test_rejects_parallel_fragments_instead_of_merging_them(self) -> None:
         documents = build_identity_fragment_consolidation_shadow(

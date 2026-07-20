@@ -379,7 +379,7 @@ def _highlight_subject(
     height, width = image.shape[:2]
     x1, x2 = max(0, min(width - 1, x1)), max(1, min(width - 1, x2))
     y1, y2 = max(0, min(height - 1, y1)), max(1, min(height - 1, y2))
-    cv2.rectangle(image, (x1, y1), (x2, y2), color, 5)
+    cv2.rectangle(image, (x1, y1), (x2, y2), color, 1)
     center_x = (x1 + x2) // 2
     arrow_start_y = max(12, y1 - max(28, (y2 - y1) // 3))
     arrow_end_y = min(height - 1, max(1, y1 + 3))
@@ -388,7 +388,7 @@ def _highlight_subject(
         (center_x, arrow_start_y),
         (center_x, arrow_end_y),
         color,
-        5,
+        2,
         cv2.LINE_AA,
         tipLength=0.28,
     )
@@ -483,6 +483,14 @@ def _render_html(manifest: dict[str, Any]) -> str:
         )
     summary = manifest.get("summary") or {}
     label = escape(str((manifest.get("benchmark") or {}).get("label") or "benchmark"))
+    ui = manifest.get("ui") or {}
+    title = escape(str(ui.get("title") or f"Identity stitching visual audit: {label}"))
+    description = escape(
+        str(ui.get("description") or "Compare SOURCE and TARGET and decide whether they show the same person.")
+    )
+    download_filename = json.dumps(
+        str(ui.get("download_filename") or f"identity_stitching_audit_reviewed_{label}.json")
+    )
     embedded_manifest = json.dumps(manifest, ensure_ascii=True).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en">
@@ -519,8 +527,8 @@ def _render_html(manifest: dict[str, Any]) -> str:
 <body>
   <header>
     <div>
-      <h1>Identity stitching visual audit: {label}</h1>
-      <p><span id="progress">0/{int(summary.get("review_items") or 0)}</span> reviewed. Production identity remains unchanged.</p>
+      <h1>{title}</h1>
+      <p><span id="progress">0/{int(summary.get("review_items") or 0)}</span> reviewed. {description}</p>
     </div>
     <button id="download" type="button">Download reviewed manifest</button>
   </header>
@@ -581,7 +589,7 @@ def _render_html(manifest: dict[str, Any]) -> str:
       const blob = new Blob([JSON.stringify(manifest, null, 2)], {{ type: "application/json" }});
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = "identity_stitching_audit_reviewed_{label}.json";
+      link.download = {download_filename};
       link.click();
       URL.revokeObjectURL(link.href);
     }});
