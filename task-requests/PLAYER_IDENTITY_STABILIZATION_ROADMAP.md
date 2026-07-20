@@ -1447,19 +1447,227 @@ easy90 i `3700/3700` hitów hard3m, bez ponownego wywołania modelu. Quality gat
 raportuje faktyczne użycie filtrów cropów, niezależnie od tego, czy subject zebrał
 minimalną liczbę embeddingów do reliable prototype.
 
-### Następny krok po P1.13
+### P1.14 — BOUNDED REID FUSION W SHADOW COST: DONE / RIGOROUSLY BENCHMARKED / RANKING ONLY
 
-Przed podmianą produkcyjnego resolvera należy wykonać mały ludzki audyt delta:
+Dodano deterministyczną warstwę fusion, która łączy dotychczasowy koszt ciągłości
+fragmentów z same-match ReID. ReID ma domyślną wagę `0.15`, a bezwzględna zmiana
+kosztu jest ograniczona do `0.08`. Brak lub niewiarygodne appearance evidence
+zachowuje koszt geometryczny bez zmian.
 
-- jeden przypadek identity, dla którego candidate abstainuje zamiast wykonać błędny
-  cross-team merge;
-- pięć pozostałych różnic `predicted` kontra `occluded` w hard3m;
-- co najmniej kilka przypadków `overlap_transition`, których obecny audyt nie zawiera.
+Implementacja:
 
-Nie trzeba ponownie oceniać wszystkich 44 kart. Po zatwierdzeniu delta goldsetu
-następny candidate może używać timeline do porównania RAW/ambiguous i coverage, ale
-każda zmiana produkcyjnego identity nadal wymaga osobnego benchmarku oraz ręcznej
-walidacji nowych cross-production links.
+```text
+backend/app/services/identity_reid_fusion_shadow.py
+backend/scripts/evaluate_identity_reid_fusion_shadow.py
+backend/tests/test_identity_reid_fusion_shadow.py
+backend/tests/test_evaluate_identity_reid_fusion_shadow.py
+```
+
+Warstwa spełnia następujące ograniczenia:
+
+- działa wyłącznie jako ranking/tie-breaker manualnego review;
+- nie posiada progu automatycznego merge;
+- nie może zmienić decyzji strict gate;
+- konflikt drużyny, brak bezpiecznego anchora, overlap, required speed powyżej
+  `4.0 m/s`, konflikt roli, niepoprawny crop lub untrusted candidate flag wyłącza
+  wpływ ReID;
+- unreliable pair, mniej niż trzy embeddingi lub dispersion powyżej `0.35`
+  wyłącza wpływ ReID;
+- nie zmienia candidate/production identity, statystyk ani timeline.
+
+Benchmark:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p114-reid-fusion-20260720-v7-final/
+```
+
+Jedynym goldsetem zgodnym z jednostką decyzyjną P1.13/P1.14 jest
+`identity_fragment_consolidation_goldset_v1.json`: 132 kandydatów, w tym 112
+oznaczonych (`99 same`, `13 different`) i 20 `uncertain`. Starsze audyty dotyczą
+innych typów kandydatów i nie zostały sztucznie mapowane do tego benchmarku.
+
+Wynik łączny przy wadze `0.15`:
+
+```text
+labeled pairs:                    112
+ReID applied after safety gates:   25 (coverage 0.223214)
+production accepted:                5 -> 5
+correct / false accepted:           5 / 0 -> 5 / 0
+production precision:               1.0 -> 1.0
+production recall:                  0.050505 -> 0.050505
+manual review cases:              127 -> 127
+zero-FP diagnostic recall:          0.757576 -> 0.737374
+ROC AUC:                            0.885781 -> 0.896659 (+0.010878)
+PR AUC:                             0.984915 -> 0.986328 (+0.001413)
+```
+
+Wynik per benchmark:
+
+```text
+easy90:
+  accepted/correct/false:       1/1/0 -> 1/1/0
+  review:                       25 -> 25
+  zero-FP diagnostic recall:    0.913043 -> 0.913043
+  ROC AUC:                      0.942029 -> 0.956522 (+0.014493)
+
+hard3m:
+  accepted/correct/false:       4/4/0 -> 4/4/0
+  review:                       102 -> 102
+  zero-FP diagnostic recall:    0.763158 -> 0.750000
+  ROC AUC:                      0.872368 -> 0.881579 (+0.009211)
+```
+
+Sweep wag `0.00/0.05/0.10/0.15/0.20/0.30` zwiększa łączny ROC AUC od `0.885781`
+do maksymalnie `0.906760`, ale dla każdej niezerowej wagi pozostawia dokładnie
+pięć production accepts i 127 przypadków review. Nie wybrano zatem preferowanej
+wagi produkcyjnej. Większa AUC nie została potraktowana jako dowód bezpiecznej
+redukcji review.
+
+Cross-benchmark calibration potwierdza ryzyko automatycznego progu: próg z easy90
+zastosowany na hard3m daje sześć false positives dla P1.14, a próg z hard3m
+zastosowany na easy90 jest bezpieczny, lecz traci recall. ReID pozostaje więc
+wyłącznie bounded tie-breakerem w shadow rankingu.
+
+Audyt delta obejmuje siedem kart: dwie zmiany top rankingu, pięć najbliższych
+negative pairs i jeden potencjalny false merge (kategorie częściowo się
+pokrywają). Potencjalny false merge jest faktycznie parą różnych osób; strict gate
+poprawnie go blokuje. Galeria:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p114-reid-fusion-20260720-v7-final/
+  visual_delta_audit/index.html
+```
+
+Wszystkie safety gate'y przeszły: weight `0` jest bitowo równoważny P1.13,
+wyniki są deterministyczne, hard constraints nigdy nie zostały nadpisane, liczba
+false merge pozostaje równa zero, a production identity, statystyki i heatmapy są
+bitowo niezmienione.
+
+Jednoznaczna klasyfikacja wyniku: **B — ranking-only improvement**. P1.14 daje
+mierzalnie lepszą kolejność kandydatów na obu benchmarkach, ale nie daje jeszcze
+bezpiecznego auto-merge ani redukcji manualnego review.
+
+### P1.15 — SHADOW ROSTER ANCHOR ASSIGNMENT: DONE / READ-ONLY
+
+Dodano osobną warstwę, która buduje jedną kartę roster review dla każdego
+candidate stable subjectu. Jedynym źródłem potwierdzonej realnej tożsamości są
+istniejące ręczne `player_identity_assignments.json`. Fused score z P1.14 może
+jedynie uszeregować nierozstrzygnięte karty po bezpiecznej ścieżce ReID; nie może
+potwierdzić zawodnika ani zasilić statystyk.
+
+Implementacja:
+
+```text
+backend/app/services/identity_roster_anchor_shadow.py
+backend/scripts/evaluate_identity_roster_anchor_shadow.py
+backend/tests/test_identity_roster_anchor_shadow.py
+backend/tests/test_evaluate_identity_roster_anchor_shadow.py
+```
+
+Artefakty:
+
+```text
+identity_roster_anchor_shadow.json
+identity_roster_anchor_shadow_report.json
+p115_roster_anchor_evaluation.json
+P1_15_REPORT.md
+```
+
+Benchmark frozen easy90 połączono z istniejącymi ręcznymi przypisaniami meczu
+`46904e8c`, bez uruchamiania YOLO, resolvera i renderowania overlayu:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p115-roster-anchor-20260720-v1/
+
+candidate stable subjects:       109
+roster players:                    12
+confirmed manual anchors:          12
+suggested review:                   0
+conflicts:                         13
+unresolved:                        84
+automatic assignments:              0
+eligible for stats/heatmaps:         0
+```
+
+Dziewięć równoległych konfliktów tej samej osoby zostało wykrytych i zablokowanych,
+a cztery kolejne karty zawierają nakładające się przypisania różnych zawodników.
+P1.14 nie utworzył dodatkowej sugestii, ponieważ jedyny edge przechodzący jego
+strict gate dotyczy Team B, który w tym meczu nie ma ręcznego anchoru rosterowego.
+
+Wszystkie safety gate'y przeszły. Hashe pięciu produkcyjnych artefaktów identity,
+assignments, statystyk i heatmap pozostały identyczne. Warstwa ma jawne flagi
+`automatic_assignments=0`, `eligible_for_player_stats=false` oraz
+`eligible_for_heatmaps=false`.
+
+### P1.16 — SHADOW ROSTER ANCHOR CROPS: DONE / READ-ONLY
+
+Dodano pasywny selektor reprezentatywnych cropów dla kart roster anchor z P1.15.
+Jednostką wyboru pozostaje candidate stable subject, a wybrane cropy są wyłącznie
+dowodem do review. Nie tworzą przypisań rosterowych, nie zasilają statystyk,
+heatmap ani produkcyjnego identity.
+
+Implementacja:
+
+```text
+backend/app/services/identity_roster_anchor_crops_shadow.py
+backend/scripts/evaluate_identity_roster_anchor_crops_shadow.py
+backend/tests/test_identity_roster_anchor_crops_shadow.py
+backend/tests/test_evaluate_identity_roster_anchor_crops_shadow.py
+```
+
+Selektor wybiera maksymalnie 5 cropów per karta i filtruje obserwacje przez:
+
+- `detected`, `inside_play`, `appearance_reliable` i `footpoint_reliable`;
+- minimalny detection confidence oraz minimalny rozmiar bboxa;
+- okna overlap/occlusion z P0/P1;
+- dodatkowy same-frame overlap guard, który odrzuca crop, gdy bbox nachodzi na
+  inną osobę w tej samej klatce;
+- dywersyfikację czasową i, gdy to możliwe, różne tracklety.
+
+Artefakty:
+
+```text
+identity_roster_anchor_crops_shadow.json
+identity_roster_anchor_crops_shadow_report.json
+p116_anchor_crop_evaluation.json
+P1_16_REPORT.md
+index.html
+anchor_crops/
+```
+
+Benchmark frozen easy90:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p116-anchor-crops-20260720-v2/
+
+cards:                         109
+ready for visual audit:         86
+insufficient reliable crops:     5
+no reliable crops:              18
+selected/rendered crops:       437
+eligible observations:       30989
+overlap rejections:           4835
+automatic assignments:           0
+eligible for stats/heatmaps:     0
+```
+
+Wszystkie safety gate'y przeszły: output jest deterministyczny, wszystkie wybrane
+cropy zostały wyrenderowane, a hashe produkcyjnych artefaktów identity,
+assignments, statystyk i heatmap pozostały bez zmian. Ręczny spot-check cropów
+znanych osób (Pawel, Mati GK, Andrzej) potwierdził, że v2 usuwa widoczne przypadki
+dwóch osób w anchor cropie lepiej niż pierwszy wariant.
+
+### Następny krok po P1.16
+
+P1.17 powinien zbudować kontrakt UI/operator review dla całego stable subjectu
+na bazie kart P1.15 i cropów P1.16. Nadal nie należy podłączać P1.14–P1.16 do
+produkcyjnego merge ani statystyk. Warunkiem promocji pozostaje goldset z nowych
+meczów, zero false merge, mniej review oraz brak regresji coverage na easy90 i
+hard3m.
 
 Nadal otwarte są między innymi:
 
@@ -1468,7 +1676,6 @@ Nadal otwarte są między innymi:
 - jawny stan `occluded` w produkcyjnym resolved timeline;
 - event-level UI review i orphan review;
 - anchor assignment per stable subject;
-- użycie same-match ReID w assignment cost wyłącznie w kolejnym shadow candidate;
 - poprawa hard3m ReID przez lepsze domain crops/model, bez obniżania strict gate;
 - wpływ quality/reliability na statystyki i crop review.
 
@@ -2741,7 +2948,7 @@ Krótkie zasłonięcie dwóch graczy nie tworzy automatycznie nowych stable subj
 2. [x] crop quality gate;
 3. [x] embeddings cache;
 4. [x] robust subject prototypes;
-5. appearance distance w assignment cost;
+5. [x] appearance distance w bounded shadow assignment cost;
 6. [x] diagnostyka i explainability;
 7. [x] test set tych samych i różnych zawodników.
 
@@ -2999,8 +3206,9 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [x] overlap tworzy explicit shadow event z evidence;
 - [ ] overlap event ma operator review UI;
 - [ ] outgoing tracklety są rozwiązywane wspólnie;
-- [ ] roster assignment działa per stable subject;
-- [ ] system automatycznie wybiera najlepsze anchor cropy;
+- [x] shadow roster anchor działa per candidate stable subject i blokuje konflikty;
+- [ ] produkcyjny roster assignment działa per stable subject;
+- [x] system automatycznie wybiera najlepsze anchor cropy w warstwie shadow;
 - [ ] manual decision aktualizuje cały fragment, nie jeden crop;
 - [ ] orphan review pokazuje tylko istotne tracklety;
 - [x] same-match ReID używa tylko reliable cropów;
