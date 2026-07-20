@@ -1380,7 +1380,74 @@ kandydatury, ale zgodnie z projektem nie zwiększa recall. Następny wzrost cove
 wymaga niezależnego evidence tożsamości, np. same-match ReID z reliable cropów lub
 manualnego potwierdzenia pary. Dalsze strojenie geometrii bboxa nie jest uzasadnione.
 
-### Następny krok po P1.4
+### P1.13 — SAME-MATCH REID SHADOW EVIDENCE: DONE / BENCHMARKED / NOT PROMOTED
+
+Dodano pierwszy niezależny sygnał wyglądu dla par fragmentów z tego samego meczu.
+Warstwa jest całkowicie advisory: nie scala fragmentów, nie zmienia candidate ani
+production identity i nie może nadpisać konfliktu drużyny, czasu lub równoległej
+obserwacji.
+
+Implementacja:
+
+```text
+backend/app/services/identity_same_match_reid.py
+backend/scripts/download_person_reid_model.py
+backend/scripts/evaluate_identity_same_match_reid.py
+backend/tests/test_identity_same_match_reid.py
+backend/requirements-reid.txt
+```
+
+Zakres:
+
+- opcjonalny adapter OpenVINO CPU dla lekkiego modelu
+  `person-reidentification-retail-0288`;
+- crop quality gate: detected, reliable appearance/footpoint, inside play area,
+  confidence, minimalny bbox, overlap/containment, blur i brightness;
+- maksymalnie osiem czasowo rozłożonych clean cropów per subject;
+- prototype jako medoid oraz jawny dispersion/quality;
+- wersjonowany persistent embedding cache związany z modelem i preprocessingiem;
+- prototype distance, reason codes i pełny kontrakt bezpieczeństwa per proposal;
+- evaluator goldsetu z coverage, medianami, AUC, precision@K i diagnostycznym
+  zero-false-positive operating point.
+
+Benchmark po cache warm-up:
+
+```text
+backend/storage/benchmarks/player_identity/
+  p113-same-match-reid-20260720-v7-cache-v2-cached/
+```
+
+Wynik łączny:
+
+```text
+labeled pairs:             112
+available reliable pairs:  101 (coverage 0.9018)
+same / different:          89 / 12
+same median distance:      0.253463
+different median distance: 0.573349
+pairwise AUC:              0.839888
+precision@5/10/20:         0.80 / 0.90 / 0.95
+```
+
+Wynik per benchmark:
+
+```text
+easy90:  coverage 0.9231, AUC 1.000000, zero-FP recall 1.0000 (21/21)
+hard3m:  coverage 0.8953, AUC 0.799020, zero-FP recall 0.0441 (3/68)
+```
+
+Na easy90 sygnał wyraźnie rozdziela osoby. Na hard3m istnieje confirmed-different
+collision z dystansem około `0.1078`; wspólny próg z zerem false positives ma przez
+to recall tylko około `4.5%`. Nie włączono zatem automatycznego merge threshold.
+ReID jest obecnie wartościowy do rankingu/manual review i jako dodatkowy koszt w
+następnym shadow solverze, ale nie jako samodzielna decyzja identity.
+
+Cache potwierdzono drugim bitowo deterministycznym przebiegiem: `941/941` hitów
+easy90 i `3700/3700` hitów hard3m, bez ponownego wywołania modelu. Quality gate
+raportuje faktyczne użycie filtrów cropów, niezależnie od tego, czy subject zebrał
+minimalną liczbę embeddingów do reliable prototype.
+
+### Następny krok po P1.13
 
 Przed podmianą produkcyjnego resolvera należy wykonać mały ludzki audyt delta:
 
@@ -1401,7 +1468,8 @@ Nadal otwarte są między innymi:
 - jawny stan `occluded` w produkcyjnym resolved timeline;
 - event-level UI review i orphan review;
 - anchor assignment per stable subject;
-- same-match ReID embeddings;
+- użycie same-match ReID w assignment cost wyłącznie w kolejnym shadow candidate;
+- poprawa hard3m ReID przez lepsze domain crops/model, bez obniżania strict gate;
 - wpływ quality/reliability na statystyki i crop review.
 
 ---
@@ -2669,13 +2737,13 @@ Krótkie zasłonięcie dwóch graczy nie tworzy automatycznie nowych stable subj
 
 ## Milestone 3 — same-match ReID
 
-1. model adapter;
-2. crop quality gate;
-3. embeddings cache;
-4. robust subject prototypes;
+1. [x] model adapter;
+2. [x] crop quality gate;
+3. [x] embeddings cache;
+4. [x] robust subject prototypes;
 5. appearance distance w assignment cost;
-6. diagnostyka i explainability;
-7. test set tych samych i różnych zawodników.
+6. [x] diagnostyka i explainability;
+7. [x] test set tych samych i różnych zawodników.
 
 ### Definition of Done
 
@@ -2935,8 +3003,8 @@ Najpierw należy zredukować review i zebrać metryki, które pokażą, gdzie fa
 - [ ] system automatycznie wybiera najlepsze anchor cropy;
 - [ ] manual decision aktualizuje cały fragment, nie jeden crop;
 - [ ] orphan review pokazuje tylko istotne tracklety;
-- [ ] same-match ReID używa tylko reliable cropów;
-- [ ] ReID nie przebija twardych constraintów;
+- [x] same-match ReID używa tylko reliable cropów;
+- [x] ReID nie przebija twardych constraintów w warstwie shadow evidence;
 - [x] shadow stitching candidates mają explainable edge costs i hard constraints;
 - [x] rekomendowane krawędzie mają karty source/transition/target i eksport review JSON;
 - [x] shadow offline graph ma globalny optimizer i buduje odseparowany candidate stable subjects;

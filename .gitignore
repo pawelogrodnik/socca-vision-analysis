@@ -75,6 +75,7 @@ training_frames/
 # *.pt
 *.onnx
 *.engine
+backend/models/person-reidentification-retail-0288/
 runs/
 
 # OS

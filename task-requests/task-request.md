@@ -21,3 +21,6 @@ Priorytety wyboru pilki aktywnej:
 - mozliwosc oznaczenia pozostalych wykrytych pilek jako `inactive/secondary`, bez traktowania ich jako false positive modelu.
 
 Zmiana aktywnej pilki powinna wymagac mocnego potwierdzenia. W artefaktach debugowych nalezy zachowac powod wyboru, confidence oraz informacje o konkurencyjnych kandydatach. Statystyki posiadania, podan, restartow i momentum moga korzystac tylko z pilki oznaczonej jako aktywna w grze.
+
+# Task 4
+render meczu 'pod klienta' - gdzie po oznaczeniu stintow czy w jakikolwiek inny sposob juz po przypisania player id do faktycznej osoby renderujemy mecz gdzie gracze sa podpisani z imienia;
