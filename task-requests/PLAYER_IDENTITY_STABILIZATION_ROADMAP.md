@@ -24,10 +24,10 @@ Najważniejsza zasada:
 
 # 1. Aktualny baseline
 
-Dokument został zaktualizowany po zakończeniu P1.20 i późniejszym safety review względem aktualnego flow z commita:
+Dokument został zaktualizowany po zakończeniu P1.20A, P1.20B i kandydackiego P1.21 względem aktualnego flow bazującego na commicie:
 
 ```text
-c04ebf31c7822315c08a200533ca38c42b0d4077
+592fc6e1b7c6101250747b1623ef3f53bae5f03d
 ```
 
 Repo posiada działający human-in-the-loop pipeline:
@@ -41,7 +41,7 @@ P1.15 roster-anchor shadow
 → P1.20 controlled promotion plan dry-run
 ```
 
-Historia szczegółowych implementacji P0–P1.20 pozostaje dostępna w Git history. Ten dokument koncentruje się na aktualnym stanie i kolejnych krokach.
+Historia szczegółowych implementacji P0–P1.20 pozostaje dostępna w Git history. Aktualne lokalne zmiany P1.20A–P1.21 nie wykonują produkcyjnego apply i pozostają candidate-only.
 
 Przed rozpoczęciem każdego kolejnego milestone agent ma:
 
@@ -206,7 +206,7 @@ ukryte false merges
 ## Status
 
 ```text
-NEXT / MUST IMPLEMENT BEFORE CANDIDATE APPLY
+IMPLEMENTED / VERIFIED ON FROZEN EASY90 INPUT
 ```
 
 ## 4.1. Cel
@@ -583,7 +583,7 @@ Dodać minimum:
 ## Status
 
 ```text
-MUST IMPLEMENT BEFORE P1.21 WHEN STRUCTURAL CONFLICTS EXIST
+IMPLEMENTED / REQUIRED REMEDIATION PATH AVAILABLE
 ```
 
 ## 5.1. Cel
@@ -633,6 +633,12 @@ production hashes remain unchanged
 ---
 
 # 6. P1.21 — Partial Candidate Apply
+
+## Status
+
+```text
+IMPLEMENTED AS CANDIDATE-ONLY / NOT PROMOTED TO PRODUCTION
+```
 
 ## Cel
 
@@ -1308,12 +1314,37 @@ P2      Approved-anchor automation and cross-match assistance
 Najbliższy task dla agenta:
 
 ```text
-Implement P1.20A Promotion Safety Audit
+P1.22 Full-Match Operator Benchmark and KPI Calibration
 ```
 
-Jeżeli P1.20A wykryje structural conflicts w aktualnym audycie, następnym zadaniem jest P1.20B przed P1.21.
+P1.20A wykrył konflikty strukturalne, dlatego P1.20B został wdrożony przed P1.21. P1.21 wygenerował poprawny `partial_candidate`; produkcyjny apply nadal pozostaje zabroniony.
 
 Nie implementować jeszcze produkcyjnego apply adaptera.
+
+## Wynik P1.20A–P1.21 na frozen easy90
+
+```text
+benchmark match:                 published-46904e8c / match 46904e8c
+promotion source observations:  12 537
+canonical observations:         12 473
+duplicate observations removed:     64
+safe duplicate observations:        40
+unsafe parallel observations:       24
+structural subjects:                  9
+partial candidate observations: 12 449
+partial candidate hard conflicts:     0
+unresolved subjects:                 14
+excluded fragments:                  33
+production hashes unchanged:       true
+canonical output deterministic:    true
+```
+
+Artefakty referencyjne:
+
+```text
+backend/storage/benchmarks/player_identity/p120a-promotion-safety-20260721-v3
+backend/storage/benchmarks/player_identity/p121-partial-candidate-20260721-final
+```
 
 ---
 
@@ -1321,37 +1352,37 @@ Nie implementować jeszcze produkcyjnego apply adaptera.
 
 ## P1.20A
 
-- [ ] wszystkie duplikaty są sklasyfikowane;
-- [ ] distant parallel observations blokują plan;
-- [ ] structural-conflict whole-subject assignments są blokowane;
-- [ ] aktywni zawodnicy są liczeni tylko z confirmed detected inside-play observations;
-- [ ] sustained team active-player overflow jest blokowany;
-- [ ] pojedynczy overflow spike jest warningiem;
-- [ ] goalkeeper hard gate używa tylko trusted role;
-- [ ] pełne lineage digests są sprawdzane;
-- [ ] coverage ma jawny denominator;
-- [ ] unresolved time-weighted coverage jest raportowane;
-- [ ] brak ball artifacts nie blokuje identity;
-- [ ] per-player readiness jest raportowane;
-- [ ] produkcyjne artefakty pozostają bez zmian.
+- [x] wszystkie duplikaty są sklasyfikowane;
+- [x] distant parallel observations blokują plan;
+- [x] structural-conflict whole-subject assignments są blokowane;
+- [x] aktywni zawodnicy są liczeni tylko z confirmed detected inside-play observations;
+- [x] sustained team active-player overflow jest blokowany;
+- [x] pojedynczy overflow spike jest warningiem;
+- [x] goalkeeper hard gate używa tylko trusted role;
+- [x] pełne lineage digests są sprawdzane;
+- [x] coverage ma jawny denominator;
+- [x] unresolved time-weighted coverage jest raportowane;
+- [x] brak ball artifacts nie blokuje identity;
+- [x] per-player readiness jest raportowane;
+- [x] produkcyjne artefakty pozostają bez zmian.
 
 ## P1.20B
 
-- [ ] structural subject można podzielić na fragmenty;
-- [ ] fragment można przypisać lub pozostawić unresolved;
-- [ ] remediation posiada freshness digest;
-- [ ] safe fragments mogą przejść do partial candidate;
-- [ ] produkcyjne identity pozostaje bez zmian.
+- [x] structural subject można podzielić na fragmenty;
+- [x] fragment można przypisać lub pozostawić unresolved;
+- [x] remediation posiada freshness digest;
+- [x] safe fragments mogą przejść do partial candidate;
+- [x] produkcyjne identity pozostaje bez zmian.
 
 ## P1.21
 
-- [ ] candidate assignments/timeline/stats/heatmaps powstają obok produkcji;
-- [ ] partial candidate jest obsługiwany jawnie;
-- [ ] candidate vs production diff jest dostępny;
-- [ ] predicted/occluded nie są liczone jako observed distance;
-- [ ] unresolved/excluded fragments nie zasilają player stats;
-- [ ] output jest atomowy i deterministyczny;
-- [ ] public package nie używa candidate artifacts.
+- [x] candidate assignments/timeline/stats/heatmaps powstają obok produkcji;
+- [x] partial candidate jest obsługiwany jawnie;
+- [x] candidate vs production diff jest dostępny;
+- [x] predicted/occluded nie są liczone jako observed distance;
+- [x] unresolved/excluded fragments nie zasilają player stats;
+- [x] output jest atomowy i deterministyczny;
+- [x] public package nie używa candidate artifacts.
 
 ## P1.22
 

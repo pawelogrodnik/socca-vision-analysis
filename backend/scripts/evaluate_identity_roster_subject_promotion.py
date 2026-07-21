@@ -36,6 +36,8 @@ def main() -> None:
     parser.add_argument("--match-dir", type=Path, required=True)
     parser.add_argument("--team-label", choices=("A", "B"), required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--anchor-crops", type=Path)
+    parser.add_argument("--team-config", type=Path)
     args = parser.parse_args()
 
     output_root = args.output_root.resolve()
@@ -49,6 +51,10 @@ def main() -> None:
         "candidate_subjects": _load(args.candidate_subjects),
         "candidate_timeline": _load(args.candidate_timeline),
         "match": _load(match_dir / "match.json"),
+        "anchor_crops": _load(args.anchor_crops) if args.anchor_crops else {},
+        "team_config": _load(args.team_config) if args.team_config else (
+            _load(match_dir / "team_config.json") if (match_dir / "team_config.json").exists() else {}
+        ),
     }
     plan = build_identity_roster_subject_promotion_plan(
         inputs["review_artifact"],
@@ -58,6 +64,9 @@ def main() -> None:
         inputs["match"],
         team_label=args.team_label,
         generated_at=generated_at,
+        anchor_crops_doc=inputs["anchor_crops"],
+        team_config_doc=inputs["team_config"],
+        review_contract_doc=inputs["review_artifact"],
     )
     repeated = build_identity_roster_subject_promotion_plan(
         inputs["review_artifact"],
@@ -67,8 +76,52 @@ def main() -> None:
         inputs["match"],
         team_label=args.team_label,
         generated_at=generated_at,
+        anchor_crops_doc=inputs["anchor_crops"],
+        team_config_doc=inputs["team_config"],
+        review_contract_doc=inputs["review_artifact"],
     )
     _write(output_root / "identity_roster_subject_promotion_plan.json", plan)
+    _write(
+        output_root / "identity_roster_subject_promotion_safety_report.json",
+        {
+            "schema_version": plan["schema_version"],
+            "generated_at": generated_at,
+            "status": plan["status"],
+            "source": plan["source"],
+            "summary": plan["summary"],
+            "coverage": plan["coverage"],
+            "active_player_validation": plan["active_player_validation"],
+            "goalkeeper_validation": plan["goalkeeper_validation"],
+            "structural_subjects": plan["structural_subjects"],
+            "errors": plan["errors"],
+            "warnings": plan["warnings"],
+        },
+    )
+    _write(
+        output_root / "identity_roster_subject_duplicate_audit.json",
+        {
+            "schema_version": plan["schema_version"],
+            "generated_at": generated_at,
+            "source": plan["source"],
+            "summary": {
+                "duplicates": len(plan["duplicate_observations"]),
+                "safe": sum(bool(row.get("safe_to_deduplicate")) for row in plan["duplicate_observations"]),
+                "unsafe": sum(not bool(row.get("safe_to_deduplicate")) for row in plan["duplicate_observations"]),
+            },
+            "duplicates": plan["duplicate_observations"],
+        },
+    )
+    _write(
+        output_root / "identity_roster_subject_readiness.json",
+        {
+            "schema_version": plan["schema_version"],
+            "generated_at": generated_at,
+            "source": plan["source"],
+            "coverage": plan["coverage"],
+            "downstream_readiness": plan["downstream_readiness"],
+            "players": plan["player_readiness"],
+        },
+    )
     after = production_hashes(match_dir)
     evaluation = evaluate_promotion_plan(
         plan,
@@ -101,11 +154,30 @@ def evaluate_promotion_plan(
 ) -> dict[str, Any]:
     unchanged = before_hashes == after_hashes
     gates = {
-        "plan_ready": plan.get("status") == "ready_for_controlled_apply",
+        "promotion_state_explicit": plan.get("status") in {"ready_for_controlled_apply", "blocked"},
         "operator_audit_complete": int((plan.get("audit") or {}).get("pending_cards") or 0) == 0,
         "operator_decisions_fresh": bool((plan.get("audit") or {}).get("decisions_fresh")),
-        "no_blocking_errors": not (plan.get("errors") or []),
-        "no_hard_conflicts": int((plan.get("summary") or {}).get("hard_conflicts") or 0) == 0,
+        "duplicates_classified": all(
+            row.get("classification") and isinstance(row.get("safe_to_deduplicate"), bool)
+            for row in plan.get("duplicate_observations") or []
+        ),
+        "unsafe_duplicates_not_silently_accepted": all(
+            row.get("safe_to_deduplicate")
+            or any(
+                error.get("frame") == row.get("frame")
+                and error.get("player_id") == row.get("player_id")
+                for error in plan.get("errors") or []
+            )
+            for row in plan.get("duplicate_observations") or []
+        ),
+        "coverage_denominator_explicit": bool(
+            (plan.get("coverage") or {}).get("coverage_denominator")
+        ) and all(
+            row.get("coverage_denominator")
+            for row in plan.get("player_readiness") or []
+        ),
+        "structural_conflicts_explicit": int((plan.get("summary") or {}).get("structural_conflicts") or 0)
+        == len(plan.get("structural_subjects") or []),
         "exact_frame_coverage_present": all(
             row.get("frame_records") for row in plan.get("canonical_coverage") or []
         ),

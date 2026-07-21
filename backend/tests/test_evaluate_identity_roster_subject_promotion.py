@@ -24,11 +24,16 @@ def ready_plan() -> dict:
             "resolved_subjects": 2,
             "unresolved_subjects": 0,
             "hard_conflicts": 0,
+            "structural_conflicts": 0,
         },
         "canonical_coverage": [
             {"player_id": "p1", "frame_records": [{"frame": 10}]},
         ],
         "errors": [],
+        "duplicate_observations": [],
+        "structural_subjects": [],
+        "coverage": {"coverage_denominator": "reliable_detected_review_scope"},
+        "player_readiness": [{"player_id": "p1", "coverage_denominator": "unknown"}],
         "safety": {"requires_explicit_apply_step": True},
     }
 
