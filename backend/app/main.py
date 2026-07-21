@@ -28,6 +28,10 @@ from app.services.identity_crop_review import (
 )
 from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
 from app.services.identity_review_segments import save_identity_review_splits
+from app.services.identity_roster_subject_review_store import (
+    load_identity_roster_subject_review,
+    save_identity_roster_subject_review,
+)
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -1150,6 +1154,31 @@ def get_identity_crop_review(match_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/matches/{match_id}/identity-roster-subject-review")
+def get_identity_roster_subject_review(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_identity_roster_subject_review(path, match_doc=read_match_meta(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/identity-roster-subject-review")
+def review_identity_roster_subjects(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    try:
+        return save_identity_roster_subject_review(path, updates, match_doc=read_match_meta(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.put("/api/matches/{match_id}/identity-crop-review")
 def review_identity_crops(match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -1768,6 +1797,13 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         len(artifact_rel.parts) >= 4
         and artifact_rel.parts[0] == "identity_review"
         and artifact_rel.parts[1] == "crops"
+        and artifact_basename.lower().endswith((".jpg", ".jpeg"))
+    ):
+        allowed[artifact_basename] = "image/jpeg"
+    if (
+        len(artifact_rel.parts) == 3
+        and artifact_rel.parts[0] == "anchor_crops"
+        and artifact_rel.parts[1].startswith("shadow-")
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):
         allowed[artifact_basename] = "image/jpeg"

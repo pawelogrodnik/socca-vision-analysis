@@ -6,6 +6,7 @@ import hashlib
 import html
 import json
 from pathlib import Path
+import shutil
 import sys
 from typing import Any
 
@@ -52,6 +53,11 @@ def main() -> None:
         anchor_crops,
         generated_at=generated_at,
     )
+    materialized = materialize_visual_evidence(
+        args.anchor_crops.resolve().parent,
+        output_root,
+        documents["identity_roster_subject_review_shadow"],
+    )
     for name, document in documents.items():
         _write(output_root / f"{name}.json", document)
     after = production_hashes(args.match_dir.resolve())
@@ -60,6 +66,7 @@ def main() -> None:
         before_hashes=before,
         after_hashes=after,
         deterministic=documents == repeated,
+        materialized_artifacts=materialized,
     )
     evaluation.update(
         {
@@ -88,10 +95,18 @@ def evaluate_identity_roster_subject_review_shadow(
     before_hashes: dict[str, str | None] | None = None,
     after_hashes: dict[str, str | None] | None = None,
     deterministic: bool = True,
+    materialized_artifacts: set[str] | None = None,
 ) -> dict[str, Any]:
     artifact = documents["identity_roster_subject_review_shadow"]
     report = documents["identity_roster_subject_review_shadow_report"]
     cards = artifact.get("cards") or []
+    visual_artifacts = {
+        str(crop.get("artifact"))
+        for card in cards
+        for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or [])
+        if crop.get("artifact")
+    }
+    materialized = materialized_artifacts if materialized_artifacts is not None else visual_artifacts
     unchanged = (before_hashes or {}) == (after_hashes or {})
     unique_card_keys = len({card.get("review_card_key") for card in cards}) == len(cards)
     gates = {
@@ -110,6 +125,7 @@ def evaluate_identity_roster_subject_review_shadow(
             for card in cards
             if card.get("review_status") == "blocked_conflict"
         ),
+        "visual_evidence_materialized": visual_artifacts <= materialized,
     }
     return {
         "schema_version": "0.1.0",
@@ -119,6 +135,7 @@ def evaluate_identity_roster_subject_review_shadow(
             **(report.get("summary") or {}),
             "production_artifacts_checked": len(before_hashes or {}),
             "production_artifacts_unchanged": unchanged,
+            "materialized_visual_artifacts": len(materialized),
         },
         "gates": gates,
         "artifact_hashes": {
@@ -126,6 +143,27 @@ def evaluate_identity_roster_subject_review_shadow(
             for name in sorted(set(before_hashes or {}) | set(after_hashes or {}))
         },
     }
+
+
+def materialize_visual_evidence(
+    source_root: Path,
+    output_root: Path,
+    artifact: dict[str, Any],
+) -> set[str]:
+    materialized: set[str] = set()
+    for card in artifact.get("cards") or []:
+        for crop in (card.get("visual_evidence") or {}).get("anchor_crops") or []:
+            relative = Path(str(crop.get("artifact") or ""))
+            if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+                continue
+            source = source_root / relative
+            if not source.is_file():
+                continue
+            target = output_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            materialized.add(str(relative))
+    return materialized
 
 
 def production_hashes(match_dir: Path) -> dict[str, str | None]:

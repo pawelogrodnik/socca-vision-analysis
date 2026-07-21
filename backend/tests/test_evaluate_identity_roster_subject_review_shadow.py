@@ -4,7 +4,10 @@ import unittest
 
 from backend.scripts.evaluate_identity_roster_subject_review_shadow import (
     evaluate_identity_roster_subject_review_shadow,
+    materialize_visual_evidence,
 )
+from pathlib import Path
+import tempfile
 
 
 def documents() -> dict[str, dict]:
@@ -79,6 +82,30 @@ class EvaluateIdentityRosterSubjectReviewShadowTests(unittest.TestCase):
 
         self.assertEqual(evaluation["status"], "failed")
         self.assertFalse(evaluation["gates"]["production_artifacts_unchanged"])
+
+    def test_materializes_visual_evidence_for_self_contained_gallery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            output = root / "output"
+            crop = source / "anchor_crops" / "subject-1" / "10.jpg"
+            crop.parent.mkdir(parents=True)
+            crop.write_bytes(b"image")
+            output.mkdir()
+            artifact = {
+                "cards": [
+                    {
+                        "visual_evidence": {
+                            "anchor_crops": [{"artifact": "anchor_crops/subject-1/10.jpg"}]
+                        }
+                    }
+                ]
+            }
+
+            materialized = materialize_visual_evidence(source, output, artifact)
+
+            self.assertEqual(materialized, {"anchor_crops/subject-1/10.jpg"})
+            self.assertEqual((output / "anchor_crops/subject-1/10.jpg").read_bytes(), b"image")
 
 
 if __name__ == "__main__":

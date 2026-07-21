@@ -1,0 +1,366 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  artifactUrl,
+  getIdentityRosterSubjectReview,
+  saveIdentityRosterSubjectReview,
+} from '../api';
+import { errorMessage } from '../lib/helpers';
+import type {
+  IdentityRosterSubjectDecision,
+  IdentityRosterSubjectReviewCard,
+  IdentityRosterSubjectReviewDocument,
+  Match,
+} from '../types';
+import {
+  nearestPendingCardIndex,
+  subjectRosterOptions,
+  subjectDecisionLabel,
+  subjectReviewStatusLabel,
+  visibleSubjectReviewCards,
+  type SubjectReviewFilter,
+  type SubjectTeamFilter,
+} from '../utils/identityRosterSubjectReview';
+
+interface IdentityRosterSubjectReviewPanelProps {
+  match: Match;
+  onStatus: (message: string) => void;
+}
+
+type Availability = 'loading' | 'available' | 'missing' | 'error';
+
+function frameRange(card: IdentityRosterSubjectReviewCard): string {
+  if (typeof card.start_frame !== 'number' || typeof card.end_frame !== 'number') return 'frames n/a';
+  return `f${card.start_frame}-${card.end_frame}`;
+}
+
+function confidenceLabel(value: number | null | undefined): string {
+  return typeof value === 'number' ? `${Math.round(value * 100)}%` : 'n/a';
+}
+
+function playerOptionLabel(name: string | null | undefined, team: string | null | undefined): string {
+  return `${name || 'Bez nazwy'}${team ? ` - Team ${team}` : ''}`;
+}
+
+export function IdentityRosterSubjectReviewPanel({
+  match,
+  onStatus,
+}: IdentityRosterSubjectReviewPanelProps) {
+  const [document, setDocument] = useState<IdentityRosterSubjectReviewDocument | null>(null);
+  const [availability, setAvailability] = useState<Availability>('loading');
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [reviewFilter, setReviewFilter] = useState<SubjectReviewFilter>('pending');
+  const [teamFilter, setTeamFilter] = useState<SubjectTeamFilter>('A');
+  const [cardIndex, setCardIndex] = useState(0);
+  const [selectedPlayerId, setSelectedPlayerId] = useState('');
+  const [comment, setComment] = useState('');
+
+  const cards = useMemo(
+    () => document ? visibleSubjectReviewCards(document, reviewFilter, teamFilter) : [],
+    [document, reviewFilter, teamFilter],
+  );
+  const currentCard = cards[cardIndex] || cards[0] || null;
+  const currentRosterOptions = currentCard ? subjectRosterOptions(currentCard) : [];
+  const counts = useMemo(() => {
+    const all = document?.cards || [];
+    return {
+      all: all.length,
+      A: all.filter((card) => card.team_label === 'A').length,
+      B: all.filter((card) => card.team_label === 'B').length,
+      U: all.filter((card) => !card.team_label || card.team_label === 'U').length,
+    };
+  }, [document]);
+
+  async function load(showStatus: boolean) {
+    setAvailability('loading');
+    try {
+      const next = await getIdentityRosterSubjectReview(match.id);
+      setDocument(next);
+      setAvailability('available');
+      if (showStatus) onStatus(`Zaladowano ${next.cards.length} kart whole-subject review.`);
+    } catch (error) {
+      const message = errorMessage(error);
+      setDocument(null);
+      setAvailability(message.startsWith('404:') ? 'missing' : 'error');
+      if (showStatus && !message.startsWith('404:')) {
+        onStatus(`Nie udalo sie zaladowac whole-subject review: ${message}`);
+      }
+    }
+  }
+
+  async function saveDecision(decision: IdentityRosterSubjectDecision | 'clear_decision') {
+    if (!currentCard) return;
+    const playerId = decision === 'confirm_recommended_player'
+      ? currentCard.recommended_player?.player_id || null
+      : decision === 'assign_roster_player'
+        ? selectedPlayerId || null
+        : null;
+    if (decision === 'assign_roster_player' && !playerId) {
+      onStatus('Wybierz zawodnika z rosteru.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const next = await saveIdentityRosterSubjectReview(match.id, [{
+        review_card_key: currentCard.review_card_key,
+        decision,
+        player_id: playerId,
+        comment: comment.trim() || null,
+      }]);
+      const nextCards = visibleSubjectReviewCards(next, reviewFilter, teamFilter);
+      const currentInNext = nextCards.findIndex((card) => card.review_card_key === currentCard.review_card_key);
+      setDocument(next);
+      setCardIndex(
+        reviewFilter === 'pending'
+          ? Math.min(cardIndex, Math.max(0, nextCards.length - 1))
+          : nearestPendingCardIndex(nextCards, currentInNext >= 0 ? currentInNext : cardIndex),
+      );
+      onStatus(decision === 'clear_decision' ? 'Usunieto decyzje shadow.' : 'Zapisano decyzje shadow.');
+    } catch (error) {
+      onStatus(`Nie udalo sie zapisac decyzji: ${errorMessage(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    if (match.analysis_report?.status === 'completed') {
+      void load(false);
+    } else {
+      setDocument(null);
+      setAvailability('missing');
+      setOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.id, match.analysis_report?.status]);
+
+  useEffect(() => {
+    setCardIndex(0);
+  }, [reviewFilter, teamFilter]);
+
+  useEffect(() => {
+    const decision = currentCard?.operator_decision;
+    setSelectedPlayerId(
+      decision?.player_id || currentCard?.recommended_player?.player_id || currentRosterOptions[0]?.player_id || '',
+    );
+    setComment(decision?.comment || '');
+  }, [currentCard?.review_card_key, currentCard?.operator_decision, currentRosterOptions]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [open]);
+
+  if (match.analysis_report?.status !== 'completed') return null;
+
+  return (
+    <div className='identity-subject-review-panel'>
+      <div className='row between'>
+        <div>
+          <h3>Whole-subject review</h3>
+          <div className='chips'>
+            <span>Tryb: shadow</span>
+            {document && <span>Review: {document.summary.reviewed_cards}/{document.cards.length}</span>}
+            {document && <span>Pozostalo: {document.summary.pending_cards}</span>}
+            {document && document.summary.stale_decisions > 0 && (
+              <span>Stale: {document.summary.stale_decisions}</span>
+            )}
+          </div>
+        </div>
+        <div className='row'>
+          <button type='button' className='secondary' onClick={() => void load(true)} disabled={availability === 'loading'}>
+            Odswiez
+          </button>
+          <button
+            type='button'
+            onClick={() => setOpen(true)}
+            disabled={!document || document.cards.length === 0}
+          >
+            Otworz review
+          </button>
+        </div>
+      </div>
+      {availability === 'missing' && (
+        <p className='muted'>Brak artefaktu whole-subject review dla tego meczu.</p>
+      )}
+      {availability === 'error' && (
+        <p className='warning-text'>Whole-subject review jest chwilowo niedostepny.</p>
+      )}
+      {document && !document.decisions_fresh && (
+        <p className='warning-text'>Kontrakt ulegl zmianie. Poprzednie decyzje nie sa stosowane.</p>
+      )}
+
+      {open && document && (
+        <div className='identity-subject-review-modal' role='dialog' aria-modal='true' aria-label='Whole-subject review'>
+          <div className='identity-subject-review-shell'>
+            <div className='row between identity-subject-review-header'>
+              <div>
+                <h2>Whole-subject review</h2>
+                <span className='confidence-pill'>shadow</span>
+              </div>
+              <button type='button' className='secondary' onClick={() => setOpen(false)}>Zamknij</button>
+            </div>
+
+            <div className='identity-subject-review-toolbar'>
+              <label className='compact-field'>
+                Stan
+                <select value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value as SubjectReviewFilter)}>
+                  <option value='pending'>Do review ({document.summary.pending_cards})</option>
+                  <option value='reviewed'>Oznaczone ({document.summary.reviewed_cards})</option>
+                  <option value='all'>Wszystkie ({document.cards.length})</option>
+                </select>
+              </label>
+              <label className='compact-field'>
+                Druzyna
+                <select value={teamFilter} onChange={(event) => setTeamFilter(event.target.value as SubjectTeamFilter)}>
+                  <option value='A'>Team A ({counts.A})</option>
+                  <option value='B'>Team B ({counts.B})</option>
+                  <option value='U'>Unknown ({counts.U})</option>
+                  <option value='all'>Wszystkie ({counts.all})</option>
+                </select>
+              </label>
+              <div className='identity-subject-review-progress'>
+                <progress value={document.summary.reviewed_cards} max={Math.max(1, document.cards.length)} />
+                <span>{document.summary.reviewed_cards}/{document.cards.length}</span>
+              </div>
+            </div>
+
+            {currentCard ? (
+              <div className='identity-subject-review-layout'>
+                <div className='identity-subject-review-list'>
+                  {cards.map((card, index) => (
+                    <button
+                      type='button'
+                      className={index === cardIndex ? 'match-item active' : 'match-item'}
+                      key={card.review_card_key}
+                      onClick={() => setCardIndex(index)}
+                    >
+                      <strong>{card.candidate_subject_id}</strong>
+                      <span>Team {card.team_label || 'U'} - {subjectDecisionLabel(card)}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className='identity-subject-review-main'>
+                  <div className='row between'>
+                    <div>
+                      <h3>{currentCard.candidate_subject_id}</h3>
+                      <p className='muted'>
+                        Team {currentCard.team_label || 'U'} - {currentCard.role || 'rola n/a'} - {frameRange(currentCard)}
+                      </p>
+                    </div>
+                    <span className={`confidence-pill ${currentCard.review_status === 'ready_for_operator_review' ? 'high' : 'low'}`}>
+                      {subjectReviewStatusLabel(currentCard.review_status)}
+                    </span>
+                  </div>
+
+                  <div className='identity-subject-crop-grid'>
+                    {currentCard.visual_evidence.anchor_crops.map((crop) => (
+                      <a
+                        className='identity-subject-crop'
+                        href={artifactUrl(match.id, crop.artifact)}
+                        target='_blank'
+                        rel='noreferrer'
+                        key={crop.anchor_crop_id}
+                      >
+                        <img src={artifactUrl(match.id, crop.artifact)} alt={`${currentCard.candidate_subject_id} frame ${crop.frame}`} />
+                        <span>f{crop.frame} - {typeof crop.time_sec === 'number' ? `${crop.time_sec.toFixed(1)}s` : 'time n/a'}</span>
+                        <span>det {confidenceLabel(crop.detection_confidence)}</span>
+                      </a>
+                    ))}
+                    {currentCard.visual_evidence.anchor_crops.length === 0 && (
+                      <div className='player-heatmap-placeholder'>Brak wiarygodnych cropow</div>
+                    )}
+                  </div>
+
+                  {(currentCard.blockers.length > 0 || currentCard.quality_flags.length > 0) && (
+                    <div className='identity-subject-evidence'>
+                      {currentCard.blockers.map((value) => <span key={`blocker-${value}`}>blocker: {value}</span>)}
+                      {currentCard.quality_flags.map((value) => <span key={`flag-${value}`}>flag: {value}</span>)}
+                    </div>
+                  )}
+
+                  <div className='identity-subject-decision'>
+                    <label>
+                      Zawodnik
+                      <select
+                        value={selectedPlayerId}
+                        onChange={(event) => setSelectedPlayerId(event.target.value)}
+                        disabled={!currentCard.allowed_actions.includes('assign_roster_player') || saving}
+                      >
+                        <option value=''>Wybierz zawodnika</option>
+                        {currentRosterOptions.map((candidate) => (
+                          <option value={candidate.player_id} key={candidate.player_id}>
+                            {playerOptionLabel(candidate.player_name, candidate.team_label)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Notatka
+                      <input value={comment} onChange={(event) => setComment(event.target.value)} disabled={saving} />
+                    </label>
+                  </div>
+
+                  <div className='row between identity-subject-review-footer'>
+                    <div className='row'>
+                      <button
+                        type='button'
+                        className='secondary'
+                        onClick={() => setCardIndex(Math.max(0, cardIndex - 1))}
+                        disabled={cardIndex === 0 || saving}
+                      >
+                        Poprzedni
+                      </button>
+                      <button
+                        type='button'
+                        className='secondary'
+                        onClick={() => setCardIndex(Math.min(cards.length - 1, cardIndex + 1))}
+                        disabled={cardIndex >= cards.length - 1 || saving}
+                      >
+                        Nastepny
+                      </button>
+                    </div>
+                    <div className='row'>
+                      {currentCard.operator_decision && (
+                        <button type='button' className='secondary' onClick={() => void saveDecision('clear_decision')} disabled={saving}>
+                          Wyczysc
+                        </button>
+                      )}
+                      <button
+                        type='button'
+                        className='secondary'
+                        onClick={() => void saveDecision('mark_unresolved')}
+                        disabled={!currentCard.allowed_actions.includes('mark_unresolved') || saving}
+                      >
+                        Nierozstrzygniety
+                      </button>
+                      {currentCard.recommended_player && currentCard.allowed_actions.includes('confirm_recommended_player') && (
+                        <button type='button' onClick={() => void saveDecision('confirm_recommended_player')} disabled={saving}>
+                          Potwierdz {currentCard.recommended_player.player_name || 'rekomendacje'}
+                        </button>
+                      )}
+                      <button
+                        type='button'
+                        onClick={() => void saveDecision('assign_roster_player')}
+                        disabled={!currentCard.allowed_actions.includes('assign_roster_player') || !selectedPlayerId || saving}
+                      >
+                        Przypisz
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className='identity-subject-review-empty'>Brak kart dla wybranych filtrow.</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -9,7 +9,7 @@ from typing import Any
 
 SCHEMA_VERSION = "0.1.0"
 ALGORITHM_NAME = "identity_roster_subject_review_shadow"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "min_visual_crops_for_ready": 3,
@@ -128,6 +128,11 @@ def _review_card(
         "review_card_key": review_card_key,
         "review_unit": "candidate_stable_subject",
         "candidate_subject_id": subject_id,
+        "candidate_player_id": roster_card.get("candidate_player_id"),
+        "production_subject_ids": sorted(
+            str(value) for value in roster_card.get("production_subject_ids") or []
+        ),
+        "tracklet_ids": sorted(str(value) for value in roster_card.get("tracklet_ids") or []),
         "anchor_key": roster_card.get("anchor_key"),
         "team_label": roster_card.get("team_label"),
         "role": roster_card.get("role"),
@@ -168,7 +173,8 @@ def _review_status(roster_status: str, crop_count: int, minimum: int) -> str:
 
 def _allowed_actions(review_status: str, has_recommendation: bool) -> list[str]:
     if review_status == "blocked_conflict":
-        return ["mark_unresolved", "open_debug_context"]
+        # A conflict blocks one-click confirmation, not an explicit operator choice.
+        return ["assign_roster_player", "mark_unresolved", "open_debug_context"]
     if review_status == "ready_for_operator_review":
         actions = ["assign_roster_player", "mark_unresolved", "open_debug_context"]
         if has_recommendation:

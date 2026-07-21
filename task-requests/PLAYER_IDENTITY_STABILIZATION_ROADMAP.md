@@ -1695,7 +1695,7 @@ Benchmark frozen easy90:
 
 ```text
 backend/storage/benchmarks/player_identity/
-  p117-subject-review-20260720-v1/
+  p117-subject-review-20260720-v2/
 
 cards:                         109
 ready for operator review:      74
@@ -1706,20 +1706,198 @@ selected crops referenced:     437
 cards with recommended player:  12
 automatic assignments:           0
 eligible for stats/heatmaps:     0
+materialized visual artifacts: 437
 ```
 
 Wszystkie safety gate'y przeszły: kontrakt pozostaje shadow/read-only,
 deterministyczny, używa całego stable subjectu jako jednostki pracy, blokuje
 potwierdzanie konfliktów i nie zmienia produkcyjnych artefaktów identity,
-assignments, statystyk ani heatmap.
+assignments, statystyk ani heatmap. Raport v2 materializuje również wszystkie
+referencjonowane cropy we własnym katalogu, dzięki czemu `index.html` jest
+samowystarczalny i nie zależy od katalogu P1.16.
 
-### Następny krok po P1.17
+Kontrakt został następnie sprawdzony na frozen hard3m przez pełny łańcuch
+P1.15 -> P1.16 -> P1.17, bez YOLO i bez zmiany produkcyjnych artefaktów meczu:
 
-P1.18 powinien przygotować minimalny operator-facing review flow albo adapter API
-dla P1.17, nadal bez podłączania decyzji do produkcyjnego merge. Sensownym
-kolejnym krokiem jest sprawdzenie kontraktu na hard3m i dopiero potem decyzja,
-czy budujemy lokalny UI review, czy najpierw dodajemy więcej shadow jakości
-(`orphan review`, `event review`, quality wpływające na kolejność kart).
+```text
+backend/storage/benchmarks/player_identity/
+  p115-roster-anchor-hard3m-20260720-v1/
+  p116-anchor-crops-hard3m-20260720-v1/
+  p117-subject-review-hard3m-20260720-v2/
+
+cards:                        400
+ready for operator review:    322
+needs more visual evidence:     5
+no visual evidence:            73
+selected/materialized crops: 1597
+automatic assignments:          0
+eligible for stats/heatmaps:    0
+```
+
+Wszystkie gate'y kontraktu i materializacji przeszły również na hard3m.
+
+### P1.18 — SHADOW SUBJECT REVIEW API ADAPTER: DONE / NOT CONNECTED TO MERGE
+
+Dodano minimalny adapter GET/PUT dla decyzji operatora dotyczącej całego
+candidate stable subjectu. Adapter korzysta z kontraktu P1.17 i zapisuje decyzje
+wyłącznie do osobnego pliku shadow:
+
+```text
+identity_roster_subject_review_decisions_shadow.json
+```
+
+Implementacja:
+
+```text
+backend/app/services/identity_roster_subject_review_store.py
+backend/tests/test_identity_roster_subject_review_store.py
+client/src/api.ts
+client/src/types.ts
+```
+
+Endpointy:
+
+```text
+GET /api/matches/{match_id}/identity-roster-subject-review
+PUT /api/matches/{match_id}/identity-roster-subject-review
+```
+
+Adapter:
+
+- waliduje `review_card_key` i `allowed_actions` z kontraktu P1.17;
+- pozwala przypisać tylko roster candidate obecnego na karcie;
+- blokuje potwierdzenie rekomendacji dla kart konfliktowych;
+- obsługuje `mark_unresolved` i idempotentne `clear_decision`;
+- zapisuje decyzje atomowo;
+- oznacza wcześniejsze decyzje jako `stale`, gdy zmieni się źródłowy kontrakt;
+- udostępnia typowany adapter klienta, ale nie dodaje jeszcze komponentu UI;
+- nie zapisuje `player_identity_assignments.json` i nie uruchamia przeliczenia
+  statystyk ani heatmap.
+
+Testy jednostkowe obejmują walidację rosteru, blokadę konfliktów, reset decyzji,
+freshness kontraktu i brak wpływu na produkcyjne assignments. Po P1.18 pełny
+backend przechodzi 420 testów, a frontend przechodzi TypeScript strict/no-unused.
+
+### P1.19 — LOCAL WHOLE-SUBJECT OPERATOR REVIEW: DONE / SHADOW / AUDITED
+
+Dodano lokalny komponent React korzystający z adaptera P1.18. Jednostką review
+jest cały candidate stable subject, a nie pojedynczy crop. Komponent jest
+dostępny w kroku review meczu, w sekcji stabilnych zawodników.
+
+Implementacja:
+
+```text
+client/src/components/IdentityRosterSubjectReviewPanel.tsx
+client/src/utils/identityRosterSubjectReview.ts
+client/src/components/StablePlayersPanel.tsx
+client/src/styles.css
+client/src/types.ts
+backend/app/main.py
+```
+
+Operator otrzymuje:
+
+- modal z dużymi anchor cropami i zakresem klatek subjectu;
+- filtry `do review / oznaczone / wszystkie` oraz Team A/B/Unknown;
+- listę subjectów, licznik postępu i nawigację poprzedni/następny;
+- roster select, rekomendowanego zawodnika, blockery i quality flags;
+- akcje `confirm recommendation`, `assign roster player`, `unresolved` i
+  idempotentne wyczyszczenie decyzji;
+- opcjonalną notatkę do decyzji.
+
+Karta konfliktowa blokuje wyłącznie szybkie `confirm recommendation`. Jawne
+wybranie roster playera i `assign roster player` pozostaje dostępne, ponieważ
+jest świadomą decyzją operatora. Adapter API uzupełnia tę akcję również dla
+wcześniej wygenerowanych kontraktów P1.17.
+
+Ścieżka artefaktów została rozszerzona wyłącznie o bezpieczny, dokładnie
+walidowany format `anchor_crops/shadow-*/<crop>.jpg`. Pozostałe zagnieżdżone
+artefakty nie są przez ten wyjątek udostępniane.
+
+Browser QA na frozen easy90 potwierdził:
+
+- załadowanie 109 kart i poprawne liczniki Team A/B/Unknown;
+- widoczne anchor cropy;
+- zapis rekomendowanej osoby i przejście do następnej karty;
+- aktualizację liczników `pending/reviewed`;
+- wyczyszczenie testowej decyzji i powrót do 109 nieoznaczonych kart.
+
+Safety contract pozostaje bez zmian: decyzje trafiają wyłącznie do shadow JSON,
+nie modyfikują produkcyjnych assignments, stable identity, statystyk ani heatmap.
+Pełna walidacja po P1.19: 420 testów backendu, TypeScript strict/no-unused oraz
+produkcyjny build frontendu.
+
+### Gate operatora po P1.19: PASSED
+
+Przed kontrolowaną promocją whole-subject decisions trzeba wykonać pierwszy
+audyt operatora na easy90. Minimalny zakres gate'u to wszystkie 45 kart Team A:
+
+1. potwierdzić rekomendację, jeżeli wszystkie cropy pokazują jedną osobę i
+   rekomendowany roster player jest poprawny;
+2. przypisać innego roster playera, jeżeli subject jest spójny, ale rekomendacja
+   wskazuje złą osobę;
+3. użyć `Nierozstrzygniety`, gdy cropy zawierają kilka osób, zły obiekt,
+   niewystarczający obraz albo konflikt, którego nie da się bezpiecznie rozwiązać;
+4. krótko opisać w notatce przypadki mieszane i błędne rekomendacje.
+
+Po audycie należy ocenić precision rekomendacji, udział spójnych whole subjects,
+liczbę konfliktów i nierozstrzygniętych kart. Dopiero pozytywny wynik tego gate'u
+pozwala zaprojektować osobny, kontrolowany promotion adapter do produkcyjnego
+`player_identity_assignments.json`.
+
+Pierwszy pełny audyt Team A na `published-46904e8c` został zakończony:
+
+- 45/45 kart otrzymało decyzję operatora;
+- 31 subjectów przypisano do 7 realnych zawodników;
+- 14 subjectów pozostawiono jawnie jako nierozstrzygnięte;
+- wszystkie 12 automatycznych rekomendacji zaakceptowano, precision `1.0`;
+- audyt nie obejmuje Team B, który może pozostać anonimowy.
+
+### P1.20 — CONTROLLED ROSTER SUBJECT PROMOTION PLAN: DONE / DRY-RUN / NOT APPLIED
+
+Dodano osobny, read-only builder planu promocji decyzji whole-subject review do
+dokładnego pokrycia klatkowego realnych zawodników:
+
+```text
+backend/app/services/identity_roster_subject_promotion.py
+backend/scripts/evaluate_identity_roster_subject_promotion.py
+backend/tests/test_identity_roster_subject_promotion.py
+backend/tests/test_evaluate_identity_roster_subject_promotion.py
+```
+
+Builder:
+
+- wymaga kompletnego i świeżego audytu wybranej drużyny;
+- waliduje roster, zakresy klatek, tracklety oraz lineage candidate/timeline;
+- promuje tylko jawne `assign_roster_player` i `confirm_recommended_player`;
+- zachowuje `mark_unresolved` jako niepromowane źródło niepewności;
+- buduje pokrycie wyłącznie z dokładnych obserwacji candidate timeline;
+- deduplikuje obserwacje po `(player_id, frame)`;
+- blokuje plan, jeśli jedna obserwacja źródłowa `(frame, tracklet_id)` trafiłaby
+  do więcej niż jednego realnego zawodnika;
+- nie zapisuje produkcyjnych assignments, identity, statystyk ani heatmap.
+
+Dry-run na `46904e8c` przeszedł wszystkie safety gates:
+
+- 18 402 obserwacje źródłowe;
+- 18 247 kanonicznych obserwacji po deduplikacji;
+- 155 usuniętych duplikatów;
+- 0 twardych konfliktów;
+- pokrycie dla 7 zawodników;
+- 0 błędów blokujących;
+- identyczne hashe `global_identity.json`, `stable_players.json`,
+  `player_identity_assignments.json`, `resolved_player_stats.json` i
+  `player_heatmaps.json` przed i po dry-runie.
+
+Wynik referencyjny:
+
+```text
+backend/storage/benchmarks/player_identity/p120-roster-subject-promotion-20260721-v1/
+```
+
+Następny krok wymaga osobnego, jawnego apply adaptera. Musi on zapisywać nowe
+assignments atomowo, zachować backup i uruchomić przeliczenie statystyk dopiero
+po ponownej walidacji konfliktów. P1.20 sam w sobie nadal niczego nie promuje.
 
 Nadal otwarte są między innymi:
 

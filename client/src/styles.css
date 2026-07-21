@@ -879,6 +879,163 @@ a { color: #93c5fd; }
 .identity-gallery-panel p {
   margin: 0;
 }
+.identity-subject-review-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+}
+.identity-subject-review-panel h3,
+.identity-subject-review-panel p {
+  margin: 0;
+}
+.identity-subject-review-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  padding: 16px;
+  background: rgba(2, 6, 23, 0.92);
+}
+.identity-subject-review-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+}
+.identity-subject-review-header h2,
+.identity-subject-review-main h3,
+.identity-subject-review-main p {
+  margin: 0;
+}
+.identity-subject-review-header > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.identity-subject-review-toolbar {
+  display: grid;
+  grid-template-columns: 150px 150px minmax(220px, 1fr);
+  align-items: end;
+  gap: 12px;
+}
+.identity-subject-review-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+.identity-subject-review-progress progress {
+  width: 100%;
+  height: 12px;
+  accent-color: #22c55e;
+}
+.identity-subject-review-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(230px, 300px) minmax(0, 1fr);
+  gap: 14px;
+}
+.identity-subject-review-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.identity-subject-review-list .match-item {
+  min-width: 0;
+  text-align: left;
+}
+.identity-subject-review-list .match-item strong,
+.identity-subject-review-list .match-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.identity-subject-review-main {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(230px, 1fr) auto auto auto;
+  gap: 12px;
+  overflow: hidden;
+}
+.identity-subject-crop-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-content: start;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.identity-subject-crop {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(180px, 1fr) auto auto;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  color: #cbd5e1;
+  text-decoration: none;
+}
+.identity-subject-crop:hover {
+  border-color: #38bdf8;
+}
+.identity-subject-crop img {
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #020617;
+}
+.identity-subject-crop span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+.identity-subject-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.identity-subject-evidence span {
+  padding: 4px 7px;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+.identity-subject-decision {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
+  gap: 12px;
+}
+.identity-subject-review-footer {
+  padding-top: 10px;
+  border-top: 1px solid #334155;
+}
+.identity-subject-review-empty {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  border: 1px dashed #334155;
+  border-radius: 8px;
+  color: #94a3b8;
+}
 .compact-field {
   width: 120px;
 }
@@ -1043,6 +1200,32 @@ a { color: #93c5fd; }
   color: #94a3b8;
 }
 @media (max-width: 900px) {
+  .identity-subject-review-modal {
+    padding: 8px;
+  }
+  .identity-subject-review-shell {
+    padding: 10px;
+  }
+  .identity-subject-review-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+  .identity-subject-review-progress {
+    grid-column: 1 / -1;
+  }
+  .identity-subject-review-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(100px, 22vh) minmax(0, 1fr);
+  }
+  .identity-subject-review-main {
+    grid-template-rows: auto minmax(190px, 1fr) auto auto auto;
+  }
+  .identity-subject-decision {
+    grid-template-columns: 1fr;
+  }
+  .identity-subject-review-footer,
+  .identity-subject-review-footer > .row {
+    align-items: stretch;
+  }
   .identity-crop-review-modal {
     padding: 8px;
   }

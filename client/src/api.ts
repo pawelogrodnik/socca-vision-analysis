@@ -11,6 +11,8 @@ import type {
   IdentityReviewGalleryDocument,
   IdentityCropReviewDocument,
   IdentityCropReviewUpdate,
+  IdentityRosterSubjectReviewDocument,
+  IdentityRosterSubjectReviewUpdate,
   Match,
   MatchPhaseConfigDocument,
   MatchPhaseConfigPayload,
@@ -266,6 +268,21 @@ export async function saveIdentityCropReview(
   updates: IdentityCropReviewUpdate[],
 ): Promise<IdentityCropReviewDocument> {
   return request<IdentityCropReviewDocument>(`/api/matches/${matchId}/identity-crop-review`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ updates }),
+  });
+}
+
+export async function getIdentityRosterSubjectReview(matchId: string): Promise<IdentityRosterSubjectReviewDocument> {
+  return request<IdentityRosterSubjectReviewDocument>(`/api/matches/${matchId}/identity-roster-subject-review`);
+}
+
+export async function saveIdentityRosterSubjectReview(
+  matchId: string,
+  updates: IdentityRosterSubjectReviewUpdate[],
+): Promise<IdentityRosterSubjectReviewDocument> {
+  return request<IdentityRosterSubjectReviewDocument>(`/api/matches/${matchId}/identity-roster-subject-review`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ updates }),

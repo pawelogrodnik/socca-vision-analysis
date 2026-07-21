@@ -1171,6 +1171,104 @@ export type IdentityCropReviewDocument = {
   resolved_player_stats?: ResolvedPlayerStatsDocument | null;
 };
 
+export type IdentityRosterSubjectDecision =
+  | 'confirm_recommended_player'
+  | 'assign_roster_player'
+  | 'mark_unresolved';
+
+export type IdentityRosterSubjectReviewUpdate = {
+  review_card_key: string;
+  decision: IdentityRosterSubjectDecision | 'clear_decision' | null;
+  player_id?: string | null;
+  comment?: string | null;
+};
+
+export type IdentityRosterSubjectOperatorDecision = {
+  review_card_key: string;
+  candidate_subject_id: string;
+  decision: IdentityRosterSubjectDecision;
+  player_id?: string | null;
+  comment?: string | null;
+  updated_at: string;
+};
+
+export type IdentityRosterSubjectRecommendedPlayer = {
+  player_id: string;
+  player_name?: string | null;
+  confidence?: number | null;
+  source?: string | null;
+};
+
+export type IdentityRosterSubjectCandidate = {
+  player_id: string;
+  player_name?: string | null;
+  team_label?: string | null;
+  direct_coverage_ratio?: number | null;
+  reid_support?: number | null;
+  recommended?: boolean;
+  ranked_candidate?: boolean;
+};
+
+export type IdentityRosterSubjectAnchorCrop = {
+  anchor_crop_id: string;
+  artifact: string;
+  frame: number;
+  time_sec?: number | null;
+  bbox_xyxy?: number[];
+  detection_confidence?: number | null;
+  selection_score?: number | null;
+  quality_class?: string | null;
+  tracklet_id?: string | null;
+};
+
+export type IdentityRosterSubjectReviewCard = {
+  review_card_key: string;
+  candidate_subject_id: string;
+  review_status: string;
+  review_unit?: string;
+  team_label?: string | null;
+  role?: string | null;
+  start_frame?: number | null;
+  end_frame?: number | null;
+  detected_frames?: number | null;
+  roster_status?: string | null;
+  recommended_player?: IdentityRosterSubjectRecommendedPlayer | null;
+  roster_candidates: IdentityRosterSubjectCandidate[];
+  operator_roster_options?: IdentityRosterSubjectCandidate[];
+  visual_evidence: {
+    status?: string | null;
+    selected_crop_count?: number;
+    minimum_required?: number;
+    anchor_crops: IdentityRosterSubjectAnchorCrop[];
+    rejected_observations?: Record<string, number>;
+  };
+  quality_flags: string[];
+  reason_codes: string[];
+  blockers: string[];
+  allowed_actions: string[];
+  operator_decision?: IdentityRosterSubjectOperatorDecision | null;
+};
+
+export type IdentityRosterSubjectReviewDocument = {
+  schema_version: string;
+  mode: 'shadow_operator_review';
+  source_artifact_digest: string;
+  decisions_fresh: boolean;
+  summary: Record<string, unknown> & {
+    reviewed_cards: number;
+    pending_cards: number;
+    stale_decisions: number;
+  };
+  safety: {
+    writes_shadow_decisions_only: boolean;
+    writes_player_identity_assignments: boolean;
+    mutates_production_identity: boolean;
+    eligible_for_player_stats: boolean;
+    eligible_for_heatmaps: boolean;
+  };
+  cards: IdentityRosterSubjectReviewCard[];
+};
+
 export type AssignmentSummary = {
   raw_tracklets: number;
   assignments_total: number;

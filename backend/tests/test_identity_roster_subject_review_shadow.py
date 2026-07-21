@@ -112,6 +112,7 @@ class IdentityRosterSubjectReviewShadowTests(unittest.TestCase):
         self.assertEqual(card["review_status"], "blocked_conflict")
         self.assertIn("roster_identity_conflict", card["blockers"])
         self.assertNotIn("confirm_recommended_player", card["allowed_actions"])
+        self.assertIn("assign_roster_player", card["allowed_actions"])
         self.assertTrue(report["gates"]["conflicts_block_confirmation"])
 
     def test_insufficient_visual_evidence_is_explicit(self) -> None:
