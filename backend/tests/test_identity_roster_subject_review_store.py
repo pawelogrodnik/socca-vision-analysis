@@ -179,6 +179,49 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         self.assertEqual(state["summary"]["reviewed_cards"], 0)
         self.assertEqual(state["summary"]["pending_cards"], 2)
 
+    def test_operator_telemetry_is_deduplicated_and_caps_idle_time(self) -> None:
+        event = {
+            "event_id": "event-1",
+            "session_id": "session-1",
+            "event_type": "card_opened",
+            "occurred_at": "2026-07-21T10:00:00+00:00",
+            "active_delta_seconds": 120,
+            "review_card_key": "card-1",
+        }
+        save_identity_roster_subject_review(self.path, [], telemetry_events=[event])
+        state = save_identity_roster_subject_review(
+            self.path,
+            [{
+                "update_id": "update-1",
+                "review_card_key": "card-1",
+                "decision": "assign_roster_player",
+                "player_id": "p2",
+            }],
+            telemetry_events=[event],
+        )
+
+        telemetry = state["operator_telemetry"]
+        self.assertEqual(telemetry["active_review_seconds"], 30.0)
+        self.assertEqual(telemetry["cards_opened"], 1)
+        self.assertEqual(telemetry["cards_decided"], 1)
+        self.assertEqual(telemetry["manual_assignment_count"], 1)
+
+    def test_decision_changes_count_once_for_retried_update(self) -> None:
+        save_identity_roster_subject_review(
+            self.path,
+            [{"update_id": "first", "review_card_key": "card-1", "decision": "mark_unresolved"}],
+        )
+        changed = {
+            "update_id": "changed",
+            "review_card_key": "card-1",
+            "decision": "assign_roster_player",
+            "player_id": "p2",
+        }
+        save_identity_roster_subject_review(self.path, [changed])
+        state = save_identity_roster_subject_review(self.path, [changed])
+
+        self.assertEqual(state["operator_telemetry"]["decisions_changed"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

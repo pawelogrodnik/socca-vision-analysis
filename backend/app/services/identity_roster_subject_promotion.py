@@ -123,6 +123,19 @@ def build_identity_roster_subject_promotion_plan(
             all_review_observations.extend(card_observations)
         else:
             card_observations = []
+        if not _is_actionable_review_card(card):
+            unresolved_subjects.append(
+                {
+                    "review_card_key": key,
+                    "candidate_subject_id": subject_id,
+                    "start_frame": int(card.get("start_frame") or 0),
+                    "end_frame": int(card.get("end_frame") or 0),
+                    "reason": str(card.get("review_status") or "not_actionable"),
+                    "comment": "Excluded because the review card has insufficient visual evidence.",
+                }
+            )
+            unresolved_observations.extend(card_observations)
+            continue
         if decision is None:
             continue
         action = str(decision.get("decision") or "")
@@ -334,15 +347,32 @@ def _audit_summary(
     cards: list[dict[str, Any]],
     decisions_by_key: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
+    actionable_cards = [card for card in cards if _is_actionable_review_card(card)]
+    actionable_keys = {
+        str(card.get("review_card_key") or "")
+        for card in actionable_cards
+        if card.get("review_card_key")
+    }
+    actionable_decisions = {
+        key: row for key, row in decisions_by_key.items() if key in actionable_keys
+    }
     actions = Counter(
-        str(row.get("decision") or "unknown") for row in decisions_by_key.values()
+        str(row.get("decision") or "unknown") for row in actionable_decisions.values()
     )
     return {
         "team_cards": len(cards),
-        "reviewed_cards": len(decisions_by_key),
-        "pending_cards": max(0, len(cards) - len(decisions_by_key)),
+        "actionable_cards": len(actionable_cards),
+        "non_actionable_cards": len(cards) - len(actionable_cards),
+        "reviewed_cards": len(actionable_decisions),
+        "pending_cards": max(0, len(actionable_cards) - len(actionable_decisions)),
+        "ignored_non_actionable_decisions": len(decisions_by_key) - len(actionable_decisions),
         "decision_counts": dict(sorted(actions.items())),
     }
+
+
+def _is_actionable_review_card(card: dict[str, Any]) -> bool:
+    review_status = str(card.get("review_status") or "").strip()
+    return not review_status or review_status == "ready_for_operator_review"
 
 
 def _recommendation_metrics(

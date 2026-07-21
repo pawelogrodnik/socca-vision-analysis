@@ -1387,19 +1387,95 @@ backend/storage/benchmarks/player_identity/p121-partial-candidate-20260721-final
 ## P1.22
 
 - [ ] co najmniej trzy mecze są ocenione;
-- [ ] co najmniej jeden mecz jest held-out;
-- [ ] review time jest mierzone;
+- [x] co najmniej jeden mecz jest held-out;
+- [x] review time jest mierzone;
 - [ ] false assignments są audytowane;
-- [ ] unresolved coverage jest mierzona czasowo, nie tylko liczbą kart;
+- [x] unresolved coverage jest mierzona czasowo, nie tylko liczbą kart;
 - [ ] KPI 95% i 15 minut są ocenione na danych pełnomaczowych.
+
+### Status implementacji P1.22 (2026-07-21)
+
+Zaimplementowano warstwę pomiarową i narzędzia audytowe, ale gate P1.22 pozostaje
+otwarty do czasu zakończenia trzech sesji operatora:
+
+- UI i backend zapisują telemetry sesji review, z limitem 30 sekund dla
+  pojedynczego okresu aktywności;
+- telemetry obejmuje otwarcia i ponowne otwarcia kart, zmiany decyzji,
+  przypisania manualne, unresolved oraz akcje remediation;
+- `evaluate_identity_operator_benchmark.py` porównuje produkcyjny timeline z
+  partial candidate i generuje metryki, interaktywną galerię różnic oraz
+  opcjonalny lekki film porównawczy;
+- unresolved coverage jest liczona z czasowych obserwacji promotion planu, a
+  nie z liczby kart review;
+- pierwszy raport easy90 znajduje się w
+  `backend/storage/benchmarks/player_identity/p122-operator-benchmark-easy90-20260721-v1`;
+- review Team A dla hard3m (`7655bf7c`) jest zakończone: 173 karty
+  audytowalne, 162 przypisania, 59 decyzji unresolved i 1117.7 s aktywnej pracy;
+- review Team A dla held-out 5 min (`343980c8`) jest zakończone: 175 kart
+  audytowalnych, 150 przypisań, 25 decyzji unresolved i 898.9 s aktywnej pracy;
+- karty `no_visual_evidence` i `needs_more_visual_evidence` są jawnie
+  nieaudytowalne i nie blokują promotion planu;
+- partial candidate dla obu materiałów ma 0 hard conflicts i nie zmienia
+  produkcyjnych artefaktów;
+- raporty bezpieczeństwa operatora znajdują się w:
+  - `backend/storage/benchmarks/player_identity/p122-operator-hard3m-20260721-v4`;
+  - `backend/storage/benchmarks/player_identity/p122-operator-heldout5m-20260721-v4`;
+- finalne galerie bezpieczeństwa zawierają odpowiednio 56 i 105 kart; dla
+  `candidate_large_jump` pokazują rzeczywiste klatki przed i po skoku;
+- oba katalogi meczów nie posiadają produkcyjnego timeline realnych zawodników,
+  dlatego raporty działają jawnie jako `candidate_safety_audit`, a nie udają
+  porównania production vs candidate;
+- produkcyjne identity, statystyki i publiczne raporty pozostają niezmienione.
+
+Historyczna sesja easy90 nie posiada wiarygodnego czasu review, ponieważ odbyła
+się przed wdrożeniem telemetry. Czas będzie mierzony dla hard3m i heldoutu;
+easy90 może zostać ponownie zmierzony tylko przez nową sesję operatora.
 
 ## P1.23
 
-- [ ] candidate timeline każdego zawodnika jest sprawdzony;
-- [ ] duże stat deltas mają explainable source;
-- [ ] brak impossible spatial jumps wpływających na statystyki;
-- [ ] feature-level readiness jest wyliczane;
-- [ ] brak optional input nie blokuje identity readiness.
+- [x] candidate timeline każdego zawodnika jest sprawdzony;
+- [x] duże stat deltas mają explainable source;
+- [x] brak impossible spatial jumps wpływających na statystyki;
+- [x] feature-level readiness jest wyliczane;
+- [x] brak optional input nie blokuje identity readiness.
+
+### Status implementacji P1.23 (2026-07-21)
+
+Zaimplementowano candidate-only walidację timeline, statystyk i readiness bez
+zmiany produkcyjnego identity, statystyk ani raportów publicznych:
+
+- `identity_candidate_stats_validation.py` sprawdza per zawodnik pierwszą i
+  ostatnią obserwację, przedziały gry, luki, potencjalne granice zmian,
+  fragmentację, równoległe obserwacje, udział `predicted/occluded` oraz skoki
+  przestrzenne;
+- duże różnice względem dostępnego baseline'u zawierają źródłowe subjecty,
+  klucze kart review i zakres klatek;
+- brak produkcyjnych statystyk graczy jest raportowany jako
+  `production_baseline_unavailable`, a nie jako pozorna duża regresja;
+- readiness jest liczony osobno dla identity, czasu gry, heatmap, dystansu,
+  possession, podań, turnoverów i eventów;
+- brak opcjonalnych ball/event artifacts ustawia zależny feature na
+  `not_available`, ale nie obniża identity readiness;
+- testy potwierdzają, że `predicted/occluded` nie zasilają observed distance ani
+  heatmapy;
+- generator zapisuje wynik atomowo i sprawdza hashami, że produkcyjne artefakty
+  pozostały niezmienione.
+
+Raporty P1.23 v2 znajdują się w:
+
+- `backend/storage/benchmarks/player_identity/p123-stats-easy90-20260721-v2`;
+- `backend/storage/benchmarks/player_identity/p123-stats-hard3m-20260721-v2`;
+- `backend/storage/benchmarks/player_identity/p123-stats-heldout5m-20260721-v2`.
+
+Wynik automatycznego gate'u na wszystkich trzech materiałach: 0 hard conflicts,
+0 parallel observations oraz 0 impossible spatial jumps wpływających na
+statystyki. Easy90 ma trzy duże delty z pełnym explainable source. Hard3m i
+heldout5m nie mają produkcyjnego baseline'u realnych zawodników, dlatego ich
+porównanie statystyczne jest jawnie oznaczone jako niedostępne.
+
+Gate P1.23 pozostaje otwarty do czasu zakończenia finalnego audytu kart
+bezpieczeństwa z P1.22 i ręcznego wyjaśnienia trzech delt easy90. P1.24 nie
+został rozpoczęty.
 
 ## P1.24
 

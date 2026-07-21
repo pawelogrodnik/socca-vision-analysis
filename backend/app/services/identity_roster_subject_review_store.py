@@ -15,6 +15,14 @@ PERSISTED_DECISIONS = {
     "assign_roster_player",
     "mark_unresolved",
 }
+TELEMETRY_EVENT_TYPES = {
+    "session_started",
+    "card_opened",
+    "activity",
+    "session_completed",
+    "remediation_action",
+}
+MAX_ACTIVE_DELTA_SECONDS = 30.0
 
 
 def load_identity_roster_subject_review(
@@ -49,7 +57,7 @@ def load_identity_roster_subject_review(
                 stale += 1
         cards.append(card)
     return {
-        "schema_version": "0.1.0",
+        "schema_version": "0.2.0",
         "mode": "shadow_operator_review",
         "source_artifact_digest": artifact_digest,
         "decisions_fresh": decisions_fresh or not stored_by_key,
@@ -66,6 +74,11 @@ def load_identity_roster_subject_review(
             "eligible_for_player_stats": False,
             "eligible_for_heatmaps": False,
         },
+        "operator_telemetry": (
+            decisions_doc.get("operator_telemetry")
+            if decisions_fresh
+            else _empty_operator_telemetry()
+        ) or _empty_operator_telemetry(),
         "cards": cards,
     }
 
@@ -76,6 +89,7 @@ def save_identity_roster_subject_review(
     *,
     match_doc: dict[str, Any] | None = None,
     updated_at: str | None = None,
+    telemetry_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     artifact = _load_object(path / REVIEW_ARTIFACT_FILENAME)
     digest = identity_review_artifact_digest(artifact)
@@ -93,6 +107,7 @@ def save_identity_roster_subject_review(
         if isinstance(row, dict) and row.get("review_card_key")
     } if existing.get("source_artifact_digest") == digest else {}
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
+    telemetry_state = _load_telemetry_state(existing) if existing.get("source_artifact_digest") == digest else _empty_telemetry_state()
     for update in updates:
         if not isinstance(update, dict):
             raise ValueError("Each subject review update must be an object")
@@ -100,9 +115,16 @@ def save_identity_roster_subject_review(
         card = cards_by_key.get(key)
         if card is None:
             raise ValueError(f"Unknown review_card_key: {key or '<missing>'}")
+        update_id = str(update.get("update_id") or "")
+        already_processed = bool(update_id and update_id in telemetry_state["processed_update_ids"])
+        previous = decisions_by_key.get(key)
         decision = update.get("decision")
         if decision in (None, "clear_decision"):
             decisions_by_key.pop(key, None)
+            if previous and not already_processed:
+                telemetry_state["decisions_changed"] += 1
+            if update_id:
+                telemetry_state["processed_update_ids"].add(update_id)
             continue
         decision = str(decision)
         if decision not in PERSISTED_DECISIONS:
@@ -110,7 +132,7 @@ def save_identity_roster_subject_review(
         if decision not in _effective_allowed_actions(card):
             raise ValueError(f"Decision {decision} is blocked for {key}")
         player_id = _validated_player_id(card, decision, update.get("player_id"))
-        decisions_by_key[key] = {
+        next_decision = {
             "review_card_key": key,
             "candidate_subject_id": card.get("candidate_subject_id"),
             "decision": decision,
@@ -118,8 +140,15 @@ def save_identity_roster_subject_review(
             "comment": str(update.get("comment") or "").strip() or None,
             "updated_at": timestamp,
         }
+        if previous and not already_processed and _decision_signature(previous) != _decision_signature(next_decision):
+            telemetry_state["decisions_changed"] += 1
+        decisions_by_key[key] = next_decision
+        if update_id:
+            telemetry_state["processed_update_ids"].add(update_id)
+    _merge_telemetry_events(telemetry_state, telemetry_events or [], cards_by_key)
+    operator_telemetry = _build_operator_telemetry(telemetry_state, decisions_by_key)
     document = {
-        "schema_version": "0.1.0",
+        "schema_version": "0.2.0",
         "updated_at": timestamp,
         "mode": "shadow_operator_review",
         "source_artifact": REVIEW_ARTIFACT_FILENAME,
@@ -131,10 +160,141 @@ def save_identity_roster_subject_review(
             "eligible_for_player_stats": False,
             "eligible_for_heatmaps": False,
         },
+        "operator_telemetry": operator_telemetry,
+        "telemetry_state": _serialize_telemetry_state(telemetry_state),
         "decisions": [decisions_by_key[key] for key in sorted(decisions_by_key)],
     }
     _write_atomic(path / REVIEW_DECISIONS_FILENAME, document)
     return load_identity_roster_subject_review(path, match_doc=match_doc)
+
+
+def _decision_signature(value: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(value.get("decision") or ""),
+        str(value.get("player_id") or ""),
+        str(value.get("comment") or ""),
+    )
+
+
+def _empty_operator_telemetry() -> dict[str, Any]:
+    return {
+        "review_session_started_at": None,
+        "review_session_completed_at": None,
+        "active_review_seconds": 0.0,
+        "cards_opened": 0,
+        "cards_decided": 0,
+        "cards_reopened": 0,
+        "decisions_changed": 0,
+        "confirm_recommendation_count": 0,
+        "manual_assignment_count": 0,
+        "unresolved_count": 0,
+        "remediation_actions_count": 0,
+        "average_seconds_per_card": None,
+        "cards_per_minute": None,
+        "sessions": 0,
+    }
+
+
+def _empty_telemetry_state() -> dict[str, Any]:
+    return {
+        "events": [],
+        "processed_event_ids": set(),
+        "processed_update_ids": set(),
+        "decisions_changed": 0,
+    }
+
+
+def _load_telemetry_state(document: dict[str, Any]) -> dict[str, Any]:
+    source = document.get("telemetry_state") if isinstance(document.get("telemetry_state"), dict) else {}
+    events = [dict(row) for row in source.get("events") or [] if isinstance(row, dict)]
+    return {
+        "events": events,
+        "processed_event_ids": {
+            str(value) for value in source.get("processed_event_ids") or [] if value
+        } | {str(row.get("event_id")) for row in events if row.get("event_id")},
+        "processed_update_ids": {str(value) for value in source.get("processed_update_ids") or [] if value},
+        "decisions_changed": int(source.get("decisions_changed") or 0),
+    }
+
+
+def _merge_telemetry_events(
+    state: dict[str, Any],
+    events: list[dict[str, Any]],
+    cards_by_key: dict[str, dict[str, Any]],
+) -> None:
+    for raw in events:
+        if not isinstance(raw, dict):
+            raise ValueError("Each telemetry event must be an object")
+        event_id = str(raw.get("event_id") or "")
+        if not event_id:
+            raise ValueError("telemetry event_id is required")
+        if event_id in state["processed_event_ids"]:
+            continue
+        event_type = str(raw.get("event_type") or "")
+        if event_type not in TELEMETRY_EVENT_TYPES:
+            raise ValueError(f"Unsupported telemetry event_type: {event_type or '<missing>'}")
+        card_key = str(raw.get("review_card_key") or "")
+        if card_key and card_key not in cards_by_key:
+            raise ValueError(f"Unknown telemetry review_card_key: {card_key}")
+        try:
+            active_delta = float(raw.get("active_delta_seconds") or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("active_delta_seconds must be numeric") from exc
+        event = {
+            "event_id": event_id,
+            "session_id": str(raw.get("session_id") or "default"),
+            "event_type": event_type,
+            "occurred_at": str(raw.get("occurred_at") or datetime.now(timezone.utc).isoformat()),
+            "active_delta_seconds": round(max(0.0, min(active_delta, MAX_ACTIVE_DELTA_SECONDS)), 3),
+            "review_card_key": card_key or None,
+        }
+        state["events"].append(event)
+        state["processed_event_ids"].add(event_id)
+
+
+def _build_operator_telemetry(
+    state: dict[str, Any],
+    decisions_by_key: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    events = state["events"]
+    starts = [row["occurred_at"] for row in events if row["event_type"] == "session_started"]
+    completions = [row["occurred_at"] for row in events if row["event_type"] == "session_completed"]
+    opened = [str(row.get("review_card_key")) for row in events if row["event_type"] == "card_opened" and row.get("review_card_key")]
+    open_counts: dict[str, int] = {}
+    for key in opened:
+        open_counts[key] = open_counts.get(key, 0) + 1
+    active_seconds = round(sum(float(row.get("active_delta_seconds") or 0.0) for row in events), 3)
+    cards_decided = len(decisions_by_key)
+    decisions = [str(row.get("decision") or "") for row in decisions_by_key.values()]
+    result = {
+        **_empty_operator_telemetry(),
+        "review_session_started_at": min(starts) if starts else None,
+        "review_session_completed_at": max(completions) if completions else None,
+        "active_review_seconds": active_seconds,
+        "cards_opened": len(opened),
+        "cards_decided": cards_decided,
+        "cards_reopened": sum(max(0, count - 1) for count in open_counts.values()),
+        "decisions_changed": int(state["decisions_changed"]),
+        "confirm_recommendation_count": decisions.count("confirm_recommended_player"),
+        "manual_assignment_count": decisions.count("assign_roster_player"),
+        "unresolved_count": decisions.count("mark_unresolved"),
+        "remediation_actions_count": sum(row["event_type"] == "remediation_action" for row in events),
+        "sessions": len({str(row.get("session_id") or "default") for row in events if row["event_type"] == "session_started"}),
+    }
+    if cards_decided > 0:
+        result["average_seconds_per_card"] = round(active_seconds / cards_decided, 3)
+    if active_seconds > 0:
+        result["cards_per_minute"] = round(cards_decided * 60.0 / active_seconds, 3)
+    return result
+
+
+def _serialize_telemetry_state(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "events": state["events"],
+        "processed_event_ids": sorted(state["processed_event_ids"]),
+        "processed_update_ids": sorted(state["processed_update_ids"]),
+        "decisions_changed": int(state["decisions_changed"]),
+    }
 
 
 def _validated_player_id(card: dict[str, Any], decision: str, value: Any) -> str | None:

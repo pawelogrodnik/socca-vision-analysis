@@ -1171,8 +1171,16 @@ def review_identity_roster_subjects(match_id: str, payload: dict[str, Any] = Bod
     updates = payload.get("updates")
     if not isinstance(updates, list):
         raise HTTPException(status_code=400, detail="updates must be a list")
+    telemetry_events = payload.get("telemetry_events") or []
+    if not isinstance(telemetry_events, list):
+        raise HTTPException(status_code=400, detail="telemetry_events must be a list")
     try:
-        return save_identity_roster_subject_review(path, updates, match_doc=read_match_meta(path))
+        return save_identity_roster_subject_review(
+            path,
+            updates,
+            match_doc=read_match_meta(path),
+            telemetry_events=telemetry_events,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

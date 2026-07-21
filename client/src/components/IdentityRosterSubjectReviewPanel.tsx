@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   artifactUrl,
   getIdentityRosterSubjectReview,
@@ -9,9 +9,11 @@ import type {
   IdentityRosterSubjectDecision,
   IdentityRosterSubjectReviewCard,
   IdentityRosterSubjectReviewDocument,
+  IdentityRosterSubjectTelemetryEvent,
   Match,
 } from '../types';
 import {
+  isActionableSubjectReviewCard,
   nearestPendingCardIndex,
   subjectRosterOptions,
   subjectDecisionLabel,
@@ -54,6 +56,51 @@ export function IdentityRosterSubjectReviewPanel({
   const [cardIndex, setCardIndex] = useState(0);
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [comment, setComment] = useState('');
+  const sessionIdRef = useRef('');
+  const lastActivityAtRef = useRef<number | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  function queuedSave(
+    updates: Parameters<typeof saveIdentityRosterSubjectReview>[1],
+    telemetryEvents: Parameters<typeof saveIdentityRosterSubjectReview>[2] = [],
+  ): Promise<IdentityRosterSubjectReviewDocument> {
+    const request = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() => saveIdentityRosterSubjectReview(match.id, updates, telemetryEvents));
+    saveQueueRef.current = request.then(() => undefined, () => undefined);
+    return request;
+  }
+
+  function telemetryEvent(
+    eventType: IdentityRosterSubjectTelemetryEvent['event_type'],
+    reviewCardKey?: string | null,
+  ): IdentityRosterSubjectTelemetryEvent {
+    const now = Date.now();
+    const previous = lastActivityAtRef.current;
+    const activeDelta = previous === null ? 0 : Math.min(30, Math.max(0, (now - previous) / 1000));
+    lastActivityAtRef.current = now;
+    return {
+      event_id: crypto.randomUUID(),
+      session_id: sessionIdRef.current || 'unknown-session',
+      event_type: eventType,
+      occurred_at: new Date(now).toISOString(),
+      active_delta_seconds: activeDelta,
+      review_card_key: reviewCardKey || null,
+    };
+  }
+
+  function startReview() {
+    sessionIdRef.current = crypto.randomUUID();
+    lastActivityAtRef.current = Date.now();
+    setOpen(true);
+    void queuedSave([], [telemetryEvent('session_started')]);
+  }
+
+  function closeReview() {
+    const event = telemetryEvent('session_completed', currentCard?.review_card_key);
+    setOpen(false);
+    void queuedSave([], [event]);
+  }
 
   const cards = useMemo(
     () => document ? visibleSubjectReviewCards(document, reviewFilter, teamFilter) : [],
@@ -61,15 +108,28 @@ export function IdentityRosterSubjectReviewPanel({
   );
   const currentCard = cards[cardIndex] || cards[0] || null;
   const currentRosterOptions = currentCard ? subjectRosterOptions(currentCard) : [];
-  const counts = useMemo(() => {
+  const reviewCounts = useMemo(() => {
     const all = document?.cards || [];
+    const actionable = all.filter(isActionableSubjectReviewCard);
+    return {
+      actionableTotal: actionable.length,
+      actionableReviewed: actionable.filter((card) => Boolean(card.operator_decision)).length,
+      pending: actionable.filter((card) => !card.operator_decision).length,
+      reviewed: all.filter((card) => Boolean(card.operator_decision)).length,
+      all: all.length,
+    };
+  }, [document]);
+  const counts = useMemo(() => {
+    const all = document
+      ? visibleSubjectReviewCards(document, reviewFilter, 'all')
+      : [];
     return {
       all: all.length,
       A: all.filter((card) => card.team_label === 'A').length,
       B: all.filter((card) => card.team_label === 'B').length,
       U: all.filter((card) => !card.team_label || card.team_label === 'U').length,
     };
-  }, [document]);
+  }, [document, reviewFilter]);
 
   async function load(showStatus: boolean) {
     setAvailability('loading');
@@ -101,12 +161,13 @@ export function IdentityRosterSubjectReviewPanel({
     }
     setSaving(true);
     try {
-      const next = await saveIdentityRosterSubjectReview(match.id, [{
+      const next = await queuedSave([{
+        update_id: crypto.randomUUID(),
         review_card_key: currentCard.review_card_key,
         decision,
         player_id: playerId,
         comment: comment.trim() || null,
-      }]);
+      }], [telemetryEvent('activity', currentCard.review_card_key)]);
       const nextCards = visibleSubjectReviewCards(next, reviewFilter, teamFilter);
       const currentInNext = nextCards.findIndex((card) => card.review_card_key === currentCard.review_card_key);
       setDocument(next);
@@ -147,13 +208,23 @@ export function IdentityRosterSubjectReviewPanel({
   }, [currentCard?.review_card_key, currentCard?.operator_decision, currentRosterOptions]);
 
   useEffect(() => {
+    if (!open || !currentCard) return;
+    void queuedSave(
+      [],
+      [telemetryEvent('card_opened', currentCard.review_card_key)],
+    );
+    // Telemetry must follow card navigation, not unrelated card object changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentCard?.review_card_key, match.id]);
+
+  useEffect(() => {
     if (!open) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') closeReview();
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [open]);
+  }, [open, currentCard?.review_card_key]);
 
   if (match.analysis_report?.status !== 'completed') return null;
 
@@ -164,8 +235,8 @@ export function IdentityRosterSubjectReviewPanel({
           <h3>Whole-subject review</h3>
           <div className='chips'>
             <span>Tryb: shadow</span>
-            {document && <span>Review: {document.summary.reviewed_cards}/{document.cards.length}</span>}
-            {document && <span>Pozostalo: {document.summary.pending_cards}</span>}
+            {document && <span>Review: {reviewCounts.actionableReviewed}/{reviewCounts.actionableTotal}</span>}
+            {document && <span>Pozostalo: {reviewCounts.pending}</span>}
             {document && document.summary.stale_decisions > 0 && (
               <span>Stale: {document.summary.stale_decisions}</span>
             )}
@@ -177,7 +248,7 @@ export function IdentityRosterSubjectReviewPanel({
           </button>
           <button
             type='button'
-            onClick={() => setOpen(true)}
+            onClick={startReview}
             disabled={!document || document.cards.length === 0}
           >
             Otworz review
@@ -202,16 +273,16 @@ export function IdentityRosterSubjectReviewPanel({
                 <h2>Whole-subject review</h2>
                 <span className='confidence-pill'>shadow</span>
               </div>
-              <button type='button' className='secondary' onClick={() => setOpen(false)}>Zamknij</button>
+              <button type='button' className='secondary' onClick={closeReview}>Zamknij</button>
             </div>
 
             <div className='identity-subject-review-toolbar'>
               <label className='compact-field'>
                 Stan
                 <select value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value as SubjectReviewFilter)}>
-                  <option value='pending'>Do review ({document.summary.pending_cards})</option>
-                  <option value='reviewed'>Oznaczone ({document.summary.reviewed_cards})</option>
-                  <option value='all'>Wszystkie ({document.cards.length})</option>
+                  <option value='pending'>Do review ({reviewCounts.pending})</option>
+                  <option value='reviewed'>Oznaczone ({reviewCounts.reviewed})</option>
+                  <option value='all'>Wszystkie ({reviewCounts.all})</option>
                 </select>
               </label>
               <label className='compact-field'>
@@ -224,8 +295,8 @@ export function IdentityRosterSubjectReviewPanel({
                 </select>
               </label>
               <div className='identity-subject-review-progress'>
-                <progress value={document.summary.reviewed_cards} max={Math.max(1, document.cards.length)} />
-                <span>{document.summary.reviewed_cards}/{document.cards.length}</span>
+                <progress value={reviewCounts.actionableReviewed} max={Math.max(1, reviewCounts.actionableTotal)} />
+                <span>{reviewCounts.actionableReviewed}/{reviewCounts.actionableTotal}</span>
               </div>
             </div>
 

@@ -23,6 +23,18 @@
       "start_sec": 270.0,
       "max_seconds": 180.0,
       "verified_stable_subjects": []
+    },
+    {
+      "benchmark_id": "player-identity-heldout-second-half-last-5m-v1",
+      "label": "heldout5m",
+      "source_type": "match_window",
+      "source_path": "backend/storage/matches/343980c8",
+      "video_path": "backend/storage/matches/343980c8/video.mp4",
+      "pitch_config_path": "backend/storage/matches/343980c8/pitch_config.json",
+      "start_sec": 0.0,
+      "max_seconds": 0.0,
+      "held_out": true,
+      "verified_stable_subjects": []
     }
   ]
 }

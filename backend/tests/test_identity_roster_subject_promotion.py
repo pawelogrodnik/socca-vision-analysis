@@ -220,6 +220,32 @@ class IdentityRosterSubjectPromotionTests(unittest.TestCase):
         self.assertEqual(plan["summary"]["resolved_subjects"], 1)
         self.assertEqual(plan["summary"]["unresolved_subjects"], 1)
 
+    def test_non_actionable_card_does_not_block_completed_operator_audit(self) -> None:
+        artifact = review_artifact()
+        artifact["cards"][0]["review_status"] = "ready_for_operator_review"
+        artifact["cards"][1]["review_status"] = "no_visual_evidence"
+        decision_doc = decisions(artifact)
+        decision_doc["decisions"].pop()
+
+        plan = build_identity_roster_subject_promotion_plan(
+            artifact,
+            decision_doc,
+            candidate_doc(),
+            timeline_doc(),
+            match_doc(),
+            team_label="A",
+            generated_at="fixed",
+        )
+
+        self.assertEqual(plan["status"], "ready_for_controlled_apply")
+        self.assertEqual(plan["audit"]["team_cards"], 2)
+        self.assertEqual(plan["audit"]["actionable_cards"], 1)
+        self.assertEqual(plan["audit"]["non_actionable_cards"], 1)
+        self.assertEqual(plan["audit"]["reviewed_cards"], 1)
+        self.assertEqual(plan["audit"]["pending_cards"], 0)
+        self.assertEqual(plan["summary"]["resolved_subjects"], 1)
+        self.assertEqual(plan["summary"]["unresolved_subjects"], 1)
+
     def test_output_is_deterministic_for_fixed_timestamp(self) -> None:
         artifact = review_artifact()
         args = (

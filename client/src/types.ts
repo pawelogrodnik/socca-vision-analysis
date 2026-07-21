@@ -1177,10 +1177,44 @@ export type IdentityRosterSubjectDecision =
   | 'mark_unresolved';
 
 export type IdentityRosterSubjectReviewUpdate = {
+  update_id?: string;
   review_card_key: string;
   decision: IdentityRosterSubjectDecision | 'clear_decision' | null;
   player_id?: string | null;
   comment?: string | null;
+};
+
+export type IdentityRosterSubjectTelemetryEventType =
+  | 'session_started'
+  | 'card_opened'
+  | 'activity'
+  | 'session_completed'
+  | 'remediation_action';
+
+export type IdentityRosterSubjectTelemetryEvent = {
+  event_id: string;
+  session_id: string;
+  event_type: IdentityRosterSubjectTelemetryEventType;
+  occurred_at: string;
+  active_delta_seconds?: number;
+  review_card_key?: string | null;
+};
+
+export type IdentityRosterSubjectOperatorTelemetry = {
+  review_session_started_at?: string | null;
+  review_session_completed_at?: string | null;
+  active_review_seconds: number;
+  cards_opened: number;
+  cards_decided: number;
+  cards_reopened: number;
+  decisions_changed: number;
+  confirm_recommendation_count: number;
+  manual_assignment_count: number;
+  unresolved_count: number;
+  remediation_actions_count: number;
+  average_seconds_per_card?: number | null;
+  cards_per_minute?: number | null;
+  sessions: number;
 };
 
 export type IdentityRosterSubjectOperatorDecision = {
@@ -1266,6 +1300,7 @@ export type IdentityRosterSubjectReviewDocument = {
     eligible_for_player_stats: boolean;
     eligible_for_heatmaps: boolean;
   };
+  operator_telemetry?: IdentityRosterSubjectOperatorTelemetry;
   cards: IdentityRosterSubjectReviewCard[];
 };
 

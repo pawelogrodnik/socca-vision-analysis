@@ -7,6 +7,12 @@ import type {
 export type SubjectReviewFilter = 'pending' | 'reviewed' | 'all';
 export type SubjectTeamFilter = 'A' | 'B' | 'U' | 'all';
 
+export function isActionableSubjectReviewCard(
+  card: IdentityRosterSubjectReviewCard,
+): boolean {
+  return card.review_status === 'ready_for_operator_review';
+}
+
 export function subjectRosterOptions(
   card: IdentityRosterSubjectReviewCard,
 ): IdentityRosterSubjectCandidate[] {
@@ -24,7 +30,9 @@ export function visibleSubjectReviewCards(
     const reviewed = Boolean(card.operator_decision);
     const reviewMatches =
       reviewFilter === 'all' ||
-      (reviewFilter === 'reviewed' ? reviewed : !reviewed);
+      (reviewFilter === 'reviewed'
+        ? reviewed
+        : !reviewed && isActionableSubjectReviewCard(card));
     const normalizedTeam = card.team_label || 'U';
     return reviewMatches && (teamFilter === 'all' || teamFilter === normalizedTeam);
   });

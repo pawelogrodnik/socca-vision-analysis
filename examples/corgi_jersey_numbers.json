@@ -1,0 +1,55 @@
+{
+  "schema_version": "0.1.0",
+  "team_id": "team-corgi-1fc405",
+  "team_name": "Corgi",
+  "source": "manual_user_confirmation",
+  "usage": "reference_only_not_automatic_identity_evidence",
+  "players": [
+    {
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "player_name": "Krzysiek",
+      "jersey_number": "10"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-8-tomek",
+      "player_name": "Tomek",
+      "jersey_number": "7"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-7-andrzej",
+      "player_name": "Andrzej",
+      "jersey_number": "8"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-10-roman",
+      "player_name": "Roman",
+      "jersey_number": "6"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-9-piotrek",
+      "player_name": "Piotrek",
+      "jersey_number": "15"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-5-mateusz",
+      "player_name": "Mateusz",
+      "jersey_number": "3"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-1-pawel",
+      "player_name": "Pawel",
+      "jersey_number": "92"
+    },
+    {
+      "player_id": "team-corgi-1fc405-player-12-patryk",
+      "player_name": "Patryk",
+      "jersey_number": "26"
+    }
+  ],
+  "players_without_confirmed_number": [
+    "team-corgi-1fc405-player-3-przemek",
+    "team-corgi-1fc405-player-4-kuba",
+    "team-corgi-1fc405-player-6-mati-gk",
+    "team-corgi-1fc405-player-11-marcin"
+  ]
+}

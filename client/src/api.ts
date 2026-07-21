@@ -12,6 +12,7 @@ import type {
   IdentityCropReviewDocument,
   IdentityCropReviewUpdate,
   IdentityRosterSubjectReviewDocument,
+  IdentityRosterSubjectTelemetryEvent,
   IdentityRosterSubjectReviewUpdate,
   Match,
   MatchPhaseConfigDocument,
@@ -281,11 +282,12 @@ export async function getIdentityRosterSubjectReview(matchId: string): Promise<I
 export async function saveIdentityRosterSubjectReview(
   matchId: string,
   updates: IdentityRosterSubjectReviewUpdate[],
+  telemetryEvents: IdentityRosterSubjectTelemetryEvent[] = [],
 ): Promise<IdentityRosterSubjectReviewDocument> {
   return request<IdentityRosterSubjectReviewDocument>(`/api/matches/${matchId}/identity-roster-subject-review`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ updates }),
+    body: JSON.stringify({ updates, telemetry_events: telemetryEvents }),
   });
 }
 
