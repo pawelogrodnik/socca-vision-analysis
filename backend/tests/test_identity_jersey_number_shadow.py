@@ -14,6 +14,9 @@ from app.services.identity_jersey_number_evidence_shadow import (
 from app.services.identity_jersey_number_roster import (
     build_identity_jersey_number_roster_shadow,
 )
+from app.services.identity_jersey_number_propagation_shadow import (
+    build_identity_jersey_number_propagation_shadow,
+)
 from app.services.identity_jersey_number_common import canonical_digest
 
 
@@ -186,6 +189,143 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertTrue(result["candidates"][0]["would_assign_if_enabled"])
         self.assertFalse(result["candidates"][0]["automatic_assignment"])
         self.assertEqual(result["safety"]["automatic_assignments"], 0)
+
+    def test_n5_propagates_only_over_safe_explicit_edge(self) -> None:
+        result = _propagation_result()
+
+        self.assertEqual(result["subjects"][0]["seed_tracklet_ids"], ["t1"])
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], ["t2"])
+        self.assertEqual(result["summary"]["safe_edges"], 1)
+        self.assertEqual(result["safety"]["automatic_assignments"], 0)
+
+    def test_n5_does_not_propagate_through_uncertain_transition(self) -> None:
+        result = _propagation_result(event_overrides={"requires_review": True, "status": "uncertain"})
+
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
+        self.assertEqual(result["subjects"][0]["blocked_tracklet_ids"], ["t2"])
+        self.assertIn("uncertain_transition", result["edge_audit"][0]["blockers"])
+
+    def test_n5_does_not_propagate_through_cross_production_transition(self) -> None:
+        result = _propagation_result(event_overrides={"current_identity_relation": "different_subjects"})
+
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
+        self.assertIn("cross_production_transition", result["edge_audit"][0]["blockers"])
+
+    def test_n5_does_not_propagate_through_weak_reid_only_edge(self) -> None:
+        result = _propagation_result(event_overrides={"recommendation_source": "same_match_reid"})
+
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
+        self.assertIn("weak_reid_only_edge", result["edge_audit"][0]["blockers"])
+
+    def test_n5_blocks_candidate_timeline_tracklet_mismatch(self) -> None:
+        assignment, evidence, candidate, timeline = _propagation_documents()
+        timeline["subjects"][0]["tracklet_ids"] = ["t1"]
+
+        result = build_identity_jersey_number_propagation_shadow(
+            assignment, evidence, candidate, timeline, generated_at="fixed"
+        )
+
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
+        self.assertIn(
+            "candidate_timeline_tracklet_mismatch",
+            result["subjects"][0]["subject_blockers"],
+        )
+
+    def test_n5_does_not_connect_disconnected_same_number_tracklet(self) -> None:
+        result = _propagation_result(include_event=False)
+
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
+        self.assertEqual(result["subjects"][0]["blocked_tracklet_ids"], ["t2"])
+
+    def test_n5_blocks_contradictory_number_evidence(self) -> None:
+        result = _propagation_result(
+            extra_evidence=[
+                {
+                    "candidate_subject_id": "s1",
+                    "team_label": "A",
+                    "tracklet_id": "t2",
+                    "state": "number_confirmed",
+                    "number": "15",
+                }
+            ]
+        )
+
+        self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
+        self.assertIn("contradictory_number_evidence", result["edge_audit"][0]["blockers"])
+
+    def test_n5_is_deterministic_and_does_not_mutate_inputs(self) -> None:
+        import copy
+
+        documents = _propagation_documents()
+        originals = copy.deepcopy(documents)
+        first = build_identity_jersey_number_propagation_shadow(
+            *documents, generated_at="fixed"
+        )
+        second = build_identity_jersey_number_propagation_shadow(
+            *documents, generated_at="fixed"
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(documents, originals)
+
+
+def _propagation_documents(
+    *,
+    event_overrides: dict | None = None,
+    include_event: bool = True,
+    extra_evidence: list[dict] | None = None,
+) -> tuple[dict, dict, dict, dict]:
+    assignment = {
+        "candidates": [{
+            "candidate_subject_id": "s1",
+            "team_label": "A",
+            "jersey_number": "92",
+            "player_id": "p92",
+            "player_name": "Pawel",
+            "strictly_eligible": True,
+        }]
+    }
+    evidence_rows = [{
+        "candidate_subject_id": "s1",
+        "team_label": "A",
+        "tracklet_id": "t1",
+        "state": "number_confirmed",
+        "number": "92",
+    }]
+    evidence_rows.extend(extra_evidence or [])
+    evidence = {"evidence": evidence_rows}
+    candidate = {
+        "subjects": [{
+            "candidate_subject_id": "s1",
+            "team_label": "A",
+            "tracklet_ids": ["t1", "t2"],
+            "quality_flags": [],
+        }]
+    }
+    event = {
+        "shadow_subject_id": "s1",
+        "team_label": "A",
+        "edge_key": "edge-1",
+        "source_tracklet_id": "t1",
+        "target_tracklet_id": "t2",
+        "status": "missing",
+        "recommendation_source": "stitching",
+        "current_identity_relation": "same_subject",
+        "requires_review": False,
+        "overlap_frames": 0,
+    }
+    event.update(event_overrides or {})
+    timeline = {
+        "subjects": [{"shadow_subject_id": "s1", "team_label": "A", "tracklet_ids": ["t1", "t2"]}],
+        "transition_events": [event] if include_event else [],
+    }
+    return assignment, evidence, candidate, timeline
+
+
+def _propagation_result(**kwargs) -> dict:
+    return build_identity_jersey_number_propagation_shadow(
+        *_propagation_documents(**kwargs), generated_at="fixed"
+    )
 
 
 if __name__ == "__main__":

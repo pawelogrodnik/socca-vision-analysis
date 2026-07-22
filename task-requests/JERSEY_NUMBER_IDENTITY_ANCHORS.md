@@ -9,7 +9,7 @@ SHADOW-FIRST / HIGH-CONFIDENCE IDENTITY EVIDENCE
 
 ### Status implementacji (2026-07-22)
 
-Zaimplementowano jeden bezpieczny chunk N0-N4. Całość działa wyłącznie w trybie
+Zaimplementowano bezpieczny zakres N0-N5. Całość działa wyłącznie w trybie
 shadow i nie zmienia candidate identity, produkcyjnych assignments, statystyk ani
 heatmap.
 
@@ -30,7 +30,11 @@ heatmap.
   wymaga świeżego lineage, braku structural blockers, jawnej aktywacji i
   zaakceptowanego goldsetu z `0` false assignments. Nie zapisuje jeszcze żadnego
   automatycznego assignment;
-- **N5 nie rozpoczęto:** numer nie jest propagowany przez uncertain transitions.
+- **N5 zakończone w shadow:** potwierdzony numer może przejść wyłącznie przez
+  jawne, bezpieczne krawędzie istniejącego lineage. Propagację blokują między
+  innymi `uncertain_transition`, cross-production, overlap, structural conflict,
+  słabe ReID-only, niespójność candidate/timeline oraz sprzeczny numer. Sam zgodny
+  numer nigdy nie tworzy nowej krawędzi ani nie scala trackletów.
 
 Pierwszy frozen audyt easy90 znajduje się w:
 
@@ -57,7 +61,20 @@ tworzy automatycznego consensus bez wymaganych trzech niezależnych odczytów.
 
 N4 pozostaje shadow-only. Jeden pozytywny benchmark easy90 nie wystarcza do
 produkcyjnego odblokowania automatycznych assignments; potrzebna jest jeszcze
-walidacja na trudniejszym materiale i implementacja bezpiecznej propagacji N5.
+walidacja na trudniejszym materiale.
+
+Frozen benchmark N5 easy90 znajduje się w:
+
+```text
+backend/storage/benchmarks/player_identity/n5-jersey-number-propagation-easy90-20260722-v1
+```
+
+Trzy strictly eligible subjecty utworzyły trzy seed tracklety. Każdy z tych
+subjectów składa się w easy90 tylko z jednego trackletu, dlatego poprawnym wynikiem
+jest `0` propagated tracklets, `0` cross-subject propagations i `0` automatic
+assignments. Ten benchmark potwierdza brak fałszywego rozszerzania tożsamości, ale
+nie mierzy jeszcze zysku pokrycia. Zysk N5 trzeba zweryfikować na ręcznie
+potwierdzonym, wielotrackletowym subjectcie z trudniejszego materiału.
 
 Ten dokument dodaje do roadmapy możliwość używania wcześniej zdefiniowanych numerów na koszulkach jako silnego sygnału identyfikacji zawodnika.
 
@@ -470,7 +487,7 @@ Przed dalszym strojeniem ogólnego pairwise ReID należy sprawdzić, czy jersey-
 - [x] wykryty numer mapuje wyłącznie do gracza tej samej drużyny;
 - [x] gracze bez numeru nie są automatycznie identyfikowani przez brak OCR;
 - [x] number evidence nie omija hard constraints;
-- [ ] number evidence nie propaguje się przez uncertain transitions;
+- [x] number evidence nie propaguje się przez uncertain transitions;
 - [x] wszystkie decyzje zachowują lineage digests;
 - [x] shadow artifacts nie zmieniają produkcyjnego identity, statystyk ani heatmap;
 - [x] benchmark framework raportuje identity-level false assignments;

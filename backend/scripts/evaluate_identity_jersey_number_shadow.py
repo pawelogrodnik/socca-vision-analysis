@@ -23,6 +23,9 @@ from app.services.identity_jersey_number_consensus_shadow import (
 from app.services.identity_jersey_number_evidence_shadow import (
     build_identity_jersey_number_evidence_shadow,
 )
+from app.services.identity_jersey_number_propagation_shadow import (
+    build_identity_jersey_number_propagation_shadow,
+)
 from app.services.identity_jersey_number_roster import (
     build_identity_jersey_number_roster_shadow,
 )
@@ -32,7 +35,7 @@ from app.services.identity_roster_subject_review_shadow import (
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate N0-N4 jersey-number identity in shadow mode.")
+    parser = argparse.ArgumentParser(description="Evaluate N0-N5 jersey-number identity in shadow mode.")
     parser.add_argument("--match-config", type=Path, required=True)
     parser.add_argument("--anchor-crops", type=Path, required=True)
     parser.add_argument("--reference", type=Path, required=True)
@@ -40,6 +43,8 @@ def main() -> None:
     parser.add_argument("--observations", type=Path)
     parser.add_argument("--goldset", type=Path)
     parser.add_argument("--roster-anchor", type=Path)
+    parser.add_argument("--candidate-identity", type=Path)
+    parser.add_argument("--shadow-timeline", type=Path)
     parser.add_argument("--activate-n4-if-benchmark-passed", action="store_true")
     args = parser.parse_args()
 
@@ -93,6 +98,20 @@ def main() -> None:
         activation_requested=args.activate_n4_if_benchmark_passed,
         generated_at=generated_at,
     )
+    propagation_documents = {}
+    if bool(args.candidate_identity) != bool(args.shadow_timeline):
+        parser.error("--candidate-identity and --shadow-timeline must be supplied together")
+    if args.candidate_identity and args.shadow_timeline:
+        propagation_documents["identity_jersey_number_propagation_shadow"] = (
+            build_identity_jersey_number_propagation_shadow(
+                assignment_doc,
+                evidence_doc,
+                _load(args.candidate_identity),
+                _load(args.shadow_timeline),
+                subject_review_doc=subject_review_doc,
+                generated_at=generated_at,
+            )
+        )
     _materialize_torso_crops(args.anchor_crops.resolve().parent, output, audit_doc)
 
     documents = {
@@ -101,12 +120,19 @@ def main() -> None:
         **consensus_documents,
         **subject_review_documents,
         "identity_jersey_number_assignment_shadow": assignment_doc,
+        **propagation_documents,
     }
     for name, document in documents.items():
         _write(output / f"{name}.json", document)
     (output / "index.html").write_text(_audit_html(audit_doc), encoding="utf-8")
     (output / "JERSEY_NUMBER_SHADOW_REPORT.md").write_text(
-        _markdown(roster_doc, evidence_doc, consensus_doc, assignment_doc),
+        _markdown(
+            roster_doc,
+            evidence_doc,
+            consensus_doc,
+            assignment_doc,
+            propagation_documents.get("identity_jersey_number_propagation_shadow"),
+        ),
         encoding="utf-8",
     )
     print(json.dumps({name: doc.get("summary") for name, doc in documents.items()}, indent=2))
@@ -197,6 +223,7 @@ def _markdown(
     evidence: dict[str, Any],
     consensus: dict[str, Any],
     assignment: dict[str, Any],
+    propagation: dict[str, Any] | None,
 ) -> str:
     gate = (assignment.get("safety") or {}).get("benchmark_gate") or {}
     return "\n".join(
@@ -210,6 +237,8 @@ def _markdown(
             f"- Strictly eligible N4 candidates: {(assignment.get('summary') or {}).get('strictly_eligible', 0)}",
             f"- N4 benchmark gate: {'passed' if gate.get('passed') else 'blocked'}",
             f"- N4 blocker reasons: {', '.join(gate.get('reason_codes') or []) or 'none'}",
+            f"- N5 propagated tracklets: {((propagation or {}).get('summary') or {}).get('propagated_tracklets', 0)}",
+            f"- N5 blocked unsafe edges: {((propagation or {}).get('summary') or {}).get('blocked_edges', 0)}",
             "",
             "All outputs are shadow-only and automatic assignments remain disabled.",
         ]
