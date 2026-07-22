@@ -3,74 +3,72 @@
 ## Status
 
 ```text
-SUPPLEMENT TO task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
+UZUPEŁNIENIE task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
 SHADOW-FIRST / HIGH-CONFIDENCE IDENTITY EVIDENCE
-N0-N5 IMPLEMENTED IN SHADOW
-NOT READY FOR AUTOMATIC CANDIDATE OR PRODUCTION ASSIGNMENTS
+N0-N5 ZAIMPLEMENTOWANE W SHADOW
+NIEGOTOWE DO AUTOMATYCZNYCH CANDIDATE ANI PRODUCTION ASSIGNMENTS
 ```
 
-Baseline reviewed:
+Przeanalizowany baseline:
 
 ```text
 d1ef613e1916a503f22607a035288edc432b95f9
 ```
 
-This document reflects the actual N0-N5 implementation and the targeted hard3m benchmark added after the first N5 easy90 run.
+Dokument opisuje rzeczywisty stan implementacji N0-N5 wraz z targeted benchmarkiem hard3m dodanym po pierwszym teście N5 na easy90.
 
-The implementation direction is correct, but the feature is not yet complete as an automatic jersey-number recognizer or as a candidate-assignment source. N0-N5 currently prove that manually reviewed number evidence can be converted into conservative roster suggestions and propagated through existing safe lineage without mutating candidate or production identity.
+Kierunek implementacji jest poprawny, ale feature nie jest jeszcze gotowym automatycznym recognizerem numerów ani źródłem candidate assignments. N0-N5 udowadniają obecnie, że ręcznie zweryfikowane evidence numeru można bezpiecznie przekształcić w roster suggestion i propagować po istniejącym, ścisłym lineage bez zmiany candidate ani produkcyjnego identity.
 
-The feature does **not** yet prove that the system can automatically read jersey numbers from video with sufficient precision.
-
----
-
-# 1. Domain assumptions
-
-The current product assumptions are:
-
-- a non-empty jersey number is unique within one team;
-- the same number may exist in Team A and Team B;
-- not every player has a number;
-- a player with a number uses the same number throughout the match;
-- several players may use plain white shirts without a number;
-- `Team A + 92` may map uniquely to Paweł;
-- `Team A + 15` may map uniquely to Piotrek.
-
-A trusted unique number is stronger identity evidence than generic appearance/ReID, but it never bypasses team, temporal, spatial, structural or lineage safety constraints.
+Feature nadal nie udowadnia, że system samodzielnie odczytuje numery z wideo z wystarczającą precyzją.
 
 ---
 
-# 2. Current implementation status
+# 1. Założenia domenowe
+
+- niepusty numer jest unikalny w obrębie jednej drużyny;
+- ten sam numer może wystąpić w Team A i Team B;
+- nie każdy zawodnik ma numer;
+- zawodnik z numerem używa go przez cały mecz;
+- kilku zawodników może grać w białych koszulkach bez numeru;
+- `Team A + 92` może jednoznacznie wskazywać Pawła;
+- `Team A + 15` może jednoznacznie wskazywać Piotrka.
+
+Zaufany, unikalny numer jest silniejszym identity evidence niż ogólny appearance/ReID, ale nigdy nie omija ograniczeń drużyny, czasu, przestrzeni, struktury i lineage.
+
+---
+
+# 2. Aktualny stan N0-N5
 
 ## N0 — roster number registry
 
-Implemented:
+Zaimplementowano:
 
-- optional jersey number per roster player;
-- explicit confirmed absence of a number;
-- normalization of one-, two- and three-digit values;
-- uniqueness validation within a team;
-- duplicate number conflicts disable trust;
-- the same number across different teams is allowed;
-- detected evidence never mutates roster configuration.
+- opcjonalny numer dla zawodnika;
+- jawnie potwierdzony brak numeru;
+- normalizację numerów jedno-, dwu- i trzycyfrowych;
+- unikalność numeru wewnątrz drużyny;
+- wyłączenie zaufania przy duplikacie;
+- możliwość tego samego numeru w różnych drużynach;
+- brak mutacji rosteru przez wykryte evidence.
 
-Current status:
+Status:
 
 ```text
-IMPLEMENTED / SHADOW-ONLY / CORRECT DIRECTION
+ZAIMPLEMENTOWANE / SHADOW-ONLY / POPRAWNY KIERUNEK
 ```
 
-## N1 — crop evidence and operator audit
+## N1 — crop evidence i operator audit
 
-Implemented:
+Zaimplementowano:
 
-- reliable anchor crop filtering;
-- torso ROI extraction;
-- visual audit gallery;
-- four evidence states;
-- low-quality crops remain excluded;
-- no recognizer output means `number_unreadable`, never `number_absent`.
+- filtrowanie reliable anchor crops;
+- torso ROI;
+- galerię do ręcznego audytu;
+- cztery stany evidence;
+- odrzucanie cropów niskiej jakości;
+- brak wyniku recognizera jako `number_unreadable`, nigdy `number_absent`.
 
-Current states:
+Stany:
 
 ```text
 number_confirmed
@@ -79,105 +77,105 @@ number_unreadable
 number_conflict
 ```
 
-Important limitation:
+Najważniejsze ograniczenie:
 
 ```text
-A calibrated automatic jersey-number recognizer/OCR is not implemented.
+skalibrowany automatyczny recognizer/OCR numerów nie jest zaimplementowany
 ```
 
-Current positive evidence is operator-reviewed. Therefore N1 currently validates the evidence contract and human audit workflow, not automatic number recognition.
+Obecne pozytywne evidence pochodzi z audytu operatora. N1 waliduje więc kontrakt danych i workflow ręcznego review, a nie automatyczne odczytywanie numerów.
 
-Current status:
+Status:
 
 ```text
-INFRASTRUCTURE IMPLEMENTED
-AUTOMATIC RECOGNIZER PENDING
+INFRASTRUKTURA ZAIMPLEMENTOWANA
+AUTOMATYCZNY RECOGNIZER PENDING
 ```
 
-## N2 — tracklet and subject consensus
+## N2 — tracklet i subject consensus
 
-Implemented:
+Zaimplementowano:
 
-- deterministic consensus per tracklet;
-- deterministic consensus per candidate subject;
-- minimum three independent reads by default;
-- minimum frame separation;
-- confidence threshold;
-- same-team unique roster lookup;
-- strong contradictory reads produce a conflict;
-- goldset evaluator reports precision, recall, false positives and identity false assignments.
+- deterministyczny consensus per tracklet;
+- deterministyczny consensus per candidate subject;
+- domyślnie minimum trzy niezależne odczyty;
+- minimalny odstęp klatek;
+- próg confidence;
+- lookup tylko do unikalnego numeru tej samej drużyny;
+- konflikt przy mocnych sprzecznych odczytach;
+- evaluator goldsetu z precision, recall, false positives i identity false assignments.
 
-Easy90 operator-reviewed result:
+Wynik easy90:
 
 ```text
-expected numbered subjects: 17
-strong consensus subjects:    4
-correct strong consensus:      4
-false positives:               0
-identity false assignments:    0
-precision:                   1.0
-recall:                 0.235294
+numbered goldset subjects:    17
+strong consensus subjects:     4
+poprawne strong consensus:      4
+false positives:                0
+identity false assignments:     0
+precision:                    1.0
+recall:                  0.235294
 ```
 
-Interpretation:
+Interpretacja:
 
 ```text
-precision signal: promising
-coverage: low
-sample size: too small for activation
+precision: obiecująca
+coverage: niskie
+próbka: zbyt mała do aktywacji
 ```
 
 ## N3 — whole-subject review suggestion
 
-Implemented:
+Zaimplementowano:
 
-- strong number consensus may populate the recommended roster player;
-- number suggestion is visible in the whole-subject review card;
-- weak reads do not create a recommendation;
-- disagreement with another roster recommendation creates `jersey_number_roster_conflict`;
-- conflict blocks one-click confirmation;
-- operator review remains required.
+- strong number consensus może ustawić rekomendowanego zawodnika;
+- evidence numeru jest widoczne na karcie whole-subject review;
+- słabe odczyty nie tworzą sugestii;
+- rozbieżność z inną rekomendacją daje `jersey_number_roster_conflict`;
+- konflikt blokuje one-click confirmation;
+- operator review pozostaje wymagane.
 
-Current status:
+Status:
 
 ```text
-IMPLEMENTED / SHADOW REVIEW ASSISTANCE
+ZAIMPLEMENTOWANE / SHADOW REVIEW ASSISTANCE
 ```
 
 ## N4 — gated assignment plan
 
-Implemented:
+Zaimplementowano:
 
-- explicit activation request;
+- jawne żądanie aktywacji;
 - benchmark gate;
-- lineage gate against review and report artifacts;
-- structural blocker checks;
+- lineage gate względem review i report artifacts;
+- structural blockers;
 - strictly eligible shadow candidates;
-- no write to candidate or production identity;
-- `automatic_assignments = 0` even when a row is eligible.
+- brak zapisu candidate i production identity;
+- `automatic_assignments = 0` nawet dla eligible row.
 
-Current status:
+Status:
 
 ```text
-SHADOW PLAN IMPLEMENTED
-GATE CONTRACT REQUIRES HARDENING BEFORE CANDIDATE USE
+SHADOW PLAN ZAIMPLEMENTOWANY
+GATE CONTRACT WYMAGA WZMOCNIENIA PRZED CANDIDATE USE
 ```
 
-## N5 — strict propagation through existing lineage
+## N5 — strict propagation po istniejącym lineage
 
-Implemented:
+Zaimplementowano:
 
 - number-confirmed seed tracklet;
-- propagation only through explicit existing transition edges;
-- candidate/timeline subject membership validation;
-- path and hop audit;
-- contradictory number blocking;
-- no new edge from number similarity;
-- no tracklet merge;
-- no cross-subject propagation;
-- no automatic assignment.
+- propagację wyłącznie przez istniejące jawne transition edges;
+- zgodność candidate/timeline subject membership;
+- audyt ścieżki i liczby hopów;
+- blokadę sprzecznego numeru;
+- brak tworzenia krawędzi na podstawie podobieństwa numeru;
+- brak merge trackletów;
+- brak cross-subject propagation;
+- brak automatycznych assignments.
 
-Blocked cases include:
+Blokowane przypadki:
 
 ```text
 uncertain_transition
@@ -190,28 +188,28 @@ structural subject conflict
 contradictory number evidence
 ```
 
-Current status:
+Status:
 
 ```text
-IMPLEMENTED IN SHADOW
-POSITIVE INTRA-SUBJECT COVERAGE BENEFIT DEMONSTRATED ON ONE TARGET
-NOT ACTIVATION-READY
+ZAIMPLEMENTOWANE W SHADOW
+ZYSK COVERAGE WEWNĄTRZ SUBJECTU POTWIERDZONY NA JEDNYM TARGEcie
+NIEGOTOWE DO AKTYWACJI
 ```
 
 ---
 
-# 3. Benchmark results
+# 3. Wyniki benchmarków
 
 ## 3.1. Easy90 N0-N4
 
-Local frozen artifacts:
+Lokalne artefakty:
 
 ```text
 backend/storage/benchmarks/player_identity/n0-n4-jersey-number-easy90-20260721-v2
 backend/storage/benchmarks/player_identity/n0-n4-jersey-number-easy90-20260722-goldset-evaluated
 ```
 
-Reported result:
+Raportowany wynik:
 
 ```text
 evidence rows:             437
@@ -225,17 +223,13 @@ precision:                 1.0
 recall:               0.235294
 ```
 
-This validates conservative consensus on a small manually reviewed sample. It does not validate an automatic recognizer.
+Wynik potwierdza konserwatywny consensus na małej, ręcznie zweryfikowanej próbce. Nie waliduje automatycznego recognizera.
 
 ## 3.2. Easy90 N5
-
-Local frozen artifacts:
 
 ```text
 backend/storage/benchmarks/player_identity/n5-jersey-number-propagation-easy90-20260722-v1
 ```
-
-Reported result:
 
 ```text
 seed subjects:              3
@@ -245,23 +239,23 @@ cross-subject propagation:  0
 automatic assignments:      0
 ```
 
-Every eligible easy90 subject contained only one tracklet. This run validated non-expansion safety but could not measure propagation benefit.
+Każdy eligible subject w easy90 zawierał tylko jeden tracklet. Test potwierdził brak fałszywego rozszerzenia identity, ale nie mógł zmierzyć zysku propagacji.
 
-## 3.3. Targeted hard3m N5 benchmark
+## 3.3. Targeted hard3m N5
 
-Selection:
+Selekcja:
 
 ```text
 backend/storage/benchmarks/player_identity/n5-jersey-number-hard3m-targeted-20260722-v1
 ```
 
-Reviewed result:
+Wynik po review:
 
 ```text
 backend/storage/benchmarks/player_identity/n5-jersey-number-hard3m-targeted-reviewed-20260722-v1
 ```
 
-Reported selection:
+Raportowana selekcja:
 
 ```text
 multi-tracklet Team A subjects: 7
@@ -274,7 +268,7 @@ number_absent reads:            5
 number_unreadable reads:       12
 ```
 
-Reported evaluation:
+Raportowana ewaluacja:
 
 ```text
 strong consensus subjects:              1
@@ -287,52 +281,52 @@ automatic assignments:                   0
 safety passed:                         true
 ```
 
-This is the first real evidence that N5 can increase coverage inside a multi-tracklet candidate subject while preserving current safety rules.
+To pierwszy realny dowód, że N5 może zwiększyć coverage wewnątrz multi-tracklet candidate subjectu przy zachowaniu obecnych zasad bezpieczeństwa.
 
-It is still only one positive eligible target. It is not sufficient for candidate activation.
+Próbka obejmuje jednak tylko jeden pozytywny eligible target. Nie wystarcza do candidate activation.
 
 ---
 
-# 4. Architectural decision for N5
+# 4. Decyzja architektoniczna dla N5
 
-N5 is defined as:
+N5 oznacza:
 
 ```text
 trusted number seed
 → strict accepted existing lineage edge
-→ another tracklet inside the same candidate subject
+→ kolejny tracklet wewnątrz tego samego candidate subjectu
 ```
 
-N5 is **not** cross-subject identity resolution.
+N5 nie jest cross-subject identity resolverem.
 
-Current behavior is intentionally:
+Obecne zachowanie jest celowe:
 
 ```text
 cross-subject edge
 → blocked
 ```
 
-This avoids allowing one OCR mistake or one weak graph edge to spread a roster identity across independent subjects.
+Chroni to przed rozlaniem jednego błędnego OCR lub jednej słabej krawędzi grafu na niezależne subjecty.
 
-A future cross-subject number-assisted resolver, if justified, must be a separate milestone with separate goldset, constraints and activation gate. It must start as ranking/review assistance, not automatic merge.
+Ewentualny future cross-subject number-assisted resolver musi być osobnym milestone’em z osobnym goldsetem, ograniczeniami i gate’em. Powinien zacząć jako ranking/review assistance, nie automatyczny merge.
 
 ---
 
-# 5. Semantics of number evidence
+# 5. Semantyka evidence
 
 ## `number_confirmed`
 
-Several independent, high-quality observations support one trusted number that exists uniquely in the same-team roster.
+Kilka niezależnych, dobrych obserwacji wskazuje jeden zaufany numer istniejący unikalnie w rosterze tej samej drużyny.
 
 ## `number_absent`
 
-A clean jersey surface is visible and no number is present.
+Na czystej powierzchni koszulki widać rzeczywisty brak numeru.
 
-`number_absent` never identifies a specific player when multiple players have no number.
+`number_absent` nie identyfikuje konkretnego zawodnika, gdy więcej niż jedna osoba gra bez numeru.
 
 ## `number_unreadable`
 
-Blur, scale, body orientation, crop quality, obstruction or missing recognizer output prevents a reliable read.
+Rozmycie, skala, orientacja ciała, jakość cropa, zasłonięcie albo brak wyniku recognizera uniemożliwiają odczyt.
 
 ```text
 no OCR result != number_absent
@@ -340,55 +334,46 @@ no OCR result != number_absent
 
 ## `number_conflict`
 
-Examples:
+Przykłady:
 
 ```text
-same tracklet contains trusted 92 and trusted 15
-subject assigned to player 92 contains trusted 15
-number maps to Team A but identity evidence says Team B
-number exists but is duplicated in the same-team roster
+ten sam tracklet zawiera trusted 92 i trusted 15
+subject Pawła 92 zawiera trusted 15
+numer wskazuje Team A, ale identity evidence mówi Team B
+numer jest zduplikowany w rosterze tej samej drużyny
 ```
 
-A strong number conflict is structural evidence and blocks automatic/candidate assignment until reviewed or remediated.
+Mocny konflikt numeru jest structural evidence i blokuje candidate/automatic assignment do czasu review lub remediation.
 
 ---
 
-# 6. Consensus contract
+# 6. Kontrakt consensus
 
-Default strong consensus requires:
+Domyślny strong consensus wymaga:
 
 ```text
 known trusted team
 + unique trusted roster number
-+ at least 3 independent high-confidence reads
-+ reads separated in time
++ minimum 3 niezależne high-confidence reads
++ odczyty rozdzielone w czasie
 + reliable crop quality
-+ no strong competing number
-+ no structural identity conflict
++ brak mocnego konkurencyjnego numeru
++ brak structural identity conflict
 ```
 
-A single clean crop may be displayed as supporting evidence but cannot create strong consensus.
+Pojedynczy czysty crop może być evidence pomocniczym, ale nie tworzy strong consensus.
 
-Example:
-
-```text
-92: 3 high-quality reads
-15: 1 low-confidence partial read
-→ possible consensus 92
-→ weak competing evidence remains auditable
-```
-
-Two strong competing numbers must produce `number_conflict`.
+Dwa mocne sprzeczne numery muszą dawać `number_conflict`.
 
 ---
 
-# 7. Required hardening before candidate activation
+# 7. Wymagane poprawki przed candidate activation
 
-The current implementation is not fundamentally wrong. The following items are required to make its activation contract correct and measurable.
+Obecna implementacja nie jest fundamentalnie błędna. Poniższe punkty są potrzebne, aby kontrakt aktywacji był poprawny i mierzalny.
 
-## N5.1 — canonical structural blockers
+## N5.1 — wspólne structural blockers
 
-Create one shared canonical set used by:
+Utworzyć jeden kanoniczny zestaw używany przez:
 
 ```text
 P1.20A promotion safety
@@ -398,9 +383,9 @@ N5 propagation
 candidate apply
 ```
 
-Current N4 and N5 blocker sets are not identical. A subject must not be `strictly_eligible` in N4 and only later become structurally blocked in N5 because the modules use different flag lists.
+Aktualne listy N4 i N5 nie są identyczne. Subject nie może być `strictly_eligible` w N4 i dopiero w N5 stać się zablokowany przez flagę nieobsługiwaną wcześniej.
 
-Required blocker coverage includes at least:
+Minimum:
 
 ```text
 cross_production_transition
@@ -416,56 +401,56 @@ jersey_number_roster_conflict
 cross_team_evidence
 ```
 
-## N5.2 — harden N4 benchmark gate
+## N5.2 — wzmocnienie N4 benchmark gate
 
-N4 currently must not pass solely because:
+N4 nie może przechodzić wyłącznie dlatego, że:
 
 ```text
 identity_false_assignments == 0
 ```
 
-The accepted benchmark gate must require:
+Gate musi wymagać:
 
 ```text
 identity_false_assignments == 0
 false_positive == 0
 precision == 1.0
-minimum reviewed numbered subjects reached
-minimum reviewed no-number subjects reached
-minimum reviewed unreadable/negative subjects reached
-at least one held-out match passed
+minimalna liczba reviewed numbered subjects
+minimalna liczba reviewed no-number subjects
+minimalna liczba reviewed unreadable/negative subjects
+minimum jeden held-out match
 ```
 
-The exact minimum sample sizes should be chosen before activation and recorded in the report, not tuned after seeing the result.
+Minimalne liczby należy ustalić przed aktywacją i zapisać w raporcie, a nie dopasowywać po zobaczeniu wyniku.
 
-## N5.3 — full lineage validation
+## N5.3 — pełna walidacja lineage
 
-N5 currently records digests of its direct inputs. Before candidate use it must also validate that the artifacts belong to the same lineage.
+N5 zapisuje digests bezpośrednich wejść, ale przed candidate use musi również sprawdzać ich wzajemną zgodność.
 
-Required checks:
+Wymagane:
 
 ```text
-assignment consensus digest matches current consensus
-assignment review digest matches current review artifact
-consensus evidence digest matches current evidence
-consensus roster digest matches current roster
-candidate digest matches expected candidate artifact
-timeline digest matches expected timeline artifact
-algorithm/version/parameter digests are present
+assignment consensus digest == aktualny consensus
+assignment review digest == aktualny review artifact
+consensus evidence digest == aktualne evidence
+consensus roster digest == aktualny roster
+candidate digest == oczekiwany candidate artifact
+timeline digest == oczekiwany timeline artifact
+algorithm/version/parameter digests są obecne
 ```
 
-A stale assignment plan with a new timeline or evidence artifact must produce:
+Stary assignment plan z nowym timeline lub evidence musi dawać:
 
 ```text
 status = blocked
 reason = stale_jersey_number_lineage
 ```
 
-## N5.4 — separate seed provenance
+## N5.4 — osobna proweniencja seedów
 
-Do not combine number evidence and operator confirmation into one undifferentiated seed set.
+Nie łączyć evidence numeru i potwierdzenia operatora w jeden nierozróżnialny seed set.
 
-Report separately:
+Raportować osobno:
 
 ```text
 number_seed_tracklet_ids
@@ -474,27 +459,23 @@ number_propagated_tracklet_ids
 operator_inherited_tracklet_ids
 ```
 
-This is necessary to measure how much coverage was added by the jersey number itself.
+Whole-subject operator confirmation może potwierdzać membership, ale nie może zawyżać raportowanego zysku N5.
 
-A whole-subject operator confirmation may mark membership as trusted, but it must not inflate the reported N5 propagation gain.
+## N5.5 — automatyczny recognizer
 
-## N5.5 — automatic recognizer calibration
-
-Implement and evaluate a recognizer only after the current visual audit contract remains stable.
-
-Recommended flow:
+Po ustabilizowaniu kontraktu galerii zaimplementować i ocenić recognizer:
 
 ```text
 reliable torso/back crop
-→ number-region proposal or constrained torso ROI
+→ number-region proposal lub constrained torso ROI
 → digit/number recognizer
 → calibrated confidence
 → per-crop evidence
 ```
 
-Do not run unconstrained OCR on the whole frame or full player crop.
+Nie używać unconstrained OCR na całej klatce ani pełnym player cropie.
 
-Evaluate separately:
+Mierzyć osobno:
 
 ```text
 readability classification precision
@@ -506,26 +487,26 @@ subject consensus coverage
 identity false assignments
 ```
 
-The highest-priority negative case is:
+Najważniejszy negatywny przypadek:
 
 ```text
-plain shirt without a number
-→ recognizer hallucinates 92
-→ wrong Paweł assignment
+biała koszulka bez numeru
+→ recognizer halucynuje 92
+→ błędne przypisanie Pawła
 ```
 
-## N5.6 — version lightweight benchmark artifacts
+## N5.6 — wersjonowane lekkie benchmark artifacts
 
-`backend/storage/**` is ignored by Git, so local benchmark summaries cannot be independently inspected from the repository.
+`backend/storage/**` jest ignorowane przez Git. Lokalne podsumowania benchmarków nie są więc niezależnie dostępne z repo.
 
-Keep large crops and videos local, but commit lightweight artifacts under a tracked path, for example:
+Duże cropy i wideo pozostają lokalne, ale lekkie raporty należy commitować, np.:
 
 ```text
 backend/benchmarks/player_identity/jersey-number/easy90-v1/
 backend/benchmarks/player_identity/jersey-number/hard3m-targeted-v1/
 ```
 
-Each tracked benchmark should include:
+Minimalny zestaw:
 
 ```text
 benchmark_manifest.json
@@ -534,14 +515,12 @@ consensus_report.json
 assignment_gate_report.json
 propagation_report.json
 targeted_evaluation.json
-source commit and input digests
+source commit i input digests
 ```
-
-No raw video or crop images need to be committed.
 
 ## N5.7 — CI
 
-Add lightweight CI coverage for:
+Dodać lekkie testy CI dla:
 
 ```text
 roster uniqueness
@@ -552,20 +531,18 @@ stale lineage blocking
 N5 safe-edge propagation
 N5 unsafe-edge blocking
 targeted hidden-tracklet evaluation
-determinism and input immutability
+determinism i input immutability
 ```
 
-Heavy crop/model evaluation may remain manual, but frozen JSON contract tests should run in CI.
+Ciężka ewaluacja modelu/cropów może pozostać manualna, ale frozen JSON contract tests powinny działać w CI.
 
 ---
 
-# 8. Activation sequence
-
-The recommended sequence from the current state is:
+# 8. Kolejność dalszej implementacji
 
 ```text
 N5.1  canonical blockers
-N5.2  benchmark gate hardening and negative goldset
+N5.2  benchmark gate hardening + negative goldset
 N5.3  full lineage validation
 N5.4  seed provenance metrics
 N5.5  automatic recognizer calibration
@@ -575,19 +552,19 @@ N5.8  held-out multi-match shadow benchmark
 N5.9  controlled candidate-only integration
 ```
 
-Do not wait until production apply to evaluate the recognizer and propagation. Run them in shadow against full-match operator benchmarks from P1.22.
+Nie czekać z recognizerem i propagacją do production apply. Testować je w shadow w ramach pełnomaczowych benchmarków P1.22.
 
 ---
 
 # 9. Candidate-only activation gate
 
-Jersey-number evidence may affect candidate identity only after all of the following pass:
+Jersey-number evidence może wpływać na candidate identity dopiero po spełnieniu wszystkich warunków:
 
 ```text
 trusted same-team unique roster number
 multi-frame strong consensus
-0 identity false assignments in accepted benchmarks
-0 false positives in accepted benchmarks
+0 identity false assignments
+0 false positives
 negative no-number sample included
 held-out match included
 fresh full lineage
@@ -600,32 +577,30 @@ fresh full lineage
 production artifacts unchanged
 ```
 
-The first activation must remain candidate-only.
+Pierwsza aktywacja pozostaje candidate-only.
 
-It may:
+Może:
 
 ```text
-add a candidate roster suggestion
-mark a candidate tracklet as number-propagated
-reduce operator review priority
+dodać candidate roster suggestion
+oznaczyć candidate tracklet jako number-propagated
+obniżyć priorytet manual review
 ```
 
-It may not:
+Nie może:
 
 ```text
-write production assignments
-publish player stats
-merge independent subjects
-create a new lineage edge from number similarity
+zapisać production assignments
+publikować player stats
+scalać niezależnych subjectów
+tworzyć nowej krawędzi lineage z podobieństwa numeru
 ```
 
 ---
 
-# 10. Metrics
+# 10. Metryki
 
-Report separately:
-
-## Recognition metrics
+## Recognition
 
 ```text
 reliable crops evaluated
@@ -637,7 +612,7 @@ number_absent precision
 number_unreadable rate
 ```
 
-## Consensus metrics
+## Consensus
 
 ```text
 numbered goldset subjects
@@ -649,7 +624,7 @@ identity false assignments
 number conflicts
 ```
 
-## Propagation metrics
+## Propagation
 
 ```text
 number seed tracklets
@@ -664,7 +639,7 @@ cross-subject propagations
 automatic assignments
 ```
 
-## Product metrics
+## Product
 
 ```text
 additional subjects correctly suggested
@@ -674,81 +649,81 @@ manual review time saved
 false roster assignments caused by number evidence
 ```
 
-High precision remains more important than coverage.
+Wysoka precision jest ważniejsza niż coverage.
 
 ---
 
 # 11. Acceptance criteria
 
-## Implemented in shadow
+## Zaimplementowane w shadow
 
-- [x] roster supports optional unique number per team;
-- [x] duplicate same-team numbers disable trust;
-- [x] `number_absent` differs from `number_unreadable`;
-- [x] no recognizer output remains unreadable;
-- [x] only reliable torso crops enter the visual audit;
-- [x] consensus requires multiple independent reads;
-- [x] strong conflicting numbers block consensus;
-- [x] number maps only to a unique player in the same team;
-- [x] players without numbers are not identified by missing OCR;
-- [x] strong number consensus may assist whole-subject review;
-- [x] N4 remains shadow-only and writes no assignments;
-- [x] N5 uses only existing explicit lineage edges;
-- [x] N5 does not create cross-subject edges;
-- [x] N5 blocks uncertain, overlapping, cross-production and weak ReID-only transitions;
-- [x] targeted hard3m benchmark demonstrated one correct hidden-tracklet propagation;
-- [x] no unexpected propagation occurred in the targeted reported sample;
-- [x] production identity, stats and heatmaps remain unchanged.
+- [x] roster wspiera opcjonalny, unikalny numer per team;
+- [x] duplikaty numeru wyłączają trust;
+- [x] `number_absent` różni się od `number_unreadable`;
+- [x] brak recognizera oznacza unreadable;
+- [x] tylko reliable torso crops trafiają do audytu;
+- [x] consensus wymaga wielu niezależnych odczytów;
+- [x] mocne konflikty blokują consensus;
+- [x] numer mapuje tylko do unikalnego zawodnika tej samej drużyny;
+- [x] gracz bez numeru nie jest identyfikowany przez brak OCR;
+- [x] strong consensus wspiera whole-subject review;
+- [x] N4 nie zapisuje assignments;
+- [x] N5 używa tylko istniejących jawnych lineage edges;
+- [x] N5 nie tworzy cross-subject edges;
+- [x] N5 blokuje uncertain, overlap, cross-production i weak ReID-only;
+- [x] targeted hard3m pokazał jedną poprawną hidden-tracklet propagation;
+- [x] w raportowanej próbce nie było unexpected propagation;
+- [x] produkcyjne identity, stats i heatmaps pozostają niezmienione.
 
-## Required before candidate activation
+## Wymagane przed candidate activation
 
-- [ ] one canonical structural blocker set is shared across N4/N5 and promotion safety;
-- [ ] N4 gate includes false positives and negative/no-number coverage;
-- [ ] N5 validates full lineage instead of only recording input digests;
-- [ ] number and operator seed provenance are reported separately;
-- [ ] automatic recognizer is calibrated on front/back torso crops;
-- [ ] no-number hallucination rate is explicitly measured;
-- [ ] lightweight benchmark reports are versioned in Git;
-- [ ] relevant frozen contract tests run in CI;
-- [ ] at least one held-out match passes with zero identity false assignments;
-- [ ] more than one positive multi-tracklet propagation is evaluated;
-- [ ] candidate integration remains reversible and production-safe.
+- [ ] wspólny canonical structural blocker set;
+- [ ] N4 gate uwzględnia false positives i no-number negatives;
+- [ ] N5 waliduje pełne lineage;
+- [ ] number seeds i operator seeds są mierzone osobno;
+- [ ] recognizer jest skalibrowany na front/back torso crops;
+- [ ] mierzony jest no-number hallucination rate;
+- [ ] lekkie raporty benchmarków są wersjonowane w Git;
+- [ ] frozen contract tests działają w CI;
+- [ ] held-out match przechodzi bez identity false assignments;
+- [ ] oceniono więcej niż jeden pozytywny multi-tracklet propagation;
+- [ ] candidate integration jest odwracalne i production-safe.
 
-## Required before production use
+## Wymagane przed production use
 
-- [ ] candidate-only integration demonstrates reduced review work;
-- [ ] no false automatic roster assignment is observed in the accepted multi-match benchmark;
-- [ ] no unexpected propagation is observed;
-- [ ] production promotion uses the main roadmap transaction, backup and rollback contract;
-- [ ] feature readiness clearly distinguishes identity, stats and unavailable optional inputs.
+- [ ] candidate-only integration realnie redukuje review;
+- [ ] accepted multi-match benchmark ma 0 false automatic roster assignments;
+- [ ] nie występuje unexpected propagation;
+- [ ] production promotion używa transaction/backup/rollback z głównej roadmapy;
+- [ ] readiness rozróżnia identity, stats i niedostępne optional inputs.
 
 ---
 
 # 12. Anti-goals
 
-Do not:
+Nie należy:
 
-- treat one crop as automatic identity;
-- treat missing OCR as a shirt without a number;
-- identify a no-number player from absence alone;
-- use number similarity to create or merge tracklets;
-- propagate through uncertain or overlapping transitions;
-- open cross-subject propagation inside N5;
-- tune thresholds only on easy90 or the reviewed hard3m sample;
-- call `1/1` eligible target recall production validation;
-- activate N4 because one small goldset has no identity false assignment;
-- publish candidate identity or stats;
-- commit raw videos or large crop galleries solely to version benchmark results.
+- traktować jednego cropa jako automatyczne identity;
+- traktować braku OCR jako koszulki bez numeru;
+- identyfikować no-number playera wyłącznie przez brak numeru;
+- tworzyć lub scalać trackletów na podstawie podobnego numeru;
+- propagować przez uncertain lub overlap transitions;
+- otwierać cross-subject propagation wewnątrz N5;
+- stroić progów tylko pod easy90 i reviewed hard3m;
+- traktować `1/1` jako production validation;
+- aktywować N4 wyłącznie na podstawie jednego małego goldsetu;
+- publikować candidate identity lub stats;
+- commitować raw video i duże galerie cropów tylko po to, aby wersjonować benchmark.
 
 ---
 
-# 13. Final interpretation
+# 13. Wniosek końcowy
 
-The current N0-N5 feature is a **correct conservative shadow prototype**.
+Aktualne N0-N5 to poprawny, konserwatywny prototyp shadow.
 
-The latest targeted hard3m benchmark fixes the largest evidence gap from the first N5 run: it demonstrates that a trusted number seed can recover a hidden tracklet inside a multi-tracklet subject.
+Targeted hard3m zamyka największą lukę pierwszego benchmarku N5: pokazuje, że trusted number seed może odzyskać hidden tracklet wewnątrz multi-tracklet subjectu.
 
-The evidence is still limited:
+Dowód jest nadal minimalny:
 
 ```text
 1 eligible positive target
@@ -756,15 +731,15 @@ The evidence is still limited:
 0 unexpected targets
 ```
 
-Therefore the correct project status is:
+Prawidłowy status projektu:
 
 ```text
-architecture: valid
-shadow safety: promising
-intra-subject coverage benefit: demonstrated on a minimal sample
-automatic recognition: not implemented
-candidate activation: blocked pending hardening and held-out benchmark
-production activation: not allowed
+architektura: poprawna
+shadow safety: obiecujące
+intra-subject coverage benefit: potwierdzony na minimalnej próbce
+automatic recognition: niezaimplementowane
+candidate activation: zablokowana do hardeningu i held-out benchmarku
+production activation: niedozwolona
 ```
 
-The next work should prioritize gate correctness, recognizer evaluation and multi-match evidence rather than adding another generic ReID score or enabling cross-subject propagation.
+Następny rozwój powinien skupić się na poprawności gate’ów, automatycznym recognizerze i multi-match evidence, a nie na kolejnym ogólnym ReID score ani cross-subject propagation.
