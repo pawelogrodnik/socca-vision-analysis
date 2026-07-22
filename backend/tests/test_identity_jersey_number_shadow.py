@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
+
+import numpy as np
 
 from app.services.identity_jersey_number_assignment_shadow import (
     build_identity_jersey_number_assignment_shadow,
@@ -409,8 +413,6 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertFalse(candidate["safety"]["mutates_candidate_identity"])
 
     def test_recognizer_does_not_hallucinate_when_crop_is_missing(self) -> None:
-        from pathlib import Path
-
         recognizer = build_identity_jersey_number_recognizer_shadow(
             {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
             build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed"),
@@ -422,6 +424,111 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertEqual(row["state"], "number_unreadable")
         self.assertIsNone(row["number"])
         self.assertFalse(row["number_panel_visible"])
+
+    def test_shape_match_requires_multi_frame_episode_consensus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            first = _write_number_crop(root / "first.jpg")
+            second = _write_number_crop(root / "second.jpg")
+            roster = build_identity_jersey_number_roster_shadow(
+                {
+                    "teams": [{
+                        "id": "ta",
+                        "name": "Corgi",
+                        "team_label": "A",
+                        "players": [{"id": "p10", "name": "Krzysiek", "number": 10}],
+                    }]
+                },
+                generated_at="fixed",
+            )
+            one_frame = build_identity_jersey_number_recognizer_shadow(
+                {"cards": [_recognizer_subject([_recognizer_crop("first", 100, first.name)])]},
+                roster,
+                crop_root=root,
+                generated_at="fixed",
+                parameters={"minimum_template_score": 0.05, "minimum_score_margin": 0.0},
+            )
+            two_frames = build_identity_jersey_number_recognizer_shadow(
+                {
+                    "cards": [_recognizer_subject([
+                        _recognizer_crop("first", 100, first.name),
+                        _recognizer_crop("second", 103, second.name),
+                    ])]
+                },
+                roster,
+                crop_root=root,
+                generated_at="fixed",
+                parameters={"minimum_template_score": 0.05, "minimum_score_margin": 0.0},
+            )
+
+        self.assertEqual(one_frame["observations"][0]["state"], "number_unreadable")
+        self.assertEqual(
+            one_frame["observations"][0]["reason_codes"],
+            ["insufficient_temporal_episode_consensus"],
+        )
+        self.assertEqual(two_frames["summary"]["confirmed_numbers"], 2)
+        self.assertTrue(all(row["number"] == "10" for row in two_frames["observations"]))
+        self.assertEqual(two_frames["safety"]["automatic_assignments"], 0)
+
+    def test_flat_crop_does_not_expose_number_panel(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            import cv2
+
+            root = Path(temporary_directory)
+            blank = np.full((160, 100, 3), (80, 130, 80), dtype=np.uint8)
+            cv2.imwrite(str(root / "blank.jpg"), blank)
+            roster = build_identity_jersey_number_roster_shadow(
+                {
+                    "teams": [{
+                        "id": "ta",
+                        "name": "Corgi",
+                        "team_label": "A",
+                        "players": [{"id": "p10", "name": "Krzysiek", "number": 10}],
+                    }]
+                },
+                generated_at="fixed",
+            )
+            result = build_identity_jersey_number_recognizer_shadow(
+                {
+                    "cards": [_recognizer_subject([
+                        _recognizer_crop("blank-1", 100, "blank.jpg"),
+                        _recognizer_crop("blank-2", 102, "blank.jpg"),
+                    ])]
+                },
+                roster,
+                crop_root=root,
+                generated_at="fixed",
+            )
+
+        self.assertEqual(result["summary"]["confirmed_numbers"], 0)
+        self.assertTrue(all(not row["number_panel_visible"] for row in result["observations"]))
+
+def _write_number_crop(path: Path) -> Path:
+    import cv2
+
+    image = np.full((160, 100, 3), (80, 130, 80), dtype=np.uint8)
+    cv2.rectangle(image, (20, 25), (80, 135), (245, 245, 245), thickness=-1)
+    cv2.putText(image, "10", (30, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (10, 10, 10), 2)
+    cv2.imwrite(str(path), image)
+    return path
+
+
+def _recognizer_crop(crop_id: str, frame: int, artifact: str) -> dict:
+    row = crop(frame, tracklet="t10")
+    row.update({
+        "anchor_crop_id": crop_id,
+        "artifact": artifact,
+        "bbox_xyxy": [0, 0, 60, 110],
+    })
+    return row
+
+
+def _recognizer_subject(crops: list[dict]) -> dict:
+    return {
+        "candidate_subject_id": "subject-10",
+        "team_label": "A",
+        "anchor_crops": crops,
+    }
 
 
 def _propagation_documents(
