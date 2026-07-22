@@ -7,6 +7,58 @@ SUPPLEMENT TO task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
 SHADOW-FIRST / HIGH-CONFIDENCE IDENTITY EVIDENCE
 ```
 
+### Status implementacji (2026-07-22)
+
+Zaimplementowano jeden bezpieczny chunk N0-N4. Całość działa wyłącznie w trybie
+shadow i nie zmienia candidate identity, produkcyjnych assignments, statystyk ani
+heatmap.
+
+- **N0 zakończone:** roster obsługuje opcjonalny numer, jawny brak numeru,
+  unikalność numeru w obrębie drużyny oraz blokadę duplikatów;
+- **N1 infrastruktura zakończona:** reliable torso crops, kontrakt czterech stanów,
+  osobne `number_absent` i `number_unreadable`, wizualny audyt operatora oraz
+  odrzucanie cropów niskiej jakości. Produkcyjny recognizer/OCR nie jest jeszcze
+  skalibrowany i bez jego wyniku stan pozostaje `number_unreadable`;
+- **N2 implementacja zakończona:** deterministyczny consensus per tracklet i
+  candidate subject, wymaganie wielu niezależnych odczytów, konflikty, lookup
+  numeru tylko w tej samej drużynie i evaluator goldsetu. Audyt easy90 został
+  ręcznie zweryfikowany i połączony z przeglądem Codex;
+- **N3 zakończone:** mocny, unikalny consensus może zasugerować zawodnika na
+  whole-subject review; słaby odczyt nie tworzy sugestii, a konflikt blokuje
+  one-click confirmation;
+- **N4 kod bramkujący zakończony:** plan przypisania pozostaje shadow-only,
+  wymaga świeżego lineage, braku structural blockers, jawnej aktywacji i
+  zaakceptowanego goldsetu z `0` false assignments. Nie zapisuje jeszcze żadnego
+  automatycznego assignment;
+- **N5 nie rozpoczęto:** numer nie jest propagowany przez uncertain transitions.
+
+Pierwszy frozen audyt easy90 znajduje się w:
+
+```text
+backend/storage/benchmarks/player_identity/n0-n4-jersey-number-easy90-20260721-v2
+```
+
+Zawiera 437 evidence rows, z czego 331 reliable i 106 odrzuconych. Domyślny
+filtr galerii pokazuje 133 reliable crops Team A. Operator-reviewed goldset
+easy90 znajduje się w tym samym katalogu jako
+`identity_jersey_number_goldset_easy90_v1.json`. Ewaluacja po połączeniu audytów
+znajduje się w:
+
+```text
+backend/storage/benchmarks/player_identity/n0-n4-jersey-number-easy90-20260722-goldset-evaluated
+```
+
+Goldset obejmuje 17 ręcznie przypisanych subjectów z numerami. Mocny consensus
+powstał dla 4 subjectów: wszystkie 4 były poprawne, bez false positives i bez
+identity false assignments (`precision=1.0`, `recall=0.235294`). Wynik potwierdza
+wysoką precyzję sygnału, ale jeszcze niskie pokrycie. Pojedynczy ręcznie
+potwierdzony odczyt numeru `15` z klatki 751 pozostaje dowodem pomocniczym i nie
+tworzy automatycznego consensus bez wymaganych trzech niezależnych odczytów.
+
+N4 pozostaje shadow-only. Jeden pozytywny benchmark easy90 nie wystarcza do
+produkcyjnego odblokowania automatycznych assignments; potrzebna jest jeszcze
+walidacja na trudniejszym materiale i implementacja bezpiecznej propagacji N5.
+
 Ten dokument dodaje do roadmapy możliwość używania wcześniej zdefiniowanych numerów na koszulkach jako silnego sygnału identyfikacji zawodnika.
 
 Założenia domenowe:
@@ -409,18 +461,19 @@ Przed dalszym strojeniem ogólnego pairwise ReID należy sprawdzić, czy jersey-
 
 # 11. Acceptance Criteria
 
-- [ ] roster wspiera opcjonalny, unikalny numer per team;
-- [ ] `number_absent` jest odróżniony od `number_unreadable`;
-- [ ] numer jest wykrywany tylko na reliable torso/back crops;
-- [ ] consensus wymaga wielu niezależnych odczytów;
-- [ ] sprzeczne mocne numery tworzą structural warning;
-- [ ] wykryty numer mapuje wyłącznie do gracza tej samej drużyny;
-- [ ] gracze bez numeru nie są automatycznie identyfikowani przez brak OCR;
-- [ ] number evidence nie omija hard constraints;
+- [x] roster wspiera opcjonalny, unikalny numer per team;
+- [x] `number_absent` jest odróżniony od `number_unreadable`;
+- [x] do audytu numeru trafiają tylko reliable torso crops;
+- [ ] recognizer numeru jest skalibrowany na reliable front/back torso crops;
+- [x] consensus wymaga wielu niezależnych odczytów;
+- [x] sprzeczne mocne numery tworzą structural warning;
+- [x] wykryty numer mapuje wyłącznie do gracza tej samej drużyny;
+- [x] gracze bez numeru nie są automatycznie identyfikowani przez brak OCR;
+- [x] number evidence nie omija hard constraints;
 - [ ] number evidence nie propaguje się przez uncertain transitions;
-- [ ] wszystkie decyzje zachowują lineage digests;
-- [ ] shadow artifacts nie zmieniają produkcyjnego identity, statystyk ani heatmap;
-- [ ] benchmark raportuje identity-level false assignments;
+- [x] wszystkie decyzje zachowują lineage digests;
+- [x] shadow artifacts nie zmieniają produkcyjnego identity, statystyk ani heatmap;
+- [x] benchmark framework raportuje identity-level false assignments;
 - [ ] produkcyjne użycie wymaga 0 false automatic assignments w zaakceptowanym benchmarku.
 
 ---

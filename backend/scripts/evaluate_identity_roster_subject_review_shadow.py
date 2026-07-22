@@ -33,6 +33,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate P1.17 whole-subject roster review contract.")
     parser.add_argument("--roster-anchor", type=Path, required=True)
     parser.add_argument("--anchor-crops", type=Path, required=True)
+    parser.add_argument("--jersey-consensus", type=Path)
     parser.add_argument("--match-dir", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()
@@ -43,14 +44,17 @@ def main() -> None:
     before = production_hashes(args.match_dir.resolve())
     roster_anchor = _load(args.roster_anchor)
     anchor_crops = _load(args.anchor_crops)
+    jersey_consensus = _load(args.jersey_consensus) if args.jersey_consensus else None
     documents = build_identity_roster_subject_review_shadow(
         roster_anchor,
         anchor_crops,
+        jersey_consensus_doc=jersey_consensus,
         generated_at=generated_at,
     )
     repeated = build_identity_roster_subject_review_shadow(
         roster_anchor,
         anchor_crops,
+        jersey_consensus_doc=jersey_consensus,
         generated_at=generated_at,
     )
     materialized = materialize_visual_evidence(

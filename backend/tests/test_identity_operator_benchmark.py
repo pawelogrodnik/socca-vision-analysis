@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from app.services.identity_operator_benchmark import build_identity_operator_benchmark
+from app.services.identity_operator_benchmark import (
+    apply_identity_operator_card_audit,
+    build_identity_operator_benchmark,
+)
 
 
 def row(frame: int, x: float, player_id: str = "p1") -> dict:
@@ -126,6 +129,40 @@ class IdentityOperatorBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(
             result["review_contract"]["allowed_decisions"],
+            ["candidate_correct", "candidate_wrong", "unclear"],
+        )
+
+    def test_applies_keyed_operator_gallery_audit(self) -> None:
+        benchmark = {
+            "schema_version": "0.1.0",
+            "metrics": {},
+            "cards": [
+                {"card_key": "a", "requires_human_review": True},
+                {"card_key": "b", "requires_human_review": True},
+                {"card_key": "c", "requires_human_review": True},
+            ],
+        }
+
+        result = apply_identity_operator_card_audit(
+            benchmark,
+            {
+                "schema_version": "0.1.0",
+                "benchmark_label": "audit",
+                "decisions": {
+                    "a": "candidate_correct",
+                    "b": "candidate_wrong",
+                    "c": "unclear",
+                },
+            },
+            generated_at="2026-01-01T00:00:00+00:00",
+        )
+
+        self.assertEqual(result["metrics"]["reviewed_card_count"], 3)
+        self.assertEqual(result["metrics"]["false_assignment_count"], 1)
+        self.assertEqual(result["metrics"]["audited_candidate_precision"], 0.5)
+        self.assertEqual(result["metrics"]["review_decision_coverage"], 1.0)
+        self.assertEqual(
+            [card["review_decision"] for card in result["cards"]],
             ["candidate_correct", "candidate_wrong", "unclear"],
         )
 

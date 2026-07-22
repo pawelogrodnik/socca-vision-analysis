@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -8,9 +8,9 @@ from math import hypot
 from typing import Any
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_operator_benchmark"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 POSITION_DISAGREEMENT_M = 3.0
 LARGE_JUMP_SPEED_MPS = 12.0
 MAX_DIFF_GROUP_GAP_FRAMES = 5
@@ -83,7 +83,14 @@ def build_identity_operator_benchmark(
         or eligible + unresolved + excluded
     )
     per_player = _player_metrics(production, candidate, fps, duration_sec, roster)
-    decisions = (review_decisions or {}).get("decisions") or []
+    review_document = review_decisions or {}
+    decisions = review_document.get("decisions") or []
+    card_audit = _operator_card_audit(cards, decisions)
+    if isinstance(decisions, dict):
+        cards = card_audit["cards"]
+        subject_decisions: list[dict[str, Any]] = []
+    else:
+        subject_decisions = [row for row in decisions if isinstance(row, dict)]
     telemetry = (review_decisions or {}).get("operator_telemetry") or {}
     structural_conflicts = len(promotion.get("structural_subjects") or [])
     hard_conflicts = len(manifest.get("hard_conflicts") or [])
@@ -120,12 +127,20 @@ def build_identity_operator_benchmark(
             "manual_review_time_sec": float(telemetry.get("active_review_seconds") or 0.0),
             "review_telemetry_available": bool(telemetry.get("sessions")),
             "manual_decisions": len(decisions),
-            "candidate_subjects_reviewed": len(decisions),
-            "subjects_assigned": sum(row.get("decision") != "mark_unresolved" for row in decisions),
-            "subjects_unresolved": sum(row.get("decision") == "mark_unresolved" for row in decisions),
+            "candidate_subjects_reviewed": len(subject_decisions),
+            "subjects_assigned": sum(row.get("decision") != "mark_unresolved" for row in subject_decisions),
+            "subjects_unresolved": sum(row.get("decision") == "mark_unresolved" for row in subject_decisions),
             "promoted_detected_ratio": round(eligible / denominator, 6) if denominator else None,
             "unresolved_detected_ratio": round(unresolved / denominator, 6) if denominator else None,
-            "false_assignment_count": None,
+            "false_assignment_count": card_audit["candidate_wrong_count"],
+            "reviewed_card_count": card_audit["reviewed_card_count"],
+            "candidate_correct_count": card_audit["candidate_correct_count"],
+            "candidate_wrong_count": card_audit["candidate_wrong_count"],
+            "unclear_count": card_audit["unclear_count"],
+            "unreviewed_card_count": card_audit["unreviewed_count"],
+            "audited_candidate_precision": card_audit["audited_candidate_precision"],
+            "review_decision_coverage": card_audit["review_decision_coverage"],
+            "unknown_review_keys": card_audit["unknown_review_keys"],
             "parallel_conflict_count": len(parallel_conflicts),
             "structural_conflict_count": structural_conflicts + hard_conflicts,
             "difference_cards": len(cards),
@@ -154,6 +169,67 @@ def build_identity_operator_benchmark(
         ),
         "cards": cards,
         "review_contract": _review_contract(production_baseline_available),
+    }
+
+
+def apply_identity_operator_card_audit(
+    benchmark: dict[str, Any],
+    review_manifest: dict[str, Any],
+    *,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    """Attach a reviewed gallery manifest to an existing benchmark deterministically."""
+    result = json.loads(json.dumps(benchmark))
+    decisions = review_manifest.get("decisions") or {}
+    if not isinstance(decisions, dict):
+        raise ValueError("Operator gallery review decisions must be keyed by card_key")
+    audit = _operator_card_audit(result.get("cards") or [], decisions)
+    result["schema_version"] = SCHEMA_VERSION
+    result["generated_at"] = generated_at or result.get("generated_at")
+    result["algorithm"] = {"name": ALGORITHM_NAME, "version": ALGORITHM_VERSION}
+    result["cards"] = audit.pop("cards")
+    metrics = result.setdefault("metrics", {})
+    metrics.update(audit)
+    metrics["false_assignment_count"] = metrics["candidate_wrong_count"]
+    result["operator_card_audit"] = {
+        "schema_version": str(review_manifest.get("schema_version") or "legacy"),
+        "benchmark_label": review_manifest.get("benchmark_label"),
+        "review_manifest_digest": _digest(review_manifest),
+        "status": "complete" if metrics["unreviewed_count"] == 0 else "partial",
+    }
+    return result
+
+
+def _operator_card_audit(
+    cards: list[dict[str, Any]],
+    decisions: dict[str, Any] | list[Any],
+) -> dict[str, Any]:
+    decision_map = decisions if isinstance(decisions, dict) else {}
+    known_keys = {str(card.get("card_key") or "") for card in cards}
+    annotated: list[dict[str, Any]] = []
+    counts = Counter()
+    for card in cards:
+        row = dict(card)
+        key = str(row.get("card_key") or "")
+        decision = str(decision_map.get(key) or "")
+        if decision not in {"candidate_correct", "candidate_wrong", "unclear"}:
+            decision = "unreviewed"
+        row["review_decision"] = decision
+        counts[decision] += 1
+        annotated.append(row)
+    definite = counts["candidate_correct"] + counts["candidate_wrong"]
+    reviewed = definite + counts["unclear"]
+    reviewable = sum(bool(card.get("requires_human_review")) for card in cards)
+    return {
+        "cards": annotated,
+        "reviewed_card_count": reviewed,
+        "candidate_correct_count": counts["candidate_correct"],
+        "candidate_wrong_count": counts["candidate_wrong"],
+        "unclear_count": counts["unclear"],
+        "unreviewed_count": counts["unreviewed"],
+        "audited_candidate_precision": round(counts["candidate_correct"] / definite, 6) if definite else None,
+        "review_decision_coverage": round(reviewed / reviewable, 6) if reviewable else None,
+        "unknown_review_keys": sorted(str(key) for key in decision_map if str(key) not in known_keys),
     }
 
 

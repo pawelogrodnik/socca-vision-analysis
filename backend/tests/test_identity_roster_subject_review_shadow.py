@@ -53,7 +53,11 @@ def crop(frame: int) -> dict:
     }
 
 
-def build(cards: list[dict], crop_cards: list[dict]) -> dict[str, dict]:
+def build(
+    cards: list[dict],
+    crop_cards: list[dict],
+    jersey_consensus: dict | None = None,
+) -> dict[str, dict]:
     return build_identity_roster_subject_review_shadow(
         {
             "algorithm": {"name": "p115"},
@@ -63,6 +67,7 @@ def build(cards: list[dict], crop_cards: list[dict]) -> dict[str, dict]:
             "algorithm": {"name": "p116"},
             "cards": crop_cards,
         },
+        jersey_consensus_doc=jersey_consensus,
         generated_at="fixed",
     )
 
@@ -149,6 +154,87 @@ class IdentityRosterSubjectReviewShadowTests(unittest.TestCase):
         )
 
         self.assertEqual(first, second)
+
+    def test_strong_jersey_consensus_adds_roster_suggestion(self) -> None:
+        documents = build(
+            [roster_card()],
+            [{"candidate_subject_id": "subject-1", "anchor_crops": [crop(10), crop(20), crop(30)]}],
+            {
+                "algorithm": {"name": "jersey-consensus"},
+                "subjects": [
+                    {
+                        "candidate_subject_id": "subject-1",
+                        "team_label": "A",
+                        "state": "number_confirmed",
+                        "consensus_number": "92",
+                        "consensus_confidence": 0.97,
+                        "strong_consensus": True,
+                        "supporting_reads": 3,
+                        "conflicting_reads": 0,
+                        "first_support_frame": 10,
+                        "last_support_frame": 30,
+                        "roster_match": {"player_id": "p92", "player_name": "Pawel", "team_label": "A"},
+                        "reason_codes": ["multi_frame_unique_roster_consensus"],
+                    }
+                ],
+            },
+        )
+        card = documents["identity_roster_subject_review_shadow"]["cards"][0]
+
+        self.assertEqual(card["recommended_player"]["player_id"], "p92")
+        self.assertEqual(card["recommended_player"]["source"], "jersey_number_consensus")
+        self.assertEqual(card["jersey_number_evidence"]["detected_number"], "92")
+        self.assertFalse(card["automatic_assignment"])
+
+    def test_jersey_conflict_blocks_one_click_confirmation(self) -> None:
+        card = build(
+            [roster_card(recommended_player_id="p1")],
+            [{"candidate_subject_id": "subject-1", "anchor_crops": [crop(10), crop(20), crop(30)]}],
+            {
+                "subjects": [
+                    {
+                        "candidate_subject_id": "subject-1",
+                        "team_label": "A",
+                        "state": "number_confirmed",
+                        "consensus_number": "92",
+                        "consensus_confidence": 0.98,
+                        "strong_consensus": True,
+                        "supporting_reads": 3,
+                        "roster_match": {"player_id": "p92", "player_name": "Pawel", "team_label": "A"},
+                    }
+                ]
+            },
+        )["identity_roster_subject_review_shadow"]["cards"][0]
+
+        self.assertEqual(card["review_status"], "blocked_conflict")
+        self.assertIn("jersey_number_roster_conflict", card["blockers"])
+        self.assertNotIn("confirm_recommended_player", card["allowed_actions"])
+
+    def test_weak_jersey_number_does_not_recommend_player(self) -> None:
+        card = build(
+            [roster_card()],
+            [{"candidate_subject_id": "subject-1", "anchor_crops": [crop(10), crop(20), crop(30)]}],
+            {
+                "subjects": [
+                    {
+                        "candidate_subject_id": "subject-1",
+                        "team_label": "A",
+                        "state": "number_unreadable",
+                        "consensus_number": "92",
+                        "consensus_confidence": 0.72,
+                        "strong_consensus": False,
+                        "roster_match": {
+                            "player_id": "p92",
+                            "player_name": "Pawel",
+                            "team_label": "A",
+                        },
+                    }
+                ]
+            },
+        )["identity_roster_subject_review_shadow"]["cards"][0]
+
+        self.assertIsNone(card["recommended_player"])
+        self.assertNotIn("p92", [row["player_id"] for row in card["roster_candidates"]])
 
 
 if __name__ == "__main__":

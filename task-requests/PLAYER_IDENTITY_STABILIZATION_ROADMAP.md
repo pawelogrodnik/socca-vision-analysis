@@ -1389,14 +1389,16 @@ backend/storage/benchmarks/player_identity/p121-partial-candidate-20260721-final
 - [ ] co najmniej trzy mecze są ocenione;
 - [x] co najmniej jeden mecz jest held-out;
 - [x] review time jest mierzone;
-- [ ] false assignments są audytowane;
+- [x] false assignments są audytowane;
 - [x] unresolved coverage jest mierzona czasowo, nie tylko liczbą kart;
 - [ ] KPI 95% i 15 minut są ocenione na danych pełnomaczowych.
 
 ### Status implementacji P1.22 (2026-07-21)
 
-Zaimplementowano warstwę pomiarową i narzędzia audytowe, ale gate P1.22 pozostaje
-otwarty do czasu zakończenia trzech sesji operatora:
+Pierwsza runda benchmarku operatora została zamknięta i jest w pełni zmierzona.
+Gate P1.22 nie został zaliczony; wyniki jawnie pokazują regres bezpieczeństwa,
+więc candidate identity nie może zastąpić produkcji. Pełny gate nadal wymaga
+trzeciego meczu i oceny KPI na danych pełnomaczowych:
 
 - UI i backend zapisują telemetry sesji review, z limitem 30 sekund dla
   pojedynczego okresu aktywności;
@@ -1417,11 +1419,18 @@ otwarty do czasu zakończenia trzech sesji operatora:
   nieaudytowalne i nie blokują promotion planu;
 - partial candidate dla obu materiałów ma 0 hard conflicts i nie zmienia
   produkcyjnych artefaktów;
-- raporty bezpieczeństwa operatora znajdują się w:
-  - `backend/storage/benchmarks/player_identity/p122-operator-hard3m-20260721-v4`;
-  - `backend/storage/benchmarks/player_identity/p122-operator-heldout5m-20260721-v4`;
-- finalne galerie bezpieczeństwa zawierają odpowiednio 56 i 105 kart; dla
+- finalne raporty bezpieczeństwa operatora znajdują się w:
+  - `backend/storage/benchmarks/player_identity/p122-operator-hard3m-20260721-final-v4`;
+  - `backend/storage/benchmarks/player_identity/p122-operator-heldout5m-20260721-final-v4`;
+- finalne audyty zawierają odpowiednio 56 i 105 kart; dla
   `candidate_large_jump` pokazują rzeczywiste klatki przed i po skoku;
+- hard3m: 54 poprawne, 2 błędne, precision `0.964286`, aktywny review time
+  `1117.7 s`, promoted coverage `86.88%` i unresolved coverage `11.79%`;
+- held-out 5 min: 93 poprawne, 10 błędnych, 2 niejasne, precision `0.902913`,
+  aktywny review time `898.9 s`, promoted coverage `73.18%` i unresolved
+  coverage `26.42%`;
+- łącznie wykryto 12 identity-level false assignments. Jest to wynik
+  nieakceptowalny dla promotion gate, ale benchmark jako pomiar jest zamknięty;
 - oba katalogi meczów nie posiadają produkcyjnego timeline realnych zawodników,
   dlatego raporty działają jawnie jako `candidate_safety_audit`, a nie udają
   porównania production vs candidate;

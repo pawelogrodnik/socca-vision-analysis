@@ -6,10 +6,12 @@ import hashlib
 import json
 from typing import Any
 
+from app.services.identity_jersey_number_common import canonical_digest
+
 
 SCHEMA_VERSION = "0.1.0"
 ALGORITHM_NAME = "identity_roster_subject_review_shadow"
-ALGORITHM_VERSION = "0.2.0"
+ALGORITHM_VERSION = "0.3.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "min_visual_crops_for_ready": 3,
@@ -21,6 +23,7 @@ def build_identity_roster_subject_review_shadow(
     roster_anchor_doc: dict[str, Any],
     anchor_crops_doc: dict[str, Any],
     *,
+    jersey_consensus_doc: dict[str, Any] | None = None,
     generated_at: str | None = None,
     parameters: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -36,8 +39,18 @@ def build_identity_roster_subject_review_shadow(
         for card in anchor_crops_doc.get("cards") or []
         if isinstance(card, dict) and card.get("candidate_subject_id")
     }
+    jersey_by_subject = {
+        str(row.get("candidate_subject_id")): row
+        for row in (jersey_consensus_doc or {}).get("subjects") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
     cards = [
-        _review_card(roster_card, crops_by_subject.get(str(roster_card.get("candidate_subject_id") or "")), params)
+        _review_card(
+            roster_card,
+            crops_by_subject.get(str(roster_card.get("candidate_subject_id") or "")),
+            jersey_by_subject.get(str(roster_card.get("candidate_subject_id") or "")),
+            params,
+        )
         for roster_card in sorted(
             roster_anchor_doc.get("cards") or [],
             key=lambda row: (
@@ -71,6 +84,8 @@ def build_identity_roster_subject_review_shadow(
         "source": {
             "roster_anchor_algorithm": roster_anchor_doc.get("algorithm") or {},
             "anchor_crops_algorithm": anchor_crops_doc.get("algorithm") or {},
+            "jersey_consensus_algorithm": (jersey_consensus_doc or {}).get("algorithm") or {},
+            "jersey_consensus_digest": canonical_digest(jersey_consensus_doc or {}),
         },
         "safety": safety,
         "summary": summary,
@@ -111,18 +126,42 @@ def build_identity_roster_subject_review_shadow(
 def _review_card(
     roster_card: dict[str, Any],
     crop_card: dict[str, Any] | None,
+    jersey_consensus: dict[str, Any] | None,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     subject_id = str(roster_card.get("candidate_subject_id") or "")
     crops = list((crop_card or {}).get("anchor_crops") or [])
     crop_count = len(crops)
     roster_status = str(roster_card.get("status") or "unresolved")
+    jersey = _jersey_number_evidence(jersey_consensus)
+    strong_jersey_consensus = bool((jersey_consensus or {}).get("strong_consensus"))
+    jersey_player_id = (
+        str(((jersey_consensus or {}).get("roster_match") or {}).get("player_id") or "")
+        if strong_jersey_consensus
+        else ""
+    )
+    current_player_id = str(roster_card.get("recommended_player_id") or "")
+    jersey_conflict = bool(jersey_player_id and current_player_id and jersey_player_id != current_player_id)
+    effective_roster_card = dict(roster_card)
+    if jersey_player_id and not current_player_id:
+        match = (jersey_consensus or {}).get("roster_match") or {}
+        effective_roster_card.update(
+            {
+                "recommended_player_id": jersey_player_id,
+                "recommended_player_name": match.get("player_name"),
+                "recommendation_confidence": jersey.get("confidence"),
+                "recommendation_source": "jersey_number_consensus",
+            }
+        )
     min_crops = int(parameters["min_visual_crops_for_ready"])
-    review_status = _review_status(roster_status, crop_count, min_crops)
-    allowed_actions = _allowed_actions(review_status, bool(roster_card.get("recommended_player_id")))
-    recommended_player = _recommended_player(roster_card)
-    roster_candidates = _roster_candidates(roster_card, parameters=parameters)
+    review_status = _review_status("conflict" if jersey_conflict else roster_status, crop_count, min_crops)
+    allowed_actions = _allowed_actions(review_status, bool(effective_roster_card.get("recommended_player_id")))
+    recommended_player = _recommended_player(effective_roster_card)
+    roster_candidates = _roster_candidates(effective_roster_card, parameters=parameters)
+    roster_candidates = _include_jersey_roster_candidate(roster_candidates, jersey_consensus)
     blockers = _blockers(roster_status, crop_count, min_crops, roster_card)
+    if jersey_conflict:
+        blockers = sorted(set(blockers + ["jersey_number_roster_conflict"]))
     review_card_key = _review_card_key(subject_id, roster_card.get("anchor_key"))
     return {
         "review_card_key": review_card_key,
@@ -143,6 +182,7 @@ def _review_card(
         "review_status": review_status,
         "recommended_player": recommended_player,
         "roster_candidates": roster_candidates,
+        "jersey_number_evidence": jersey,
         "visual_evidence": {
             "status": (crop_card or {}).get("status") or "missing",
             "selected_crop_count": crop_count,
@@ -191,7 +231,7 @@ def _recommended_player(roster_card: dict[str, Any]) -> dict[str, Any] | None:
         "player_id": str(player_id),
         "player_name": roster_card.get("recommended_player_name"),
         "confidence": _round_or_none(roster_card.get("recommendation_confidence"), 4),
-        "source": "manual_anchor_or_p114_ranked_suggestion",
+        "source": roster_card.get("recommendation_source") or "manual_anchor_or_p114_ranked_suggestion",
     }
 
 
@@ -212,6 +252,50 @@ def _roster_candidates(roster_card: dict[str, Any], *, parameters: dict[str, Any
             }
         )
     return rows[:limit]
+
+
+def _include_jersey_roster_candidate(
+    candidates: list[dict[str, Any]],
+    jersey_consensus: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not (jersey_consensus or {}).get("strong_consensus"):
+        return candidates
+    match = (jersey_consensus or {}).get("roster_match") or {}
+    player_id = str(match.get("player_id") or "")
+    if not player_id or any(row["player_id"] == player_id for row in candidates):
+        return candidates
+    return [
+        {
+            "player_id": player_id,
+            "player_name": match.get("player_name"),
+            "team_label": match.get("team_label") or (jersey_consensus or {}).get("team_label"),
+            "direct_coverage_ratio": None,
+            "reid_support": None,
+            "recommended": False,
+            "source": "jersey_number_consensus",
+        },
+        *candidates,
+    ]
+
+
+def _jersey_number_evidence(consensus: dict[str, Any] | None) -> dict[str, Any]:
+    row = consensus or {}
+    roster_match = row.get("roster_match") or {}
+    return {
+        "available": bool(row),
+        "state": row.get("state") or "not_available",
+        "detected_number": row.get("consensus_number"),
+        "confidence": _round_or_none(row.get("consensus_confidence"), 4),
+        "strong_consensus": bool(row.get("strong_consensus")),
+        "supporting_reads": int(row.get("supporting_reads") or 0),
+        "supporting_frames": [
+            value for value in [row.get("first_support_frame"), row.get("last_support_frame")] if value is not None
+        ],
+        "conflicting_reads": int(row.get("conflicting_reads") or 0),
+        "roster_match": roster_match or None,
+        "reason_codes": list(row.get("reason_codes") or []),
+        "shadow_only": True,
+    }
 
 
 def _blockers(
