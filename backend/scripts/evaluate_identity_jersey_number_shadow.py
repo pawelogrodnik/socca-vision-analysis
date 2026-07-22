@@ -17,6 +17,9 @@ if str(BACKEND_DIR) not in sys.path:
 from app.services.identity_jersey_number_assignment_shadow import (
     build_identity_jersey_number_assignment_shadow,
 )
+from app.services.identity_jersey_number_candidate_shadow import (
+    build_identity_jersey_number_candidate_integration_shadow,
+)
 from app.services.identity_jersey_number_consensus_shadow import (
     build_identity_jersey_number_consensus_shadow,
 )
@@ -25,6 +28,9 @@ from app.services.identity_jersey_number_evidence_shadow import (
 )
 from app.services.identity_jersey_number_propagation_shadow import (
     build_identity_jersey_number_propagation_shadow,
+)
+from app.services.identity_jersey_number_recognizer_shadow import (
+    build_identity_jersey_number_recognizer_shadow,
 )
 from app.services.identity_jersey_number_roster import (
     build_identity_jersey_number_roster_shadow,
@@ -45,7 +51,9 @@ def main() -> None:
     parser.add_argument("--roster-anchor", type=Path)
     parser.add_argument("--candidate-identity", type=Path)
     parser.add_argument("--shadow-timeline", type=Path)
+    parser.add_argument("--run-recognizer", action="store_true")
     parser.add_argument("--activate-n4-if-benchmark-passed", action="store_true")
+    parser.add_argument("--activate-n5-candidate-shadow", action="store_true")
     args = parser.parse_args()
 
     output = args.output_root.resolve()
@@ -62,6 +70,17 @@ def main() -> None:
         reference_doc=reference_doc,
         generated_at=generated_at,
     )
+    recognizer_doc = None
+    if args.run_recognizer:
+        recognizer_doc = build_identity_jersey_number_recognizer_shadow(
+            anchor_doc,
+            roster_doc,
+            crop_root=args.anchor_crops.resolve().parent,
+            reviewed_observations_doc=observations_doc,
+            generated_at=generated_at,
+        )
+        if not args.observations:
+            observations_doc = {"observations": recognizer_doc.get("observations") or []}
     evidence_documents = build_identity_jersey_number_evidence_shadow(
         anchor_doc,
         roster_doc,
@@ -96,6 +115,8 @@ def main() -> None:
         consensus_doc,
         subject_review_doc,
         number_report,
+        evidence_doc=evidence_doc,
+        roster_doc=roster_doc,
         activation_requested=args.activate_n4_if_benchmark_passed,
         generated_at=generated_at,
     )
@@ -110,6 +131,18 @@ def main() -> None:
                 _load(args.candidate_identity),
                 _load(args.shadow_timeline),
                 subject_review_doc=subject_review_doc,
+                consensus_doc=consensus_doc,
+                roster_doc=roster_doc,
+                jersey_report_doc=number_report,
+                generated_at=generated_at,
+            )
+        )
+        propagation_doc = propagation_documents["identity_jersey_number_propagation_shadow"]
+        propagation_documents["identity_jersey_number_candidate_integration_shadow"] = (
+            build_identity_jersey_number_candidate_integration_shadow(
+                assignment_doc,
+                propagation_doc,
+                activation_requested=args.activate_n5_candidate_shadow,
                 generated_at=generated_at,
             )
         )
@@ -117,6 +150,7 @@ def main() -> None:
 
     documents = {
         "identity_jersey_number_roster_shadow": roster_doc,
+        **({"identity_jersey_number_recognizer_shadow": recognizer_doc} if recognizer_doc else {}),
         **evidence_documents,
         **consensus_documents,
         **subject_review_documents,
@@ -195,6 +229,7 @@ def _audit_html(audit_doc: dict[str, Any]) -> str:
         current_confidence = float(current.get("confidence") or 0.0)
         current_view = str(current.get("view") or "unknown")
         clean_checked = " checked" if current.get("clean_jersey_visible") else ""
+        panel_checked = " checked" if current.get("number_panel_visible") else ""
         state_options = "".join(
             f'<option value="{value}"{" selected" if value == current_state else ""}>{label}</option>'
             for value, label in (
@@ -218,6 +253,7 @@ def _audit_html(audit_doc: dict[str, Any]) -> str:
             <label>View<select class="view">{view_options}</select></label>
             <label>Confidence<input class="confidence" type="number" min="0" max="1" step="0.01" value="{current_confidence:.2f}"></label>
             <label class="check"><input class="clean" type="checkbox"{clean_checked}> Clean jersey surface is visible</label>
+            <label class="check"><input class="panel" type="checkbox"{panel_checked}> Number panel itself is clearly visible</label>
             </article>"""
         )
     teams = sorted({str(card.get("team_label") or "U") for card in audit_doc.get("cards") or []})
@@ -225,7 +261,7 @@ def _audit_html(audit_doc: dict[str, Any]) -> str:
     payload = json.dumps({"schema_version": "0.1.0", "observations": []}).replace("</", "<\\/")
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Jersey number audit</title><style>
     body{{margin:0;background:#081120;color:#eef5ff;font:15px system-ui}}header{{position:sticky;top:0;z-index:2;background:#101c30;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}}.tools{{display:flex;align-items:center;gap:10px}}button{{padding:10px 14px;background:#32b7eb;border:0;font-weight:700;cursor:pointer}}main{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:18px}}.card{{background:#101c30;border:1px solid #33445f;padding:10px}}.card[hidden]{{display:none}}img{{width:100%;height:300px;object-fit:contain;background:#020817}}.meta{{display:flex;justify-content:space-between;gap:8px;margin:8px 0}}.lineage{{display:grid;gap:3px;color:#9fb1ca;font:12px ui-monospace,monospace;overflow-wrap:anywhere}}label{{display:grid;gap:4px;margin-top:8px}}select,input{{background:#020817;color:white;border:1px solid #566883;padding:8px}}.check{{display:flex;align-items:center;gap:8px}}.check input{{width:18px;height:18px}}#count{{color:#9fb1ca}}
-    </style></head><body><header><div><strong>Jersey number audit</strong><div>Mark only clear numbers. Use Number absent only when a clean jersey surface is visible.</div></div><div class="tools"><label>Team<select id="team"><option value="all">All</option>{team_options}</select></label><span id="count"></span><button id="export">Export decisions</button></div></header><main>{''.join(cards)}</main><script>
+    </style></head><body><header><div><strong>Jersey number audit</strong><div>Mark only clear numbers. Use Number absent only when the back/front number panel itself is clearly visible.</div></div><div class="tools"><label>Team<select id="team"><option value="all">All</option>{team_options}</select></label><span id="count"></span><button id="export">Export decisions</button></div></header><main>{''.join(cards)}</main><script>
     const base={payload};
     const cards=[...document.querySelectorAll('.card')];
     const teamSelect=document.getElementById('team');
@@ -233,7 +269,7 @@ def _audit_html(audit_doc: dict[str, Any]) -> str:
     function filterCards(){{let visible=0;cards.forEach(card=>{{const show=teamSelect.value==='all'||card.dataset.team===teamSelect.value;card.hidden=!show;if(show)visible+=1}});document.getElementById('count').textContent=`${{visible}} reliable crops`}}
     teamSelect.onchange=filterCards;filterCards();
     cards.forEach(card=>card.querySelector('.state').addEventListener('change',event=>{{if(event.target.value==='number_confirmed'&&Number(card.querySelector('.confidence').value)===0)card.querySelector('.confidence').value='1.00'}}));
-    document.getElementById('export').onclick=()=>{{base.observations=cards.map(card=>{{const state=card.querySelector('.state').value;const number=card.querySelector('.number').value.trim();return {{anchor_crop_id:card.dataset.key,state,number:number||null,confidence:Number(card.querySelector('.confidence').value),view:card.querySelector('.view').value,clean_jersey_visible:card.querySelector('.clean').checked,source:'operator'}}}});const blob=new Blob([JSON.stringify(base,null,2)],{{type:'application/json'}});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='identity_jersey_number_observations_reviewed.json';link.click();URL.revokeObjectURL(link.href)}};
+    document.getElementById('export').onclick=()=>{{base.observations=cards.map(card=>{{const state=card.querySelector('.state').value;const number=card.querySelector('.number').value.trim();return {{anchor_crop_id:card.dataset.key,state,number:number||null,confidence:Number(card.querySelector('.confidence').value),view:card.querySelector('.view').value,clean_jersey_visible:card.querySelector('.clean').checked,number_panel_visible:card.querySelector('.panel').checked,source:'operator'}}}});const blob=new Blob([JSON.stringify(base,null,2)],{{type:'application/json'}});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='identity_jersey_number_observations_reviewed.json';link.click();URL.revokeObjectURL(link.href)}};
     </script></body></html>"""
 
 

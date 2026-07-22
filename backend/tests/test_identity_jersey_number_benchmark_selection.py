@@ -72,6 +72,24 @@ class JerseyNumberBenchmarkSelectionTests(unittest.TestCase):
         self.assertEqual(first["summary"]["selected_subjects"], 1)
         self.assertLessEqual(first["summary"]["selected_crops"], 5)
 
+    def test_rejects_consecutive_crops_that_cannot_satisfy_consensus(self) -> None:
+        anchor = {"cards": [_card("s1", "A", "t1", 4, frame_step=1)]}
+        candidate = {
+            "subjects": [{"candidate_subject_id": "s1", "tracklet_ids": ["t1", "t2"]}]
+        }
+
+        result = build_targeted_jersey_number_benchmark(
+            anchor,
+            candidate,
+            generated_at="fixed",
+        )
+
+        self.assertEqual(result["summary"]["selected_subjects"], 0)
+        self.assertEqual(
+            result["summary"]["rejection_counts"]["no_consensus_eligible_seed_tracklet"],
+            1,
+        )
+
 
 def _anchor_doc() -> dict:
     card = _card("s1", "A", "t1", 3)
@@ -83,22 +101,35 @@ def _candidate_doc() -> dict:
     return {"subjects": [{"candidate_subject_id": "s1", "tracklet_ids": ["t1", "t2"]}]}
 
 
-def _card(subject_id: str, team: str, tracklet_id: str, crop_count: int) -> dict:
+def _card(
+    subject_id: str,
+    team: str,
+    tracklet_id: str,
+    crop_count: int,
+    *,
+    frame_step: int = 50,
+) -> dict:
     return {
         "candidate_subject_id": subject_id,
         "team_label": team,
         "status": "ready_for_visual_audit",
-        "anchor_crops": _crops(tracklet_id, crop_count),
+        "anchor_crops": _crops(tracklet_id, crop_count, frame_step=frame_step),
         "selected_crop_count": crop_count,
     }
 
 
-def _crops(tracklet_id: str, count: int, *, frame_offset: int = 0) -> list[dict]:
+def _crops(
+    tracklet_id: str,
+    count: int,
+    *,
+    frame_offset: int = 0,
+    frame_step: int = 50,
+) -> list[dict]:
     return [
         {
             "anchor_crop_id": f"{tracklet_id}-{index}",
             "tracklet_id": tracklet_id,
-            "frame": frame_offset + index,
+            "frame": frame_offset + index * frame_step,
             "bbox_xyxy": [0, 0, 40 + index, 80 + index],
             "detection_confidence": 0.9,
             "artifact": f"anchor_crops/s/{tracklet_id}-{index}.jpg",

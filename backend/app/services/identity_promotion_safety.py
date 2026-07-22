@@ -6,21 +6,14 @@ import json
 from math import hypot
 from typing import Any
 
+from app.services.identity_jersey_number_common import (
+    CANONICAL_STRUCTURAL_BLOCKERS,
+    canonical_structural_blockers,
+)
 
-STRUCTURAL_FLAGS = {
-    "merges_production_subjects",
-    "merges_multiple_production_subjects",
-    "cross_production_transition",
-    "uncertain_transition",
-    "parallel_roster_candidate_conflict",
-    "parallel_subject_observations",
-    "mixed_team_evidence",
-    "structural_identity_conflict",
-}
-STRUCTURAL_BLOCKERS = {
-    "parallel_roster_candidate_conflict",
-    "structural_identity_conflict",
-}
+
+STRUCTURAL_FLAGS = set(CANONICAL_STRUCTURAL_BLOCKERS)
+STRUCTURAL_BLOCKERS = set(CANONICAL_STRUCTURAL_BLOCKERS)
 SAFE_DUPLICATE_CLASSES = {
     "same_source_duplicate",
     "boundary_split_duplicate",
@@ -66,7 +59,7 @@ def structural_conflict_reasons(
         values.add("cross_production_transition")
     if int(candidate.get("uncertain_transitions") or 0) > 0:
         values.add("uncertain_transition")
-    return sorted(values & (STRUCTURAL_FLAGS | STRUCTURAL_BLOCKERS))
+    return canonical_structural_blockers(values)
 
 
 def canonicalize_promoted_observations(

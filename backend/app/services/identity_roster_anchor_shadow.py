@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+from app.services.identity_jersey_number_common import canonical_structural_blockers
+
 
 SCHEMA_VERSION = "0.1.0"
 ALGORITHM_NAME = "identity_roster_anchor_shadow"
@@ -431,16 +433,8 @@ def _subject_range(subject: dict[str, Any]) -> tuple[int, int]:
 
 
 def _candidate_identity_conflict(subject: dict[str, Any]) -> bool:
-    flags = set(str(value) for value in subject.get("quality_flags") or [])
-    return bool(
-        flags
-        & {
-            "merges_production_subjects",
-            "merges_multiple_production_subjects",
-            "cross_production_transition",
-            "production_anchor_team_mismatch",
-        }
-    )
+    flags = list(subject.get("quality_flags") or [])
+    return bool(canonical_structural_blockers(flags)) or "production_anchor_team_mismatch" in flags
 
 
 def _intersection(left_start: int, left_end: int, right_start: int, right_end: int) -> tuple[int, int] | None:

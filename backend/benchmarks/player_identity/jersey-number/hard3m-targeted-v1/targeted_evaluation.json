@@ -1,0 +1,23 @@
+{
+  "algorithm": {
+    "name": "identity_jersey_number_targeted_benchmark_evaluation",
+    "version": "1.0.0"
+  },
+  "available": true,
+  "benchmark": "hard3m-targeted-v1",
+  "schema_version": "0.1.0",
+  "summary": {
+    "all_hidden_target_tracklets": 8,
+    "all_matched_hidden_target_tracklets": 1,
+    "automatic_assignments": 0,
+    "coverage_benefit_demonstrated": true,
+    "cross_subject_propagations": 0,
+    "eligible_hidden_target_tracklets": 1,
+    "eligible_matched_hidden_target_tracklets": 1,
+    "eligible_target_recall": 1.0,
+    "safety_passed": true,
+    "selected_subjects": 7,
+    "strong_consensus_subjects": 1,
+    "unexpected_propagated_tracklets": 0
+  }
+}

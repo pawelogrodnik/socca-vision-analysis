@@ -1,0 +1,17 @@
+{
+  "benchmark": "easy90-v1",
+  "evaluation": {
+    "available": true,
+    "expected_subjects": 17,
+    "false_positive": 0,
+    "identity_false_assignments": 0,
+    "missed": 13,
+    "precision": 1.0,
+    "recall": 0.235294,
+    "suggested_subjects": 4,
+    "tracklet_consensus_rows": 102,
+    "true_positive": 4
+  },
+  "schema_version": "0.1.0",
+  "source_report_digest": "71613ea969761c682a7f2fb96bc2786e34cf47c3545e064b8bbbc314d32346c5"
+}

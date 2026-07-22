@@ -1,0 +1,9 @@
+{
+  "benchmark": "hard3m-targeted-v1",
+  "evaluation": {
+    "available": false,
+    "identity_false_assignments": null
+  },
+  "schema_version": "0.1.0",
+  "source_report_digest": "a2dc931d039087489b8a287d740c1152954aa7607f7c373077a113be3d86ff98"
+}

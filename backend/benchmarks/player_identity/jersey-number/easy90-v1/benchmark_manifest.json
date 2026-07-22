@@ -1,0 +1,70 @@
+{
+  "activation_blockers": [
+    "historical_artifacts_precede_n5_hardened_contract",
+    "heldout_multi_match_validation_required",
+    "automatic_recognizer_calibration_required"
+  ],
+  "activation_eligible": false,
+  "artifact_contract": "historical_shadow_baseline",
+  "artifact_source_revision": "d1ef613e1916a503f22607a035288edc432b95f9",
+  "benchmark": "easy90-v1",
+  "exporter_base_revision": "01923e57662907d1f26671f2f3a542cb28b59ff1",
+  "outputs": {
+    "assignment_gate_report.json": "f0cae67cfe93adb8396fc5a93ffaaf148b8bc2231e5773153d49fddb0b676a38",
+    "consensus_report.json": "172850a8aad43d1260f5fdd17d1034c329e613bbbcd1ca76ddcd42bd3d5f750f",
+    "goldset_summary.json": "f94795e354d40a099db7be640475265e12d635a1733d1ff3efa06983f3458176",
+    "propagation_report.json": "ef6fe2ac21eb7458f464344c5ba2dd5f7bb4bc4874f29619535a8f26fe1cc7b5",
+    "targeted_evaluation.json": "c4ac1edbaf352032c33d44a7b00e488b407c6c51cf8ebee563bd37970b7af7c4"
+  },
+  "schema_version": "0.1.0",
+  "sources": {
+    "assignment": {
+      "algorithm": {
+        "name": "identity_jersey_number_assignment_shadow",
+        "version": "1.0.0"
+      },
+      "canonical_digest": "c6d0a1a000641ef0c6d026f44a5119dc2e2c08fe094703d5b90e36d3e3f1ea0a",
+      "filename": "identity_jersey_number_assignment_shadow.json",
+      "schema_version": "0.1.0"
+    },
+    "consensus": {
+      "algorithm": {
+        "name": "identity_jersey_number_consensus_shadow",
+        "parameters": {
+          "minimum_consensus_confidence": 0.9,
+          "minimum_consistent_reads": 3,
+          "minimum_frame_separation": 12,
+          "minimum_read_confidence": 0.9
+        },
+        "version": "1.0.0"
+      },
+      "canonical_digest": "6ba0ffbd41993826dedf8d9f327171b4574d5e3001d5d1cc4a176e1f973342a3",
+      "filename": "identity_jersey_number_consensus_shadow.json",
+      "schema_version": "0.1.0"
+    },
+    "propagation": {
+      "algorithm": {
+        "name": "identity_jersey_number_propagation_shadow",
+        "version": "1.0.0"
+      },
+      "canonical_digest": "14045208b2207eac2f28b4768019672aa8c159d7be8823c1ba5bc70d350b70ff",
+      "filename": "identity_jersey_number_propagation_shadow.json",
+      "schema_version": "0.1.0"
+    },
+    "report": {
+      "algorithm": {
+        "name": "identity_jersey_number_consensus_shadow",
+        "parameters": {
+          "minimum_consensus_confidence": 0.9,
+          "minimum_consistent_reads": 3,
+          "minimum_frame_separation": 12,
+          "minimum_read_confidence": 0.9
+        },
+        "version": "1.0.0"
+      },
+      "canonical_digest": "71613ea969761c682a7f2fb96bc2786e34cf47c3545e064b8bbbc314d32346c5",
+      "filename": "identity_jersey_number_report.json",
+      "schema_version": "0.1.0"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "algorithm": {
+    "name": "identity_jersey_number_assignment_shadow",
+    "version": "1.0.0"
+  },
+  "available": true,
+  "benchmark": "hard3m-targeted-v1",
+  "gates": {
+    "all_assignments_are_shadow_only": true,
+    "benchmark_passed": false,
+    "hard_constraints_cannot_be_bypassed": true,
+    "lineage_fresh": true,
+    "zero_false_assignments_required": true
+  },
+  "safety": {
+    "activation_enabled": false,
+    "activation_requested": false,
+    "automatic_assignments": 0,
+    "benchmark_gate": {
+      "goldset_available": false,
+      "identity_false_assignments": null,
+      "passed": false,
+      "reason_codes": [
+        "jersey_number_goldset_missing"
+      ],
+      "reviewed_subjects": 0
+    },
+    "lineage_gate": {
+      "consensus_digest": "06c6e304fd52a7e2e233c9345752bfd7a4dfcaf10fd45f385e012f23618dc694",
+      "passed": true,
+      "reason_codes": []
+    },
+    "mutates_candidate_identity": false,
+    "mutates_production_identity": false,
+    "writes_player_identity_assignments": false
+  },
+  "schema_version": "0.1.0",
+  "summary": {
+    "status_counts": {
+      "eligible_shadow": 1
+    },
+    "strictly_eligible": 1,
+    "strong_consensus_subjects": 1,
+    "would_assign_if_enabled": 0
+  }
+}

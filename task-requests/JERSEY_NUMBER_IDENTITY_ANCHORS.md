@@ -5,7 +5,7 @@
 ```text
 UZUPEŁNIENIE task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
 SHADOW-FIRST / HIGH-CONFIDENCE IDENTITY EVIDENCE
-N0-N5 ZAIMPLEMENTOWANE W SHADOW
+N0-N5 ORAZ HARDENING N5.1-N5.7 ZAIMPLEMENTOWANE W SHADOW
 NIEGOTOWE DO AUTOMATYCZNYCH CANDIDATE ANI PRODUCTION ASSIGNMENTS
 ```
 
@@ -20,6 +20,15 @@ Dokument opisuje rzeczywisty stan implementacji N0-N5 wraz z targeted benchmarki
 Kierunek implementacji jest poprawny, ale feature nie jest jeszcze gotowym automatycznym recognizerem numerów ani źródłem candidate assignments. N0-N5 udowadniają obecnie, że ręcznie zweryfikowane evidence numeru można bezpiecznie przekształcić w roster suggestion i propagować po istniejącym, ścisłym lineage bez zmiany candidate ani produkcyjnego identity.
 
 Feature nadal nie udowadnia, że system samodzielnie odczytuje numery z wideo z wystarczającą precyzją.
+
+Aktualizacja 2026-07-22:
+
+- N5.1-N5.4 mają wspólny kontrakt blockerów, pełne lineage i rozdzieloną proweniencję seedów;
+- N5.5 ma konserwatywny recognizer constrained-ROI działający wyłącznie w shadow; jego kalibracja na held-out materiale pozostaje otwarta;
+- N5.6 ma lekkie, wersjonowane bundle benchmarkowe `easy90-v1` i `hard3m-targeted-v1` bez wideo i cropów;
+- N5.7 ma frozen contract tests uruchamiane przez istniejący backend CI;
+- N5.9 ma domyślnie wyłączony, odwracalny szkielet candidate-only, którego nie da się aktywować bez N5.8 i dowodu braku zmian production identity;
+- N5.8 pozostaje następnym obowiązkowym etapem walidacyjnym.
 
 ---
 
@@ -677,17 +686,17 @@ Wysoka precision jest ważniejsza niż coverage.
 
 ## Wymagane przed candidate activation
 
-- [ ] wspólny canonical structural blocker set;
-- [ ] N4 gate uwzględnia false positives i no-number negatives;
-- [ ] N5 waliduje pełne lineage;
-- [ ] number seeds i operator seeds są mierzone osobno;
+- [x] wspólny canonical structural blocker set;
+- [x] N4 gate uwzględnia false positives i no-number negatives;
+- [x] N5 waliduje pełne lineage;
+- [x] number seeds i operator seeds są mierzone osobno;
 - [ ] recognizer jest skalibrowany na front/back torso crops;
-- [ ] mierzony jest no-number hallucination rate;
-- [ ] lekkie raporty benchmarków są wersjonowane w Git;
-- [ ] frozen contract tests działają w CI;
+- [x] mierzony jest no-number hallucination rate;
+- [x] lekkie raporty benchmarków są wersjonowane w Git;
+- [x] frozen contract tests działają w CI;
 - [ ] held-out match przechodzi bez identity false assignments;
 - [ ] oceniono więcej niż jeden pozytywny multi-tracklet propagation;
-- [ ] candidate integration jest odwracalne i production-safe.
+- [x] szkielet candidate integration jest odwracalny, domyślnie wyłączony i production-safe;
 
 ## Wymagane przed production use
 

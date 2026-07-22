@@ -76,7 +76,7 @@ class IdentityPromotionSafetyTests(unittest.TestCase):
             {"quality_flags": ["merges_multiple_production_subjects"]},
             {},
         )
-        self.assertEqual(reasons, ["merges_multiple_production_subjects"])
+        self.assertEqual(reasons, ["merges_production_subjects"])
         self.assertFalse(
             structural_conflict_reasons(
                 {"blockers": ["insufficient_visual_evidence"]}, {}, {}

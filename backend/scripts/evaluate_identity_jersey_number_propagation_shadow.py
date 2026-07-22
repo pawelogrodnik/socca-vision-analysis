@@ -26,6 +26,9 @@ def main() -> None:
     parser.add_argument("--candidate-identity", type=Path, required=True)
     parser.add_argument("--shadow-timeline", type=Path, required=True)
     parser.add_argument("--subject-review", type=Path)
+    parser.add_argument("--consensus", type=Path, required=True)
+    parser.add_argument("--roster", type=Path, required=True)
+    parser.add_argument("--jersey-report", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()
 
@@ -37,6 +40,9 @@ def main() -> None:
         _load(args.candidate_identity),
         _load(args.shadow_timeline),
         subject_review_doc=_load(args.subject_review) if args.subject_review else None,
+        consensus_doc=_load(args.consensus),
+        roster_doc=_load(args.roster),
+        jersey_report_doc=_load(args.jersey_report),
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
     _write(output_root / "identity_jersey_number_propagation_shadow.json", document)
@@ -68,6 +74,10 @@ def _markdown(document: dict[str, Any]) -> str:
             f"- Seed subjects: {summary.get('seed_subjects', 0)}",
             f"- Seed tracklets: {summary.get('seed_tracklets', 0)}",
             f"- Propagated tracklets: {summary.get('propagated_tracklets', 0)}",
+            f"- Number seed tracklets: {summary.get('number_seed_tracklets', 0)}",
+            f"- Operator-confirmed tracklets: {summary.get('operator_confirmed_tracklets', 0)}",
+            f"- Number-propagated tracklets: {summary.get('number_propagated_tracklets', 0)}",
+            f"- Operator-inherited tracklets: {summary.get('operator_inherited_tracklets', 0)}",
             f"- Subjects with propagation: {summary.get('subjects_with_propagation', 0)}",
             f"- Safe explicit edges: {summary.get('safe_edges', 0)}",
             f"- Blocked edges: {summary.get('blocked_edges', 0)}",

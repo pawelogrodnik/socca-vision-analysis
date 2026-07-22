@@ -1,0 +1,45 @@
+{
+  "algorithm": {
+    "name": "identity_jersey_number_assignment_shadow",
+    "version": "1.0.0"
+  },
+  "available": true,
+  "benchmark": "easy90-v1",
+  "gates": {
+    "all_assignments_are_shadow_only": true,
+    "benchmark_passed": true,
+    "hard_constraints_cannot_be_bypassed": true,
+    "lineage_fresh": true,
+    "zero_false_assignments_required": true
+  },
+  "safety": {
+    "activation_enabled": false,
+    "activation_requested": false,
+    "automatic_assignments": 0,
+    "benchmark_gate": {
+      "goldset_available": true,
+      "identity_false_assignments": 0,
+      "passed": true,
+      "reason_codes": [],
+      "reviewed_subjects": 17
+    },
+    "lineage_gate": {
+      "consensus_digest": "6ba0ffbd41993826dedf8d9f327171b4574d5e3001d5d1cc4a176e1f973342a3",
+      "passed": true,
+      "reason_codes": []
+    },
+    "mutates_candidate_identity": false,
+    "mutates_production_identity": false,
+    "writes_player_identity_assignments": false
+  },
+  "schema_version": "0.1.0",
+  "summary": {
+    "status_counts": {
+      "blocked": 1,
+      "eligible_shadow": 3
+    },
+    "strictly_eligible": 3,
+    "strong_consensus_subjects": 4,
+    "would_assign_if_enabled": 0
+  }
+}

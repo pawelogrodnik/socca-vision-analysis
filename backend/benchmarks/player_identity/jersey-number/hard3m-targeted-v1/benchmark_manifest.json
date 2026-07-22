@@ -1,0 +1,79 @@
+{
+  "activation_blockers": [
+    "historical_artifacts_precede_n5_hardened_contract",
+    "heldout_multi_match_validation_required",
+    "automatic_recognizer_calibration_required"
+  ],
+  "activation_eligible": false,
+  "artifact_contract": "historical_shadow_baseline",
+  "artifact_source_revision": "d1ef613e1916a503f22607a035288edc432b95f9",
+  "benchmark": "hard3m-targeted-v1",
+  "exporter_base_revision": "01923e57662907d1f26671f2f3a542cb28b59ff1",
+  "outputs": {
+    "assignment_gate_report.json": "cc7c2fdbf96c902765dc6e71fa24bc58fa13da9cd59a05e06647b3e3c0b7d5bc",
+    "consensus_report.json": "9a28f9734a34c014554f8b0c9df6636472742a03f8d3e8218a29e03f861ee52b",
+    "goldset_summary.json": "9ee6a7708f92a607a0e035ccafbab89c7ba8174fbb731cbcdd18c6aa8c0ec855",
+    "propagation_report.json": "2d60564c85fed0f551580edfa823b58aca4606b03e531921507f17ce6d45411f",
+    "targeted_evaluation.json": "664fb053542aff0f5c948db316398e7d20256d31587334bf91103dab40a89d6b"
+  },
+  "schema_version": "0.1.0",
+  "sources": {
+    "assignment": {
+      "algorithm": {
+        "name": "identity_jersey_number_assignment_shadow",
+        "version": "1.0.0"
+      },
+      "canonical_digest": "97a931245b663d8ddddb3605a6de0ead28c19970de5d06a6701906a3a40515f2",
+      "filename": "identity_jersey_number_assignment_shadow.json",
+      "schema_version": "0.1.0"
+    },
+    "consensus": {
+      "algorithm": {
+        "name": "identity_jersey_number_consensus_shadow",
+        "parameters": {
+          "minimum_consensus_confidence": 0.9,
+          "minimum_consistent_reads": 3,
+          "minimum_frame_separation": 12,
+          "minimum_read_confidence": 0.9
+        },
+        "version": "1.0.0"
+      },
+      "canonical_digest": "06c6e304fd52a7e2e233c9345752bfd7a4dfcaf10fd45f385e012f23618dc694",
+      "filename": "identity_jersey_number_consensus_shadow.json",
+      "schema_version": "0.1.0"
+    },
+    "propagation": {
+      "algorithm": {
+        "name": "identity_jersey_number_propagation_shadow",
+        "version": "1.0.0"
+      },
+      "canonical_digest": "f49765377d9289d69796e0e8493230076968e9622eee0bb2ee970f6538a1bbe5",
+      "filename": "identity_jersey_number_propagation_shadow.json",
+      "schema_version": "0.1.0"
+    },
+    "report": {
+      "algorithm": {
+        "name": "identity_jersey_number_consensus_shadow",
+        "parameters": {
+          "minimum_consensus_confidence": 0.9,
+          "minimum_consistent_reads": 3,
+          "minimum_frame_separation": 12,
+          "minimum_read_confidence": 0.9
+        },
+        "version": "1.0.0"
+      },
+      "canonical_digest": "a2dc931d039087489b8a287d740c1152954aa7607f7c373077a113be3d86ff98",
+      "filename": "identity_jersey_number_report.json",
+      "schema_version": "0.1.0"
+    },
+    "targeted_evaluation": {
+      "algorithm": {
+        "name": "identity_jersey_number_targeted_benchmark_evaluation",
+        "version": "1.0.0"
+      },
+      "canonical_digest": "3732869299a04c2615d145b3081cc30e4c929a4812c85c75435f8a12a79a2c7c",
+      "filename": "identity_jersey_number_targeted_benchmark_report.json",
+      "schema_version": "0.1.0"
+    }
+  }
+}

@@ -14,9 +14,9 @@ from app.services.identity_jersey_number_common import (
 )
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_evidence_shadow"
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.1.0"
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "minimum_bbox_width_px": 24.0,
     "minimum_bbox_height_px": 48.0,
@@ -77,6 +77,7 @@ def build_identity_jersey_number_evidence_shadow(
                         "confidence": row["confidence"],
                         "view": row["view"],
                         "clean_jersey_visible": row["clean_jersey_visible"],
+                        "number_panel_visible": row["number_panel_visible"],
                         "reason_codes": row["reason_codes"],
                     },
                     "allowed_review_states": sorted(EVIDENCE_STATES),
@@ -126,6 +127,7 @@ def build_identity_jersey_number_evidence_shadow(
             "states": sorted(EVIDENCE_STATES),
             "number_required_for": ["number_confirmed", "number_conflict"],
             "number_absent_requires_visible_clean_jersey": True,
+            "number_absent_requires_number_panel_visibility": True,
             "unreadable_includes_recognizer_not_run": True,
         },
     }
@@ -197,6 +199,12 @@ def _evidence_row(
         "digits": [int(value) for value in str(number)] if number is not None else [],
         "view": str((observation or {}).get("view") or "unknown"),
         "clean_jersey_visible": bool((observation or {}).get("clean_jersey_visible", False)),
+        "number_panel_visible": _number_panel_visible(observation),
+        "visibility_episode_id": str(
+            (observation or {}).get("visibility_episode_id")
+            or crop.get("visibility_episode_id")
+            or ""
+        ) or None,
         "observation_source": str((observation or {}).get("source") or "not_run"),
         "reason_codes": sorted(set(reasons)),
     }
@@ -233,12 +241,23 @@ def _normalize_observation(
     if state == "number_confirmed" and label != "U" and f"{label}:{number}" not in unique_lookup:
         state = "number_conflict"
         reasons.append("number_not_unique_trusted_roster_match")
-    if state == "number_absent" and not bool(observation.get("clean_jersey_visible", False)):
+    if state == "number_absent" and not _number_panel_visible(observation):
         state = "number_unreadable"
-        reasons.append("number_absent_without_clean_jersey_evidence")
+        reasons.append("number_absent_without_number_panel_evidence")
     if state in {"number_absent", "number_unreadable"}:
         number = None
     return state, number, round(confidence, 4), reasons
+
+
+def _number_panel_visible(observation: dict[str, Any] | None) -> bool:
+    if not observation:
+        return False
+    if "number_panel_visible" in observation:
+        return bool(observation.get("number_panel_visible"))
+    return bool(
+        observation.get("clean_jersey_visible", False)
+        and str(observation.get("view") or "unknown") == "back"
+    )
 
 
 def _observation_map(document: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -17,7 +17,16 @@ from app.services.identity_jersey_number_roster import (
 from app.services.identity_jersey_number_propagation_shadow import (
     build_identity_jersey_number_propagation_shadow,
 )
-from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_jersey_number_candidate_shadow import (
+    build_identity_jersey_number_candidate_integration_shadow,
+)
+from app.services.identity_jersey_number_common import (
+    canonical_digest,
+    lineage_entry,
+)
+from app.services.identity_jersey_number_recognizer_shadow import (
+    build_identity_jersey_number_recognizer_shadow,
+)
 
 
 def match_doc(*, duplicate: bool = False) -> dict:
@@ -80,7 +89,7 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertEqual(len(documents["identity_jersey_number_audit"]["cards"]), 1)
         self.assertEqual(documents["identity_jersey_number_audit"]["summary"]["excluded_unreliable_cards"], 1)
 
-    def test_absent_requires_visible_clean_jersey(self) -> None:
+    def test_absent_requires_visible_number_panel(self) -> None:
         roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
         documents = build_identity_jersey_number_evidence_shadow(
             {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
@@ -91,11 +100,32 @@ class JerseyNumberShadowTests(unittest.TestCase):
         row = documents["identity_jersey_number_evidence_shadow"]["evidence"][0]
 
         self.assertEqual(row["state"], "number_unreadable")
-        self.assertIn("number_absent_without_clean_jersey_evidence", row["reason_codes"])
+        self.assertIn("number_absent_without_number_panel_evidence", row["reason_codes"])
+
+    def test_visible_number_panel_allows_explicit_absent_state(self) -> None:
+        roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
+        documents = build_identity_jersey_number_evidence_shadow(
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
+            roster,
+            observations_doc={
+                "observations": [{
+                    "anchor_crop_id": "crop-10",
+                    "state": "number_absent",
+                    "confidence": 1.0,
+                    "view": "back",
+                    "clean_jersey_visible": True,
+                    "number_panel_visible": True,
+                }]
+            },
+            generated_at="fixed",
+        )
+
+        row = documents["identity_jersey_number_evidence_shadow"]["evidence"][0]
+        self.assertEqual(row["state"], "number_absent")
 
     def test_consensus_requires_multiple_independent_reads(self) -> None:
         roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
-        crops = [crop(10), crop(30), crop(50)]
+        crops = [crop(10), crop(70), crop(130)]
         observations = {
             "observations": [
                 {"anchor_crop_id": row["anchor_crop_id"], "state": "number_confirmed", "number": 92, "confidence": 0.97}
@@ -159,7 +189,9 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertIn("stale_or_missing_lineage", result["candidates"][0]["blockers"])
 
     def test_n4_can_become_eligible_but_never_writes_assignment(self) -> None:
-        consensus = {
+        evidence = _document("evidence", {"evidence": []})
+        roster = _document("roster", {"players": []})
+        consensus = _document("consensus", {
             "source": {"evidence_digest": "evidence", "roster_digest": "roster", "goldset_digest": "gold"},
             "subjects": [{
                 "candidate_subject_id": "s1", "team_label": "A", "strong_consensus": True,
@@ -167,21 +199,39 @@ class JerseyNumberShadowTests(unittest.TestCase):
                 "conflicting_reads": 0,
                 "roster_match": {"team_label": "A", "player_id": "p92", "player_name": "Pawel"},
             }],
-        }
-        review = {
+        })
+        consensus["source"]["evidence_digest"] = canonical_digest(evidence)
+        consensus["source"]["roster_digest"] = canonical_digest(roster)
+        review = _document("review", {
             "source": {"jersey_consensus_digest": canonical_digest(consensus)},
             "cards": [{
                 "candidate_subject_id": "s1", "recommended_player": {"player_id": "p92"},
                 "blockers": [], "quality_flags": [], "reason_codes": [],
             }],
-        }
-        report = {
+        })
+        report = _document("report", {
             "source": dict(consensus["source"]),
-            "goldset_evaluation": {"available": True, "expected_subjects": 8, "identity_false_assignments": 0},
-        }
+            "goldset_evaluation": {
+                "available": True,
+                "reviewed_subjects": 8,
+                "reviewed_numbered_subjects": 3,
+                "reviewed_no_number_subjects": 1,
+                "reviewed_unreadable_subjects": 1,
+                "heldout_matches": 1,
+                "identity_false_assignments": 0,
+                "false_positive": 0,
+                "precision": 1.0,
+            },
+        })
 
         result = build_identity_jersey_number_assignment_shadow(
-            consensus, review, report, activation_requested=True, generated_at="fixed"
+            consensus,
+            review,
+            report,
+            evidence_doc=evidence,
+            roster_doc=roster,
+            activation_requested=True,
+            generated_at="fixed",
         )
 
         self.assertTrue(result["safety"]["activation_enabled"])
@@ -218,12 +268,11 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertIn("weak_reid_only_edge", result["edge_audit"][0]["blockers"])
 
     def test_n5_blocks_candidate_timeline_tracklet_mismatch(self) -> None:
-        assignment, evidence, candidate, timeline = _propagation_documents()
+        documents = _propagation_documents()
+        timeline = documents["timeline"]
         timeline["subjects"][0]["tracklet_ids"] = ["t1"]
 
-        result = build_identity_jersey_number_propagation_shadow(
-            assignment, evidence, candidate, timeline, generated_at="fixed"
-        )
+        result = _build_propagation(documents)
 
         self.assertEqual(result["subjects"][0]["propagated_tracklet_ids"], [])
         self.assertIn(
@@ -258,15 +307,121 @@ class JerseyNumberShadowTests(unittest.TestCase):
 
         documents = _propagation_documents()
         originals = copy.deepcopy(documents)
-        first = build_identity_jersey_number_propagation_shadow(
-            *documents, generated_at="fixed"
-        )
-        second = build_identity_jersey_number_propagation_shadow(
-            *documents, generated_at="fixed"
-        )
+        first = _build_propagation(documents)
+        second = _build_propagation(documents)
 
         self.assertEqual(first, second)
         self.assertEqual(documents, originals)
+
+    def test_n5_blocks_stale_assignment_lineage(self) -> None:
+        documents = _propagation_documents()
+        documents["consensus"]["subjects"].append({"candidate_subject_id": "changed"})
+
+        result = _build_propagation(documents)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("stale_jersey_number_lineage", result["subjects"][0]["subject_blockers"])
+
+    def test_operator_membership_is_not_reported_as_number_propagation(self) -> None:
+        documents = _propagation_documents(operator_confirmed=True)
+
+        result = _build_propagation(documents)
+        subject = result["subjects"][0]
+
+        self.assertEqual(subject["number_seed_tracklet_ids"], ["t1"])
+        self.assertEqual(subject["number_propagated_tracklet_ids"], ["t2"])
+        self.assertEqual(subject["operator_confirmed_tracklet_ids"], ["t1", "t2"])
+        self.assertEqual(subject["operator_inherited_tracklet_ids"], [])
+
+    def test_candidate_integration_is_disabled_by_default(self) -> None:
+        documents = _propagation_documents()
+        propagation = _build_propagation(documents)
+
+        candidate = build_identity_jersey_number_candidate_integration_shadow(
+            documents["assignment"], propagation, generated_at="fixed"
+        )
+
+        self.assertEqual(candidate["status"], "disabled")
+        self.assertEqual(candidate["suggestions"], [])
+        self.assertEqual(candidate["safety"]["automatic_assignments"], 0)
+
+    def test_candidate_integration_requires_heldout_and_unchanged_production(self) -> None:
+        candidate = build_identity_jersey_number_candidate_integration_shadow(
+            {"safety": {"benchmark_gate": {"passed": True}}, "candidates": []},
+            {
+                "status": "fresh",
+                "safety": {"lineage_gate": {"passed": True}},
+                "summary": {"cross_subject_propagations": 0, "automatic_assignments": 0},
+                "subjects": [],
+            },
+            activation_requested=True,
+            generated_at="fixed",
+        )
+
+        self.assertEqual(candidate["status"], "disabled")
+        self.assertIn("heldout_targeted_evaluation_missing", candidate["safety"]["reason_codes"])
+        self.assertIn(
+            "production_identity_unchanged_not_verified",
+            candidate["safety"]["reason_codes"],
+        )
+
+    def test_candidate_integration_emits_only_reversible_review_suggestion(self) -> None:
+        candidate = build_identity_jersey_number_candidate_integration_shadow(
+            {
+                "safety": {"benchmark_gate": {"passed": True}},
+                "candidates": [
+                    {
+                        "candidate_subject_id": "s1",
+                        "strictly_eligible": True,
+                        "blockers": [],
+                        "player_id": "p15",
+                        "player_name": "Piotrek",
+                        "team_label": "A",
+                        "jersey_number": "15",
+                    }
+                ],
+            },
+            {
+                "status": "fresh",
+                "safety": {"lineage_gate": {"passed": True}},
+                "summary": {"cross_subject_propagations": 0, "automatic_assignments": 0},
+                "subjects": [
+                    {
+                        "candidate_subject_id": "s1",
+                        "subject_blockers": [],
+                        "number_seed_tracklet_ids": ["t1"],
+                        "number_propagated_tracklet_ids": ["t2"],
+                    }
+                ],
+            },
+            targeted_evaluation_doc={
+                "summary": {"safety_passed": True, "unexpected_propagated_tracklets": 0}
+            },
+            production_identity_unchanged=True,
+            activation_requested=True,
+            generated_at="fixed",
+        )
+
+        self.assertEqual(candidate["status"], "ready_shadow")
+        self.assertEqual(len(candidate["suggestions"]), 1)
+        self.assertFalse(candidate["suggestions"][0]["automatic_assignment"])
+        self.assertEqual(candidate["safety"]["automatic_assignments"], 0)
+        self.assertFalse(candidate["safety"]["mutates_candidate_identity"])
+
+    def test_recognizer_does_not_hallucinate_when_crop_is_missing(self) -> None:
+        from pathlib import Path
+
+        recognizer = build_identity_jersey_number_recognizer_shadow(
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
+            build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed"),
+            crop_root=Path("/does/not/exist"),
+            generated_at="fixed",
+        )
+
+        row = recognizer["observations"][0]
+        self.assertEqual(row["state"], "number_unreadable")
+        self.assertIsNone(row["number"])
+        self.assertFalse(row["number_panel_visible"])
 
 
 def _propagation_documents(
@@ -274,8 +429,44 @@ def _propagation_documents(
     event_overrides: dict | None = None,
     include_event: bool = True,
     extra_evidence: list[dict] | None = None,
-) -> tuple[dict, dict, dict, dict]:
-    assignment = {
+    operator_confirmed: bool = False,
+) -> dict[str, dict]:
+    evidence = _document("evidence", {"evidence": []})
+    roster = _document("roster", {"players": []})
+    consensus = _document("consensus", {
+        "source": {
+            "evidence_digest": canonical_digest(evidence),
+            "roster_digest": canonical_digest(roster),
+            "goldset_digest": "gold",
+        },
+        "subjects": [],
+    })
+    subject_review = _document("review", {
+        "source": {"jersey_consensus_digest": canonical_digest(consensus)},
+        "cards": [{
+            "candidate_subject_id": "s1",
+            "recommended_player": {"player_id": "p92"},
+            "operator_decision": {
+                "decision": "assign_roster_player" if operator_confirmed else "unresolved",
+                "player_id": "p92" if operator_confirmed else None,
+            },
+        }],
+    })
+    report = _document("report", {
+        "source": dict(consensus["source"]),
+        "goldset_evaluation": {
+            "available": True,
+            "reviewed_subjects": 8,
+            "reviewed_numbered_subjects": 3,
+            "reviewed_no_number_subjects": 1,
+            "reviewed_unreadable_subjects": 1,
+            "heldout_matches": 1,
+            "identity_false_assignments": 0,
+            "false_positive": 0,
+            "precision": 1.0,
+        },
+    })
+    assignment = _document("assignment", {
         "candidates": [{
             "candidate_subject_id": "s1",
             "team_label": "A",
@@ -283,7 +474,21 @@ def _propagation_documents(
             "player_id": "p92",
             "player_name": "Pawel",
             "strictly_eligible": True,
-        }]
+        }],
+    })
+    assignment["source"] = {
+        "consensus_digest": canonical_digest(consensus),
+        "subject_review_digest": canonical_digest(subject_review),
+        "jersey_report_digest": canonical_digest(report),
+        "evidence_digest": canonical_digest(evidence),
+        "roster_digest": canonical_digest(roster),
+        "lineage": {
+            "consensus": lineage_entry(consensus),
+            "subject_review": lineage_entry(subject_review),
+            "jersey_report": lineage_entry(report),
+            "evidence": lineage_entry(evidence),
+            "roster": lineage_entry(roster),
+        },
     }
     evidence_rows = [{
         "candidate_subject_id": "s1",
@@ -293,15 +498,15 @@ def _propagation_documents(
         "number": "92",
     }]
     evidence_rows.extend(extra_evidence or [])
-    evidence = {"evidence": evidence_rows}
-    candidate = {
+    evidence["evidence"] = evidence_rows
+    candidate = _document("candidate", {
         "subjects": [{
             "candidate_subject_id": "s1",
             "team_label": "A",
             "tracklet_ids": ["t1", "t2"],
             "quality_flags": [],
-        }]
-    }
+        }],
+    })
     event = {
         "shadow_subject_id": "s1",
         "team_label": "A",
@@ -315,17 +520,64 @@ def _propagation_documents(
         "overlap_frames": 0,
     }
     event.update(event_overrides or {})
-    timeline = {
+    timeline = _document("timeline", {
         "subjects": [{"shadow_subject_id": "s1", "team_label": "A", "tracklet_ids": ["t1", "t2"]}],
         "transition_events": [event] if include_event else [],
+    })
+    consensus["source"]["evidence_digest"] = canonical_digest(evidence)
+    consensus["source"]["roster_digest"] = canonical_digest(roster)
+    subject_review["source"]["jersey_consensus_digest"] = canonical_digest(consensus)
+    report["source"] = dict(consensus["source"])
+    assignment["source"] = {
+        "consensus_digest": canonical_digest(consensus),
+        "subject_review_digest": canonical_digest(subject_review),
+        "jersey_report_digest": canonical_digest(report),
+        "evidence_digest": canonical_digest(evidence),
+        "roster_digest": canonical_digest(roster),
+        "lineage": {
+            "consensus": lineage_entry(consensus),
+            "subject_review": lineage_entry(subject_review),
+            "jersey_report": lineage_entry(report),
+            "evidence": lineage_entry(evidence),
+            "roster": lineage_entry(roster),
+        },
     }
-    return assignment, evidence, candidate, timeline
+    return {
+        "assignment": assignment,
+        "evidence": evidence,
+        "candidate": candidate,
+        "timeline": timeline,
+        "subject_review": subject_review,
+        "consensus": consensus,
+        "roster": roster,
+        "report": report,
+    }
 
 
 def _propagation_result(**kwargs) -> dict:
+    return _build_propagation(_propagation_documents(**kwargs))
+
+
+def _build_propagation(documents: dict[str, dict]) -> dict:
     return build_identity_jersey_number_propagation_shadow(
-        *_propagation_documents(**kwargs), generated_at="fixed"
+        documents["assignment"],
+        documents["evidence"],
+        documents["candidate"],
+        documents["timeline"],
+        subject_review_doc=documents["subject_review"],
+        consensus_doc=documents["consensus"],
+        roster_doc=documents["roster"],
+        jersey_report_doc=documents["report"],
+        generated_at="fixed",
     )
+
+
+def _document(name: str, body: dict) -> dict:
+    return {
+        "schema_version": "test",
+        "algorithm": {"name": f"test_{name}", "version": "1.0.0", "parameters": {}},
+        **body,
+    }
 
 
 if __name__ == "__main__":

@@ -1,0 +1,28 @@
+{
+  "algorithm": {
+    "name": "identity_jersey_number_propagation_shadow",
+    "version": "1.0.0"
+  },
+  "available": true,
+  "benchmark": "easy90-v1",
+  "safety": {
+    "automatic_assignments": 0,
+    "merges_tracklets": false,
+    "mutates_candidate_identity": false,
+    "mutates_production_identity": false,
+    "number_similarity_creates_edges": false,
+    "writes_player_identity_assignments": false
+  },
+  "schema_version": "0.1.0",
+  "summary": {
+    "automatic_assignments": 0,
+    "blocked_edges": 0,
+    "blocked_reason_counts": {},
+    "cross_subject_propagations": 0,
+    "propagated_tracklets": 0,
+    "safe_edges": 0,
+    "seed_subjects": 3,
+    "seed_tracklets": 3,
+    "subjects_with_propagation": 0
+  }
+}

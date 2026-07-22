@@ -1,0 +1,31 @@
+{
+  "algorithm": {
+    "name": "identity_jersey_number_consensus_shadow",
+    "parameters": {
+      "minimum_consensus_confidence": 0.9,
+      "minimum_consistent_reads": 3,
+      "minimum_frame_separation": 12,
+      "minimum_read_confidence": 0.9
+    },
+    "version": "1.0.0"
+  },
+  "available": true,
+  "benchmark": "easy90-v1",
+  "safety": {
+    "automatic_assignments": 0,
+    "mutates_candidate_identity": false,
+    "mutates_production_identity": false,
+    "single_crop_consensus_allowed": false
+  },
+  "schema_version": "0.1.0",
+  "summary": {
+    "strong_subject_consensus": 4,
+    "subject_consensus_rows": 91,
+    "subject_state_counts": {
+      "number_absent": 11,
+      "number_confirmed": 4,
+      "number_unreadable": 76
+    },
+    "tracklet_consensus_rows": 102
+  }
+}

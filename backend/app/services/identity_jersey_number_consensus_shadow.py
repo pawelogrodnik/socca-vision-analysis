@@ -7,14 +7,15 @@ from typing import Any
 from app.services.identity_jersey_number_common import canonical_digest, stable_key
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_consensus_shadow"
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.1.0"
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "minimum_consistent_reads": 3,
     "minimum_frame_separation": 12,
     "minimum_read_confidence": 0.90,
     "minimum_consensus_confidence": 0.90,
+    "minimum_visibility_episode_gap_frames": 45,
 }
 
 
@@ -101,7 +102,11 @@ def _group_consensus(
             groups[key].append(row)
     result: list[dict[str, Any]] = []
     for group_id, group_rows in sorted(groups.items()):
-        selected = _independent_reads(group_rows, int(parameters["minimum_frame_separation"]))
+        selected = _independent_reads(
+            group_rows,
+            int(parameters["minimum_frame_separation"]),
+            int(parameters["minimum_visibility_episode_gap_frames"]),
+        )
         trusted = [
             row for row in selected
             if row.get("state") == "number_confirmed"
@@ -151,6 +156,9 @@ def _group_consensus(
                 "conflicting_reads": competing + len(strong_conflicts),
                 "absent_reads": absent_reads,
                 "independent_reads": len(selected),
+                "independent_visibility_episodes": len(
+                    {_episode_key(row, int(parameters["minimum_visibility_episode_gap_frames"])) for row in selected}
+                ),
                 "unique_supporting_tracklets": len({row.get("tracklet_id") for row in trusted if row.get("tracklet_id")}),
                 "first_support_frame": min((int(row["frame"]) for row in trusted), default=None),
                 "last_support_frame": max((int(row["frame"]) for row in trusted), default=None),
@@ -169,9 +177,14 @@ def _group_consensus(
     return result
 
 
-def _independent_reads(rows: list[dict[str, Any]], minimum_gap: int) -> list[dict[str, Any]]:
+def _independent_reads(
+    rows: list[dict[str, Any]],
+    minimum_gap: int,
+    episode_gap: int,
+) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     last_by_tracklet: dict[str, int] = {}
+    used_episodes: set[str] = set()
     for row in sorted(rows, key=lambda value: (int(value.get("frame") or 0), -float(value.get("confidence") or 0.0))):
         if not (row.get("quality") or {}).get("eligible"):
             continue
@@ -179,9 +192,22 @@ def _independent_reads(rows: list[dict[str, Any]], minimum_gap: int) -> list[dic
         frame = int(row.get("frame") or 0)
         if tracklet in last_by_tracklet and frame - last_by_tracklet[tracklet] < minimum_gap:
             continue
+        episode = _episode_key(row, episode_gap)
+        if episode in used_episodes:
+            continue
         selected.append(row)
         last_by_tracklet[tracklet] = frame
+        used_episodes.add(episode)
     return selected
+
+
+def _episode_key(row: dict[str, Any], episode_gap: int) -> str:
+    explicit = row.get("visibility_episode_id")
+    if explicit:
+        return str(explicit)
+    tracklet = str(row.get("tracklet_id") or "unknown")
+    frame = int(row.get("frame") or 0)
+    return f"legacy:{tracklet}:{frame // max(1, episode_gap)}"
 
 
 def _consensus_confidence(
@@ -226,11 +252,38 @@ def _evaluate_goldset(
 ) -> dict[str, Any]:
     expected_rows = goldset.get("subjects") or goldset.get("expected_subjects") or []
     if not expected_rows:
-        return {"available": False, "identity_false_assignments": None}
+        return {
+            "available": False,
+            "identity_false_assignments": None,
+            "false_positive": None,
+            "precision": None,
+        }
+    reviewed: dict[str, dict[str, Any]] = {}
+    for row in expected_rows:
+        if not isinstance(row, dict) or not row.get("candidate_subject_id"):
+            continue
+        subject_id = str(row["candidate_subject_id"])
+        number = row.get("jersey_number")
+        state = str(row.get("expected_state") or row.get("state") or "")
+        if number is not None:
+            state = "number_confirmed"
+        if state in {"number_absent", "no_number"}:
+            state = "number_absent"
+        elif state in {"number_unreadable", "unreadable", "negative"}:
+            state = "number_unreadable"
+        elif state != "number_confirmed":
+            state = "unreviewed"
+        reviewed[subject_id] = {
+            "state": state,
+            "jersey_number": str(number) if number is not None else None,
+        }
     expected = {
-        str(row.get("candidate_subject_id")): str(row.get("jersey_number"))
-        for row in expected_rows
-        if isinstance(row, dict) and row.get("candidate_subject_id") and row.get("jersey_number") is not None
+        key: str(value["jersey_number"])
+        for key, value in reviewed.items()
+        if value["state"] == "number_confirmed" and value["jersey_number"] is not None
+    }
+    reviewed_negatives = {
+        key for key, value in reviewed.items() if value["state"] in {"number_absent", "number_unreadable"}
     }
     predicted = {
         str(row.get("candidate_subject_id")): str(row.get("consensus_number"))
@@ -238,15 +291,27 @@ def _evaluate_goldset(
     }
     true_positive = sum(predicted.get(key) == value for key, value in expected.items())
     false_assignment = sum(key in expected and expected[key] != value for key, value in predicted.items())
-    false_positive = sum(key not in expected for key in predicted)
+    false_positive = sum(key in reviewed_negatives for key in predicted)
+    outside_reviewed_scope = sum(key not in reviewed for key in predicted)
     missed = sum(key not in predicted for key in expected)
     precision_denominator = true_positive + false_assignment + false_positive
     return {
         "available": True,
         "expected_subjects": len(expected),
+        "reviewed_subjects": len(reviewed),
+        "reviewed_numbered_subjects": len(expected),
+        "reviewed_no_number_subjects": sum(
+            value["state"] == "number_absent" for value in reviewed.values()
+        ),
+        "reviewed_unreadable_subjects": sum(
+            value["state"] == "number_unreadable" for value in reviewed.values()
+        ),
+        "reviewed_negative_subjects": len(reviewed_negatives),
+        "heldout_matches": len(goldset.get("heldout_matches") or []),
         "suggested_subjects": len(predicted),
         "true_positive": true_positive,
         "false_positive": false_positive,
+        "predictions_outside_reviewed_scope": outside_reviewed_scope,
         "missed": missed,
         "identity_false_assignments": false_assignment,
         "precision": round(true_positive / precision_denominator, 6) if precision_denominator else None,

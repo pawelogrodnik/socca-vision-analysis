@@ -11,7 +11,7 @@ from app.services.identity_jersey_number_common import canonical_digest
 
 SCHEMA_VERSION = "0.1.0"
 ALGORITHM_NAME = "identity_jersey_number_targeted_benchmark_selection"
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.1.0"
 
 
 def build_targeted_jersey_number_benchmark(
@@ -22,6 +22,9 @@ def build_targeted_jersey_number_benchmark(
     max_subjects: int = 7,
     max_crops: int = 30,
     min_seed_crops: int = 3,
+    min_independent_seed_reads: int = 3,
+    minimum_seed_frame_separation: int = 12,
+    minimum_visibility_episode_gap_frames: int = 45,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Select one readable seed tracklet per multi-tracklet subject.
@@ -29,7 +32,14 @@ def build_targeted_jersey_number_benchmark(
     Target tracklet crops are deliberately excluded. They remain unseen number
     evidence, which makes the later N5 propagation result measurable.
     """
-    if max_subjects < 1 or max_crops < 1 or min_seed_crops < 1:
+    if (
+        max_subjects < 1
+        or max_crops < 1
+        or min_seed_crops < 1
+        or min_independent_seed_reads < 1
+        or minimum_seed_frame_separation < 1
+        or minimum_visibility_episode_gap_frames < 1
+    ):
         raise ValueError("Benchmark limits must be positive")
 
     generated = generated_at or datetime.now(timezone.utc).isoformat()
@@ -64,15 +74,24 @@ def build_targeted_jersey_number_benchmark(
         for crop in source_card.get("anchor_crops") or []:
             if isinstance(crop, dict) and crop.get("tracklet_id"):
                 crops_by_tracklet[str(crop["tracklet_id"])].append(crop)
-        seed_options = [
-            (_tracklet_rank(crops), tracklet_id, crops)
-            for tracklet_id, crops in crops_by_tracklet.items()
-            if len(crops) >= min_seed_crops
-        ]
+        seed_options = []
+        for tracklet_id, crops in crops_by_tracklet.items():
+            if len(crops) < min_seed_crops:
+                continue
+            independent_crops = _independent_seed_crops(
+                crops,
+                minimum_frame_separation=minimum_seed_frame_separation,
+                visibility_episode_gap_frames=minimum_visibility_episode_gap_frames,
+            )
+            if len(independent_crops) < min_independent_seed_reads:
+                continue
+            seed_options.append(
+                (_tracklet_rank(crops), tracklet_id, crops, independent_crops)
+            )
         if not seed_options:
-            rejection_counts["no_tracklet_with_enough_seed_crops"] += 1
+            rejection_counts["no_consensus_eligible_seed_tracklet"] += 1
             continue
-        _, seed_tracklet_id, seed_crops = max(
+        _, seed_tracklet_id, seed_crops, independent_seed_crops = max(
             seed_options,
             key=lambda row: (row[0], row[1]),
         )
@@ -91,6 +110,11 @@ def build_targeted_jersey_number_benchmark(
             "target_tracklet_ids": target_tracklet_ids,
             "candidate_tracklet_ids": tracklet_ids,
             "target_crops_intentionally_hidden": True,
+            "independent_seed_crop_ids": [
+                str(crop.get("anchor_crop_id") or "") for crop in independent_seed_crops
+            ],
+            "independent_seed_reads": len(independent_seed_crops),
+            "consensus_eligible_seed": True,
         }
         eligible.append(
             {
@@ -124,6 +148,9 @@ def build_targeted_jersey_number_benchmark(
                 "max_subjects": max_subjects,
                 "max_crops": max_crops,
                 "min_seed_crops": min_seed_crops,
+                "min_independent_seed_reads": min_independent_seed_reads,
+                "minimum_seed_frame_separation": minimum_seed_frame_separation,
+                "minimum_visibility_episode_gap_frames": minimum_visibility_episode_gap_frames,
                 "ranking": "median_bbox_area_then_mean_detection_confidence_then_crop_count",
             },
         },
@@ -165,3 +192,34 @@ def _tracklet_rank(crops: list[dict[str, Any]]) -> tuple[float, float, int]:
         sum(confidences) / len(confidences) if confidences else 0.0,
         len(crops),
     )
+
+
+def _independent_seed_crops(
+    crops: list[dict[str, Any]],
+    *,
+    minimum_frame_separation: int,
+    visibility_episode_gap_frames: int,
+) -> list[dict[str, Any]]:
+    """Estimate whether selected crops can satisfy the production consensus gate."""
+    selected: list[dict[str, Any]] = []
+    used_episodes: set[str] = set()
+    last_frame: int | None = None
+    for crop in sorted(
+        crops,
+        key=lambda row: (int(row.get("frame") or 0), str(row.get("anchor_crop_id") or "")),
+    ):
+        frame = int(crop.get("frame") or 0)
+        if last_frame is not None and frame - last_frame < minimum_frame_separation:
+            continue
+        explicit_episode = crop.get("visibility_episode_id")
+        episode = (
+            str(explicit_episode)
+            if explicit_episode
+            else f"legacy:{str(crop.get('tracklet_id') or 'unknown')}:{frame // visibility_episode_gap_frames}"
+        )
+        if episode in used_episodes:
+            continue
+        selected.append(crop)
+        last_frame = frame
+        used_episodes.add(episode)
+    return selected

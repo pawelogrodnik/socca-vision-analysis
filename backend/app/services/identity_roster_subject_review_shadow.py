@@ -6,7 +6,10 @@ import hashlib
 import json
 from typing import Any
 
-from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_jersey_number_common import (
+    canonical_digest,
+    canonical_structural_blockers,
+)
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -154,14 +157,19 @@ def _review_card(
             }
         )
     min_crops = int(parameters["min_visual_crops_for_ready"])
-    review_status = _review_status("conflict" if jersey_conflict else roster_status, crop_count, min_crops)
+    blockers = _blockers(roster_status, crop_count, min_crops, roster_card)
+    if jersey_conflict:
+        blockers = sorted(set(blockers + ["jersey_number_roster_conflict"]))
+    has_structural_blocker = bool(canonical_structural_blockers(blockers))
+    review_status = _review_status(
+        "conflict" if jersey_conflict or has_structural_blocker else roster_status,
+        crop_count,
+        min_crops,
+    )
     allowed_actions = _allowed_actions(review_status, bool(effective_roster_card.get("recommended_player_id")))
     recommended_player = _recommended_player(effective_roster_card)
     roster_candidates = _roster_candidates(effective_roster_card, parameters=parameters)
     roster_candidates = _include_jersey_roster_candidate(roster_candidates, jersey_consensus)
-    blockers = _blockers(roster_status, crop_count, min_crops, roster_card)
-    if jersey_conflict:
-        blockers = sorted(set(blockers + ["jersey_number_roster_conflict"]))
     review_card_key = _review_card_key(subject_id, roster_card.get("anchor_key"))
     return {
         "review_card_key": review_card_key,
@@ -304,7 +312,10 @@ def _blockers(
     minimum: int,
     roster_card: dict[str, Any],
 ) -> list[str]:
-    blockers: list[str] = []
+    blockers = canonical_structural_blockers(
+        list(roster_card.get("quality_flags") or [])
+        + list(roster_card.get("reason_codes") or [])
+    )
     if roster_status == "conflict":
         blockers.append("roster_identity_conflict")
     if crop_count < minimum:

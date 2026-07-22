@@ -27,6 +27,9 @@ def main() -> None:
     parser.add_argument("--max-subjects", type=int, default=7)
     parser.add_argument("--max-crops", type=int, default=30)
     parser.add_argument("--min-seed-crops", type=int, default=3)
+    parser.add_argument("--min-independent-seed-reads", type=int, default=3)
+    parser.add_argument("--minimum-seed-frame-separation", type=int, default=12)
+    parser.add_argument("--minimum-visibility-episode-gap-frames", type=int, default=45)
     args = parser.parse_args()
 
     output = args.output_root.resolve()
@@ -39,6 +42,9 @@ def main() -> None:
         max_subjects=args.max_subjects,
         max_crops=args.max_crops,
         min_seed_crops=args.min_seed_crops,
+        min_independent_seed_reads=args.min_independent_seed_reads,
+        minimum_seed_frame_separation=args.minimum_seed_frame_separation,
+        minimum_visibility_episode_gap_frames=args.minimum_visibility_episode_gap_frames,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
     _copy_artifacts(source_anchor_path.parent, output, document)

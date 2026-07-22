@@ -4,20 +4,24 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-from app.services.identity_jersey_number_common import canonical_digest, stable_key
+from app.services.identity_jersey_number_common import (
+    algorithm_signature,
+    canonical_digest,
+    canonical_structural_blockers,
+    lineage_entry,
+    stable_key,
+)
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_assignment_shadow"
-ALGORITHM_VERSION = "1.0.0"
-STRUCTURAL_BLOCKERS = {
-    "jersey_number_roster_conflict",
-    "parallel_roster_candidate_conflict",
-    "roster_identity_conflict",
-    "temporal_overlap_conflict",
-    "parallel_distant_observation",
-    "structural_identity_conflict",
-    "cross_team_evidence",
+ALGORITHM_VERSION = "1.1.0"
+DEFAULT_BENCHMARK_GATE_PARAMETERS: dict[str, Any] = {
+    "minimum_reviewed_numbered_subjects": 3,
+    "minimum_reviewed_no_number_subjects": 1,
+    "minimum_reviewed_unreadable_subjects": 1,
+    "minimum_heldout_matches": 1,
+    "required_precision": 1.0,
 }
 
 
@@ -26,8 +30,11 @@ def build_identity_jersey_number_assignment_shadow(
     subject_review_doc: dict[str, Any],
     jersey_report_doc: dict[str, Any],
     *,
+    evidence_doc: dict[str, Any] | None = None,
+    roster_doc: dict[str, Any] | None = None,
     activation_requested: bool = False,
     generated_at: str | None = None,
+    benchmark_gate_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a gated N4 assignment plan without mutating candidate or production identity."""
     generated = generated_at or datetime.now(timezone.utc).isoformat()
@@ -36,8 +43,18 @@ def build_identity_jersey_number_assignment_shadow(
         for row in subject_review_doc.get("cards") or []
         if isinstance(row, dict) and row.get("candidate_subject_id")
     }
-    benchmark_gate = _benchmark_gate(jersey_report_doc)
-    lineage_gate = _lineage_gate(consensus_doc, subject_review_doc, jersey_report_doc)
+    gate_parameters = {
+        **DEFAULT_BENCHMARK_GATE_PARAMETERS,
+        **(benchmark_gate_parameters or {}),
+    }
+    benchmark_gate = _benchmark_gate(jersey_report_doc, gate_parameters)
+    lineage_gate = _lineage_gate(
+        consensus_doc,
+        subject_review_doc,
+        jersey_report_doc,
+        evidence_doc=evidence_doc,
+        roster_doc=roster_doc,
+    )
     activation_enabled = bool(
         activation_requested and benchmark_gate["passed"] and lineage_gate["passed"]
     )
@@ -56,12 +73,25 @@ def build_identity_jersey_number_assignment_shadow(
         "consensus_digest": canonical_digest(consensus_doc),
         "subject_review_digest": canonical_digest(subject_review_doc),
         "jersey_report_digest": canonical_digest(jersey_report_doc),
+        "evidence_digest": canonical_digest(evidence_doc or {}),
+        "roster_digest": canonical_digest(roster_doc or {}),
+        "lineage": {
+            "consensus": lineage_entry(consensus_doc),
+            "subject_review": lineage_entry(subject_review_doc),
+            "jersey_report": lineage_entry(jersey_report_doc),
+            "evidence": lineage_entry(evidence_doc or {}),
+            "roster": lineage_entry(roster_doc or {}),
+        },
     }
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated,
         "mode": "shadow_candidate_plan",
-        "algorithm": {"name": ALGORITHM_NAME, "version": ALGORITHM_VERSION},
+        "algorithm": {
+            "name": ALGORITHM_NAME,
+            "version": ALGORITHM_VERSION,
+            "parameters": {"benchmark_gate": gate_parameters},
+        },
         "source": source,
         "safety": {
             "mutates_candidate_identity": False,
@@ -119,10 +149,10 @@ def _candidate(
     ):
         blockers.append("cross_team_evidence")
     if review_card:
-        evidence = set(str(value) for value in review_card.get("blockers") or [])
-        evidence.update(str(value) for value in review_card.get("quality_flags") or [])
-        evidence.update(str(value) for value in review_card.get("reason_codes") or [])
-        blockers.extend(sorted(evidence & STRUCTURAL_BLOCKERS))
+        evidence = list(review_card.get("blockers") or [])
+        evidence.extend(review_card.get("quality_flags") or [])
+        evidence.extend(review_card.get("reason_codes") or [])
+        blockers.extend(canonical_structural_blockers(evidence))
         recommended = (review_card.get("recommended_player") or {}).get("player_id")
         if recommended and str(recommended) != str(roster_match.get("player_id") or ""):
             blockers.append("jersey_number_roster_conflict")
@@ -150,24 +180,51 @@ def _candidate(
     }
 
 
-def _benchmark_gate(report: dict[str, Any]) -> dict[str, Any]:
+def _benchmark_gate(
+    report: dict[str, Any],
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
     evaluation = report.get("goldset_evaluation") or {}
     available = bool(evaluation.get("available"))
     false_assignments = evaluation.get("identity_false_assignments")
-    reviewed = int(evaluation.get("expected_subjects") or 0)
-    passed = bool(available and reviewed > 0 and false_assignments == 0)
+    false_positive = evaluation.get("false_positive")
+    precision = evaluation.get("precision")
+    numbered = int(evaluation.get("reviewed_numbered_subjects") or 0)
+    no_number = int(evaluation.get("reviewed_no_number_subjects") or 0)
+    unreadable = int(evaluation.get("reviewed_unreadable_subjects") or 0)
+    heldout = int(evaluation.get("heldout_matches") or 0)
     reasons: list[str] = []
     if not available:
         reasons.append("jersey_number_goldset_missing")
-    elif reviewed <= 0:
+    elif int(evaluation.get("reviewed_subjects") or 0) <= 0:
         reasons.append("jersey_number_goldset_empty")
     if available and false_assignments != 0:
         reasons.append("jersey_number_goldset_has_false_assignments")
+    if available and false_positive != 0:
+        reasons.append("jersey_number_goldset_has_false_positives")
+    if available and precision != float(parameters["required_precision"]):
+        reasons.append("jersey_number_precision_below_required")
+    if numbered < int(parameters["minimum_reviewed_numbered_subjects"]):
+        reasons.append("insufficient_reviewed_numbered_subjects")
+    if no_number < int(parameters["minimum_reviewed_no_number_subjects"]):
+        reasons.append("insufficient_reviewed_no_number_subjects")
+    if unreadable < int(parameters["minimum_reviewed_unreadable_subjects"]):
+        reasons.append("insufficient_reviewed_unreadable_subjects")
+    if heldout < int(parameters["minimum_heldout_matches"]):
+        reasons.append("heldout_match_missing")
+    passed = bool(available and not reasons)
     return {
         "passed": passed,
         "goldset_available": available,
-        "reviewed_subjects": reviewed,
+        "reviewed_subjects": int(evaluation.get("reviewed_subjects") or 0),
+        "reviewed_numbered_subjects": numbered,
+        "reviewed_no_number_subjects": no_number,
+        "reviewed_unreadable_subjects": unreadable,
+        "heldout_matches": heldout,
         "identity_false_assignments": false_assignments,
+        "false_positive": false_positive,
+        "precision": precision,
+        "parameters": parameters,
         "reason_codes": reasons,
     }
 
@@ -176,20 +233,40 @@ def _lineage_gate(
     consensus_doc: dict[str, Any],
     subject_review_doc: dict[str, Any],
     jersey_report_doc: dict[str, Any],
+    *,
+    evidence_doc: dict[str, Any] | None,
+    roster_doc: dict[str, Any] | None,
 ) -> dict[str, Any]:
     consensus_source = consensus_doc.get("source") or {}
     review_source = subject_review_doc.get("source") or {}
     report_source = jersey_report_doc.get("source") or {}
     consensus_digest = canonical_digest(consensus_doc)
     reasons: list[str] = []
+    if evidence_doc is None or roster_doc is None:
+        reasons.append("current_lineage_inputs_missing")
     if not consensus_source.get("evidence_digest") or not consensus_source.get("roster_digest"):
         reasons.append("consensus_lineage_missing")
+    if evidence_doc is not None and consensus_source.get("evidence_digest") != canonical_digest(evidence_doc):
+        reasons.append("consensus_evidence_lineage_mismatch")
+    if roster_doc is not None and consensus_source.get("roster_digest") != canonical_digest(roster_doc):
+        reasons.append("consensus_roster_lineage_mismatch")
     if review_source.get("jersey_consensus_digest") != consensus_digest:
         reasons.append("subject_review_lineage_mismatch")
     if report_source != consensus_source:
         reasons.append("jersey_report_lineage_mismatch")
+    for name, document in (
+        ("consensus", consensus_doc),
+        ("subject_review", subject_review_doc),
+        ("jersey_report", jersey_report_doc),
+        ("evidence", evidence_doc or {}),
+        ("roster", roster_doc or {}),
+    ):
+        if algorithm_signature(document) is None:
+            reasons.append(f"{name}_algorithm_signature_missing")
     return {
         "passed": not reasons,
         "consensus_digest": consensus_digest,
+        "status": "fresh" if not reasons else "stale",
+        "blocking_reason": None if not reasons else "stale_jersey_number_lineage",
         "reason_codes": reasons,
     }
