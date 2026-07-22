@@ -70,6 +70,7 @@ def main() -> None:
     )
     evidence_doc = evidence_documents["identity_jersey_number_evidence_shadow"]
     audit_doc = evidence_documents["identity_jersey_number_audit"]
+    _enrich_audit_cards(audit_doc, anchor_doc)
     consensus_documents = build_identity_jersey_number_consensus_shadow(
         evidence_doc,
         roster_doc,
@@ -165,12 +166,29 @@ def _materialize_torso_crops(source_root: Path, output_root: Path, audit_doc: di
         card["torso_artifact"] = str(target.relative_to(output_root))
 
 
+def _enrich_audit_cards(audit_doc: dict[str, Any], anchor_doc: dict[str, Any]) -> None:
+    selection_by_subject = {
+        str(card.get("candidate_subject_id")): card.get("benchmark_selection") or {}
+        for card in anchor_doc.get("cards") or []
+        if isinstance(card, dict) and card.get("candidate_subject_id")
+    }
+    for card in audit_doc.get("cards") or []:
+        selection = selection_by_subject.get(str(card.get("candidate_subject_id") or ""))
+        if selection:
+            card["benchmark_selection"] = selection
+
+
 def _audit_html(audit_doc: dict[str, Any]) -> str:
     cards = []
     for card in audit_doc.get("cards") or []:
         artifact = html.escape(str(card.get("torso_artifact") or card.get("artifact") or ""))
         key = html.escape(str(card.get("anchor_crop_id") or ""))
         team = html.escape(str(card.get("team_label") or "U"))
+        subject_id = html.escape(str(card.get("candidate_subject_id") or ""))
+        tracklet_id = html.escape(str(card.get("tracklet_id") or ""))
+        selection = card.get("benchmark_selection") or {}
+        target_tracklets = ", ".join(str(value) for value in selection.get("target_tracklet_ids") or [])
+        target_text = html.escape(target_tracklets or "n/a")
         current = card.get("current_evidence") or {}
         current_state = str(current.get("state") or "number_unreadable")
         current_number = html.escape(str(current.get("number") or ""))
@@ -194,6 +212,7 @@ def _audit_html(audit_doc: dict[str, Any]) -> str:
             f"""<article class="card" data-key="{key}" data-team="{team}">
             <img src="{artifact}" alt="Torso crop {key}">
             <div class="meta"><strong>{key}</strong><span>frame {card.get('frame')} / team {team}</span></div>
+            <div class="lineage"><span>subject {subject_id}</span><span>seed {tracklet_id}</span><span>N5 target {target_text}</span></div>
             <label>State<select class="state">{state_options}</select></label>
             <label>Number<input class="number" inputmode="numeric" maxlength="3" value="{current_number}"></label>
             <label>View<select class="view">{view_options}</select></label>
@@ -205,7 +224,7 @@ def _audit_html(audit_doc: dict[str, Any]) -> str:
     team_options = "".join(f'<option value="{html.escape(team)}">Team {html.escape(team)}</option>' for team in teams)
     payload = json.dumps({"schema_version": "0.1.0", "observations": []}).replace("</", "<\\/")
     return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Jersey number audit</title><style>
-    body{{margin:0;background:#081120;color:#eef5ff;font:15px system-ui}}header{{position:sticky;top:0;z-index:2;background:#101c30;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}}.tools{{display:flex;align-items:center;gap:10px}}button{{padding:10px 14px;background:#32b7eb;border:0;font-weight:700;cursor:pointer}}main{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;padding:18px}}.card{{background:#101c30;border:1px solid #33445f;padding:10px}}.card[hidden]{{display:none}}img{{width:100%;height:260px;object-fit:contain;background:#020817}}.meta{{display:flex;justify-content:space-between;gap:8px;margin:8px 0}}label{{display:grid;gap:4px;margin-top:8px}}select,input{{background:#020817;color:white;border:1px solid #566883;padding:8px}}.check{{display:flex;align-items:center;gap:8px}}.check input{{width:18px;height:18px}}#count{{color:#9fb1ca}}
+    body{{margin:0;background:#081120;color:#eef5ff;font:15px system-ui}}header{{position:sticky;top:0;z-index:2;background:#101c30;padding:16px 24px;display:flex;align-items:center;justify-content:space-between;gap:20px}}.tools{{display:flex;align-items:center;gap:10px}}button{{padding:10px 14px;background:#32b7eb;border:0;font-weight:700;cursor:pointer}}main{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:18px}}.card{{background:#101c30;border:1px solid #33445f;padding:10px}}.card[hidden]{{display:none}}img{{width:100%;height:300px;object-fit:contain;background:#020817}}.meta{{display:flex;justify-content:space-between;gap:8px;margin:8px 0}}.lineage{{display:grid;gap:3px;color:#9fb1ca;font:12px ui-monospace,monospace;overflow-wrap:anywhere}}label{{display:grid;gap:4px;margin-top:8px}}select,input{{background:#020817;color:white;border:1px solid #566883;padding:8px}}.check{{display:flex;align-items:center;gap:8px}}.check input{{width:18px;height:18px}}#count{{color:#9fb1ca}}
     </style></head><body><header><div><strong>Jersey number audit</strong><div>Mark only clear numbers. Use Number absent only when a clean jersey surface is visible.</div></div><div class="tools"><label>Team<select id="team"><option value="all">All</option>{team_options}</select></label><span id="count"></span><button id="export">Export decisions</button></div></header><main>{''.join(cards)}</main><script>
     const base={payload};
     const cards=[...document.querySelectorAll('.card')];

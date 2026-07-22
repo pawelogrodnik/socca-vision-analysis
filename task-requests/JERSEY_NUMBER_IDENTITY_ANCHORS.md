@@ -76,6 +76,38 @@ assignments. Ten benchmark potwierdza brak fałszywego rozszerzania tożsamości
 nie mierzy jeszcze zysku pokrycia. Zysk N5 trzeba zweryfikować na ręcznie
 potwierdzonym, wielotrackletowym subjectcie z trudniejszego materiału.
 
+Targeted benchmark N5 hard3m został przygotowany w:
+
+```text
+backend/storage/benchmarks/player_identity/n5-jersey-number-hard3m-targeted-20260722-v1
+```
+
+Selekcja obejmuje 7 wielotrackletowych subjectów Team A, 7 seed trackletów,
+25 wybranych cropów (22 spełniające końcowe kryteria audytu) oraz 8 ukrytych
+target trackletów. Galeria pokazuje wyłącznie evidence z seed trackletów;
+targety nie są ujawniane operatorowi, dzięki czemu po ręcznym potwierdzeniu
+czytelnych numerów można uczciwie zmierzyć zysk i błędy propagacji N5. Audyt
+operatora zawiera 5 potwierdzonych odczytów, 5 przypadków `number_absent` i 12
+przypadków `number_unreadable`.
+
+Wynik benchmarku znajduje się w:
+
+```text
+backend/storage/benchmarks/player_identity/n5-jersey-number-hard3m-targeted-reviewed-20260722-v1
+```
+
+Jeden subject uzyskał mocny consensus numeru `3` i poprawnie odzyskał jedyny
+strictly eligible ukryty tracklet: `eligible_target_recall=1.0` (`1/1`). Nie
+powstała żadna nieoczekiwana propagacja, propagacja cross-subject ani
+automatyczne przypisanie do rosteru. Safety gate przeszedł. Drugi rozpoznany
+numer (`15`) miał dwa niezależne odczyty i zgodnie z konserwatywnym progiem nie
+utworzył consensus wymagającego co najmniej trzech odczytów.
+
+Benchmark demonstruje zysk pokrycia N5 w trybie shadow, ale próbka pozytywna jest
+za mała do aktywacji produkcyjnej: tylko 1 z 7 subjectów uzyskał mocny consensus,
+a spośród wszystkich 8 ukrytych trackletów tylko 1 był eligible. Produkcyjne
+assignments pozostają bez zmian.
+
 Ten dokument dodaje do roadmapy możliwość używania wcześniej zdefiniowanych numerów na koszulkach jako silnego sygnału identyfikacji zawodnika.
 
 Założenia domenowe:
