@@ -255,6 +255,46 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         crop = state["cards"][0]["visual_evidence"]["anchor_crops"][0]
         self.assertEqual(crop["jersey_number_annotation"], annotation)
 
+    def test_operator_number_panel_annotation_persists_separately(self) -> None:
+        source_sha = hashlib.sha256((self.path / "crop.jpg").read_bytes()).hexdigest()
+        panel = {
+            "number_panel_source_artifact": "crop.jpg",
+            "number_panel_source_sha256": source_sha,
+            "coordinate_space_version": "crop-normalized-v1",
+            "number_panel_bbox_normalized": [0.1, 0.2, 0.8, 0.9],
+            "glyph_height_px": 12,
+            "annotation_source": "operator",
+        }
+        save_identity_roster_subject_review(
+            self.path,
+            [{"review_card_key": "card-1", "anchor_crop_id": "crop-1", "number_panel_annotation": panel}],
+            updated_at="fixed",
+        )
+
+        crop = load_identity_roster_subject_review(self.path)["cards"][0]["visual_evidence"]["anchor_crops"][0]
+        self.assertEqual(crop["number_panel_annotation"]["number_panel_source_sha256"], source_sha)
+        self.assertIsNone(crop["jersey_number_annotation"])
+
+    def test_invalid_or_machine_number_panel_annotation_is_rejected(self) -> None:
+        for panel in (
+            {"annotation_source": "assistant"},
+            {
+                "number_panel_source_artifact": "wrong.jpg",
+                "coordinate_space_version": "v1",
+                "number_panel_bbox_normalized": [0, 0, 1, 1],
+            },
+            {
+                "number_panel_source_artifact": "crop.jpg",
+                "coordinate_space_version": "v1",
+                "number_panel_bbox_normalized": [0.5, 0.2, 0.4, 0.9],
+            },
+        ):
+            with self.assertRaises(ValueError):
+                save_identity_roster_subject_review(
+                    self.path,
+                    [{"review_card_key": "card-1", "anchor_crop_id": "crop-1", "number_panel_annotation": panel}],
+                )
+
     def test_invalid_crop_annotation_enum_or_ratio_is_rejected(self) -> None:
         for annotation in (
             {"digit_visibility": "visible"},

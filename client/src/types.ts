@@ -1191,9 +1191,25 @@ export type IdentityRosterSubjectJerseyNumberAnnotationUpdate = {
   jersey_number_annotation: IdentityRosterSubjectJerseyNumberAnnotation;
 };
 
+export type IdentityRosterSubjectNumberPanelAnnotation = {
+  number_panel_source_artifact: string;
+  number_panel_source_sha256?: string | null;
+  coordinate_space_version: 'number_panel_source_pixels_v1';
+  number_panel_bbox_normalized: [number, number, number, number];
+  glyph_height_px?: number | null;
+};
+
+export type IdentityRosterSubjectNumberPanelAnnotationUpdate = {
+  update_id?: string;
+  review_card_key: string;
+  anchor_crop_id: string;
+  number_panel_annotation: IdentityRosterSubjectNumberPanelAnnotation;
+};
+
 export type IdentityRosterSubjectReviewUpdate =
   | IdentityRosterSubjectDecisionUpdate
-  | IdentityRosterSubjectJerseyNumberAnnotationUpdate;
+  | IdentityRosterSubjectJerseyNumberAnnotationUpdate
+  | IdentityRosterSubjectNumberPanelAnnotationUpdate;
 
 export type IdentityRosterSubjectTelemetryEventType =
   | 'session_started'
@@ -1266,6 +1282,7 @@ export type IdentityRosterSubjectAnchorCrop = {
   tracklet_id?: string | null;
   jersey_number_visual_diagnostics?: IdentityRosterSubjectJerseyNumberVisualDiagnostics | null;
   jersey_number_annotation?: IdentityRosterSubjectJerseyNumberAnnotation | null;
+  number_panel_annotation?: IdentityRosterSubjectNumberPanelAnnotation | null;
 };
 
 export type IdentityRosterSubjectJerseyNumberVisualDiagnostics = {

@@ -13,6 +13,16 @@ import type {
   IdentityRosterSubjectTelemetryEvent,
   Match,
 } from '../types';
+
+type NumberPanelFormState = {
+  x1: string;
+  y1: string;
+  x2: string;
+  y2: string;
+  glyphHeightPx: string;
+};
+
+const EMPTY_NUMBER_PANEL_FORM: NumberPanelFormState = { x1: '', y1: '', x2: '', y2: '', glyphHeightPx: '' };
 import {
   isActionableSubjectReviewCard,
   nearestPendingCardIndex,
@@ -58,6 +68,8 @@ export function IdentityRosterSubjectReviewPanel({
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [comment, setComment] = useState('');
   const [cropAnnotations, setCropAnnotations] = useState<Record<string, IdentityRosterSubjectJerseyNumberAnnotation>>({});
+  const [numberPanelForms, setNumberPanelForms] = useState<Record<string, NumberPanelFormState>>({});
+  const [savingNumberPanelCropId, setSavingNumberPanelCropId] = useState<string | null>(null);
   const sessionIdRef = useRef('');
   const lastActivityAtRef = useRef<number | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -256,7 +268,85 @@ export function IdentityRosterSubjectReviewPanel({
         ]),
       ),
     );
+    // Number panel bbox form starts blank; never hydrated from machine diagnostics.
+    // Only the operator's own previously-saved panel bbox (if any) is restored.
+    setNumberPanelForms(
+      Object.fromEntries(
+        (currentCard?.visual_evidence.anchor_crops || []).map((crop) => {
+          const saved = crop.number_panel_annotation;
+          const bbox = saved?.number_panel_bbox_normalized;
+          return [
+            crop.anchor_crop_id,
+            bbox
+              ? {
+                  x1: String(bbox[0]),
+                  y1: String(bbox[1]),
+                  x2: String(bbox[2]),
+                  y2: String(bbox[3]),
+                  glyphHeightPx: saved?.glyph_height_px != null ? String(saved.glyph_height_px) : '',
+                }
+              : EMPTY_NUMBER_PANEL_FORM,
+          ];
+        }),
+      ),
+    );
   }, [currentCard?.review_card_key]);
+
+  function updateNumberPanelForm(
+    anchorCropId: string,
+    field: keyof NumberPanelFormState,
+    value: string,
+  ) {
+    setNumberPanelForms((current) => ({
+      ...current,
+      [anchorCropId]: {
+        ...(current[anchorCropId] || EMPTY_NUMBER_PANEL_FORM),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function saveNumberPanelAnnotation(anchorCropId: string, sourceArtifact: string) {
+    if (!currentCard || savingNumberPanelCropId) return;
+    const form = numberPanelForms[anchorCropId] || EMPTY_NUMBER_PANEL_FORM;
+    const x1 = Number(form.x1);
+    const y1 = Number(form.y1);
+    const x2 = Number(form.x2);
+    const y2 = Number(form.y2);
+    const coordinatesValid = [x1, y1, x2, y2].every((value) => Number.isFinite(value) && value >= 0 && value <= 1);
+    if (!coordinatesValid || x1 >= x2 || y1 >= y2) {
+      onStatus('Podaj poprawny bbox panelu numeru (x1<x2, y1<y2, wartosci 0-1).');
+      return;
+    }
+    const glyphHeightPx = form.glyphHeightPx.trim() === '' ? null : Number(form.glyphHeightPx);
+    if (glyphHeightPx !== null && (!Number.isFinite(glyphHeightPx) || glyphHeightPx <= 0)) {
+      onStatus('Wysokosc cyfry w px musi byc liczba dodatnia lub pusta.');
+      return;
+    }
+    setSavingNumberPanelCropId(anchorCropId);
+    try {
+      const next = await queuedSave(
+        [{
+          update_id: crypto.randomUUID(),
+          review_card_key: currentCard.review_card_key,
+          anchor_crop_id: anchorCropId,
+          number_panel_annotation: {
+            number_panel_source_artifact: sourceArtifact,
+            coordinate_space_version: 'number_panel_source_pixels_v1',
+            number_panel_bbox_normalized: [x1, y1, x2, y2],
+            glyph_height_px: glyphHeightPx,
+          },
+        }],
+        [telemetryEvent('activity', currentCard.review_card_key)],
+      );
+      setDocument(next);
+      onStatus('Zapisano bbox panelu numeru (shadow).');
+    } catch (error) {
+      onStatus(`Nie udalo sie zapisac bbox panelu numeru: ${errorMessage(error)}`);
+    } finally {
+      setSavingNumberPanelCropId(null);
+    }
+  }
 
   function updateCropAnnotation(
     anchorCropId: string,
@@ -418,6 +508,58 @@ export function IdentityRosterSubjectReviewPanel({
                               <div>Nieokreslone nie oznacza braku numeru ani etykiety operatora.</div>
                             </fieldset>
                           )}
+                          <fieldset disabled={savingNumberPanelCropId === crop.anchor_crop_id}>
+                            <legend>Bbox panelu numeru (operator)</legend>
+                            <div className='muted'>Artifact: {crop.artifact}</div>
+                            <label>
+                              x1
+                              <input
+                                type='number' min='0' max='1' step='0.001'
+                                value={numberPanelForms[crop.anchor_crop_id]?.x1 ?? ''}
+                                onChange={(event) => updateNumberPanelForm(crop.anchor_crop_id, 'x1', event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              y1
+                              <input
+                                type='number' min='0' max='1' step='0.001'
+                                value={numberPanelForms[crop.anchor_crop_id]?.y1 ?? ''}
+                                onChange={(event) => updateNumberPanelForm(crop.anchor_crop_id, 'y1', event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              x2
+                              <input
+                                type='number' min='0' max='1' step='0.001'
+                                value={numberPanelForms[crop.anchor_crop_id]?.x2 ?? ''}
+                                onChange={(event) => updateNumberPanelForm(crop.anchor_crop_id, 'x2', event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              y2
+                              <input
+                                type='number' min='0' max='1' step='0.001'
+                                value={numberPanelForms[crop.anchor_crop_id]?.y2 ?? ''}
+                                onChange={(event) => updateNumberPanelForm(crop.anchor_crop_id, 'y2', event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              Wysokosc cyfry (px, opcjonalnie)
+                              <input
+                                type='number' min='0' step='1'
+                                value={numberPanelForms[crop.anchor_crop_id]?.glyphHeightPx ?? ''}
+                                onChange={(event) => updateNumberPanelForm(crop.anchor_crop_id, 'glyphHeightPx', event.target.value)}
+                              />
+                            </label>
+                            <button
+                              type='button'
+                              className='secondary'
+                              onClick={() => void saveNumberPanelAnnotation(crop.anchor_crop_id, crop.artifact)}
+                              disabled={savingNumberPanelCropId === crop.anchor_crop_id}
+                            >
+                              Zapisz bbox panelu
+                            </button>
+                          </fieldset>
                           <fieldset disabled={saving}>
                             <legend>Ocena reczna numeru</legend>
                             <label>

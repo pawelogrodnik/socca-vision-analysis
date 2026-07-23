@@ -63,6 +63,11 @@ def sequence_contract_metadata() -> dict[str, Any]:
             "max_digit_length": MAX_DIGIT_LENGTH,
             "visual_states": list(VISUAL_STATES),
         },
+        "experiment_status": {
+            "status": "deferred_diagnostic",
+            "target_ready": False,
+            "activation_eligible": False,
+        },
     }
 
 
@@ -131,6 +136,9 @@ def build_sequence_training_eligibility_report(dataset_doc: dict[str, Any]) -> d
         "training_gate": {
             "mechanically_trainable": mechanically_trainable,
             "diagnostic_only": True,
+            "status": "deferred_diagnostic",
+            "target_ready": False,
+            "activation_eligible": False,
             "calibration_eligible": calibration_eligible,
             "generalization_eligible": calibration_eligible,
             "production_eligible": False,

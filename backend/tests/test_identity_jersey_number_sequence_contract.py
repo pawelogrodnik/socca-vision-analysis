@@ -54,6 +54,19 @@ class JerseyNumberSequenceContractTests(unittest.TestCase):
         self.assertEqual(metadata["recognition_contract"]["alphabet"], [*DIGIT_ALPHABET, "<blank>"])
         self.assertEqual(metadata["recognition_contract"]["max_digit_length"], MAX_DIGIT_LENGTH)
 
+    def test_sequence_experiment_stays_deferred_and_never_target_ready(self) -> None:
+        metadata = sequence_contract_metadata()
+        report = build_sequence_training_eligibility_report(
+            {"split_contract": {"production_eligible": True}, "samples": []}
+        )
+
+        self.assertEqual(metadata["experiment_status"]["status"], "deferred_diagnostic")
+        self.assertFalse(metadata["experiment_status"]["target_ready"])
+        self.assertFalse(metadata["experiment_status"]["activation_eligible"])
+        self.assertEqual(report["training_gate"]["status"], "deferred_diagnostic")
+        self.assertFalse(report["training_gate"]["target_ready"])
+        self.assertFalse(report["training_gate"]["activation_eligible"])
+
     def test_single_match_dataset_is_diagnostic_only(self) -> None:
         report = build_sequence_training_eligibility_report(
             {

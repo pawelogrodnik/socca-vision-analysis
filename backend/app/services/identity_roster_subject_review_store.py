@@ -68,6 +68,7 @@ def load_identity_roster_subject_review(
         if isinstance(row, dict) and row.get("review_card_key")
     }
     annotations_by_crop = _stored_crop_annotations(decisions_doc) if decisions_fresh else {}
+    panel_annotations_by_crop = _stored_panel_annotations(decisions_doc) if decisions_fresh else {}
     cards: list[dict[str, Any]] = []
     applied = 0
     stale = 0
@@ -76,7 +77,9 @@ def load_identity_roster_subject_review(
         card["operator_roster_options"] = _operator_roster_options(card, match_doc)
         card["decision_contract"] = _effective_decision_contract(card)
         card["allowed_actions"] = _effective_allowed_actions(card)
-        card = _with_crop_annotations(card, annotations_by_crop, pre_audits_by_crop)
+        card = _with_crop_annotations(
+            card, annotations_by_crop, panel_annotations_by_crop, pre_audits_by_crop
+        )
         stored = stored_by_key.get(str(card.get("review_card_key") or ""))
         if stored and decisions_fresh:
             card["operator_decision"] = stored
@@ -142,6 +145,11 @@ def save_identity_roster_subject_review(
         if existing.get("source_artifact_digest") == digest
         else {}
     )
+    panel_annotations_by_crop = (
+        _stored_panel_annotations(existing)
+        if existing.get("source_artifact_digest") == digest
+        else {}
+    )
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
     telemetry_state = _load_telemetry_state(existing) if existing.get("source_artifact_digest") == digest else _empty_telemetry_state()
     for update in updates:
@@ -171,12 +179,32 @@ def save_identity_roster_subject_review(
                     **_normalize_crop_annotation(update["jersey_number_annotation"]),
                     "updated_at": timestamp,
                 }
+            if update.get("clear_number_panel_annotation"):
+                panel_annotations_by_crop.pop(crop_id, None)
+            elif "number_panel_annotation" in update:
+                crop = next(
+                    crop
+                    for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or [])
+                    if isinstance(crop, dict) and str(crop.get("anchor_crop_id") or "") == crop_id
+                )
+                panel_annotations_by_crop[crop_id] = {
+                    "anchor_crop_id": crop_id,
+                    **_normalize_number_panel_annotation(
+                        update["number_panel_annotation"], crop=crop, root=path
+                    ),
+                    "updated_at": timestamp,
+                }
             if update_id:
                 telemetry_state["processed_update_ids"].add(update_id)
             if "decision" not in update:
                 continue
-        elif "jersey_number_annotation" in update or update.get("clear_jersey_number_annotation"):
-            raise ValueError("anchor_crop_id is required for jersey_number_annotation")
+        elif (
+            "jersey_number_annotation" in update
+            or update.get("clear_jersey_number_annotation")
+            or "number_panel_annotation" in update
+            or update.get("clear_number_panel_annotation")
+        ):
+            raise ValueError("anchor_crop_id is required for crop annotation")
         decision = update.get("decision")
         if decision in (None, "clear_decision"):
             decisions_by_key.pop(key, None)
@@ -223,6 +251,9 @@ def save_identity_roster_subject_review(
         "telemetry_state": _serialize_telemetry_state(telemetry_state),
         "decisions": [decisions_by_key[key] for key in sorted(decisions_by_key)],
         "jersey_number_annotations": [annotations_by_crop[key] for key in sorted(annotations_by_crop)],
+        "number_panel_annotations": [
+            panel_annotations_by_crop[key] for key in sorted(panel_annotations_by_crop)
+        ],
     }
     _write_atomic(path / REVIEW_DECISIONS_FILENAME, document)
     return load_identity_roster_subject_review(path, match_doc=match_doc)
@@ -244,9 +275,18 @@ def _stored_crop_annotations(document: dict[str, Any]) -> dict[str, dict[str, An
     }
 
 
+def _stored_panel_annotations(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["anchor_crop_id"]): dict(row)
+        for row in document.get("number_panel_annotations") or []
+        if isinstance(row, dict) and row.get("anchor_crop_id")
+    }
+
+
 def _with_crop_annotations(
     card: dict[str, Any],
     annotations_by_crop: dict[str, dict[str, Any]],
+    panel_annotations_by_crop: dict[str, dict[str, Any]],
     pre_audits_by_crop: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     visual_evidence = dict(card.get("visual_evidence") or {})
@@ -254,6 +294,9 @@ def _with_crop_annotations(
         {
             **crop,
             "jersey_number_annotation": annotations_by_crop.get(
+                str(crop.get("anchor_crop_id") or "")
+            ),
+            "number_panel_annotation": panel_annotations_by_crop.get(
                 str(crop.get("anchor_crop_id") or "")
             ),
             "jersey_number_pre_audit": pre_audits_by_crop.get(
@@ -276,7 +319,8 @@ def _fresh_pre_audits(path: Path, artifact: dict[str, Any]) -> dict[str, dict[st
         return {}
     if _contains_prohibited_pre_audit_keys(audit):
         return {}
-    algorithm = audit.get("algorithm") if isinstance(audit.get("algorithm"), dict) else {}
+    algorithm_value = audit.get("algorithm")
+    algorithm: dict[str, Any] = algorithm_value if isinstance(algorithm_value, dict) else {}
     if (
         audit.get("schema_version") != VISUAL_PRE_AUDIT_SCHEMA_VERSION
         or algorithm.get("name") != VISUAL_PRE_AUDIT_ALGORITHM_NAME
@@ -375,6 +419,55 @@ def _normalize_crop_annotation(value: Any) -> dict[str, Any]:
     return normalized
 
 
+def _normalize_number_panel_annotation(
+    value: Any,
+    *,
+    crop: dict[str, Any],
+    root: Path,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("number_panel_annotation must be an object")
+    source = str(value.get("annotation_source") or value.get("source") or "operator").strip().lower()
+    if source != "operator":
+        raise ValueError("number_panel_annotation source must be operator")
+    artifact = str(value.get("number_panel_source_artifact") or "")
+    current_artifact = str(crop.get("torso_artifact") or crop.get("artifact") or "")
+    if artifact != current_artifact:
+        raise ValueError("number_panel_source_artifact must match current crop")
+    supplied_sha = value.get("number_panel_source_sha256")
+    current_sha = _sha256(root / current_artifact)
+    if supplied_sha is not None and str(supplied_sha) != str(current_sha):
+        raise ValueError("number_panel_source_sha256 does not match current crop")
+    bbox = value.get("number_panel_bbox_normalized")
+    if (
+        not isinstance(bbox, list)
+        or len(bbox) != 4
+        or any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in bbox)
+    ):
+        raise ValueError("number_panel_bbox_normalized must contain four numbers")
+    x1, y1, x2, y2 = (float(item) for item in bbox)
+    if not 0.0 <= x1 < x2 <= 1.0 or not 0.0 <= y1 < y2 <= 1.0:
+        raise ValueError("number_panel_bbox_normalized must be within normalized bounds")
+    coordinate_space_version = value.get("coordinate_space_version")
+    if not isinstance(coordinate_space_version, str) or not coordinate_space_version.strip():
+        raise ValueError("coordinate_space_version is required")
+    glyph_height = value.get("glyph_height_px")
+    if glyph_height is not None and (
+        isinstance(glyph_height, bool)
+        or not isinstance(glyph_height, (int, float))
+        or float(glyph_height) <= 0
+    ):
+        raise ValueError("glyph_height_px must be positive or null")
+    return {
+        "number_panel_source_artifact": current_artifact,
+        "number_panel_source_sha256": current_sha,
+        "coordinate_space_version": coordinate_space_version.strip(),
+        "number_panel_bbox_normalized": [round(item, 6) for item in (x1, y1, x2, y2)],
+        "glyph_height_px": round(float(glyph_height), 3) if glyph_height is not None else None,
+        "annotation_source": "operator",
+    }
+
+
 def _empty_operator_telemetry() -> dict[str, Any]:
     return {
         "review_session_started_at": None,
@@ -404,7 +497,8 @@ def _empty_telemetry_state() -> dict[str, Any]:
 
 
 def _load_telemetry_state(document: dict[str, Any]) -> dict[str, Any]:
-    source = document.get("telemetry_state") if isinstance(document.get("telemetry_state"), dict) else {}
+    source_value = document.get("telemetry_state")
+    source: dict[str, Any] = source_value if isinstance(source_value, dict) else {}
     events = [dict(row) for row in source.get("events") or [] if isinstance(row, dict)]
     return {
         "events": events,
