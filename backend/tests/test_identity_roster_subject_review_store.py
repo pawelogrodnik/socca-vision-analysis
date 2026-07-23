@@ -231,12 +231,9 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
 
     def test_crop_annotation_saves_and_reloads_by_anchor_crop_id(self) -> None:
         annotation = {
-            "digit_visibility": "full",
-            "occlusion_state": "partial",
-            "blur_level": "mild",
-            "perspective_state": "angled",
-            "panel_height_ratio": 0.42,
-            "kit_profile": "home-blue",
+            "jersey_number": "10",
+            "number_panel_bbox_normalized": [0.2, 0.18, 0.81, 0.72],
+            "number_panel_artifact": "panels/crop-1.jpg",
         }
         save_identity_roster_subject_review(
             self.path,
@@ -257,8 +254,11 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
 
     def test_invalid_crop_annotation_enum_or_ratio_is_rejected(self) -> None:
         for annotation in (
+            {"jersey_number": "abc"},
             {"digit_visibility": "visible"},
             {"panel_height_ratio": 1.1},
+            {"number_panel_bbox_normalized": [0.2, 0.3, 0.2, 0.7]},
+            {"number_panel_artifact": "../escape.jpg"},
         ):
             with self.assertRaises(ValueError):
                 save_identity_roster_subject_review(

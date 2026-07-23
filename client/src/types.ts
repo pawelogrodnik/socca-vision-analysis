@@ -1275,12 +1275,9 @@ export type IdentityRosterSubjectJerseyNumberVisualDiagnostics = {
 };
 
 export type IdentityRosterSubjectJerseyNumberAnnotation = {
-  digit_visibility?: 'full' | 'partial' | 'none' | 'unknown' | null;
-  occlusion_state?: 'none' | 'partial' | 'heavy' | 'unknown' | null;
-  blur_level?: 'none' | 'mild' | 'heavy' | 'unknown' | null;
-  perspective_state?: 'frontal' | 'angled' | 'severe' | 'unknown' | null;
-  panel_height_ratio?: number | null;
-  kit_profile?: string | null;
+  jersey_number?: string | null;
+  number_panel_bbox_normalized?: number[] | null;
+  number_panel_artifact?: string | null;
 };
 
 export type IdentityRosterSubjectReviewCard = {

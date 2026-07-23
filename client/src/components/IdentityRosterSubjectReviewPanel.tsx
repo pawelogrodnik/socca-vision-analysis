@@ -261,7 +261,7 @@ export function IdentityRosterSubjectReviewPanel({
   function updateCropAnnotation(
     anchorCropId: string,
     field: keyof IdentityRosterSubjectJerseyNumberAnnotation,
-    value: string | number | null,
+    value: string | number | number[] | null,
   ) {
     setCropAnnotations((current) => ({
       ...current,
@@ -270,6 +270,23 @@ export function IdentityRosterSubjectReviewPanel({
         [field]: value,
       },
     }));
+  }
+
+  function updatePanelBBoxCoordinate(
+    anchorCropId: string,
+    index: number,
+    value: string,
+  ) {
+    const current = cropAnnotations[anchorCropId]?.number_panel_bbox_normalized;
+    const next = Array.isArray(current) && current.length === 4
+      ? [...current]
+      : [0.2, 0.2, 0.8, 0.8];
+    next[index] = value === '' ? Number.NaN : Number(value);
+    updateCropAnnotation(
+      anchorCropId,
+      'number_panel_bbox_normalized',
+      next.some((item) => Number.isNaN(item)) ? null : next,
+    );
   }
 
   useEffect(() => {
@@ -421,49 +438,38 @@ export function IdentityRosterSubjectReviewPanel({
                           <fieldset disabled={saving}>
                             <legend>Ocena reczna numeru</legend>
                             <label>
-                              Cyfry
-                              <select value={annotation.digit_visibility || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'digit_visibility', event.target.value)}>
-                                <option value='full'>Czytelne</option>
-                                <option value='partial'>Czesciowo</option>
-                                <option value='none'>Niewidoczne</option>
-                                <option value='unknown'>Nie oceniono</option>
-                              </select>
+                              Numer
+                              <input
+                                inputMode='numeric'
+                                pattern='[0-9]*'
+                                maxLength={3}
+                                value={annotation.jersey_number ?? ''}
+                                onChange={(event) => updateCropAnnotation(
+                                  crop.anchor_crop_id,
+                                  'jersey_number',
+                                  event.target.value.replace(/\D/g, '').slice(0, 3) || null,
+                                )}
+                                placeholder='np. 10; puste = niewidoczny'
+                              />
                             </label>
-                            <label>
-                              Zaslonicie
-                              <select value={annotation.occlusion_state || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'occlusion_state', event.target.value)}>
-                                <option value='none'>Brak</option>
-                                <option value='partial'>Czesciowe</option>
-                                <option value='heavy'>Duże</option>
-                                <option value='unknown'>Nie oceniono</option>
-                              </select>
-                            </label>
-                            <label>
-                              Ostrosc
-                              <select value={annotation.blur_level || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'blur_level', event.target.value)}>
-                                <option value='none'>Brak</option>
-                                <option value='mild'>Lekka</option>
-                                <option value='heavy'>Duże</option>
-                                <option value='unknown'>Nie oceniono</option>
-                              </select>
-                            </label>
-                            <label>
-                              Perspektywa
-                              <select value={annotation.perspective_state || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'perspective_state', event.target.value)}>
-                                <option value='frontal'>Przod</option>
-                                <option value='angled'>Skos</option>
-                                <option value='severe'>Silny skos</option>
-                                <option value='unknown'>Nie oceniono</option>
-                              </select>
-                            </label>
-                            <label>
-                              Panel % wysokosci
-                              <input type='number' min='0' max='1' step='0.01' value={annotation.panel_height_ratio ?? ''} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'panel_height_ratio', event.target.value === '' ? null : Number(event.target.value))} />
-                            </label>
-                            <label>
-                              Profil stroju
-                              <input value={annotation.kit_profile ?? ''} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'kit_profile', event.target.value || null)} placeholder='np. biale pasy' />
-                            </label>
+                            <div>
+                              <span>Panel bbox [x1, y1, x2, y2]</span>
+                              <div className='row' style={{ gap: 8, flexWrap: 'wrap' }}>
+                                {(['x1', 'y1', 'x2', 'y2'] as const).map((label, index) => (
+                                  <label key={`${crop.anchor_crop_id}-${label}`} style={{ minWidth: 72 }}>
+                                    {label}
+                                    <input
+                                      type='number'
+                                      min='0'
+                                      max='1'
+                                      step='0.01'
+                                      value={Array.isArray(annotation.number_panel_bbox_normalized) ? (annotation.number_panel_bbox_normalized[index] ?? '') : ''}
+                                      onChange={(event) => updatePanelBBoxCoordinate(crop.anchor_crop_id, index, event.target.value)}
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
                           </fieldset>
                         </div>
                       );
