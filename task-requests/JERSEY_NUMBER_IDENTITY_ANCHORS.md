@@ -6,24 +6,113 @@
 UZUPEŁNIENIE task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
 SHADOW-FIRST / HIGH-CONFIDENCE IDENTITY EVIDENCE
 N0-N5 ORAZ INFRASTRUKTURA N5.1-N5.8 ZAIMPLEMENTOWANE
-DATASET NUMERÓW JEST DOSTĘPNY
-J1-J2 ORAZ INFRASTRUKTURA EWALUACJI J3-J7 ZAIMPLEMENTOWANE
-DIAGNOSTYCZNY LEARNED CENTROID BASELINE JEST WYUCZONY I SKALIBROWANY
-DOCELOWY DIGIT-SEQUENCE RECOGNIZER NIE JEST JESZ ZAIMPLEMENTOWANY
+DATASET MANIFEST, SPLITY I EWALUACJA ZAIMPLEMENTOWANE
+TEMPLATE I CENTROID POZOSTAJĄ DIAGNOSTYCZNYMI BASELINE'AMI
+CRNN-CTC JEST MECHANICZNIE ZAIMPLEMENTOWANY, ALE NIEZWALIDOWANY I NIEZINTEGROWANY
 CANDIDATE I PRODUCTION ASSIGNMENTS POZOSTAJĄ ZABLOKOWANE
 ```
 
-Przeanalizowany baseline:
+Przeanalizowany aktualny baseline:
 
 ```text
-425da4cec50603d87af97fad3e19c1f614a9696f
+e86fcb70f06ae1f1e5347a780fef9ca0eb25f7ce
 ```
 
-Najważniejsza decyzja:
+Najważniejsza decyzja po audycie kodu:
 
-> Jersey number jest jednym z najsilniejszych dostępnych identity anchors i warto rozwijać go dalej. Nie należy jednak zatrzymywać całej stabilizacji Player ID do czasu osiągnięcia idealnego OCR. Krótki recognizer closeout i trening na istniejącym datasecie powinny działać równolegle z P1.22 Full-Match Operator Benchmark.
+> Agent nie powinien dalej tworzyć kolejnych recognizerów, kolejnych schematów ani stroić CTC w ciemno. Aktualny problem nie polega na braku architektury. Problemem jest zbyt szeroki i niesprawdzony number ROI, mała liczba niezależnych readable episodes oraz trenowanie sekwencyjnego modelu od zera na jednym fizycznym meczu.
 
-Aktualna implementacja jest poprawna jako konserwatywny, bezpieczny pipeline shadow. Nie jest jeszcze domknięta jako automatyczne odczytywanie numerów z realnego wideo.
+Docelowy następny krok to jeden prosty model panelowy z trzema pozycjami cyfr, poprzedzony obowiązkowym audytem tight number-panel crops i testem overfit na małej próbce.
+
+Jersey-number work nie blokuje P1.22 Full-Match Operator Benchmark.
+
+---
+
+# 1. Dlaczego ten feature nadal jest bardzo wartościowy
+
+Zaufany numer może utworzyć znacznie silniejszy identity anchor niż ogólne appearance/ReID:
+
+```text
+Team A + numer 10
+→ jednoznaczny roster player
+→ operator-confirmed candidate subject
+→ safe intra-subject lineage propagation
+→ approved appearance crops
+→ roster-confirmed ReID prototype
+→ ranking unresolved tracklets/subjects
+```
+
+Nawet umiarkowany recall może dać duży zysk:
+
+```text
+kilka poprawnie rozpoznanych numerów
+→ kilka pewnych real-player anchors
+→ więcej trackletów przypisanych przez istniejący safe lineage
+→ mniej ręcznych kart do przejrzenia
+```
+
+Warunek pozostaje niezmienny:
+
+```text
+wysoka precision > wysoki recall
+```
+
+Numer nie może omijać:
+
+```text
+team constraints
+temporal overlap constraints
+parallel-position constraints
+structural blockers
+lineage freshness
+operator review
+```
+
+---
+
+# 2. Co jest już poprawnie zaimplementowane
+
+## N0-N5
+
+Gotowe pozostają:
+
+- optional unique jersey number per team;
+- duplicate same-team number disables trust;
+- `number_absent` różne od `number_unreadable`;
+- reliable crop/evidence contract;
+- visibility episodes;
+- tracklet i subject consensus;
+- same-team unique roster lookup;
+- whole-subject review suggestion;
+- canonical structural blockers;
+- full lineage validation;
+- separate number/operator seed provenance;
+- safe intra-subject propagation;
+- brak cross-subject propagation;
+- brak automatic assignments;
+- candidate i production identity pozostają niezmienione.
+
+## Dataset i ewaluacja
+
+Aktualny kod ma:
+
+- deterministyczny dataset manifest;
+- content digests i provenance;
+- split bez przecieku jednego subjectu/episode pomiędzy zestawami;
+- match-level split przy minimum trzech source matches;
+- subject-group fallback dla jednego fizycznego meczu;
+- team-scoped roster candidate numbers;
+- crop, episode i subject metrics;
+- plain-shirt negatives;
+- real fixture numeru `10`;
+- canonical production artifact comparison;
+- held-out multi-match infrastructure.
+
+To jest wystarczająca infrastruktura. Nie należy teraz dodawać kolejnych warstw kontraktowych, dopóki recognizer nie przejdzie prostego testu percepcji.
+
+---
+
+# 3. Aktualny wynik i jego właściwa interpretacja
 
 Najnowszy closeout:
 
@@ -32,7 +121,7 @@ backend/storage/benchmarks/player_identity/
 jersey-number-dataset-closeout-20260723-v3/
 ```
 
-Wynik pozostaje świadomie zablokowany:
+Wynik:
 
 ```text
 334 samples
@@ -46,984 +135,791 @@ real number 10 fixture: FAILED BY SAFE ABSTENTION
 production eligible: false
 ```
 
----
-
-# 1. Założenia domenowe
-
-- niepusty numer jest unikalny w obrębie jednej drużyny;
-- ten sam numer może wystąpić w Team A i Team B;
-- nie każdy zawodnik ma numer;
-- kilku zawodników może grać w koszulkach bez numeru;
-- zawodnik z numerem używa tego samego numeru przez cały mecz;
-- numer może być widoczny tylko w niewielkiej części trackletów;
-- brak odczytu nie oznacza braku numeru;
-- jeden poprawny number anchor może być bardziej wartościowy niż wiele słabych pairwise ReID scores.
-
-Przykład:
+Interpretacja:
 
 ```text
-trusted Team A + numer 10
-→ jednoznaczny roster player
-→ potwierdzony candidate subject
-→ safe lineage propagation wewnątrz subjectu
-→ operator-approved crops do przyszłego roster-confirmed ReID prototype
+safety: bardzo dobra
+precision: obiecująca, ale wynika głównie z abstention
+recall: za niski do realnej pomocy
+identity gain: obecnie zero
+multi-match generalization: niezmierzone
 ```
 
-Numer nigdy nie omija:
-
-```text
-team constraints
-temporal overlap constraints
-parallel-position constraints
-structural blockers
-lineage freshness
-operator review, gdy wymagane
-```
+Model nie tworzy błędnych identity, ale także nie dostarcza użytecznych number anchors.
 
 ---
 
-# 2. Aktualny stan implementacji
+# 4. Audit aktualnego number-recognition kodu
 
-## N0 — roster number registry
+Aktualnie istnieją trzy różne ścieżki rozpoznawania.
 
-Zaimplementowano:
+## 4.1. OpenCV template baseline
 
-- opcjonalny numer per roster player;
-- jawnie potwierdzony brak numeru;
-- normalizację numerów;
-- unikalność numeru wewnątrz drużyny;
-- wyłączenie trust przy duplikacie;
-- możliwość tego samego numeru w różnych drużynach;
-- brak mutacji rosteru przez evidence.
+```text
+constrained torso ROI
+→ bright jersey component
+→ dark digit mask
+→ OpenCV font templates
+```
 
 Status:
 
 ```text
-IMPLEMENTED / SHADOW-SAFE
+diagnostic baseline only
 ```
 
-## N1 — crop evidence i operator audit
+Nie rozwijać go dalej jako głównej metody.
 
-Zaimplementowano:
+## 4.2. Whole-number centroid baseline
 
-- reliable anchor crops;
-- torso ROI;
-- operator audit gallery;
-- stany `number_confirmed`, `number_absent`, `number_unreadable`, `number_conflict`;
-- odrzucanie cropów niskiej jakości;
-- brak recognizera jako `number_unreadable`, nigdy `number_absent`.
-
-Status:
+Plik:
 
 ```text
-IMPLEMENTED
+backend/app/services/identity_jersey_number_learned.py
 ```
 
-## N2 — tracklet i subject consensus
-
-Zaimplementowano:
-
-- deterministic consensus per tracklet i candidate subject;
-- minimum independent reads;
-- visibility episodes;
-- frame separation;
-- confidence thresholds;
-- same-team unique roster lookup;
-- conflict handling;
-- goldset precision/recall/false-positive evaluation.
-
-Status:
+Mechanizm:
 
 ```text
-IMPLEMENTED / CONSERVATIVE
+normalized grayscale/gradient torso feature
+→ centroid per pełny numer
+→ closed-set cosine similarity
 ```
-
-## N3 — whole-subject review suggestion
-
-Zaimplementowano:
-
-- strong number consensus jako roster recommendation;
-- evidence numeru w review card;
-- konflikt z inną rekomendacją jako blocker;
-- brak automatycznego potwierdzenia operatora.
-
-Status:
-
-```text
-IMPLEMENTED / REVIEW ASSISTANCE
-```
-
-## N4 — gated assignment plan
-
-Zaimplementowano:
-
-- benchmark gate;
-- lineage gate;
-- canonical structural blockers;
-- strictly eligible shadow candidates;
-- brak zapisu candidate i production identity;
-- `automatic_assignments = 0`.
-
-Status:
-
-```text
-IMPLEMENTED / SHADOW-ONLY
-```
-
-## N5 — strict lineage propagation
-
-Zaimplementowano:
-
-- number-confirmed seed tracklet;
-- propagację tylko po istniejących accepted lineage edges;
-- brak nowych krawędzi z podobieństwa numeru;
-- brak tracklet merge;
-- brak cross-subject propagation;
-- osobną proweniencję number/operator seeds;
-- pełny edge/path audit;
-- stale lineage blocking;
-- contradictory number blocking.
-
-Status:
-
-```text
-IMPLEMENTED / SHADOW-ONLY
-```
-
-## N5.5 — aktualny recognizer v0.2
-
-Obecny recognizer:
-
-```text
-anchor crop
-→ usunięcie selection padding
-→ constrained upper-person ROI
-→ jasny komponent koszulki
-→ ciemny digit mask
-→ roster-constrained OpenCV template score
-→ temporal episode voting
-```
-
-Posiada:
-
-- single-frame confirmation disabled;
-- temporal episode consensus;
-- panel diagnostics;
-- panel precision/recall;
-- readability precision/recall;
-- false-negative metrics;
-- plain-shirt false-positive metrics;
-- brak automatycznych assignments.
 
 Ograniczenia:
 
-- template jest generowany `cv2.FONT_HERSHEY_SIMPLEX`;
-- aktualny panel detector jest zoptymalizowany głównie pod jasną koszulkę i ciemny nadruk;
-- realne fonty, perspektywa, fałdy i mały rozmiar cyfr nie są dobrze modelowane;
-- recognizer nie jest jeszcze wytrenowany na dostępnym datasecie;
-- wynik realnego materiału pokazał false negative dla numeru widocznego człowiekowi.
+- nie uczy się cyfr `0-9`;
+- nie potrafi generalizować do nowego numeru;
+- może uczyć się wyglądu koszulki lub zawodnika;
+- jest roster/closed-set diagnostic baseline;
+- realny numer `10` kończy jako safe abstention.
 
 Status:
 
 ```text
-IMPLEMENTED AS DIAGNOSTIC BASELINE
-NOT THE TARGET RECOGNIZER
+keep for regression comparison
+not a target recognizer
 ```
 
-## N5.8 — held-out validation infrastructure
+## 4.3. CRNN-CTC prototype
 
-Zaimplementowano:
-
-- canonical held-out case contract;
-- minimum distinct source matches;
-- clips jednego meczu nie liczą się jako osobne matches;
-- production identity before/after SHA-256 comparison;
-- required recognizer/assignment/propagation/targeted artifacts;
-- candidate integration zablokowane bez pozytywnego held-out suite.
-
-Status:
+Pliki:
 
 ```text
-INFRASTRUCTURE IMPLEMENTED
-REAL MULTI-MATCH VALIDATION PENDING
+backend/app/services/identity_jersey_number_sequence.py
+backend/app/services/identity_jersey_number_sequence_training.py
+backend/app/services/identity_jersey_number_sequence_evaluation.py
 ```
 
-## J1-J7 — dataset-driven recognizer closeout
-
-Zaimplementowano:
-
-- deterministyczny dataset manifest z digestem, provenance i visibility episodes;
-- grupowanie splitów bez przecieku jednego subjectu pomiędzy train/validation/heldout;
-- match-level split, gdy dostępne są co najmniej trzy niezależne source matches;
-- jawny fallback subject-group przy jednym fizycznym meczu;
-- team-scoped roster candidate numbers;
-- wersjonowany diagnostyczny learned centroid baseline;
-- calibrated confidence i confidence tiers;
-- episode-level oraz subject-level temporal fusion;
-- rozłączne metryki błędów dla numerowanej, czystej i nieczytelnej koszulki;
-- metryki panel/readability oraz slice metrics per view, split, team i długość numeru;
-- real fixture numeru 10 ograniczony do właściwego subjectu i trackletu;
-- ponowny shadow run na `07d227bd`;
-- realne SHA-256 comparison wymaganych produkcyjnych identity artifacts.
-
-Ograniczenia potwierdzone przez closeout:
-
-- wszystkie dostępne materiały pochodzą z jednego fizycznego meczu;
-- whole-number centroid baseline nie generalizuje cyfr i pozostaje wyłącznie diagnostyczny;
-- numer 10 jest poprawnie lokalizowany jako fixture, ale model bezpiecznie abstynuje;
-- `global_identity.json` i `stable_players.json` pozostały identyczne;
-- brak `player_identity_assignments.json` uniemożliwia pełne potwierdzenie canonical production digest gate;
-- candidate i production activation pozostają wyłączone.
-
-Status:
+Aktualna architektura:
 
 ```text
-J1-J2 IMPLEMENTED
-J3 DIAGNOSTIC BASELINE IMPLEMENTED, TARGET RECOGNIZER PENDING
-J4-J7 EVALUATION INFRASTRUCTURE IMPLEMENTED
-QUALITY AND MULTI-MATCH GATES FAILED SAFELY
+fixed upper-torso ROI
+→ grayscale 32x96
+→ small CNN
+→ BiGRU
+→ CTC digits
+→ visual-state head
 ```
 
----
+To oznacza, że digit-sequence recognizer jest mechanicznie zaimplementowany. Nie jest jednak gotowy produktowo.
 
-# 3. Najnowszy real-video benchmark: match 07d227bd
+Najważniejsze problemy aktualnej implementacji:
 
-Źródło:
-
-```text
-analysis job: analysis-20260722T101544Z-3846235e
-match:        07d227bd
-run:          20260722T102708Z-yolo-ultralytics-chunked-3a1e7bac
-duration:     215.849 s
-device:       Apple MPS
-scope:        within-match shadow validation
-```
-
-## Selection correction
-
-Pierwszy selector traktował dowolne trzy cropy jako potencjalny seed. Było to niezgodne z downstream consensus, który wymaga independent visibility episodes.
-
-Po poprawce:
-
-```text
-potential multi-tracklet Team A subjects:       15
-consensus-eligible subjects:                     4
-rejected for insufficient independent evidence: 11
-selected seed crops:                            15
-hidden target tracklets:                         4
-```
-
-Ta poprawka jest właściwa. Selector i consensus muszą używać tego samego kontraktu temporal independence.
-
-## Recognition result
-
-```text
-recognizer evaluated crops:          15
-reliable evidence rows:              13
-rejected evidence rows:               2
-automatically confirmed reads:        0
-strong subject consensuses:            0
-number-propagated tracklets:           0
-```
-
-Manual spot check:
-
-```text
-tracklet: 100304:1
-frames:   3509, 3510, 3512
-number:   10
-result:   recognizer marked all unreadable
-```
-
-Klatki 3509/3510/3512 poprawnie tworzą jeden visibility episode. Nie mogą zostać policzone jako trzy independent identity reads.
+1. wejściem jest szeroki, stały torso ROI, a nie tight number panel;
+2. po resize do `32x96` cyfry mogą mieć tylko kilka pikseli wysokości;
+3. CNN+GRU+CTC jest trenowany od zera;
+4. domyślne trenowanie to jeden epoch;
+5. brak batchingu, augmentacji i pozytywnego overfit smoke testu na realnych panelach;
+6. CTC ma naturalną tendencję do blank collapse przy małym datasecie;
+7. obecny model jest tylko diagnostic: public prediction pozostaje `accepted = false`;
+8. CRNN nie jest podłączony jako target predictor do głównego recognizer shadow;
+9. testy sprawdzają głównie kontrakty i mechanikę na sztucznych tensorach, a nie real-video quality;
+10. wszystkie dostępne dane pochodzą z jednego fizycznego meczu.
 
 Wniosek:
 
-```text
-safety:        passed
-recognizer:    false-negative fixture found
-recall:        too low for activation
-propagation:   correctly remained zero
-production:    unchanged
-```
-
-Ten benchmark nie jest porażką. Dostarcza pierwszy realny fixture, na którym target recognizer musi umieć odczytać numer `10` bez sztucznego obniżania progów.
+> Nie należy próbować naprawić tego przez kolejne warianty GRU, dodatkowe regularizatory blank albo wielokrotne zmiany thresholdów. Najpierw trzeba udowodnić, że model w ogóle dostaje czytelny panel numeru.
 
 ---
 
-# 4. Dataset numerów — nowy punkt startowy
+# 5. STOP-LOOP RULES dla agenta
 
-Dataset już istnieje. Następny etap nie powinien więc polegać na dalszym ręcznym tuningu font templates. Najpierw należy zinwentaryzować dataset i zbudować reprodukowalny training/evaluation contract.
+Agent ma obowiązek zatrzymać iterację, gdy wystąpi którykolwiek z poniższych przypadków.
 
-## 4.1. Dataset manifest
-
-Dodać wersjonowany manifest zawierający:
+## Rule A — brak panel audit
 
 ```text
-dataset_id
-dataset_version
-source matches
-source videos
-source frame ranges
-annotation format
-numbered samples
-no-number samples
-unreadable samples
-front/back/side distribution
-number frequency distribution
-one/two/three-digit distribution
-team/kit profile distribution
-resolution distribution
-train/validation/test split
-held-out source-match keys
-content digest
+brak montage tight panel crops
+→ nie wolno zmieniać architektury ani trenować kolejnego modelu
 ```
 
-Nie trzeba commitować pełnego datasetu do repo. Commitować manifest, schema, split IDs i metryki.
-
-## 4.2. Split bez leakage
-
-Nie dzielić losowo sąsiednich klatek.
-
-Wymagane:
+## Rule B — brak tiny-set overfit
 
 ```text
-visibility episode nie może wystąpić w więcej niż jednym splicie
-tracklet nie może wystąpić w więcej niż jednym splicie
-najlepiej cały source match należy do jednego splitu
-held-out test musi zawierać niezależny source match
+model nie potrafi osiągnąć >= 95% exact sequence accuracy
+na 16 ręcznie wybranych czystych panelach
+→ preprocessing, labels lub loss są błędne
+→ nie wolno zwiększać datasetu ani stroić confidence
 ```
 
-Sąsiednie klatki tego samego numeru są prawie duplikatami. Random frame split da sztucznie zawyżony wynik.
-
-## 4.3. Minimalne klasy semantyczne
-
-Dataset/evaluator musi rozróżniać:
+## Rule C — overfit działa, validation nie działa
 
 ```text
-number_readable
-number_partially_readable
-number_absent
-number_unreadable
-not_a_jersey_panel
+tiny overfit passes
+same-match validation fails
+→ problemem jest diversity/dataset
+→ zbieraj lepsze dane
+→ nie twórz kolejnej architektury
 ```
 
-Dla `number_readable` przechowywać:
+## Rule D — real10 nadal unreadable
 
 ```text
-number string
-visible digits
-front/back/side
-occlusion
-blur
-perspective
-pixel height of digit/number panel
-team/kit profile
-source match / tracklet / visibility episode
+real10 panel jest czytelny w montage
+model nadal abstynuje
+→ problem panel alignment / model training
+
+real10 panel nie jest czytelny po preprocessing
+→ problem crop pipeline
 ```
 
-## 4.4. Negatywne próbki są obowiązkowe
-
-Najważniejsze negatives:
+## Rule E — plain-shirt false read
 
 ```text
-biała koszulka bez numeru
-logo lub sponsor wyglądający jak cyfra
-fałda koszulki
-ręka lub noga przecinająca panel
-ciemny element tła wewnątrz cropa
-front koszulki bez numeru
-inny zawodnik częściowo w cropie
-nieczytelny, bardzo mały numer
+jakikolwiek confirmed number na plain-shirt held-out negative
+→ blokada activation
+→ popraw visual/readability head lub calibration
 ```
 
-Dataset nie może składać się głównie z dobrych, centralnych cropów numerów.
-
----
-
-# 5. Target recognizer V1
-
-## 5.1. Nie traktować template matcher jako finalnego modelu
-
-Aktualny template matcher pozostaje:
+## Rule F — limit eksperymentów
 
 ```text
-diagnostic baseline
-regression comparison
-optional fallback evidence
+maksymalnie jeden model architecture experiment per benchmark cycle
 ```
 
-Nie powinien być głównym recognizerem po dostępności datasetu.
-
-## 5.2. Wybór architektury zależy od anotacji datasetu
-
-### Gdy dataset ma bboxy pojedynczych cyfr
-
-Preferowany wariant:
+Każdy cykl musi zakończyć się jednym raportem:
 
 ```text
-number-panel detector
-→ digit detector 0-9
-→ sortowanie cyfr left-to-right
-→ sequence assembly
-→ calibrated confidence
-```
-
-Zalety:
-
-- wspiera numery niewidziane jako pełna klasa;
-- naturalnie obsługuje 1-3 cyfry;
-- daje explainable per-digit confidence;
-- pozwala wykryć częściowy numer.
-
-### Gdy dataset ma tylko label całego numeru
-
-Preferowany wariant:
-
-```text
-number-panel crop
-→ small sequence recognizer / CRNN-CTC
-→ digit string
-→ calibrated confidence
-```
-
-Nie budować osobnej klasy dla każdego numeru rosteru jako jedynego modelu. Taki model nie generalizuje do nowych numerów i może nauczyć się wyglądu konkretnego zawodnika zamiast cyfr.
-
-### Roster constraint
-
-Roster powinien działać po recognition:
-
-```text
-recognized digit string
-→ same-team trusted roster lookup
-```
-
-Nie używać whole-person appearance ani roster player identity jako skrótu do przewidywania numeru.
-
-## 5.3. Team-scoped candidates
-
-Obecny recognizer tworzy listę trusted numerów z całego rosteru. Należy zmienić kontrakt:
-
-```text
-trusted Team A subject
-→ tylko Team A roster numbers
-
-trusted Team B subject
-→ tylko Team B roster numbers
-
-unknown team
-→ brak roster-confirmed identity anchor
-```
-
-Numer innej drużyny nie może obniżać score margin ani stać się candidate’em dla subjectu.
-
-## 5.4. Kit profiles
-
-Jawnie wspierać profile:
-
-```text
-bright_jersey_dark_number
-dark_jersey_bright_number
-custom_team_profile
-unknown_profile
-```
-
-Aktualny `bright_jersey_dark_number` może pozostać preprocessor baseline. Inne profile wymagają osobnej normalizacji albo learned panel detectora.
-
-## 5.5. Front/back/side
-
-Rozróżniać orientację:
-
-```text
-back:    najwyższy trust
-front:   podwyższony próg / większe ryzyko logo i sponsora
-side:    partial evidence
-unknown: conservative unreadable
-```
-
-Front nie może mieć takiego samego activation gate jak czysty back view bez osobnego benchmarku.
-
----
-
-# 6. Temporal evidence: dwa różne poziomy consensus
-
-Należy rozdzielić:
-
-## 6.1. Episode-level visual fusion
-
-Sąsiednie klatki mogą poprawić jeden odczyt:
-
-```text
-frames 3509, 3510, 3512
-→ alignment
-→ sharp-frame selection / temporal fusion
-→ jeden episode-level number prediction
-```
-
-Dozwolone techniki:
-
-```text
-wybór najostrzejszej klatki
-median/weighted fusion po alignment
-multi-frame logits aggregation
-best-view selection
-```
-
-## 6.2. Identity-level independence
-
-Ten sam episode nadal liczy się jako jeden independent read:
-
-```text
-3 adjacent frames
-→ 1 visual episode
-→ 1 identity vote
-```
-
-Strong subject consensus nadal wymaga kilku niezależnych episode’ów rozdzielonych w czasie.
-
-Nie mieszać:
-
-```text
-multi-frame evidence used to read one number
-```
-
-z:
-
-```text
-multiple independent sightings used to assign identity
+what changed
+train overfit result
+validation result
+real10 result
+plain-shirt result
+decision: keep / reject / collect data
 ```
 
 ---
 
-# 7. Confidence contract
+# 6. Obowiązkowy krok zerowy: tight number-panel dataset
 
-Aktualny confidence:
+Największym obecnym ryzykiem jest nie model, lecz wejście.
 
-```text
-best_score * (0.5 + score_margin)
-```
+Aktualny fixed torso ROI nie jest wystarczającym kontraktem dla target recognizera.
 
-nie jest skalibrowanym prawdopodobieństwem i może być niezgodny z downstream thresholdami `0.80` i `0.90`.
+## 6.1. Nowe opcjonalne pole annotation
 
-Wprowadzić osobne pola:
+Dodać do review crop:
 
 ```json
 {
-  "raw_shape_score": 0.0,
-  "raw_score_margin": 0.0,
-  "episode_support": 0,
-  "episode_competing_votes": 0,
-  "model_confidence": 0.0,
-  "calibrated_read_confidence": 0.0,
-  "calibration_version": "..."
+  "number_panel_bbox_normalized": [0.22, 0.18, 0.78, 0.62]
 }
 ```
 
-Downstream evidence i consensus powinny używać wyłącznie:
+Pole oznacza tight panel numeru względem właściwego person/torso cropa.
+
+Nie trzeba annotować całego datasetu od razu.
+
+Minimum dla pierwszego eksperymentu:
+
+```text
+wszystkie high-confidence number_confirmed crops
+real10 frames 3509/3510/3512
+co najmniej 30 plain-shirt / unreadable negatives
+```
+
+## 6.2. Panel artifact
+
+Training sample powinien używać:
+
+```text
+number_panel_artifact
+```
+
+lub deterministycznie wycinać panel z:
+
+```text
+artifact + number_panel_bbox_normalized
+```
+
+Do modelu nie podawać całej sylwetki ani szerokiej górnej połowy tułowia jako finalnego inputu.
+
+## 6.3. Readiness report
+
+Przed treningiem wygenerować:
+
+```text
+number_panel_dataset_readiness.json
+number_panel_montage.jpg
+```
+
+Raport musi zawierać:
+
+```text
+total panel crops
+readable full-number crops
+partial-number crops
+plain-shirt crops
+unreadable crops
+unique visibility episodes
+unique tracklets
+unique subjects
+counts per number
+counts per digit 0-9
+counts per view
+panel width/height distribution
+estimated digit pixel-height distribution
+missing panel bbox count
+```
+
+Hard stop:
+
+```text
+median digit height < 8 px po preprocessing
+→ nie trenować modelu
+```
+
+Target dla pierwszego użytecznego eksperymentu:
+
+```text
+minimum 50 readable panel crops
+minimum 20 independent readable visibility episodes
+minimum 30 plain-shirt/unreadable negatives
+```
+
+Mniejsze zbiory mogą służyć do overfit smoke testu, ale nie do oceny generalizacji.
+
+---
+
+# 7. Decyzja modelowa: PanelDigitNetV1
+
+Nie implementować kolejnego CRNN jako następnego kroku.
+
+Użyć jednego prostego modelu wielowyjściowego.
+
+## 7.1. Architektura
+
+```text
+number panel crop 64x96
+→ shared small CNN
+├── visual head: readable / absent / unreadable
+├── digit position 1: blank + 0-9
+├── digit position 2: blank + 0-9
+└── digit position 3: blank + 0-9
+```
+
+To jest jeden model, nie kilka osobnych modeli.
+
+Można początkowo ponownie użyć prostego CNN z obecnego CRNN:
+
+```text
+Conv 1→32
+MaxPool
+Conv 32→64
+MaxPool
+Adaptive pooling
+shared embedding
+```
+
+Bez:
+
+```text
+GRU
+CTC
+beam search
+blank regularizer
+```
+
+## 7.2. Target encoding
+
+```text
+"7"   → [7, blank, blank]
+"10"  → [1, 0, blank]
+"92"  → [9, 2, blank]
+"100" → [1, 0, 0]
+```
+
+## 7.3. Loss
+
+```text
+total_loss = visual_cross_entropy
+```
+
+Dla `number_confirmed` z pełnym numerem:
+
+```text
+total_loss += digit_1_ce + digit_2_ce + digit_3_ce
+```
+
+Dla `number_partially_readable`:
+
+```text
+loss tylko dla jawnie widocznych pozycji cyfr
+```
+
+Dla `number_absent` i `number_unreadable`:
+
+```text
+bez digit loss
+```
+
+## 7.4. Dlaczego ten wariant
+
+- odpowiada dokładnie numerom długości 1-3;
+- używa istniejących whole-number labels;
+- nie wymaga bboxów pojedynczych cyfr;
+- eliminuje CTC blank collapse;
+- jest łatwy do overfitowania i debugowania;
+- daje per-position confidence;
+- nie tworzy nowego skomplikowanego OCR systemu;
+- pozostawia możliwość powrotu do CRNN dopiero, gdy fixed-position model przegra z powodu realnego układu cyfr.
+
+## 7.5. CRNN status
+
+Obecny CRNN pozostawić w repo jako:
+
+```text
+deferred diagnostic experiment
+```
+
+Nie usuwać go i nie integrować teraz z identity pipeline.
+
+Powrót do CRNN jest dozwolony wyłącznie, gdy:
+
+```text
+PanelDigitNetV1 overfits clean panels
++ panel crops są poprawne
++ błędy wynikają z variable digit spacing/alignment
+```
+
+---
+
+# 8. Obowiązkowa drabina debugowania
+
+## R0 — panel visual audit
+
+Deliverables:
+
+```text
+montage z expected number
+panel bbox overlay
+panel crop po resize
+source frame/tracklet/episode
+```
+
+Decision:
+
+```text
+czy cyfry są czytelne dla człowieka po dokładnie tym samym preprocessing?
+```
+
+## R1 — tiny overfit
+
+Dataset:
+
+```text
+16 clean readable panel crops
+minimum 3 różne numery
+minimum 4 różne visibility episodes
+```
+
+Training:
+
+```text
+no augmentation
+same 16 samples
+train until overfit or max 500 epochs
+```
+
+Pass gate:
+
+```text
+exact sequence accuracy >= 0.95
+visual-state accuracy = 1.0
+0 null predictions
+```
+
+Brak pass oznacza błąd kodu, cropów, labeli lub loss.
+
+## R2 — readable-vs-negative overfit
+
+Dataset:
+
+```text
+16 readable
+16 plain-shirt/unreadable
+```
+
+Pass gate:
+
+```text
+readable recall >= 0.95
+negative specificity >= 0.95
+exact sequence accuracy >= 0.90 na readable
+```
+
+## R3 — same-match subject-heldout diagnostic
+
+Nie jest to production validation.
+
+Mierzyć:
+
+```text
+crop exact sequence accuracy
+episode exact sequence accuracy
+plain-shirt false confirmed reads
+real10 episode result
+```
+
+Target diagnostyczny:
+
+```text
+real10 = 10
+plain-shirt false confirmed = 0
+episode precision = 1.0
+episode recall > 0
+```
+
+## R4 — drugi niezależny mecz
+
+Dopiero drugi source match pozwala ocenić, czy model nauczył się cyfr zamiast strojów/zawodników.
+
+Dopiero wtedy:
+
+```text
+confidence calibration
+threshold freeze
+N5.8 candidate-review experiment
+```
+
+---
+
+# 9. Integracja z istniejącym pipeline
+
+PanelDigitNetV1 ma początkowo działać tylko w osobnym offline benchmarku.
+
+Nie integrować go do `identity_jersey_number_recognizer_shadow` przed przejściem R0-R3.
+
+Po przejściu R0-R3:
+
+```text
+PanelDigitNetV1 raw prediction
+→ episode-level fusion
+→ calibrated confidence
+→ same-team roster lookup
+→ existing evidence contract
+→ existing subject consensus
+→ operator review suggestion
+```
+
+Roster constraint działa po recognition:
+
+```text
+raw model: "10"
+→ Team A roster lookup
+→ unique player or unmatched/conflict
+```
+
+Model nie może być trenowany wyłącznie jako klasyfikator aktualnych roster players.
+
+## Confidence
+
+Przed drugim meczem zapisywać tylko:
+
+```text
+raw visual probabilities
+raw digit probabilities
+raw decoded sequence
+```
+
+Nie udawać kalibrowanego prawdopodobieństwa.
+
+Po niezależnym validation:
 
 ```text
 calibrated_read_confidence
-```
-
-Kalibrację wykonać na validation set, np. temperature scaling, isotonic regression albo jawny threshold table. Wybrana metoda musi być zapisana w artifact metadata.
-
-Nie obniżać thresholdów tylko po to, aby uzyskać pierwszy pozytywny wynik.
-
----
-
-# 8. Natychmiastowe poprawki kontraktu
-
-Przed kolejnym held-out benchmarkiem naprawić:
-
-## 8.1. Observation source
-
-Recognizer powinien emitować:
-
-```json
-{
-  "source": "automatic_jersey_recognizer",
-  "recognizer_version": "...",
-  "model_digest": "...",
-  "dataset_digest": "..."
-}
-```
-
-Evidence nie może oznaczać automatycznej obserwacji jako `not_run`.
-
-## 8.2. False-read double counting
-
-`false_number_on_plain_shirt` jest podzbiorem false positive reads i nie może być ponownie dodawany do ogólnej liczby błędów.
-
-Raportować:
-
-```text
-false_confirmed_reads_total
-false_confirmed_reads_numbered_player
-false_confirmed_reads_plain_shirt
-```
-
-`total` ma być liczbą unikalnych błędnych observations/episodes, nie sumą nakładających się kategorii.
-
-## 8.3. Canonical production comparison
-
-Candidate integration nie powinno przyjmować gołego:
-
-```text
-production_identity_unchanged: bool
-```
-
-Powinno przyjmować canonical held-out case/production artifact comparison i samodzielnie sprawdzać jego digest oraz status.
-
-## 8.4. Real regression fixture
-
-Dodać fixture bazujący na realnym przypadku:
-
-```text
-match 07d227bd
-tracklet 100304:1
-frames 3509, 3510, 3512
-expected number 10
-one visibility episode
-```
-
-Wersjonować mały panel crop lub zanonimizowaną maskę/feature fixture, nie całe wideo.
-
-Test powinien wymagać:
-
-```text
-number 10 read at episode level
-1 visibility episode
-not 3 independent identity reads
-no automatic assignment
-```
-
-Syntetyczny test wygenerowany tym samym fontem co matcher pozostaje unit testem mechaniki, ale nie jest recognizer quality testem.
-
----
-
-# 9. Metryki recognizera
-
-Raportować na crop, episode, subject i identity level.
-
-## Crop/panel level
-
-```text
-panel precision
-panel recall
-readability precision
-readability recall
-number accuracy
-digit accuracy
-partial-number rate
-plain-shirt hallucination rate
-unreadable rate
-```
-
-## Visibility episode level
-
-```text
-episodes reviewed
-episodes with readable number
-correct episode reads
-wrong episode reads
-episode precision
-episode recall
-competing-number episodes
-```
-
-## Subject level
-
-```text
-subjects with trusted number consensus
-correct strong consensuses
-false strong consensuses
-subject precision
-subject recall
-number conflicts
-```
-
-## Identity/product level
-
-```text
-correct roster suggestions
-false roster suggestions
-subjects resolved by number
-tracklets resolved by number
-frames added by propagation
-review cards avoided
-review seconds saved
-false assignments caused by number evidence
-```
-
-Najważniejszy gate nie brzmi:
-
-```text
-raw crop model has no mistakes
-```
-
-lecz:
-
-```text
-0 false strong subject consensuses
-0 false roster suggestions
-0 false propagated identity
-```
-
-Jednocześnie każdy false confirmed episode read na held-out materiale musi blokować pierwszą candidate activation do czasu analizy i ponownej kalibracji.
-
----
-
-# 10. Benchmark i activation gates
-
-## 10.1. Dataset offline benchmark
-
-Minimum:
-
-```text
-match-level held-out split
-front/back/side metrics
-numbered/no-number/unreadable metrics
-one/two/three-digit metrics
-kit-profile metrics
-real-video regression fixture 07d227bd
-```
-
-## 10.2. N5.8 multi-match shadow benchmark
-
-Minimum:
-
-```text
-minimum 2 independent source matches for candidate-review experiment
-minimum 1 additional held-out source match before production consideration
-minimum 2 positive multi-tracklet propagations
-0 false strong subject consensuses
-0 false roster suggestions
-0 unexpected propagated targets
-0 cross-subject propagations
-0 automatic assignments
-production identity hashes unchanged
-```
-
-Kilka clipów tego samego meczu nadal liczy się jako jeden source match.
-
-## 10.3. Candidate-only activation
-
-Pierwsza aktywacja może wyłącznie:
-
-```text
-pokazać roster suggestion do operator review
-pokazać number evidence i episode crops
-oznaczyć safe intra-subject propagated tracklets
-obniżyć priorytet ręcznego review po potwierdzeniu operatora
-```
-
-Nie może:
-
-```text
-zapisać player_identity_assignments.json
-publikować statystyk
-scalać niezależnych subjectów
-tworzyć nowych lineage edges
-uruchamiać cross-match auto identity
+calibration_version
+threshold_version
 ```
 
 ---
 
-# 11. Integracja z Player Identity Stabilization
+# 10. Konkretne zadania dla agenta
 
-Jersey-number work nie powinien dalej blokować głównej roadmapy.
+Agent ma wykonać dokładnie poniższą sekwencję.
+
+## J8.1 — freeze existing recognizers
+
+- nie zmieniać template baseline;
+- nie zmieniać centroid baseline;
+- nie stroić CRNN;
+- oznaczyć CRNN jako deferred diagnostic w raportach;
+- brak zmian candidate/production identity.
+
+## J8.2 — panel annotation contract
+
+Dodać:
+
+```text
+number_panel_bbox_normalized
+number_panel_artifact lub deterministic panel extraction
+```
+
+Zachować pełne provenance i source digests.
+
+## J8.3 — panel readiness report
+
+Dodać skrypt:
+
+```text
+backend/scripts/audit_identity_jersey_number_panels.py
+```
+
+Output:
+
+```text
+number_panel_dataset_readiness.json
+number_panel_montage.jpg
+```
+
+Po tym milestone agent ma zatrzymać implementację i zapisać findings.
+
+## J8.4 — PanelDigitNetV1
+
+Dodać jeden moduł, np.:
+
+```text
+backend/app/services/identity_jersey_number_panel_digit_model.py
+```
+
+Nie tworzyć dodatkowego detectora cyfr, CRNN ani OCR frameworka.
+
+## J8.5 — explicit overfit mode
+
+Training CLI musi obsługiwać:
+
+```text
+--mode overfit-smoke
+--sample-limit 16
+--epochs 500
+```
+
+Raportować co najmniej:
+
+```text
+exact train sequence accuracy
+visual train accuracy
+null prediction count
+per-position accuracy
+```
+
+Checkpoint nie może zostać uznany za udany bez pass gate R1.
+
+## J8.6 — negative overfit i real10
+
+Dodać R2 i R3 jako osobne raporty.
+
+Real10 contract:
+
+```text
+frames 3509/3510/3512
+→ one visibility episode
+→ episode prediction "10"
+→ one identity vote
+→ no automatic assignment
+```
+
+## J8.7 — stop and report
+
+Po R3 agent ma zakończyć pracę nad recognizerem i zwrócić:
+
+```text
+panel readiness summary
+R1 result
+R2 result
+R3 result
+real10 result
+plain-shirt result
+recommended next decision
+```
+
+Nie może automatycznie przejść do kolejnej architektury.
+
+---
+
+# 11. Testy wymagane w następnym commicie
+
+## Contract tests
+
+- panel bbox musi być znormalizowany i mieścić się w `[0,1]`;
+- niepoprawny bbox blokuje sample;
+- panel crop jest deterministyczny;
+- panel artifact digest jest stabilny;
+- visibility episode nie zmienia się przez liczbę adjacent frames;
+- Team B/unknown team nie tworzy Team A roster suggestion.
+
+## Model smoke tests
+
+- model ma cztery heads: visual + 3 digit positions;
+- output shapes są stabilne;
+- one-digit, two-digit i three-digit target encoding;
+- digit loss tylko dla readable labels;
+- negative sample nie tworzy digit target;
+- tiny synthetic overfit mechanicznie działa.
+
+## Real quality regression
+
+- real10 panel fixture jest widoczny w montage;
+- R1 wykorzystuje real panel crops, nie font generowany przez ten sam kod;
+- plain-shirt fixture nie daje confirmed number;
+- accepted identity evidence pozostaje `null` w diagnostic benchmarku.
+
+---
+
+# 12. Czego agent nie ma teraz robić
+
+Nie implementować:
+
+- kolejnego CRNN/Transformer/OCR modelu;
+- osobnego digit detectora bez digit bbox datasetu;
+- beam search;
+- kolejnych CTC regularizerów;
+- nowego candidate integration;
+- cross-subject propagation;
+- production apply;
+- kolejnych warstw schema/gate niezwiązanych z R0-R3;
+- automatycznego generowania player stats z number predictions;
+- confidence calibration na train set;
+- losowego frame-level splitu;
+- synthetic-font benchmarku jako dowodu jakości.
+
+Nie zmieniać thresholdów tylko po to, aby real10 został zaakceptowany.
+
+---
+
+# 13. Kontynuacja Player ID roadmap
+
+Jersey recognition i Player ID Stabilization mają działać równolegle.
 
 ## Teraz
 
-Wykonać krótki dataset-driven recognizer closeout:
-
 ```text
-J1 dataset audit + manifest
-J2 leak-safe match-level splits
-J3 learned recognizer baseline
-J4 episode-level temporal fusion
-J5 confidence calibration
-J6 real fixture + held-out offline evaluation
-J7 shadow rerun on 07d227bd
-```
-
-## Równolegle
-
-Kontynuować:
-
-```text
+J8.2-J8.7 panel recognizer rescue
++
 P1.22 Full-Match Operator Benchmark
 ```
 
-P1.22 powinno zbierać dodatkową telemetry:
-
-```text
-number_suggestions_shown
-number_suggestions_accepted
-number_suggestions_rejected
-number_conflicts
-subjects_resolved_by_number
-tracklets_resolved_by_number
-frames_added_by_number_propagation
-review_seconds_spent_on_number_evidence
-estimated_review_seconds_saved
-```
-
-Każdy mecz P1.22 powinien jednocześnie dostarczać:
+P1.22 powinno zbierać:
 
 ```text
 number visibility episodes
 plain-shirt negatives
 unreadable negatives
-held-out recognizer evaluation
-N5.8 case package
+operator-confirmed panel bboxes
+number suggestions shown/accepted/rejected
+subjects resolved by number
+tracklets resolved by number
+review time spent/saved
 ```
 
-## Po P1.22
-
-Gdy number anchor zostanie potwierdzony przez operatora:
+## Po poprawnym number anchor
 
 ```text
-real player
-→ approved number-confirmed crops
+operator-confirmed real player
+→ approved number panel
 → approved appearance crops
 → roster-confirmed ReID prototype
 → ranking unresolved fragments
 ```
 
-To odpowiada P2.1 z głównej roadmapy.
-
-Nie uruchamiać automatycznego cross-subject merge. Number-confirmed ReID najpierw służy tylko do rankingu i review assistance.
-
----
-
-# 12. Rekomendowana kolejność implementacji
+Na tym etapie nadal:
 
 ```text
-1. Audit istniejącego datasetu i annotation schema
-2. Zbuduj leak-safe train/validation/held-out splits per source match
-3. Napraw team-scoped roster candidates
-4. Napraw observation_source i false-read double counting
-5. Zdefiniuj calibrated confidence contract
-6. Wytrenuj learned recognizer baseline odpowiedni do annotations
-7. Dodaj episode-level temporal fusion
-8. Dodaj real regression fixture number 10
-9. Uruchom offline held-out benchmark
-10. Uruchom shadow benchmark ponownie na 07d227bd
-11. Rozpocznij/ kontynuuj P1.22 na kolejnych meczach
-12. Wypełnij N5.8 multi-match suite
-13. Dopiero wtedy rozważ N5.9 candidate review suggestions
-14. Po P1.22 rozważ P2.1 roster-confirmed ReID prototypes
+no automatic cross-subject merge
+no production identity write
 ```
 
 ---
 
-# 13. Acceptance criteria
+# 14. Acceptance criteria
 
-## Zaimplementowane
+## Recognizer rescue complete
 
-- [x] optional unique jersey number per team;
-- [x] duplicate same-team number disables trust;
-- [x] `number_absent` differs from `number_unreadable`;
-- [x] operator audit contract;
-- [x] independent visibility episode contract;
-- [x] tracklet/subject consensus;
-- [x] same-team unique roster lookup downstream;
-- [x] canonical structural blockers;
-- [x] full lineage validation;
-- [x] separate number/operator seed provenance;
-- [x] safe intra-subject propagation;
-- [x] no cross-subject propagation;
-- [x] no automatic assignments;
-- [x] N5.8 canonical case infrastructure;
-- [x] dataset numerów jest dostępny;
-- [x] real-video false-negative fixture został zidentyfikowany.
+- [ ] tight panel montage zostało ręcznie obejrzane;
+- [ ] median digit height po preprocessing wynosi minimum 8 px;
+- [ ] real10 panel jest czytelny po dokładnie tym samym preprocessing;
+- [ ] PanelDigitNetV1 R1 exact train accuracy >= 0.95;
+- [ ] R2 negative specificity >= 0.95;
+- [ ] real10 episode prediction = `10`;
+- [ ] plain-shirt false confirmed reads = 0;
+- [ ] raw prediction nie mutuje identity;
+- [ ] agent kończy milestone raportem zamiast automatycznie zmieniać architekturę.
 
-## Wymagane przed candidate review activation
+## Candidate review activation
 
-- [x] dataset manifest i version digest;
-- [x] leak-safe split contract i subject-group fallback;
-- [ ] rzeczywisty match-level held-out split na niezależnych source matches;
-- [ ] learned recognizer trained and versioned;
-- [x] diagnostyczny learned centroid baseline trained and versioned;
-- [ ] docelowy digit-sequence learned recognizer trained and versioned;
-- [x] team-scoped roster candidate list;
-- [x] calibrated confidence used by evidence/consensus;
-- [x] automatic observation source/version metadata;
-- [x] false-read metrics do not double count;
-- [ ] real `10` regression fixture passes at episode level;
-- [x] plain-shirt negative benchmark passes dla diagnostycznego baseline;
-- [x] front/back/side metrics reported;
-- [ ] minimum 2 independent source matches in N5.8;
+- [ ] minimum 2 independent source matches;
 - [ ] minimum 2 positive safe multi-tracklet propagations;
 - [ ] 0 false strong subject consensuses;
 - [ ] 0 false roster suggestions;
 - [ ] 0 unexpected propagations;
-- [ ] production identity unchanged by kompletnym zestawem digestów;
-- [x] candidate integration consumes canonical held-out contract, not a manual boolean.
+- [ ] canonical production digests unchanged;
+- [ ] operator review pozostaje wymagane.
 
-## Wymagane przed production use
+## Production use
 
 - [ ] minimum 3 evaluated source matches including held-out;
-- [ ] P1.22 operator benchmark completed;
+- [ ] P1.22 completed;
 - [ ] candidate-only number assistance measurably reduces review;
-- [ ] 0 known false assignments after operator review;
-- [ ] P1.23 candidate stats validation passes;
-- [ ] controlled transaction/backup/rollback from P1.24;
-- [ ] downstream freshness rebuilt after apply;
+- [ ] P1.23 stats validation passes;
+- [ ] P1.24 transaction/backup/rollback implemented;
 - [ ] no automatic cross-subject or cross-match identity promotion.
-
----
-
-# 14. Anti-goals
-
-Nie należy:
-
-- kontynuować ręcznego strojenia OpenCV font templates jako głównej strategii po dostępności datasetu;
-- dzielić datasetu losowo per frame;
-- liczyć sąsiednich klatek jako niezależnych identity reads;
-- obniżać progów tylko po to, aby uzyskać pierwszy positive;
-- używać whole-person appearance jako etykiety numeru;
-- ograniczać learned model do osobnej klasy każdego roster number bez generalizacji cyfr;
-- traktować braku OCR jako `number_absent`;
-- identyfikować gracza bez numeru na podstawie samego braku numeru;
-- tworzyć krawędzi lub scalać subjectów z samego number match;
-- aktywować N5.9 przed held-out multi-match validation;
-- blokować P1.22 do czasu idealnego jersey OCR;
-- przechodzić od number anchor bezpośrednio do production Player ID;
-- traktować template synthetic tests jako dowodu real-video quality.
 
 ---
 
 # 15. Wniosek końcowy
 
-Aktualny feature jest domknięty jako:
+Aktualny agent nie utknął dlatego, że potrzebuje bardziej zaawansowanego OCR.
+
+Utknął, ponieważ równolegle powstały:
 
 ```text
-bezpieczna architektura shadow
-manualny high-confidence number anchor
-conservative consensus i propagation
-held-out validation infrastructure
+template matcher
+whole-number centroid baseline
+CRNN-CTC prototype
+multiple evaluation contracts
 ```
 
-Nie jest domknięty jako:
+bez wcześniejszego udowodnienia, że model dostaje tight, czytelny number panel i potrafi overfitować kilkanaście realnych przykładów.
+
+Prawidłowa ścieżka jest teraz znacznie krótsza:
 
 ```text
-automatyczne odczytywanie numerów z realnego wideo
-skalibrowany learned recognizer
-multi-match validated candidate suggestion source
+tight panel annotation
+→ montage/readiness audit
+→ simple PanelDigitNetV1
+→ tiny real-data overfit
+→ negatives
+→ real10
+→ stop and report
 ```
 
-Dataset usuwa najważniejszą przeszkodę do kolejnego etapu. Następna iteracja powinna być dataset-driven, nie template-driven.
+Dopiero po tym można wrócić do generalizacji, confidence calibration i N5.8.
 
-Prawidłowy rozwój:
+Najważniejsza decyzja:
 
 ```text
-learned jersey recognizer
-+ conservative episode/subject consensus
-+ operator-confirmed number anchors
-+ roster-confirmed ReID ranking
-+ P1.22 full-match validation
+nie dodawać kolejnej architektury
+nie stroić CTC w ciemno
+najpierw udowodnić poprawność panel input + tiny overfit
 ```
-
-Jersey number może znacząco zwiększyć liczbę trackletów przypisanych do faktycznego gracza nawet przy umiarkowanym recall. Warunkiem pozostaje bardzo wysoka precision i jawne `unreadable` zamiast agresywnego zgadywania.
