@@ -138,20 +138,26 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
 
     def test_quality_annotations_round_trip_and_change_dataset_digest(self) -> None:
         annotations = {
+            "jersey_number": "10",
             "digit_visibility": "full",
             "occlusion_state": "partial",
             "blur_level": "mild",
             "perspective_state": "angled",
             "panel_height_ratio": 0.42,
             "kit_profile": "home-blue",
+            "number_panel_bbox_normalized": [0.2, 0.15, 0.8, 0.7],
+            "number_panel_artifact": "panels/sample-10.jpg",
         }
         changed_values = {
+            "jersey_number": "11",
             "digit_visibility": "partial",
             "occlusion_state": "heavy",
             "blur_level": "heavy",
             "perspective_state": "severe",
             "panel_height_ratio": 0.43,
             "kit_profile": "away-white",
+            "number_panel_bbox_normalized": [0.21, 0.15, 0.8, 0.7],
+            "number_panel_artifact": "panels/sample-10-v2.jpg",
         }
         with tempfile.TemporaryDirectory() as directory:
             source = _source(Path(directory), video_key="clip-a", subject_id="s1")
@@ -193,15 +199,26 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
         self.assertEqual(sample["perspective_state"], "unknown")
         self.assertIsNone(sample["panel_height_ratio"])
         self.assertIsNone(sample["kit_profile"])
+        self.assertIsNone(sample["number_panel_bbox_normalized"])
+        self.assertIsNone(sample["number_panel_artifact"])
+
+    def test_invalid_panel_annotations_raise(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(Path(directory), video_key="clip-a", subject_id="s1")
+            source["reviewed_observations_doc"]["observations"][0]["number_panel_bbox_normalized"] = [
+                0.4,
+                0.4,
+                0.3,
+                0.8,
+            ]
+            with self.assertRaises(ValueError):
+                build_identity_jersey_number_dataset_manifest([source], generated_at="fixed")
 
     def test_fresh_subject_review_crop_annotation_merges_with_provenance(self) -> None:
         annotation = {
-            "digit_visibility": "full",
-            "occlusion_state": "partial",
-            "blur_level": "mild",
-            "perspective_state": "angled",
-            "panel_height_ratio": 0.42,
-            "kit_profile": "home-blue",
+            "jersey_number": "15",
+            "number_panel_bbox_normalized": [0.2, 0.15, 0.8, 0.7],
+            "number_panel_artifact": "panels/clip-a-1.jpg",
         }
         with tempfile.TemporaryDirectory() as directory:
             source = _source(Path(directory), video_key="clip-a", subject_id="s1")
@@ -227,7 +244,7 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
             changed = copy.deepcopy(source)
             changed["subject_review_doc"]["cards"][0]["visual_evidence"]["anchor_crops"][0][
                 "jersey_number_annotation"
-            ]["kit_profile"] = "away-white"
+            ]["jersey_number"] = "16"
             changed_manifest = build_identity_jersey_number_dataset_manifest(
                 [changed], generated_at="fixed"
             )
@@ -246,9 +263,11 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
 
         sample = manifest["samples"][0]
         provenance = manifest["sources"][0]
-        self.assertEqual({field: sample[field] for field in annotation}, annotation)
+        self.assertEqual(sample["number"], "15")
         self.assertEqual(sample["label_state"], "number_confirmed")
-        self.assertEqual(sample["number"], "10")
+        self.assertEqual(sample["number_panel_bbox_normalized"], [0.2, 0.15, 0.8, 0.7])
+        self.assertEqual(sample["number_panel_artifact"], "panels/clip-a-1.jpg")
+        self.assertEqual(sample["label_state"], "number_confirmed")
         self.assertTrue(provenance["subject_review_decisions_fresh"])
         self.assertEqual(provenance["subject_review_annotations_applied"], 1)
         self.assertIsNotNone(provenance["subject_review_digest"])
@@ -257,6 +276,35 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
         self.assertEqual(mismatched_manifest["sources"][0]["subject_review_annotations_applied"], 0)
         self.assertEqual(stale_manifest["samples"][0]["number"], "10")
         self.assertEqual(mismatched_manifest["samples"][0]["number"], "10")
+
+    def test_blank_subject_review_number_annotation_marks_crop_unreadable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(Path(directory), video_key="clip-a", subject_id="s1")
+            source["subject_review_doc"] = {
+                "decisions_fresh": True,
+                "cards": [
+                    {
+                        "visual_evidence": {
+                            "anchor_crops": [
+                                {
+                                    "anchor_crop_id": "clip-a-1",
+                                    "jersey_number_annotation": {
+                                        "jersey_number": None,
+                                        "number_panel_bbox_normalized": [0.2, 0.15, 0.8, 0.7],
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+            sample = build_identity_jersey_number_dataset_manifest(
+                [source], generated_at="fixed"
+            )["samples"][0]
+
+        self.assertEqual(sample["label_state"], "number_unreadable")
+        self.assertIsNone(sample["number"])
+        self.assertFalse(sample["number_panel_visible"])
 
 
 def _source(root: Path, *, video_key: str, subject_id: str) -> dict:

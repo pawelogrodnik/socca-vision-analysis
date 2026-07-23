@@ -8,6 +8,9 @@ from typing import Any
 import uuid
 
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_jersey_number_common import normalize_normalized_bbox
+from app.services.identity_jersey_number_common import normalize_jersey_number
+from app.services.identity_jersey_number_common import normalize_safe_relative_artifact_path
 
 
 REVIEW_ARTIFACT_FILENAME = "identity_roster_subject_review_shadow.json"
@@ -24,6 +27,8 @@ PROHIBITED_PRE_AUDIT_KEYS = {
     "perspective_state",
     "panel_height_ratio",
     "kit_profile",
+    "number_panel_bbox_normalized",
+    "number_panel_artifact",
     "number",
     "number_absent",
     "digit_string",
@@ -400,22 +405,42 @@ def _normalize_crop_annotation(value: Any) -> dict[str, Any]:
         raise ValueError("jersey_number_annotation must be an object")
     normalized: dict[str, Any] = {}
     for field, allowed in JERSEY_ANNOTATION_ENUMS.items():
+        if field not in value:
+            continue
         raw = value.get(field)
         item = str(raw or "unknown").strip().lower()
         if item not in allowed:
             raise ValueError(f"Invalid jersey_number_annotation {field}")
         normalized[field] = item
-    ratio = value.get("panel_height_ratio")
-    if ratio is None:
-        normalized["panel_height_ratio"] = None
-    elif isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0.0 <= float(ratio) <= 1.0:
-        raise ValueError("panel_height_ratio must be between zero and one or null")
-    else:
-        normalized["panel_height_ratio"] = round(float(ratio), 6)
-    profile = value.get("kit_profile")
-    if profile is not None and not isinstance(profile, str):
-        raise ValueError("kit_profile must be a string or null")
-    normalized["kit_profile"] = profile.strip() or None if isinstance(profile, str) else None
+    if "panel_height_ratio" in value:
+        ratio = value.get("panel_height_ratio")
+        if ratio is None:
+            normalized["panel_height_ratio"] = None
+        elif isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0.0 <= float(ratio) <= 1.0:
+            raise ValueError("panel_height_ratio must be between zero and one or null")
+        else:
+            normalized["panel_height_ratio"] = round(float(ratio), 6)
+    if "kit_profile" in value:
+        profile = value.get("kit_profile")
+        if profile is not None and not isinstance(profile, str):
+            raise ValueError("kit_profile must be a string or null")
+        normalized["kit_profile"] = profile.strip() or None if isinstance(profile, str) else None
+    if "number_panel_bbox_normalized" in value:
+        normalized["number_panel_bbox_normalized"] = normalize_normalized_bbox(
+            value.get("number_panel_bbox_normalized"),
+            field_name="number_panel_bbox_normalized",
+        )
+    if "number_panel_artifact" in value:
+        normalized["number_panel_artifact"] = normalize_safe_relative_artifact_path(
+            value.get("number_panel_artifact"),
+            field_name="number_panel_artifact",
+        )
+    if "jersey_number" in value:
+        jersey_number = normalize_jersey_number(value.get("jersey_number"))
+        raw_jersey_number = value.get("jersey_number")
+        if raw_jersey_number not in (None, "") and jersey_number is None:
+            raise ValueError("jersey_number must contain 1-3 digits or be empty")
+        normalized["jersey_number"] = jersey_number
     return normalized
 
 

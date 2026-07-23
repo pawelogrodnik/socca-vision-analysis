@@ -8,7 +8,9 @@ from typing import Any
 
 from app.services.identity_jersey_number_common import (
     canonical_digest,
+    normalize_normalized_bbox,
     normalize_jersey_number,
+    normalize_safe_relative_artifact_path,
     stable_key,
     team_label,
 )
@@ -29,12 +31,15 @@ DEFAULT_PARAMETERS = {
     },
 }
 JERSEY_ANNOTATION_FIELDS = (
+    "jersey_number",
     "digit_visibility",
     "occlusion_state",
     "blur_level",
     "perspective_state",
     "panel_height_ratio",
     "kit_profile",
+    "number_panel_bbox_normalized",
+    "number_panel_artifact",
 )
 
 
@@ -152,6 +157,8 @@ def build_identity_jersey_number_dataset_manifest(
                     "perspective_state",
                     "panel_height_ratio",
                     "kit_profile",
+                    "number_panel_bbox_normalized",
+                    "number_panel_artifact",
                     "visibility_episode_id",
                     "split",
                     "artifact_digest",
@@ -220,7 +227,11 @@ def _merge_subject_review_annotations(
             if not isinstance(annotation, dict):
                 continue
             crop_id = str(crop["anchor_crop_id"])
-            normalized = {field: annotation.get(field) for field in JERSEY_ANNOTATION_FIELDS}
+            normalized = {
+                field: annotation.get(field)
+                for field in JERSEY_ANNOTATION_FIELDS
+                if field in annotation
+            }
             if crop_id in annotations and annotations[crop_id] != normalized:
                 annotations.pop(crop_id)
                 continue
@@ -245,10 +256,15 @@ def _sample_from_review(
     artifact = str(card.get("torso_artifact") or card.get("artifact") or "")
     artifact_kind = "torso_crop" if card.get("torso_artifact") else "anchor_crop"
     artifact_path = crop_root / artifact
-    state = str(review.get("state") or "number_unreadable")
-    number = normalize_jersey_number(review.get("number"))
-    if state != "number_confirmed":
-        number = None
+    manual_number = normalize_jersey_number(review.get("jersey_number"))
+    if "jersey_number" in review:
+        state = "number_confirmed" if manual_number is not None else "number_unreadable"
+        number = manual_number
+    else:
+        state = str(review.get("state") or "number_unreadable")
+        number = normalize_jersey_number(review.get("number"))
+        if state != "number_confirmed":
+            number = None
     subject_id = str(card.get("candidate_subject_id") or "")
     tracklet_id = str(card.get("tracklet_id") or "")
     frame = int(card.get("frame") or 0)
@@ -264,6 +280,14 @@ def _sample_from_review(
     )
     perspective_state = _annotation_enum(
         review.get("perspective_state"), {"frontal", "angled", "severe", "unknown"}
+    )
+    number_panel_bbox_normalized = normalize_normalized_bbox(
+        review.get("number_panel_bbox_normalized"),
+        field_name="number_panel_bbox_normalized",
+    )
+    number_panel_artifact = normalize_safe_relative_artifact_path(
+        review.get("number_panel_artifact"),
+        field_name="number_panel_artifact",
     )
     return {
         "sample_key": stable_key(
@@ -299,8 +323,10 @@ def _sample_from_review(
         "perspective_state": perspective_state,
         "panel_height_ratio": _panel_height_ratio(review.get("panel_height_ratio")),
         "kit_profile": _kit_profile(review.get("kit_profile")),
+        "number_panel_bbox_normalized": number_panel_bbox_normalized,
+        "number_panel_artifact": number_panel_artifact,
         "clean_jersey_visible": bool(review.get("clean_jersey_visible")),
-        "number_panel_visible": bool(review.get("number_panel_visible")),
+        "number_panel_visible": manual_number is not None if "jersey_number" in review else bool(review.get("number_panel_visible")),
         "annotation_confidence": round(float(review.get("confidence") or 0.0), 4),
         "annotation_source": {
             "kind": "manual_review",

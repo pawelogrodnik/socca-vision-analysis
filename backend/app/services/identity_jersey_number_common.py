@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+from pathlib import Path
 import re
 from typing import Any
 
@@ -58,6 +60,51 @@ def normalize_jersey_number(value: Any) -> str | None:
 def team_label(value: Any) -> str:
     text = str(value or "U").strip().upper()
     return text if text in {"A", "B"} else "U"
+
+
+def is_safe_relative_artifact_path(value: str) -> bool:
+    path = Path(value)
+    return bool(value and not path.is_absolute() and ".." not in path.parts)
+
+
+def normalize_safe_relative_artifact_path(
+    value: Any,
+    *,
+    field_name: str,
+) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a relative artifact path string or null")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if not is_safe_relative_artifact_path(normalized):
+        raise ValueError(f"{field_name} must be a safe relative artifact path")
+    return normalized
+
+
+def normalize_normalized_bbox(
+    value: Any,
+    *,
+    field_name: str,
+) -> list[float] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        raise ValueError(f"{field_name} must be [x1, y1, x2, y2] or null")
+    normalized: list[float] = []
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(float(item)):
+            raise ValueError(f"{field_name} values must be finite numbers")
+        current = float(item)
+        if not 0.0 <= current <= 1.0:
+            raise ValueError(f"{field_name} values must be between zero and one")
+        normalized.append(round(current, 6))
+    x1, y1, x2, y2 = normalized
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError(f"{field_name} must satisfy x1 < x2 and y1 < y2")
+    return normalized
 
 
 def round_or_none(value: Any, digits: int = 4) -> float | None:
