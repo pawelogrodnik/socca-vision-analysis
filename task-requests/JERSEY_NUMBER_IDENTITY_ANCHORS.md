@@ -28,7 +28,15 @@ Aktualizacja 2026-07-22:
 - N5.6 ma lekkie, wersjonowane bundle benchmarkowe `easy90-v1` i `hard3m-targeted-v1` bez wideo i cropów;
 - N5.7 ma frozen contract tests uruchamiane przez istniejący backend CI;
 - N5.9 ma domyślnie wyłączony, odwracalny szkielet candidate-only, którego nie da się aktywować bez N5.8 i dowodu braku zmian production identity;
-- N5.8 pozostaje następnym obowiązkowym etapem walidacyjnym.
+- N5.8 ma zaimplementowany agregator i gate rozróżniający klipy od niezależnych meczów;
+  canonical case contract jest budowany z kompletu shadow artifacts oraz bitowego porównania
+  produkcyjnych artefaktów identity przed i po benchmarku;
+  CLI `export_identity_jersey_number_heldout_case.py` tworzy snapshot przed przebiegiem
+  i immutable case package po przebiegu, a suite przyjmuje ten kontrakt bez ręcznej flagi
+  `production_identity_unchanged`;
+  rzeczywista walidacja pozostaje zablokowana do czasu uzyskania drugiego materiału źródłowego;
+- pierwszy przebieg N5.8 na `corgi-verisk-2026-07-13` poprawnie zwraca `blocked`: jeden
+  niezależny mecz, zero pozytywnych multi-tracklet propagations i niepełny targeted contract.
 
 ---
 
@@ -563,6 +571,51 @@ N5.9  controlled candidate-only integration
 
 Nie czekać z recognizerem i propagacją do production apply. Testować je w shadow w ramach pełnomaczowych benchmarków P1.22.
 
+## N5.8 — canonical held-out case workflow
+
+Przed uruchomieniem shadow benchmarku należy zapisać snapshot produkcyjnego identity:
+
+```bash
+PYTHONPATH=backend backend/.venv-mps/bin/python \
+  backend/scripts/export_identity_jersey_number_heldout_case.py snapshot \
+  --match-dir backend/storage/matches/<match_id> \
+  --output <benchmark_dir>/production_identity_before.json
+```
+
+Po benchmarku jeden case jest pakowany z czterech wymaganych shadow artifacts i aktualnego
+katalogu meczu:
+
+```bash
+PYTHONPATH=backend backend/.venv-mps/bin/python \
+  backend/scripts/export_identity_jersey_number_heldout_case.py package \
+  --benchmark-id <benchmark_id> \
+  --source-match-key <independent_match_key> \
+  --recognizer <recognizer.json> \
+  --assignment <assignment.json> \
+  --propagation <propagation.json> \
+  --targeted-evaluation <targeted_evaluation.json> \
+  --production-before-snapshot <benchmark_dir>/production_identity_before.json \
+  --production-after-match-dir backend/storage/matches/<match_id> \
+  --output <benchmark_dir>/heldout_case.json
+```
+
+Suite N5.8 przyjmuje następnie manifest z wpisem:
+
+```json
+{
+  "cases": [
+    {
+      "case_contract": "heldout_case.json"
+    }
+  ]
+}
+```
+
+Wartość `production_identity_unchanged` jest wyliczana z SHA-256 plików
+`global_identity.json`, `stable_players.json` i `player_identity_assignments.json`.
+Brak albo zmiana któregokolwiek z nich blokuje case. Starszy manifest pozostaje obsługiwany
+wyłącznie dla kompatybilności benchmarków.
+
 ---
 
 # 9. Candidate-only activation gate
@@ -694,6 +747,9 @@ Wysoka precision jest ważniejsza niż coverage.
 - [x] mierzony jest no-number hallucination rate;
 - [x] lekkie raporty benchmarków są wersjonowane w Git;
 - [x] frozen contract tests działają w CI;
+- [x] N5.8 nie traktuje kilku klipów jednego meczu jako multi-match evidence;
+- [x] N5.8 ma canonical case contract i nie ufa ręcznej fladze niezmienności production identity;
+- [x] snapshot/export/suite N5.8 mają lekkie testy deterministyczności i kontraktu;
 - [ ] held-out match przechodzi bez identity false assignments;
 - [ ] oceniono więcej niż jeden pozytywny multi-tracklet propagation;
 - [x] szkielet candidate integration jest odwracalny, domyślnie wyłączony i production-safe;

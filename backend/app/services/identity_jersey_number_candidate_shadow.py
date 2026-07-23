@@ -10,9 +10,9 @@ from app.services.identity_jersey_number_common import (
 )
 
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_jersey_number_candidate_integration_shadow"
-ALGORITHM_VERSION = "0.2.0"
+ALGORITHM_VERSION = "0.3.0"
 
 
 def build_identity_jersey_number_candidate_integration_shadow(
@@ -20,6 +20,7 @@ def build_identity_jersey_number_candidate_integration_shadow(
     propagation_doc: dict[str, Any],
     *,
     targeted_evaluation_doc: dict[str, Any] | None = None,
+    heldout_validation_doc: dict[str, Any] | None = None,
     production_identity_unchanged: bool | None = None,
     activation_requested: bool = False,
     generated_at: str | None = None,
@@ -46,6 +47,13 @@ def build_identity_jersey_number_candidate_integration_shadow(
         reason_codes.append("heldout_targeted_evaluation_failed")
     if int(targeted_summary.get("unexpected_propagated_tracklets") or 0) != 0:
         reason_codes.append("unexpected_propagated_target")
+    heldout_summary = (heldout_validation_doc or {}).get("summary") or {}
+    if not heldout_validation_doc:
+        reason_codes.append("heldout_multi_match_validation_missing")
+    elif not heldout_summary.get("activation_gate_passed"):
+        reason_codes.append("heldout_multi_match_validation_failed")
+    if int(heldout_summary.get("distinct_source_matches") or 0) < 2:
+        reason_codes.append("insufficient_external_match_coverage")
     if production_identity_unchanged is not True:
         reason_codes.append(
             "production_identity_unchanged_not_verified"
@@ -99,6 +107,9 @@ def build_identity_jersey_number_candidate_integration_shadow(
             "propagation_digest": canonical_digest(propagation_doc),
             "targeted_evaluation_digest": (
                 canonical_digest(targeted_evaluation_doc) if targeted_evaluation_doc else None
+            ),
+            "heldout_validation_digest": (
+                canonical_digest(heldout_validation_doc) if heldout_validation_doc else None
             ),
         },
         "safety": {

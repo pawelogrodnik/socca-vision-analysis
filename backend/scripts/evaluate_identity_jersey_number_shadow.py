@@ -51,6 +51,7 @@ def main() -> None:
     parser.add_argument("--roster-anchor", type=Path)
     parser.add_argument("--candidate-identity", type=Path)
     parser.add_argument("--shadow-timeline", type=Path)
+    parser.add_argument("--heldout-validation", type=Path)
     parser.add_argument("--run-recognizer", action="store_true")
     parser.add_argument("--activate-n4-if-benchmark-passed", action="store_true")
     parser.add_argument("--activate-n5-candidate-shadow", action="store_true")
@@ -142,6 +143,9 @@ def main() -> None:
             build_identity_jersey_number_candidate_integration_shadow(
                 assignment_doc,
                 propagation_doc,
+                heldout_validation_doc=(
+                    _load(args.heldout_validation) if args.heldout_validation else None
+                ),
                 activation_requested=args.activate_n5_candidate_shadow,
                 generated_at=generated_at,
             )

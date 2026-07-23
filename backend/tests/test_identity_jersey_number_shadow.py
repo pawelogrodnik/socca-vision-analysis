@@ -365,6 +365,9 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertEqual(candidate["status"], "disabled")
         self.assertIn("heldout_targeted_evaluation_missing", candidate["safety"]["reason_codes"])
         self.assertIn(
+            "heldout_multi_match_validation_missing", candidate["safety"]["reason_codes"]
+        )
+        self.assertIn(
             "production_identity_unchanged_not_verified",
             candidate["safety"]["reason_codes"],
         )
@@ -400,6 +403,9 @@ class JerseyNumberShadowTests(unittest.TestCase):
             },
             targeted_evaluation_doc={
                 "summary": {"safety_passed": True, "unexpected_propagated_tracklets": 0}
+            },
+            heldout_validation_doc={
+                "summary": {"activation_gate_passed": True, "distinct_source_matches": 2}
             },
             production_identity_unchanged=True,
             activation_requested=True,
