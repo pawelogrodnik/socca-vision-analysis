@@ -12,9 +12,9 @@ from app.services.identity_jersey_number_common import (
 )
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_roster_subject_review_shadow"
-ALGORITHM_VERSION = "0.3.0"
+ALGORITHM_VERSION = "0.4.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "min_visual_crops_for_ready": 3,
@@ -133,7 +133,11 @@ def _review_card(
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     subject_id = str(roster_card.get("candidate_subject_id") or "")
-    crops = list((crop_card or {}).get("anchor_crops") or [])
+    crops = [
+        {**crop, "jersey_number_annotation": crop.get("jersey_number_annotation")}
+        for crop in (crop_card or {}).get("anchor_crops") or []
+        if isinstance(crop, dict)
+    ]
     crop_count = len(crops)
     roster_status = str(roster_card.get("status") or "unresolved")
     jersey = _jersey_number_evidence(jersey_consensus)

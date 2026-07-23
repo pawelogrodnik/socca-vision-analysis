@@ -6,12 +6,12 @@ from typing import Any
 from app.services.identity_jersey_number_common import canonical_digest
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_heldout_validation"
-ALGORITHM_VERSION = "0.1.0"
-CASE_SCHEMA_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.3.0"
+CASE_SCHEMA_VERSION = "0.2.0"
 CASE_ALGORITHM_NAME = "identity_jersey_number_heldout_case_contract"
-CASE_ALGORITHM_VERSION = "0.1.0"
+CASE_ALGORITHM_VERSION = "0.3.0"
 REQUIRED_PRODUCTION_IDENTITY_ARTIFACTS = (
     "global_identity.json",
     "stable_players.json",
@@ -96,7 +96,11 @@ def build_identity_jersey_number_heldout_case_contract(
             "targeted_evaluation_doc": targeted_evaluation_doc,
         }
     )
-    return {
+    normalized["case_contract_valid"] = not normalized["reason_codes"]
+    normalized["independent_match_lineage_digest"] = _independent_match_lineage_digest(
+        normalized["source_digests"], comparison
+    )
+    case_contract = {
         "schema_version": CASE_SCHEMA_VERSION,
         "generated_at": generated,
         "mode": "shadow_read_only",
@@ -114,6 +118,8 @@ def build_identity_jersey_number_heldout_case_contract(
             "production_identity_unchanged_derived_from_artifacts": True,
         },
     }
+    case_contract["case"] = _case_from_contract(case_contract)
+    return case_contract
 
 
 def build_identity_jersey_number_heldout_validation(
@@ -127,23 +133,45 @@ def build_identity_jersey_number_heldout_validation(
     generated = generated_at or datetime.now(timezone.utc).isoformat()
     normalized_cases = [_evaluate_case(row) for row in cases]
     heldout_cases = [row for row in normalized_cases if row["held_out"]]
+    valid_cases = [
+        row for row in heldout_cases
+        if row.get("canonical_case_origin") is True and row.get("case_contract_valid") is True
+    ]
     source_match_keys = sorted(
         {
             str(row["source_match_key"])
-            for row in heldout_cases
+            for row in valid_cases
             if row.get("source_match_key")
         }
     )
-    false_assignments = sum(row["identity_false_assignments"] for row in heldout_cases)
-    false_number_reads = sum(row["false_number_reads"] for row in heldout_cases)
-    unexpected_targets = sum(row["unexpected_propagated_tracklets"] for row in heldout_cases)
-    positive_propagations = sum(row["positive_multi_tracklet_propagations"] for row in heldout_cases)
-    automatic_assignments = sum(row["automatic_assignments"] for row in heldout_cases)
+    lineage_cases: dict[str, dict[str, Any]] = {}
+    duplicate_lineages = 0
+    lineage_sources: dict[str, set[str]] = {}
+    for row in valid_cases:
+        lineage = str(row.get("independent_match_lineage_digest") or "")
+        if not lineage:
+            continue
+        if lineage in lineage_cases:
+            duplicate_lineages += 1
+        else:
+            lineage_cases[lineage] = row
+        lineage_sources.setdefault(lineage, set()).add(str(row.get("source_match_key") or ""))
+    false_assignments = sum(row["identity_false_assignments"] for row in lineage_cases.values())
+    false_number_reads = sum(row["false_number_reads"] for row in lineage_cases.values())
+    unexpected_targets = sum(row["unexpected_propagated_tracklets"] for row in lineage_cases.values())
+    positive_propagations = sum(row["positive_multi_tracklet_propagations"] for row in lineage_cases.values())
+    automatic_assignments = sum(row["automatic_assignments"] for row in lineage_cases.values())
     invalid_cases = sum(not row["case_contract_valid"] for row in heldout_cases)
 
     reason_codes: list[str] = []
     if len(source_match_keys) < minimum_distinct_source_matches:
         reason_codes.append("insufficient_external_match_coverage")
+    if len(lineage_cases) < minimum_distinct_source_matches:
+        reason_codes.append("insufficient_independent_match_lineage_coverage")
+    if duplicate_lineages:
+        reason_codes.append("duplicate_independent_match_lineage")
+    if any(len(source_keys) > 1 for source_keys in lineage_sources.values()):
+        reason_codes.append("reused_independent_match_lineage_across_source_keys")
     if positive_propagations < minimum_positive_multi_tracklet_propagations:
         reason_codes.append("insufficient_positive_multi_tracklet_propagations")
     if false_assignments:
@@ -181,6 +209,8 @@ def build_identity_jersey_number_heldout_validation(
             "heldout_cases": len(heldout_cases),
             "distinct_source_matches": len(source_match_keys),
             "source_match_keys": source_match_keys,
+            "distinct_independent_match_lineages": len(lineage_cases),
+            "duplicate_independent_match_lineages": duplicate_lineages,
             "positive_multi_tracklet_propagations": positive_propagations,
             "identity_false_assignments": false_assignments,
             "false_number_reads": false_number_reads,
@@ -259,7 +289,8 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
         "benchmark_id": str(case.get("benchmark_id") or "unknown"),
         "source_match_key": case.get("source_match_key"),
         "held_out": bool(case.get("held_out")),
-        "case_contract_valid": not case_reason_codes,
+        "canonical_case_origin": False,
+        "case_contract_valid": False,
         "production_identity_unchanged": production_unchanged,
         "positive_multi_tracklet_propagations": positive_propagations,
         "identity_false_assignments": identity_false_assignments,
@@ -280,6 +311,32 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _independent_match_lineage_digest(
+    source_digests: dict[str, Any],
+    comparison: dict[str, Any],
+) -> str | None:
+    required_sources = ("recognizer", "assignment", "propagation", "targeted_evaluation")
+    values = {name: str(source_digests.get(name) or "").strip() for name in required_sources}
+    artifacts = {
+        str(row.get("artifact")): {
+            "before_sha256": row.get("before_sha256"),
+            "after_sha256": row.get("after_sha256"),
+        }
+        for row in comparison.get("artifacts") or []
+        if isinstance(row, dict) and row.get("artifact") in REQUIRED_PRODUCTION_IDENTITY_ARTIFACTS
+    }
+    if not all(values.values()) or set(artifacts) != set(REQUIRED_PRODUCTION_IDENTITY_ARTIFACTS):
+        return None
+    if any(
+        not pair["before_sha256"]
+        or not pair["after_sha256"]
+        or pair["before_sha256"] != pair["after_sha256"]
+        for pair in artifacts.values()
+    ):
+        return None
+    return canonical_digest({"source_digests": values, "production_artifact_sha_pairs": artifacts})
+
+
 def _case_from_contract(contract: dict[str, Any]) -> dict[str, Any]:
     algorithm_value = contract.get("algorithm")
     algorithm = algorithm_value if isinstance(algorithm_value, dict) else {}
@@ -293,6 +350,7 @@ def _case_from_contract(contract: dict[str, Any]) -> dict[str, Any]:
         "benchmark_id",
         "source_match_key",
         "held_out",
+        "canonical_case_origin",
         "case_contract_valid",
         "production_identity_unchanged",
         "positive_multi_tracklet_propagations",
@@ -302,6 +360,7 @@ def _case_from_contract(contract: dict[str, Any]) -> dict[str, Any]:
         "automatic_assignments",
         "reason_codes",
         "source_digests",
+        "independent_match_lineage_digest",
     )
     required_comparison_fields = {
         "production_identity_unchanged",
@@ -352,14 +411,34 @@ def _case_from_contract(contract: dict[str, Any]) -> dict[str, Any]:
         and isinstance(row_value, dict)
         and set(required_fields).issubset(row)
         and safety_valid
+        and row.get("case_contract_valid") is True
+        and row.get("production_identity_unchanged") is True
+        and not set(row.get("reason_codes") or []) & {
+            "source_match_key_missing",
+            "required_shadow_documents_missing",
+            "production_identity_unchanged_not_verified",
+            "recognizer_calibration_not_measured",
+            "assignment_benchmark_gate_failed",
+            "targeted_evaluation_failed",
+            "production_identity_artifact_comparison_invalid",
+        }
         and row.get("production_identity_unchanged")
         == comparison.get("production_identity_unchanged")
+        and row.get("independent_match_lineage_digest")
+        == _independent_match_lineage_digest(row.get("source_digests") or {}, comparison)
     )
     if not contract_valid:
+        invalid_reasons = {
+            "heldout_case_contract_invalid",
+            *(str(reason) for reason in row.get("reason_codes") or []),
+        }
+        if not comparison_proves_unchanged:
+            invalid_reasons.add("production_identity_artifact_comparison_invalid")
         return {
             "benchmark_id": str(row.get("benchmark_id") or "unknown"),
             "source_match_key": row.get("source_match_key"),
             "held_out": bool(row.get("held_out")),
+            "canonical_case_origin": False,
             "case_contract_valid": False,
             "production_identity_unchanged": False,
             "positive_multi_tracklet_propagations": 0,
@@ -367,8 +446,9 @@ def _case_from_contract(contract: dict[str, Any]) -> dict[str, Any]:
             "false_number_reads": 0,
             "unexpected_propagated_tracklets": 0,
             "automatic_assignments": 0,
-            "reason_codes": ["heldout_case_contract_invalid"],
+            "reason_codes": sorted(invalid_reasons),
             "source_digests": {},
+            "independent_match_lineage_digest": None,
         }
     normalized = {name: row[name] for name in required_fields}
     if normalized["production_identity_unchanged"] and not comparison_proves_unchanged:
@@ -382,6 +462,7 @@ def _case_from_contract(contract: dict[str, Any]) -> dict[str, Any]:
         )
     normalized["benchmark_id"] = str(normalized["benchmark_id"] or "unknown")
     normalized["held_out"] = bool(normalized["held_out"])
+    normalized["canonical_case_origin"] = True
     normalized["case_contract_valid"] = bool(normalized["case_contract_valid"])
     normalized["production_identity_unchanged"] = bool(
         normalized["production_identity_unchanged"]

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,11 +12,14 @@ from app.services.identity_jersey_number_common import (
     stable_key,
     team_label,
 )
+from app.services.identity_jersey_number_visibility_episodes import (
+    attach_jersey_visibility_episode_ids,
+)
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.4.0"
 ALGORITHM_NAME = "identity_jersey_number_dataset_manifest"
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.3.0"
 DEFAULT_PARAMETERS = {
     "maximum_visibility_episode_gap_frames": 45,
     "fallback_split_ratios": {
@@ -24,6 +28,14 @@ DEFAULT_PARAMETERS = {
         "heldout": 0.15,
     },
 }
+JERSEY_ANNOTATION_FIELDS = (
+    "digit_visibility",
+    "occlusion_state",
+    "blur_level",
+    "perspective_state",
+    "panel_height_ratio",
+    "kit_profile",
+)
 
 
 def build_identity_jersey_number_dataset_manifest(
@@ -51,14 +63,20 @@ def build_identity_jersey_number_dataset_manifest(
         crop_root = Path(str(source.get("crop_root") or ""))
         cards_doc = source.get("cards_doc") or {}
         reviewed_doc = source.get("reviewed_observations_doc") or {}
+        subject_review_doc = source.get("subject_review_doc")
         if not match_key or not video_key:
             raise ValueError("Every dataset source requires source_match_key and source_video_key")
         cards = _flatten_cards(cards_doc)
         reviewed = {
-            str(row.get("anchor_crop_id")): row
+            str(row.get("anchor_crop_id")): dict(row)
             for row in reviewed_doc.get("observations") or []
             if isinstance(row, dict) and row.get("anchor_crop_id")
         }
+        applied_annotations = _merge_subject_review_annotations(
+            reviewed,
+            cards,
+            subject_review_doc,
+        )
         matched = 0
         missing_cards = 0
         for crop_id, review in sorted(reviewed.items()):
@@ -83,13 +101,24 @@ def build_identity_jersey_number_dataset_manifest(
                 "crop_root": str(crop_root),
                 "cards_digest": canonical_digest(cards_doc),
                 "reviewed_observations_digest": canonical_digest(reviewed_doc),
+                "subject_review_digest": (
+                    canonical_digest(subject_review_doc)
+                    if isinstance(subject_review_doc, dict)
+                    else None
+                ),
+                "subject_review_decisions_fresh": (
+                    subject_review_doc.get("decisions_fresh")
+                    if isinstance(subject_review_doc, dict)
+                    else None
+                ),
+                "subject_review_annotations_applied": applied_annotations,
                 "reviewed_observations": len(reviewed),
                 "matched_samples": matched,
                 "missing_cards": missing_cards,
             }
         )
 
-    _assign_visibility_episodes(
+    samples = attach_jersey_visibility_episode_ids(
         samples,
         maximum_gap_frames=int(params["maximum_visibility_episode_gap_frames"]),
     )
@@ -117,6 +146,12 @@ def build_identity_jersey_number_dataset_manifest(
                     "label_state",
                     "number",
                     "view",
+                    "digit_visibility",
+                    "occlusion_state",
+                    "blur_level",
+                    "perspective_state",
+                    "panel_height_ratio",
+                    "kit_profile",
                     "visibility_episode_id",
                     "split",
                     "artifact_digest",
@@ -129,7 +164,7 @@ def build_identity_jersey_number_dataset_manifest(
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated,
         "mode": "shadow_training_dataset",
-        "dataset_version": f"jersey-number-dataset:v1:{dataset_digest}",
+        "dataset_version": f"jersey-number-dataset:v3:{dataset_digest}",
         "dataset_digest": dataset_digest,
         "algorithm": {
             "name": ALGORITHM_NAME,
@@ -167,6 +202,37 @@ def _flatten_cards(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return flattened
 
 
+def _merge_subject_review_annotations(
+    reviewed: dict[str, dict[str, Any]],
+    cards: dict[str, dict[str, Any]],
+    subject_review_doc: Any,
+) -> int:
+    if not isinstance(subject_review_doc, dict) or subject_review_doc.get("decisions_fresh") is not True:
+        return 0
+    annotations: dict[str, dict[str, Any]] = {}
+    for card in subject_review_doc.get("cards") or []:
+        if not isinstance(card, dict):
+            continue
+        for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or []):
+            if not isinstance(crop, dict) or not crop.get("anchor_crop_id"):
+                continue
+            annotation = crop.get("jersey_number_annotation")
+            if not isinstance(annotation, dict):
+                continue
+            crop_id = str(crop["anchor_crop_id"])
+            normalized = {field: annotation.get(field) for field in JERSEY_ANNOTATION_FIELDS}
+            if crop_id in annotations and annotations[crop_id] != normalized:
+                annotations.pop(crop_id)
+                continue
+            annotations[crop_id] = normalized
+    applied = 0
+    for crop_id, annotation in annotations.items():
+        if crop_id in reviewed and crop_id in cards:
+            reviewed[crop_id] = {**reviewed[crop_id], **annotation}
+            applied += 1
+    return applied
+
+
 def _sample_from_review(
     *,
     source_match_key: str,
@@ -187,6 +253,18 @@ def _sample_from_review(
     tracklet_id = str(card.get("tracklet_id") or "")
     frame = int(card.get("frame") or 0)
     source_kind = str(review.get("source") or "unknown")
+    digit_visibility = _annotation_enum(
+        review.get("digit_visibility"), {"full", "partial", "none", "unknown"}
+    )
+    occlusion_state = _annotation_enum(
+        review.get("occlusion_state"), {"none", "partial", "heavy", "unknown"}
+    )
+    blur_level = _annotation_enum(
+        review.get("blur_level"), {"none", "mild", "heavy", "unknown"}
+    )
+    perspective_state = _annotation_enum(
+        review.get("perspective_state"), {"frontal", "angled", "severe", "unknown"}
+    )
     return {
         "sample_key": stable_key(
             "jersey-dataset-sample",
@@ -202,7 +280,9 @@ def _sample_from_review(
         "candidate_subject_id": subject_id,
         "tracklet_id": tracklet_id,
         "frame": frame,
+        "team_id": card.get("team_id"),
         "team_label": team_label(card.get("team_label")),
+        "visibility_episode_id": card.get("visibility_episode_id"),
         "role": card.get("role"),
         "bbox_xyxy": card.get("bbox_xyxy"),
         "artifact": artifact,
@@ -213,6 +293,12 @@ def _sample_from_review(
         "label_state": state,
         "number": number,
         "view": str(review.get("view") or "unknown"),
+        "digit_visibility": digit_visibility,
+        "occlusion_state": occlusion_state,
+        "blur_level": blur_level,
+        "perspective_state": perspective_state,
+        "panel_height_ratio": _panel_height_ratio(review.get("panel_height_ratio")),
+        "kit_profile": _kit_profile(review.get("kit_profile")),
         "clean_jersey_visible": bool(review.get("clean_jersey_visible")),
         "number_panel_visible": bool(review.get("number_panel_visible")),
         "annotation_confidence": round(float(review.get("confidence") or 0.0), 4),
@@ -222,6 +308,22 @@ def _sample_from_review(
             "review_schema_version": review.get("schema_version"),
         },
     }
+
+
+def _annotation_enum(value: Any, allowed: set[str]) -> str:
+    normalized = str(value or "unknown").strip().lower()
+    return normalized if normalized in allowed else "unknown"
+
+
+def _panel_height_ratio(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    normalized = float(value)
+    return round(normalized, 6) if math.isfinite(normalized) and 0.0 <= normalized <= 1.0 else None
+
+
+def _kit_profile(value: Any) -> str | None:
+    return value.strip() or None if isinstance(value, str) else None
 
 
 def _file_digest(path: Path) -> str | None:
@@ -234,41 +336,6 @@ def _file_digest(path: Path) -> str | None:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _assign_visibility_episodes(
-    samples: list[dict[str, Any]],
-    *,
-    maximum_gap_frames: int,
-) -> None:
-    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in samples:
-        groups[
-            (
-                row["source_match_key"],
-                row["source_video_key"],
-                row["candidate_subject_id"],
-                row["tracklet_id"],
-            )
-        ].append(row)
-    for group_key, rows in groups.items():
-        episode_index = 0
-        previous_frame: int | None = None
-        for row in sorted(rows, key=lambda item: (int(item["frame"]), item["anchor_crop_id"])):
-            frame = int(row["frame"])
-            if previous_frame is None or frame - previous_frame > maximum_gap_frames:
-                episode_index += 1
-            row["visibility_episode_id"] = stable_key(
-                "jersey-visibility-episode",
-                {
-                    "source_match_key": group_key[0],
-                    "source_video_key": group_key[1],
-                    "candidate_subject_id": group_key[2],
-                    "tracklet_id": group_key[3],
-                    "episode_index": episode_index,
-                },
-            )
-            previous_frame = frame
 
 
 def _assign_splits(

@@ -7,9 +7,9 @@ import json
 from typing import Any
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.4.0"
 ALGORITHM_NAME = "identity_roster_anchor_crops_shadow"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.4.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "min_anchors": 3,
@@ -90,6 +90,13 @@ def build_identity_roster_anchor_crops_shadow(
             "roster_anchor_algorithm": roster_anchor_doc.get("algorithm") or {},
             "timeline_algorithm": timeline_doc.get("algorithm") or {},
             "occlusion_algorithm": (occlusion_doc or {}).get("algorithm") or None,
+            "source_match_key": (roster_anchor_doc.get("source") or {}).get("source_match_key"),
+            "source_video_key": (roster_anchor_doc.get("source") or {}).get("source_video_key"),
+            "team_ids": sorted({
+                str(card.get("team_id"))
+                for card in roster_anchor_doc.get("cards") or []
+                if card.get("team_id")
+            }),
         },
         "safety": safety,
         "summary": summary,
@@ -151,7 +158,16 @@ def _build_card(
     selected = _select_diverse(eligible, roster_card, parameters=parameters)
     anchor_crops = [
         {
-            "anchor_crop_id": _anchor_crop_id(subject_id, int(row["frame"])),
+            "anchor_crop_id": _anchor_crop_id(
+                subject_id,
+                int(row["frame"]),
+                roster_card.get("source_match_key"),
+                roster_card.get("source_video_key"),
+                roster_card.get("team_id"),
+            ),
+            "source_match_key": roster_card.get("source_match_key"),
+            "source_video_key": roster_card.get("source_video_key"),
+            "team_id": roster_card.get("team_id"),
             "artifact": _artifact_path(subject_id, index, int(row["frame"])),
             "frame": int(row["frame"]),
             "time_sec": _round_or_none(row.get("time_sec"), 3),
@@ -178,6 +194,9 @@ def _build_card(
         "anchor_key": roster_card.get("anchor_key"),
         "candidate_subject_id": subject_id,
         "team_label": roster_card.get("team_label"),
+        "source_match_key": roster_card.get("source_match_key"),
+        "source_video_key": roster_card.get("source_video_key"),
+        "team_id": roster_card.get("team_id"),
         "role": roster_card.get("role"),
         "start_frame": int(roster_card.get("start_frame") or 0),
         "end_frame": int(roster_card.get("end_frame") or 0),
@@ -474,13 +493,25 @@ def _artifact_path(subject_id: str, index: int, frame: int) -> str:
     return f"anchor_crops/{safe_subject}/{index:02d}_f{frame:06d}.jpg"
 
 
-def _anchor_crop_id(subject_id: str, frame: int) -> str:
+def _anchor_crop_id(
+    subject_id: str,
+    frame: int,
+    source_match_key: Any,
+    source_video_key: Any,
+    team_id: Any,
+) -> str:
     payload = json.dumps(
-        {"candidate_subject_id": subject_id, "frame": frame},
+        {
+            "candidate_subject_id": subject_id,
+            "frame": frame,
+            "source_match_key": source_match_key,
+            "source_video_key": source_video_key,
+            "team_id": team_id,
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
-    return f"anchor-crop:v1:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
+    return f"anchor-crop:v3:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
 def _round_or_none(value: Any, digits: int) -> float | None:

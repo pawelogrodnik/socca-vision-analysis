@@ -9,12 +9,17 @@ from app.services.identity_jersey_number_common import (
     canonical_digest,
     normalize_jersey_number,
     stable_key,
+    team_label,
+)
+from app.services.identity_jersey_number_visibility_episodes import (
+    attach_jersey_visibility_episode_ids,
+    partition_jersey_visibility_episodes,
 )
 
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.6.0"
 ALGORITHM_NAME = "identity_jersey_number_recognizer_shadow"
-ALGORITHM_VERSION = "0.3.0"
+ALGORITHM_VERSION = "0.6.0"
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "number_roi_normalized": [0.05, 0.00, 0.95, 0.62],
     "minimum_template_score": 0.72,
@@ -24,7 +29,7 @@ DEFAULT_PARAMETERS: dict[str, Any] = {
     "minimum_roi_contrast": 20.0,
     "minimum_roi_edge_ratio": 0.015,
     "minimum_episode_votes": 2,
-    "maximum_episode_gap_frames": 5,
+    "maximum_episode_gap_frames": 45,
 }
 
 
@@ -41,7 +46,7 @@ def build_identity_jersey_number_recognizer_shadow(
     """Recognize roster-constrained numbers from a torso ROI without changing identity."""
     params = {**DEFAULT_PARAMETERS, **(parameters or {})}
     generated = generated_at or datetime.now(timezone.utc).isoformat()
-    roster_numbers_by_team = _trusted_roster_numbers_by_team(roster_doc)
+    roster_numbers_by_scope = _trusted_roster_numbers_by_scope(roster_doc)
     observations: list[dict[str, Any]] = []
     for subject in anchor_crops_doc.get("cards") or []:
         if not isinstance(subject, dict):
@@ -54,8 +59,26 @@ def build_identity_jersey_number_recognizer_shadow(
                     crop,
                     subject=subject,
                     crop_root=crop_root,
-                    roster_numbers=roster_numbers_by_team.get(
-                        str(subject.get("team_label") or "U"),
+                    roster_numbers=roster_numbers_by_scope.get(
+                        (
+                            str(
+                                (
+                                    crop.get("source_match_key")
+                                    if "source_match_key" in crop
+                                    else subject.get("source_match_key")
+                                )
+                                or ""
+                            ).strip(),
+                            str(
+                                (
+                                    crop.get("team_id")
+                                    if "team_id" in crop
+                                    else subject.get("team_id")
+                                )
+                                or ""
+                            ).strip(),
+                            team_label(subject.get("team_label")),
+                        ),
                         [],
                     ),
                     parameters=params,
@@ -117,6 +140,18 @@ def _recognize_crop(
         "tracklet_id": crop.get("tracklet_id"),
         "frame": crop.get("frame"),
         "team_label": subject.get("team_label"),
+        "source_match_key": (
+            crop.get("source_match_key")
+            if "source_match_key" in crop
+            else subject.get("source_match_key")
+        ),
+        "source_video_key": (
+            crop.get("source_video_key")
+            if "source_video_key" in crop
+            else subject.get("source_video_key")
+        ),
+        "team_id": crop.get("team_id") if "team_id" in crop else subject.get("team_id"),
+        "visibility_episode_id": crop.get("visibility_episode_id"),
         "state": "number_unreadable",
         "number": None,
         "confidence": 0.0,
@@ -184,7 +219,7 @@ def _recognize_crop(
             base["candidate_number"] = learned["candidate_number"]
             base["candidate_confidence"] = base["calibrated_confidence"]
             base["candidate_method"] = base["recognition_method"]
-            base["reason_codes"] = ["awaiting_temporal_episode_consensus"]
+            base["reason_codes"] = ["insufficient_temporal_episode_consensus"]
         else:
             base["reason_codes"] = ["learned_recognizer_below_calibrated_threshold"]
         return base
@@ -204,11 +239,12 @@ def _recognize_crop(
         **panel["diagnostics"],
         "person_crop_shape": [int(height), int(width)],
     }
-    if not panel_visible or not roster_numbers:
-        base["reason_codes"] = ["number_panel_not_reliably_visible" if not panel_visible else "roster_numbers_missing"]
+    if not panel_visible:
+        base["reason_codes"] = ["number_panel_not_reliably_visible"]
         return base
+    candidate_numbers = roster_numbers or [str(number) for number in range(1, 100)]
     scores = sorted(
-        ((_template_score(mask, value), value) for value in roster_numbers),
+        ((_template_score(mask, value), value) for value in candidate_numbers),
         reverse=True,
     )
     best_score, best_number = scores[0]
@@ -235,9 +271,11 @@ def _recognize_crop(
         base["candidate_confidence"] = base["confidence"]
         base["candidate_method"] = "constrained_number_roi_template"
     if base.get("candidate_number") is None:
-        base["reason_codes"] = ["recognizer_below_conservative_threshold"]
+        base["reason_codes"] = [
+            "recognizer_below_conservative_threshold" if roster_numbers else "roster_numbers_missing"
+        ]
     else:
-        base["reason_codes"] = ["awaiting_temporal_episode_consensus"]
+        base["reason_codes"] = ["insufficient_temporal_episode_consensus"]
     return base
 
 
@@ -394,54 +432,27 @@ def _apply_temporal_episode_consensus(
     observations: list[dict[str, Any]],
     parameters: dict[str, Any],
 ) -> None:
-    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
-    for row in observations:
-        groups[(
-            str(row.get("candidate_subject_id") or ""),
-            str(row.get("tracklet_id") or ""),
-            str(row.get("team_label") or "U"),
-        )].append(row)
     maximum_gap = int(parameters["maximum_episode_gap_frames"])
     minimum_votes = int(parameters["minimum_episode_votes"])
-    for group_key, rows in groups.items():
-        episode: list[dict[str, Any]] = []
-        previous_frame: int | None = None
-        episode_index = 0
-        for row in sorted(rows, key=lambda value: int(value.get("frame") or 0)) + [None]:
-            frame = int(row.get("frame") or 0) if row else None
-            if row is not None and (previous_frame is None or frame - previous_frame <= maximum_gap):
-                episode.append(row)
-                previous_frame = frame
-                continue
-            if episode:
-                episode_index += 1
-                _finalize_episode(
-                    episode,
-                    group_key=group_key,
-                    episode_index=episode_index,
-                    minimum_votes=minimum_votes,
-                )
-            episode = [row] if row is not None else []
-            previous_frame = frame
+    try:
+        attached = attach_jersey_visibility_episode_ids(observations, maximum_gap)
+        episodes = partition_jersey_visibility_episodes(attached, maximum_gap)
+    except ValueError:
+        for row in observations:
+            if row.get("candidate_number") is not None:
+                row["reason_codes"] = ["insufficient_temporal_episode_consensus"]
+        return
+    observations[:] = attached
+    for episode in episodes:
+        _finalize_episode(episode, minimum_votes=minimum_votes)
 
 
 def _finalize_episode(
     rows: list[dict[str, Any]],
     *,
-    group_key: tuple[str, str, str],
-    episode_index: int,
     minimum_votes: int,
 ) -> None:
-    episode_id = stable_key(
-        "jersey-visibility-episode",
-        {
-            "subject": group_key[0],
-            "tracklet": group_key[1],
-            "team": group_key[2],
-            "index": episode_index,
-            "start_frame": min(int(row.get("frame") or 0) for row in rows),
-        },
-    )
+    episode_id = str(rows[0]["visibility_episode_id"])
     weighted_votes: dict[str, float] = defaultdict(float)
     support_counts: Counter[str] = Counter()
     for row in rows:
@@ -459,10 +470,15 @@ def _finalize_episode(
     support = support_counts.get(str(number), 0) if number is not None else 0
     competing = sum(value for key, value in support_counts.items() if key != number)
     competing_weight = sum(value for key, value in weighted_votes.items() if key != number)
+    roster_number_available = bool(number) and all(
+        str(number) in (row.get("candidate_scope") or {}).get("roster_numbers", [])
+        for row in rows
+    )
     accepted = bool(
         number is not None
         and support >= minimum_votes
         and winning_weight > competing_weight
+        and roster_number_available
     )
     for row in rows:
         row["visibility_episode_id"] = episode_id
@@ -486,7 +502,11 @@ def _finalize_episode(
             )
             row["reason_codes"] = ["multi_frame_number_shape_episode_consensus"]
         elif row.get("candidate_number") is not None:
-            row["reason_codes"] = ["insufficient_temporal_episode_consensus"]
+            row["reason_codes"] = [
+                "insufficient_temporal_episode_consensus"
+                if support < minimum_votes or winning_weight <= competing_weight
+                else "roster_numbers_missing"
+            ]
 
 
 def _template_score(mask: Any, number: str) -> float:
@@ -574,10 +594,10 @@ def _evaluate(observations: list[dict[str, Any]], reviewed_doc: dict[str, Any]) 
     }
 
 
-def _trusted_roster_numbers_by_team(
+def _trusted_roster_numbers_by_scope(
     roster_doc: dict[str, Any],
-) -> dict[str, list[str]]:
-    values: dict[str, set[str]] = defaultdict(set)
+) -> dict[tuple[str, str, str], list[str]]:
+    values: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     for row in roster_doc.get("players") or []:
         if (
             not isinstance(row, dict)
@@ -585,9 +605,12 @@ def _trusted_roster_numbers_by_team(
             or row.get("roster_number_status") != "confirmed"
         ):
             continue
+        source_match_key = str(row.get("source_match_key") or "").strip()
+        team_id = str(row.get("team_id") or "").strip()
+        label = team_label(row.get("team_label"))
         number = normalize_jersey_number(row.get("jersey_number"))
-        if number is not None:
-            values[str(row.get("team_label") or "U")].add(number)
+        if source_match_key and team_id and label != "U" and number is not None:
+            values[(source_match_key, team_id, label)].add(number)
     return {
         label: sorted(numbers, key=lambda value: (len(value), value))
         for label, numbers in values.items()

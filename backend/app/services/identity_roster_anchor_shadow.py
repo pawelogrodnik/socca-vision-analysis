@@ -6,12 +6,12 @@ import hashlib
 import json
 from typing import Any
 
-from app.services.identity_jersey_number_common import canonical_structural_blockers
+from app.services.identity_jersey_number_common import canonical_structural_blockers, team_label
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_roster_anchor_shadow"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.5.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "direct_confirmation_ratio": 0.80,
@@ -40,7 +40,9 @@ def build_identity_roster_anchor_shadow(
     """
     params = {**DEFAULT_PARAMETERS, **(parameters or {})}
     generated = generated_at or datetime.now(timezone.utc).isoformat()
-    roster = _roster_players(match_doc)
+    source_match_key = _source_match_key(match_doc)
+    source_video_key = _source_video_key(match_doc)
+    roster = _roster_players(match_doc, source_match_key=source_match_key)
     subjects = sorted(
         [row for row in candidate_doc.get("subjects") or [] if row.get("candidate_subject_id")],
         key=lambda row: (
@@ -69,6 +71,8 @@ def build_identity_roster_anchor_shadow(
             roster=roster,
             direct_evidence=direct[str(subject["candidate_subject_id"])],
             propagated_evidence=propagated.get(str(subject["candidate_subject_id"])) or {},
+            source_match_key=source_match_key,
+            source_video_key=source_video_key,
             parameters=params,
         )
         for subject in subjects
@@ -79,6 +83,8 @@ def build_identity_roster_anchor_shadow(
         "candidate_identity": candidate_doc.get("algorithm") or {},
         "manual_assignments_schema": assignments_doc.get("schema_version"),
         "reid_fusion": (reid_fusion_doc or {}).get("algorithm") or None,
+        "source_match_key": source_match_key,
+        "source_video_key": source_video_key,
     }
     safety = {
         "mutates_candidate_identity": False,
@@ -133,12 +139,9 @@ def build_identity_roster_anchor_shadow(
     }
 
 
-def _roster_players(match_doc: dict[str, Any]) -> list[dict[str, Any]]:
+def _roster_players(match_doc: dict[str, Any], *, source_match_key: str | None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for team_index, team in enumerate(match_doc.get("teams") or []):
-        if not isinstance(team, dict):
-            continue
-        team_label = "A" if team_index == 0 else "B" if team_index == 1 else "U"
+    for team_label_value, team in _teams(match_doc):
         for player in team.get("players") or []:
             if not isinstance(player, dict) or not player.get("id"):
                 continue
@@ -151,12 +154,23 @@ def _roster_players(match_doc: dict[str, Any]) -> list[dict[str, Any]]:
                     "player_number": player.get("number"),
                     "player_role": role,
                     "is_goalkeeper": _is_goalkeeper(role, number),
-                    "team_id": str(team.get("id") or f"team-{team_index + 1}"),
-                    "team_name": str(team.get("name") or f"Team {team_index + 1}"),
-                    "team_label": team_label,
+                    "source_match_key": source_match_key,
+                    "team_id": str(team.get("id") or team.get("team_id") or "").strip() or None,
+                    "team_name": str(team.get("name") or f"Team {team_label_value}"),
+                    "team_label": team_label_value,
                 }
             )
     return sorted(rows, key=lambda row: (row["team_label"], row["player_name"], row["player_id"]))
+
+
+def _teams(match_doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    result: list[tuple[str, dict[str, Any]]] = []
+    for index, team in enumerate(match_doc.get("teams") or []):
+        if not isinstance(team, dict):
+            continue
+        explicit = team_label(team.get("team_label") or team.get("label"))
+        result.append((explicit if explicit != "U" else ("A" if index == 0 else "B" if index == 1 else "U"), team))
+    return result
 
 
 def _direct_assignment_evidence(
@@ -285,6 +299,8 @@ def _card(
     roster: list[dict[str, Any]],
     direct_evidence: dict[str, dict[str, Any]],
     propagated_evidence: dict[str, dict[str, Any]],
+    source_match_key: str | None,
+    source_video_key: str | None,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     subject_id = str(subject["candidate_subject_id"])
@@ -356,11 +372,15 @@ def _card(
         (row for row in candidates if row["player_id"] == recommended_player_id),
         None,
     )
+    team_ids = {player["team_id"] for player in candidates if player.get("team_id")}
     return {
         "anchor_key": _stable_key(subject_id),
         "candidate_subject_id": subject_id,
         "candidate_player_id": subject.get("candidate_player_id"),
         "team_label": team_label,
+        "source_match_key": source_match_key,
+        "source_video_key": source_video_key,
+        "team_id": next(iter(team_ids)) if len(team_ids) == 1 else None,
         "role": role,
         "start_frame": int(subject.get("start_frame") or 0),
         "end_frame": int(subject.get("end_frame") or 0),
@@ -460,6 +480,27 @@ def _optional_int(value: Any) -> int | None:
 def _is_goalkeeper(role: str, number: str) -> bool:
     value = f"{role} {number}".lower()
     return "goalkeeper" in value or "keeper" in value or " gk" in f" {value}"
+
+
+def _source_match_key(match_doc: dict[str, Any]) -> str | None:
+    for field in ("source_match_key", "match_id", "id"):
+        value = str(match_doc.get(field) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _source_video_key(match_doc: dict[str, Any]) -> str | None:
+    metadata = match_doc.get("metadata")
+    sources = (match_doc, metadata) if isinstance(metadata, dict) else (match_doc,)
+    for field in ("source_video_key", "video_key", "video_id", "video_filename", "video"):
+        for source in sources:
+            value = source.get(field)
+            if isinstance(value, (str, int)) and not isinstance(value, bool):
+                key = str(value).strip()
+                if key:
+                    return key
+    return None
 
 
 def _stable_key(subject_id: str) -> str:

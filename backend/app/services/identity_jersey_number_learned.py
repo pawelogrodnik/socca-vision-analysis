@@ -8,9 +8,9 @@ from typing import Any
 from app.services.identity_jersey_number_common import canonical_digest, normalize_jersey_number
 
 
-SCHEMA_VERSION = "0.1.0"
-ALGORITHM_NAME = "identity_jersey_number_centroid_baseline"
-ALGORITHM_VERSION = "1.0.0"
+SCHEMA_VERSION = "0.2.0"
+ALGORITHM_NAME = "identity_jersey_number_closed_set_diagnostic_v1"
+ALGORITHM_VERSION = "1.1.0"
 DEFAULT_PARAMETERS = {
     "feature_width": 24,
     "feature_height": 32,
@@ -55,6 +55,8 @@ def train_identity_jersey_number_learned_baseline(
         for number, vectors in sorted(vectors_by_number.items())
         if len(vectors) >= int(params["minimum_train_samples_per_number"])
     }
+    candidate_vocabulary = sorted(prototypes, key=lambda value: (len(value), value))
+    candidate_vocabulary_digest = canonical_digest(candidate_vocabulary)
     validation_rows = _validation_predictions(
         dataset_doc,
         prototypes=prototypes,
@@ -71,7 +73,9 @@ def train_identity_jersey_number_learned_baseline(
         }
     )
     split_contract = dataset_doc.get("split_contract") or {}
-    production_eligible = bool(split_contract.get("production_eligible")) and len(source_matches) >= 3
+    reason_codes = ["shadow_baseline_not_production_validated"]
+    if not bool(split_contract.get("production_eligible")) or len(source_matches) < 3:
+        reason_codes.append("insufficient_independent_source_matches")
     model_payload = {
         "prototypes": prototypes,
         "readable_centroid": _mean_vector(readable_vectors) if readable_vectors else None,
@@ -87,6 +91,11 @@ def train_identity_jersey_number_learned_baseline(
             "name": ALGORITHM_NAME,
             "version": ALGORITHM_VERSION,
             "parameters": params,
+            "capabilities": {
+                "diagnostic_only": True,
+                "production_activation_eligible": False,
+                "recognition_mode": "closed_set_diagnostic_v1",
+            },
         },
         "model_digest": canonical_digest(model_payload),
         "source": {
@@ -95,14 +104,11 @@ def train_identity_jersey_number_learned_baseline(
             "source_match_keys": source_matches,
         },
         "production_gate": {
-            "eligible": production_eligible,
-            "reason_codes": [] if production_eligible else [
-                "insufficient_independent_source_matches",
-                "shadow_baseline_not_production_validated",
-            ],
+            "eligible": False,
+            "reason_codes": reason_codes,
         },
         "summary": {
-            "trained_numbers": sorted(prototypes, key=lambda value: (len(value), value)),
+            "trained_numbers": candidate_vocabulary,
             "number_samples": {
                 number: len(vectors) for number, vectors in sorted(vectors_by_number.items())
             },
@@ -118,6 +124,9 @@ def train_identity_jersey_number_learned_baseline(
             "uses_synthetic_font_templates": False,
         },
         "calibration": calibration,
+        "candidate_vocabulary": candidate_vocabulary,
+        "candidate_vocabulary_digest": candidate_vocabulary_digest,
+        "candidate_vocabulary_source": "train_prototypes_only",
         "prototypes": prototypes,
         "readable_centroid": model_payload["readable_centroid"],
         "absent_centroid": model_payload["absent_centroid"],

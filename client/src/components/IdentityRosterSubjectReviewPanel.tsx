@@ -7,6 +7,7 @@ import {
 import { errorMessage } from '../lib/helpers';
 import type {
   IdentityRosterSubjectDecision,
+  IdentityRosterSubjectJerseyNumberAnnotation,
   IdentityRosterSubjectReviewCard,
   IdentityRosterSubjectReviewDocument,
   IdentityRosterSubjectTelemetryEvent,
@@ -56,6 +57,7 @@ export function IdentityRosterSubjectReviewPanel({
   const [cardIndex, setCardIndex] = useState(0);
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [comment, setComment] = useState('');
+  const [cropAnnotations, setCropAnnotations] = useState<Record<string, IdentityRosterSubjectJerseyNumberAnnotation>>({});
   const sessionIdRef = useRef('');
   const lastActivityAtRef = useRef<number | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -120,16 +122,24 @@ export function IdentityRosterSubjectReviewPanel({
     };
   }, [document]);
   const counts = useMemo(() => {
-    const all = document
-      ? visibleSubjectReviewCards(document, reviewFilter, 'all')
-      : [];
+    const all = document?.cards || [];
     return {
       all: all.length,
       A: all.filter((card) => card.team_label === 'A').length,
       B: all.filter((card) => card.team_label === 'B').length,
       U: all.filter((card) => !card.team_label || card.team_label === 'U').length,
     };
-  }, [document, reviewFilter]);
+  }, [document]);
+  const reviewedCardsInSelectedTeam = useMemo(() => {
+    if (!document || teamFilter === 'all') return 0;
+    return document.cards.filter((card) => (
+      (card.team_label || 'U') === teamFilter && Boolean(card.operator_decision)
+    )).length;
+  }, [document, teamFilter]);
+  const hasOnlyReviewedCardsInSelectedTeam = reviewFilter === 'pending'
+    && teamFilter !== 'all'
+    && cards.length === 0
+    && reviewedCardsInSelectedTeam > 0;
 
   async function load(showStatus: boolean) {
     setAvailability('loading');
@@ -161,13 +171,21 @@ export function IdentityRosterSubjectReviewPanel({
     }
     setSaving(true);
     try {
-      const next = await queuedSave([{
-        update_id: crypto.randomUUID(),
-        review_card_key: currentCard.review_card_key,
-        decision,
-        player_id: playerId,
-        comment: comment.trim() || null,
-      }], [telemetryEvent('activity', currentCard.review_card_key)]);
+      const next = await queuedSave([
+        {
+          update_id: crypto.randomUUID(),
+          review_card_key: currentCard.review_card_key,
+          decision,
+          player_id: playerId,
+          comment: comment.trim() || null,
+        },
+        ...currentCard.visual_evidence.anchor_crops.map((crop) => ({
+          update_id: crypto.randomUUID(),
+          review_card_key: currentCard.review_card_key,
+          anchor_crop_id: crop.anchor_crop_id,
+          jersey_number_annotation: cropAnnotations[crop.anchor_crop_id] || {},
+        })),
+      ], [telemetryEvent('activity', currentCard.review_card_key)]);
       const nextCards = visibleSubjectReviewCards(next, reviewFilter, teamFilter);
       const currentInNext = nextCards.findIndex((card) => card.review_card_key === currentCard.review_card_key);
       setDocument(next);
@@ -179,6 +197,28 @@ export function IdentityRosterSubjectReviewPanel({
       onStatus(decision === 'clear_decision' ? 'Usunieto decyzje shadow.' : 'Zapisano decyzje shadow.');
     } catch (error) {
       onStatus(`Nie udalo sie zapisac decyzji: ${errorMessage(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveCropAnnotations() {
+    if (!currentCard || currentCard.visual_evidence.anchor_crops.length === 0) return;
+    setSaving(true);
+    try {
+      const next = await queuedSave(
+        currentCard.visual_evidence.anchor_crops.map((crop) => ({
+          update_id: crypto.randomUUID(),
+          review_card_key: currentCard.review_card_key,
+          anchor_crop_id: crop.anchor_crop_id,
+          jersey_number_annotation: cropAnnotations[crop.anchor_crop_id] || {},
+        })),
+        [telemetryEvent('activity', currentCard.review_card_key)],
+      );
+      setDocument(next);
+      onStatus('Zapisano shadow ocene cropow. Decyzja rosteru bez zmian.');
+    } catch (error) {
+      onStatus(`Nie udalo sie zapisac ocen cropow: ${errorMessage(error)}`);
     } finally {
       setSaving(false);
     }
@@ -206,6 +246,31 @@ export function IdentityRosterSubjectReviewPanel({
     );
     setComment(decision?.comment || '');
   }, [currentCard?.review_card_key, currentCard?.operator_decision, currentRosterOptions]);
+
+  useEffect(() => {
+    setCropAnnotations(
+      Object.fromEntries(
+        (currentCard?.visual_evidence.anchor_crops || []).map((crop) => [
+          crop.anchor_crop_id,
+          crop.jersey_number_annotation || {},
+        ]),
+      ),
+    );
+  }, [currentCard?.review_card_key]);
+
+  function updateCropAnnotation(
+    anchorCropId: string,
+    field: keyof IdentityRosterSubjectJerseyNumberAnnotation,
+    value: string | number | null,
+  ) {
+    setCropAnnotations((current) => ({
+      ...current,
+      [anchorCropId]: {
+        ...current[anchorCropId],
+        [field]: value,
+      },
+    }));
+  }
 
   useEffect(() => {
     if (!open || !currentCard) return;
@@ -330,19 +395,79 @@ export function IdentityRosterSubjectReviewPanel({
                   </div>
 
                   <div className='identity-subject-crop-grid'>
-                    {currentCard.visual_evidence.anchor_crops.map((crop) => (
-                      <a
-                        className='identity-subject-crop'
-                        href={artifactUrl(match.id, crop.artifact)}
-                        target='_blank'
-                        rel='noreferrer'
-                        key={crop.anchor_crop_id}
-                      >
-                        <img src={artifactUrl(match.id, crop.artifact)} alt={`${currentCard.candidate_subject_id} frame ${crop.frame}`} />
-                        <span>f{crop.frame} - {typeof crop.time_sec === 'number' ? `${crop.time_sec.toFixed(1)}s` : 'time n/a'}</span>
-                        <span>det {confidenceLabel(crop.detection_confidence)}</span>
-                      </a>
-                    ))}
+                    {currentCard.visual_evidence.anchor_crops.map((crop) => {
+                      const annotation = cropAnnotations[crop.anchor_crop_id] || {};
+                      const visualDiagnostics = crop.jersey_number_visual_diagnostics;
+                      return (
+                        <div className='identity-subject-crop' key={crop.anchor_crop_id}>
+                          <a href={artifactUrl(match.id, crop.artifact)} target='_blank' rel='noreferrer'>
+                            <img src={artifactUrl(match.id, crop.artifact)} alt={`${currentCard.candidate_subject_id} frame ${crop.frame}`} />
+                          </a>
+                          <span>f{crop.frame} - {typeof crop.time_sec === 'number' ? `${crop.time_sec.toFixed(1)}s` : 'time n/a'}</span>
+                          <span>det {confidenceLabel(crop.detection_confidence)}</span>
+                          {visualDiagnostics && (
+                            <fieldset>
+                              <legend>Diagnostyka obrazu (maszyna)</legend>
+                              <div>Stan: {visualDiagnostics.status || 'nieokreslony'}</div>
+                              {visualDiagnostics.observations?.map((observation) => (
+                                <div key={observation}>{observation}</div>
+                              ))}
+                              {visualDiagnostics.reason_codes?.map((reason) => (
+                                <div key={reason}>powod: {reason}</div>
+                              ))}
+                              <div>Nieokreslone nie oznacza braku numeru ani etykiety operatora.</div>
+                            </fieldset>
+                          )}
+                          <fieldset disabled={saving}>
+                            <legend>Ocena reczna numeru</legend>
+                            <label>
+                              Cyfry
+                              <select value={annotation.digit_visibility || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'digit_visibility', event.target.value)}>
+                                <option value='full'>Czytelne</option>
+                                <option value='partial'>Czesciowo</option>
+                                <option value='none'>Niewidoczne</option>
+                                <option value='unknown'>Nie oceniono</option>
+                              </select>
+                            </label>
+                            <label>
+                              Zaslonicie
+                              <select value={annotation.occlusion_state || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'occlusion_state', event.target.value)}>
+                                <option value='none'>Brak</option>
+                                <option value='partial'>Czesciowe</option>
+                                <option value='heavy'>Duże</option>
+                                <option value='unknown'>Nie oceniono</option>
+                              </select>
+                            </label>
+                            <label>
+                              Ostrosc
+                              <select value={annotation.blur_level || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'blur_level', event.target.value)}>
+                                <option value='none'>Brak</option>
+                                <option value='mild'>Lekka</option>
+                                <option value='heavy'>Duże</option>
+                                <option value='unknown'>Nie oceniono</option>
+                              </select>
+                            </label>
+                            <label>
+                              Perspektywa
+                              <select value={annotation.perspective_state || 'unknown'} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'perspective_state', event.target.value)}>
+                                <option value='frontal'>Przod</option>
+                                <option value='angled'>Skos</option>
+                                <option value='severe'>Silny skos</option>
+                                <option value='unknown'>Nie oceniono</option>
+                              </select>
+                            </label>
+                            <label>
+                              Panel % wysokosci
+                              <input type='number' min='0' max='1' step='0.01' value={annotation.panel_height_ratio ?? ''} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'panel_height_ratio', event.target.value === '' ? null : Number(event.target.value))} />
+                            </label>
+                            <label>
+                              Profil stroju
+                              <input value={annotation.kit_profile ?? ''} onChange={(event) => updateCropAnnotation(crop.anchor_crop_id, 'kit_profile', event.target.value || null)} placeholder='np. biale pasy' />
+                            </label>
+                          </fieldset>
+                        </div>
+                      );
+                    })}
                     {currentCard.visual_evidence.anchor_crops.length === 0 && (
                       <div className='player-heatmap-placeholder'>Brak wiarygodnych cropow</div>
                     )}
@@ -397,6 +522,14 @@ export function IdentityRosterSubjectReviewPanel({
                       </button>
                     </div>
                     <div className='row'>
+                      <button
+                        type='button'
+                        className='secondary'
+                        onClick={() => void saveCropAnnotations()}
+                        disabled={currentCard.visual_evidence.anchor_crops.length === 0 || saving}
+                      >
+                        Zapisz ocene cropow (shadow)
+                      </button>
                       {currentCard.operator_decision && (
                         <button type='button' className='secondary' onClick={() => void saveDecision('clear_decision')} disabled={saving}>
                           Wyczysc
@@ -427,7 +560,11 @@ export function IdentityRosterSubjectReviewPanel({
                 </div>
               </div>
             ) : (
-              <div className='identity-subject-review-empty'>Brak kart dla wybranych filtrow.</div>
+              <div className='identity-subject-review-empty'>
+                {hasOnlyReviewedCardsInSelectedTeam
+                  ? `Team ${teamFilter}: brak kart do review. ${reviewedCardsInSelectedTeam} kart${reviewedCardsInSelectedTeam === 1 ? 'a jest juz oznaczona' : ' jest juz oznaczonych'}. Zmien Stan na Oznaczone lub Wszystkie, aby je zobaczyc.`
+                  : 'Brak kart dla wybranych filtrow.'}
+              </div>
             )}
           </div>
         </div>

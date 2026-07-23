@@ -7,9 +7,30 @@ from pathlib import Path
 from typing import Any
 import uuid
 
+from app.services.identity_jersey_number_common import canonical_digest
+
 
 REVIEW_ARTIFACT_FILENAME = "identity_roster_subject_review_shadow.json"
 REVIEW_DECISIONS_FILENAME = "identity_roster_subject_review_decisions_shadow.json"
+VISUAL_PRE_AUDIT_FILENAME = "identity_jersey_number_visual_pre_audit_shadow.json"
+VISUAL_PRE_AUDIT_SCHEMA_VERSION = "0.2.0"
+VISUAL_PRE_AUDIT_ALGORITHM_NAME = "identity_jersey_number_visual_pre_audit"
+VISUAL_PRE_AUDIT_ALGORITHM_VERSION = "1.1.0"
+PROHIBITED_PRE_AUDIT_KEYS = {
+    "jersey_number_annotation_suggestion",
+    "digit_visibility",
+    "occlusion_state",
+    "blur_level",
+    "perspective_state",
+    "panel_height_ratio",
+    "kit_profile",
+    "number",
+    "number_absent",
+    "digit_string",
+    "visual_state",
+    "state",
+    "label_state",
+}
 PERSISTED_DECISIONS = {
     "confirm_recommended_player",
     "assign_roster_player",
@@ -23,6 +44,12 @@ TELEMETRY_EVENT_TYPES = {
     "remediation_action",
 }
 MAX_ACTIVE_DELTA_SECONDS = 30.0
+JERSEY_ANNOTATION_ENUMS = {
+    "digit_visibility": {"full", "partial", "none", "unknown"},
+    "occlusion_state": {"none", "partial", "heavy", "unknown"},
+    "blur_level": {"none", "mild", "heavy", "unknown"},
+    "perspective_state": {"frontal", "angled", "severe", "unknown"},
+}
 
 
 def load_identity_roster_subject_review(
@@ -34,11 +61,13 @@ def load_identity_roster_subject_review(
     artifact_digest = identity_review_artifact_digest(artifact)
     decisions_doc = _load_optional_decisions(path / REVIEW_DECISIONS_FILENAME)
     decisions_fresh = decisions_doc.get("source_artifact_digest") == artifact_digest
+    pre_audits_by_crop = _fresh_pre_audits(path, artifact)
     stored_by_key = {
         str(row.get("review_card_key")): row
         for row in decisions_doc.get("decisions") or []
         if isinstance(row, dict) and row.get("review_card_key")
     }
+    annotations_by_crop = _stored_crop_annotations(decisions_doc) if decisions_fresh else {}
     cards: list[dict[str, Any]] = []
     applied = 0
     stale = 0
@@ -47,6 +76,7 @@ def load_identity_roster_subject_review(
         card["operator_roster_options"] = _operator_roster_options(card, match_doc)
         card["decision_contract"] = _effective_decision_contract(card)
         card["allowed_actions"] = _effective_allowed_actions(card)
+        card = _with_crop_annotations(card, annotations_by_crop, pre_audits_by_crop)
         stored = stored_by_key.get(str(card.get("review_card_key") or ""))
         if stored and decisions_fresh:
             card["operator_decision"] = stored
@@ -57,7 +87,7 @@ def load_identity_roster_subject_review(
                 stale += 1
         cards.append(card)
     return {
-        "schema_version": "0.2.0",
+        "schema_version": "0.4.0",
         "mode": "shadow_operator_review",
         "source_artifact_digest": artifact_digest,
         "decisions_fresh": decisions_fresh or not stored_by_key,
@@ -66,6 +96,7 @@ def load_identity_roster_subject_review(
             "reviewed_cards": applied,
             "pending_cards": max(0, len(cards) - applied),
             "stale_decisions": stale,
+            "fresh_jersey_number_pre_audits": len(pre_audits_by_crop),
         },
         "safety": {
             "writes_shadow_decisions_only": True,
@@ -106,6 +137,11 @@ def save_identity_roster_subject_review(
         for row in existing.get("decisions") or []
         if isinstance(row, dict) and row.get("review_card_key")
     } if existing.get("source_artifact_digest") == digest else {}
+    annotations_by_crop = (
+        _stored_crop_annotations(existing)
+        if existing.get("source_artifact_digest") == digest
+        else {}
+    )
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
     telemetry_state = _load_telemetry_state(existing) if existing.get("source_artifact_digest") == digest else _empty_telemetry_state()
     for update in updates:
@@ -118,6 +154,29 @@ def save_identity_roster_subject_review(
         update_id = str(update.get("update_id") or "")
         already_processed = bool(update_id and update_id in telemetry_state["processed_update_ids"])
         previous = decisions_by_key.get(key)
+        crop_id = str(update.get("anchor_crop_id") or "")
+        if crop_id:
+            crop_ids = {
+                str(crop.get("anchor_crop_id"))
+                for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or [])
+                if isinstance(crop, dict) and crop.get("anchor_crop_id")
+            }
+            if crop_id not in crop_ids:
+                raise ValueError(f"Unknown anchor_crop_id for {key}: {crop_id}")
+            if update.get("clear_jersey_number_annotation"):
+                annotations_by_crop.pop(crop_id, None)
+            elif "jersey_number_annotation" in update:
+                annotations_by_crop[crop_id] = {
+                    "anchor_crop_id": crop_id,
+                    **_normalize_crop_annotation(update["jersey_number_annotation"]),
+                    "updated_at": timestamp,
+                }
+            if update_id:
+                telemetry_state["processed_update_ids"].add(update_id)
+            if "decision" not in update:
+                continue
+        elif "jersey_number_annotation" in update or update.get("clear_jersey_number_annotation"):
+            raise ValueError("anchor_crop_id is required for jersey_number_annotation")
         decision = update.get("decision")
         if decision in (None, "clear_decision"):
             decisions_by_key.pop(key, None)
@@ -148,7 +207,7 @@ def save_identity_roster_subject_review(
     _merge_telemetry_events(telemetry_state, telemetry_events or [], cards_by_key)
     operator_telemetry = _build_operator_telemetry(telemetry_state, decisions_by_key)
     document = {
-        "schema_version": "0.2.0",
+        "schema_version": "0.3.0",
         "updated_at": timestamp,
         "mode": "shadow_operator_review",
         "source_artifact": REVIEW_ARTIFACT_FILENAME,
@@ -163,6 +222,7 @@ def save_identity_roster_subject_review(
         "operator_telemetry": operator_telemetry,
         "telemetry_state": _serialize_telemetry_state(telemetry_state),
         "decisions": [decisions_by_key[key] for key in sorted(decisions_by_key)],
+        "jersey_number_annotations": [annotations_by_crop[key] for key in sorted(annotations_by_crop)],
     }
     _write_atomic(path / REVIEW_DECISIONS_FILENAME, document)
     return load_identity_roster_subject_review(path, match_doc=match_doc)
@@ -174,6 +234,145 @@ def _decision_signature(value: dict[str, Any]) -> tuple[str, str, str]:
         str(value.get("player_id") or ""),
         str(value.get("comment") or ""),
     )
+
+
+def _stored_crop_annotations(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(row["anchor_crop_id"]): _normalize_crop_annotation(row)
+        for row in document.get("jersey_number_annotations") or []
+        if isinstance(row, dict) and row.get("anchor_crop_id")
+    }
+
+
+def _with_crop_annotations(
+    card: dict[str, Any],
+    annotations_by_crop: dict[str, dict[str, Any]],
+    pre_audits_by_crop: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    visual_evidence = dict(card.get("visual_evidence") or {})
+    visual_evidence["anchor_crops"] = [
+        {
+            **crop,
+            "jersey_number_annotation": annotations_by_crop.get(
+                str(crop.get("anchor_crop_id") or "")
+            ),
+            "jersey_number_pre_audit": pre_audits_by_crop.get(
+                str(crop.get("anchor_crop_id") or "")
+            ),
+        }
+        for crop in visual_evidence.get("anchor_crops") or []
+        if isinstance(crop, dict)
+    ]
+    return {**card, "visual_evidence": visual_evidence}
+
+
+def _fresh_pre_audits(path: Path, artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    audit_path = path / VISUAL_PRE_AUDIT_FILENAME
+    if not audit_path.exists():
+        return {}
+    try:
+        audit = _load_object(audit_path)
+    except ValueError:
+        return {}
+    if _contains_prohibited_pre_audit_keys(audit):
+        return {}
+    algorithm = audit.get("algorithm") if isinstance(audit.get("algorithm"), dict) else {}
+    if (
+        audit.get("schema_version") != VISUAL_PRE_AUDIT_SCHEMA_VERSION
+        or algorithm.get("name") != VISUAL_PRE_AUDIT_ALGORITHM_NAME
+        or algorithm.get("version") != VISUAL_PRE_AUDIT_ALGORITHM_VERSION
+    ):
+        return {}
+    rows = _review_crop_rows(artifact)
+    review_digest = canonical_digest(artifact)
+    if (
+        (audit.get("source") or {}).get("subject_review_digest") != review_digest
+        or (audit.get("source") or {}).get("review_crop_entries_digest") != canonical_digest(rows)
+    ):
+        return {}
+    current_by_id = {str(row["anchor_crop_id"]): row for row in rows}
+    fresh: dict[str, dict[str, Any]] = {}
+    for suggestion in audit.get("suggestions") or []:
+        if not isinstance(suggestion, dict):
+            return {}
+        if suggestion.get("status") != "audited":
+            continue
+        crop_id = str(suggestion.get("anchor_crop_id") or "")
+        row = current_by_id.get(crop_id)
+        if row is None or suggestion.get("source_crop_digest") != canonical_digest(row):
+            continue
+        artifact_name = str(row.get("artifact") or "")
+        crop_path = path / artifact_name
+        if not _safe_crop_path(artifact_name) or suggestion.get("crop_sha256") != _sha256(crop_path):
+            continue
+        expected_row_digest = canonical_digest(
+            {key: value for key, value in suggestion.items() if key != "row_digest"}
+        )
+        if suggestion.get("row_digest") != expected_row_digest:
+            continue
+        fresh[crop_id] = dict(suggestion)
+    return fresh
+
+
+def _contains_prohibited_pre_audit_keys(value: Any) -> bool:
+    if isinstance(value, dict):
+        return bool(PROHIBITED_PRE_AUDIT_KEYS & set(value)) or any(
+            _contains_prohibited_pre_audit_keys(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_prohibited_pre_audit_keys(item) for item in value)
+    return False
+
+
+def _review_crop_rows(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for card in artifact.get("cards") or []:
+        if not isinstance(card, dict):
+            continue
+        for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or []):
+            if isinstance(crop, dict) and crop.get("anchor_crop_id"):
+                rows.append(
+                    {
+                        "review_card_key": card.get("review_card_key"),
+                        "candidate_subject_id": card.get("candidate_subject_id"),
+                        "anchor_crop_id": crop.get("anchor_crop_id"),
+                        "artifact": crop.get("torso_artifact") or crop.get("artifact"),
+                    }
+                )
+    return sorted(rows, key=lambda row: (str(row["review_card_key"] or ""), str(row["anchor_crop_id"])))
+
+
+def _safe_crop_path(artifact: str) -> bool:
+    crop_path = Path(artifact)
+    return bool(artifact and not crop_path.is_absolute() and ".." not in crop_path.parts)
+
+
+def _sha256(path: Path) -> str | None:
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def _normalize_crop_annotation(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("jersey_number_annotation must be an object")
+    normalized: dict[str, Any] = {}
+    for field, allowed in JERSEY_ANNOTATION_ENUMS.items():
+        raw = value.get(field)
+        item = str(raw or "unknown").strip().lower()
+        if item not in allowed:
+            raise ValueError(f"Invalid jersey_number_annotation {field}")
+        normalized[field] = item
+    ratio = value.get("panel_height_ratio")
+    if ratio is None:
+        normalized["panel_height_ratio"] = None
+    elif isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or not 0.0 <= float(ratio) <= 1.0:
+        raise ValueError("panel_height_ratio must be between zero and one or null")
+    else:
+        normalized["panel_height_ratio"] = round(float(ratio), 6)
+    profile = value.get("kit_profile")
+    if profile is not None and not isinstance(profile, str):
+        raise ValueError("kit_profile must be a string or null")
+    normalized["kit_profile"] = profile.strip() or None if isinstance(profile, str) else None
+    return normalized
 
 
 def _empty_operator_telemetry() -> dict[str, Any]:

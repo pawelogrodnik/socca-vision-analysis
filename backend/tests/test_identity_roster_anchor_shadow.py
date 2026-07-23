@@ -62,11 +62,16 @@ MATCH = {
 }
 
 
-def build(subjects: list[dict], assignments: list[dict], fusion: dict | None = None) -> dict:
+def build(
+    subjects: list[dict],
+    assignments: list[dict],
+    fusion: dict | None = None,
+    match_doc: dict | None = None,
+) -> dict:
     return build_identity_roster_anchor_shadow(
         {"algorithm": {"name": "candidate"}, "subjects": subjects},
         {"schema_version": "test", "assignments": assignments},
-        MATCH,
+        match_doc or MATCH,
         reid_fusion_doc=fusion,
         generated_at="fixed",
     )
@@ -161,6 +166,55 @@ class IdentityRosterAnchorShadowTests(unittest.TestCase):
 
         self.assertEqual([row["player_id"] for row in card["roster_candidates"]], ["b1"])
         self.assertEqual(card["status"], "unresolved")
+
+    def test_explicit_match_and_team_scope_survive_into_anchor_card(self) -> None:
+        match_doc = {**MATCH, "source_match_key": "source-match", "match_id": "fallback-match"}
+        card = build([subject("s1")], [assignment("p1")], match_doc=match_doc)[
+            "identity_roster_anchor_shadow"
+        ]["cards"][0]
+
+        self.assertEqual(card["source_match_key"], "source-match")
+        self.assertEqual(card["team_id"], "team-a")
+
+    def test_metadata_video_filename_resolves_unless_explicit_video_id_exists(self) -> None:
+        match_doc = {**MATCH, "metadata": {"video_filename": "match.mp4"}}
+        card = build([subject("s1")], [assignment("p1")], match_doc=match_doc)[
+            "identity_roster_anchor_shadow"
+        ]["cards"][0]
+
+        self.assertEqual(card["source_video_key"], "match.mp4")
+        explicit = build(
+            [subject("s1")],
+            [assignment("p1")],
+            match_doc={**match_doc, "video_id": "video-1"},
+        )["identity_roster_anchor_shadow"]["cards"][0]
+        self.assertEqual(explicit["source_video_key"], "video-1")
+
+    def test_missing_root_match_and_team_scope_stay_missing(self) -> None:
+        match_doc = {
+            "teams": [{"name": "A", "players": [{"id": "p1", "name": "Player One"}]}],
+        }
+        card = build([subject("s1")], [assignment("p1")], match_doc=match_doc)[
+            "identity_roster_anchor_shadow"
+        ]["cards"][0]
+
+        self.assertIsNone(card["source_match_key"])
+        self.assertIsNone(card["team_id"])
+
+    def test_explicit_swapped_team_labels_override_position(self) -> None:
+        match_doc = {
+            "teams": [
+                {"id": "team-b", "label": " b ", "players": [{"id": "b1", "name": "Blue"}]},
+                {"id": "team-a", "team_label": "a", "players": [{"id": "p1", "name": "Player One"}]},
+            ]
+        }
+        card = build([subject("s1")], [assignment("p1")], match_doc=match_doc)[
+            "identity_roster_anchor_shadow"
+        ]["cards"][0]
+
+        self.assertEqual([row["player_id"] for row in card["roster_candidates"]], ["p1"])
+        self.assertEqual(card["recommended_player_id"], "p1")
+        self.assertEqual(card["team_id"], "team-a")
 
     def test_same_input_is_deterministic(self) -> None:
         first = build([subject("s1")], [assignment("p1")])

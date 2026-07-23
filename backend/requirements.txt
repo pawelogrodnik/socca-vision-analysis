@@ -5,5 +5,7 @@ pydantic==2.10.4
 numpy==1.26.4; sys_platform == "darwin"
 numpy==2.1.3; sys_platform != "darwin"
 opencv-python-headless==4.10.0.84
+# Use a Python 3.11-compatible environment for torch.
+torch==2.4.1; python_version < "3.14"
 ultralytics==8.3.58
 lap==0.5.13

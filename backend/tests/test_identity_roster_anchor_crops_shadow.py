@@ -39,6 +39,8 @@ def build(
     *,
     other_subjects: list[dict] | None = None,
     occlusion_events: list[dict] | None = None,
+    source_match_key: str | None = "source-match",
+    team_id: str | None = "team-a",
     generated_at: str = "fixed",
 ) -> dict[str, dict]:
     roster_anchor = {
@@ -48,6 +50,8 @@ def build(
                 "anchor_key": "anchor-1",
                 "candidate_subject_id": "shadow-a-1",
                 "team_label": "A",
+                **({"source_match_key": source_match_key} if source_match_key is not None else {}),
+                **({"team_id": team_id} if team_id is not None else {}),
                 "role": "field_player",
                 "start_frame": 0,
                 "end_frame": 99,
@@ -159,6 +163,33 @@ class IdentityRosterAnchorCropsShadowTests(unittest.TestCase):
             documents["identity_roster_anchor_crops_shadow_report"]["status"],
             "no_reliable_crops",
         )
+
+    def test_anchor_scope_survives_into_crop_card(self) -> None:
+        card = build([observation(10)], source_match_key="match-1", team_id="team-1")[
+            "identity_roster_anchor_crops_shadow"
+        ]["cards"][0]
+
+        self.assertEqual(card["source_match_key"], "match-1")
+        self.assertEqual(card["team_id"], "team-1")
+
+    def test_missing_anchor_scope_stays_missing_on_crop_card(self) -> None:
+        card = build([observation(10)], source_match_key=None, team_id=None)[
+            "identity_roster_anchor_crops_shadow"
+        ]["cards"][0]
+
+        self.assertIsNone(card["source_match_key"])
+        self.assertIsNone(card["team_id"])
+
+    def test_crop_ids_are_distinct_across_match_or_team_scope(self) -> None:
+        first = build([observation(10)], source_match_key="match-1", team_id="team-1")
+        other_match = build([observation(10)], source_match_key="match-2", team_id="team-1")
+        other_team = build([observation(10)], source_match_key="match-1", team_id="team-2")
+
+        first_crop = first["identity_roster_anchor_crops_shadow"]["cards"][0]["anchor_crops"][0]
+        other_match_crop = other_match["identity_roster_anchor_crops_shadow"]["cards"][0]["anchor_crops"][0]
+        other_team_crop = other_team["identity_roster_anchor_crops_shadow"]["cards"][0]["anchor_crops"][0]
+        self.assertNotEqual(first_crop["anchor_crop_id"], other_match_crop["anchor_crop_id"])
+        self.assertNotEqual(first_crop["anchor_crop_id"], other_team_crop["anchor_crop_id"])
 
     def test_selection_is_deterministic_for_reordered_observations(self) -> None:
         rows = [observation(frame, tracklet_id=f"track-{frame // 20}") for frame in range(0, 100, 5)]

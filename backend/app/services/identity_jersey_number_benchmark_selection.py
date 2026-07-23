@@ -7,11 +7,14 @@ from statistics import median
 from typing import Any
 
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_jersey_number_visibility_episodes import (
+    attach_jersey_visibility_episode_ids,
+)
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_jersey_number_targeted_benchmark_selection"
-ALGORITHM_VERSION = "1.1.0"
+ALGORITHM_VERSION = "1.3.0"
 
 
 def build_targeted_jersey_number_benchmark(
@@ -73,15 +76,31 @@ def build_targeted_jersey_number_benchmark(
         crops_by_tracklet: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
         for crop in source_card.get("anchor_crops") or []:
             if isinstance(crop, dict) and crop.get("tracklet_id"):
-                crops_by_tracklet[str(crop["tracklet_id"])].append(crop)
+                crops_by_tracklet[str(crop["tracklet_id"])].append(
+                    {
+                        **crop,
+                        "source_match_key": source_card.get("source_match_key"),
+                        "source_video_key": source_card.get("source_video_key"),
+                        "candidate_subject_id": source_card.get("candidate_subject_id"),
+                        "team_id": source_card.get("team_id"),
+                        "team_label": source_card.get("team_label"),
+                    }
+                )
         seed_options = []
         for tracklet_id, crops in crops_by_tracklet.items():
+            try:
+                crops = attach_jersey_visibility_episode_ids(
+                    crops,
+                    maximum_gap_frames=minimum_visibility_episode_gap_frames,
+                )
+            except ValueError:
+                rejection_counts["incomplete_visibility_episode_scope"] += 1
+                continue
             if len(crops) < min_seed_crops:
                 continue
             independent_crops = _independent_seed_crops(
                 crops,
                 minimum_frame_separation=minimum_seed_frame_separation,
-                visibility_episode_gap_frames=minimum_visibility_episode_gap_frames,
             )
             if len(independent_crops) < min_independent_seed_reads:
                 continue
@@ -198,7 +217,6 @@ def _independent_seed_crops(
     crops: list[dict[str, Any]],
     *,
     minimum_frame_separation: int,
-    visibility_episode_gap_frames: int,
 ) -> list[dict[str, Any]]:
     """Estimate whether selected crops can satisfy the production consensus gate."""
     selected: list[dict[str, Any]] = []
@@ -211,12 +229,7 @@ def _independent_seed_crops(
         frame = int(crop.get("frame") or 0)
         if last_frame is not None and frame - last_frame < minimum_frame_separation:
             continue
-        explicit_episode = crop.get("visibility_episode_id")
-        episode = (
-            str(explicit_episode)
-            if explicit_episode
-            else f"legacy:{str(crop.get('tracklet_id') or 'unknown')}:{frame // visibility_episode_gap_frames}"
-        )
+        episode = str(crop["visibility_episode_id"])
         if episode in used_episodes:
             continue
         selected.append(crop)

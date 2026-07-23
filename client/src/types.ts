@@ -1176,13 +1176,24 @@ export type IdentityRosterSubjectDecision =
   | 'assign_roster_player'
   | 'mark_unresolved';
 
-export type IdentityRosterSubjectReviewUpdate = {
+export type IdentityRosterSubjectDecisionUpdate = {
   update_id?: string;
   review_card_key: string;
   decision: IdentityRosterSubjectDecision | 'clear_decision' | null;
   player_id?: string | null;
   comment?: string | null;
 };
+
+export type IdentityRosterSubjectJerseyNumberAnnotationUpdate = {
+  update_id?: string;
+  review_card_key: string;
+  anchor_crop_id: string;
+  jersey_number_annotation: IdentityRosterSubjectJerseyNumberAnnotation;
+};
+
+export type IdentityRosterSubjectReviewUpdate =
+  | IdentityRosterSubjectDecisionUpdate
+  | IdentityRosterSubjectJerseyNumberAnnotationUpdate;
 
 export type IdentityRosterSubjectTelemetryEventType =
   | 'session_started'
@@ -1253,6 +1264,23 @@ export type IdentityRosterSubjectAnchorCrop = {
   selection_score?: number | null;
   quality_class?: string | null;
   tracklet_id?: string | null;
+  jersey_number_visual_diagnostics?: IdentityRosterSubjectJerseyNumberVisualDiagnostics | null;
+  jersey_number_annotation?: IdentityRosterSubjectJerseyNumberAnnotation | null;
+};
+
+export type IdentityRosterSubjectJerseyNumberVisualDiagnostics = {
+  status?: string | null;
+  reason_codes?: string[];
+  observations?: string[];
+};
+
+export type IdentityRosterSubjectJerseyNumberAnnotation = {
+  digit_visibility?: 'full' | 'partial' | 'none' | 'unknown' | null;
+  occlusion_state?: 'none' | 'partial' | 'heavy' | 'unknown' | null;
+  blur_level?: 'none' | 'mild' | 'heavy' | 'unknown' | null;
+  perspective_state?: 'frontal' | 'angled' | 'severe' | 'unknown' | null;
+  panel_height_ratio?: number | null;
+  kit_profile?: string | null;
 };
 
 export type IdentityRosterSubjectReviewCard = {

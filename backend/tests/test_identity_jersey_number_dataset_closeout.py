@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 from pathlib import Path
 import unittest
@@ -92,6 +93,170 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
         self.assertEqual(metrics["false_confirmed_reads_plain_shirt"], 1)
         self.assertEqual(metrics["false_confirmed_reads_unreadable"], 1)
         self.assertEqual(metrics["wrong_reads"], 3)
+
+    def test_contiguous_scoped_frames_receive_one_visibility_episode_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = {
+                "source_match_key": "match-3509",
+                "source_video_key": "video-3509",
+                "crop_root": Path(directory),
+                "cards_doc": {
+                    "cards": [
+                        {
+                            "anchor_crop_id": f"crop-{frame}",
+                            "candidate_subject_id": "subject-10",
+                            "tracklet_id": "tracklet-10",
+                            "frame": frame,
+                            "team_id": "team-a",
+                            "team_label": "A",
+                            "artifact": "missing.jpg",
+                        }
+                        for frame in (3509, 3510, 3512)
+                    ]
+                },
+                "reviewed_observations_doc": {
+                    "observations": [
+                        {
+                            "anchor_crop_id": f"crop-{frame}",
+                            "state": "number_confirmed",
+                            "number": "10",
+                            "confidence": 1.0,
+                            "view": "back",
+                        }
+                        for frame in (3509, 3510, 3512)
+                    ]
+                },
+            }
+            manifest = build_identity_jersey_number_dataset_manifest(
+                [source], generated_at="fixed"
+            )
+
+        self.assertEqual(len(manifest["samples"]), 3)
+        self.assertEqual(
+            len({row["visibility_episode_id"] for row in manifest["samples"]}), 1
+        )
+
+    def test_quality_annotations_round_trip_and_change_dataset_digest(self) -> None:
+        annotations = {
+            "digit_visibility": "full",
+            "occlusion_state": "partial",
+            "blur_level": "mild",
+            "perspective_state": "angled",
+            "panel_height_ratio": 0.42,
+            "kit_profile": "home-blue",
+        }
+        changed_values = {
+            "digit_visibility": "partial",
+            "occlusion_state": "heavy",
+            "blur_level": "heavy",
+            "perspective_state": "severe",
+            "panel_height_ratio": 0.43,
+            "kit_profile": "away-white",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(Path(directory), video_key="clip-a", subject_id="s1")
+            source["reviewed_observations_doc"]["observations"][0].update(annotations)
+            baseline = build_identity_jersey_number_dataset_manifest([source], generated_at="fixed")
+
+            self.assertEqual(
+                {field: baseline["samples"][0][field] for field in annotations},
+                annotations,
+            )
+            for field, value in changed_values.items():
+                changed = copy.deepcopy(source)
+                changed["reviewed_observations_doc"]["observations"][0][field] = value
+                manifest = build_identity_jersey_number_dataset_manifest(
+                    [changed], generated_at="fixed"
+                )
+                self.assertNotEqual(manifest["dataset_digest"], baseline["dataset_digest"])
+
+    def test_invalid_quality_annotations_normalize_to_unknown_or_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(Path(directory), video_key="clip-a", subject_id="s1")
+            source["reviewed_observations_doc"]["observations"][0].update(
+                {
+                    "digit_visibility": "visible",
+                    "occlusion_state": "occluded",
+                    "blur_level": "extreme",
+                    "perspective_state": "sideways",
+                    "panel_height_ratio": 1.1,
+                    "kit_profile": 17,
+                }
+            )
+            sample = build_identity_jersey_number_dataset_manifest(
+                [source], generated_at="fixed"
+            )["samples"][0]
+
+        self.assertEqual(sample["digit_visibility"], "unknown")
+        self.assertEqual(sample["occlusion_state"], "unknown")
+        self.assertEqual(sample["blur_level"], "unknown")
+        self.assertEqual(sample["perspective_state"], "unknown")
+        self.assertIsNone(sample["panel_height_ratio"])
+        self.assertIsNone(sample["kit_profile"])
+
+    def test_fresh_subject_review_crop_annotation_merges_with_provenance(self) -> None:
+        annotation = {
+            "digit_visibility": "full",
+            "occlusion_state": "partial",
+            "blur_level": "mild",
+            "perspective_state": "angled",
+            "panel_height_ratio": 0.42,
+            "kit_profile": "home-blue",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(Path(directory), video_key="clip-a", subject_id="s1")
+            source["subject_review_doc"] = {
+                "decisions_fresh": True,
+                "cards": [
+                    {
+                        "operator_decision": {"decision": "assign_roster_player"},
+                        "visual_evidence": {
+                            "anchor_crops": [
+                                {
+                                    "anchor_crop_id": "clip-a-1",
+                                    "jersey_number_annotation": annotation,
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+            manifest = build_identity_jersey_number_dataset_manifest(
+                [source], generated_at="fixed"
+            )
+            changed = copy.deepcopy(source)
+            changed["subject_review_doc"]["cards"][0]["visual_evidence"]["anchor_crops"][0][
+                "jersey_number_annotation"
+            ]["kit_profile"] = "away-white"
+            changed_manifest = build_identity_jersey_number_dataset_manifest(
+                [changed], generated_at="fixed"
+            )
+            stale = copy.deepcopy(source)
+            stale["subject_review_doc"]["decisions_fresh"] = False
+            stale_manifest = build_identity_jersey_number_dataset_manifest(
+                [stale], generated_at="fixed"
+            )
+            mismatched = copy.deepcopy(source)
+            mismatched["subject_review_doc"]["cards"][0]["visual_evidence"]["anchor_crops"][0][
+                "anchor_crop_id"
+            ] = "other-crop"
+            mismatched_manifest = build_identity_jersey_number_dataset_manifest(
+                [mismatched], generated_at="fixed"
+            )
+
+        sample = manifest["samples"][0]
+        provenance = manifest["sources"][0]
+        self.assertEqual({field: sample[field] for field in annotation}, annotation)
+        self.assertEqual(sample["label_state"], "number_confirmed")
+        self.assertEqual(sample["number"], "10")
+        self.assertTrue(provenance["subject_review_decisions_fresh"])
+        self.assertEqual(provenance["subject_review_annotations_applied"], 1)
+        self.assertIsNotNone(provenance["subject_review_digest"])
+        self.assertNotEqual(manifest["dataset_digest"], changed_manifest["dataset_digest"])
+        self.assertEqual(stale_manifest["sources"][0]["subject_review_annotations_applied"], 0)
+        self.assertEqual(mismatched_manifest["sources"][0]["subject_review_annotations_applied"], 0)
+        self.assertEqual(stale_manifest["samples"][0]["number"], "10")
+        self.assertEqual(mismatched_manifest["samples"][0]["number"], "10")
 
 
 def _source(root: Path, *, video_key: str, subject_id: str) -> dict:

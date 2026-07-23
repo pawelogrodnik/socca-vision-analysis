@@ -27,9 +27,14 @@ from app.services.identity_jersey_number_candidate_shadow import (
 from app.services.identity_jersey_number_common import (
     canonical_digest,
     lineage_entry,
+    stable_key,
 )
 from app.services.identity_jersey_number_recognizer_shadow import (
     build_identity_jersey_number_recognizer_shadow,
+)
+from app.services.identity_jersey_number_heldout_validation import (
+    build_identity_jersey_number_heldout_case_contract,
+    build_identity_jersey_number_heldout_validation,
 )
 
 
@@ -40,7 +45,10 @@ def match_doc(*, duplicate: bool = False) -> dict:
     ]
     if duplicate:
         players.append({"id": "p92b", "name": "Other", "number": 92})
-    return {"teams": [{"id": "ta", "name": "Corgi", "team_label": "A", "players": players}]}
+    return {
+        "source_match_key": "match-1",
+        "teams": [{"id": "ta", "name": "Corgi", "team_label": "A", "players": players}],
+    }
 
 
 def crop(frame: int, *, tracklet: str = "t1") -> dict:
@@ -65,12 +73,52 @@ class JerseyNumberShadowTests(unittest.TestCase):
         rows = [row for row in roster["players"] if row["jersey_number"] == "92"]
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(row["roster_number_status"] == "conflict" for row in rows))
-        self.assertNotIn("A:92", roster["unique_number_lookup"])
+        self.assertNotIn(_roster_lookup_key("match-1", "ta", "92"), roster["unique_number_lookup"])
+
+    def test_roster_missing_scope_is_conflict_and_untrusted(self) -> None:
+        for match, reason in (
+            ({"teams": [{"id": "ta", "team_label": "A", "players": [{"id": "p1", "number": 92}]}]}, "missing_source_match_key"),
+            ({"source_match_key": "match-1", "teams": [{"team_label": "A", "players": [{"id": "p1", "number": 92}]}]}, "missing_team_id"),
+        ):
+            roster = build_identity_jersey_number_roster_shadow(match, generated_at="fixed")
+
+            row = roster["players"][0]
+            self.assertEqual(row["roster_number_status"], "conflict")
+            self.assertFalse(row["jersey_number_trusted"])
+            self.assertIn(reason, row["conflicts"])
+            self.assertEqual(roster["summary"]["untrusted_scope_rows"], 1)
+            self.assertTrue(roster["gates"]["scope_required_for_trust"])
+            self.assertEqual(roster["unique_number_lookup"], {})
+
+    def test_roster_scopes_same_label_number_by_match_and_team(self) -> None:
+        first = build_identity_jersey_number_roster_shadow(
+            {
+                "source_match_key": "match-one",
+                "teams": [{"id": "team-one", "team_label": "A", "players": [{"id": "p1", "number": 92}]}],
+            },
+            generated_at="fixed",
+        )
+        second = build_identity_jersey_number_roster_shadow(
+            {
+                "source_match_key": "match-two",
+                "teams": [{"id": "team-two", "team_label": "A", "players": [{"id": "p2", "number": 92}]}],
+            },
+            generated_at="fixed",
+        )
+
+        first_key = _roster_lookup_key("match-one", "team-one", "92")
+        second_key = _roster_lookup_key("match-two", "team-two", "92")
+        self.assertNotEqual(first_key, second_key)
+        self.assertEqual(first["unique_number_lookup"][first_key]["player_id"], "p1")
+        self.assertEqual(second["unique_number_lookup"][second_key]["player_id"], "p2")
+        self.assertEqual(first["players"][0]["source_match_key"], "match-one")
+        self.assertTrue(first["players"][0]["jersey_number_trusted"])
+        self.assertEqual(second["unique_number_lookup"][second_key]["team_id"], "team-two")
 
     def test_missing_recognizer_result_is_unreadable_not_absent(self) -> None:
         roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
         documents = build_identity_jersey_number_evidence_shadow(
-            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "source_match_key": "match-1", "source_video_key": "video-1", "team_id": "ta", "anchor_crops": [crop(10)]}]},
             roster,
             generated_at="fixed",
         )
@@ -84,7 +132,7 @@ class JerseyNumberShadowTests(unittest.TestCase):
         rejected = crop(20)
         rejected["detection_confidence"] = 0.2
         documents = build_identity_jersey_number_evidence_shadow(
-            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10), rejected]}]},
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "source_match_key": "match-1", "source_video_key": "video-1", "team_id": "ta", "anchor_crops": [crop(10), rejected]}]},
             roster,
             generated_at="fixed",
         )
@@ -96,7 +144,7 @@ class JerseyNumberShadowTests(unittest.TestCase):
     def test_absent_requires_visible_number_panel(self) -> None:
         roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
         documents = build_identity_jersey_number_evidence_shadow(
-            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "source_match_key": "match-1", "source_video_key": "video-1", "team_id": "ta", "anchor_crops": [crop(10)]}]},
             roster,
             observations_doc={"observations": [{"anchor_crop_id": "crop-10", "state": "number_absent", "confidence": 1.0}]},
             generated_at="fixed",
@@ -109,7 +157,7 @@ class JerseyNumberShadowTests(unittest.TestCase):
     def test_visible_number_panel_allows_explicit_absent_state(self) -> None:
         roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
         documents = build_identity_jersey_number_evidence_shadow(
-            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "source_match_key": "match-1", "source_video_key": "video-1", "team_id": "ta", "anchor_crops": [crop(10)]}]},
             roster,
             observations_doc={
                 "observations": [{
@@ -137,7 +185,7 @@ class JerseyNumberShadowTests(unittest.TestCase):
             ]
         }
         evidence = build_identity_jersey_number_evidence_shadow(
-            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": crops}]},
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "source_match_key": "match-1", "source_video_key": "video-1", "team_id": "ta", "anchor_crops": crops}]},
             roster,
             observations_doc=observations,
             generated_at="fixed",
@@ -152,6 +200,167 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertTrue(row["strong_consensus"])
         self.assertEqual(row["consensus_number"], "92")
         self.assertEqual(row["roster_match"]["player_id"], "p92")
+
+    def test_missing_or_unknown_scope_abstains_from_consensus(self) -> None:
+        roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
+        crops = [crop(10), crop(70), crop(130)]
+        observations = {
+            "observations": [
+                {"anchor_crop_id": row["anchor_crop_id"], "state": "number_confirmed", "number": 92, "confidence": 0.97}
+                for row in crops
+            ]
+        }
+        for scope in ({}, {"source_match_key": "match-1", "source_video_key": "video-1", "team_id": "ta", "team_label": "U"}):
+            card = {"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": crops, **scope}
+            evidence = build_identity_jersey_number_evidence_shadow(
+                {"cards": [card]}, roster, observations_doc=observations, generated_at="fixed"
+            )["identity_jersey_number_evidence_shadow"]
+            consensus = build_identity_jersey_number_consensus_shadow(
+                evidence, roster, generated_at="fixed"
+            )["identity_jersey_number_consensus_shadow"]
+
+            row = consensus["subjects"][0]
+            self.assertFalse(row["strong_consensus"])
+            self.assertIsNone(row["roster_match"])
+
+    def test_wrong_scope_cannot_roster_confirm(self) -> None:
+        roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
+        crops = [crop(10), crop(70), crop(130)]
+        observations = {
+            "observations": [
+                {"anchor_crop_id": row["anchor_crop_id"], "state": "number_confirmed", "number": 92, "confidence": 0.97}
+                for row in crops
+            ]
+        }
+        for scope in (
+            {"source_match_key": "wrong-match", "source_video_key": "video-1", "team_id": "ta"},
+            {"source_match_key": "match-1", "source_video_key": "video-1", "team_id": "wrong-team"},
+        ):
+            evidence = build_identity_jersey_number_evidence_shadow(
+                {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": crops, **scope}]},
+                roster,
+                observations_doc=observations,
+                generated_at="fixed",
+            )["identity_jersey_number_evidence_shadow"]
+            consensus = build_identity_jersey_number_consensus_shadow(
+                evidence, roster, generated_at="fixed"
+            )["identity_jersey_number_consensus_shadow"]
+
+            row = consensus["subjects"][0]
+            self.assertFalse(row["strong_consensus"])
+            self.assertIsNone(row["roster_match"])
+
+    def test_team_label_mismatch_cannot_roster_confirm(self) -> None:
+        roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
+        crops = [crop(10), crop(70), crop(130)]
+        observations = {
+            "observations": [
+                {"anchor_crop_id": row["anchor_crop_id"], "state": "number_confirmed", "number": 92, "confidence": 0.97}
+                for row in crops
+            ]
+        }
+        evidence = build_identity_jersey_number_evidence_shadow(
+            {"cards": [{
+                "candidate_subject_id": "s1",
+                "team_label": "B",
+                "source_match_key": "match-1",
+                "source_video_key": "video-1",
+                "team_id": "ta",
+                "anchor_crops": crops,
+            }]},
+            roster,
+            observations_doc=observations,
+            generated_at="fixed",
+        )["identity_jersey_number_evidence_shadow"]
+        consensus = build_identity_jersey_number_consensus_shadow(
+            evidence, roster, generated_at="fixed"
+        )["identity_jersey_number_consensus_shadow"]
+
+        row = consensus["subjects"][0]
+        self.assertFalse(row["strong_consensus"])
+        self.assertIsNone(row["roster_match"])
+        self.assertTrue(all("roster_lookup_scope_mismatch" in item["reason_codes"] for item in evidence["evidence"]))
+
+    def test_consensus_does_not_coalesce_colliding_cross_match_evidence(self) -> None:
+        roster = build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed")
+        evidence = {
+            "evidence": [
+                {
+                    "evidence_key": f"{source_match_key}-{frame}",
+                    "candidate_subject_id": "shared-subject",
+                    "tracklet_id": "shared-tracklet",
+                    "team_label": "A",
+                    "source_match_key": source_match_key,
+                    "source_video_key": f"video-{source_match_key}",
+                    "team_id": team_id,
+                    "frame": frame,
+                    "visibility_episode_id": f"episode-{frame}",
+                    "quality": {"eligible": True},
+                    "state": "number_confirmed",
+                    "number": "92",
+                    "confidence": 0.97,
+                }
+                for source_match_key, team_id in (("match-1", "ta"), ("match-2", "tb"))
+                for frame in (10, 70, 130)
+            ]
+        }
+        consensus = build_identity_jersey_number_consensus_shadow(
+            evidence, roster, generated_at="fixed"
+        )["identity_jersey_number_consensus_shadow"]
+
+        rows = consensus["subjects"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len(consensus["tracklets"]), 2)
+        self.assertEqual({row["source_match_key"] for row in rows}, {"match-1", "match-2"})
+        self.assertTrue(all(row["supporting_reads"] == 3 for row in rows))
+        self.assertTrue(next(row for row in rows if row["source_match_key"] == "match-1")["strong_consensus"])
+        self.assertFalse(next(row for row in rows if row["source_match_key"] == "match-2")["strong_consensus"])
+
+    def test_goldset_cross_match_subject_collision_cannot_hide_false_assignment(self) -> None:
+        roster = {
+            "unique_number_lookup": {
+                _roster_lookup_key("match-1", "ta", "92"): {
+                    "source_match_key": "match-1", "team_id": "ta", "team_label": "A", "player_id": "p1",
+                },
+                _roster_lookup_key("match-2", "tb", "92"): {
+                    "source_match_key": "match-2", "team_id": "tb", "team_label": "A", "player_id": "p2",
+                },
+            }
+        }
+        evidence = {
+            "evidence": [
+                {
+                    "evidence_key": f"{source_match_key}-{frame}",
+                    "candidate_subject_id": "shared-subject",
+                    "tracklet_id": "shared-tracklet",
+                    "team_label": "A",
+                    "source_match_key": source_match_key,
+                    "source_video_key": f"video-{source_match_key}",
+                    "team_id": team_id,
+                    "frame": frame,
+                    "visibility_episode_id": f"episode-{frame}",
+                    "quality": {"eligible": True},
+                    "state": "number_confirmed",
+                    "number": "92",
+                    "confidence": 0.97,
+                }
+                for source_match_key, team_id in (("match-1", "ta"), ("match-2", "tb"))
+                for frame in (10, 70, 130)
+            ]
+        }
+        result = build_identity_jersey_number_consensus_shadow(
+            evidence,
+            roster,
+            goldset_doc={"subjects": [
+                {"candidate_subject_id": "shared-subject", "source_match_key": "match-1", "source_video_key": "video-match-1", "team_id": "ta", "team_label": "A", "jersey_number": "15"},
+                {"candidate_subject_id": "shared-subject", "source_match_key": "match-2", "source_video_key": "video-match-2", "team_id": "tb", "team_label": "A", "jersey_number": "92"},
+            ]},
+            generated_at="fixed",
+        )["identity_jersey_number_report"]["goldset_evaluation"]
+
+        self.assertTrue(result["scoped_subject_identity_available"])
+        self.assertEqual(result["expected_subjects"], 2)
+        self.assertEqual(result["identity_false_assignments"], 1)
 
     def test_n4_stays_disabled_without_zero_false_goldset(self) -> None:
         consensus = {
@@ -368,7 +577,7 @@ class JerseyNumberShadowTests(unittest.TestCase):
             "heldout_multi_match_validation_missing", candidate["safety"]["reason_codes"]
         )
         self.assertIn(
-            "production_identity_unchanged_not_verified",
+            "matching_canonical_heldout_case_missing",
             candidate["safety"]["reason_codes"],
         )
 
@@ -412,15 +621,85 @@ class JerseyNumberShadowTests(unittest.TestCase):
             generated_at="fixed",
         )
 
+        self.assertEqual(candidate["status"], "disabled")
+        self.assertEqual(candidate["suggestions"], [])
+        self.assertEqual(candidate["safety"]["automatic_assignments"], 0)
+        self.assertFalse(candidate["safety"]["mutates_candidate_identity"])
+        self.assertIn(
+            "matching_canonical_heldout_case_missing",
+            candidate["safety"]["reason_codes"],
+        )
+
+    def test_candidate_integration_emits_reversible_suggestion_from_canonical_case(self) -> None:
+        assignment = {
+            "safety": {"benchmark_gate": {"passed": True}},
+            "candidates": [{
+                "candidate_subject_id": "s1",
+                "strictly_eligible": True,
+                "blockers": [],
+                "player_id": "p15",
+                "player_name": "Piotrek",
+                "team_label": "A",
+                "jersey_number": "15",
+            }],
+        }
+        propagation = {
+            "status": "fresh",
+            "safety": {"lineage_gate": {"passed": True}},
+            "summary": {"cross_subject_propagations": 0, "automatic_assignments": 0},
+            "subjects": [{
+                "candidate_subject_id": "s1",
+                "subject_blockers": [],
+                "number_seed_tracklet_ids": ["t1"],
+                "number_propagated_tracklet_ids": ["t2"],
+            }],
+        }
+        targeted = {
+            "summary": {
+                "safety_passed": True,
+                "eligible_matched_hidden_target_tracklets": 1,
+                "unexpected_propagated_tracklets": 0,
+                "automatic_assignments": 0,
+            }
+        }
+        recognizer = {"calibration": {"calibration_status": "measured", "total_false_confirmed_reads": 0}}
+        hashes: dict[str, str | None] = {
+            "global_identity.json": "same-global",
+            "stable_players.json": "same-stable",
+            "player_identity_assignments.json": "same-assignments",
+        }
+        heldout = build_identity_jersey_number_heldout_validation(
+            [{"case_contract_doc": build_identity_jersey_number_heldout_case_contract(
+                benchmark_id=f"case-{source_match_key}",
+                source_match_key=source_match_key,
+                recognizer_doc={**recognizer, "heldout_source_match_key": source_match_key},
+                assignment_doc=assignment,
+                propagation_doc=propagation,
+                targeted_evaluation_doc=targeted,
+                production_before=hashes,
+                production_after=hashes,
+                generated_at="fixed",
+            )} for source_match_key in ("match-1", "match-2")],
+            generated_at="fixed",
+        )
+
+        candidate = build_identity_jersey_number_candidate_integration_shadow(
+            assignment,
+            propagation,
+            targeted_evaluation_doc=targeted,
+            heldout_validation_doc=heldout,
+            activation_requested=True,
+            generated_at="fixed",
+        )
+
         self.assertEqual(candidate["status"], "ready_shadow")
         self.assertEqual(len(candidate["suggestions"]), 1)
         self.assertFalse(candidate["suggestions"][0]["automatic_assignment"])
         self.assertEqual(candidate["safety"]["automatic_assignments"], 0)
-        self.assertFalse(candidate["safety"]["mutates_candidate_identity"])
 
     def test_recognizer_does_not_hallucinate_when_crop_is_missing(self) -> None:
         recognizer = build_identity_jersey_number_recognizer_shadow(
-            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "anchor_crops": [crop(10)]}]},
+            {"cards": [{"candidate_subject_id": "s1", "team_label": "A", "source_match_key": "match-1", "team_id": "ta", "anchor_crops": [crop(10)]}]},
             build_identity_jersey_number_roster_shadow(match_doc(), generated_at="fixed"),
             crop_root=Path("/does/not/exist"),
             generated_at="fixed",
@@ -431,6 +710,47 @@ class JerseyNumberShadowTests(unittest.TestCase):
         self.assertIsNone(row["number"])
         self.assertFalse(row["number_panel_visible"])
 
+    def test_recognizer_roster_candidates_are_match_and_team_scoped(self) -> None:
+        roster = {
+            "players": [
+                {
+                    "source_match_key": "match-1",
+                    "team_id": "team-1",
+                    "team_label": "A",
+                    "jersey_number": "10",
+                    "jersey_number_trusted": True,
+                    "roster_number_status": "confirmed",
+                },
+                {
+                    "source_match_key": "match-2",
+                    "team_id": "team-2",
+                    "team_label": "A",
+                    "jersey_number": "99",
+                    "jersey_number_trusted": True,
+                    "roster_number_status": "confirmed",
+                },
+            ]
+        }
+        recognizer = build_identity_jersey_number_recognizer_shadow(
+            {
+                "cards": [
+                    {
+                        "candidate_subject_id": "s1",
+                        "source_match_key": "match-1",
+                        "source_video_key": "video-1",
+                        "team_id": "team-1",
+                        "team_label": "A",
+                        "anchor_crops": [crop(10)],
+                    }
+                ]
+            },
+            roster,
+            crop_root=Path("/does/not/exist"),
+            generated_at="fixed",
+        )
+
+        self.assertEqual(recognizer["observations"][0]["candidate_scope"]["roster_numbers"], ["10"])
+
     def test_shape_match_requires_multi_frame_episode_consensus(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -438,6 +758,18 @@ class JerseyNumberShadowTests(unittest.TestCase):
             second = _write_number_crop(root / "second.jpg")
             roster = build_identity_jersey_number_roster_shadow(
                 {
+                    "teams": [{
+                        "id": "ta",
+                        "name": "Corgi",
+                        "team_label": "A",
+                        "players": [{"id": "p10", "name": "Krzysiek", "number": 10}],
+                    }]
+                },
+                generated_at="fixed",
+            )
+            scoped_roster = build_identity_jersey_number_roster_shadow(
+                {
+                    "source_match_key": "match-1",
                     "teams": [{
                         "id": "ta",
                         "name": "Corgi",
@@ -456,12 +788,9 @@ class JerseyNumberShadowTests(unittest.TestCase):
             )
             two_frames = build_identity_jersey_number_recognizer_shadow(
                 {
-                    "cards": [_recognizer_subject([
-                        _recognizer_crop("first", 100, first.name),
-                        _recognizer_crop("second", 103, second.name),
-                    ])]
+                    "cards": [_recognizer_subject(_canonical_episode_crops(first.name, second.name))]
                 },
-                roster,
+                scoped_roster,
                 crop_root=root,
                 generated_at="fixed",
                 parameters={"minimum_template_score": 0.05, "minimum_score_margin": 0.0},
@@ -472,8 +801,12 @@ class JerseyNumberShadowTests(unittest.TestCase):
             one_frame["observations"][0]["reason_codes"],
             ["insufficient_temporal_episode_consensus"],
         )
-        self.assertEqual(two_frames["summary"]["confirmed_numbers"], 2)
+        self.assertEqual(two_frames["summary"]["confirmed_numbers"], 3)
         self.assertTrue(all(row["number"] == "10" for row in two_frames["observations"]))
+        self.assertEqual(
+            {row["visibility_episode_id"] for row in two_frames["observations"]},
+            {"episode-3509"},
+        )
         self.assertEqual(two_frames["safety"]["automatic_assignments"], 0)
 
     def test_flat_crop_does_not_expose_number_panel(self) -> None:
@@ -533,8 +866,33 @@ def _recognizer_subject(crops: list[dict]) -> dict:
     return {
         "candidate_subject_id": "subject-10",
         "team_label": "A",
+        "source_match_key": "match-1",
+        "source_video_key": "video-1",
+        "team_id": "ta",
         "anchor_crops": crops,
     }
+
+
+def _canonical_episode_crops(first_artifact: str, second_artifact: str) -> list[dict]:
+    crops = [
+        _recognizer_crop("first", 3509, first_artifact),
+        _recognizer_crop("second", 3510, second_artifact),
+        _recognizer_crop("third", 3512, first_artifact),
+    ]
+    for row in crops:
+        row["visibility_episode_id"] = "episode-3509"
+    return crops
+
+
+def _roster_lookup_key(source_match_key: str, team_id: str, jersey_number: str) -> str:
+    return stable_key(
+        "jersey-roster-lookup",
+        {
+            "source_match_key": source_match_key,
+            "team_id": team_id,
+            "jersey_number": jersey_number,
+        },
+    )
 
 
 def _propagation_documents(

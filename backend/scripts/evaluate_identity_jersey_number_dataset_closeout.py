@@ -35,6 +35,9 @@ from app.services.identity_jersey_number_offline_evaluation import (
 from app.services.identity_jersey_number_recognizer_shadow import (
     build_identity_jersey_number_recognizer_shadow,
 )
+from app.services.identity_roster_subject_review_store import (
+    load_identity_roster_subject_review,
+)
 
 
 REPOSITORY_ROOT = BACKEND_DIR.parent
@@ -84,6 +87,9 @@ def main() -> None:
     )
     real_cards = _load(real_anchor_root / "identity_roster_anchor_crops_shadow.json")
     real_reviews = _load(real_root / "jersey_number_observations_reviewed.json")
+    real_subject_review = _load_subject_review_if_available(real_root) or _load_subject_review_if_available(
+        real_anchor_root
+    )
     roster_doc = _load(
         real_root
         / "jersey-recognizer-v2-full-rerun"
@@ -105,6 +111,7 @@ def main() -> None:
                 "crop_root": real_anchor_root,
                 "cards_doc": real_cards,
                 "reviewed_observations_doc": real_reviews,
+                "subject_review_doc": real_subject_review,
             },
         ],
         generated_at=generated_at,
@@ -281,6 +288,13 @@ def _closeout_report(
 
 def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_subject_review_if_available(path: Path) -> dict[str, Any] | None:
+    try:
+        return load_identity_roster_subject_review(path)
+    except FileNotFoundError:
+        return None
 
 
 def _write(path: Path, document: dict[str, Any]) -> None:

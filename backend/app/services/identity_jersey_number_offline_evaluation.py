@@ -9,11 +9,15 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_jersey_number_learned import (
     predict_identity_jersey_number_learned,
 )
+from app.services.identity_jersey_number_visibility_episodes import (
+    attach_jersey_visibility_episode_ids,
+    partition_jersey_visibility_episodes,
+)
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.4.0"
 ALGORITHM_NAME = "identity_jersey_number_offline_evaluation"
-ALGORITHM_VERSION = "1.1.0"
+ALGORITHM_VERSION = "1.4.0"
 DEFAULT_PARAMETERS = {
     "minimum_episode_support": 2,
     "minimum_subject_episode_support": 2,
@@ -30,7 +34,10 @@ def evaluate_identity_jersey_number_learned(
     """Evaluate crop, visibility-episode and subject consensus without changing identity."""
     params = {**DEFAULT_PARAMETERS, **(parameters or {})}
     generated = generated_at or datetime.now(timezone.utc).isoformat()
-    team_candidates = _team_candidate_numbers(dataset_doc)
+    candidate_vocabulary = sorted(
+        (model_doc.get("prototypes") or {}).keys(), key=lambda value: (len(value), value)
+    )
+    candidate_vocabulary_digest = canonical_digest(candidate_vocabulary)
     predictions = [
         prediction
         for sample in dataset_doc.get("samples") or []
@@ -39,30 +46,47 @@ def evaluate_identity_jersey_number_learned(
             prediction := _predict_sample(
                 sample,
                 model_doc=model_doc,
-                candidate_numbers=team_candidates.get(str(sample.get("team_label") or "U"), []),
+                candidate_numbers=candidate_vocabulary,
             )
         )
         is not None
     ]
-    episode_rows = _episode_predictions(
-        predictions,
-        minimum_support=int(params["minimum_episode_support"]),
-    )
+    evaluation_safety_blockers: list[str] = []
+    try:
+        episode_rows = _episode_predictions(
+            predictions,
+            minimum_support=int(params["minimum_episode_support"]),
+        )
+    except ValueError:
+        episode_rows = []
+        evaluation_safety_blockers.append("episode_scope_invalid")
     subject_rows = _subject_predictions(
         episode_rows,
         minimum_support=int(params["minimum_subject_episode_support"]),
     )
     production_reasons: list[str] = []
+    if evaluation_safety_blockers:
+        production_reasons.extend(evaluation_safety_blockers)
     split_contract = dataset_doc.get("split_contract") or {}
     if not split_contract.get("production_eligible"):
         production_reasons.append("dataset_split_not_production_eligible")
     if any(
-        row["split"] == "heldout" and row["result"] == "wrong_confirmed_number"
+        row["split"] == "heldout"
+        and row["result"]
+        in {
+            "wrong_confirmed_number",
+            "false_number_on_plain_shirt",
+            "false_number_on_unreadable",
+        }
         for row in episode_rows
     ):
         production_reasons.append("heldout_false_confirmed_episode_read")
     if int((model_doc.get("production_gate") or {}).get("eligible") or 0) != 1:
         production_reasons.append("learned_model_not_production_eligible")
+    production_reasons.extend([
+        "roster_confirmation_unavailable_not_applied",
+        "closed_set_diagnostic_identity_activation_ineligible",
+    ])
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -81,6 +105,18 @@ def evaluate_identity_jersey_number_learned(
             "mutates_candidate_identity": False,
             "mutates_production_identity": False,
             "automatic_assignments": 0,
+            "evaluation_safety_blockers": evaluation_safety_blockers,
+        },
+        "evaluation_contract": {
+            "recognition_mode": "closed_set_diagnostic_v1",
+            "candidate_vocabulary": candidate_vocabulary,
+            "candidate_vocabulary_digest": candidate_vocabulary_digest,
+            "candidate_vocabulary_source": "model_train_prototypes_only",
+            "heldout_annotation_vocabulary_used": False,
+            "roster_confirmation_available": False,
+            "roster_confirmation_applied": False,
+            "identity_activation_eligible": False,
+            "target_recognizer_results_claimed": False,
         },
         "production_gate": {
             "eligible": not production_reasons,
@@ -94,6 +130,14 @@ def evaluate_identity_jersey_number_learned(
             "by_split": _slice_metrics(predictions, "split"),
             "by_number_length": _slice_metrics(predictions, "number_length"),
             "by_team": _slice_metrics(predictions, "team_label"),
+        },
+        "quality_slice_coverage": {
+            "digit_visibility": _slice_metrics(predictions, "digit_visibility"),
+            "occlusion_state": _slice_metrics(predictions, "occlusion_state"),
+            "blur_level": _slice_metrics(predictions, "blur_level"),
+            "perspective_state": _slice_metrics(predictions, "perspective_state"),
+            "panel_height_ratio": _slice_metrics(predictions, "panel_height_ratio"),
+            "kit_profile": _slice_metrics(predictions, "kit_profile"),
         },
         "predictions": predictions,
         "episodes": episode_rows,
@@ -135,6 +179,7 @@ def _predict_sample(
         "anchor_crop_id": sample.get("anchor_crop_id"),
         "source_match_key": sample.get("source_match_key"),
         "source_video_key": sample.get("source_video_key"),
+        "team_id": sample.get("team_id"),
         "candidate_subject_id": sample.get("candidate_subject_id"),
         "tracklet_id": sample.get("tracklet_id"),
         "visibility_episode_id": sample.get("visibility_episode_id"),
@@ -142,6 +187,12 @@ def _predict_sample(
         "team_label": sample.get("team_label"),
         "split": sample.get("split"),
         "view": sample.get("view"),
+        "digit_visibility": sample.get("digit_visibility"),
+        "occlusion_state": sample.get("occlusion_state"),
+        "blur_level": sample.get("blur_level"),
+        "perspective_state": sample.get("perspective_state"),
+        "panel_height_ratio": sample.get("panel_height_ratio"),
+        "kit_profile": sample.get("kit_profile"),
         "number_length": len(expected_number) if expected_number else 0,
         "expected_state": expected_state,
         "expected_number": expected_number,
@@ -181,9 +232,11 @@ def _episode_predictions(
     *,
     minimum_support: int,
 ) -> list[dict[str, Any]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in predictions:
-        grouped[str(row.get("visibility_episode_id") or row["sample_key"])].append(row)
+    attached = attach_jersey_visibility_episode_ids(predictions)
+    grouped = {
+        str(episode[0]["visibility_episode_id"]): episode
+        for episode in partition_jersey_visibility_episodes(attached)
+    }
     episodes: list[dict[str, Any]] = []
     for episode_id, rows in sorted(grouped.items()):
         expected_votes = Counter(
@@ -218,6 +271,7 @@ def _episode_predictions(
                 "visibility_episode_id": episode_id,
                 "source_match_key": rows[0].get("source_match_key"),
                 "source_video_key": rows[0].get("source_video_key"),
+                "team_id": rows[0].get("team_id"),
                 "candidate_subject_id": rows[0].get("candidate_subject_id"),
                 "tracklet_id": rows[0].get("tracklet_id"),
                 "team_label": rows[0].get("team_label"),
@@ -241,11 +295,16 @@ def _subject_predictions(
     *,
     minimum_support: int,
 ) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in episodes:
-        grouped[(str(row.get("source_match_key")), str(row.get("candidate_subject_id")))].append(row)
+        grouped[(
+            str(row.get("source_match_key") or ""),
+            str(row.get("source_video_key") or ""),
+            str(row.get("team_id") or ""),
+            str(row.get("candidate_subject_id") or ""),
+        )].append(row)
     subjects: list[dict[str, Any]] = []
-    for (match_key, subject_id), rows in sorted(grouped.items()):
+    for (match_key, video_key, team_id, subject_id), rows in sorted(grouped.items()):
         expected = Counter(
             str(row["expected_number"]) for row in rows if row.get("expected_number") is not None
         )
@@ -254,18 +313,23 @@ def _subject_predictions(
         )
         expected_number = expected.most_common(1)[0][0] if expected else None
         predicted_number, support = predicted.most_common(1)[0] if predicted else (None, 0)
-        if support < minimum_support:
+        competing_numbers = sum(
+            value for number, value in predicted.items() if number != predicted_number
+        )
+        if support < minimum_support or competing_numbers:
             predicted_number = None
         subjects.append(
             {
                 "source_match_key": match_key,
+                "source_video_key": video_key,
+                "team_id": team_id,
                 "candidate_subject_id": subject_id,
                 "team_label": rows[0].get("team_label"),
                 "visibility_episodes": len(rows),
                 "expected_number": expected_number,
                 "predicted_number": predicted_number,
                 "independent_episode_support": support,
-                "competing_numbers": max(0, len(predicted) - (1 if predicted_number else 0)),
+                "competing_numbers": competing_numbers,
                 "result": _result(
                     "number_confirmed" if expected_number is not None else "number_unreadable",
                     expected_number,
@@ -391,14 +455,3 @@ def _slice_metrics(rows: list[dict[str, Any]], field: str) -> dict[str, Any]:
     for row in rows:
         grouped[str(row.get(field) or "unknown")].append(row)
     return {key: _metrics(values, unit="crop") for key, values in sorted(grouped.items())}
-
-
-def _team_candidate_numbers(dataset_doc: dict[str, Any]) -> dict[str, list[str]]:
-    result: dict[str, set[str]] = defaultdict(set)
-    for row in dataset_doc.get("samples") or []:
-        if row.get("label_state") == "number_confirmed" and row.get("number") is not None:
-            result[str(row.get("team_label") or "U")].add(str(row["number"]))
-    return {
-        team: sorted(numbers, key=lambda value: (len(value), value))
-        for team, numbers in sorted(result.items())
-    }

@@ -12,9 +12,9 @@ from app.services.identity_jersey_number_common import (
 )
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_roster_shadow"
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.2.0"
 
 
 def build_identity_jersey_number_roster_shadow(
@@ -26,6 +26,7 @@ def build_identity_jersey_number_roster_shadow(
     """Build a trusted, conflict-aware jersey registry without mutating match metadata."""
     generated = generated_at or datetime.now(timezone.utc).isoformat()
     reference = reference_doc or {}
+    source_match_key = _source_match_key(match_doc)
     reference_players = {
         str(row.get("player_id")): row
         for row in reference.get("players") or []
@@ -68,7 +69,8 @@ def build_identity_jersey_number_roster_shadow(
                 {
                     "player_id": player_id,
                     "player_name": player.get("name") or reference_row.get("player_name"),
-                    "team_id": str(team.get("id") or team.get("team_id") or ""),
+                    "source_match_key": source_match_key,
+                    "team_id": str(team.get("id") or team.get("team_id") or "").strip(),
                     "team_name": team.get("name"),
                     "team_label": label,
                     "jersey_number": number,
@@ -79,30 +81,45 @@ def build_identity_jersey_number_roster_shadow(
                 }
             )
 
-    by_team_number: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    by_team_number: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        if row["jersey_number"] is not None and row["roster_number_status"] != "conflict":
-            by_team_number[(row["team_label"], row["jersey_number"])].append(row)
+        scope_conflicts = []
+        if not row["source_match_key"]:
+            scope_conflicts.append("missing_source_match_key")
+        if not row["team_id"]:
+            scope_conflicts.append("missing_team_id")
+        if scope_conflicts:
+            row["roster_number_status"] = "conflict"
+            row["jersey_number_trusted"] = False
+            row["conflicts"] = sorted(set(row["conflicts"] + scope_conflicts))
+        if _lookup_eligible(row) and row["roster_number_status"] != "conflict":
+            by_team_number[(row["source_match_key"], row["team_id"], row["jersey_number"])].append(row)
     duplicate_keys = {key for key, values in by_team_number.items() if len(values) > 1}
     for row in rows:
-        key = (row["team_label"], row["jersey_number"])
-        if row["jersey_number"] is not None and key in duplicate_keys:
+        key = (row["source_match_key"], row["team_id"], row["jersey_number"])
+        if _lookup_eligible(row) and key in duplicate_keys:
             row["roster_number_status"] = "conflict"
             row["jersey_number_trusted"] = False
             row["conflicts"] = sorted(set(row["conflicts"] + ["duplicate_number_within_team"]))
         row["registry_key"] = stable_key(
             "jersey-roster",
-            {"team_label": row["team_label"], "player_id": row["player_id"]},
+            {
+                "source_match_key": row["source_match_key"],
+                "team_id": row["team_id"],
+                "player_id": row["player_id"],
+            },
         )
 
     unique_lookup = {
-        f"{label}:{number}": {
-            "team_label": label,
+        _lookup_key(source_match_key, team_id, number): {
+            "source_match_key": source_match_key,
+            "team_id": team_id,
+            "team_label": values[0]["team_label"],
             "jersey_number": number,
             "player_id": values[0]["player_id"],
             "player_name": values[0].get("player_name"),
         }
-        for (label, number), values in sorted(by_team_number.items())
+        for (source_match_key, team_id, number), values in sorted(by_team_number.items())
         if len(values) == 1 and values[0]["jersey_number_trusted"]
     }
     statuses = Counter(row["roster_number_status"] for row in rows)
@@ -114,6 +131,7 @@ def build_identity_jersey_number_roster_shadow(
         "source": {
             "match_digest": canonical_digest(match_doc),
             "reference_digest": canonical_digest(reference),
+            "source_match_key": source_match_key,
         },
         "safety": {
             "mutates_match_roster": False,
@@ -127,14 +145,25 @@ def build_identity_jersey_number_roster_shadow(
             "confirmed_absent": statuses["confirmed_absent"],
             "unknown": statuses["unknown"],
             "conflicts": statuses["conflict"],
+            "untrusted_scope_rows": sum(
+                not row["source_match_key"] or not row["team_id"] for row in rows
+            ),
             "unique_trusted_numbers": len(unique_lookup),
         },
         "players": sorted(rows, key=lambda row: (row["team_label"], str(row.get("player_name") or ""))),
+        "unique_number_lookup_key_format": (
+            "jersey-roster-lookup:v1:sha256(canonical JSON object with "
+            "source_match_key, team_id, jersey_number)"
+        ),
         "unique_number_lookup": unique_lookup,
         "gates": {
             "numbers_unique_within_team": not duplicate_keys,
             "conflicts_disable_anchor": all(
                 not row["jersey_number_trusted"] for row in rows if row["roster_number_status"] == "conflict"
+            ),
+            "scope_required_for_trust": all(
+                not row["jersey_number_trusted"] or (row["source_match_key"] and row["team_id"])
+                for row in rows
             ),
             "same_number_across_teams_allowed": True,
         },
@@ -144,8 +173,8 @@ def build_identity_jersey_number_roster_shadow(
 def _teams(match_doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     candidates = match_doc.get("teams")
     if not isinstance(candidates, list):
-        metadata = match_doc.get("metadata") if isinstance(match_doc.get("metadata"), dict) else {}
-        candidates = metadata.get("teams")
+        metadata = match_doc.get("metadata")
+        candidates = metadata.get("teams") if isinstance(metadata, dict) else []
     if not isinstance(candidates, list):
         candidates = []
     result: list[tuple[str, dict[str, Any]]] = []
@@ -155,3 +184,26 @@ def _teams(match_doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
         explicit = team_label(team.get("team_label") or team.get("label"))
         result.append((explicit if explicit != "U" else ("A" if index == 0 else "B" if index == 1 else "U"), team))
     return result
+
+
+def _source_match_key(match_doc: dict[str, Any]) -> str:
+    for field in ("source_match_key", "match_id", "id"):
+        value = str(match_doc.get(field) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _lookup_eligible(row: dict[str, Any]) -> bool:
+    return bool(row["source_match_key"] and row["team_id"] and row["jersey_number"] is not None)
+
+
+def _lookup_key(source_match_key: str, team_id: str, jersey_number: str) -> str:
+    return stable_key(
+        "jersey-roster-lookup",
+        {
+            "source_match_key": source_match_key,
+            "team_id": team_id,
+            "jersey_number": jersey_number,
+        },
+    )

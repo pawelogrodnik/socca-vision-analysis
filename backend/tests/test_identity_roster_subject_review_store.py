@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -8,9 +9,11 @@ import unittest
 from app.services.identity_roster_subject_review_store import (
     REVIEW_ARTIFACT_FILENAME,
     REVIEW_DECISIONS_FILENAME,
+    VISUAL_PRE_AUDIT_FILENAME,
     load_identity_roster_subject_review,
     save_identity_roster_subject_review,
 )
+from app.services.identity_jersey_number_common import canonical_digest
 
 
 def artifact() -> dict:
@@ -33,6 +36,9 @@ def artifact() -> dict:
                     "mark_unresolved",
                     "open_debug_context",
                 ],
+                "visual_evidence": {
+                    "anchor_crops": [{"anchor_crop_id": "crop-1", "artifact": "crop.jpg"}],
+                },
             },
             {
                 "review_card_key": "card-2",
@@ -73,6 +79,7 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.path = Path(self.temporary.name)
         (self.path / REVIEW_ARTIFACT_FILENAME).write_text(json.dumps(artifact()), encoding="utf-8")
+        (self.path / "crop.jpg").write_bytes(b"crop")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -221,6 +228,172 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         state = save_identity_roster_subject_review(self.path, [changed])
 
         self.assertEqual(state["operator_telemetry"]["decisions_changed"], 1)
+
+    def test_crop_annotation_saves_and_reloads_by_anchor_crop_id(self) -> None:
+        annotation = {
+            "digit_visibility": "full",
+            "occlusion_state": "partial",
+            "blur_level": "mild",
+            "perspective_state": "angled",
+            "panel_height_ratio": 0.42,
+            "kit_profile": "home-blue",
+        }
+        save_identity_roster_subject_review(
+            self.path,
+            [
+                {
+                    "review_card_key": "card-1",
+                    "anchor_crop_id": "crop-1",
+                    "jersey_number_annotation": annotation,
+                }
+            ],
+            updated_at="fixed",
+        )
+
+        state = load_identity_roster_subject_review(self.path)
+
+        crop = state["cards"][0]["visual_evidence"]["anchor_crops"][0]
+        self.assertEqual(crop["jersey_number_annotation"], annotation)
+
+    def test_invalid_crop_annotation_enum_or_ratio_is_rejected(self) -> None:
+        for annotation in (
+            {"digit_visibility": "visible"},
+            {"panel_height_ratio": 1.1},
+        ):
+            with self.assertRaises(ValueError):
+                save_identity_roster_subject_review(
+                    self.path,
+                    [
+                        {
+                            "review_card_key": "card-1",
+                            "anchor_crop_id": "crop-1",
+                            "jersey_number_annotation": annotation,
+                        }
+                    ],
+                )
+
+    def test_unknown_crop_annotation_id_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unknown anchor_crop_id"):
+            save_identity_roster_subject_review(
+                self.path,
+                [
+                    {
+                        "review_card_key": "card-1",
+                        "anchor_crop_id": "unknown-crop",
+                        "jersey_number_annotation": {},
+                    }
+                ],
+            )
+
+    def test_annotation_only_update_preserves_decision_and_identity_safety(self) -> None:
+        save_identity_roster_subject_review(
+            self.path,
+            [{"review_card_key": "card-1", "decision": "mark_unresolved"}],
+            updated_at="first",
+        )
+        state = save_identity_roster_subject_review(
+            self.path,
+            [
+                {
+                    "review_card_key": "card-1",
+                    "anchor_crop_id": "crop-1",
+                    "jersey_number_annotation": {},
+                }
+            ],
+            updated_at="second",
+        )
+
+        self.assertEqual(state["cards"][0]["operator_decision"]["decision"], "mark_unresolved")
+        self.assertFalse(state["safety"]["writes_player_identity_assignments"])
+        self.assertFalse(state["safety"]["mutates_production_identity"])
+
+    def test_fresh_pre_audit_attaches_to_matching_crop(self) -> None:
+        self._write_pre_audit()
+
+        crop = load_identity_roster_subject_review(self.path)["cards"][0]["visual_evidence"]["anchor_crops"][0]
+
+        self.assertEqual(crop["jersey_number_pre_audit"]["anchor_crop_id"], "crop-1")
+        self.assertEqual(
+            crop["jersey_number_pre_audit"]["jersey_number_visual_diagnostics"]["digit_signal"],
+            "likely_partial",
+        )
+        self.assertIsNone(crop["jersey_number_annotation"])
+
+    def test_stale_or_mismatched_pre_audit_is_ignored(self) -> None:
+        for mutate in (
+            lambda document: document["source"].update({"subject_review_digest": "stale"}),
+            lambda document: document["suggestions"][0].update({"crop_sha256": "mismatch"}),
+            lambda document: document.update({"schema_version": "0.1.0"}),
+            lambda document: document["suggestions"][0].update({"digit_visibility": "full"}),
+        ):
+            document = self._pre_audit_document()
+            mutate(document)
+            (self.path / VISUAL_PRE_AUDIT_FILENAME).write_text(json.dumps(document), encoding="utf-8")
+
+            crop = load_identity_roster_subject_review(self.path)["cards"][0]["visual_evidence"]["anchor_crops"][0]
+
+            self.assertIsNone(crop["jersey_number_pre_audit"])
+
+    def test_pre_audit_remains_separate_from_manual_annotation(self) -> None:
+        save_identity_roster_subject_review(
+            self.path,
+            [{
+                "review_card_key": "card-1",
+                "anchor_crop_id": "crop-1",
+                "jersey_number_annotation": {"kit_profile": "manual-kit"},
+            }],
+        )
+        self._write_pre_audit()
+
+        crop = load_identity_roster_subject_review(self.path)["cards"][0]["visual_evidence"]["anchor_crops"][0]
+
+        self.assertEqual(crop["jersey_number_annotation"]["kit_profile"], "manual-kit")
+        self.assertEqual(
+            crop["jersey_number_pre_audit"]["jersey_number_visual_diagnostics"]["digit_signal"],
+            "likely_partial",
+        )
+
+    def _write_pre_audit(self) -> None:
+        (self.path / VISUAL_PRE_AUDIT_FILENAME).write_text(
+            json.dumps(self._pre_audit_document()), encoding="utf-8"
+        )
+
+    def _pre_audit_document(self) -> dict:
+        source = artifact()
+        crop_row = {
+            "review_card_key": "card-1",
+            "candidate_subject_id": "subject-1",
+            "anchor_crop_id": "crop-1",
+            "artifact": "crop.jpg",
+        }
+        suggestion = {
+            **crop_row,
+            "source_review_digest": canonical_digest(source),
+            "source_crop_digest": canonical_digest(crop_row),
+            "crop_sha256": hashlib.sha256((self.path / "crop.jpg").read_bytes()).hexdigest(),
+            "status": "audited",
+            "jersey_number_visual_diagnostics": {"digit_signal": "likely_partial"},
+        }
+        suggestion["row_digest"] = canonical_digest(suggestion)
+        return {
+            "schema_version": "0.2.0",
+            "mode": "shadow_visual_pre_audit",
+            "algorithm": {
+                "name": "identity_jersey_number_visual_pre_audit",
+                "version": "1.1.0",
+                "parameters": {},
+            },
+            "source": {
+                "subject_review_digest": canonical_digest(source),
+                "review_crop_entries_digest": canonical_digest([crop_row]),
+            },
+            "safety": {
+                "eligible_for_training": False,
+                "mutates_candidate_identity": False,
+                "mutates_production_identity": False,
+            },
+            "suggestions": [suggestion],
+        }
 
 
 if __name__ == "__main__":

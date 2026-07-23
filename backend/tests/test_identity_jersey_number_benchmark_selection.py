@@ -90,6 +90,35 @@ class JerseyNumberBenchmarkSelectionTests(unittest.TestCase):
             1,
         )
 
+    def test_same_visibility_episode_counts_as_one_independent_seed_read(self) -> None:
+        anchor = {"cards": [_card("s1", "A", "t1", 3, frames=[3509, 3510, 3512])]}
+        candidate = {
+            "subjects": [{"candidate_subject_id": "s1", "tracklet_ids": ["t1", "t2"]}]
+        }
+
+        result = build_targeted_jersey_number_benchmark(
+            anchor,
+            candidate,
+            min_independent_seed_reads=1,
+            minimum_seed_frame_separation=1,
+            generated_at="fixed",
+        )
+
+        self.assertEqual(result["cards"][0]["benchmark_selection"]["independent_seed_reads"], 1)
+
+    def test_incomplete_visibility_scope_is_reported(self) -> None:
+        anchor = _anchor_doc()
+        del anchor["cards"][0]["source_video_key"]
+
+        result = build_targeted_jersey_number_benchmark(
+            anchor,
+            _candidate_doc(),
+            generated_at="fixed",
+        )
+
+        self.assertEqual(result["summary"]["selected_subjects"], 0)
+        self.assertEqual(result["summary"]["rejection_counts"]["incomplete_visibility_episode_scope"], 2)
+
 
 def _anchor_doc() -> dict:
     card = _card("s1", "A", "t1", 3)
@@ -108,12 +137,16 @@ def _card(
     crop_count: int,
     *,
     frame_step: int = 50,
+    frames: list[int] | None = None,
 ) -> dict:
     return {
         "candidate_subject_id": subject_id,
+        "source_match_key": "match-1",
+        "source_video_key": "video-1",
+        "team_id": f"team-{team.lower()}",
         "team_label": team,
         "status": "ready_for_visual_audit",
-        "anchor_crops": _crops(tracklet_id, crop_count, frame_step=frame_step),
+        "anchor_crops": _crops(tracklet_id, crop_count, frame_step=frame_step, frames=frames),
         "selected_crop_count": crop_count,
     }
 
@@ -124,12 +157,13 @@ def _crops(
     *,
     frame_offset: int = 0,
     frame_step: int = 50,
+    frames: list[int] | None = None,
 ) -> list[dict]:
     return [
         {
             "anchor_crop_id": f"{tracklet_id}-{index}",
             "tracklet_id": tracklet_id,
-            "frame": frame_offset + index * frame_step,
+            "frame": frames[index] if frames else frame_offset + index * frame_step,
             "bbox_xyxy": [0, 0, 40 + index, 80 + index],
             "detection_confidence": 0.9,
             "artifact": f"anchor_crops/s/{tracklet_id}-{index}.jpg",

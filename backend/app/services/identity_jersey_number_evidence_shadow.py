@@ -12,11 +12,12 @@ from app.services.identity_jersey_number_common import (
     stable_key,
     team_label,
 )
+from app.services.identity_jersey_number_roster import _lookup_key
 
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.5.0"
 ALGORITHM_NAME = "identity_jersey_number_evidence_shadow"
-ALGORITHM_VERSION = "1.2.0"
+ALGORITHM_VERSION = "1.4.0"
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "minimum_bbox_width_px": 24.0,
     "minimum_bbox_height_px": 48.0,
@@ -50,10 +51,24 @@ def build_identity_jersey_number_evidence_shadow(
         for crop in card.get("anchor_crops") or []:
             if not isinstance(crop, dict) or not crop.get("anchor_crop_id"):
                 continue
+            source_match_key = (
+                crop.get("source_match_key")
+                if "source_match_key" in crop
+                else card.get("source_match_key")
+            )
+            source_video_key = (
+                crop.get("source_video_key")
+                if "source_video_key" in crop
+                else card.get("source_video_key")
+            )
+            team_id = crop.get("team_id") if "team_id" in crop else card.get("team_id")
             row = _evidence_row(
                 crop,
                 subject_id=subject_id,
                 label=label,
+                source_match_key=source_match_key,
+                source_video_key=source_video_key,
+                team_id=team_id,
                 observation=observations.get(str(crop["anchor_crop_id"])),
                 unique_lookup=unique_lookup,
                 parameters=params,
@@ -67,6 +82,9 @@ def build_identity_jersey_number_evidence_shadow(
                     "candidate_subject_id": subject_id,
                     "tracklet_id": row["tracklet_id"],
                     "team_label": label,
+                    "source_match_key": row["source_match_key"],
+                    "source_video_key": row["source_video_key"],
+                    "team_id": row["team_id"],
                     "frame": row["frame"],
                     "artifact": row["artifact"],
                     "torso_roi_normalized": row["torso_roi_normalized"],
@@ -142,6 +160,9 @@ def _evidence_row(
     *,
     subject_id: str,
     label: str,
+    source_match_key: Any,
+    source_video_key: Any,
+    team_id: Any,
     observation: dict[str, Any] | None,
     unique_lookup: dict[str, Any],
     parameters: dict[str, Any],
@@ -166,10 +187,30 @@ def _evidence_row(
     state, number, confidence, observation_reasons = _normalize_observation(
         observation,
         label=label,
+        source_match_key=source_match_key,
+        source_video_key=source_video_key,
+        team_id=team_id,
         unique_lookup=unique_lookup,
         minimum_read_confidence=float(parameters["minimum_read_confidence"]),
     )
     reasons.extend(observation_reasons)
+    observation_data = observation or {}
+    observation_visibility_episode_id = str(observation_data.get("visibility_episode_id") or "").strip()
+    visibility_episode_id = observation_visibility_episode_id or str(crop.get("visibility_episode_id") or "").strip()
+    observation_kind = _observation_source(observation)["kind"]
+    if observation_visibility_episode_id and observation_kind == "automatic_recognizer":
+        observation_scope = {
+            "source_match_key": source_match_key,
+            "source_video_key": source_video_key,
+            "team_id": team_id,
+            "team_label": label,
+        }
+        if any(not observation_data.get(key) for key in observation_scope):
+            visibility_episode_id = ""
+            reasons.append("visibility_episode_id_scope_metadata_missing")
+        elif any(observation_data.get(key) != value for key, value in observation_scope.items()):
+            visibility_episode_id = ""
+            reasons.append("visibility_episode_id_scope_mismatch")
     evidence_key = stable_key(
         "jersey-evidence",
         {"anchor_crop_id": crop.get("anchor_crop_id"), "subject_id": subject_id, "frame": crop.get("frame")},
@@ -180,6 +221,9 @@ def _evidence_row(
         "candidate_subject_id": subject_id,
         "tracklet_id": str(crop.get("tracklet_id") or ""),
         "team_label": label,
+        "source_match_key": source_match_key,
+        "source_video_key": source_video_key,
+        "team_id": team_id,
         "frame": int(crop.get("frame") or 0),
         "time_sec": round_or_none(crop.get("time_sec"), 3),
         "artifact": crop.get("artifact"),
@@ -218,11 +262,7 @@ def _evidence_row(
         "view": str((observation or {}).get("view") or "unknown"),
         "clean_jersey_visible": bool((observation or {}).get("clean_jersey_visible", False)),
         "number_panel_visible": _number_panel_visible(observation),
-        "visibility_episode_id": str(
-            (observation or {}).get("visibility_episode_id")
-            or crop.get("visibility_episode_id")
-            or ""
-        ) or None,
+        "visibility_episode_id": visibility_episode_id or None,
         "observation_source": _observation_source(observation),
         "reason_codes": sorted(set(reasons)),
     }
@@ -256,6 +296,9 @@ def _normalize_observation(
     observation: dict[str, Any] | None,
     *,
     label: str,
+    source_match_key: Any,
+    source_video_key: Any,
+    team_id: Any,
     unique_lookup: dict[str, Any],
     minimum_read_confidence: float,
 ) -> tuple[str, str | None, float, list[str]]:
@@ -285,15 +328,39 @@ def _normalize_observation(
         state = "number_unreadable"
         number = None
         reasons.append("read_confidence_below_threshold")
-    if state == "number_confirmed" and label != "U" and f"{label}:{number}" not in unique_lookup:
-        state = "number_conflict"
-        reasons.append("number_not_unique_trusted_roster_match")
+    if state == "number_confirmed":
+        if not source_match_key or not source_video_key or not team_id or label == "U":
+            state = "number_unreadable"
+            number = None
+            reasons.append("missing_or_unknown_roster_scope")
+        else:
+            lookup = unique_lookup.get(_lookup_key(source_match_key, team_id, number or ""))
+            if lookup is None:
+                state = "number_conflict"
+                reasons.append("number_not_unique_trusted_roster_match")
+            elif not _lookup_matches_scope(lookup, source_match_key, team_id, label):
+                state = "number_unreadable"
+                number = None
+                reasons.append("roster_lookup_scope_mismatch")
     if state == "number_absent" and not _number_panel_visible(observation):
         state = "number_unreadable"
         reasons.append("number_absent_without_number_panel_evidence")
     if state in {"number_absent", "number_unreadable"}:
         number = None
     return state, number, round(confidence, 4), reasons
+
+
+def _lookup_matches_scope(
+    lookup: Any,
+    source_match_key: str,
+    team_id: str,
+    label: str,
+) -> bool:
+    return isinstance(lookup, dict) and (
+        str(lookup.get("source_match_key") or "").strip() == source_match_key
+        and str(lookup.get("team_id") or "").strip() == team_id
+        and str(lookup.get("team_label") or "U") == label
+    )
 
 
 def _number_panel_visible(observation: dict[str, Any] | None) -> bool:
