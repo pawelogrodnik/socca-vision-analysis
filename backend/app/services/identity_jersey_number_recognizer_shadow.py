@@ -12,9 +12,9 @@ from app.services.identity_jersey_number_common import (
 )
 
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_jersey_number_recognizer_shadow"
-ALGORITHM_VERSION = "0.2.0"
+ALGORITHM_VERSION = "0.3.0"
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "number_roi_normalized": [0.05, 0.00, 0.95, 0.62],
     "minimum_template_score": 0.72,
@@ -34,22 +34,14 @@ def build_identity_jersey_number_recognizer_shadow(
     *,
     crop_root: Path,
     reviewed_observations_doc: dict[str, Any] | None = None,
+    learned_model_doc: dict[str, Any] | None = None,
     generated_at: str | None = None,
     parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Recognize roster-constrained numbers from a torso ROI without changing identity."""
     params = {**DEFAULT_PARAMETERS, **(parameters or {})}
     generated = generated_at or datetime.now(timezone.utc).isoformat()
-    roster_numbers = sorted(
-        {
-            str(row["jersey_number"])
-            for row in roster_doc.get("players") or []
-            if row.get("jersey_number_trusted")
-            and row.get("roster_number_status") == "confirmed"
-            and row.get("jersey_number") is not None
-        },
-        key=lambda value: (len(value), value),
-    )
+    roster_numbers_by_team = _trusted_roster_numbers_by_team(roster_doc)
     observations: list[dict[str, Any]] = []
     for subject in anchor_crops_doc.get("cards") or []:
         if not isinstance(subject, dict):
@@ -62,8 +54,12 @@ def build_identity_jersey_number_recognizer_shadow(
                     crop,
                     subject=subject,
                     crop_root=crop_root,
-                    roster_numbers=roster_numbers,
+                    roster_numbers=roster_numbers_by_team.get(
+                        str(subject.get("team_label") or "U"),
+                        [],
+                    ),
                     parameters=params,
+                    learned_model_doc=learned_model_doc,
                 )
             )
     _apply_temporal_episode_consensus(observations, params)
@@ -82,6 +78,7 @@ def build_identity_jersey_number_recognizer_shadow(
             "anchor_crops_digest": canonical_digest(anchor_crops_doc),
             "roster_digest": canonical_digest(roster_doc),
             "reviewed_observations_digest": canonical_digest(reviewed_observations_doc or {}),
+            "learned_model_digest": canonical_digest(learned_model_doc or {}),
         },
         "safety": {
             "mutates_candidate_identity": False,
@@ -91,6 +88,7 @@ def build_identity_jersey_number_recognizer_shadow(
             "whole_frame_ocr": False,
             "single_frame_confirmation_allowed": False,
             "whole_person_appearance_used_as_number_label": False,
+            "team_scoped_roster_candidates": True,
         },
         "summary": {
             "evaluated_crops": len(observations),
@@ -110,6 +108,7 @@ def _recognize_crop(
     crop_root: Path,
     roster_numbers: list[str],
     parameters: dict[str, Any],
+    learned_model_doc: dict[str, Any] | None,
 ) -> dict[str, Any]:
     base = {
         "recognition_key": stable_key("jersey-recognition", {"anchor_crop_id": crop["anchor_crop_id"]}),
@@ -121,9 +120,26 @@ def _recognize_crop(
         "state": "number_unreadable",
         "number": None,
         "confidence": 0.0,
+        "raw_confidence": 0.0,
+        "calibrated_confidence": 0.0,
+        "confidence_tier": "low",
         "number_panel_visible": False,
         "reason_codes": [],
         "recognition_method": "constrained_number_roi_template",
+        "observation_source": {
+            "kind": "automatic_recognizer",
+            "method": "constrained_number_roi_template",
+            "algorithm_name": ALGORITHM_NAME,
+            "algorithm_version": ALGORITHM_VERSION,
+            "model_digest": canonical_digest(learned_model_doc or {}),
+            "dataset_digest": (
+                (learned_model_doc or {}).get("source") or {}
+            ).get("dataset_digest"),
+        },
+        "candidate_scope": {
+            "team_label": subject.get("team_label"),
+            "roster_numbers": list(roster_numbers),
+        },
     }
     artifact = Path(str(crop.get("artifact") or ""))
     if artifact.is_absolute() or ".." in artifact.parts or not artifact.parts:
@@ -140,6 +156,38 @@ def _recognize_crop(
         base["reason_codes"] = ["crop_unavailable"]
         return base
     person = _extract_person_crop(image, crop)
+    if learned_model_doc:
+        from app.services.identity_jersey_number_learned import (
+            predict_identity_jersey_number_learned,
+        )
+
+        learned = predict_identity_jersey_number_learned(
+            image,
+            learned_model_doc,
+            candidate_numbers=roster_numbers,
+            artifact_kind="anchor_crop",
+            bbox_xyxy=crop.get("bbox_xyxy"),
+        )
+        base["recognition_method"] = "learned_real_crop_centroid_v1"
+        base["observation_source"]["method"] = base["recognition_method"]
+        base["learned_diagnostics"] = learned
+        base["raw_confidence"] = round(float(learned["raw_similarity"]), 4)
+        base["calibrated_confidence"] = round(
+            float(learned["calibrated_confidence"]),
+            4,
+        )
+        base["confidence"] = base["calibrated_confidence"]
+        base["confidence_tier"] = learned["confidence_tier"]
+        base["candidate_scores"] = learned["candidate_scores"]
+        base["number_panel_visible"] = bool(learned["readability_score"] >= 0.5)
+        if learned.get("candidate_number") is not None:
+            base["candidate_number"] = learned["candidate_number"]
+            base["candidate_confidence"] = base["calibrated_confidence"]
+            base["candidate_method"] = base["recognition_method"]
+            base["reason_codes"] = ["awaiting_temporal_episode_consensus"]
+        else:
+            base["reason_codes"] = ["learned_recognizer_below_calibrated_threshold"]
+        return base
     height, width = person.shape[:2]
     x1n, y1n, x2n, y2n = parameters["number_roi_normalized"]
     x1, y1 = max(0, int(width * x1n)), max(0, int(height * y1n))
@@ -169,7 +217,19 @@ def _recognize_crop(
     base["candidate_scores"] = [
         {"number": number, "score": round(score, 4)} for score, number in scores[:3]
     ]
-    base["confidence"] = round(max(0.0, min(1.0, best_score * (0.5 + margin))), 4)
+    base["raw_confidence"] = round(best_score, 4)
+    base["calibrated_confidence"] = round(
+        max(0.0, min(1.0, best_score * (0.5 + margin))),
+        4,
+    )
+    base["confidence"] = base["calibrated_confidence"]
+    base["confidence_tier"] = (
+        "high"
+        if base["calibrated_confidence"] >= 0.85
+        else "medium"
+        if base["calibrated_confidence"] >= 0.65
+        else "low"
+    )
     if best_score >= parameters["minimum_template_score"] and margin >= parameters["minimum_score_margin"]:
         base["candidate_number"] = best_number
         base["candidate_confidence"] = base["confidence"]
@@ -382,25 +442,48 @@ def _finalize_episode(
             "start_frame": min(int(row.get("frame") or 0) for row in rows),
         },
     )
-    votes = Counter(
-        str(row["candidate_number"])
-        for row in rows
-        if row.get("candidate_number") is not None and row.get("number_panel_visible")
+    weighted_votes: dict[str, float] = defaultdict(float)
+    support_counts: Counter[str] = Counter()
+    for row in rows:
+        if row.get("candidate_number") is None or not row.get("number_panel_visible"):
+            continue
+        number_key = str(row["candidate_number"])
+        support_counts[number_key] += 1
+        weighted_votes[number_key] += float(
+            row.get("calibrated_confidence")
+            or row.get("candidate_confidence")
+            or 0.0
+        )
+    ranked = sorted(weighted_votes.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    number, winning_weight = ranked[0] if ranked else (None, 0.0)
+    support = support_counts.get(str(number), 0) if number is not None else 0
+    competing = sum(value for key, value in support_counts.items() if key != number)
+    competing_weight = sum(value for key, value in weighted_votes.items() if key != number)
+    accepted = bool(
+        number is not None
+        and support >= minimum_votes
+        and winning_weight > competing_weight
     )
-    number, support = votes.most_common(1)[0] if votes else (None, 0)
-    competing = sum(value for key, value in votes.items() if key != number)
-    accepted = bool(number is not None and support >= minimum_votes and competing == 0)
     for row in rows:
         row["visibility_episode_id"] = episode_id
         row["episode_diagnostics"] = {
             "supporting_votes": support,
             "competing_votes": competing,
             "observations": len(rows),
+            "winning_weight": round(winning_weight, 4),
+            "competing_weight": round(competing_weight, 4),
         }
         if accepted and str(row.get("candidate_number")) == number:
             row["state"] = "number_confirmed"
             row["number"] = number
-            row["confidence"] = round(float(row.get("candidate_confidence") or 0.0), 4)
+            row["confidence"] = round(
+                float(
+                    row.get("calibrated_confidence")
+                    or row.get("candidate_confidence")
+                    or 0.0
+                ),
+                4,
+            )
             row["reason_codes"] = ["multi_frame_number_shape_episode_consensus"]
         elif row.get("candidate_number") is not None:
             row["reason_codes"] = ["insufficient_temporal_episode_consensus"]
@@ -435,6 +518,7 @@ def _evaluate(observations: list[dict[str, Any]], reviewed_doc: dict[str, Any]) 
     readable_true = readable_false = readable_missed = number_correct = number_incorrect = 0
     panel_true = panel_false = panel_missed = 0
     false_number_on_plain_shirt = 0
+    false_number_on_unreadable = 0
     for row in observations:
         gold = reviewed.get(str(row.get("anchor_crop_id")))
         if not gold:
@@ -460,6 +544,8 @@ def _evaluate(observations: list[dict[str, Any]], reviewed_doc: dict[str, Any]) 
             readable_false += 1
             if gold.get("state") == "number_absent":
                 false_number_on_plain_shirt += 1
+            elif gold.get("state") == "number_unreadable":
+                false_number_on_unreadable += 1
         elif expected:
             readable_missed += 1
     precision_denominator = readable_true + readable_false
@@ -479,6 +565,30 @@ def _evaluate(observations: list[dict[str, Any]], reviewed_doc: dict[str, Any]) 
         "readable_false_negatives": readable_missed,
         "number_accuracy": round(number_correct / accuracy_denominator, 4) if accuracy_denominator else None,
         "false_number_on_plain_shirt": false_number_on_plain_shirt,
-        "numbered_player_false_positives": readable_false,
+        "false_number_on_unreadable": false_number_on_unreadable,
+        "wrong_number_on_numbered_player": number_incorrect,
+        "total_false_confirmed_reads": readable_false + number_incorrect,
+        "numbered_player_false_positives": number_incorrect,
+        "false_read_counts_are_disjoint": True,
         "calibration_status": "measured" if compared else "needs_reviewed_fixture",
+    }
+
+
+def _trusted_roster_numbers_by_team(
+    roster_doc: dict[str, Any],
+) -> dict[str, list[str]]:
+    values: dict[str, set[str]] = defaultdict(set)
+    for row in roster_doc.get("players") or []:
+        if (
+            not isinstance(row, dict)
+            or not row.get("jersey_number_trusted")
+            or row.get("roster_number_status") != "confirmed"
+        ):
+            continue
+        number = normalize_jersey_number(row.get("jersey_number"))
+        if number is not None:
+            values[str(row.get("team_label") or "U")].add(number)
+    return {
+        label: sorted(numbers, key=lambda value: (len(value), value))
+        for label, numbers in values.items()
     }

@@ -236,8 +236,13 @@ def _evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
     if targeted_summary.get("safety_passed") is not True:
         case_reason_codes.append("targeted_evaluation_failed")
 
-    false_number_reads = int(calibration.get("numbered_player_false_positives") or 0) + int(
-        calibration.get("false_number_on_plain_shirt") or 0
+    false_number_reads = int(
+        calibration.get("total_false_confirmed_reads")
+        if calibration.get("total_false_confirmed_reads") is not None
+        else (
+            int(calibration.get("numbered_player_false_positives") or 0)
+            + int(calibration.get("false_number_on_plain_shirt") or 0)
+        )
     )
     identity_false_assignments = int(assignment_gate.get("identity_false_assignments") or 0)
     unexpected_targets = int(targeted_summary.get("unexpected_propagated_tracklets") or 0)

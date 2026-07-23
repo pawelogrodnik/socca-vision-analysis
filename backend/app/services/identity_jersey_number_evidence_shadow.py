@@ -14,9 +14,9 @@ from app.services.identity_jersey_number_common import (
 )
 
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_jersey_number_evidence_shadow"
-ALGORITHM_VERSION = "1.1.0"
+ALGORITHM_VERSION = "1.2.0"
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "minimum_bbox_width_px": 24.0,
     "minimum_bbox_height_px": 48.0,
@@ -196,6 +196,24 @@ def _evidence_row(
         "state": state if quality_eligible else "number_unreadable",
         "number": number if quality_eligible else None,
         "confidence": confidence if quality_eligible else 0.0,
+        "raw_confidence": (
+            round_or_none((observation or {}).get("raw_confidence"), 4)
+            if quality_eligible
+            else 0.0
+        ),
+        "calibrated_confidence": (
+            round_or_none(
+                (observation or {}).get("calibrated_confidence", confidence),
+                4,
+            )
+            if quality_eligible
+            else 0.0
+        ),
+        "confidence_tier": (
+            str((observation or {}).get("confidence_tier") or "unknown")
+            if quality_eligible
+            else "rejected"
+        ),
         "digits": [int(value) for value in str(number)] if number is not None else [],
         "view": str((observation or {}).get("view") or "unknown"),
         "clean_jersey_visible": bool((observation or {}).get("clean_jersey_visible", False)),
@@ -205,8 +223,32 @@ def _evidence_row(
             or crop.get("visibility_episode_id")
             or ""
         ) or None,
-        "observation_source": str((observation or {}).get("source") or "not_run"),
+        "observation_source": _observation_source(observation),
         "reason_codes": sorted(set(reasons)),
+    }
+
+
+def _observation_source(observation: dict[str, Any] | None) -> dict[str, Any]:
+    if not observation:
+        return {"kind": "not_run", "method": None}
+    structured = observation.get("observation_source")
+    if isinstance(structured, dict):
+        return {
+            "kind": str(structured.get("kind") or "automatic_recognizer"),
+            "method": structured.get("method"),
+            "model_digest": structured.get("model_digest"),
+        }
+    legacy = observation.get("source")
+    if isinstance(legacy, dict):
+        return {
+            "kind": str(legacy.get("kind") or "legacy"),
+            "method": legacy.get("method"),
+            "model_digest": legacy.get("model_digest"),
+        }
+    return {
+        "kind": str(legacy or "automatic_recognizer"),
+        "method": observation.get("recognition_method"),
+        "model_digest": observation.get("model_digest"),
     }
 
 
@@ -229,7 +271,12 @@ def _normalize_observation(
     if state not in EVIDENCE_STATES:
         state = "number_unreadable"
     number = normalize_jersey_number(observation.get("number"))
-    confidence = max(0.0, min(1.0, float(observation.get("confidence") or 0.0)))
+    confidence_value = (
+        observation.get("calibrated_confidence")
+        if observation.get("calibrated_confidence") is not None
+        else observation.get("confidence")
+    )
+    confidence = max(0.0, min(1.0, float(confidence_value or 0.0)))
     reasons: list[str] = []
     if state in {"number_confirmed", "number_conflict"} and number is None:
         state = "number_unreadable"

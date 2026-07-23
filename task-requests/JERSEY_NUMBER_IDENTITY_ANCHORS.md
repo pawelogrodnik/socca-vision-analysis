@@ -7,7 +7,9 @@ UZUPEŁNIENIE task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
 SHADOW-FIRST / HIGH-CONFIDENCE IDENTITY EVIDENCE
 N0-N5 ORAZ INFRASTRUKTURA N5.1-N5.8 ZAIMPLEMENTOWANE
 DATASET NUMERÓW JEST DOSTĘPNY
-LEARNED RECOGNIZER NIE JEST JESZ SKALIBROWANY ANI AKTYWOWANY
+J1-J2 ORAZ INFRASTRUKTURA EWALUACJI J3-J7 ZAIMPLEMENTOWANE
+DIAGNOSTYCZNY LEARNED CENTROID BASELINE JEST WYUCZONY I SKALIBROWANY
+DOCELOWY DIGIT-SEQUENCE RECOGNIZER NIE JEST JESZ ZAIMPLEMENTOWANY
 CANDIDATE I PRODUCTION ASSIGNMENTS POZOSTAJĄ ZABLOKOWANE
 ```
 
@@ -22,6 +24,27 @@ Najważniejsza decyzja:
 > Jersey number jest jednym z najsilniejszych dostępnych identity anchors i warto rozwijać go dalej. Nie należy jednak zatrzymywać całej stabilizacji Player ID do czasu osiągnięcia idealnego OCR. Krótki recognizer closeout i trening na istniejącym datasecie powinny działać równolegle z P1.22 Full-Match Operator Benchmark.
 
 Aktualna implementacja jest poprawna jako konserwatywny, bezpieczny pipeline shadow. Nie jest jeszcze domknięta jako automatyczne odczytywanie numerów z realnego wideo.
+
+Najnowszy closeout:
+
+```text
+backend/storage/benchmarks/player_identity/
+jersey-number-dataset-closeout-20260723-v3/
+```
+
+Wynik pozostaje świadomie zablokowany:
+
+```text
+334 samples
+1 physical source match / 2 source videos
+crop precision: 1.0000
+crop recall:    0.0909
+episode recall: 0.0000
+subject recall: 0.0000
+plain-shirt false reads: 0
+real number 10 fixture: FAILED BY SAFE ABSTENTION
+production eligible: false
+```
 
 ---
 
@@ -223,6 +246,42 @@ Status:
 ```text
 INFRASTRUCTURE IMPLEMENTED
 REAL MULTI-MATCH VALIDATION PENDING
+```
+
+## J1-J7 — dataset-driven recognizer closeout
+
+Zaimplementowano:
+
+- deterministyczny dataset manifest z digestem, provenance i visibility episodes;
+- grupowanie splitów bez przecieku jednego subjectu pomiędzy train/validation/heldout;
+- match-level split, gdy dostępne są co najmniej trzy niezależne source matches;
+- jawny fallback subject-group przy jednym fizycznym meczu;
+- team-scoped roster candidate numbers;
+- wersjonowany diagnostyczny learned centroid baseline;
+- calibrated confidence i confidence tiers;
+- episode-level oraz subject-level temporal fusion;
+- rozłączne metryki błędów dla numerowanej, czystej i nieczytelnej koszulki;
+- metryki panel/readability oraz slice metrics per view, split, team i długość numeru;
+- real fixture numeru 10 ograniczony do właściwego subjectu i trackletu;
+- ponowny shadow run na `07d227bd`;
+- realne SHA-256 comparison wymaganych produkcyjnych identity artifacts.
+
+Ograniczenia potwierdzone przez closeout:
+
+- wszystkie dostępne materiały pochodzą z jednego fizycznego meczu;
+- whole-number centroid baseline nie generalizuje cyfr i pozostaje wyłącznie diagnostyczny;
+- numer 10 jest poprawnie lokalizowany jako fixture, ale model bezpiecznie abstynuje;
+- `global_identity.json` i `stable_players.json` pozostały identyczne;
+- brak `player_identity_assignments.json` uniemożliwia pełne potwierdzenie canonical production digest gate;
+- candidate i production activation pozostają wyłączone.
+
+Status:
+
+```text
+J1-J2 IMPLEMENTED
+J3 DIAGNOSTIC BASELINE IMPLEMENTED, TARGET RECOGNIZER PENDING
+J4-J7 EVALUATION INFRASTRUCTURE IMPLEMENTED
+QUALITY AND MULTI-MATCH GATES FAILED SAFELY
 ```
 
 ---
@@ -882,23 +941,26 @@ Nie uruchamiać automatycznego cross-subject merge. Number-confirmed ReID najpie
 
 ## Wymagane przed candidate review activation
 
-- [ ] dataset manifest i version digest;
-- [ ] match-level leak-safe splits;
+- [x] dataset manifest i version digest;
+- [x] leak-safe split contract i subject-group fallback;
+- [ ] rzeczywisty match-level held-out split na niezależnych source matches;
 - [ ] learned recognizer trained and versioned;
-- [ ] team-scoped roster candidate list;
-- [ ] calibrated confidence used by evidence/consensus;
-- [ ] automatic observation source/version metadata;
-- [ ] false-read metrics do not double count;
+- [x] diagnostyczny learned centroid baseline trained and versioned;
+- [ ] docelowy digit-sequence learned recognizer trained and versioned;
+- [x] team-scoped roster candidate list;
+- [x] calibrated confidence used by evidence/consensus;
+- [x] automatic observation source/version metadata;
+- [x] false-read metrics do not double count;
 - [ ] real `10` regression fixture passes at episode level;
-- [ ] plain-shirt negative benchmark passes;
-- [ ] front/back/side metrics reported;
+- [x] plain-shirt negative benchmark passes dla diagnostycznego baseline;
+- [x] front/back/side metrics reported;
 - [ ] minimum 2 independent source matches in N5.8;
 - [ ] minimum 2 positive safe multi-tracklet propagations;
 - [ ] 0 false strong subject consensuses;
 - [ ] 0 false roster suggestions;
 - [ ] 0 unexpected propagations;
-- [ ] production identity unchanged by digest;
-- [ ] candidate integration consumes canonical held-out contract, not a manual boolean.
+- [ ] production identity unchanged by kompletnym zestawem digestów;
+- [x] candidate integration consumes canonical held-out contract, not a manual boolean.
 
 ## Wymagane przed production use
 
