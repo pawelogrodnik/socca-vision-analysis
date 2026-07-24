@@ -9,9 +9,10 @@ Orlik Vision is a local-first video analysis app for amateur 7v7 football/orlik 
 1. upload match video,
 2. calibrate pitch,
 3. detect and track players,
-4. review tracker ID flickering,
-5. later resolve `tracklet -> player_id -> stint`,
-6. generate player/team stats such as play time, heatmaps, distance and sprints.
+4. run a quick operator identity-seed audit on a few automatically selected frames,
+5. resolve `tracklet -> player_id -> stint`,
+6. review only unresolved/conflicting subjects and tracker ID flickering,
+7. generate player/team stats such as play time, heatmaps, distance and sprints.
 
 Treat raw `tracker_id` as a temporary computer-vision identifier, not a real player identity. Real player identity must be represented separately as `player_id` and connected through assignments/stints.
 
@@ -34,6 +35,211 @@ examples/ small local demo assets
 - Make changes easy to test on short video clips before running full-match analysis.
 - Preserve generated artifacts as files under match storage; do not hide important results only in memory.
 - Be explicit about confidence and uncertainty in CV outputs.
+
+## Mandatory human-audit and operator UX contract
+
+The operator is a football user who knows the players. The operator is **not** an annotation worker, computer-vision engineer, JSON editor or coordinate calculator. Every audit/review feature must therefore be designed as a fast, obvious product interaction.
+
+### Core rule
+
+```text
+user supplies human knowledge
+application supplies all technical metadata
+```
+
+The user may know:
+
+```text
+this is Roman #6 from Team A
+this is definitely an unknown Team B player
+this detection is a referee
+this detection is false
+I am not sure, so I will skip it
+```
+
+The application/agent must derive or persist automatically:
+
+```text
+x1 / y1 / x2 / y2
+normalized coordinates
+frame and timestamp
+track_id / tracklet_id / subject_id
+artifact paths and hashes
+digests and schema versions
+model confidence and thresholds
+capture-domain metadata
+lineage/provenance fields
+```
+
+Never require the operator to calculate, copy or type those technical values. When geometry is needed, provide click/drag/draw interaction and compute coordinates internally. When a frame, crop, tracklet or artifact is needed, the system must select and display it. When confidence is needed internally, compute it from model/lineage evidence; do not ask the user for a percentage.
+
+Existing developer/debug forms that expose raw coordinate fields may remain temporarily, but they are technical debt. Do not copy that interaction into new operator workflows. When such a form is materially changed, prefer replacing it with direct manipulation such as drawing a box on the image.
+
+### Audits must be quick actions, not labeling projects
+
+Do not design a normal product audit that requires reviewing or annotating hundreds of crops. Do not make exhaustive completion a prerequisite when a small set of high-value confirmations is enough.
+
+For every new audit/review flow:
+
+- automatically prioritize the smallest set of examples with the highest expected information gain;
+- prefer clear, non-overlapping, high-confidence frames and crops;
+- hide low-value noise unless it affects identity, safety or final statistics;
+- allow `Skip / Nie wiem` without penalty;
+- save after every action and allow resume;
+- provide an obvious `Finish audit` action even when some items remain unresolved;
+- keep unresolved data explicit instead of forcing a guess;
+- measure active operator time and number of actions;
+- report whether the audit reduced later review work.
+
+A larger dataset may be required for model research, but that is a separate offline/admin workflow. It must not be silently converted into a mandatory end-user task.
+
+### Certainty semantics
+
+The fast operator audit uses a deliberately simple contract:
+
+```text
+certain assignment
+or
+skip / unknown
+```
+
+Do not ask the user for `60%`, `medium confidence`, IoU quality, blur score, visibility score or similar technical judgments. A selected named player is an operator-certain observation-level anchor. No selection means no anchor.
+
+Useful one-click actions should include:
+
+```text
+named roster player (implies team and roster number)
+Team A — player unknown
+Team B — player unknown
+referee
+false detection
+skip / not sure
+```
+
+Selecting `Roman #6 · Team A` must automatically correct an incorrect automatic Team B assignment for that observation and record the contradiction. Do not ask the user to separately edit the team.
+
+### Initial Identity Audit MVP
+
+The first player-identity audit must be a short stage after automatic tracking/stabilization and before the existing whole-subject review:
+
+```text
+automatic analysis
+→ quick Initial Identity Audit
+→ seed-aware downstream identity re-resolve without rerunning YOLO
+→ optional short second-half re-anchor
+→ existing whole-subject review only for unresolved/conflicting cases
+→ candidate timeline and stats validation
+```
+
+MVP interaction budget:
+
+```text
+5–8 automatically selected frames by default
+10 frames maximum unless the operator explicitly asks for more
+roughly 8–12 certain assignments as a target, not a requirement
+stop early when no new easy/high-value player is available
+```
+
+Frame selection must optimize for:
+
+```text
+many visible players
+new not-yet-seeded players
+low bbox overlap
+large enough player crops
+high detection quality
+tracklet continuity around the selected frame
+few edge-cut players
+low motion blur
+capture-domain diversity
+```
+
+Do not show ten nearly identical frames. Each next frame should ideally reveal a new player or resolve a previous ambiguity. A small second-half re-anchor may use 2–3 frames because the camera side, angle and lighting change.
+
+The GUI should support both fast directions:
+
+```text
+click bbox → choose player/action
+click roster player → click bbox
+```
+
+Clicking a bbox should show the full-frame context plus a readable crop. A lightweight neighboring-frame strip may be used to catch a local ID switch, but the user must not be forced into a long clip-by-clip review.
+
+The audit creates observation-level seeds. It must not blindly assign a name to the entire raw tracker ID. Propagation to a tracklet, stable subject or other fragments must pass existing lineage, temporal-overlap, team and structural safety checks.
+
+The first MVP does **not** require:
+
+```text
+named MP4 generation
+manual correction of every missed detection
+full timeline editor
+automatic substitution review
+names for opponent players
+retraining a model during the audit
+exhaustive jersey-number annotation
+```
+
+### Flow integration requirement
+
+A new audit is valuable only when it shortens the later workflow. Do not add a new mandatory screen and then require the operator to repeat the same assignments in whole-subject review.
+
+After saving seeds:
+
+- rebuild only downstream identity/candidate artifacts from frozen detections/tracks;
+- do not rerun full-match YOLO;
+- carry operator-confirmed player/team information into subject recommendations;
+- automatically hide or mark already-resolved review cards;
+- surface contradictions, unresolved fragments and possible ID switches;
+- retain provenance from frame observation to tracklet, subject and candidate player assignment;
+- leave production identity unchanged until the roadmap explicitly permits promotion.
+
+Minimum effectiveness telemetry:
+
+```text
+audit_frames_shown
+audit_actions
+active_operator_seconds
+unique_players_seeded
+team_assignments_corrected
+tracklets_seeded
+subjects_resolved_after_seeding
+review_cards_before_seeding
+review_cards_after_seeding
+conflicts_created
+```
+
+The feature is not successful merely because the UI exists. It must demonstrate fewer later review actions or better safe identity coverage.
+
+### Agent behavior when human input is unavailable
+
+Do not ask the user for information they cannot reasonably provide, such as internal IDs, exact frame coordinates, digest values, model confidence or a hand-built list of hundreds of samples.
+
+When a task appears to need such input, the agent must first choose one of these approaches:
+
+1. derive it automatically from current artifacts;
+2. build an intuitive selector/drawing/picker UI;
+3. generate a small curated review package with one-click choices;
+4. reduce the experiment scope and state what can be proved with available data;
+5. stop safely and report the missing machine-generated prerequisite.
+
+Asking the operator to behave like a script is not an acceptable workaround.
+
+### UX acceptance checklist for every audit feature
+
+Before marking an audit/review milestone complete, verify:
+
+- a user can understand the next action without reading implementation docs;
+- no mandatory raw coordinates, hashes, IDs or numeric confidence fields are exposed;
+- the default path requires only high-value human decisions;
+- `Skip / Nie wiem` is always available;
+- progress and remaining work are visible;
+- the flow is resumable and does not lose prior decisions;
+- the user can finish without resolving every item;
+- technical details are hidden under an optional developer/debug view;
+- keyboard shortcuts or one-click actions are used where repeated choices exist;
+- the audit has an explicit human-effort budget and telemetry;
+- downstream review is measurably reduced or better prioritized;
+- tests cover the user-facing contract, not only JSON schemas.
 
 ## Data model rules
 
