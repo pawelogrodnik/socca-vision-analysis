@@ -11,6 +11,11 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_jersey_number_common import normalize_normalized_bbox
 from app.services.identity_jersey_number_common import normalize_jersey_number_annotation
 from app.services.identity_jersey_number_common import normalize_safe_relative_artifact_path
+from app.services.identity_seeded_review_reduction import (
+    apply_identity_seeded_review_reduction,
+    load_fresh_seeded_assignments,
+    write_identity_seeded_review_reduction_report,
+)
 
 
 REVIEW_ARTIFACT_FILENAME = "identity_roster_subject_review_shadow.json"
@@ -94,15 +99,51 @@ def load_identity_roster_subject_review(
             if stored:
                 stale += 1
         cards.append(card)
+    operator_telemetry = (
+        decisions_doc.get("operator_telemetry")
+        if decisions_fresh
+        else _empty_operator_telemetry()
+    ) or _empty_operator_telemetry()
+    seeded_assignments, seeded_freshness = load_fresh_seeded_assignments(path)
+    cards, initial_audit_integration = apply_identity_seeded_review_reduction(
+        cards,
+        seeded_assignments,
+        freshness=seeded_freshness,
+        operator_telemetry=operator_telemetry,
+    )
+    try:
+        write_identity_seeded_review_reduction_report(
+            path,
+            initial_audit_integration,
+        )
+    except OSError as exc:
+        initial_audit_integration = {
+            **initial_audit_integration,
+            "report_write_warning": f"{type(exc).__name__}: {exc}",
+        }
+    reviewed = sum(_is_effectively_reviewed(card) for card in cards)
+    pending = sum(
+        _requires_operator_review(card) and not _is_effectively_reviewed(card)
+        for card in cards
+    )
     return {
-        "schema_version": "0.4.0",
+        "schema_version": "0.5.0",
         "mode": "shadow_operator_review",
         "source_artifact_digest": artifact_digest,
         "decisions_fresh": decisions_fresh or not stored_by_key,
         "summary": {
             **(artifact.get("summary") or {}),
-            "reviewed_cards": applied,
-            "pending_cards": max(0, len(cards) - applied),
+            "reviewed_cards": reviewed,
+            "pending_cards": pending,
+            "operator_reviewed_cards": applied,
+            "initial_audit_completed_cards": sum(
+                card.get("review_status") == "completed_by_initial_audit"
+                for card in cards
+            ),
+            "initial_audit_conflict_cards": sum(
+                card.get("review_status") == "blocked_seed_conflict"
+                for card in cards
+            ),
             "stale_decisions": stale,
             "fresh_jersey_number_pre_audits": len(pre_audits_by_crop),
         },
@@ -113,11 +154,8 @@ def load_identity_roster_subject_review(
             "eligible_for_player_stats": False,
             "eligible_for_heatmaps": False,
         },
-        "operator_telemetry": (
-            decisions_doc.get("operator_telemetry")
-            if decisions_fresh
-            else _empty_operator_telemetry()
-        ) or _empty_operator_telemetry(),
+        "operator_telemetry": operator_telemetry,
+        "initial_audit_integration": initial_audit_integration,
         "cards": cards,
     }
 
@@ -145,6 +183,20 @@ def save_identity_roster_subject_review(
         for row in existing.get("decisions") or []
         if isinstance(row, dict) and row.get("review_card_key")
     } if existing.get("source_artifact_digest") == digest else {}
+    for key, card in cards_by_key.items():
+        card["operator_decision"] = decisions_by_key.get(key)
+    seeded_assignments, seeded_freshness = load_fresh_seeded_assignments(path)
+    reduced_cards, _ = apply_identity_seeded_review_reduction(
+        list(cards_by_key.values()),
+        seeded_assignments,
+        freshness=seeded_freshness,
+        operator_telemetry=existing.get("operator_telemetry"),
+    )
+    cards_by_key = {
+        str(card["review_card_key"]): card
+        for card in reduced_cards
+        if card.get("review_card_key")
+    }
     annotations_by_crop = (
         _stored_crop_annotations(existing)
         if existing.get("source_artifact_digest") == digest
@@ -698,6 +750,14 @@ def _effective_allowed_actions(card: dict[str, Any]) -> list[str]:
     ):
         actions.insert(0, "assign_roster_player")
     return actions
+
+
+def _requires_operator_review(card: dict[str, Any]) -> bool:
+    return card.get("requires_operator_review") is not False
+
+
+def _is_effectively_reviewed(card: dict[str, Any]) -> bool:
+    return bool(card.get("operator_decision")) or not _requires_operator_review(card)
 
 
 def identity_review_artifact_digest(artifact: dict[str, Any]) -> str:

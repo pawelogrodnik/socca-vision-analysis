@@ -678,6 +678,30 @@ selected frames
 
 Samo utworzenie UI bez downstream reduction nie zamyka Fazy B.
 
+### Status implementacji — 2026-07-27
+
+`CLOSED`.
+
+Zaimplementowano:
+
+- fresh IA3 seeded assignments są automatycznie włączane do whole-subject review;
+- bezpiecznie rozwiązane karty dostają `completed_by_initial_audit` i znikają z domyślnej kolejki `Do review`;
+- konflikty seed/manual oraz seed/seed pozostają widoczne jako `blocked_seed_conflict` i można je rozstrzygnąć;
+- zawodnik zajęty przez nakładający się seeded subject nie może zostać ponownie wybrany bez jawnego konfliktu;
+- zapis Initial Identity Audit przebudowuje IA3 i od razu odświeża redukcję whole-subject review, bez YOLO;
+- `identity_seeded_review_reduction_report.json` zapisuje wymagane metryki redukcji, konflikty i false assignments;
+- frontend rozróżnia decyzje operatora od kart rozwiązanych przez initial audit i pokazuje efekt redukcji;
+- production identity, statystyki i heatmapy pozostają nietknięte.
+
+Gate Fazy B potwierdzony testami kontraktowymi:
+
+```text
+selected frames
+→ saved seeds
+→ downstream candidate resolve
+→ reduced/prioritized existing review
+```
+
 ---
 
 # 6. Faza C — Cross-half Anchoring and Automatic Appearance, IA5–IA6
@@ -1148,8 +1172,8 @@ Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 
 ```text
 A  J8.3 panel closeout                         CLOSED — AVAILABLE_DATA_NOT_SUFFICIENT
-B  IA0–IA4 Initial Audit core                 IN PROGRESS — IA0–IA3 CLOSED, IA4 READY
-C  IA5–IA6 H2 re-anchor + appearance gallery  BLOCKED BY B
+B  IA0–IA4 Initial Audit core                 CLOSED
+C  IA5–IA6 H2 re-anchor + appearance gallery  READY — IA5 NEXT
 D  J8.4 useful jersey recognizer              BLOCKED BY DATA READINESS; SCHEDULED AFTER C
 E  IA7 evidence fusion                        BLOCKED BY C + D
 F  IA8–IA9 exception-only/adaptive review     BLOCKED BY E
@@ -1167,7 +1191,7 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie agent ma rozpocząć od:
 
 ```text
-IA4 Existing whole-subject review integration and reduction
+IA5 Second-half capture-domain re-anchor
 ```
 
 J8.3 zostało zamknięte decyzją:

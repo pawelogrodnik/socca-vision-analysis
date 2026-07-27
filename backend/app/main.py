@@ -1246,6 +1246,24 @@ def update_initial_identity_audit_seeds(
                 "summary": seeded_candidates.get("summary") or {},
                 "safety": seeded_candidates.get("safety") or {},
             }
+            review_path = path / "identity_roster_subject_review_shadow.json"
+            if review_path.exists():
+                try:
+                    reduced_review = load_identity_roster_subject_review(
+                        path,
+                        match_doc=match_document,
+                    )
+                    rebuild_status["whole_subject_review"] = {
+                        "status": (
+                            reduced_review.get("initial_audit_integration") or {}
+                        ).get("status"),
+                        "summary": reduced_review.get("summary") or {},
+                    }
+                except (OSError, ValueError) as exc:
+                    rebuild_status["whole_subject_review"] = {
+                        "status": "warning",
+                        "reason": str(exc),
+                    }
             result["safety"] = {
                 **(result.get("safety") or {}),
                 "downstream_rebuild_triggered": True,

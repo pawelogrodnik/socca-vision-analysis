@@ -1264,8 +1264,26 @@ export type IdentityRosterSubjectOperatorDecision = {
 export type IdentityRosterSubjectRecommendedPlayer = {
   player_id: string;
   player_name?: string | null;
+  team_label?: string | null;
   confidence?: number | null;
   source?: string | null;
+};
+
+export type IdentityRosterSubjectSeedResolution = {
+  status?: 'accepted' | 'conflict' | string;
+  assigned_player?: {
+    player_id?: string | null;
+    name?: string | null;
+    player_name?: string | null;
+    team_label?: string | null;
+  } | null;
+  seed_observations?: string[];
+  tracklet_ids?: string[];
+  start_frame?: number | null;
+  end_frame?: number | null;
+  reason_codes?: string[];
+  conflict_type?: string | null;
+  conflicts?: unknown[];
 };
 
 export type IdentityRosterSubjectCandidate = {
@@ -1331,6 +1349,9 @@ export type IdentityRosterSubjectReviewCard = {
   reason_codes: string[];
   blockers: string[];
   allowed_actions: string[];
+  requires_operator_review?: boolean;
+  overlapping_seeded_player_ids?: string[];
+  seed_resolution?: IdentityRosterSubjectSeedResolution | null;
   operator_decision?: IdentityRosterSubjectOperatorDecision | null;
 };
 
@@ -1352,6 +1373,23 @@ export type IdentityRosterSubjectReviewDocument = {
     eligible_for_heatmaps: boolean;
   };
   operator_telemetry?: IdentityRosterSubjectOperatorTelemetry;
+  initial_audit_integration?: {
+    status?: string;
+    reason_codes?: string[];
+    metrics?: {
+      review_cards_before_seeding?: number;
+      review_cards_after_seeding?: number;
+      review_cards_reduced?: number;
+      subjects_resolved_after_seeding?: number;
+      tracklets_resolved_after_seeding?: number;
+      frames_resolved_after_seeding?: number;
+      manual_decisions_before_seeding?: number;
+      manual_decisions_after_seeding?: number;
+      conflicts_created?: number;
+      false_assignments_found?: number;
+      blocked_overlapping_player_options?: number;
+    };
+  };
   cards: IdentityRosterSubjectReviewCard[];
 };
 

@@ -14,6 +14,9 @@ from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_initial_audit_store import SEEDS_FILENAME
+from app.services.identity_seeded_candidate_assignments import OUTPUT_FILENAME
+from app.services.identity_seeded_review_reduction import REPORT_FILENAME
 
 
 def artifact() -> dict:
@@ -27,6 +30,8 @@ def artifact() -> dict:
                 "review_card_key": "card-1",
                 "candidate_subject_id": "subject-1",
                 "team_label": "A",
+                "start_frame": 10,
+                "end_frame": 100,
                 "review_status": "ready_for_operator_review",
                 "recommended_player": {"player_id": "p1", "player_name": "One"},
                 "roster_candidates": [{"player_id": "p1"}, {"player_id": "p2"}],
@@ -44,6 +49,8 @@ def artifact() -> dict:
                 "review_card_key": "card-2",
                 "candidate_subject_id": "subject-2",
                 "team_label": "A",
+                "start_frame": 110,
+                "end_frame": 180,
                 "review_status": "blocked_conflict",
                 "recommended_player": {"player_id": "p2"},
                 "roster_candidates": [{"player_id": "p2"}],
@@ -84,6 +91,41 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def write_seeded_assignment(
+        self,
+        *,
+        conflicts: list[dict] | None = None,
+    ) -> None:
+        seeds = {"schema_version": "0.1.0", "decisions": []}
+        seeded = {
+            "schema_version": "0.1.0",
+            "source": {"operator_seeds_digest": canonical_digest(seeds)},
+            "accepted_assignments": [
+                {
+                    "candidate_subject_id": "subject-1",
+                    "start_frame": 10,
+                    "end_frame": 100,
+                    "tracklet_ids": ["tracklet-1"],
+                    "assigned_player": {
+                        "player_id": "p1",
+                        "name": "One",
+                        "team_label": "A",
+                    },
+                    "seed_observations": ["observation-1"],
+                }
+            ],
+            "conflicts": conflicts or [],
+            "summary": {
+                "subjects_resolved_after_seeding": 1,
+                "tracklets_resolved_after_seeding": 1,
+                "frames_resolved_after_seeding": 91,
+                "conflicts_created": len(conflicts or []),
+            },
+            "safety": {"production_identity_untouched": True},
+        }
+        (self.path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
+        (self.path / OUTPUT_FILENAME).write_text(json.dumps(seeded), encoding="utf-8")
+
     def test_saves_whole_subject_decision_without_touching_production_artifacts(self) -> None:
         production = self.path / "player_identity_assignments.json"
         production.write_text('{"keep": true}', encoding="utf-8")
@@ -99,6 +141,57 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         self.assertEqual(production.read_text(encoding="utf-8"), '{"keep": true}')
         self.assertTrue((self.path / REVIEW_DECISIONS_FILENAME).exists())
         self.assertFalse(state["safety"]["writes_player_identity_assignments"])
+
+    def test_initial_audit_seed_completes_card_and_reduces_pending_queue(self) -> None:
+        self.write_seeded_assignment()
+
+        state = load_identity_roster_subject_review(self.path, match_doc=match_doc())
+
+        card = next(
+            row for row in state["cards"]
+            if row["candidate_subject_id"] == "subject-1"
+        )
+        self.assertEqual(card["review_status"], "completed_by_initial_audit")
+        self.assertFalse(card["requires_operator_review"])
+        self.assertEqual(state["summary"]["initial_audit_completed_cards"], 1)
+        self.assertEqual(state["summary"]["pending_cards"], 1)
+        self.assertEqual(
+            state["initial_audit_integration"]["metrics"]["review_cards_reduced"],
+            1,
+        )
+        self.assertTrue((self.path / REPORT_FILENAME).exists())
+
+    def test_initial_audit_completed_card_cannot_be_reassigned(self) -> None:
+        self.write_seeded_assignment()
+
+        with self.assertRaisesRegex(ValueError, "blocked"):
+            save_identity_roster_subject_review(
+                self.path,
+                [{
+                    "review_card_key": "card-1",
+                    "decision": "assign_roster_player",
+                    "player_id": "p2",
+                }],
+                match_doc=match_doc(),
+            )
+
+    def test_initial_audit_conflict_stays_assignable(self) -> None:
+        self.write_seeded_assignment(
+            conflicts=[{
+                "candidate_subject_ids": ["subject-1"],
+                "reason_codes": ["seed_observations_disagree"],
+            }]
+        )
+
+        state = load_identity_roster_subject_review(self.path, match_doc=match_doc())
+        card = next(
+            row for row in state["cards"]
+            if row["candidate_subject_id"] == "subject-1"
+        )
+
+        self.assertEqual(card["review_status"], "blocked_seed_conflict")
+        self.assertTrue(card["requires_operator_review"])
+        self.assertIn("assign_roster_player", card["allowed_actions"])
 
     def test_blocked_action_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "blocked"):

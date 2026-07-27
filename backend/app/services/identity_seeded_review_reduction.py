@@ -1,0 +1,461 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from app.services.identity_initial_audit_store import (
+    SEEDS_FILENAME,
+    load_identity_json,
+    write_identity_json_atomic,
+)
+from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_seeded_candidate_assignments import OUTPUT_FILENAME
+
+
+SCHEMA_VERSION = "0.1.0"
+ALGORITHM_NAME = "identity_seeded_review_reduction"
+ALGORITHM_VERSION = "0.1.0"
+REPORT_FILENAME = "identity_seeded_review_reduction_report.json"
+
+COMPLETED_STATUS = "completed_by_initial_audit"
+CONFLICT_STATUS = "blocked_seed_conflict"
+
+
+def load_fresh_seeded_assignments(
+    match_path: Path,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    seeded_path = match_path / OUTPUT_FILENAME
+    seeds_path = match_path / SEEDS_FILENAME
+    if not seeded_path.exists() or not seeds_path.exists():
+        return None, {
+            "status": "missing",
+            "reason_codes": ["seeded_assignments_or_operator_seeds_missing"],
+        }
+
+    try:
+        seeded = load_identity_json(seeded_path)
+        seeds = load_identity_json(seeds_path)
+    except (OSError, ValueError):
+        return None, {
+            "status": "invalid",
+            "reason_codes": ["seeded_assignments_or_operator_seeds_invalid"],
+        }
+
+    expected_digest = str(
+        (seeded.get("source") or {}).get("operator_seeds_digest") or ""
+    )
+    current_digest = canonical_digest(seeds)
+    if not expected_digest or expected_digest != current_digest:
+        return None, {
+            "status": "stale",
+            "reason_codes": ["operator_seeds_digest_mismatch"],
+            "expected_operator_seeds_digest": expected_digest or None,
+            "current_operator_seeds_digest": current_digest,
+        }
+    if (seeded.get("safety") or {}).get("production_identity_untouched") is not True:
+        return None, {
+            "status": "unsafe",
+            "reason_codes": ["seeded_assignments_safety_contract_missing"],
+        }
+    return seeded, {
+        "status": "fresh",
+        "reason_codes": [],
+        "operator_seeds_digest": current_digest,
+        "seeded_assignments_digest": canonical_digest(seeded),
+    }
+
+
+def apply_identity_seeded_review_reduction(
+    cards: list[dict[str, Any]],
+    seeded_assignments: dict[str, Any] | None,
+    *,
+    freshness: dict[str, Any] | None = None,
+    operator_telemetry: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    source_cards = [dict(card) for card in cards]
+    before_count = sum(_requires_review(card) for card in source_cards)
+    manual_before = sum(_has_manual_decision(card) for card in source_cards)
+    status = dict(freshness or {"status": "missing", "reason_codes": []})
+
+    if seeded_assignments is None or status.get("status") != "fresh":
+        report = _report(
+            status=status,
+            seeded_assignments=None,
+            review_cards_before=before_count,
+            review_cards_after=before_count,
+            manual_before=manual_before,
+            manual_after=manual_before,
+            false_assignments=[],
+            blocked_player_options=0,
+            operator_telemetry=operator_telemetry,
+        )
+        return source_cards, report
+
+    accepted_by_subject = {
+        str(row.get("candidate_subject_id")): dict(row)
+        for row in seeded_assignments.get("accepted_assignments") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    conflicts_by_subject = _conflicts_by_subject(seeded_assignments)
+    accepted_intervals = _accepted_player_intervals(accepted_by_subject.values())
+    false_assignments: list[dict[str, Any]] = []
+    blocked_player_options = 0
+    reduced: list[dict[str, Any]] = []
+
+    for source_card in source_cards:
+        card = dict(source_card)
+        subject_id = str(card.get("candidate_subject_id") or "")
+        accepted = accepted_by_subject.get(subject_id)
+        conflicts = conflicts_by_subject.get(subject_id, [])
+        existing_player_id = _manual_player_id(card)
+
+        if accepted is not None:
+            seeded_player = dict(accepted.get("assigned_player") or {})
+            seeded_player_id = str(seeded_player.get("player_id") or "")
+            if existing_player_id and existing_player_id != seeded_player_id:
+                false_assignments.append(
+                    _false_assignment(card, seeded_player_id, existing_player_id)
+                )
+                card = _as_seed_conflict(
+                    card,
+                    conflict_type="manual_assignment_disagrees_with_initial_audit",
+                    seeded_player=seeded_player,
+                )
+            elif conflicts:
+                card = _as_seed_conflict(
+                    card,
+                    conflict_type="seeded_assignment_conflict",
+                    seeded_player=seeded_player,
+                    conflict_rows=conflicts,
+                )
+            else:
+                card = _as_seed_completed(card, accepted)
+        elif conflicts:
+            card = _as_seed_conflict(
+                card,
+                conflict_type="seeded_assignment_conflict",
+                conflict_rows=conflicts,
+            )
+        else:
+            card, removed = _block_overlapping_seeded_players(
+                card,
+                accepted_intervals,
+            )
+            blocked_player_options += removed
+            if existing_player_id in set(card.get("overlapping_seeded_player_ids") or []):
+                false_assignments.append(
+                    _false_assignment(
+                        card,
+                        existing_player_id,
+                        existing_player_id,
+                        reason="parallel_manual_assignment_overlaps_seeded_subject",
+                    )
+                )
+                card = _as_seed_conflict(
+                    card,
+                    conflict_type="parallel_manual_assignment_overlaps_seeded_subject",
+                )
+
+        card["decision_contract"] = _decision_contract(card)
+        reduced.append(card)
+
+    reduced.sort(key=_review_priority)
+    after_count = sum(_requires_review(card) for card in reduced)
+    manual_after = sum(
+        _has_manual_decision(card) and _requires_review(card) for card in reduced
+    )
+    report = _report(
+        status=status,
+        seeded_assignments=seeded_assignments,
+        review_cards_before=before_count,
+        review_cards_after=after_count,
+        manual_before=manual_before,
+        manual_after=manual_after,
+        false_assignments=false_assignments,
+        blocked_player_options=blocked_player_options,
+        operator_telemetry=operator_telemetry,
+    )
+    return reduced, report
+
+
+def write_identity_seeded_review_reduction_report(
+    match_path: Path,
+    report: dict[str, Any],
+) -> Path:
+    path = match_path / REPORT_FILENAME
+    write_identity_json_atomic(path, report)
+    return path
+
+
+def _as_seed_completed(
+    card: dict[str, Any],
+    accepted: dict[str, Any],
+) -> dict[str, Any]:
+    assigned_player = dict(accepted.get("assigned_player") or {})
+    recommendation = {
+        "player_id": assigned_player.get("player_id"),
+        "player_name": assigned_player.get("name")
+        or assigned_player.get("player_name"),
+        "team_label": assigned_player.get("team_label"),
+        "source": "initial_identity_audit",
+        "confidence": 1.0,
+    }
+    return {
+        **card,
+        "review_status": COMPLETED_STATUS,
+        "requires_operator_review": False,
+        "recommended_player": recommendation,
+        "seed_resolution": {
+            "status": "accepted",
+            "assigned_player": assigned_player,
+            "seed_observations": accepted.get("seed_observations") or [],
+            "tracklet_ids": accepted.get("tracklet_ids") or [],
+            "start_frame": accepted.get("start_frame"),
+            "end_frame": accepted.get("end_frame"),
+            "reason_codes": accepted.get("reason_codes")
+            or ["safe_seeded_subject_assignment"],
+        },
+        "allowed_actions": ["open_debug_context"],
+    }
+
+
+def _as_seed_conflict(
+    card: dict[str, Any],
+    *,
+    conflict_type: str,
+    seeded_player: dict[str, Any] | None = None,
+    conflict_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    blockers = list(dict.fromkeys([
+        *(str(value) for value in card.get("blockers") or []),
+        conflict_type,
+    ]))
+    actions = ["assign_roster_player", "mark_unresolved", "open_debug_context"]
+    return {
+        **card,
+        "review_status": CONFLICT_STATUS,
+        "requires_operator_review": True,
+        "blockers": blockers,
+        "allowed_actions": actions,
+        "seed_resolution": {
+            "status": "conflict",
+            "conflict_type": conflict_type,
+            "assigned_player": seeded_player,
+            "conflicts": conflict_rows or [],
+        },
+    }
+
+
+def _block_overlapping_seeded_players(
+    card: dict[str, Any],
+    accepted_intervals: dict[str, list[tuple[int, int, str]]],
+) -> tuple[dict[str, Any], int]:
+    start_frame, end_frame = _frame_range(card)
+    blocked: set[str] = set()
+    for player_id, intervals in accepted_intervals.items():
+        if any(
+            subject_id != str(card.get("candidate_subject_id") or "")
+            and _intervals_overlap(start_frame, end_frame, start, end)
+            for start, end, subject_id in intervals
+        ):
+            blocked.add(player_id)
+    if not blocked:
+        return card, 0
+
+    options = [
+        row
+        for row in card.get("operator_roster_options") or []
+        if str(row.get("player_id") or "") not in blocked
+    ]
+    recommended = card.get("recommended_player")
+    if str((recommended or {}).get("player_id") or "") in blocked:
+        recommended = None
+    return {
+        **card,
+        "operator_roster_options": options,
+        "recommended_player": recommended,
+        "overlapping_seeded_player_ids": sorted(blocked),
+        "reason_codes": list(dict.fromkeys([
+            *(str(value) for value in card.get("reason_codes") or []),
+            "overlapping_seeded_player_option_blocked",
+        ])),
+    }, len(blocked)
+
+
+def _accepted_player_intervals(
+    accepted: Any,
+) -> dict[str, list[tuple[int, int, str]]]:
+    result: dict[str, list[tuple[int, int, str]]] = {}
+    for row in accepted:
+        player_id = str((row.get("assigned_player") or {}).get("player_id") or "")
+        if not player_id:
+            continue
+        start = int(row.get("start_frame") or 0)
+        end = int(row.get("end_frame") or start)
+        result.setdefault(player_id, []).append(
+            (start, end, str(row.get("candidate_subject_id") or ""))
+        )
+    return result
+
+
+def _conflicts_by_subject(
+    seeded_assignments: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in seeded_assignments.get("conflicts") or []:
+        if not isinstance(row, dict):
+            continue
+        subject_ids = {
+            str(value)
+            for key in (
+                "candidate_subject_ids",
+                "subject_ids",
+                "conflicting_subject_ids",
+            )
+            for value in row.get(key) or []
+            if value
+        }
+        for key in ("candidate_subject_id", "source_subject_id", "target_subject_id"):
+            if row.get(key):
+                subject_ids.add(str(row[key]))
+        for subject_id in subject_ids:
+            result.setdefault(subject_id, []).append(dict(row))
+    return result
+
+
+def _report(
+    *,
+    status: dict[str, Any],
+    seeded_assignments: dict[str, Any] | None,
+    review_cards_before: int,
+    review_cards_after: int,
+    manual_before: int,
+    manual_after: int,
+    false_assignments: list[dict[str, Any]],
+    blocked_player_options: int,
+    operator_telemetry: dict[str, Any] | None,
+) -> dict[str, Any]:
+    seeded_summary = (seeded_assignments or {}).get("summary") or {}
+    active_seconds = float(
+        (operator_telemetry or {}).get("active_review_seconds") or 0.0
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "seed_aware_review_reduction_shadow",
+        "algorithm": {
+            "name": ALGORITHM_NAME,
+            "version": ALGORITHM_VERSION,
+        },
+        "status": status.get("status"),
+        "reason_codes": status.get("reason_codes") or [],
+        "source": {
+            key: value
+            for key, value in status.items()
+            if key not in {"status", "reason_codes"}
+        },
+        "metrics": {
+            "review_cards_before_seeding": review_cards_before,
+            "review_cards_after_seeding": review_cards_after,
+            "review_cards_reduced": max(
+                0, review_cards_before - review_cards_after
+            ),
+            "subjects_resolved_after_seeding": int(
+                seeded_summary.get("subjects_resolved_after_seeding") or 0
+            ),
+            "tracklets_resolved_after_seeding": int(
+                seeded_summary.get("tracklets_resolved_after_seeding") or 0
+            ),
+            "frames_resolved_after_seeding": int(
+                seeded_summary.get("frames_resolved_after_seeding") or 0
+            ),
+            "manual_decisions_before_seeding": manual_before,
+            "manual_decisions_after_seeding": manual_after,
+            "estimated_manual_decisions_remaining": review_cards_after,
+            "active_review_seconds_before_seeding": active_seconds,
+            "active_review_seconds_after_seeding": None,
+            "active_time_after_measurable": False,
+            "conflicts_created": int(
+                seeded_summary.get("conflicts_created") or 0
+            ),
+            "false_assignments_found": len(false_assignments),
+            "blocked_overlapping_player_options": blocked_player_options,
+        },
+        "false_assignments": false_assignments,
+        "safety": {
+            "mutates_production_identity": False,
+            "writes_shadow_review_state_only": True,
+            "seeded_completed_cards_are_not_manually_reassignable": True,
+            "conflicts_remain_operator_visible": True,
+        },
+    }
+
+
+def _false_assignment(
+    card: dict[str, Any],
+    seeded_player_id: str,
+    manual_player_id: str,
+    *,
+    reason: str = "manual_assignment_disagrees_with_initial_audit",
+) -> dict[str, Any]:
+    return {
+        "review_card_key": card.get("review_card_key"),
+        "candidate_subject_id": card.get("candidate_subject_id"),
+        "seeded_player_id": seeded_player_id,
+        "manual_player_id": manual_player_id,
+        "reason": reason,
+    }
+
+
+def _manual_player_id(card: dict[str, Any]) -> str:
+    decision = card.get("operator_decision") or {}
+    if decision.get("decision") not in {
+        "assign_roster_player",
+        "confirm_recommended_player",
+    }:
+        return ""
+    return str(decision.get("player_id") or "")
+
+
+def _has_manual_decision(card: dict[str, Any]) -> bool:
+    return isinstance(card.get("operator_decision"), dict)
+
+
+def _requires_review(card: dict[str, Any]) -> bool:
+    return card.get("requires_operator_review") is not False
+
+
+def _frame_range(card: dict[str, Any]) -> tuple[int, int]:
+    start = int(card.get("start_frame") or 0)
+    end = int(card.get("end_frame") or start)
+    return min(start, end), max(start, end)
+
+
+def _intervals_overlap(
+    left_start: int,
+    left_end: int,
+    right_start: int,
+    right_end: int,
+) -> bool:
+    return max(left_start, right_start) <= min(left_end, right_end)
+
+
+def _decision_contract(card: dict[str, Any]) -> dict[str, Any]:
+    contract = dict(card.get("decision_contract") or {})
+    schema = dict(contract.get("decision_schema") or {})
+    schema["player_id"] = [
+        str(row["player_id"])
+        for row in card.get("operator_roster_options") or []
+        if row.get("player_id")
+    ]
+    contract["decision_schema"] = schema
+    return contract
+
+
+def _review_priority(card: dict[str, Any]) -> tuple[int, int, str]:
+    status = str(card.get("review_status") or "")
+    priority = 0 if status == CONFLICT_STATUS else 2 if status == COMPLETED_STATUS else 1
+    return (
+        priority,
+        int(card.get("start_frame") or 0),
+        str(card.get("review_card_key") or ""),
+    )

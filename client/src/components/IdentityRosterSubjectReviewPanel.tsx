@@ -19,6 +19,7 @@ import {
 } from './NumberPanelBoxEditor';
 import {
   isActionableSubjectReviewCard,
+  isEffectivelyReviewedSubjectReviewCard,
   nearestPendingCardIndex,
   subjectRosterOptions,
   subjectDecisionLabel,
@@ -131,9 +132,9 @@ export function IdentityRosterSubjectReviewPanel({
     const actionable = all.filter(isActionableSubjectReviewCard);
     return {
       actionableTotal: actionable.length,
-      actionableReviewed: actionable.filter((card) => Boolean(card.operator_decision)).length,
-      pending: actionable.filter((card) => !card.operator_decision).length,
-      reviewed: all.filter((card) => Boolean(card.operator_decision)).length,
+      actionableReviewed: actionable.filter(isEffectivelyReviewedSubjectReviewCard).length,
+      pending: actionable.filter((card) => !isEffectivelyReviewedSubjectReviewCard(card)).length,
+      reviewed: all.filter(isEffectivelyReviewedSubjectReviewCard).length,
       all: all.length,
     };
   }, [document]);
@@ -149,7 +150,8 @@ export function IdentityRosterSubjectReviewPanel({
   const reviewedCardsInSelectedTeam = useMemo(() => {
     if (!document || teamFilter === 'all') return 0;
     return document.cards.filter((card) => (
-      (card.team_label || 'U') === teamFilter && Boolean(card.operator_decision)
+      (card.team_label || 'U') === teamFilter
+      && isEffectivelyReviewedSubjectReviewCard(card)
     )).length;
   }, [document, teamFilter]);
   const hasOnlyReviewedCardsInSelectedTeam = reviewFilter === 'pending'
@@ -408,6 +410,21 @@ export function IdentityRosterSubjectReviewPanel({
       )}
       {document && !document.decisions_fresh && (
         <p className='warning-text'>Kontrakt ulegl zmianie. Poprzednie decyzje nie sa stosowane.</p>
+      )}
+      {document?.initial_audit_integration?.status === 'fresh' && (
+        <div className='identity-subject-evidence'>
+          <span>
+            Initial audit: rozwiazano {document.initial_audit_integration.metrics?.subjects_resolved_after_seeding || 0} subjectow
+          </span>
+          <span>
+            Review: {document.initial_audit_integration.metrics?.review_cards_before_seeding || 0}
+            {' -> '}
+            {document.initial_audit_integration.metrics?.review_cards_after_seeding || 0}
+          </span>
+          {(document.initial_audit_integration.metrics?.conflicts_created || 0) > 0 && (
+            <span>Konflikty: {document.initial_audit_integration.metrics?.conflicts_created}</span>
+          )}
+        </div>
       )}
 
       {open && document && (
