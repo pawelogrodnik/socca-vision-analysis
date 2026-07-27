@@ -1206,10 +1206,18 @@ export type IdentityRosterSubjectNumberPanelAnnotationUpdate = {
   number_panel_annotation: IdentityRosterSubjectNumberPanelAnnotation;
 };
 
+export type IdentityRosterSubjectNumberPanelAnnotationClearUpdate = {
+  update_id?: string;
+  review_card_key: string;
+  anchor_crop_id: string;
+  clear_number_panel_annotation: true;
+};
+
 export type IdentityRosterSubjectReviewUpdate =
   | IdentityRosterSubjectDecisionUpdate
   | IdentityRosterSubjectJerseyNumberAnnotationUpdate
-  | IdentityRosterSubjectNumberPanelAnnotationUpdate;
+  | IdentityRosterSubjectNumberPanelAnnotationUpdate
+  | IdentityRosterSubjectNumberPanelAnnotationClearUpdate;
 
 export type IdentityRosterSubjectTelemetryEventType =
   | 'session_started'
@@ -1292,6 +1300,7 @@ export type IdentityRosterSubjectJerseyNumberVisualDiagnostics = {
 };
 
 export type IdentityRosterSubjectJerseyNumberAnnotation = {
+  jersey_number_state?: 'number_confirmed' | 'number_absent' | 'number_unreadable';
   jersey_number?: string | null;
   number_panel_bbox_normalized?: number[] | null;
   number_panel_artifact?: string | null;
@@ -1375,6 +1384,142 @@ export type TrackletReviewState = {
   tracklets: TrackletSummary[];
   assignments: PlayerAssignment[];
   summary: AssignmentSummary;
+};
+
+export type InitialIdentityAuditTeamLabel = 'A' | 'B' | 'U';
+
+export type InitialIdentityAuditRosterPlayer = {
+  player_id: string;
+  player_name: string;
+  player_number?: string | null;
+  player_role: string;
+};
+
+export type InitialIdentityAuditRosterTeam = {
+  team_label: InitialIdentityAuditTeamLabel;
+  team_id?: string | null;
+  team_name: string;
+  players: InitialIdentityAuditRosterPlayer[];
+};
+
+export type InitialIdentityAuditObservation = {
+  observation_key: string;
+  bbox_xyxy: [number, number, number, number];
+  team_label: InitialIdentityAuditTeamLabel;
+  role: string;
+  provenance: Record<string, unknown>;
+  display_order: number;
+};
+
+export type InitialIdentityAuditFrame = {
+  audit_frame_key: string;
+  frame_number: number;
+  time_sec: number;
+  full_frame_artifact: string;
+  thumbnail_artifact: string;
+  observations: InitialIdentityAuditObservation[];
+};
+
+export type InitialIdentityAuditDocument = {
+  schema_version: string;
+  mode: string;
+  read_only: boolean;
+  selection_digest?: string | null;
+  video: VideoMetadata;
+  summary: {
+    selected_frames: number;
+    visible_observations: number;
+    maximum_frames: number;
+    target_actions: string;
+  };
+  roster: InitialIdentityAuditRosterTeam[];
+  frames: InitialIdentityAuditFrame[];
+  actions: string[];
+  operator_contract: {
+    certainty: string;
+    finish_before_full_coverage: boolean;
+    raw_coordinates_required: boolean;
+    technical_ids_visible: boolean;
+    decisions_persisted: boolean;
+  };
+  safety: {
+    production_identity_untouched: boolean;
+    candidate_identity_untouched: boolean;
+    yolo_not_required: boolean;
+    downstream_rebuild_triggered: boolean;
+  };
+};
+
+export type InitialIdentityAuditSeedAction =
+  | 'assign_roster_player'
+  | 'team_a_unknown'
+  | 'team_b_unknown'
+  | 'referee'
+  | 'false_detection'
+  | 'skip';
+
+export type InitialIdentityAuditStoredDecision = {
+  observation_key: string;
+  action: InitialIdentityAuditSeedAction;
+  assigned_team?: {
+    team_label: InitialIdentityAuditTeamLabel;
+    team_id?: string | null;
+    team_name: string;
+  } | null;
+  assigned_player?: {
+    player_id: string;
+    player_name: string;
+    player_number?: string | null;
+    player_role: string;
+  } | null;
+  team_assignment_corrected: boolean;
+  updated_at?: string | null;
+};
+
+export type InitialIdentityAuditTelemetryMetrics = {
+  audit_frames_shown: number;
+  audit_crops_clicked: number;
+  audit_actions: number;
+  active_operator_seconds: number;
+  unique_players_seeded: number;
+  team_assignments_corrected: number;
+  false_detections_marked: number;
+};
+
+export type InitialIdentityAuditSeedStoreDocument = {
+  schema_version: string;
+  mode: string;
+  status: 'empty' | 'fresh' | 'stale';
+  decisions_fresh: boolean;
+  source_selection_digest?: string | null;
+  decisions: InitialIdentityAuditStoredDecision[];
+  operator_telemetry: {
+    metrics: InitialIdentityAuditTelemetryMetrics;
+  };
+  safety: Record<string, boolean>;
+  updated_at?: string | null;
+};
+
+export type InitialIdentityAuditSeedUpdate = {
+  update_id: string;
+  observation_key: string;
+  action: InitialIdentityAuditSeedAction | 'clear';
+  player_id?: string;
+};
+
+export type InitialIdentityAuditTelemetryEvent = {
+  event_id: string;
+  session_id: string;
+  event_type:
+    | 'session_started'
+    | 'frame_shown'
+    | 'crop_clicked'
+    | 'action'
+    | 'session_finished';
+  audit_frame_key?: string;
+  observation_key?: string;
+  active_delta_seconds?: number;
+  occurred_at?: string;
 };
 
 export type Match = MatchMetadataPayload & {

@@ -250,7 +250,13 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         state = load_identity_roster_subject_review(self.path)
 
         crop = state["cards"][0]["visual_evidence"]["anchor_crops"][0]
-        self.assertEqual(crop["jersey_number_annotation"], annotation)
+        self.assertEqual(
+            crop["jersey_number_annotation"],
+            {
+                **annotation,
+                "jersey_number_state": "number_confirmed",
+            },
+        )
 
     def test_operator_number_panel_annotation_persists_separately(self) -> None:
         source_sha = hashlib.sha256((self.path / "crop.jpg").read_bytes()).hexdigest()

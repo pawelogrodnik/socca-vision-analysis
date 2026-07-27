@@ -9,7 +9,9 @@ N0-N5 ORAZ INFRASTRUKTURA N5.1-N5.8 ZAIMPLEMENTOWANE
 J8.1 FREEZE EXISTING RECOGNIZERS: CLOSED
 J8.2 PANEL ANNOTATION CONTRACT: CLOSED
 J8.3 PANEL AUDIT IMPLEMENTATION: CLOSED
-J8.3 REAL DATASET RUN + HUMAN MONTAGE APPROVAL + FINDINGS: OPEN
+J8.3 CANONICAL SUBSET + OPERATOR PANEL-BOX PACKAGE: CLOSED
+J8.3 REAL PANEL AUDIT + HUMAN MONTAGE APPROVAL + FINDINGS: CLOSED
+J8.3 FINAL DECISION: AVAILABLE_DATA_NOT_SUFFICIENT
 J8.4 PANELDIGITNETV1: NOT STARTED
 CANDIDATE I PRODUCTION ASSIGNMENTS POZOSTAJĄ ZABLOKOWANE
 ```
@@ -22,7 +24,7 @@ Aktualny baseline po mergu:
 
 Najważniejsza decyzja:
 
-> Nie budować teraz kolejnego recognizera ani nie wracać do strojenia CRNN. Najpierw należy operacyjnie domknąć J8.3: wybrać jawny subset paneli, wygenerować realne montage, ręcznie je zatwierdzić, naprawić finalne readiness gates i zapisać findings. Dopiero potem wolno rozpocząć J8.4.
+> J8.3 zostało operacyjnie domknięte. Pipeline paneli i ręczny audyt działają, ale dostępny materiał nie spełnia progów ilościowych. Nie rozpoczynać J8.4; najpierw zebrać więcej niezależnych, czytelnych paneli i negatywów.
 
 Jersey-number work nie blokuje równoległego P1.22 Full-Match Operator Benchmark.
 
@@ -553,11 +555,9 @@ final decision
 Dozwolone final decisions:
 
 ```text
-PROCEED_TO_J8_4
-FIX_PANEL_ANNOTATIONS
-COLLECT_MORE_READABLE_EPISODES
-COLLECT_MORE_NEGATIVES
-CROP_PIPELINE_NOT_VIABLE
+PROCEED_TO_J8_4_LATER
+FIX_PANEL_PIPELINE_FIRST
+AVAILABLE_DATA_NOT_SUFFICIENT
 ```
 
 Po zapisaniu findings agent kończy pracę.
@@ -621,7 +621,7 @@ J8.4 może rozpocząć się wyłącznie po:
 
 ```text
 J8_3_PANEL_READINESS_FINDINGS.md
-final decision = PROCEED_TO_J8_4
+final decision = PROCEED_TO_J8_4_LATER
 ```
 
 Architektura:
@@ -842,22 +842,43 @@ no production identity write
 - [x] resize preview `96x64`;
 - [x] panel audit tests.
 
-## J8.3 operational closeout required
+## J8.3 operational closeout
 
-- [ ] explicit three-state jersey annotation;
-- [ ] canonical panel experiment selection subset;
-- [ ] 100% audit coverage of selected samples;
-- [ ] 0 invalid selected samples;
+- [x] explicit three-state jersey annotation;
+- [x] canonical panel experiment selection subset;
+- [x] 100% audit coverage of selected samples;
+- [x] 0 invalid selected samples;
 - [ ] minimum 50 confirmed panels;
 - [ ] minimum 20 readable visibility episodes;
 - [ ] minimum 30 absent/unreadable negatives;
-- [ ] digit-height median from confirmed panels only;
-- [ ] real10 included and readable after preprocessing;
-- [ ] montage approval tied to digest;
-- [ ] duplicate panel readiness path removed/deprecated;
-- [ ] real readiness artifacts generated;
-- [ ] J8.3 findings committed;
-- [ ] final decision recorded.
+- [x] digit-height median from confirmed panels only;
+- [x] real10 included and readable after preprocessing;
+- [x] montage approval tied to digest;
+- [x] duplicate panel readiness path removed/deprecated;
+- [x] real readiness artifacts generated;
+- [x] J8.3 findings generated;
+- [x] final decision recorded.
+
+Finalny checkpoint (2026-07-27):
+
+```text
+operator audit: 58/58 reviewed
+operator-confirmed panel boxes: 19
+canonical panel experiment: 19/19 audited, 0 invalid
+readable confirmed panels: 16 / required 50
+readable visibility episodes: 13 / required 20
+absent/unreadable negatives: 3 / required 30
+human montage approval: approved and digest-bound
+final decision: AVAILABLE_DATA_NOT_SUFFICIENT
+J8.4: blocked
+```
+
+Artefakty closeoutu:
+
+```text
+backend/storage/benchmarks/player_identity/
+j8-3-panel-closeout-20260727-v1/audit-confirmed-panels/
+```
 
 ## Candidate review activation
 

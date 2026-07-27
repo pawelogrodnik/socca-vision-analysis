@@ -11,6 +11,10 @@ import type {
   IdentityReviewGalleryDocument,
   IdentityCropReviewDocument,
   IdentityCropReviewUpdate,
+  InitialIdentityAuditDocument,
+  InitialIdentityAuditSeedStoreDocument,
+  InitialIdentityAuditSeedUpdate,
+  InitialIdentityAuditTelemetryEvent,
   IdentityRosterSubjectReviewDocument,
   IdentityRosterSubjectTelemetryEvent,
   IdentityRosterSubjectReviewUpdate,
@@ -262,6 +266,41 @@ export async function splitIdentityReviewGallery(
 
 export async function getIdentityCropReview(matchId: string): Promise<IdentityCropReviewDocument> {
   return request<IdentityCropReviewDocument>(`/api/matches/${matchId}/identity-crop-review`);
+}
+
+export async function getInitialIdentityAudit(
+  matchId: string,
+  force = false,
+): Promise<InitialIdentityAuditDocument> {
+  return request<InitialIdentityAuditDocument>(
+    `/api/matches/${encodeURIComponent(matchId)}/initial-identity-audit?force=${String(force)}`,
+  );
+}
+
+export async function getInitialIdentityAuditSeeds(
+  matchId: string,
+): Promise<InitialIdentityAuditSeedStoreDocument> {
+  return request<InitialIdentityAuditSeedStoreDocument>(
+    `/api/matches/${encodeURIComponent(matchId)}/initial-identity-audit/seeds`,
+  );
+}
+
+export async function saveInitialIdentityAuditSeeds(
+  matchId: string,
+  updates: InitialIdentityAuditSeedUpdate[],
+  telemetryEvents: InitialIdentityAuditTelemetryEvent[] = [],
+): Promise<InitialIdentityAuditSeedStoreDocument> {
+  return request<InitialIdentityAuditSeedStoreDocument>(
+    `/api/matches/${encodeURIComponent(matchId)}/initial-identity-audit/seeds`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        updates,
+        telemetry_events: telemetryEvents,
+      }),
+    },
+  );
 }
 
 export async function saveIdentityCropReview(

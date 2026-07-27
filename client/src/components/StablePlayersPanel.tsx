@@ -21,6 +21,7 @@ import type {
 import { errorMessage } from '../lib/helpers';
 import { IdentityReviewGalleryPanel } from './IdentityReviewGalleryPanel';
 import { IdentityCropReviewPanel } from './IdentityCropReviewPanel';
+import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { IdentityRosterSubjectReviewPanel } from './IdentityRosterSubjectReviewPanel';
 
 interface StablePlayersPanelProps {
@@ -492,6 +493,11 @@ export function StablePlayersPanel({
           <span>Ghost boxes: {numberFrom(frameSummary, 'ghost_bbox_count') ?? 'n/a'}</span>
         </div>
       )}
+
+      <InitialIdentityAuditPanel
+        match={match}
+        onStatus={onStatus}
+      />
 
       <IdentityRosterSubjectReviewPanel
         match={match}

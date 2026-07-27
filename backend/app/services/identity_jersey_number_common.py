@@ -15,6 +15,24 @@ EVIDENCE_STATES = {
     "number_unreadable",
     "number_conflict",
 }
+JERSEY_NUMBER_STATES = frozenset(
+    {
+        "number_confirmed",
+        "number_absent",
+        "number_unreadable",
+    }
+)
+JERSEY_NUMBER_STATE_ALIASES = {
+    "confirmed": "number_confirmed",
+    "readable": "number_confirmed",
+    "number_confirmed": "number_confirmed",
+    "absent": "number_absent",
+    "no_number": "number_absent",
+    "number_absent": "number_absent",
+    "unreadable": "number_unreadable",
+    "unknown": "number_unreadable",
+    "number_unreadable": "number_unreadable",
+}
 
 CANONICAL_STRUCTURAL_BLOCKERS = frozenset(
     {
@@ -55,6 +73,56 @@ def normalize_jersey_number(value: Any) -> str | None:
     if not text or not NUMBER_PATTERN.fullmatch(text):
         return None
     return str(int(text))
+
+
+def normalize_jersey_number_annotation(
+    value: Any,
+    *,
+    allow_missing: bool = True,
+) -> dict[str, str | None]:
+    """Normalize canonical and legacy operator jersey-number annotations."""
+    if not isinstance(value, dict):
+        raise ValueError("jersey number annotation must be an object")
+
+    raw_number = value.get("jersey_number", value.get("number"))
+    number = normalize_jersey_number(raw_number)
+    if raw_number not in (None, "") and number is None:
+        raise ValueError("jersey_number must contain 1-3 digits or be empty")
+
+    explicit_canonical_state = value.get("jersey_number_state")
+    if explicit_canonical_state not in (None, ""):
+        raw_state = explicit_canonical_state
+    elif "jersey_number" in value:
+        # The old operator contract used a present-but-empty field for unreadable.
+        raw_state = "number_confirmed" if number is not None else "number_unreadable"
+    else:
+        raw_state = value.get("label_state", value.get("state"))
+    state = (
+        JERSEY_NUMBER_STATE_ALIASES.get(str(raw_state).strip().lower())
+        if raw_state not in (None, "")
+        else None
+    )
+    if raw_state not in (None, "") and state is None:
+        raise ValueError(f"Unsupported jersey_number_state: {raw_state}")
+
+    if state is None and number is not None:
+        state = "number_confirmed"
+    elif state is None and ("jersey_number" in value or "number" in value):
+        state = "number_unreadable"
+
+    if state is None:
+        if allow_missing:
+            return {}
+        raise ValueError("jersey_number_state is required")
+    if state == "number_confirmed" and number is None:
+        raise ValueError("number_confirmed requires a valid jersey_number")
+    if state in {"number_absent", "number_unreadable"}:
+        number = None
+
+    return {
+        "jersey_number_state": state,
+        "jersey_number": number,
+    }
 
 
 def team_label(value: Any) -> str:

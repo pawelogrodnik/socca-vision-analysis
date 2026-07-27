@@ -8,21 +8,38 @@ from statistics import median
 from typing import Any
 
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_jersey_number_common import normalize_jersey_number_annotation
 from app.services.identity_jersey_number_common import normalize_normalized_bbox
 from app.services.identity_jersey_number_common import normalize_safe_relative_artifact_path
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_panel_audit"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "1.0.0"
 PANEL_RESIZE_WIDTH = 96
 PANEL_RESIZE_HEIGHT = 64
 MONTAGE_FILENAME = "number_panel_montage.jpg"
 READINESS_FILENAME = "number_panel_dataset_readiness.json"
+SELECTION_FILENAME = "panel_experiment_selection.json"
+APPROVAL_FILENAME = "number_panel_montage_approval.json"
+FINDINGS_FILENAME = "J8_3_PANEL_READINESS_FINDINGS.md"
+SELECTION_VERSION = "panel-experiment-selection-v1"
 MIN_READABLE_CROPS = 50
 MIN_READABLE_EPISODES = 20
 MIN_NEGATIVES = 30
 MIN_MEDIAN_DIGIT_HEIGHT = 8.0
+REAL10_FRAMES = frozenset({3509, 3510, 3512})
+INVALID_SELECTED_STATUSES = frozenset(
+    {
+        "missing_panel_bbox",
+        "missing_panel_artifact",
+        "missing_source_artifact",
+        "corrupt_source_artifact",
+        "empty_panel_crop",
+        "invalid_bbox",
+        "stale_panel_definition",
+    }
+)
 
 
 def audit_identity_jersey_number_panels(
@@ -30,6 +47,8 @@ def audit_identity_jersey_number_panels(
     *,
     output_root: Path,
     generated_at: str | None = None,
+    selection_doc: dict[str, Any] | None = None,
+    approval_doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     samples = [dict(row) for row in dataset_doc.get("samples") or [] if isinstance(row, dict)]
     ordered = sorted(
@@ -41,11 +60,52 @@ def audit_identity_jersey_number_panels(
             str(row.get("anchor_crop_id") or ""),
         ),
     )
-    rows = [_audit_row(row) for row in ordered]
+    selection = normalize_panel_experiment_selection(
+        selection_doc or build_panel_experiment_selection(dataset_doc)
+    )
+    selected_keys = set(selection["sample_keys"])
+    rows: list[dict[str, Any]] = []
+    for sample in ordered:
+        sample_key = str(sample.get("sample_key") or "")
+        if sample_key not in selected_keys:
+            rows.append(_unselected_row(sample))
+            continue
+        try:
+            rows.append(_audit_row(sample))
+        except ValueError as exc:
+            rows.append(_invalid_row(sample, str(exc)))
+
     output_root.mkdir(parents=True, exist_ok=True)
     montage_path = output_root / MONTAGE_FILENAME
-    _write_montage(rows, montage_path)
+    selected_rows = [row for row in rows if row["status"] != "not_selected_for_panel_experiment"]
+    _write_montage(selected_rows, montage_path)
+    montage_sha256 = _file_sha256(montage_path)
     summary = _summary(rows, dataset_doc)
+    approval = validate_montage_approval(
+        approval_doc,
+        montage_sha256=montage_sha256,
+        dataset_digest=str(dataset_doc.get("dataset_digest") or ""),
+        selection_digest=selection["selection_digest"],
+    )
+    digit_height_median = summary["estimated_digit_height_px"]["median"]
+    machine_gates = {
+        "selected_sample_nonempty": summary["selected_samples"] > 0,
+        "selected_invalid_zero": summary["selected_invalid_samples"] == 0,
+        "audited_panel_coverage_complete": summary["audited_panel_coverage"] == 1.0,
+        "readable_panel_crop_minimum": summary["readable_confirmed_panels"] >= MIN_READABLE_CROPS,
+        "readable_visibility_episode_minimum": summary["readable_visibility_episodes"] >= MIN_READABLE_EPISODES,
+        "negative_crop_minimum": (
+            summary["number_absent_panels"] + summary["number_unreadable_panels"]
+        )
+        >= MIN_NEGATIVES,
+        "median_digit_height_minimum": (
+            digit_height_median is not None
+            and float(digit_height_median) >= MIN_MEDIAN_DIGIT_HEIGHT
+        ),
+        "real10_panel_minimum": summary["real10_panels_found"] >= 1,
+    }
+    machine_ready = all(machine_gates.values())
+    human_approved = bool(approval["valid"] and approval["status"] == "approved")
     report = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
@@ -68,38 +128,210 @@ def audit_identity_jersey_number_panels(
             "dataset_summary_digest": canonical_digest(dataset_doc.get("summary") or {}),
             "samples": len(ordered),
         },
+        "panel_experiment_selection": selection,
+        "montage": {
+            "filename": MONTAGE_FILENAME,
+            "sha256": montage_sha256,
+            "human_approval": approval,
+        },
         "outputs": {
             "number_panel_dataset_readiness": READINESS_FILENAME,
             "number_panel_montage": MONTAGE_FILENAME,
+            "number_panel_montage_approval": APPROVAL_FILENAME,
+            "panel_experiment_selection": SELECTION_FILENAME,
+            "findings": FINDINGS_FILENAME,
         },
         "summary": summary,
         "gates": {
-            "readable_panel_crop_minimum": summary["readable_full_number_crops"] >= MIN_READABLE_CROPS,
-            "readable_visibility_episode_minimum": summary["readable_visibility_episodes"] >= MIN_READABLE_EPISODES,
-            "negative_crop_minimum": summary["negative_crops"] >= MIN_NEGATIVES,
-            "median_digit_height_minimum": (
-                summary["estimated_digit_height_px"]["median"] is not None
-                and float(summary["estimated_digit_height_px"]["median"]) >= MIN_MEDIAN_DIGIT_HEIGHT
-            ),
+            **machine_gates,
+            "machine_ready": machine_ready,
             "manual_panel_audit_required": True,
+            "human_montage_approval_valid": human_approved,
         },
         "samples": rows,
     }
-    report["status"] = (
-        "ready_for_panel_digit_experiment"
-        if (
-            report["gates"]["readable_panel_crop_minimum"]
-            and report["gates"]["readable_visibility_episode_minimum"]
-            and report["gates"]["negative_crop_minimum"]
-            and report["gates"]["median_digit_height_minimum"]
-        )
-        else "insufficient_panel_readiness"
-    )
+    if not machine_ready:
+        report["status"] = "insufficient_panel_readiness"
+    elif human_approved:
+        report["status"] = "ready_for_panel_digit_experiment"
+    elif approval["valid"] and approval["status"] == "rejected":
+        report["status"] = "human_review_rejected"
+    else:
+        report["status"] = "machine_ready_waiting_for_human_review"
+    report["final_decision"] = panel_readiness_final_decision(report)
     return report
+
+
+def build_panel_experiment_selection(dataset_doc: dict[str, Any]) -> dict[str, Any]:
+    """Select deterministic high-value panels; never make all dataset noise blocking."""
+    samples = [row for row in dataset_doc.get("samples") or [] if isinstance(row, dict)]
+    normalized: list[tuple[dict[str, Any], dict[str, str | None]]] = []
+    for sample in samples:
+        sample_key = str(sample.get("sample_key") or "")
+        if not sample_key:
+            continue
+        try:
+            annotation = normalize_jersey_number_annotation(sample, allow_missing=False)
+        except ValueError:
+            continue
+        normalized.append((sample, annotation))
+
+    def sort_key(item: tuple[dict[str, Any], dict[str, str | None]]) -> tuple[Any, ...]:
+        sample, annotation = item
+        state = annotation["jersey_number_state"]
+        state_order = {"number_confirmed": 0, "number_absent": 1, "number_unreadable": 2}
+        return (
+            0 if int(sample.get("frame") or -1) in REAL10_FRAMES else 1,
+            state_order.get(str(state), 9),
+            str(sample.get("visibility_episode_id") or ""),
+            int(sample.get("frame") or 0),
+            str(sample.get("sample_key") or ""),
+        )
+
+    ordered = sorted(normalized, key=sort_key)
+    selected_set: set[str] = set()
+
+    def choose_diverse(
+        rows: list[tuple[dict[str, Any], dict[str, str | None]]],
+        *,
+        limit: int,
+    ) -> list[str]:
+        chosen: list[str] = []
+        chosen_set: set[str] = set()
+        episodes: set[str] = set()
+        for sample, _ in rows:
+            if len(chosen) >= limit:
+                break
+            episode = str(sample.get("visibility_episode_id") or "")
+            if episode and episode in episodes:
+                continue
+            key = str(sample["sample_key"])
+            chosen.append(key)
+            chosen_set.add(key)
+            if episode:
+                episodes.add(episode)
+        for sample, _ in rows:
+            if len(chosen) >= limit:
+                break
+            key = str(sample["sample_key"])
+            if key in chosen_set:
+                continue
+            chosen.append(key)
+            chosen_set.add(key)
+        return chosen
+
+    confirmed = [item for item in ordered if item[1]["jersey_number_state"] == "number_confirmed"]
+    absent = [item for item in ordered if item[1]["jersey_number_state"] == "number_absent"]
+    unreadable = [
+        item for item in ordered if item[1]["jersey_number_state"] == "number_unreadable"
+    ]
+    negatives: list[tuple[dict[str, Any], dict[str, str | None]]] = []
+    for index in range(max(len(absent), len(unreadable))):
+        if index < len(absent):
+            negatives.append(absent[index])
+        if index < len(unreadable):
+            negatives.append(unreadable[index])
+
+    selected_set.update(choose_diverse(confirmed, limit=MIN_READABLE_CROPS))
+    selected_set.update(choose_diverse(negatives, limit=MIN_NEGATIVES))
+    selection_keys = sorted(selected_set)
+    selection_digest = canonical_digest(
+        {"selection_version": SELECTION_VERSION, "sample_keys": selection_keys}
+    )
+    return {
+        "selection_version": SELECTION_VERSION,
+        "sample_keys": selection_keys,
+        "selection_digest": selection_digest,
+    }
+
+
+def normalize_panel_experiment_selection(value: dict[str, Any]) -> dict[str, Any]:
+    version = str(value.get("selection_version") or SELECTION_VERSION)
+    keys = sorted(
+        {
+            str(key).strip()
+            for key in value.get("sample_keys") or []
+            if isinstance(key, str) and str(key).strip()
+        }
+    )
+    expected = canonical_digest({"selection_version": version, "sample_keys": keys})
+    supplied = value.get("selection_digest")
+    if supplied not in (None, expected):
+        raise ValueError("panel experiment selection digest mismatch")
+    return {
+        "selection_version": version,
+        "sample_keys": keys,
+        "selection_digest": expected,
+    }
+
+
+def validate_montage_approval(
+    value: dict[str, Any] | None,
+    *,
+    montage_sha256: str,
+    dataset_digest: str,
+    selection_digest: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"valid": False, "status": None, "reasons": ["approval_missing"]}
+    status = str(value.get("status") or "").strip().lower()
+    reasons: list[str] = []
+    if status not in {"approved", "rejected"}:
+        reasons.append("approval_status_invalid")
+    for key, expected in (
+        ("montage_sha256", montage_sha256),
+        ("dataset_digest", dataset_digest),
+        ("selection_digest", selection_digest),
+    ):
+        if str(value.get(key) or "") != expected:
+            reasons.append(f"{key}_mismatch")
+    if not str(value.get("reviewer") or "").strip():
+        reasons.append("reviewer_missing")
+    if not str(value.get("reviewed_at") or "").strip():
+        reasons.append("reviewed_at_missing")
+    return {
+        "valid": not reasons,
+        "status": status or None,
+        "reviewer": value.get("reviewer"),
+        "reviewed_at": value.get("reviewed_at"),
+        "notes": value.get("notes"),
+        "reasons": reasons,
+    }
+
+
+def build_montage_approval_template(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "0.1.0",
+        "montage_sha256": report["montage"]["sha256"],
+        "dataset_digest": str(report["source"].get("dataset_digest") or ""),
+        "selection_digest": report["panel_experiment_selection"]["selection_digest"],
+        "reviewer": None,
+        "reviewed_at": None,
+        "status": None,
+        "notes": "",
+    }
+
+
+def panel_readiness_final_decision(report: dict[str, Any]) -> str:
+    summary = report["summary"]
+    if summary["selected_invalid_samples"] > 0 or summary["audited_panel_coverage"] < 1.0:
+        return "FIX_PANEL_PIPELINE_FIRST"
+    if summary["readable_confirmed_panels"] < MIN_READABLE_CROPS:
+        return "AVAILABLE_DATA_NOT_SUFFICIENT"
+    if summary["readable_visibility_episodes"] < MIN_READABLE_EPISODES:
+        return "AVAILABLE_DATA_NOT_SUFFICIENT"
+    if summary["number_absent_panels"] + summary["number_unreadable_panels"] < MIN_NEGATIVES:
+        return "AVAILABLE_DATA_NOT_SUFFICIENT"
+    if report["status"] == "ready_for_panel_digit_experiment":
+        return "PROCEED_TO_J8_4_LATER"
+    if report["status"] == "machine_ready_waiting_for_human_review":
+        return "PENDING_HUMAN_APPROVAL"
+    return "FIX_PANEL_PIPELINE_FIRST"
 
 
 def _audit_row(sample: dict[str, Any]) -> dict[str, Any]:
     cv2, _ = _image_libs()
+    annotation = normalize_jersey_number_annotation(sample, allow_missing=False)
     artifact_root = Path(str(sample.get("artifact_root") or ""))
     base_artifact = normalize_safe_relative_artifact_path(
         sample.get("artifact"),
@@ -123,8 +355,10 @@ def _audit_row(sample: dict[str, Any]) -> dict[str, Any]:
         "visibility_episode_id": sample.get("visibility_episode_id"),
         "frame": int(sample.get("frame") or 0),
         "view": sample.get("view"),
-        "label_state": sample.get("label_state"),
-        "number": sample.get("number"),
+        "jersey_number_state": annotation["jersey_number_state"],
+        "jersey_number": annotation["jersey_number"],
+        "label_state": annotation["jersey_number_state"],
+        "number": annotation["jersey_number"],
         "digit_visibility": sample.get("digit_visibility"),
         "artifact": base_artifact,
         "number_panel_artifact": panel_artifact,
@@ -204,6 +438,42 @@ def _audit_row(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _unselected_row(sample: dict[str, Any]) -> dict[str, Any]:
+    try:
+        annotation = normalize_jersey_number_annotation(sample, allow_missing=True)
+    except ValueError:
+        annotation = {}
+    return {
+        "sample_key": sample.get("sample_key"),
+        "anchor_crop_id": sample.get("anchor_crop_id"),
+        "source_match_key": sample.get("source_match_key"),
+        "source_video_key": sample.get("source_video_key"),
+        "candidate_subject_id": sample.get("candidate_subject_id"),
+        "tracklet_id": sample.get("tracklet_id"),
+        "visibility_episode_id": sample.get("visibility_episode_id"),
+        "frame": int(sample.get("frame") or 0),
+        "view": sample.get("view"),
+        "jersey_number_state": annotation.get("jersey_number_state"),
+        "jersey_number": annotation.get("jersey_number"),
+        "label_state": annotation.get("jersey_number_state"),
+        "number": annotation.get("jersey_number"),
+        "status": "not_selected_for_panel_experiment",
+        "panel_digest": None,
+        "panel_width_px": None,
+        "panel_height_px": None,
+        "resized_panel_shape": None,
+        "estimated_digit_height_px": None,
+    }
+
+
+def _invalid_row(sample: dict[str, Any], error: str) -> dict[str, Any]:
+    return {
+        **_unselected_row(sample),
+        "status": "invalid_bbox" if "bbox" in error.lower() else "stale_panel_definition",
+        "error": error,
+    }
+
+
 def _crop_panel(image: Any, bbox: list[float] | None) -> Any:
     if bbox is None:
         return None
@@ -249,16 +519,22 @@ def _estimate_digit_height(image: Any) -> float | None:
 
 
 def _summary(rows: list[dict[str, Any]], dataset_doc: dict[str, Any]) -> dict[str, Any]:
-    audited = [row for row in rows if row["status"] == "audited"]
-    readable = [row for row in audited if row.get("label_state") == "number_confirmed" and row.get("number")]
+    selected = [row for row in rows if row["status"] != "not_selected_for_panel_experiment"]
+    audited = [row for row in selected if row["status"] == "audited"]
+    invalid = [row for row in selected if row["status"] in INVALID_SELECTED_STATUSES]
+    readable = [
+        row
+        for row in audited
+        if row.get("jersey_number_state") == "number_confirmed" and row.get("jersey_number")
+    ]
     readable_full = [row for row in readable if row.get("digit_visibility") != "partial"]
     readable_partial = [
         row
         for row in readable
         if row.get("digit_visibility") == "partial"
     ]
-    plain_shirt = [row for row in audited if row.get("label_state") == "number_absent"]
-    unreadable = [row for row in audited if row.get("label_state") == "number_unreadable"]
+    plain_shirt = [row for row in audited if row.get("jersey_number_state") == "number_absent"]
+    unreadable = [row for row in audited if row.get("jersey_number_state") == "number_unreadable"]
     digits = Counter()
     for row in readable_full:
         for digit in str(row.get("number") or ""):
@@ -270,6 +546,18 @@ def _summary(rows: list[dict[str, Any]], dataset_doc: dict[str, Any]) -> dict[st
     }
     return {
         "total_samples": len(rows),
+        "selected_samples": len(selected),
+        "selected_audited_samples": len(audited),
+        "selected_invalid_samples": len(invalid),
+        "audited_panel_coverage": round(len(audited) / len(selected), 6) if selected else 0.0,
+        "readable_confirmed_panels": len(readable_full),
+        "number_absent_panels": len(plain_shirt),
+        "number_unreadable_panels": len(unreadable),
+        "real10_panels_found": sum(
+            row.get("source_match_key") == "real10"
+            or int(row.get("frame") or -1) in REAL10_FRAMES
+            for row in audited
+        ),
         "total_panel_crops": len(audited),
         "readable_full_number_crops": len(readable_full),
         "partial_number_crops": len(readable_partial),
@@ -290,7 +578,11 @@ def _summary(rows: list[dict[str, Any]], dataset_doc: dict[str, Any]) -> dict[st
         "panel_width_px": _distribution([float(row["panel_width_px"]) for row in audited if row.get("panel_width_px")]),
         "panel_height_px": _distribution([float(row["panel_height_px"]) for row in audited if row.get("panel_height_px")]),
         "estimated_digit_height_px": _distribution(
-            [float(row["estimated_digit_height_px"]) for row in audited if row.get("estimated_digit_height_px") is not None]
+            [
+                float(row["estimated_digit_height_px"])
+                for row in readable_full
+                if row.get("estimated_digit_height_px") is not None
+            ]
         ),
         "missing_panel_bbox_count": sum(row["status"] == "missing_panel_bbox" for row in rows),
         "status_counts": dict(sorted(Counter(str(row["status"]) for row in rows).items())),
@@ -307,6 +599,47 @@ def _distribution(values: list[float]) -> dict[str, float | int | None]:
         "median": round(float(median(values)), 3),
         "max": round(max(values), 3),
     }
+
+
+def render_panel_readiness_findings(report: dict[str, Any]) -> str:
+    summary = report["summary"]
+    approval = report["montage"]["human_approval"]
+    selection = report["panel_experiment_selection"]
+    source = report["source"]
+    return "\n".join(
+        [
+            "# J8.3 Panel Readiness Findings",
+            "",
+            f"- Source dataset digest: `{source.get('dataset_digest') or 'missing'}`",
+            f"- Selection version: `{selection['selection_version']}`",
+            f"- Selection digest: `{selection['selection_digest']}`",
+            f"- Selected samples: {summary['selected_samples']}",
+            f"- Audited selected samples: {summary['selected_audited_samples']}",
+            f"- Invalid selected samples: {summary['selected_invalid_samples']}",
+            f"- Panel coverage: {summary['audited_panel_coverage']:.3f}",
+            f"- Confirmed readable panels: {summary['readable_confirmed_panels']}",
+            f"- Number absent panels: {summary['number_absent_panels']}",
+            f"- Number unreadable panels: {summary['number_unreadable_panels']}",
+            f"- Readable visibility episodes: {summary['readable_visibility_episodes']}",
+            f"- Median confirmed digit height: {summary['estimated_digit_height_px']['median']}",
+            f"- real10 panels found: {summary['real10_panels_found']}",
+            f"- Montage SHA-256: `{report['montage']['sha256']}`",
+            f"- Human montage decision: `{approval.get('status') or 'pending'}`",
+            f"- Human approval valid: `{approval.get('valid')}`",
+            f"- Runtime status: `{report['status']}`",
+            "",
+            f"## Final Decision: {report['final_decision']}",
+            "",
+        ]
+    )
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _write_montage(rows: list[dict[str, Any]], path: Path) -> None:

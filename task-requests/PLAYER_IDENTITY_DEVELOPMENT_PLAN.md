@@ -227,11 +227,28 @@ kilka pewnych operator seeds
 J8.1 freeze recognizers: closed
 J8.2 panel annotation contract: closed
 J8.3 panel audit implementation: closed
-J8.3 real dataset run + human approval + findings: open
+J8.3 real dataset run + human approval + findings: closed
+J8.3 final decision: AVAILABLE_DATA_NOT_SUFFICIENT
 J8.4 PanelDigitNetV1: not started
 ```
 
 Agent ma najpierw zweryfikować, czy ten status nadal odpowiada aktualnemu `HEAD`.
+
+Checkpoint 2026-07-27:
+
+```text
+J8.3 implementation + canonical subset: complete
+bounded panel-box audit package: generated (58 samples)
+operator panel-box review: complete (58/58)
+confirmed panel boxes: 19
+canonical experiment: 19/19 audited, 0 invalid
+readable panels: 16 / 50
+readable visibility episodes: 13 / 20
+absent/unreadable negatives: 3 / 30
+human montage approval: approved and digest-bound
+final decision: AVAILABLE_DATA_NOT_SUFFICIENT
+J8.4: blocked until dataset readiness improves
+```
 
 ## Cel fazy
 
@@ -342,6 +359,43 @@ selection digest
 - output jest deterministyczny;
 - żadnego UI wymagającego raw coordinates.
 
+### Status 2026-07-27
+
+```text
+CLOSED — IA0_ACCEPTED
+```
+
+Zaimplementowano:
+
+- read-only selektor pracujący na frozen `global_identity.json`,
+  `tracklets.json`, `analysis_report.json` i opcjonalnym camera motion;
+- deterministyczny scoring jakości, różnorodności czasowej i pokrycia
+  dotychczas niewidzianych subjectów;
+- twardy limit 10 klatek oraz domyślny budżet 8 klatek;
+- eksport pełnych stop-klatek i lekkich miniaturek bez ponownego YOLO;
+- canonical digests wejść, `selection_digest`, provenance i safety contract;
+- testy budżetu, deterministyczności, odstępów czasowych, jakości,
+  provenance oraz braku mutacji wejściowego identity.
+
+Akceptacja na frozen easy90:
+
+```text
+run: 20260715T111009Z-yolo-ultralytics-chunked-598d1dee
+artifact: backend/storage/benchmarks/player_identity/ia0-frame-selection-easy90-20260727-v1
+candidate frames: 180
+selected frames: 8
+unique visible subjects: 19
+selected mean intrinsic score: 0.839489
+random baseline mean intrinsic score: 0.745798
+near-duplicate pairs: 0
+selection digest: a8095f335a09fd3d6123c518b78fc713caf97c493e0ddbb237cdc006fe807820
+```
+
+Powtórne uruchomienie wygenerowało identyczne selected rows i ten sam
+`selection_digest`. Kontrola wizualna montage potwierdziła czytelne,
+zróżnicowane czasowo klatki bez masowego overlapu. IA1 może korzystać z
+pełnych klatek i detection provenance zapisanych przez IA0.
+
 ## IA1 — Initial Identity Audit read-only UI
 
 ### Cel
@@ -376,6 +430,48 @@ Kliknięcie może pokazać powiększony crop i lekki neighboring-frame strip, al
 - `Skip / Nie wiem` zawsze dostępne;
 - widoczny progress;
 - możliwość zakończenia przed pełnym pokryciem.
+
+### Status 2026-07-27
+
+```text
+CLOSED — IA1_ACCEPTED
+```
+
+Zaimplementowano:
+
+- read-only endpoint i cache per match, korzystające wyłącznie z frozen
+  artifacts oraz stop-klatek wybranych przez IA0;
+- pełną stop-klatkę z klikalnymi bboxami i czytelnym cropem wybranej
+  obserwacji;
+- obie szybkie ścieżki operatora: `bbox → zawodnik/akcja` oraz
+  `zawodnik/akcja → bbox`;
+- akcje roster player, nieznany Team A/B, sędzia, false detection oraz
+  `Pomiń / nie wiem`;
+- widoczny postęp, licznik decyzji, nawigację między klatkami i możliwość
+  zakończenia audytu w dowolnym momencie;
+- jednorazowe uzbrajanie akcji, żeby wybór osoby nie został przypadkiem
+  przeniesiony na kolejny bbox;
+- automatyczny reset read-only dokumentu i lokalnych decyzji po zmianie
+  meczu;
+- operator-safe public contract bez coordinates, confidence i internal IDs;
+  techniczne provenance pozostaje w artifacts backendu.
+
+Walidacja lokalna:
+
+```text
+match: 46904e8c
+selected frames: 8
+visible observations: 94
+YOLO rerun: no
+backend focused tests: 11 passed
+frontend strict typecheck: passed
+frontend build: passed
+operator flow: bbox→player, player→bbox, skip, navigation, early finish passed
+```
+
+IA1 zamknęło read-only kontrakt interakcji. Zapis decyzji i telemetry został
+następnie dołączony w IA2; propagacja i seed-aware rebuild nadal należą do
+IA3–IA4.
 
 ## IA2 — Atomic operator-seed store and telemetry
 
@@ -430,6 +526,42 @@ false_detections_marked
 - stale artifact detection;
 - production hashes unchanged;
 - duplicate assignment conflict na tej samej klatce jest blokowany lub jawnie obsługiwany.
+
+### Status 2026-07-27
+
+```text
+CLOSED — IA2_ACCEPTED
+```
+
+Zaimplementowano:
+
+- osobny `identity_operator_seeds.json` z observation-level decisions,
+  technicznym provenance, capture domain, roster metadata i source digests;
+- autosave po każdej akcji, idempotentne `update_id`, zapis atomowy przez
+  plik tymczasowy oraz wznowienie audytu po ponownym otwarciu;
+- publiczny kontrakt bez bboxów i internal provenance przy zachowaniu pełnych
+  danych technicznych w artefakcie backendu;
+- telemetry sesji, pokazanych klatek, kliknięć cropów, decyzji i aktywnego
+  czasu operatora;
+- stale selection detection, która nie przyjmuje decyzji dla zmienionego
+  zestawu klatek;
+- blokadę przypisania jednego realnego zawodnika do dwóch obserwacji w tej
+  samej klatce;
+- snapshot i kontrolę hashy production identity przed i po zapisie;
+- integrację UI z autosave, widocznym stanem zapisu, resume i bezpiecznym
+  komunikatem błędu.
+
+Walidacja lokalna:
+
+```text
+backend focused tests: 16 passed
+frontend strict typecheck: passed
+frontend production build: passed
+atomic temporary files after save: 0
+production identity mutation during seed save: 0
+YOLO rerun: no
+downstream identity rebuild: no
+```
 
 ## IA3 — Seed-aware candidate identity re-resolve
 
@@ -978,10 +1110,10 @@ Named MP4 może wrócić później jako opcjonalny validation/export feature, al
 Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 
 ```text
-A  J8.3 panel closeout                         OPEN
-B  IA0–IA4 Initial Audit core                 BLOCKED BY A CLOSEOUT
+A  J8.3 panel closeout                         CLOSED — AVAILABLE_DATA_NOT_SUFFICIENT
+B  IA0–IA4 Initial Audit core                 IN PROGRESS — IA0–IA2 CLOSED, IA3 READY
 C  IA5–IA6 H2 re-anchor + appearance gallery  BLOCKED BY B
-D  J8.4 useful jersey recognizer              BLOCKED BY A; SCHEDULED AFTER C
+D  J8.4 useful jersey recognizer              BLOCKED BY DATA READINESS; SCHEDULED AFTER C
 E  IA7 evidence fusion                        BLOCKED BY C + D
 F  IA8–IA9 exception-only/adaptive review     BLOCKED BY E
 G  P1.23 revalidation + P1.24 apply            BLOCKED BY F
@@ -998,18 +1130,18 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie agent ma rozpocząć od:
 
 ```text
-Faza A — J8.3 Jersey Panel Closeout
+IA3 Seed-aware candidate identity re-resolve
 ```
 
-Po jej zamknięciu agent ma zatrzymać się, zapisać decyzję i wskazać:
+J8.3 zostało zamknięte decyzją:
 
 ```text
-next task = IA0 Frozen-artifact frame selection prototype
+AVAILABLE_DATA_NOT_SUFFICIENT
 ```
 
-Nie rozpoczynać J8.4 automatycznie w tym samym cyklu.
+Nie rozpoczynać J8.4, dopóki dane nie spełnią readiness gates.
 
-Po IA0 następne zadania są wykonywane dokładnie w kolejności:
+Po zamkniętym IA0 następne zadania są wykonywane dokładnie w kolejności:
 
 ```text
 IA1

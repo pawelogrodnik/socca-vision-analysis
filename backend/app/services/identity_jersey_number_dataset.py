@@ -9,7 +9,7 @@ from typing import Any
 from app.services.identity_jersey_number_common import (
     canonical_digest,
     normalize_normalized_bbox,
-    normalize_jersey_number,
+    normalize_jersey_number_annotation,
     normalize_safe_relative_artifact_path,
     stable_key,
     team_label,
@@ -31,6 +31,7 @@ DEFAULT_PARAMETERS = {
     },
 }
 JERSEY_ANNOTATION_FIELDS = (
+    "jersey_number_state",
     "jersey_number",
     "digit_visibility",
     "occlusion_state",
@@ -136,37 +137,7 @@ def build_identity_jersey_number_dataset_manifest(
             row["anchor_crop_id"],
         )
     )
-    dataset_digest = canonical_digest(
-        [
-            {
-                key: row.get(key)
-                for key in (
-                    "sample_key",
-                    "source_match_key",
-                    "source_video_key",
-                    "candidate_subject_id",
-                    "tracklet_id",
-                    "frame",
-                    "team_label",
-                    "label_state",
-                    "number",
-                    "view",
-                    "digit_visibility",
-                    "occlusion_state",
-                    "blur_level",
-                    "perspective_state",
-                    "panel_height_ratio",
-                    "kit_profile",
-                    "number_panel_bbox_normalized",
-                    "number_panel_artifact",
-                    "visibility_episode_id",
-                    "split",
-                    "artifact_digest",
-                )
-            }
-            for row in samples
-        ]
-    )
+    dataset_digest = identity_jersey_number_dataset_digest(samples)
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated,
@@ -187,6 +158,43 @@ def build_identity_jersey_number_dataset_manifest(
         "sources": source_rows,
         "samples": samples,
     }
+
+
+def identity_jersey_number_dataset_digest(samples: list[dict[str, Any]]) -> str:
+    """Return the canonical digest used by dataset manifests and review imports."""
+    return canonical_digest(
+        [
+            {
+                key: row.get(key)
+                for key in (
+                    "sample_key",
+                    "source_match_key",
+                    "source_video_key",
+                    "candidate_subject_id",
+                    "tracklet_id",
+                    "frame",
+                    "team_label",
+                    "jersey_number_state",
+                    "jersey_number",
+                    "label_state",
+                    "number",
+                    "view",
+                    "digit_visibility",
+                    "occlusion_state",
+                    "blur_level",
+                    "perspective_state",
+                    "panel_height_ratio",
+                    "kit_profile",
+                    "number_panel_bbox_normalized",
+                    "number_panel_artifact",
+                    "visibility_episode_id",
+                    "split",
+                    "artifact_digest",
+                )
+            }
+            for row in samples
+        ]
+    )
 
 
 def _flatten_cards(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -217,23 +225,36 @@ def _merge_subject_review_annotations(
     if not isinstance(subject_review_doc, dict) or subject_review_doc.get("decisions_fresh") is not True:
         return 0
     annotations: dict[str, dict[str, Any]] = {}
+    conflicting_crop_ids: set[str] = set()
     for card in subject_review_doc.get("cards") or []:
         if not isinstance(card, dict):
             continue
         for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or []):
             if not isinstance(crop, dict) or not crop.get("anchor_crop_id"):
                 continue
-            annotation = crop.get("jersey_number_annotation")
-            if not isinstance(annotation, dict):
+            jersey_annotation = crop.get("jersey_number_annotation")
+            panel_annotation = crop.get("number_panel_annotation")
+            if not isinstance(jersey_annotation, dict) and not isinstance(panel_annotation, dict):
                 continue
             crop_id = str(crop["anchor_crop_id"])
-            normalized = {
-                field: annotation.get(field)
-                for field in JERSEY_ANNOTATION_FIELDS
-                if field in annotation
-            }
+            normalized: dict[str, Any] = {}
+            if isinstance(jersey_annotation, dict):
+                normalized.update(
+                    {
+                        field: jersey_annotation.get(field)
+                        for field in JERSEY_ANNOTATION_FIELDS
+                        if field in jersey_annotation
+                    }
+                )
+            if isinstance(panel_annotation, dict):
+                bbox = panel_annotation.get("number_panel_bbox_normalized")
+                if bbox is not None:
+                    normalized["number_panel_bbox_normalized"] = bbox
+            if not normalized or crop_id in conflicting_crop_ids:
+                continue
             if crop_id in annotations and annotations[crop_id] != normalized:
                 annotations.pop(crop_id)
+                conflicting_crop_ids.add(crop_id)
                 continue
             annotations[crop_id] = normalized
     applied = 0
@@ -256,15 +277,15 @@ def _sample_from_review(
     artifact = str(card.get("torso_artifact") or card.get("artifact") or "")
     artifact_kind = "torso_crop" if card.get("torso_artifact") else "anchor_crop"
     artifact_path = crop_root / artifact
-    manual_number = normalize_jersey_number(review.get("jersey_number"))
-    if "jersey_number" in review:
-        state = "number_confirmed" if manual_number is not None else "number_unreadable"
-        number = manual_number
-    else:
-        state = str(review.get("state") or "number_unreadable")
-        number = normalize_jersey_number(review.get("number"))
-        if state != "number_confirmed":
-            number = None
+    normalized_annotation = normalize_jersey_number_annotation(
+        review,
+        allow_missing=True,
+    )
+    state = str(
+        normalized_annotation.get("jersey_number_state")
+        or "number_unreadable"
+    )
+    number = normalized_annotation.get("jersey_number")
     subject_id = str(card.get("candidate_subject_id") or "")
     tracklet_id = str(card.get("tracklet_id") or "")
     frame = int(card.get("frame") or 0)
@@ -314,6 +335,8 @@ def _sample_from_review(
         "artifact_root": str(crop_root),
         "artifact_digest": _file_digest(artifact_path),
         "artifact_available": artifact_path.is_file(),
+        "jersey_number_state": state,
+        "jersey_number": number,
         "label_state": state,
         "number": number,
         "view": str(review.get("view") or "unknown"),
@@ -326,7 +349,7 @@ def _sample_from_review(
         "number_panel_bbox_normalized": number_panel_bbox_normalized,
         "number_panel_artifact": number_panel_artifact,
         "clean_jersey_visible": bool(review.get("clean_jersey_visible")),
-        "number_panel_visible": manual_number is not None if "jersey_number" in review else bool(review.get("number_panel_visible")),
+        "number_panel_visible": number is not None if normalized_annotation else bool(review.get("number_panel_visible")),
         "annotation_confidence": round(float(review.get("confidence") or 0.0), 4),
         "annotation_source": {
             "kind": "manual_review",

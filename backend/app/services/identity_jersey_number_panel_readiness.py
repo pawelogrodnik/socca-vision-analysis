@@ -6,9 +6,14 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import tempfile
 from typing import Any, cast
 
 from app.services.identity_jersey_number_common import canonical_digest, normalize_jersey_number
+from app.services.identity_jersey_number_panel_audit import (
+    audit_identity_jersey_number_panels,
+    build_panel_experiment_selection,
+)
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -85,63 +90,53 @@ def build_identity_jersey_number_panel_readiness(
     generated_at: str | None = None,
     montage_reviewed: bool | None = None,
 ) -> dict[str, Any]:
-    """Build bounded, read-only panel extraction/readiness artifact.
-
-    This consumes the already loaded operator subject-review document. It does
-    not infer labels, train models, or write identity assignments.
-    """
-    _require_cv2()
-    import cv2
-
-    source = subject_review_doc
+    """Deprecated adapter to canonical J8.3 panel readiness audit."""
     generated = generated_at or datetime.now(timezone.utc).isoformat()
-    rows: list[dict[str, Any]] = []
-    for card in source.get("cards") or []:
-        if not isinstance(card, dict):
-            continue
-        evidence = card.get("visual_evidence") or {}
-        for crop in evidence.get("anchor_crops") or []:
-            if isinstance(crop, dict):
-                rows.append(_panel_row(card, crop, artifact_root=artifact_root, cv2=cv2))
-    rows.sort(key=lambda row: (str(row.get("subject_id") or ""), int(row.get("frame") or 0), str(row["crop_id"])))
-
-    if output_root is not None:
-        output_root.mkdir(parents=True, exist_ok=True)
-        montage_path = output_root / MONTAGE_FILENAME
-        _write_montage(rows, montage_path, cv2=cv2)
-        _write_panel_artifacts(rows, output_root, cv2=cv2)
+    dataset = _legacy_review_to_dataset(subject_review_doc, artifact_root=artifact_root)
+    selection = build_panel_experiment_selection(dataset)
+    if output_root is None:
+        with tempfile.TemporaryDirectory() as directory:
+            canonical = audit_identity_jersey_number_panels(
+                dataset,
+                output_root=Path(directory),
+                generated_at=generated,
+                selection_doc=selection,
+            )
     else:
-        montage_path = None
-
-    for row in rows:
-        row.pop("_source_image", None)
-        row.pop("_panel", None)
-    summary = _summary(rows)
-    blockers = _hard_blockers(source, rows, montage_reviewed=montage_reviewed)
+        canonical = audit_identity_jersey_number_panels(
+            dataset,
+            output_root=output_root,
+            generated_at=generated,
+            selection_doc=selection,
+        )
+    compatibility = _legacy_compatibility(canonical, subject_review_doc, montage_reviewed)
     report = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated,
-        "mode": "shadow_readiness_audit",
+        "mode": "deprecated_canonical_adapter",
+        "deprecated": True,
         "algorithm": {"name": ALGORITHM_NAME, "version": ALGORITHM_VERSION, "parameters": {
-            "bbox_rounding": "floor_min_ceil_max_clamp",
-            "audit_panel_size": list(AUDIT_PANEL_SIZE),
+            "canonical_algorithm": canonical["algorithm"],
         }},
-        "source": {"subject_review_digest": canonical_digest(source)},
+        "source": {"subject_review_digest": canonical_digest(subject_review_doc)},
         "safety": {
             "mutates_subject_review": False,
             "writes_player_identity_assignments": False,
             "eligible_for_training": False,
             "eligible_for_identity": False,
         },
-        "status": "ready" if not blockers else "blocked",
-        "hard_blockers": blockers,
-        "summary": summary,
+        "status": "ready" if canonical["status"] == "ready_for_panel_digit_experiment" else "blocked",
+        "hard_blockers": compatibility["hard_blockers"],
+        "summary": compatibility["summary"],
         "montage": {
             "filename": MONTAGE_FILENAME,
-            "written": montage_path is not None,
-            "manually_reviewed": _montage_reviewed(source, montage_reviewed),
+            "written": output_root is not None,
+            "manually_reviewed": _montage_reviewed(subject_review_doc, montage_reviewed),
+            "canonical_filename": canonical["montage"]["filename"],
+            "canonical_sha256": canonical["montage"]["sha256"],
         },
-        "panels": rows,
+        "panels": canonical["samples"],
+        "canonical_readiness": canonical,
     }
     result = {
         "identity_jersey_number_panel_readiness": report,
@@ -150,6 +145,109 @@ def build_identity_jersey_number_panel_readiness(
     if output_root is not None:
         _write_json(output_root / READINESS_FILENAME, report)
     return result
+
+
+def _legacy_review_to_dataset(
+    subject_review_doc: dict[str, Any],
+    *,
+    artifact_root: Path,
+) -> dict[str, Any]:
+    samples: list[dict[str, Any]] = []
+    for card in subject_review_doc.get("cards") or []:
+        if not isinstance(card, dict):
+            continue
+        evidence = card.get("visual_evidence") or {}
+        for crop in evidence.get("anchor_crops") or []:
+            if not isinstance(crop, dict):
+                continue
+            crop_id = str(crop.get("anchor_crop_id") or "")
+            panel = crop.get("number_panel_annotation")
+            panel = panel if isinstance(panel, dict) else {}
+            label = crop.get("jersey_number_annotation")
+            label = label if isinstance(label, dict) else {}
+            artifact = str(crop.get("torso_artifact") or crop.get("artifact") or "")
+            samples.append(
+                {
+                    "sample_key": crop_id,
+                    "anchor_crop_id": crop_id,
+                    "artifact_root": str(artifact_root),
+                    "artifact": artifact,
+                    "candidate_subject_id": str(card.get("candidate_subject_id") or ""),
+                    "tracklet_id": _first_text(crop, "tracklet_id"),
+                    "visibility_episode_id": _first_text(
+                        crop, "visibility_episode_id", "episode_id"
+                    ),
+                    "frame": crop.get("frame"),
+                    "view": _first_text(panel, "view") or _first_text(crop, "view"),
+                    "jersey_number_state": _first_value(
+                        label, "jersey_number_state", "label_state", "state"
+                    ),
+                    "jersey_number": _first_value(
+                        label, "jersey_number", "number", "digit_string"
+                    ),
+                    "number_panel_bbox_normalized": panel.get(
+                        "number_panel_bbox_normalized"
+                    ),
+                    "glyph_height_px": panel.get("glyph_height_px"),
+                    "annotation_source": _first_value(
+                        label, "annotation_source", "source", "label_source"
+                    ),
+                }
+            )
+    digest = canonical_digest(samples)
+    return {
+        "schema_version": "legacy-adapter-v1",
+        "dataset_version": "legacy-subject-review-adapter-v1",
+        "dataset_digest": digest,
+        "summary": {"samples": len(samples)},
+        "samples": samples,
+    }
+
+
+def _legacy_compatibility(
+    canonical: dict[str, Any],
+    source: dict[str, Any],
+    montage_reviewed: bool | None,
+) -> dict[str, Any]:
+    samples = canonical["samples"]
+    status_counts = Counter(str(row.get("status") or "") for row in samples)
+    state_counts = Counter(str(row.get("jersey_number_state") or "") for row in samples)
+    blockers: list[str] = []
+    if not _montage_reviewed(source, montage_reviewed):
+        blockers.append("no_manually_reviewed_montage")
+    assistant_only = False
+    glyph_missing = False
+    heights: list[float] = []
+    for card in source.get("cards") or []:
+        for crop in ((card.get("visual_evidence") or {}).get("anchor_crops") or []):
+            label = crop.get("jersey_number_annotation") or {}
+            label_source = str(label.get("annotation_source") or "").lower()
+            assistant_only = assistant_only or label_source.startswith("assistant")
+            panel = crop.get("number_panel_annotation") or {}
+            glyph = panel.get("glyph_height_px")
+            glyph_missing = glyph_missing or glyph is None
+            if glyph is not None:
+                heights.append(float(glyph))
+    if assistant_only:
+        blockers.append("assistant_only_label_ground_truth")
+    if status_counts["missing_panel_bbox"]:
+        blockers.append("missing_bbox")
+    if glyph_missing:
+        blockers.append("unknown_glyph_height")
+    if heights and _median(sorted(heights)) < 8.0:
+        blockers.append("median_glyph_height_below_8")
+    summary = {
+        "total": len(samples),
+        "readable": state_counts["number_confirmed"],
+        "partial": 0,
+        "plain": state_counts["number_absent"],
+        "unreadable": state_counts["number_unreadable"],
+        "extracted": status_counts["audited"],
+    }
+    return {
+        "hard_blockers": [value for value in HARD_BLOCKERS if value in blockers],
+        "summary": summary,
+    }
 
 
 def build_panel_readiness(*args: Any, **kwargs: Any) -> dict[str, Any]:

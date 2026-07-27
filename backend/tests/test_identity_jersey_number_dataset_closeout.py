@@ -306,6 +306,46 @@ class JerseyNumberDatasetCloseoutTests(unittest.TestCase):
         self.assertIsNone(sample["number"])
         self.assertFalse(sample["number_panel_visible"])
 
+    def test_separate_subject_review_panel_annotation_is_merged_into_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source(Path(directory), video_key="clip-a", subject_id="s1")
+            source["subject_review_doc"] = {
+                "decisions_fresh": True,
+                "cards": [
+                    {
+                        "visual_evidence": {
+                            "anchor_crops": [
+                                {
+                                    "anchor_crop_id": "clip-a-1",
+                                    "jersey_number_annotation": {
+                                        "jersey_number_state": "number_confirmed",
+                                        "jersey_number": "10",
+                                    },
+                                    "number_panel_annotation": {
+                                        "number_panel_source_artifact": "missing.jpg",
+                                        "coordinate_space_version": "number_panel_source_pixels_v1",
+                                        "number_panel_bbox_normalized": [0.25, 0.2, 0.75, 0.7],
+                                        "glyph_height_px": None,
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+            manifest = build_identity_jersey_number_dataset_manifest(
+                [source], generated_at="fixed"
+            )
+
+        self.assertEqual(
+            manifest["samples"][0]["number_panel_bbox_normalized"],
+            [0.25, 0.2, 0.75, 0.7],
+        )
+        self.assertEqual(
+            manifest["sources"][0]["subject_review_annotations_applied"],
+            1,
+        )
+
 
 def _source(root: Path, *, video_key: str, subject_id: str) -> dict:
     cards = {

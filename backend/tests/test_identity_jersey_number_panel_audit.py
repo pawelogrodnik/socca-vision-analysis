@@ -8,6 +8,9 @@ from app.services.identity_jersey_number_panel_audit import (
     MONTAGE_FILENAME,
     READINESS_FILENAME,
     audit_identity_jersey_number_panels,
+    build_montage_approval_template,
+    build_panel_experiment_selection,
+    normalize_panel_experiment_selection,
 )
 
 try:
@@ -103,6 +106,217 @@ class JerseyNumberPanelAuditTests(unittest.TestCase):
         self.assertEqual(first_digests, second_digests)
         self.assertGreaterEqual(first["summary"]["estimated_digit_height_px"]["median"], 8.0)
 
+    @unittest.skipUnless(cv2 is not None and np is not None, "OpenCV test dependency unavailable")
+    def test_unselected_invalid_sample_does_not_block_selected_subset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_torso(root / "torso-read.jpg", digits="10")
+            dataset = {
+                "dataset_digest": "dataset-digest",
+                "samples": [
+                    _sample(
+                        root,
+                        "selected",
+                        "torso-read.jpg",
+                        state="number_confirmed",
+                        number="10",
+                        frame=3509,
+                        visibility_episode_id="episode-selected",
+                    ),
+                    {
+                        **_sample(
+                            root,
+                            "not-selected",
+                            "missing.jpg",
+                            state="number_unreadable",
+                            number=None,
+                            frame=99,
+                            visibility_episode_id="episode-noise",
+                        ),
+                        "number_panel_bbox_normalized": None,
+                    },
+                ],
+            }
+            selection = _selection("selected")
+            report = audit_identity_jersey_number_panels(
+                dataset,
+                output_root=root / "audit",
+                selection_doc=selection,
+            )
+
+        self.assertEqual(report["summary"]["selected_samples"], 1)
+        self.assertEqual(report["summary"]["selected_invalid_samples"], 0)
+        self.assertEqual(report["summary"]["audited_panel_coverage"], 1.0)
+        statuses = {row["sample_key"]: row["status"] for row in report["samples"]}
+        self.assertEqual(statuses["not-selected"], "not_selected_for_panel_experiment")
+
+    @unittest.skipUnless(cv2 is not None and np is not None, "OpenCV test dependency unavailable")
+    def test_exact_approved_montage_contract_unlocks_human_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            samples = []
+            for index in range(50):
+                artifact = f"confirmed-{index}.jpg"
+                _write_torso(root / artifact, digits="10")
+                samples.append(
+                    _sample(
+                        root,
+                        f"confirmed-{index}",
+                        artifact,
+                        state="number_confirmed",
+                        number="10",
+                        frame=3509 if index == 0 else 4000 + index,
+                        visibility_episode_id=f"confirmed-episode-{index}",
+                    )
+                )
+            for index in range(30):
+                artifact = f"negative-{index}.jpg"
+                _write_torso(root / artifact, digits=None)
+                samples.append(
+                    _sample(
+                        root,
+                        f"negative-{index}",
+                        artifact,
+                        state="number_absent",
+                        number=None,
+                        frame=5000 + index,
+                        visibility_episode_id=f"negative-episode-{index}",
+                    )
+                )
+            dataset = {"dataset_digest": "dataset-digest", "samples": samples}
+            first = audit_identity_jersey_number_panels(dataset, output_root=root / "audit")
+            approval = {
+                **build_montage_approval_template(first),
+                "reviewer": "operator",
+                "reviewed_at": "2026-07-26T10:00:00+00:00",
+                "status": "approved",
+            }
+            approved = audit_identity_jersey_number_panels(
+                dataset,
+                output_root=root / "audit",
+                selection_doc=first["panel_experiment_selection"],
+                approval_doc=approval,
+            )
+
+        self.assertTrue(approved["gates"]["machine_ready"])
+        self.assertTrue(approved["gates"]["human_montage_approval_valid"])
+        self.assertEqual(approved["status"], "ready_for_panel_digit_experiment")
+        self.assertEqual(approved["final_decision"], "PROCEED_TO_J8_4_LATER")
+
+    @unittest.skipUnless(cv2 is not None and np is not None, "OpenCV test dependency unavailable")
+    def test_approval_digest_mismatch_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_torso(root / "torso.jpg", digits="10")
+            dataset = {
+                "dataset_digest": "dataset-digest",
+                "samples": [
+                    _sample(
+                        root,
+                        "sample",
+                        "torso.jpg",
+                        state="number_confirmed",
+                        number="10",
+                        frame=3509,
+                        visibility_episode_id="episode",
+                    )
+                ],
+            }
+            first = audit_identity_jersey_number_panels(dataset, output_root=root / "audit")
+            approval = {
+                **build_montage_approval_template(first),
+                "montage_sha256": "wrong",
+                "reviewer": "operator",
+                "reviewed_at": "2026-07-26T10:00:00+00:00",
+                "status": "approved",
+            }
+            report = audit_identity_jersey_number_panels(
+                dataset,
+                output_root=root / "audit",
+                approval_doc=approval,
+            )
+
+        self.assertFalse(report["gates"]["human_montage_approval_valid"])
+        self.assertIn(
+            "montage_sha256_mismatch",
+            report["montage"]["human_approval"]["reasons"],
+        )
+        self.assertNotEqual(report["status"], "ready_for_panel_digit_experiment")
+
+    def test_selection_digest_mismatch_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "selection digest mismatch"):
+            normalize_panel_experiment_selection(
+                {
+                    "selection_version": "panel-experiment-selection-v1",
+                    "sample_keys": ["sample"],
+                    "selection_digest": "wrong",
+                }
+            )
+
+    def test_default_selection_is_deterministic(self) -> None:
+        dataset = {
+            "samples": [
+                {
+                    "sample_key": "b",
+                    "label_state": "number_unreadable",
+                    "number": None,
+                    "frame": 2,
+                },
+                {
+                    "sample_key": "a",
+                    "label_state": "number_confirmed",
+                    "number": "10",
+                    "frame": 1,
+                },
+            ]
+        }
+        first = build_panel_experiment_selection(dataset)
+        second = build_panel_experiment_selection(dataset)
+        self.assertEqual(first, second)
+        self.assertEqual(first["sample_keys"], ["a", "b"])
+
+    def test_default_selection_is_bounded_and_balances_negative_states(self) -> None:
+        samples = []
+        for index in range(70):
+            samples.append(
+                {
+                    "sample_key": f"confirmed-{index:03d}",
+                    "label_state": "number_confirmed",
+                    "number": "10",
+                    "frame": 3509 if index == 0 else 1000 + index,
+                    "visibility_episode_id": f"confirmed-episode-{index}",
+                }
+            )
+        for state in ("number_absent", "number_unreadable"):
+            for index in range(40):
+                samples.append(
+                    {
+                        "sample_key": f"{state}-{index:03d}",
+                        "label_state": state,
+                        "number": None,
+                        "frame": 5000 + index,
+                        "visibility_episode_id": f"{state}-episode-{index}",
+                    }
+                )
+
+        selection = build_panel_experiment_selection({"samples": samples})
+        selected = set(selection["sample_keys"])
+
+        self.assertEqual(len(selected), 80)
+        self.assertEqual(
+            len([key for key in selected if key.startswith("confirmed-")]),
+            50,
+        )
+        self.assertEqual(
+            len([key for key in selected if key.startswith("number_absent-")]),
+            15,
+        )
+        self.assertEqual(
+            len([key for key in selected if key.startswith("number_unreadable-")]),
+            15,
+        )
+        self.assertIn("confirmed-000", selected)
+
 
 def _sample(
     root: Path,
@@ -138,6 +352,14 @@ def _write_torso(path: Path, *, digits: str | None) -> None:
     if digits is not None:
         cv2.putText(image, digits, (34, 98), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 0), 3)
     cv2.imwrite(str(path), image)
+
+
+def _selection(*sample_keys: str) -> dict[str, object]:
+    selection = {
+        "selection_version": "panel-experiment-selection-v1",
+        "sample_keys": list(sample_keys),
+    }
+    return normalize_panel_experiment_selection(selection)
 
 
 if __name__ == "__main__":
