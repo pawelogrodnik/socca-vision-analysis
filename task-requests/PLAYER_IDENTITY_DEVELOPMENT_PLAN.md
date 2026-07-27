@@ -600,6 +600,43 @@ conflicts
 - production identity unchanged;
 - deterministyczny rebuild z frozen tracks.
 
+### Status 2026-07-27
+
+```text
+CLOSED — IA3_ACCEPTED
+```
+
+Zaimplementowano:
+
+- osobny shadow-only artefakt
+  `identity_seeded_candidate_assignments.json`, który nie jest wejściem do
+  statystyk ani production identity;
+- propagację named operator seed wyłącznie przez dokładne lineage
+  `frame + tracklet_id` do jednego candidate subjectu;
+- twarde gate'y drużyny, świeżości selection, blockerów strukturalnych i
+  równoległych obserwacji tej samej realnej osoby;
+- jawne `accepted_assignments`, `rejected_propagations`, `conflicts` oraz
+  `unresolved_subjects` wraz z przyczynami i provenance;
+- deterministyczne łączenie wielu zgodnych seedów jednego subjectu oraz
+  blokadę sprzecznych nazwisk dla tego samego subjectu;
+- automatyczny tani rebuild po zapisie IA2 seeds oraz osobne endpointy
+  odczytu i ręcznego rebuilda;
+- atomowy zapis i kontrolę hashy production identity przed i po rebuildzie.
+
+Walidacja lokalna:
+
+```text
+backend focused tests: 12 passed
+deterministic repeated build/rebuild: passed
+cross-team propagation: blocked and reported
+parallel same-player assignment: blocked and reported
+hard structural blocker: blocked and reported
+atomic temporary files after rebuild: 0
+production identity mutation during rebuild: 0
+YOLO rerun: no
+overlay render: no
+```
+
 ## IA4 — Existing whole-subject review integration and reduction
 
 ### Cel
@@ -1111,7 +1148,7 @@ Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 
 ```text
 A  J8.3 panel closeout                         CLOSED — AVAILABLE_DATA_NOT_SUFFICIENT
-B  IA0–IA4 Initial Audit core                 IN PROGRESS — IA0–IA2 CLOSED, IA3 READY
+B  IA0–IA4 Initial Audit core                 IN PROGRESS — IA0–IA3 CLOSED, IA4 READY
 C  IA5–IA6 H2 re-anchor + appearance gallery  BLOCKED BY B
 D  J8.4 useful jersey recognizer              BLOCKED BY DATA READINESS; SCHEDULED AFTER C
 E  IA7 evidence fusion                        BLOCKED BY C + D
@@ -1130,7 +1167,7 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie agent ma rozpocząć od:
 
 ```text
-IA3 Seed-aware candidate identity re-resolve
+IA4 Existing whole-subject review integration and reduction
 ```
 
 J8.3 zostało zamknięte decyzją:

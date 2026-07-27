@@ -694,3 +694,32 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return value
+
+
+def find_identity_artifact(
+    match_path: Path,
+    match_document: dict[str, Any],
+    filename: str,
+) -> Path | None:
+    """Find a root or analysis-run identity artifact using canonical precedence."""
+    return _first_artifact_candidate(match_path, match_document, filename)
+
+
+def production_identity_snapshot(
+    match_path: Path,
+    match_document: dict[str, Any],
+) -> dict[str, Any]:
+    """Return immutable hashes used by shadow rebuild safety checks."""
+    return _production_identity_snapshot(match_path, match_document)
+
+
+def write_identity_json_atomic(
+    path: Path,
+    document: dict[str, Any],
+) -> None:
+    """Persist a derived identity document without exposing partial JSON."""
+    _write_atomic(path, document)
+
+
+def load_identity_json(path: Path) -> dict[str, Any]:
+    return _load_json(path)

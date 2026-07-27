@@ -33,6 +33,11 @@ from app.services.identity_initial_audit_store import (
     load_initial_identity_audit_seeds,
     save_initial_identity_audit_seeds,
 )
+from app.services.identity_seeded_candidate_assignments import (
+    SeededCandidateAssignmentsStaleError,
+    load_identity_seeded_candidate_assignments,
+    rebuild_identity_seeded_candidate_assignments,
+)
 from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
 from app.services.identity_review_segments import save_identity_review_splits
 from app.services.identity_roster_subject_review_store import (
@@ -1225,15 +1230,77 @@ def update_initial_identity_audit_seeds(
             match_video_path(path),
             match_document,
         )
-        return save_initial_identity_audit_seeds(
+        result = save_initial_identity_audit_seeds(
             path,
             match_document,
             updates,
             telemetry_events=telemetry_events,
         )
+        try:
+            seeded_candidates = rebuild_identity_seeded_candidate_assignments(
+                path,
+                match_document,
+            )
+            rebuild_status = {
+                "status": "fresh",
+                "summary": seeded_candidates.get("summary") or {},
+                "safety": seeded_candidates.get("safety") or {},
+            }
+            result["safety"] = {
+                **(result.get("safety") or {}),
+                "downstream_rebuild_triggered": True,
+            }
+        except (
+            FileNotFoundError,
+            SeededCandidateAssignmentsStaleError,
+            ValueError,
+        ) as exc:
+            rebuild_status = {
+                "status": "unavailable",
+                "reason": str(exc),
+            }
+        result["seeded_candidate_rebuild"] = rebuild_status
+        return result
     except InitialIdentityAuditConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InitialIdentityAuditStaleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/matches/{match_id}/initial-identity-audit/seeded-candidates"
+)
+def get_initial_identity_audit_seeded_candidates(
+    match_id: str,
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return load_identity_seeded_candidate_assignments(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/matches/{match_id}/initial-identity-audit/seeded-candidates/rebuild"
+)
+def rebuild_initial_identity_audit_seeded_candidates(
+    match_id: str,
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return rebuild_identity_seeded_candidate_assignments(
+            path,
+            read_match_meta(path),
+        )
+    except SeededCandidateAssignmentsStaleError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
