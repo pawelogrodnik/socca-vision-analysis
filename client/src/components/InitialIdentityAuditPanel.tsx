@@ -7,6 +7,7 @@ import {
   saveInitialIdentityAuditSeeds,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
+import { IdentityAuditObservationPreview } from './IdentityAuditObservationPreview';
 import type {
   InitialIdentityAuditDocument,
   InitialIdentityAuditObservation,
@@ -22,7 +23,6 @@ import {
   initialIdentityAuditPlayerAction,
   initialIdentityAuditSeedUpdate,
   observationBoxStyle,
-  observationCropLayout,
   type InitialIdentityAuditAction,
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
@@ -367,20 +367,12 @@ export function InitialIdentityAuditPanel({
 
               <aside className='initial-identity-audit-actions'>
                 <div className='initial-identity-audit-crop'>
-                  {selectedObservation ? (() => {
-                    const crop = observationCropLayout(selectedObservation, document.video);
-                    return (
-                      <div style={{ aspectRatio: crop.aspectRatio }}>
-                        <img
-                          src={artifactUrl(match.id, frame.full_frame_artifact)}
-                          alt='Powiekszenie wybranego zawodnika'
-                          style={crop.imageStyle}
-                        />
-                      </div>
-                    );
-                  })() : (
-                    <p className='muted'>Kliknij zawodnika na pelnej klatce.</p>
-                  )}
+                  <IdentityAuditObservationPreview
+                    observation={selectedObservation}
+                    video={document.video}
+                    frameArtifactUrl={artifactUrl(match.id, frame.full_frame_artifact)}
+                    emptyLabel='Kliknij zawodnika na pelnej klatce.'
+                  />
                 </div>
 
                 <div className='initial-identity-audit-current'>

@@ -6,11 +6,18 @@ import tempfile
 import unittest
 
 from app.services.identity_initial_audit_store import SEEDS_FILENAME
+from app.services.identity_initial_audit import (
+    AUDIT_DIRECTORY,
+    SELECTION_FILENAME,
+)
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_operator_seed_digest import (
     identity_operator_seed_decisions_digest,
 )
 from app.services.identity_seeded_candidate_assignments import OUTPUT_FILENAME
+from app.services.identity_seeded_candidate_assignments import (
+    load_combined_operator_seeds,
+)
 from app.services.identity_seeded_review_reduction import (
     apply_identity_seeded_review_reduction,
     load_fresh_seeded_assignments,
@@ -231,6 +238,45 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
 
             self.assertIsNone(loaded)
             self.assertEqual(freshness["status"], "stale")
+
+    def test_freshness_uses_canonical_combined_audit_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            selection = {"schema_version": "0.1.0", "frames": []}
+            selection_path = path / AUDIT_DIRECTORY / SELECTION_FILENAME
+            selection_path.parent.mkdir(parents=True)
+            selection_path.write_text(json.dumps(selection), encoding="utf-8")
+            seeds = {
+                "schema_version": "0.1.0",
+                "mode": "initial_identity_audit",
+                "source": {
+                    "selection_digest": "selection-digest",
+                    "selection_artifact_digest": canonical_digest(selection),
+                },
+                "decisions": [
+                    {
+                        "observation_key": "frame-1-tracklet-1",
+                        "frame_number": 1,
+                        "action": "assign_roster_player",
+                    }
+                ],
+            }
+            (path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
+            combined = load_combined_operator_seeds(path)
+            seeded = seeded_document([accepted_assignment()])
+            seeded["source"] = {
+                "operator_seed_decisions_digest": (
+                    identity_operator_seed_decisions_digest(combined)
+                )
+            }
+            (path / OUTPUT_FILENAME).write_text(
+                json.dumps(seeded), encoding="utf-8"
+            )
+
+            loaded, freshness = load_fresh_seeded_assignments(path)
+
+            self.assertIsNotNone(loaded)
+            self.assertEqual(freshness["status"], "fresh")
 
 
 if __name__ == "__main__":

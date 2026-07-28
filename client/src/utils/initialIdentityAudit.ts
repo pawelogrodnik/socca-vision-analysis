@@ -151,12 +151,15 @@ export function observationCropLayout(
 ): {
   aspectRatio: string;
   imageStyle: CSSProperties;
+  targetBoxStyle: CSSProperties;
 } {
   const [x1, y1, x2, y2] = observation.bbox_xyxy;
   const bboxWidth = Math.max(1, x2 - x1);
   const bboxHeight = Math.max(1, y2 - y1);
-  const horizontalPadding = bboxWidth * 0.65;
-  const verticalPadding = bboxHeight * 0.25;
+  // Keep enough of the nearby pitch for orientation, but make the person the
+  // primary visual signal. The former loose crop made a selected player tiny.
+  const horizontalPadding = bboxWidth * 0.28;
+  const verticalPadding = bboxHeight * 0.18;
   const cropX = clamp(x1 - horizontalPadding, 0, video.width - 1);
   const cropY = clamp(y1 - verticalPadding, 0, video.height - 1);
   const cropRight = clamp(x2 + horizontalPadding, cropX + 1, video.width);
@@ -171,6 +174,12 @@ export function observationCropLayout(
       maxWidth: 'none',
       left: `${(-cropX / cropWidth) * 100}%`,
       top: `${(-cropY / cropHeight) * 100}%`,
+    },
+    targetBoxStyle: {
+      left: `${((x1 - cropX) / cropWidth) * 100}%`,
+      top: `${((y1 - cropY) / cropHeight) * 100}%`,
+      width: `${(bboxWidth / cropWidth) * 100}%`,
+      height: `${(bboxHeight / cropHeight) * 100}%`,
     },
   };
 }

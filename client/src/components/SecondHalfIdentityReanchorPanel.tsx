@@ -7,6 +7,7 @@ import {
   saveSecondHalfIdentityReanchorSeeds,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
+import { IdentityAuditObservationPreview } from './IdentityAuditObservationPreview';
 import type {
   InitialIdentityAuditObservation,
   InitialIdentityAuditSeedStoreDocument,
@@ -21,7 +22,6 @@ import {
   initialIdentityAuditPlayerAction,
   initialIdentityAuditSeedUpdate,
   observationBoxStyle,
-  observationCropLayout,
   type InitialIdentityAuditAction,
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
@@ -305,18 +305,12 @@ export function SecondHalfIdentityReanchorPanel({
 
               <aside className='initial-identity-audit-actions'>
                 <div className='initial-identity-audit-crop'>
-                  {selectedObservation ? (() => {
-                    const crop = observationCropLayout(selectedObservation, document.video!);
-                    return (
-                      <div style={{ aspectRatio: crop.aspectRatio }}>
-                        <img
-                          src={artifactUrl(match.id, frame.full_frame_artifact)}
-                          alt='Powiekszenie zawodnika'
-                          style={crop.imageStyle}
-                        />
-                      </div>
-                    );
-                  })() : <p className='muted'>Kliknij zawodnika.</p>}
+                  <IdentityAuditObservationPreview
+                    observation={selectedObservation}
+                    video={document.video!}
+                    frameArtifactUrl={artifactUrl(match.id, frame.full_frame_artifact)}
+                    emptyLabel='Kliknij zawodnika.'
+                  />
                 </div>
 
                 {currentSuggestion && (

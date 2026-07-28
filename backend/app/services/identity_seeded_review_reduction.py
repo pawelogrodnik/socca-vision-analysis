@@ -13,7 +13,11 @@ from app.services.identity_operator_seed_digest import (
     DIGEST_CONTRACT,
     identity_operator_seed_decisions_digest,
 )
-from app.services.identity_seeded_candidate_assignments import OUTPUT_FILENAME
+from app.services.identity_seeded_candidate_assignments import (
+    OUTPUT_FILENAME,
+    SeededCandidateAssignmentsStaleError,
+    load_combined_operator_seeds,
+)
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -38,7 +42,12 @@ def load_fresh_seeded_assignments(
 
     try:
         seeded = load_identity_json(seeded_path)
-        seeds = load_identity_json(seeds_path)
+        seeds = _current_seed_document(match_path, seeds_path)
+    except SeededCandidateAssignmentsStaleError:
+        return None, {
+            "status": "stale",
+            "reason_codes": ["operator_seed_selection_digest_mismatch"],
+        }
     except (OSError, ValueError):
         return None, {
             "status": "invalid",
@@ -81,6 +90,23 @@ def load_fresh_seeded_assignments(
         "operator_seeds_document_digest": current_document_digest,
         "seeded_assignments_digest": canonical_digest(seeded),
     }
+
+
+def _current_seed_document(
+    match_path: Path,
+    fallback_seeds_path: Path,
+) -> dict[str, Any]:
+    """Load the canonical combined seeds, with a legacy test-safe fallback.
+
+    Older artifacts and small unit-test fixtures may predate an audit selection
+    document.  In that one case the raw initial-audit seeds remain the canonical
+    input.  Real audit selections use the same combined document as the
+    candidate-assignment rebuild, preventing false stale reports.
+    """
+    try:
+        return load_combined_operator_seeds(match_path)
+    except FileNotFoundError:
+        return load_identity_json(fallback_seeds_path)
 
 
 def apply_identity_seeded_review_reduction(

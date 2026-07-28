@@ -247,7 +247,7 @@ def rebuild_identity_seeded_candidate_assignments(
     match_path: Path,
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
-    seeds_document = _load_combined_operator_seeds(match_path)
+    seeds_document = load_combined_operator_seeds(match_path)
 
     candidate_path = find_identity_artifact(
         match_path,
@@ -302,7 +302,14 @@ def load_identity_seeded_candidate_assignments(
     return load_identity_json(path)
 
 
-def _load_combined_operator_seeds(match_path: Path) -> dict[str, Any]:
+def load_combined_operator_seeds(match_path: Path) -> dict[str, Any]:
+    """Return the canonical set of decisions used by seeded shadow rebuilds.
+
+    Both the seed-aware candidate builder and the downstream review reducer must
+    hash this exact combined document.  A raw initial-audit document is not
+    equivalent: the combined document adds audit-stage lineage and can also
+    contain second-half re-anchor decisions.
+    """
     seed_sources = [
         {
             "audit_stage": "initial_identity_audit",
