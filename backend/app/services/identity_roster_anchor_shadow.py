@@ -386,6 +386,7 @@ def _card(
         "end_frame": int(subject.get("end_frame") or 0),
         "detected_frames": int(subject.get("detected_frames") or 0),
         "production_subject_ids": sorted(str(value) for value in subject.get("production_subject_ids") or []),
+        "tracklet_ids": sorted(str(value) for value in subject.get("tracklet_ids") or []),
         "quality_flags": sorted(str(value) for value in subject.get("quality_flags") or []),
         "status": status,
         "recommended_player_id": recommended_player_id,

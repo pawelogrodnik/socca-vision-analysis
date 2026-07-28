@@ -14,11 +14,22 @@ from app.services.identity_initial_audit_store import (
     write_identity_json_atomic,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_operator_seed_digest import (
+    DIGEST_CONTRACT,
+    identity_operator_seed_decisions_digest,
+)
+from app.services.identity_second_half_reanchor import (
+    REANCHOR_DIRECTORY,
+    SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME,
+)
+from app.services.identity_second_half_reanchor_store import (
+    SEEDS_FILENAME as REANCHOR_SEEDS_FILENAME,
+)
 
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_seeded_candidate_assignments"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 OUTPUT_FILENAME = "identity_seeded_candidate_assignments.json"
 CANDIDATE_FILENAME = "identity_candidate_shadow.json"
 TIMELINE_FILENAME = "identity_offline_shadow_timeline.json"
@@ -162,8 +173,18 @@ def build_identity_seeded_candidate_assignments(
         row.get("conflict_type") == "parallel_same_player"
         for row in conflicts
     )
+    accepted_parallel_conflicts = _accepted_parallel_assignment_count(
+        accepted,
+        timeline=timeline,
+    )
+    operator_decisions_digest = identity_operator_seed_decisions_digest(
+        seeds_document
+    )
     source = {
-        "operator_seeds_digest": canonical_digest(seeds_document),
+        "operator_seeds_digest": operator_decisions_digest,
+        "operator_seed_decisions_digest": operator_decisions_digest,
+        "operator_seed_decisions_digest_contract": DIGEST_CONTRACT,
+        "operator_seeds_document_digest": canonical_digest(seeds_document),
         "candidate_identity_digest": canonical_digest(candidate_document),
         "timeline_digest": canonical_digest(timeline_document),
         "selection_digest": (seeds_document.get("source") or {}).get(
@@ -171,6 +192,9 @@ def build_identity_seeded_candidate_assignments(
         ),
         "selection_artifact_digest": (seeds_document.get("source") or {}).get(
             "selection_artifact_digest"
+        ),
+        "selection_sources": list(
+            (seeds_document.get("source") or {}).get("selection_sources") or []
         ),
         "frozen_tracks_reused": True,
     }
@@ -210,7 +234,9 @@ def build_identity_seeded_candidate_assignments(
             "eligible_for_roster_assignment": False,
             "promotion_status": "shadow_only",
             "cross_team_links": cross_team_links,
-            "impossible_parallel_assignments": parallel_conflicts,
+            "parallel_assignment_conflicts_detected": parallel_conflicts,
+            "parallel_assignment_conflicts_blocked": parallel_conflicts,
+            "impossible_parallel_assignments": accepted_parallel_conflicts,
             "unresolved_remains_explicit": True,
             "yolo_not_required": True,
         },
@@ -221,23 +247,7 @@ def rebuild_identity_seeded_candidate_assignments(
     match_path: Path,
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
-    seeds_path = match_path / SEEDS_FILENAME
-    if not seeds_path.exists():
-        raise FileNotFoundError("Initial Identity Audit seeds are missing")
-    selection_path = match_path / AUDIT_DIRECTORY / SELECTION_FILENAME
-    if not selection_path.exists():
-        raise FileNotFoundError("Initial Identity Audit selection is missing")
-
-    seeds_document = load_identity_json(seeds_path)
-    selection_document = load_identity_json(selection_path)
-    stored_selection_digest = (seeds_document.get("source") or {}).get(
-        "selection_artifact_digest"
-    )
-    current_selection_digest = canonical_digest(selection_document)
-    if stored_selection_digest != current_selection_digest:
-        raise SeededCandidateAssignmentsStaleError(
-            "Initial Identity Audit seeds are stale for the current selection"
-        )
+    seeds_document = _load_combined_operator_seeds(match_path)
 
     candidate_path = find_identity_artifact(
         match_path,
@@ -292,6 +302,113 @@ def load_identity_seeded_candidate_assignments(
     return load_identity_json(path)
 
 
+def _load_combined_operator_seeds(match_path: Path) -> dict[str, Any]:
+    seed_sources = [
+        {
+            "audit_stage": "initial_identity_audit",
+            "seed_path": match_path / SEEDS_FILENAME,
+            "selection_path": (
+                match_path / AUDIT_DIRECTORY / SELECTION_FILENAME
+            ),
+            "required": True,
+        },
+        {
+            "audit_stage": "second_half_identity_reanchor",
+            "seed_path": (
+                match_path / REANCHOR_DIRECTORY / REANCHOR_SEEDS_FILENAME
+            ),
+            "selection_path": (
+                match_path
+                / REANCHOR_DIRECTORY
+                / REANCHOR_SELECTION_FILENAME
+            ),
+            "required": False,
+        },
+    ]
+    documents: list[dict[str, Any]] = []
+    source_rows: list[dict[str, Any]] = []
+    for source in seed_sources:
+        seed_path = Path(source["seed_path"])
+        selection_path = Path(source["selection_path"])
+        if not seed_path.exists():
+            if source["required"]:
+                raise FileNotFoundError(
+                    "Initial Identity Audit seeds are missing"
+                )
+            continue
+        if not selection_path.exists():
+            raise FileNotFoundError(
+                f"{source['audit_stage']} selection is missing"
+            )
+        seed_document = load_identity_json(seed_path)
+        selection_document = load_identity_json(selection_path)
+        stored_digest = (seed_document.get("source") or {}).get(
+            "selection_artifact_digest"
+        )
+        current_digest = canonical_digest(selection_document)
+        if stored_digest != current_digest:
+            raise SeededCandidateAssignmentsStaleError(
+                f"{source['audit_stage']} seeds are stale for the current "
+                "selection"
+            )
+        documents.append(seed_document)
+        source_rows.append(
+            {
+                "audit_stage": source["audit_stage"],
+                "selection_digest": (
+                    seed_document.get("source") or {}
+                ).get("selection_digest"),
+                "selection_artifact_digest": current_digest,
+                "seed_decisions_digest": (
+                    identity_operator_seed_decisions_digest(seed_document)
+                ),
+            }
+        )
+
+    decisions_by_key: dict[str, dict[str, Any]] = {}
+    for seed_document, source in zip(documents, source_rows):
+        for decision in seed_document.get("decisions") or []:
+            if not isinstance(decision, dict):
+                continue
+            observation_key = str(decision.get("observation_key") or "")
+            if not observation_key:
+                continue
+            decisions_by_key[observation_key] = {
+                **decision,
+                "audit_stage": (
+                    decision.get("audit_stage")
+                    or source["audit_stage"]
+                ),
+            }
+
+    initial_source = (
+        documents[0].get("source") or {} if documents else {}
+    )
+    updated_at = max(
+        (
+            str(document.get("updated_at") or "")
+            for document in documents
+        ),
+        default="",
+    )
+    return {
+        "schema_version": "0.1.0",
+        "mode": "combined_operator_identity_seeds",
+        "source": {
+            "selection_digest": initial_source.get("selection_digest"),
+            "selection_artifact_digest": initial_source.get(
+                "selection_artifact_digest"
+            ),
+            "selection_sources": source_rows,
+        },
+        "decisions": sorted(
+            decisions_by_key.values(),
+            key=_decision_sort_key,
+        ),
+        "updated_at": updated_at or None,
+    }
+
+
 def _candidate_index(
     document: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
@@ -330,6 +447,8 @@ def _exact_observation_seed(
         "assigned_team": decision.get("assigned_team"),
         "assigned_player": decision.get("assigned_player"),
         "provenance": decision.get("provenance"),
+        "audit_stage": decision.get("audit_stage")
+        or "initial_identity_audit",
         "operator_certainty": "certain_or_explicit_skip",
         "propagation_scope": "observation_only",
     }
@@ -407,6 +526,8 @@ def _proposal_for_named_seed(
                     "observation_key": decision.get("observation_key"),
                     "frame_number": frame_number,
                     "tracklet_id": tracklet_id,
+                    "audit_stage": decision.get("audit_stage")
+                    or "initial_identity_audit",
                 }
             ],
             "accepted_reasons": [
@@ -416,7 +537,8 @@ def _proposal_for_named_seed(
                 "no_hard_structural_blocker",
             ],
             "propagation_provenance": {
-                "source": "initial_identity_audit",
+                "source": decision.get("audit_stage")
+                or "initial_identity_audit",
                 "scope": "candidate_subject",
                 "local_tracklet_continuity": True,
                 "team_consistency": True,
@@ -588,6 +710,38 @@ def _detected_frames(subject: dict[str, Any]) -> set[int]:
         for row in subject.get("observations") or []
         if str(row.get("status") or "detected") == "detected"
     }
+
+
+def _accepted_parallel_assignment_count(
+    accepted: list[dict[str, Any]],
+    *,
+    timeline: dict[str, dict[str, Any]],
+) -> int:
+    """Count unsafe overlaps that survived conflict resolution."""
+    by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for assignment in accepted:
+        player_id = str(
+            (assignment.get("assigned_player") or {}).get("player_id") or ""
+        )
+        if player_id:
+            by_player[player_id].append(assignment)
+
+    conflict_count = 0
+    for assignments in by_player.values():
+        for left_index, left in enumerate(assignments):
+            left_frames = _detected_frames(
+                timeline.get(str(left.get("candidate_subject_id") or ""), {})
+            )
+            for right in assignments[left_index + 1 :]:
+                right_frames = _detected_frames(
+                    timeline.get(
+                        str(right.get("candidate_subject_id") or ""),
+                        {},
+                    )
+                )
+                if left_frames & right_frames:
+                    conflict_count += 1
+    return conflict_count
 
 
 def _rejected_seed(

@@ -7,6 +7,9 @@ import unittest
 
 from app.services.identity_initial_audit_store import SEEDS_FILENAME
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_operator_seed_digest import (
+    identity_operator_seed_decisions_digest,
+)
 from app.services.identity_seeded_candidate_assignments import OUTPUT_FILENAME
 from app.services.identity_seeded_review_reduction import (
     apply_identity_seeded_review_reduction,
@@ -197,10 +200,27 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             path = Path(temporary)
             seeds = {"schema_version": "0.1.0", "decisions": []}
             seeded = seeded_document([accepted_assignment()])
-            seeded["source"] = {"operator_seeds_digest": canonical_digest(seeds)}
+            seeded["source"] = {
+                "operator_seed_decisions_digest": (
+                    identity_operator_seed_decisions_digest(seeds)
+                )
+            }
             (path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
             (path / OUTPUT_FILENAME).write_text(json.dumps(seeded), encoding="utf-8")
 
+            loaded, freshness = load_fresh_seeded_assignments(path)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(freshness["status"], "fresh")
+
+            seeds["operator_telemetry"] = {
+                "active_operator_seconds": 42.0,
+                "events": [{"event_type": "session_finished"}],
+            }
+            seeds["updated_at"] = "2026-07-27T14:00:00+00:00"
+            (path / SEEDS_FILENAME).write_text(
+                json.dumps(seeds),
+                encoding="utf-8",
+            )
             loaded, freshness = load_fresh_seeded_assignments(path)
             self.assertIsNotNone(loaded)
             self.assertEqual(freshness["status"], "fresh")

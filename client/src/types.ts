@@ -1447,6 +1447,11 @@ export type InitialIdentityAuditObservation = {
   role: string;
   provenance: Record<string, unknown>;
   display_order: number;
+  suggested_player?: {
+    player_id: string;
+    player_name: string;
+    team_label: InitialIdentityAuditTeamLabel;
+  } | null;
 };
 
 export type InitialIdentityAuditFrame = {
@@ -1485,6 +1490,50 @@ export type InitialIdentityAuditDocument = {
     candidate_identity_untouched: boolean;
     yolo_not_required: boolean;
     downstream_rebuild_triggered: boolean;
+  };
+};
+
+export type SecondHalfIdentityReanchorDocument = {
+  schema_version: string;
+  mode: string;
+  status: 'ready' | 'not_applicable' | 'skipped_already_resolved';
+  reason?: string | null;
+  read_only?: boolean;
+  selection_digest?: string | null;
+  video?: VideoMetadata;
+  second_half: {
+    start_time_sec?: number | null;
+    start_frame?: number | null;
+  };
+  safely_resolved_players: Array<{
+    player_id: string;
+    player_name?: string | null;
+    team_label?: InitialIdentityAuditTeamLabel | null;
+    candidate_subject_id?: string | null;
+    tracklet_ids?: string[];
+    trusted_second_half_frames?: number;
+  }>;
+  summary: {
+    selected_frames: number;
+    visible_observations: number;
+    maximum_frames: number;
+    target_actions: string;
+    confirmation_first: boolean;
+  };
+  roster: InitialIdentityAuditRosterTeam[];
+  frames: InitialIdentityAuditFrame[];
+  actions: string[];
+  operator_contract: {
+    confirmation_first: boolean;
+    second_full_lineup_audit: boolean;
+    finish_before_full_coverage: boolean;
+    [key: string]: unknown;
+  };
+  safety: {
+    production_identity_untouched: boolean;
+    candidate_identity_untouched: boolean;
+    yolo_not_required: boolean;
+    [key: string]: boolean;
   };
 };
 

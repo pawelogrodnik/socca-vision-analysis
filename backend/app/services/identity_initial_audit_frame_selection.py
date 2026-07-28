@@ -73,6 +73,8 @@ def build_initial_identity_audit_frame_selection(
     parameters: dict[str, Any] | None = None,
     generated_at: str | None = None,
     artifact_directory: str = "frames",
+    minimum_frame: int | None = None,
+    maximum_frame: int | None = None,
 ) -> dict[str, Any]:
     config = _merged_parameters(parameters)
     video = analysis_report.get("video") or {}
@@ -94,6 +96,14 @@ def build_initial_identity_audit_frame_selection(
         global_identity,
         stride_frames=int(config["candidate_stride_frames"]),
     )
+    if minimum_frame is not None:
+        candidate_frames = [
+            frame for frame in candidate_frames if frame >= int(minimum_frame)
+        ]
+    if maximum_frame is not None:
+        candidate_frames = [
+            frame for frame in candidate_frames if frame <= int(maximum_frame)
+        ]
     candidates: list[dict[str, Any]] = []
     for frame in candidate_frames:
         frame_observations = observations.get(frame) or []
@@ -192,6 +202,10 @@ def build_initial_identity_audit_frame_selection(
                 if camera_motion_report
                 else None
             ),
+            "frame_range": {
+                "minimum_frame": minimum_frame,
+                "maximum_frame": maximum_frame,
+            },
         },
         "video": {
             "fps": fps,

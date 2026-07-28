@@ -702,6 +702,28 @@ selected frames
 → reduced/prioritized existing review
 ```
 
+Live-check na `461e4dd9` (`20260727T132244Z-yolo-ultralytics-chunked-725dbdd1`):
+
+```text
+operator actions: 50
+unique named players: 7
+safe subjects resolved: 12
+tracklets resolved: 13
+frames resolved: 2692
+review cards: 109 -> 97
+parallel same-player conflicts detected and blocked: 3
+unsafe accepted parallel assignments: 0
+production identity mutations: 0
+YOLO / tracking / overlay rerun: no
+```
+
+Naprawiono również bootstrap fresh-match review oraz freshness operator seeds:
+
+- whole-subject review jest budowany po pierwszym audycie nawet wtedy, gdy wcześniej nie istniał;
+- telemetry i techniczne timestampy nie unieważniają decyzji operatora;
+- zmiana merytorycznej decyzji nadal poprawnie oznacza downstream jako stale;
+- bezpiecznie zablokowany konflikt jest zapisywany do review, a nie traktowany jako awaria rebuilda.
+
 ---
 
 # 6. Faza C — Cross-half Anchoring and Automatic Appearance, IA5–IA6
@@ -728,6 +750,41 @@ Roman #6
 ```
 
 Nie wykonywać pełnego drugiego lineup audit.
+
+### Status 2026-07-27
+
+```text
+CLOSED — IA5_ACCEPTED
+```
+
+Zaimplementowano:
+
+- jawne wykrywanie początku H2 wyłącznie z `match_phase_config.json`;
+- świadome `not_applicable`, gdy druga połowa nie jest skonfigurowana,
+  bez zgadywania jej początku z połowy długości materiału;
+- automatyczne pominięcie re-anchor, jeżeli co najmniej trzech graczy
+  posiada już bezpieczne pokrycie H2;
+- wybór maksymalnie trzech łatwych i zróżnicowanych klatek H2;
+- confirmation-first UI z akcjami `Potwierdź`, `Inny zawodnik`, `Team B`
+  oraz `Pomiń / nie wiem`;
+- współdzielony zapis operator seeds i downstream rebuild z frozen
+  detections/tracks, bez ponownego YOLO;
+- deterministyczny limit klatek także na granicy kontraktu dokumentu,
+  niezależnie od zawartości cache;
+- testy explicit-phase, limitu trzech klatek, aktualnych sugestii,
+  braku mutacji wejścia i współdzielonego seed-aware rebuilda.
+
+Akceptacja na runie:
+
+```text
+20260727T132244Z-yolo-ultralytics-chunked-725dbdd1
+match: 461e4dd9
+status: not_applicable
+reason: second_half_not_configured
+frames: 0
+```
+
+To jest oczekiwany wynik dla 90-sekundowego klipu bez jawnej H2.
 
 ## IA6 — Automatic approved appearance gallery
 
@@ -778,6 +835,61 @@ Nie wykonuje nieodwracalnego cross-subject merge.
 - brak automatycznych false merges;
 - crop selection automatyczne;
 - operator work nie rośnie względem IA0–IA4.
+
+### Status 2026-07-28
+
+```text
+IMPLEMENTED — IA6_CODE_COMPLETE
+VALIDATION_PARTIAL — CROSS_HALF_GATE_OPEN
+```
+
+Zaimplementowano:
+
+- automatyczną galerię appearance wyłącznie z operator-confirmed subjects;
+- limit i selekcję reliable cropów per gracz oraz jawna domenę H1/H2;
+- automatyczne ponowne wykorzystanie cropów whole-subject review,
+  bez dodatkowej pracy operatora;
+- robust prototype per subject i per real player;
+- leave-one-subject-out evaluation oraz advisory top-3 ranking dla
+  nierozwiązanych subjectów;
+- przenośny fallback appearance dla Apple Silicon, gdy model OpenVINO
+  nie może zostać uruchomiony;
+- jawne oznaczenie fallbacku jako `baseline_fallback`, aby nie mieszać
+  jego wyników z docelowym modelem ReID;
+- cache embeddingów oraz osobne shadow artifacts i quality report;
+- integrację z frozen downstream rebuildem, bez YOLO, trackingu
+  i renderowania pełnego overlayu;
+- fail-open warning contract oraz test niezmienności production identity;
+- testy deterministyczności, separacji H1/H2, rankingu, braku
+  automatycznych merge oraz pełnej integracji z IA4/IA5.
+
+Live-check:
+
+```text
+run: 20260727T132244Z-yolo-ultralytics-chunked-725dbdd1
+match: 461e4dd9
+gallery players: 6
+accepted candidate subjects: 12
+selected gallery crops: 42
+embedded crops: 268
+subject prototypes: 89
+player prototypes: 6
+unresolved subjects ranked: 25
+leave-one-subject-out queries: 12
+top-1 accuracy: 33.3%
+top-3 accuracy: 50.0%
+automatic merges: 0
+operator actions required: 0
+production identity changed: no
+```
+
+Wynik potwierdza działający kontrakt i mierzalny baseline, ale nie
+zamyka pełnego gate'u Fazy C:
+
+- klip nie posiada H2, więc `cross_domain_players=0`;
+- portable descriptor jest tylko bezpiecznym rankingiem bazowym;
+- przed promocją IA6 potrzeba materiału z jawnym H1/H2 i potwierdzenia,
+  że top-k przewyższa prosty baseline na nierozwiązanych fragmentach.
 
 Po Fazie C przejść do Fazy D.
 
@@ -1173,7 +1285,7 @@ Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 ```text
 A  J8.3 panel closeout                         CLOSED — AVAILABLE_DATA_NOT_SUFFICIENT
 B  IA0–IA4 Initial Audit core                 CLOSED
-C  IA5–IA6 H2 re-anchor + appearance gallery  READY — IA5 NEXT
+C  IA5–IA6 H2 re-anchor + appearance gallery  IA5 CLOSED — IA6 IMPLEMENTED, CROSS-HALF GATE OPEN
 D  J8.4 useful jersey recognizer              BLOCKED BY DATA READINESS; SCHEDULED AFTER C
 E  IA7 evidence fusion                        BLOCKED BY C + D
 F  IA8–IA9 exception-only/adaptive review     BLOCKED BY E
@@ -1188,10 +1300,10 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 
 # 14. Następne zadanie dla agenta
 
-Przy aktualnym planie agent ma rozpocząć od:
+Przy aktualnym planie następne zadanie to:
 
 ```text
-IA5 Second-half capture-domain re-anchor
+IA6 cross-half validation na materiale z jawnym H1/H2
 ```
 
 J8.3 zostało zamknięte decyzją:

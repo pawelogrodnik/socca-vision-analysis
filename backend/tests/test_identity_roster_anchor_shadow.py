@@ -18,6 +18,7 @@ def subject(
         "candidate_player_id": "A01",
         "team_label": team,
         "role": "field_player",
+        "tracklet_ids": ["track-1"],
         "production_subject_ids": [production_subject],
         "start_frame": start,
         "end_frame": end,
@@ -84,6 +85,7 @@ class IdentityRosterAnchorShadowTests(unittest.TestCase):
 
         self.assertEqual(card["status"], "confirmed_manual_anchor")
         self.assertEqual(card["recommended_player_id"], "p1")
+        self.assertEqual(card["tracklet_ids"], ["track-1"])
         self.assertFalse(card["automatic_assignment"])
         self.assertFalse(card["eligible_for_player_stats"])
         self.assertEqual(documents["identity_roster_anchor_shadow"]["safety"]["automatic_assignments"], 0)

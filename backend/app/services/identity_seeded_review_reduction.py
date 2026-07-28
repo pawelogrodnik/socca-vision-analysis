@@ -9,12 +9,16 @@ from app.services.identity_initial_audit_store import (
     write_identity_json_atomic,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_operator_seed_digest import (
+    DIGEST_CONTRACT,
+    identity_operator_seed_decisions_digest,
+)
 from app.services.identity_seeded_candidate_assignments import OUTPUT_FILENAME
 
 
 SCHEMA_VERSION = "0.1.0"
 ALGORITHM_NAME = "identity_seeded_review_reduction"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 REPORT_FILENAME = "identity_seeded_review_reduction_report.json"
 
 COMPLETED_STATUS = "completed_by_initial_audit"
@@ -41,16 +45,28 @@ def load_fresh_seeded_assignments(
             "reason_codes": ["seeded_assignments_or_operator_seeds_invalid"],
         }
 
-    expected_digest = str(
-        (seeded.get("source") or {}).get("operator_seeds_digest") or ""
+    source = seeded.get("source") or {}
+    expected_decisions_digest = str(
+        source.get("operator_seed_decisions_digest") or ""
     )
-    current_digest = canonical_digest(seeds)
-    if not expected_digest or expected_digest != current_digest:
+    legacy_expected_digest = str(source.get("operator_seeds_digest") or "")
+    current_decisions_digest = identity_operator_seed_decisions_digest(seeds)
+    current_document_digest = canonical_digest(seeds)
+    digest_matches = (
+        expected_decisions_digest == current_decisions_digest
+        if expected_decisions_digest
+        else legacy_expected_digest
+        in {current_decisions_digest, current_document_digest}
+    )
+    if not digest_matches:
         return None, {
             "status": "stale",
             "reason_codes": ["operator_seeds_digest_mismatch"],
-            "expected_operator_seeds_digest": expected_digest or None,
-            "current_operator_seeds_digest": current_digest,
+            "expected_operator_seed_decisions_digest": (
+                expected_decisions_digest or legacy_expected_digest or None
+            ),
+            "current_operator_seed_decisions_digest": current_decisions_digest,
+            "current_operator_seeds_document_digest": current_document_digest,
         }
     if (seeded.get("safety") or {}).get("production_identity_untouched") is not True:
         return None, {
@@ -60,7 +76,9 @@ def load_fresh_seeded_assignments(
     return seeded, {
         "status": "fresh",
         "reason_codes": [],
-        "operator_seeds_digest": current_digest,
+        "operator_seed_decisions_digest": current_decisions_digest,
+        "operator_seed_decisions_digest_contract": DIGEST_CONTRACT,
+        "operator_seeds_document_digest": current_document_digest,
         "seeded_assignments_digest": canonical_digest(seeded),
     }
 

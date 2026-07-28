@@ -9,15 +9,15 @@ from pathlib import Path
 import sys
 from typing import Any
 
-import cv2
-
-
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.services.identity_roster_anchor_crops_shadow import (
     build_identity_roster_anchor_crops_shadow,
+)
+from app.services.identity_roster_anchor_crop_renderer import (
+    render_identity_roster_anchor_crops,
 )
 
 
@@ -62,7 +62,11 @@ def main() -> None:
         generated_at=generated_at,
     )
     artifact = documents["identity_roster_anchor_crops_shadow"]
-    rendered = render_anchor_crops(args.video.resolve(), output_root, artifact)
+    rendered = render_identity_roster_anchor_crops(
+        args.video.resolve(),
+        output_root,
+        artifact,
+    )
     for name, document in documents.items():
         _write(output_root / f"{name}.json", document)
     after = production_hashes(args.match_dir.resolve())
@@ -91,46 +95,6 @@ def main() -> None:
     print(json.dumps(evaluation["summary"], indent=2))
     if evaluation["status"] != "passed":
         raise SystemExit(1)
-
-
-def render_anchor_crops(video_path: Path, output_root: Path, artifact: dict[str, Any]) -> set[str]:
-    requests: dict[int, list[dict[str, Any]]] = {}
-    for card in artifact.get("cards") or []:
-        for crop in card.get("anchor_crops") or []:
-            requests.setdefault(int(crop["frame"]), []).append(crop)
-    if not requests:
-        return set()
-    capture = cv2.VideoCapture(str(video_path))
-    if not capture.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-    rendered: set[str] = set()
-    try:
-        target_frames = set(requests)
-        frame_index = 0
-        while target_frames:
-            ok, frame = capture.read()
-            if not ok:
-                break
-            if frame_index in target_frames:
-                height, width = frame.shape[:2]
-                for crop in requests[frame_index]:
-                    x1, y1, x2, y2 = [float(value) for value in crop["bbox_xyxy"]]
-                    margin_x = max(8, int(round((x2 - x1) * 0.30)))
-                    margin_y = max(8, int(round((y2 - y1) * 0.20)))
-                    left = max(0, int(x1) - margin_x)
-                    top = max(0, int(y1) - margin_y)
-                    right = min(width, int(x2) + margin_x)
-                    bottom = min(height, int(y2) + margin_y)
-                    image = frame[top:bottom, left:right]
-                    artifact_path = output_root / str(crop["artifact"])
-                    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-                    if image.size and cv2.imwrite(str(artifact_path), image):
-                        rendered.add(str(crop["artifact"]))
-                target_frames.remove(frame_index)
-            frame_index += 1
-    finally:
-        capture.release()
-    return rendered
 
 
 def evaluate_anchor_crops_shadow(

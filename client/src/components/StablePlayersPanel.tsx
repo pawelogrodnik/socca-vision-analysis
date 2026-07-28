@@ -23,6 +23,7 @@ import { IdentityReviewGalleryPanel } from './IdentityReviewGalleryPanel';
 import { IdentityCropReviewPanel } from './IdentityCropReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { IdentityRosterSubjectReviewPanel } from './IdentityRosterSubjectReviewPanel';
+import { SecondHalfIdentityReanchorPanel } from './SecondHalfIdentityReanchorPanel';
 
 interface StablePlayersPanelProps {
   match: Match;
@@ -495,6 +496,11 @@ export function StablePlayersPanel({
       )}
 
       <InitialIdentityAuditPanel
+        match={match}
+        onStatus={onStatus}
+      />
+
+      <SecondHalfIdentityReanchorPanel
         match={match}
         onStatus={onStatus}
       />

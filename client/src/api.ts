@@ -15,6 +15,7 @@ import type {
   InitialIdentityAuditSeedStoreDocument,
   InitialIdentityAuditSeedUpdate,
   InitialIdentityAuditTelemetryEvent,
+  SecondHalfIdentityReanchorDocument,
   IdentityRosterSubjectReviewDocument,
   IdentityRosterSubjectTelemetryEvent,
   IdentityRosterSubjectReviewUpdate,
@@ -292,6 +293,41 @@ export async function saveInitialIdentityAuditSeeds(
 ): Promise<InitialIdentityAuditSeedStoreDocument> {
   return request<InitialIdentityAuditSeedStoreDocument>(
     `/api/matches/${encodeURIComponent(matchId)}/initial-identity-audit/seeds`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        updates,
+        telemetry_events: telemetryEvents,
+      }),
+    },
+  );
+}
+
+export async function getSecondHalfIdentityReanchor(
+  matchId: string,
+  force = false,
+): Promise<SecondHalfIdentityReanchorDocument> {
+  return request<SecondHalfIdentityReanchorDocument>(
+    `/api/matches/${encodeURIComponent(matchId)}/second-half-identity-reanchor?force=${String(force)}`,
+  );
+}
+
+export async function getSecondHalfIdentityReanchorSeeds(
+  matchId: string,
+): Promise<InitialIdentityAuditSeedStoreDocument> {
+  return request<InitialIdentityAuditSeedStoreDocument>(
+    `/api/matches/${encodeURIComponent(matchId)}/second-half-identity-reanchor/seeds`,
+  );
+}
+
+export async function saveSecondHalfIdentityReanchorSeeds(
+  matchId: string,
+  updates: InitialIdentityAuditSeedUpdate[],
+  telemetryEvents: InitialIdentityAuditTelemetryEvent[] = [],
+): Promise<InitialIdentityAuditSeedStoreDocument> {
+  return request<InitialIdentityAuditSeedStoreDocument>(
+    `/api/matches/${encodeURIComponent(matchId)}/second-half-identity-reanchor/seeds`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

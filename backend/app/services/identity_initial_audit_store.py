@@ -56,12 +56,30 @@ def load_initial_identity_audit_seeds(
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
     selection = _load_selection(match_path)
+    return load_operator_identity_audit_seeds(
+        match_path,
+        match_document,
+        selection=selection,
+        seed_path=match_path / SEEDS_FILENAME,
+        mode=MODE,
+    )
+
+
+def load_operator_identity_audit_seeds(
+    match_path: Path,
+    match_document: dict[str, Any],
+    *,
+    selection: dict[str, Any],
+    seed_path: Path,
+    mode: str,
+) -> dict[str, Any]:
     source = _source_descriptor(selection)
-    stored = _load_optional_json(match_path / SEEDS_FILENAME)
+    stored = _load_optional_json(seed_path)
     if stored is None:
         return _public_document(
             _empty_document(
                 source,
+                mode=mode,
                 production_snapshot=_production_identity_snapshot(
                     match_path,
                     match_document,
@@ -69,6 +87,7 @@ def load_initial_identity_audit_seeds(
             ),
             status="empty",
             decisions_fresh=True,
+            mode=mode,
         )
 
     decisions_fresh = _stored_source_matches(stored, source)
@@ -76,6 +95,7 @@ def load_initial_identity_audit_seeds(
         stored,
         status="fresh" if decisions_fresh else "stale",
         decisions_fresh=decisions_fresh,
+        mode=mode,
     )
 
 
@@ -88,11 +108,35 @@ def save_initial_identity_audit_seeds(
     updated_at: str | None = None,
 ) -> dict[str, Any]:
     selection = _load_selection(match_path)
+    return save_operator_identity_audit_seeds(
+        match_path,
+        match_document,
+        updates,
+        selection=selection,
+        seed_path=match_path / SEEDS_FILENAME,
+        mode=MODE,
+        audit_stage="initial_identity_audit",
+        telemetry_events=telemetry_events,
+        updated_at=updated_at,
+    )
+
+
+def save_operator_identity_audit_seeds(
+    match_path: Path,
+    match_document: dict[str, Any],
+    updates: list[dict[str, Any]],
+    *,
+    selection: dict[str, Any],
+    seed_path: Path,
+    mode: str,
+    audit_stage: str,
+    telemetry_events: list[dict[str, Any]] | None = None,
+    updated_at: str | None = None,
+) -> dict[str, Any]:
     source = _source_descriptor(selection)
     observation_index = _observation_index(selection, match_document)
     roster_index = _roster_index(match_document)
     team_index = _team_index(match_document)
-    seed_path = match_path / SEEDS_FILENAME
     existing = _load_optional_json(seed_path)
     if existing is not None and not _stored_source_matches(existing, source):
         if existing.get("decisions") or existing.get("operator_telemetry", {}).get(
@@ -106,9 +150,18 @@ def save_initial_identity_audit_seeds(
 
     production_before = _production_identity_snapshot(match_path, match_document)
     document = (
-        _normalized_existing_document(existing, source, production_before)
+        _normalized_existing_document(
+            existing,
+            source,
+            production_before,
+            mode=mode,
+        )
         if existing is not None
-        else _empty_document(source, production_snapshot=production_before)
+        else _empty_document(
+            source,
+            mode=mode,
+            production_snapshot=production_before,
+        )
     )
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
     decisions_by_key = {
@@ -149,6 +202,7 @@ def save_initial_identity_audit_seeds(
                 roster_index=roster_index,
                 team_index=team_index,
                 timestamp=timestamp,
+                audit_stage=audit_stage,
             )
         if update_id:
             processed_update_ids.add(update_id)
@@ -172,7 +226,7 @@ def save_initial_identity_audit_seeds(
     document.update(
         {
             "schema_version": SCHEMA_VERSION,
-            "mode": MODE,
+            "mode": mode,
             "source": source,
             "decisions": decisions,
             "operator_telemetry": {
@@ -201,6 +255,7 @@ def save_initial_identity_audit_seeds(
         document,
         status="fresh",
         decisions_fresh=True,
+        mode=mode,
     )
 
 
@@ -320,6 +375,7 @@ def _build_decision(
     roster_index: dict[str, dict[str, Any]],
     team_index: dict[str, dict[str, Any]],
     timestamp: str,
+    audit_stage: str,
 ) -> dict[str, Any]:
     if action not in ALLOWED_ACTIONS:
         raise ValueError(f"Unsupported Initial Identity Audit action: {action}")
@@ -383,6 +439,7 @@ def _build_decision(
         ),
         "provenance": observation.get("provenance"),
         "capture_domain": observation.get("capture_domain"),
+        "audit_stage": audit_stage,
         "updated_at": timestamp,
     }
 
@@ -523,11 +580,12 @@ def _normalize_telemetry_event(
 def _empty_document(
     source: dict[str, Any],
     *,
+    mode: str,
     production_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "mode": MODE,
+        "mode": mode,
         "source": source,
         "decisions": [],
         "operator_telemetry": {
@@ -551,9 +609,12 @@ def _normalized_existing_document(
     existing: dict[str, Any],
     source: dict[str, Any],
     production_snapshot: dict[str, Any],
+    *,
+    mode: str,
 ) -> dict[str, Any]:
     document = _empty_document(
         source,
+        mode=mode,
         production_snapshot=production_snapshot,
     )
     document.update(existing)
@@ -578,6 +639,7 @@ def _public_document(
     *,
     status: str,
     decisions_fresh: bool,
+    mode: str,
 ) -> dict[str, Any]:
     decisions = []
     if decisions_fresh:
@@ -591,13 +653,14 @@ def _public_document(
                     "team_assignment_corrected": bool(
                         row.get("team_assignment_corrected")
                     ),
+                    "audit_stage": row.get("audit_stage"),
                     "updated_at": row.get("updated_at"),
                 }
             )
     telemetry = document.get("operator_telemetry") or {}
     return {
         "schema_version": document.get("schema_version") or SCHEMA_VERSION,
-        "mode": MODE,
+        "mode": mode,
         "status": status,
         "decisions_fresh": decisions_fresh,
         "source_selection_digest": (document.get("source") or {}).get(

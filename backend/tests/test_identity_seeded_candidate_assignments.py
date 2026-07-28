@@ -267,6 +267,14 @@ class IdentitySeededCandidateAssignmentsTests(unittest.TestCase):
         )
         self.assertEqual(
             document["safety"]["impossible_parallel_assignments"],
+            0,
+        )
+        self.assertEqual(
+            document["safety"]["parallel_assignment_conflicts_detected"],
+            1,
+        )
+        self.assertEqual(
+            document["safety"]["parallel_assignment_conflicts_blocked"],
             1,
         )
 

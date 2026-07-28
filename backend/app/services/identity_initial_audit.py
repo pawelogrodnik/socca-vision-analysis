@@ -371,3 +371,27 @@ def _team_label(value: Any) -> str:
 
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_identity_audit_visual_metrics(
+    video_path: Path,
+    frames: list[int],
+) -> dict[int, dict[str, float]]:
+    """Read blur metrics shared by the initial and second-half audits."""
+    return _read_visual_metrics(video_path, frames)
+
+
+def export_identity_audit_frames(
+    video_path: Path,
+    frames: list[int],
+    output_directory: Path,
+) -> None:
+    """Export full-size and thumbnail frames for operator audit UIs."""
+    _export_selected_frames(video_path, frames, output_directory)
+
+
+def identity_audit_selection_artifacts_exist(
+    match_path: Path,
+    selection: dict[str, Any],
+) -> bool:
+    return _selection_artifacts_exist(match_path, selection)

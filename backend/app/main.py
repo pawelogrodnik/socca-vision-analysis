@@ -33,10 +33,20 @@ from app.services.identity_initial_audit_store import (
     load_initial_identity_audit_seeds,
     save_initial_identity_audit_seeds,
 )
+from app.services.identity_second_half_reanchor import (
+    prepare_second_half_identity_reanchor,
+)
+from app.services.identity_second_half_reanchor_store import (
+    load_second_half_identity_reanchor_seeds,
+    save_second_half_identity_reanchor_seeds,
+)
 from app.services.identity_seeded_candidate_assignments import (
     SeededCandidateAssignmentsStaleError,
     load_identity_seeded_candidate_assignments,
     rebuild_identity_seeded_candidate_assignments,
+)
+from app.services.identity_seeded_subject_review_rebuild import (
+    rebuild_identity_seeded_subject_review,
 )
 from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
 from app.services.identity_review_segments import save_identity_review_splits
@@ -1187,6 +1197,54 @@ def get_initial_identity_audit(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+def rebuild_seeded_identity_after_operator_audit(
+    path: Path,
+    match_document: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        seeded_candidates = rebuild_identity_seeded_candidate_assignments(
+            path,
+            match_document,
+        )
+    except (
+        FileNotFoundError,
+        SeededCandidateAssignmentsStaleError,
+        ValueError,
+    ) as exc:
+        return {
+            "status": "unavailable",
+            "reason": str(exc),
+        }
+
+    rebuild_status: dict[str, Any] = {
+        "status": "fresh",
+        "summary": seeded_candidates.get("summary") or {},
+        "safety": seeded_candidates.get("safety") or {},
+    }
+    try:
+        reduced_review = rebuild_identity_seeded_subject_review(
+            path,
+            match_document,
+            video_path=match_video_path(path),
+        )
+        rebuild_status["whole_subject_review"] = {
+            "status": reduced_review.get("status"),
+            "summary": reduced_review.get("summary") or {},
+            "initial_audit_integration": (
+                reduced_review.get("initial_audit_integration") or {}
+            ),
+            "rendered_anchor_crops": reduced_review.get(
+                "rendered_anchor_crops"
+            ),
+        }
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        rebuild_status["whole_subject_review"] = {
+            "status": "warning",
+            "reason": str(exc),
+        }
+    return rebuild_status
+
+
 @app.get("/api/matches/{match_id}/initial-identity-audit/seeds")
 def get_initial_identity_audit_seeds(
     match_id: str,
@@ -1236,49 +1294,133 @@ def update_initial_identity_audit_seeds(
             updates,
             telemetry_events=telemetry_events,
         )
-        try:
-            seeded_candidates = rebuild_identity_seeded_candidate_assignments(
-                path,
-                match_document,
-            )
-            rebuild_status = {
-                "status": "fresh",
-                "summary": seeded_candidates.get("summary") or {},
-                "safety": seeded_candidates.get("safety") or {},
-            }
-            review_path = path / "identity_roster_subject_review_shadow.json"
-            if review_path.exists():
-                try:
-                    reduced_review = load_identity_roster_subject_review(
-                        path,
-                        match_doc=match_document,
-                    )
-                    rebuild_status["whole_subject_review"] = {
-                        "status": (
-                            reduced_review.get("initial_audit_integration") or {}
-                        ).get("status"),
-                        "summary": reduced_review.get("summary") or {},
-                    }
-                except (OSError, ValueError) as exc:
-                    rebuild_status["whole_subject_review"] = {
-                        "status": "warning",
-                        "reason": str(exc),
-                    }
+        rebuild_status = rebuild_seeded_identity_after_operator_audit(
+            path,
+            match_document,
+        )
+        if rebuild_status.get("status") == "fresh":
             result["safety"] = {
                 **(result.get("safety") or {}),
                 "downstream_rebuild_triggered": True,
             }
-        except (
-            FileNotFoundError,
-            SeededCandidateAssignmentsStaleError,
-            ValueError,
-        ) as exc:
-            rebuild_status = {
-                "status": "unavailable",
-                "reason": str(exc),
+        result["seeded_candidate_rebuild"] = rebuild_status
+        return result
+    except InitialIdentityAuditConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InitialIdentityAuditStaleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/second-half-identity-reanchor")
+def get_second_half_identity_reanchor(
+    match_id: str,
+    force: bool = Query(False),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return prepare_second_half_identity_reanchor(
+            path,
+            match_video_path(path),
+            read_match_meta(path),
+            force=force,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/second-half-identity-reanchor/seeds")
+def get_second_half_identity_reanchor_seeds(
+    match_id: str,
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        match_document = read_match_meta(path)
+        document = prepare_second_half_identity_reanchor(
+            path,
+            match_video_path(path),
+            match_document,
+        )
+        if document.get("status") != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail=str(
+                    document.get("reason")
+                    or "Second-half re-anchor is not available"
+                ),
+            )
+        return load_second_half_identity_reanchor_seeds(
+            path,
+            match_document,
+        )
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.put("/api/matches/{match_id}/second-half-identity-reanchor/seeds")
+def update_second_half_identity_reanchor_seeds(
+    match_id: str,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    telemetry_events = payload.get("telemetry_events") or []
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    if not isinstance(telemetry_events, list):
+        raise HTTPException(
+            status_code=400,
+            detail="telemetry_events must be a list",
+        )
+    try:
+        match_document = read_match_meta(path)
+        document = prepare_second_half_identity_reanchor(
+            path,
+            match_video_path(path),
+            match_document,
+        )
+        if document.get("status") != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail=str(
+                    document.get("reason")
+                    or "Second-half re-anchor is not available"
+                ),
+            )
+        result = save_second_half_identity_reanchor_seeds(
+            path,
+            match_document,
+            updates,
+            telemetry_events=telemetry_events,
+        )
+        rebuild_status = rebuild_seeded_identity_after_operator_audit(
+            path,
+            match_document,
+        )
+        if rebuild_status.get("status") == "fresh":
+            result["safety"] = {
+                **(result.get("safety") or {}),
+                "downstream_rebuild_triggered": True,
             }
         result["seeded_candidate_rebuild"] = rebuild_status
         return result
+    except HTTPException:
+        raise
     except InitialIdentityAuditConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InitialIdentityAuditStaleError as exc:
@@ -1992,6 +2134,13 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     if (
         len(artifact_rel.parts) == 3
         and artifact_rel.parts[0] == "identity_initial_audit"
+        and artifact_rel.parts[1] == "frames"
+        and artifact_basename.lower().endswith((".jpg", ".jpeg"))
+    ):
+        allowed[artifact_basename] = "image/jpeg"
+    if (
+        len(artifact_rel.parts) == 3
+        and artifact_rel.parts[0] == "identity_second_half_reanchor"
         and artifact_rel.parts[1] == "frames"
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):
