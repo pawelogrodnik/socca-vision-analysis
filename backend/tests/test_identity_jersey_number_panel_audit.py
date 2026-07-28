@@ -11,6 +11,7 @@ from app.services.identity_jersey_number_panel_audit import (
     build_montage_approval_template,
     build_panel_experiment_selection,
     normalize_panel_experiment_selection,
+    render_montage_approval_page,
 )
 
 try:
@@ -204,6 +205,47 @@ class JerseyNumberPanelAuditTests(unittest.TestCase):
         self.assertEqual(approved["final_decision"], "PROCEED_TO_J8_4_LATER")
 
     @unittest.skipUnless(cv2 is not None and np is not None, "OpenCV test dependency unavailable")
+    def test_semantic_number_ten_satisfies_real10_gate_outside_legacy_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            samples = []
+            for index in range(50):
+                artifact = f"confirmed-{index}.jpg"
+                _write_torso(root / artifact, digits="10")
+                samples.append(
+                    _sample(
+                        root,
+                        f"confirmed-{index}",
+                        artifact,
+                        state="number_confirmed",
+                        number="10",
+                        frame=8000 + index,
+                        visibility_episode_id=f"confirmed-episode-{index}",
+                    )
+                )
+            for index in range(30):
+                artifact = f"negative-{index}.jpg"
+                _write_torso(root / artifact, digits=None)
+                samples.append(
+                    _sample(
+                        root,
+                        f"negative-{index}",
+                        artifact,
+                        state="number_absent",
+                        number=None,
+                        frame=9000 + index,
+                        visibility_episode_id=f"negative-episode-{index}",
+                    )
+                )
+            report = audit_identity_jersey_number_panels(
+                {"dataset_digest": "dataset-digest", "samples": samples},
+                output_root=root / "audit",
+            )
+
+        self.assertGreaterEqual(report["summary"]["real10_panels_found"], 1)
+        self.assertTrue(report["gates"]["real10_panel_minimum"])
+
+    @unittest.skipUnless(cv2 is not None and np is not None, "OpenCV test dependency unavailable")
     def test_approval_digest_mismatch_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -274,6 +316,59 @@ class JerseyNumberPanelAuditTests(unittest.TestCase):
         second = build_panel_experiment_selection(dataset)
         self.assertEqual(first, second)
         self.assertEqual(first["sample_keys"], ["a", "b"])
+
+    def test_default_selection_skips_unreviewed_null_placeholder_rows(self) -> None:
+        dataset = {
+            "samples": [
+                {
+                    "sample_key": "reviewed",
+                    "jersey_number_state": "number_confirmed",
+                    "jersey_number": "10",
+                    "frame": 1,
+                },
+                {
+                    "sample_key": "placeholder",
+                    "jersey_number_state": None,
+                    "jersey_number": None,
+                    "label_state": None,
+                    "number": None,
+                    "frame": 2,
+                },
+            ]
+        }
+
+        selection = build_panel_experiment_selection(dataset)
+
+        self.assertEqual(selection["sample_keys"], ["reviewed"])
+
+    @unittest.skipUnless(cv2 is not None and np is not None, "OpenCV test dependency unavailable")
+    def test_montage_approval_page_contains_simple_operator_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_torso(root / "torso.jpg", digits="10")
+            report = audit_identity_jersey_number_panels(
+                {
+                    "dataset_digest": "dataset-digest",
+                    "samples": [
+                        _sample(
+                            root,
+                            "sample",
+                            "torso.jpg",
+                            state="number_confirmed",
+                            number="10",
+                            frame=8000,
+                            visibility_episode_id="episode",
+                        )
+                    ],
+                },
+                output_root=root / "audit",
+            )
+
+        page = render_montage_approval_page(report)
+        self.assertIn("Akceptuje montage", page)
+        self.assertIn("Odrzucam montage", page)
+        self.assertIn("number_panel_montage.jpg", page)
+        self.assertIn("montage_sha256", page)
 
     def test_default_selection_is_bounded_and_balances_negative_states(self) -> None:
         samples = []

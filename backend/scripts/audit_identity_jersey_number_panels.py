@@ -13,10 +13,12 @@ if str(BACKEND_DIR) not in sys.path:
 from app.services.identity_jersey_number_panel_audit import (  # noqa: E402
     APPROVAL_FILENAME,
     FINDINGS_FILENAME,
+    MONTAGE_REVIEW_FILENAME,
     READINESS_FILENAME,
     SELECTION_FILENAME,
     audit_identity_jersey_number_panels,
     build_montage_approval_template,
+    render_montage_approval_page,
     render_panel_readiness_findings,
 )
 
@@ -27,6 +29,11 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--selection", type=Path)
     parser.add_argument("--approval", type=Path)
+    parser.add_argument(
+        "--reset-approval",
+        action="store_true",
+        help="Replace a previous blank or stale approval template with one for this exact montage.",
+    )
     args = parser.parse_args()
 
     dataset_doc = json.loads(args.dataset.resolve().read_text(encoding="utf-8"))
@@ -36,7 +43,7 @@ def main() -> None:
     selection_path = args.selection.resolve() if args.selection else output_root / SELECTION_FILENAME
     approval_path = args.approval.resolve() if args.approval else output_root / APPROVAL_FILENAME
     selection_doc = _read_optional_object(selection_path)
-    approval_doc = _read_optional_object(approval_path)
+    approval_doc = None if args.reset_approval else _read_optional_object(approval_path)
     report = audit_identity_jersey_number_panels(
         dataset_doc,
         output_root=output_root,
@@ -59,6 +66,10 @@ def main() -> None:
     )
     (output_root / FINDINGS_FILENAME).write_text(
         render_panel_readiness_findings(report),
+        encoding="utf-8",
+    )
+    (output_root / MONTAGE_REVIEW_FILENAME).write_text(
+        render_montage_approval_page(report),
         encoding="utf-8",
     )
     print(json.dumps(report["summary"], indent=2, ensure_ascii=False))

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
+import json
 from pathlib import Path
 from statistics import median
 from typing import Any
@@ -15,20 +16,23 @@ from app.services.identity_jersey_number_common import normalize_safe_relative_a
 
 SCHEMA_VERSION = "0.2.0"
 ALGORITHM_NAME = "identity_jersey_number_panel_audit"
-ALGORITHM_VERSION = "1.0.0"
+ALGORITHM_VERSION = "1.1.0"
 PANEL_RESIZE_WIDTH = 96
 PANEL_RESIZE_HEIGHT = 64
 MONTAGE_FILENAME = "number_panel_montage.jpg"
 READINESS_FILENAME = "number_panel_dataset_readiness.json"
 SELECTION_FILENAME = "panel_experiment_selection.json"
 APPROVAL_FILENAME = "number_panel_montage_approval.json"
+MONTAGE_REVIEW_FILENAME = "number_panel_montage_review.html"
 FINDINGS_FILENAME = "J8_3_PANEL_READINESS_FINDINGS.md"
 SELECTION_VERSION = "panel-experiment-selection-v1"
 MIN_READABLE_CROPS = 50
 MIN_READABLE_EPISODES = 20
 MIN_NEGATIVES = 30
 MIN_MEDIAN_DIGIT_HEIGHT = 8.0
-REAL10_FRAMES = frozenset({3509, 3510, 3512})
+# Kept only for compatibility with the original fixture.  Real-number coverage
+# must come from a confirmed semantic label, never from a frame number.
+LEGACY_REAL10_FRAMES = frozenset({3509, 3510, 3512})
 INVALID_SELECTED_STATUSES = frozenset(
     {
         "missing_panel_bbox",
@@ -138,6 +142,7 @@ def audit_identity_jersey_number_panels(
             "number_panel_dataset_readiness": READINESS_FILENAME,
             "number_panel_montage": MONTAGE_FILENAME,
             "number_panel_montage_approval": APPROVAL_FILENAME,
+            "number_panel_montage_review": MONTAGE_REVIEW_FILENAME,
             "panel_experiment_selection": SELECTION_FILENAME,
             "findings": FINDINGS_FILENAME,
         },
@@ -170,6 +175,15 @@ def build_panel_experiment_selection(dataset_doc: dict[str, Any]) -> dict[str, A
         sample_key = str(sample.get("sample_key") or "")
         if not sample_key:
             continue
+        # Discovery-source rows reserve the jersey fields with null values before
+        # an operator has reviewed them.  They are not negative examples: a
+        # negative requires an explicit "absent" or "unreadable" decision.
+        has_explicit_annotation = any(
+            sample.get(field) not in (None, "")
+            for field in ("jersey_number_state", "label_state", "number")
+        )
+        if not has_explicit_annotation:
+            continue
         try:
             annotation = normalize_jersey_number_annotation(sample, allow_missing=False)
         except ValueError:
@@ -181,7 +195,7 @@ def build_panel_experiment_selection(dataset_doc: dict[str, Any]) -> dict[str, A
         state = annotation["jersey_number_state"]
         state_order = {"number_confirmed": 0, "number_absent": 1, "number_unreadable": 2}
         return (
-            0 if int(sample.get("frame") or -1) in REAL10_FRAMES else 1,
+            0 if str(annotation.get("jersey_number") or "") == "10" else 1,
             state_order.get(str(state), 9),
             str(sample.get("visibility_episode_id") or ""),
             int(sample.get("frame") or 0),
@@ -312,6 +326,75 @@ def build_montage_approval_template(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def render_montage_approval_page(report: dict[str, Any]) -> str:
+    """Render a one-decision J8.3 review without exposing technical metadata."""
+    summary = report["summary"]
+    template = json.dumps(build_montage_approval_template(report), ensure_ascii=False)
+    return f"""<!doctype html>
+<html lang=\"pl\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>J8.3 - akceptacja paneli numerow</title>
+  <style>
+    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }}
+    body {{ margin: 0; background: #07111f; color: #edf3ff; }}
+    main {{ max-width: 1180px; margin: 0 auto; padding: 32px 20px 48px; }}
+    h1 {{ margin: 0 0 8px; font-size: 28px; }}
+    p {{ color: #b9c7dc; line-height: 1.5; max-width: 900px; }}
+    .summary {{ display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }}
+    .pill {{ border: 1px solid #2a4569; border-radius: 999px; padding: 7px 11px; color: #dbe9ff; }}
+    .montage {{ width: 100%; border: 1px solid #2a4569; background: #020817; display: block; }}
+    .actions {{ display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; align-items: end; }}
+    label {{ display: grid; gap: 6px; color: #b9c7dc; font-size: 14px; }}
+    input, textarea {{ background: #0c1b30; color: #edf3ff; border: 1px solid #36587f; border-radius: 4px; padding: 10px; min-width: 220px; }}
+    textarea {{ min-width: 320px; min-height: 42px; }}
+    button {{ border: 0; border-radius: 4px; padding: 12px 16px; font-weight: 750; cursor: pointer; }}
+    .approve {{ background: #2fcf62; color: #04140a; }}
+    .reject {{ background: #f46969; color: #220606; }}
+    #message {{ min-height: 22px; color: #b9c7dc; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Ostatnia akceptacja paneli numerow</h1>
+    <p>To nie jest kolejna annotacja. Sprawdz tylko, czy montage przedstawia sensowne ciasne wycinki numerow i negatywne przyklady, ktore oznaczyles. Akceptuj, gdy material ogolnie wyglada poprawnie; odrzuc tylko, gdy panelowy dataset jest wyraznie bledny.</p>
+    <div class=\"summary\">
+      <span class=\"pill\">Czytelne numery: {summary['readable_confirmed_panels']}</span>
+      <span class=\"pill\">Negatywne: {summary['negative_crops']}</span>
+      <span class=\"pill\">Epizody widocznosci: {summary['readable_visibility_episodes']}</span>
+      <span class=\"pill\">Numer #10: {summary['real10_panels_found']}</span>
+    </div>
+    <img class=\"montage\" src=\"{MONTAGE_FILENAME}\" alt=\"Montaz paneli numerow koszulek\">
+    <div class=\"actions\">
+      <label>Osoba sprawdzajaca<input id=\"reviewer\" value=\"operator\" autocomplete=\"name\"></label>
+      <label>Opcjonalna notatka<textarea id=\"notes\" placeholder=\"Np. panele czytelne, mozna przejsc dalej\"></textarea></label>
+      <button class=\"approve\" onclick=\"downloadDecision('approved')\">Akceptuje montage</button>
+      <button class=\"reject\" onclick=\"downloadDecision('rejected')\">Odrzucam montage</button>
+    </div>
+    <p id=\"message\"></p>
+  </main>
+  <script>
+    const template = {template};
+    function downloadDecision(status) {{
+      const reviewer = document.getElementById('reviewer').value.trim() || 'operator';
+      const notes = document.getElementById('notes').value.trim();
+      const payload = {{ ...template, reviewer, notes, status, reviewed_at: new Date().toISOString() }};
+      const blob = new Blob([JSON.stringify(payload, null, 2) + '\\n'], {{ type: 'application/json' }});
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = '{APPROVAL_FILENAME}';
+      anchor.click();
+      URL.revokeObjectURL(url);
+      document.getElementById('message').textContent = 'Pobrano decyzje. Dolacz pobrany plik JSON w rozmowie.';
+    }}
+  </script>
+</body>
+</html>
+"""
+
+
 def panel_readiness_final_decision(report: dict[str, Any]) -> str:
     summary = report["summary"]
     if summary["selected_invalid_samples"] > 0 or summary["audited_panel_coverage"] < 1.0:
@@ -322,6 +405,11 @@ def panel_readiness_final_decision(report: dict[str, Any]) -> str:
         return "AVAILABLE_DATA_NOT_SUFFICIENT"
     if summary["number_absent_panels"] + summary["number_unreadable_panels"] < MIN_NEGATIVES:
         return "AVAILABLE_DATA_NOT_SUFFICIENT"
+    if summary["real10_panels_found"] < 1:
+        return "AVAILABLE_DATA_NOT_SUFFICIENT"
+    median_height = summary["estimated_digit_height_px"]["median"]
+    if median_height is None or float(median_height) < MIN_MEDIAN_DIGIT_HEIGHT:
+        return "FIX_PANEL_PIPELINE_FIRST"
     if report["status"] == "ready_for_panel_digit_experiment":
         return "PROCEED_TO_J8_4_LATER"
     if report["status"] == "machine_ready_waiting_for_human_review":
@@ -554,9 +642,13 @@ def _summary(rows: list[dict[str, Any]], dataset_doc: dict[str, Any]) -> dict[st
         "number_absent_panels": len(plain_shirt),
         "number_unreadable_panels": len(unreadable),
         "real10_panels_found": sum(
-            row.get("source_match_key") == "real10"
-            or int(row.get("frame") or -1) in REAL10_FRAMES
-            for row in audited
+            str(row.get("jersey_number") or "") == "10"
+            # Older immutable fixture artifacts did not carry the semantic label.
+            or (
+                row.get("source_match_key") == "real10"
+                and int(row.get("frame") or -1) in LEGACY_REAL10_FRAMES
+            )
+            for row in readable_full
         ),
         "total_panel_crops": len(audited),
         "readable_full_number_crops": len(readable_full),
