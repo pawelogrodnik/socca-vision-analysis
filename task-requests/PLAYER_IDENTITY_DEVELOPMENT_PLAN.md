@@ -840,7 +840,7 @@ Nie wykonuje nieodwracalnego cross-subject merge.
 
 ```text
 IMPLEMENTED — IA6_CODE_COMPLETE
-VALIDATION_PARTIAL — CROSS_HALF_GATE_OPEN
+VALIDATED_ADVISORY_ONLY — CROSS_ANALYSIS_BASELINE_PASSED
 ```
 
 Zaimplementowano:
@@ -884,12 +884,42 @@ production identity changed: no
 ```
 
 Wynik potwierdza działający kontrakt i mierzalny baseline, ale nie
-zamyka pełnego gate'u Fazy C:
+zamyka jeszcze pełnego gate'u Fazy C:
 
 - klip nie posiada H2, więc `cross_domain_players=0`;
 - portable descriptor jest tylko bezpiecznym rankingiem bazowym;
-- przed promocją IA6 potrzeba materiału z jawnym H1/H2 i potwierdzenia,
-  że top-k przewyższa prosty baseline na nierozwiązanych fragmentach.
+- przed promocją IA6 potrzeba potwierdzenia, że top-k przewyższa prosty
+  baseline na nierozwiązanych fragmentach w osobnych analizach tego samego
+  fizycznego meczu.
+
+Cross-analysis live validation, 2026-07-28:
+
+```text
+source analysis: 7655bf7c
+target analysis: 343980c8
+source manual assignments: 162
+target manual assignments: 150
+source player profiles: 10
+target subject queries: 125
+top-1 accuracy: 37.6%
+top-3 accuracy: 60.0%
+same-team random top-1: 10.0%
+same-team random top-3: 30.0%
+top-1 lift vs random: 3.76x
+top-3 lift vs random: 2.00x
+automatic merges: 0
+production identity changed: no
+```
+
+To jest właściwy kontrakt dla produktu: połówki są osobnymi uploadami i
+osobnymi analizami. Benchmark może wykorzystywać je jako różne domeny
+capture, ale nie scala ich automatycznie ani nie wymaga stworzenia jednego
+plikowego "pełnego meczu". Wynik jest wystarczający dla advisory ranking,
+ale za słaby dla automatycznego przypisania realnego zawodnika.
+
+Gate porównawczy IA6 jest zatem spełniony: ranking pokonuje prosty losowy
+baseline tej samej drużyny. Nie jest to jednak zgoda na automatyczny merge;
+każda sugestia pozostaje decyzją review lub seedem o jawnej proweniencji.
 
 Po Fazie C przejść do Fazy D.
 
@@ -1285,7 +1315,7 @@ Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 ```text
 A  J8.3 panel closeout                         CLOSED — AVAILABLE_DATA_NOT_SUFFICIENT
 B  IA0–IA4 Initial Audit core                 CLOSED
-C  IA5–IA6 H2 re-anchor + appearance gallery  IA5 CLOSED — IA6 IMPLEMENTED, CROSS-HALF GATE OPEN
+C  IA5–IA6 re-anchor + appearance gallery     IA5 CLOSED — IA6 VALIDATED, ADVISORY ONLY
 D  J8.4 useful jersey recognizer              BLOCKED BY DATA READINESS; SCHEDULED AFTER C
 E  IA7 evidence fusion                        BLOCKED BY C + D
 F  IA8–IA9 exception-only/adaptive review     BLOCKED BY E
@@ -1303,7 +1333,8 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie następne zadanie to:
 
 ```text
-IA6 cross-half validation na materiale z jawnym H1/H2
+J8.4 pozostaje zablokowane przez panel-data readiness.
+Uzupełnić tylko wybrany subset paneli lub świadomie wstrzymać jersey work.
 ```
 
 J8.3 zostało zamknięte decyzją:
