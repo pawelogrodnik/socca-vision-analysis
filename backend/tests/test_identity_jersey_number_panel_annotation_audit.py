@@ -42,6 +42,8 @@ class JerseyNumberPanelAnnotationAuditTests(unittest.TestCase):
             self.assertEqual(len(list((output_root / "images").glob("*.jpg"))), 2)
             html = (output_root / INDEX_FILENAME).read_text(encoding="utf-8")
             self.assertIn("Skip / not sure", html)
+            self.assertIn("Save suggested jersey panel", html)
+            self.assertIn("defaultPanelBox", html)
             self.assertIn("Finish audit", html)
             self.assertIn('id="zoomIn"', html)
             self.assertIn('id="zoomOut"', html)

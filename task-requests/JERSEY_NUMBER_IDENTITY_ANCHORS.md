@@ -12,7 +12,7 @@ J8.3 PANEL AUDIT IMPLEMENTATION: CLOSED
 J8.3 CANONICAL SUBSET + OPERATOR PANEL-BOX PACKAGE: CLOSED
 J8.3 REAL PANEL AUDIT + HUMAN MONTAGE APPROVAL + FINDINGS: CLOSED
 J8.3 FINAL DECISION: AVAILABLE_DATA_NOT_SUFFICIENT
-J8.4 PANELDIGITNETV1: NOT STARTED
+J8.4 PANELDIGITNETV1: DIAGNOSTIC R1-R3 COMPLETE / NOT ELIGIBLE
 CANDIDATE I PRODUCTION ASSIGNMENTS POZOSTAJĄ ZABLOKOWANE
 ```
 
@@ -24,7 +24,7 @@ Aktualny baseline po mergu:
 
 Najważniejsza decyzja:
 
-> J8.3 zostało operacyjnie domknięte. Pipeline paneli i ręczny audyt działają, ale dostępny materiał nie spełnia progów ilościowych. Nie rozpoczynać J8.4; najpierw zebrać więcej niezależnych, czytelnych paneli i negatywów.
+> J8.3 zostało operacyjnie domknięte. Pipeline paneli i ręczny audyt działają, ale dostępny materiał nie spełnia progów ilościowych. PanelDigitNetV1 uruchomiono wyłącznie jako diagnostyczne R1-R3; wyniki nie kwalifikują go do candidate ani production identity. Przed kolejną próbą zbieramy więcej niezależnych, czytelnych paneli oraz prawdziwych negatywów `number_absent`.
 
 Jersey-number work nie blokuje równoległego P1.22 Full-Match Operator Benchmark.
 

@@ -335,6 +335,7 @@ def _render_audit_html(manifest: dict[str, Any]) -> str:
     <div class="buttons">
       <button id="previous">Previous</button>
       <button id="confirm" class="primary">Save panel</button>
+      <button id="suggested" class="primary">Save suggested jersey panel</button>
       <button id="clear">Clear box</button>
       <button id="skip" class="warn">Skip / not sure</button>
       <button id="next">Next</button>
@@ -343,8 +344,9 @@ def _render_audit_html(manifest: dict[str, Any]) -> str:
       <summary>Short instructions</summary>
       <p>Draw one tight rectangle around the visible number panel. For a confirmed
       number, include only the digits and a small margin. For number absent or unreadable,
-      draw the clean stable jersey region where the number would be visible. If that
-      region cannot be identified safely, choose Skip. Decisions save automatically.</p>
+      use <strong>Save suggested jersey panel</strong> only when the back/bib is clearly
+      visible without digits. If the player, back or expected panel area is obscured,
+      choose Skip. Decisions save automatically.</p>
       <p><kbd>Left/Right</kbd> navigation, <kbd>S</kbd> save, <kbd>K</kbd> skip.</p>
     </details>
   </main>
@@ -358,6 +360,7 @@ def _render_audit_html(manifest: dict[str, Any]) -> str:
     let dragStart = null;
     let draftBox = null;
     let zoom = Number(stored.zoom) || 1;
+    const defaultPanelBox = [0.35, 0.28, 0.65, 0.45];
     const canvas = document.getElementById("canvas");
     const context = canvas.getContext("2d");
     const canvasWrap = document.querySelector(".canvas-wrap");
@@ -415,6 +418,11 @@ def _render_audit_html(manifest: dict[str, Any]) -> str:
       document.getElementById("previous").disabled = index === 0;
       document.getElementById("next").disabled = index >= audit.items.length - 1;
       document.getElementById("confirm").disabled = !draftBox || !item.image_available;
+      const canUseSuggestedPanel = item.image_available &&
+        item.jersey_number_state !== "number_confirmed";
+      document.getElementById("suggested").hidden =
+        item.jersey_number_state === "number_confirmed";
+      document.getElementById("suggested").disabled = !canUseSuggestedPanel;
       if (!item.image_filename) {{
         canvas.width = 800; canvas.height = 520;
         context.fillStyle = "#020817"; context.fillRect(0, 0, canvas.width, canvas.height);
@@ -497,14 +505,25 @@ def _render_audit_html(manifest: dict[str, Any]) -> str:
       zoom = fitZoom(); applyZoom();
     }};
     document.getElementById("clear").onclick = () => {{ draftBox = null; draw(); }};
-    document.getElementById("confirm").onclick = () => {{
-      if (!draftBox) return;
+    function savePanel(box, source) {{
+      if (!box || !current().image_available) return;
       decisions[current().sample_key] = {{
         status: "panel_confirmed",
-        number_panel_bbox_normalized: draftBox.map(value => Number(value.toFixed(6))),
+        number_panel_bbox_normalized: box.map(value => Number(value.toFixed(6))),
+        panel_source: source,
         reviewed_at: new Date().toISOString()
       }};
       saveLocal(); move(1);
+    }}
+    document.getElementById("confirm").onclick = () => {{
+      savePanel(draftBox, "operator_drawn");
+    }};
+    document.getElementById("suggested").onclick = () => {{
+      const item = current();
+      const existing = item.existing_number_panel_bbox_normalized;
+      const suggested = Array.isArray(existing) && existing.length === 4
+        ? existing : defaultPanelBox;
+      savePanel(suggested, "operator_suggested");
     }};
     document.getElementById("skip").onclick = () => {{
       decisions[current().sample_key] = {{
