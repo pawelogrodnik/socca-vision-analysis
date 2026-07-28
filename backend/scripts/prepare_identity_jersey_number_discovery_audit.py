@@ -32,6 +32,11 @@ def main() -> None:
     parser.add_argument("--target-confirmations", type=int, default=60)
     parser.add_argument("--team-label", default="A")
     parser.add_argument(
+        "--unreviewed-only",
+        action="store_true",
+        help="Select only crop rows that have not received any prior jersey-number annotation.",
+    )
+    parser.add_argument(
         "--choice",
         action="append",
         required=False,
@@ -67,6 +72,7 @@ def main() -> None:
         target_cards=args.target_cards,
         target_confirmations=args.target_confirmations,
         team_label=args.team_label,
+        unreviewed_only=args.unreviewed_only,
     )
     print(json.dumps(manifest["summary"], indent=2, ensure_ascii=False))
     print(f"manifest={output_root / MANIFEST_FILENAME}")

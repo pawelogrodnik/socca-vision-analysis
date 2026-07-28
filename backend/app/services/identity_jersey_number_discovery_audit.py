@@ -19,9 +19,9 @@ from app.services.identity_jersey_number_dataset import (
 )
 
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_jersey_number_discovery_audit"
-ALGORITHM_VERSION = "1.1.0"
+ALGORITHM_VERSION = "1.2.0"
 MANIFEST_FILENAME = "identity_jersey_number_discovery_audit.json"
 REVIEWED_FILENAME = "identity_jersey_number_discovery_audit_reviewed.json"
 INDEX_FILENAME = "index.html"
@@ -35,6 +35,7 @@ def prepare_jersey_number_discovery_audit(
     target_cards: int = 150,
     target_confirmations: int = 60,
     team_label: str = "A",
+    unreviewed_only: bool = False,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Prepare a research-only number discovery gate from existing crop artifacts.
@@ -47,7 +48,12 @@ def prepare_jersey_number_discovery_audit(
     if target_confirmations < 1:
         raise ValueError("target_confirmations must be positive")
     normalized_choices = _normalize_roster_choices(roster_choices)
-    selected = _select_samples(dataset_doc, team_label=team_label, target_cards=target_cards)
+    selected = _select_samples(
+        dataset_doc,
+        team_label=team_label,
+        target_cards=target_cards,
+        unreviewed_only=unreviewed_only,
+    )
     output_root.mkdir(parents=True, exist_ok=True)
     image_root = output_root / "images"
     image_root.mkdir(parents=True, exist_ok=True)
@@ -91,6 +97,7 @@ def prepare_jersey_number_discovery_audit(
         "dataset_digest": str(dataset_doc.get("dataset_digest") or ""),
         "team_label": team_label,
         "target_confirmations": target_confirmations,
+        "selection_mode": "unreviewed_only" if unreviewed_only else "all_available",
         "roster_choices": normalized_choices,
         "items": [
             {
@@ -115,6 +122,7 @@ def prepare_jersey_number_discovery_audit(
             "target_confirmations": target_confirmations,
             "selected_cards": len(items),
             "available_images": sum(bool(item["image_available"]) for item in items),
+            "unreviewed_only": unreviewed_only,
             "preexisting_confirmed": sum(
                 item["existing_annotation"]["jersey_number_state"] == "number_confirmed"
                 for item in items
@@ -311,13 +319,18 @@ def apply_jersey_number_discovery_audit(
 
 
 def _select_samples(
-    dataset_doc: dict[str, Any], *, team_label: str, target_cards: int
+    dataset_doc: dict[str, Any],
+    *,
+    team_label: str,
+    target_cards: int,
+    unreviewed_only: bool = False,
 ) -> list[dict[str, Any]]:
     candidates = [
         row for row in dataset_doc.get("samples") or []
         if isinstance(row, dict)
         and str(row.get("team_label") or "").upper() == team_label.upper()
         and bool(row.get("artifact_available"))
+        and (not unreviewed_only or _is_unreviewed(row))
     ]
     # First pass preserves episode diversity; later passes fill the requested budget.
     candidates.sort(key=_sample_sort_key)
@@ -339,6 +352,19 @@ def _select_samples(
         if len(selected) >= target_cards:
             break
     return selected
+
+
+def _is_unreviewed(sample: dict[str, Any]) -> bool:
+    return not any(
+        sample.get(field) is not None
+        for field in (
+            "jersey_number_state",
+            "label_state",
+            "jersey_number",
+            "number",
+            "number_panel_bbox_normalized",
+        )
+    )
 
 
 def _sample_sort_key(sample: dict[str, Any]) -> tuple[Any, ...]:
@@ -381,6 +407,7 @@ def _contract_from_review(reviewed_doc: dict[str, Any]) -> dict[str, Any]:
         "dataset_digest": reviewed_doc.get("dataset_digest"),
         "team_label": reviewed_doc.get("team_label"),
         "target_confirmations": reviewed_doc.get("target_confirmations"),
+        "selection_mode": reviewed_doc.get("selection_mode"),
         "roster_choices": reviewed_doc.get("roster_choices"),
         "items": [
             {

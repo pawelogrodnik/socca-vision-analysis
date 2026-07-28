@@ -137,6 +137,30 @@ class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "contract digest mismatch"):
                 apply_jersey_number_discovery_audit(dataset, reviewed)
 
+    def test_prepare_unreviewed_only_excludes_existing_number_annotations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = _dataset(root)
+            dataset["samples"][0]["jersey_number_state"] = None
+            dataset["samples"][0]["label_state"] = None
+            dataset["samples"][0]["clean_jersey_visible"] = None
+            dataset["samples"][0]["number_panel_visible"] = None
+            dataset["samples"][0]["annotation_confidence"] = 0.0
+            dataset["dataset_digest"] = identity_jersey_number_dataset_digest(dataset["samples"])
+
+            manifest = prepare_jersey_number_discovery_audit(
+                dataset,
+                output_root=root / "audit",
+                roster_choices=[{"number": "10", "label": "Krzysiek #10"}],
+                target_cards=5,
+                team_label="A",
+                unreviewed_only=True,
+            )
+
+        self.assertEqual([item["sample_key"] for item in manifest["items"]], ["a-first"])
+        self.assertEqual(manifest["selection_mode"], "unreviewed_only")
+        self.assertTrue(manifest["summary"]["unreviewed_only"])
+
 
 def _dataset(root: Path) -> dict[str, object]:
     (root / "crop-a.jpg").write_bytes(b"jpeg-placeholder")
