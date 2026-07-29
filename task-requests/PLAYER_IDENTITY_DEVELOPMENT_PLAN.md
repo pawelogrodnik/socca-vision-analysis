@@ -228,8 +228,8 @@ J8.1 freeze recognizers: closed
 J8.2 panel annotation contract: closed
 J8.3 panel audit implementation: closed
 J8.3 real dataset run + human approval + findings: closed
-J8.3 final decision: AVAILABLE_DATA_NOT_SUFFICIENT
-J8.4 PanelDigitNetV1: not started
+J8.3 final decision: READY_FOR_J8_4_DIAGNOSTIC
+J8.4 PanelDigitNetV1: R1-R3 complete / diagnostic only / not eligible
 ```
 
 Agent ma najpierw zweryfikować, czy ten status nadal odpowiada aktualnemu `HEAD`.
@@ -248,6 +248,66 @@ absent/unreadable negatives: 3 / 30
 human montage approval: approved and digest-bound
 final decision: AVAILABLE_DATA_NOT_SUFFICIENT
 J8.4: blocked until dataset readiness improves
+```
+
+Refresh 2026-07-28 (after applying the 19 saved panel decisions):
+
+```text
+selected panel definitions: 58 total, 19 audited, 39 still missing
+readable confirmed panels: 16 / required 50
+readable visibility episodes: 13 / required 20
+absent/unreadable negatives: 3 / required 30
+all currently known confirmed labels in the dataset: 28 across 24 visibility episodes
+even annotating every remaining known confirmed label cannot reach the 50-crop threshold
+minimum new readable confirmed examples required from a broader source: 22
+J8.4: still blocked; prepare a small, high-value discovery/recovery package instead of asking for exhaustive re-annotation
+```
+
+Recovery package 2026-07-28:
+
+```text
+source: first-half match 7655bf7c, Team A only
+package size: 65 independent visibility episodes (bounded below the 80-card cap)
+target: 22 new certain readable panels and 27 useful negative panels
+purpose: panel_readiness_recovery
+operator may Skip / finish early; this is an offline research package, not normal match review
+artifact: backend/storage/benchmarks/player_identity/j8-4-number-recovery-first-half-20260728-v1/index.html
+next: apply the reviewed manifest, rebuild readiness and decide whether J8.4 can start
+```
+
+The readiness artifact can temporarily report `FIX_PANEL_PIPELINE_FIRST` while the
+selected canonical subset has missing panel definitions. That status only describes
+the incomplete subset. The operational J8.3 decision remains
+`AVAILABLE_DATA_NOT_SUFFICIENT`: completing that subset alone cannot reach the
+required number of readable positive examples.
+
+Recovery refresh 2026-07-29:
+
+```text
+first recovery manifest applied: 10 confirmed, 3 absent, 1 unreadable, 29 skipped
+readable confirmed panels: 24 / 50
+readable visibility episodes: 23 / 20 (requirement met)
+absent/unreadable negatives: 30 / 30 (requirement met)
+remaining data gap: 26 certain readable number panels
+skipped samples are persisted and excluded from later recovery queues
+second package: 64 fresh, independent visibility episodes
+artifact: backend/storage/benchmarks/player_identity/
+  j8-4-number-recovery-second-followup-first-half-20260729-v1/index.html
+J8.4 remains blocked until the 26 additional positive labels are collected
+```
+
+Second recovery refresh 2026-07-29:
+
+```text
+second reviewed manifest: 14 additional confirmed readable numbers
+readable confirmed panels: 38 / 50
+readable visibility episodes: 33 / 20 (requirement met)
+absent/unreadable negatives: 30 / 30 (requirement met)
+remaining data gap: 12 certain readable number panels
+final bounded follow-up: 48 fresh independent episodes
+artifact: backend/storage/benchmarks/player_identity/
+  j8-4-number-recovery-final-followup-first-half-20260729-v1/index.html
+J8.4 remains blocked only by these 12 positive labels
 ```
 
 ## Cel fazy
@@ -1313,10 +1373,10 @@ Named MP4 może wrócić później jako opcjonalny validation/export feature, al
 Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 
 ```text
-A  J8.3 panel closeout                         CLOSED — AVAILABLE_DATA_NOT_SUFFICIENT
+A  J8.3 panel closeout                         CLOSED — READY_FOR_J8_4_DIAGNOSTIC
 B  IA0–IA4 Initial Audit core                 CLOSED
 C  IA5–IA6 re-anchor + appearance gallery     IA5 CLOSED — IA6 VALIDATED, ADVISORY ONLY
-D  J8.4 useful jersey recognizer              BLOCKED BY DATA READINESS; SCHEDULED AFTER C
+D  J8.4 useful jersey recognizer              R1-R3 COMPLETE — NOT ELIGIBLE (R3 safety gate failed)
 E  IA7 evidence fusion                        BLOCKED BY C + D
 F  IA8–IA9 exception-only/adaptive review     BLOCKED BY E
 G  P1.23 revalidation + P1.24 apply            BLOCKED BY F
@@ -1333,17 +1393,19 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie następne zadanie to:
 
 ```text
-J8.4 pozostaje zablokowane przez panel-data readiness.
-Uzupełnić tylko wybrany subset paneli lub świadomie wstrzymać jersey work.
+J8.4 R1-R3 zostało uruchomione diagnostycznie. R3 nie przeszedł safety gate'u,
+więc jersey work należy wstrzymać do czasu nowego niezależnego capture domain.
 ```
 
 J8.3 zostało zamknięte decyzją:
 
 ```text
-AVAILABLE_DATA_NOT_SUFFICIENT
+READY_FOR_J8_4_DIAGNOSTIC
 ```
 
-Nie rozpoczynać J8.4, dopóki dane nie spełnią readiness gates.
+Nie promować PanelDigitNetV1 ani nie rozpoczynać kolejnej architektury bez
+nowego materiału walidacyjnego. IA7 pozostaje zablokowane do czasu użytecznego
+jersey recognizera.
 
 Po zamkniętym IA0 następne zadania są wykonywane dokładnie w kolejności:
 

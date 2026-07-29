@@ -11,7 +11,7 @@ J8.2 PANEL ANNOTATION CONTRACT: CLOSED
 J8.3 PANEL AUDIT IMPLEMENTATION: CLOSED
 J8.3 CANONICAL SUBSET + OPERATOR PANEL-BOX PACKAGE: CLOSED
 J8.3 REAL PANEL AUDIT + HUMAN MONTAGE APPROVAL + FINDINGS: CLOSED
-J8.3 FINAL DECISION: AVAILABLE_DATA_NOT_SUFFICIENT
+J8.3 FINAL DECISION: READY_FOR_J8_4_DIAGNOSTIC
 J8.4 PANELDIGITNETV1: DIAGNOSTIC R1-R3 COMPLETE / NOT ELIGIBLE
 CANDIDATE I PRODUCTION ASSIGNMENTS POZOSTAJĄ ZABLOKOWANE
 ```
@@ -24,7 +24,7 @@ Aktualny baseline po mergu:
 
 Najważniejsza decyzja:
 
-> J8.3 zostało operacyjnie domknięte. Pipeline paneli i ręczny audyt działają, ale dostępny materiał nie spełnia progów ilościowych. PanelDigitNetV1 uruchomiono wyłącznie jako diagnostyczne R1-R3; wyniki nie kwalifikują go do candidate ani production identity. Przed kolejną próbą zbieramy więcej niezależnych, czytelnych paneli oraz prawdziwych negatywów `number_absent`.
+> J8.3 zostało operacyjnie domknięte i końcowy zbiór spełnia progi ilościowe. PanelDigitNetV1 uruchomiono wyłącznie jako diagnostyczne R1-R3. R1 i R2 przeszły, lecz R3 nie spełnia safety gate'u episode precision, więc model nie kwalifikuje się do candidate ani production identity. Przed kolejną próbą potrzebujemy nowego, niezależnego materiału i potwierdzenia jakości poza obecnym jednym meczem.
 
 Jersey-number work nie blokuje równoległego P1.22 Full-Match Operator Benchmark.
 
@@ -848,9 +848,9 @@ no production identity write
 - [x] canonical panel experiment selection subset;
 - [x] 100% audit coverage of selected samples;
 - [x] 0 invalid selected samples;
-- [ ] minimum 50 confirmed panels;
-- [ ] minimum 20 readable visibility episodes;
-- [ ] minimum 30 absent/unreadable negatives;
+- [x] minimum 50 confirmed panels;
+- [x] minimum 20 readable visibility episodes;
+- [x] minimum 30 absent/unreadable negatives;
 - [x] digit-height median from confirmed panels only;
 - [x] real10 included and readable after preprocessing;
 - [x] montage approval tied to digest;
@@ -871,6 +871,135 @@ absent/unreadable negatives: 3 / required 30
 human montage approval: approved and digest-bound
 final decision: AVAILABLE_DATA_NOT_SUFFICIENT
 J8.4: blocked
+```
+
+Odświeżenie 2026-07-28 po zastosowaniu 19 zapisanych decyzji panelowych:
+
+```text
+wybrane definicje paneli: 58, z czego 19 zaaudytowanych i 39 nadal brakujących
+czytelne potwierdzone panele: 16 / wymagane 50
+czytelne epizody widoczności: 13 / wymagane 20
+negatywy absent/unreadable: 3 / wymagane 30
+w całym aktualnym zbiorze: 28 znanych potwierdzonych etykiet w 24 epizodach
+nawet opisanie wszystkich pozostałych znanych pozytywów nie osiągnie 50 cropów
+potrzebne są co najmniej 22 nowe czytelne pozytywy z szerszego źródła
+```
+
+Jeżeli artefakt gotowości zwraca tymczasowo `FIX_PANEL_PIPELINE_FIRST`, oznacza to
+wyłącznie niekompletny kanoniczny podzbiór 58 paneli. Nie zmienia to decyzji
+operacyjnej J8.3: `AVAILABLE_DATA_NOT_SUFFICIENT`; samo uzupełnienie tego
+podzbioru nie odblokuje J8.4.
+
+## Bounded recovery package 2026-07-28
+
+Zamiast rozszerzać zwykły review meczu do setek cropów, przygotowano osobny,
+ograniczony pakiet badawczy z pierwszej połowy (`7655bf7c`, wyłącznie Team A):
+
+```text
+65 kart / 65 niezależnych epizodów widoczności
+cel: 22 nowe pewne czytelne numery + 27 paneli negatywnych
+artefakt: backend/storage/benchmarks/player_identity/
+  j8-4-number-recovery-first-half-20260728-v1/index.html
+```
+
+Operator może pominąć niejednoznaczny crop i zakończyć pakiet wcześniej. Po
+zastosowaniu manifestu ponownie generujemy readiness; dopiero pozytywny wynik
+tego gate'a pozwala rozpocząć J8.4.
+
+## Checkpoint recovery 2026-07-29
+
+Po zastosowaniu pierwszego manifestu recovery do kanonicznego zbioru:
+
+```text
+nowe pewne numery: 10
+nowe panele bez numeru: 3
+nowe panele nieczytelne: 1
+świadomie pominięte przez operatora: 29
+czytelne potwierdzone panele: 24 / wymagane 50
+czytelne epizody widoczności: 23 / wymagane 20
+negatywy absent/unreadable: 30 / wymagane 30
+pozostały brak: 26 pewnych, czytelnych paneli
+decyzja: AVAILABLE_DATA_NOT_SUFFICIENT
+J8.4: nadal zablokowane wyłącznie przez pozytywne przykłady
+```
+
+Pominięte karty zapisują jawny status i nie wracają automatycznie do kolejnej
+kolejki. Drugi pakiet recovery obejmuje tylko nowe, nieocenione kandydaty:
+
+```text
+64 karty / 64 niezależne epizody widoczności
+cel: zebrać pozostałe 26 pewnych, czytelnych numerów
+artefakt: backend/storage/benchmarks/player_identity/
+  j8-4-number-recovery-second-followup-first-half-20260729-v1/index.html
+```
+
+Operator może zakończyć pakiet po osiągnięciu 26 nowych pewnych potwierdzeń.
+Niejednoznaczne przypadki należy pominąć; nie są wymagane do osiągnięcia gate'a.
+
+## J8.4 diagnostic closeout 2026-07-29
+
+Końcowy kanoniczny zbiór po zaakceptowanym montażu paneli:
+
+```text
+samples: 1562
+number_confirmed: 54
+readable visibility episodes: 43
+number_absent + number_unreadable: 48
+number_panel_bbox samples: 119
+number distribution: 3, 6, 8, 10, 15, 92
+```
+
+Wyniki małego `PanelDigitNetV1`:
+
+```text
+R1 tiny overfit: PASS
+  visual state accuracy 1.00
+  exact sequence accuracy 1.00
+
+R2 confirmed vs negatives: PASS
+  readable recall 1.00
+  negative specificity 1.00
+  exact sequence accuracy 1.00
+
+R3 same-match heldout: NOT ELIGIBLE
+  crop exact sequence accuracy 0.714
+  episode exact sequence accuracy 0.600
+  episode precision 0.300 / required 1.000
+  episode recall 0.600
+  plain-shirt false confirmed reads 0
+  real10 = 10: PASS
+```
+
+Decyzja:
+
+```text
+PanelDigitNetV1 pozostaje diagnostic_training_only.
+Nie tworzyć candidate ani production identity assignment z jego predykcji.
+Nie stroić kolejnej architektury na tym samym materiale.
+Kolejny eksperyment wymaga nowego, niezależnego capture domain.
+```
+
+## Second recovery checkpoint 2026-07-29
+
+Drugi manifest recovery dostarczył 14 dodatkowych pewnych numerów. Readiness po
+jego zastosowaniu wygląda następująco:
+
+```text
+czytelne potwierdzone panele: 38 / wymagane 50
+czytelne epizody widoczności: 33 / wymagane 20
+negatywy absent/unreadable: 30 / wymagane 30
+pozostały brak: 12 pewnych, czytelnych paneli
+decyzja: AVAILABLE_DATA_NOT_SUFFICIENT
+```
+
+Wygenerowano końcowy ograniczony follow-up z nowymi, wcześniej nieocenionymi
+epizodami:
+
+```text
+48 kart / 48 niezależnych epizodów widoczności
+cel: 12 pewnych, czytelnych numerów
+artefakt: backend/storage/benchmarks/player_identity/
+  j8-4-number-recovery-final-followup-first-half-20260729-v1/index.html
 ```
 
 Artefakty closeoutu:

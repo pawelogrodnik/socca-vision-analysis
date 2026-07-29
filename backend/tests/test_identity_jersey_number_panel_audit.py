@@ -88,6 +88,22 @@ class JerseyNumberPanelAuditTests(unittest.TestCase):
         self.assertEqual(first["summary"]["plain_shirt_crops"], 1)
         self.assertEqual(first["summary"]["missing_panel_bbox_count"], 1)
         self.assertEqual(first["summary"]["counts_per_number"], {"10": 1, "92": 1})
+        self.assertEqual(
+            first["summary"]["collection_gap"]["additional_readable_panels_needed"],
+            48,
+        )
+        self.assertEqual(
+            first["summary"]["collection_gap"]["additional_negative_panels_needed"],
+            29,
+        )
+        self.assertEqual(
+            first["summary"]["collection_gap"]["selected_panel_definitions_needed"],
+            1,
+        )
+        self.assertEqual(
+            first["summary"]["collection_gap"]["recommendation"],
+            "collect_new_readable_number_examples",
+        )
         self.assertEqual(first["summary"]["counts_per_digit"]["0"], 1)
         self.assertEqual(first["summary"]["counts_per_digit"]["1"], 1)
         self.assertEqual(first["summary"]["counts_per_digit"]["2"], 1)

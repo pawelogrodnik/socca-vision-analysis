@@ -49,6 +49,7 @@ def main() -> None:
     torch.save(result["checkpoint"], checkpoint_path)
     report_path.write_text(json.dumps(result["report"], indent=2) + "\n")
     report = result["report"]
+    evaluation = report.get("evaluation") or {}
     summary: dict[str, object] = {
         "stage": args.stage,
         "checkpoint": str(checkpoint_path),
@@ -56,10 +57,10 @@ def main() -> None:
         "device": report.get("device"),
         "sample_count": report.get("sample_count"),
         "training_profile": report.get("training_profile"),
-        "visual_state_accuracy": report.get("visual_state_accuracy"),
-        "readable_recall": report.get("readable_recall"),
-        "negative_specificity": report.get("negative_specificity"),
-        "exact_sequence_accuracy": report.get("exact_sequence_accuracy"),
+        "visual_state_accuracy": evaluation.get("visual_state_accuracy"),
+        "readable_recall": evaluation.get("readable_recall"),
+        "negative_specificity": evaluation.get("negative_specificity"),
+        "exact_sequence_accuracy": evaluation.get("exact_sequence_accuracy"),
     }
     if args.stage == "r3":
         heldout = report.get("heldout_evaluation") or {}

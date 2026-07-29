@@ -14,9 +14,9 @@ from app.services.identity_jersey_number_common import normalize_normalized_bbox
 from app.services.identity_jersey_number_common import normalize_safe_relative_artifact_path
 
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 ALGORITHM_NAME = "identity_jersey_number_panel_audit"
-ALGORITHM_VERSION = "1.1.0"
+ALGORITHM_VERSION = "1.2.0"
 PANEL_RESIZE_WIDTH = 96
 PANEL_RESIZE_HEIGHT = 64
 MONTAGE_FILENAME = "number_panel_montage.jpg"
@@ -632,6 +632,70 @@ def _summary(rows: list[dict[str, Any]], dataset_doc: dict[str, Any]) -> dict[st
         for row in readable_full
         if row.get("visibility_episode_id")
     }
+    dataset_annotations: list[tuple[dict[str, Any], dict[str, str | None]]] = []
+    for sample in dataset_doc.get("samples") or []:
+        if not isinstance(sample, dict):
+            continue
+        try:
+            annotation = normalize_jersey_number_annotation(sample, allow_missing=False)
+        except ValueError:
+            continue
+        dataset_annotations.append((sample, annotation))
+
+    confirmed_dataset_rows = [
+        (sample, annotation)
+        for sample, annotation in dataset_annotations
+        if annotation["jersey_number_state"] == "number_confirmed"
+        and annotation.get("jersey_number")
+    ]
+    confirmed_dataset_episodes = {
+        str(sample.get("visibility_episode_id"))
+        for sample, _ in confirmed_dataset_rows
+        if sample.get("visibility_episode_id")
+    }
+    selected_missing_confirmed = [
+        row
+        for row in invalid
+        if row.get("jersey_number_state") == "number_confirmed"
+        and row.get("jersey_number")
+    ]
+    selected_missing_negative = [
+        row
+        for row in invalid
+        if row.get("jersey_number_state") in {"number_absent", "number_unreadable"}
+    ]
+    collection_gap = {
+        "selected_panel_definitions_needed": len(invalid),
+        "selected_confirmed_panel_definitions_needed": len(selected_missing_confirmed),
+        "selected_negative_panel_definitions_needed": len(selected_missing_negative),
+        "current_dataset_confirmed_labels": len(confirmed_dataset_rows),
+        "current_dataset_confirmed_visibility_episodes": len(confirmed_dataset_episodes),
+        "additional_readable_panels_needed": max(0, MIN_READABLE_CROPS - len(readable_full)),
+        "additional_confirmed_labels_needed_from_new_source": max(
+            0,
+            MIN_READABLE_CROPS - len(confirmed_dataset_rows),
+        ),
+        "additional_readable_visibility_episodes_needed": max(
+            0,
+            MIN_READABLE_EPISODES - len(readable_episode_ids),
+        ),
+        "additional_confirmed_visibility_episodes_needed_from_new_source": max(
+            0,
+            MIN_READABLE_EPISODES - len(confirmed_dataset_episodes),
+        ),
+        "additional_negative_panels_needed": max(
+            0,
+            MIN_NEGATIVES - (len(plain_shirt) + len(unreadable)),
+        ),
+        "reannotating_all_current_confirmed_labels_can_meet_crop_minimum": (
+            len(confirmed_dataset_rows) >= MIN_READABLE_CROPS
+        ),
+        "recommendation": (
+            "collect_new_readable_number_examples"
+            if len(confirmed_dataset_rows) < MIN_READABLE_CROPS
+            else "complete_selected_panel_definitions"
+        ),
+    }
     return {
         "total_samples": len(rows),
         "selected_samples": len(selected),
@@ -679,6 +743,7 @@ def _summary(rows: list[dict[str, Any]], dataset_doc: dict[str, Any]) -> dict[st
         "missing_panel_bbox_count": sum(row["status"] == "missing_panel_bbox" for row in rows),
         "status_counts": dict(sorted(Counter(str(row["status"]) for row in rows).items())),
         "dataset_samples": (dataset_doc.get("summary") or {}).get("samples"),
+        "collection_gap": collection_gap,
     }
 
 
@@ -698,6 +763,7 @@ def render_panel_readiness_findings(report: dict[str, Any]) -> str:
     approval = report["montage"]["human_approval"]
     selection = report["panel_experiment_selection"]
     source = report["source"]
+    collection_gap = summary["collection_gap"]
     return "\n".join(
         [
             "# J8.3 Panel Readiness Findings",
@@ -719,6 +785,15 @@ def render_panel_readiness_findings(report: dict[str, Any]) -> str:
             f"- Human montage decision: `{approval.get('status') or 'pending'}`",
             f"- Human approval valid: `{approval.get('valid')}`",
             f"- Runtime status: `{report['status']}`",
+            "",
+            "## Collection Gap",
+            "",
+            f"- Selected panel definitions still needed: {collection_gap['selected_panel_definitions_needed']}",
+            f"- Additional readable panels needed: {collection_gap['additional_readable_panels_needed']}",
+            f"- Additional readable panels needed from a new source: {collection_gap['additional_confirmed_labels_needed_from_new_source']}",
+            f"- Additional negative panels needed: {collection_gap['additional_negative_panels_needed']}",
+            f"- Reannotating all current confirmed labels can meet the crop minimum: `{collection_gap['reannotating_all_current_confirmed_labels_can_meet_crop_minimum']}`",
+            f"- Recommended next action: `{collection_gap['recommendation']}`",
             "",
             f"## Final Decision: {report['final_decision']}",
             "",

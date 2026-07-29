@@ -10,12 +10,29 @@ from app.services.identity_jersey_number_discovery_audit import (
     INDEX_FILENAME,
     MANIFEST_FILENAME,
     apply_jersey_number_discovery_audit,
+    build_discovery_dataset_from_review_gallery,
     build_discovery_dataset_from_subject_review,
+    combine_discovery_datasets,
+    derive_jersey_number_recovery_targets,
     prepare_jersey_number_discovery_audit,
 )
 
 
 class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
+    def test_derives_bounded_recovery_targets_from_collection_gap(self) -> None:
+        targets = derive_jersey_number_recovery_targets(
+            {"summary": {"collection_gap": {
+                "additional_confirmed_labels_needed_from_new_source": 22,
+                "additional_negative_panels_needed": 27,
+            }}},
+            card_cap=80,
+        )
+
+        self.assertEqual(targets["target_cards"], 73)
+        self.assertEqual(targets["target_confirmations"], 22)
+        self.assertEqual(targets["target_negatives"], 27)
+        self.assertEqual(targets["audit_purpose"], "panel_readiness_recovery")
+
     def test_prepare_prioritizes_diverse_team_samples_and_renders_choices(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -31,6 +48,7 @@ class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
 
             self.assertEqual(manifest["summary"]["selected_cards"], 2)
             self.assertEqual(manifest["summary"]["target_confirmations"], 60)
+            self.assertEqual(manifest["summary"]["target_negatives"], 0)
             self.assertEqual(manifest["summary"]["unique_visibility_episodes"], 2)
             self.assertTrue((root / "audit" / MANIFEST_FILENAME).is_file())
             html = (root / "audit" / INDEX_FILENAME).read_text(encoding="utf-8")
@@ -79,6 +97,57 @@ class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
         self.assertTrue(dataset["samples"][0]["artifact_available"])
         self.assertIsNone(dataset["samples"][0]["jersey_number_state"])
 
+    def test_build_from_review_gallery_and_combination_deduplicate_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "identity_review" / "crops" / "slot-A01").mkdir(parents=True)
+            (root / "identity_review" / "crops" / "slot-A01" / "first.jpg").write_bytes(b"jpeg")
+            (root / "identity_review" / "crops" / "slot-A01" / "second.jpg").write_bytes(b"jpeg")
+            gallery = {
+                "players": [
+                    {
+                        "stable_subject_id": "slot-A01",
+                        "stable_player_id": "A01",
+                        "team_label": "A",
+                        "stints": [{
+                            "stint_id": "A01-S01",
+                            "crops": [
+                                {
+                                    "artifact": "identity_review/crops/slot-A01/first.jpg",
+                                    "frame": 100,
+                                    "track_id": 100001,
+                                    "bbox_xyxy": [0, 0, 24, 110],
+                                    "confidence": 0.92,
+                                },
+                                {
+                                    "artifact": "identity_review/crops/slot-A01/second.jpg",
+                                    "frame": 460,
+                                    "track_id": 100001,
+                                    "bbox_xyxy": [0, 0, 20, 80],
+                                    "confidence": 0.86,
+                                },
+                            ],
+                        }],
+                    },
+                    {"stable_subject_id": "slot-B01", "team_label": "B", "stints": []},
+                ]
+            }
+            gallery_dataset = build_discovery_dataset_from_review_gallery(
+                gallery,
+                artifact_root=root,
+                source_match_key="match-a",
+                source_video_key="video-a",
+                team_label_value="A",
+            )
+            duplicate = deepcopy(gallery_dataset)
+            duplicate["samples"] = [deepcopy(gallery_dataset["samples"][0])]
+            combined = combine_discovery_datasets(gallery_dataset, duplicate)
+
+        self.assertEqual(gallery_dataset["summary"]["samples"], 2)
+        self.assertTrue(all(row["artifact_available"] for row in gallery_dataset["samples"]))
+        self.assertEqual(combined["summary"]["samples"], 2)
+        self.assertEqual(combined["summary"]["source"], "identity_review_gallery")
+
     def test_apply_changes_only_labeled_samples_and_recomputes_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -116,6 +185,7 @@ class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
         self.assertEqual(rows["a-first"]["jersey_number"], "10")
         self.assertEqual(rows["a-first"]["number_panel_bbox_normalized"], [0.3, 0.2, 0.6, 0.5])
         self.assertIsNone(rows["a-second"]["jersey_number"])
+        self.assertEqual(rows["a-second"]["discovery_review_status"], "skipped")
         self.assertEqual(updated["discovery_audit_import"]["confirmed"], 1)
         self.assertEqual(updated["discovery_audit_import"]["skipped"], 1)
         self.assertEqual(updated["dataset_digest"], identity_jersey_number_dataset_digest(updated["samples"]))
@@ -160,6 +230,29 @@ class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
         self.assertEqual([item["sample_key"] for item in manifest["items"]], ["a-first"])
         self.assertEqual(manifest["selection_mode"], "unreviewed_only")
         self.assertTrue(manifest["summary"]["unreviewed_only"])
+
+    def test_prepare_unreviewed_only_excludes_prior_operator_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = _dataset(root)
+            dataset["samples"][0]["discovery_review_status"] = "skipped"
+            dataset["samples"][1]["jersey_number_state"] = None
+            dataset["samples"][1]["label_state"] = None
+            dataset["samples"][1]["clean_jersey_visible"] = None
+            dataset["samples"][1]["number_panel_visible"] = None
+            dataset["samples"][1]["annotation_confidence"] = 0.0
+            dataset["dataset_digest"] = identity_jersey_number_dataset_digest(dataset["samples"])
+
+            manifest = prepare_jersey_number_discovery_audit(
+                dataset,
+                output_root=root / "audit",
+                roster_choices=[{"number": "10", "label": "Krzysiek #10"}],
+                target_cards=5,
+                team_label="A",
+                unreviewed_only=True,
+            )
+
+        self.assertEqual([item["sample_key"] for item in manifest["items"]], ["a-second"])
 
 
 def _dataset(root: Path) -> dict[str, object]:
