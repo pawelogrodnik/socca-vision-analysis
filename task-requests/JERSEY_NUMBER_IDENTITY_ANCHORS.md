@@ -979,6 +979,62 @@ Nie stroić kolejnej architektury na tym samym materiale.
 Kolejny eksperyment wymaga nowego, niezależnego capture domain.
 ```
 
+## J8.4 selected-only rerun 2026-07-29
+
+Po akceptacji montażu `number_panel_montage_approval (2).json` zamknięto
+operacyjny gate J8.3 i ponowiono J8.4 na dokładnie tym samym, zatwierdzonym
+zbiorze. Ten rerun zastępuje wcześniejszy wynik J8.4 jako decyzję o promocji.
+
+Naprawiono dwa błędy eksperymentu: trening korzysta wyłącznie z 80 paneli
+wybranych przez J8.3, a encoder zachowuje sześć poziomych binów cech zamiast
+tracić układ cyfr przez global pooling `1x1`.
+
+```text
+zatwierdzone panele J8.3: 80
+number_confirmed: 50
+number_absent: 15
+number_unreadable: 15
+niezależne epizody widoczności: 79
+number 10: 10 paneli
+```
+
+```text
+R1 tiny overfit: PASS
+  16 paneli, visual-state accuracy 1.00, exact sequence accuracy 1.00
+
+R2 confirmed vs negatives: PASS
+  32 panele, readable recall 1.00, negative specificity 1.00,
+  exact sequence accuracy 1.00
+
+R3 same-match heldout: FAIL
+  65 paneli treningowych / 15 heldout
+  crop exact sequence accuracy 0.285714
+  episode exact sequence accuracy 0.285714
+  episode precision 0.181818
+  episode recall 0.285714
+  plain-shirt false confirmed reads 0
+  wymagany real10=10 odczytano jako 8
+```
+
+Decyzja:
+
+```text
+PanelDigitNetV1 v1.1 pozostaje diagnostic_training_only.
+Nie tworzyć candidate ani production identity assignment z predykcji.
+Nie stroić dalej wag lub architektury wyłącznie na tym samym capture domain.
+Kolejny eksperyment promocyjny wymaga nowego, niezależnego materiału.
+```
+
+Artefakty decyzji:
+
+```text
+backend/storage/benchmarks/player_identity/
+  j8-7-panel-digitnet-rerun-20260729-v2-selected-spatial/
+    panel_digitnet_r1_report.json
+    panel_digitnet_r2_report.json
+    panel_digitnet_r3_report.json
+```
+
 ## Second recovery checkpoint 2026-07-29
 
 Drugi manifest recovery dostarczył 14 dodatkowych pewnych numerów. Readiness po

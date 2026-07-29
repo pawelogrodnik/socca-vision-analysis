@@ -69,9 +69,32 @@ def select_panel_digitnet_device(preferred: str | torch.device | None = None) ->
     return torch.device("cpu")
 
 
-def build_panel_training_sets(dataset_doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def resolve_panel_training_selection(
+    dataset_doc: dict[str, Any], selection_doc: dict[str, Any],
+) -> set[str]:
+    """Validate the human-approved J8.3 panel selection against its dataset."""
+    raw_keys = selection_doc.get("sample_keys")
+    if not isinstance(raw_keys, list) or not raw_keys or any(not isinstance(key, str) or not key for key in raw_keys):
+        raise ValueError("panel training selection needs a non-empty sample_keys list")
+    selected_keys = set(raw_keys)
+    if len(selected_keys) != len(raw_keys):
+        raise ValueError("panel training selection contains duplicate sample keys")
+    dataset_keys = {
+        str(sample.get("sample_key") or "")
+        for sample in dataset_doc.get("samples") or []
+        if isinstance(sample, dict) and sample.get("sample_key")
+    }
+    missing_keys = sorted(selected_keys - dataset_keys)
+    if missing_keys:
+        raise ValueError(f"panel training selection references missing samples: {missing_keys[:3]}")
+    return selected_keys
+
+
+def build_panel_training_sets(
+    dataset_doc: dict[str, Any], *, selected_sample_keys: set[str] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     """Produce deterministic R1/R2 samples with episode and number diversity."""
-    normalized = _normalized_usable_samples(dataset_doc)
+    normalized = _normalized_usable_samples(dataset_doc, selected_sample_keys=selected_sample_keys)
     confirmed = [row for row in normalized if row["jersey_number_state"] == "number_confirmed"]
     negatives = [row for row in normalized if row["jersey_number_state"] != "number_confirmed"]
     confirmed.sort(key=_sort_key)
@@ -81,9 +104,11 @@ def build_panel_training_sets(dataset_doc: dict[str, Any]) -> dict[str, list[dic
     return {"r1": r1_confirmed, "r2": [*r1_confirmed, *r2_negatives]}
 
 
-def build_panel_r3_split(dataset_doc: dict[str, Any]) -> dict[str, Any]:
+def build_panel_r3_split(
+    dataset_doc: dict[str, Any], *, selected_sample_keys: set[str] | None = None,
+) -> dict[str, Any]:
     """Create a deterministic same-match holdout without visibility-episode leakage."""
-    normalized = _normalized_usable_samples(dataset_doc)
+    normalized = _normalized_usable_samples(dataset_doc, selected_sample_keys=selected_sample_keys)
     confirmed = [row for row in normalized if row["jersey_number_state"] == "number_confirmed"]
     negatives = [row for row in normalized if row["jersey_number_state"] != "number_confirmed"]
     confirmed_by_number: dict[str, list[str]] = {}
@@ -193,10 +218,14 @@ def evaluate_panel_digitnet_r3(
     }
 
 
-def _normalized_usable_samples(dataset_doc: dict[str, Any]) -> list[dict[str, Any]]:
+def _normalized_usable_samples(
+    dataset_doc: dict[str, Any], *, selected_sample_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for source in dataset_doc.get("samples") or []:
         if not isinstance(source, dict):
+            continue
+        if selected_sample_keys is not None and str(source.get("sample_key") or "") not in selected_sample_keys:
             continue
         # Unreviewed discovery candidates have an empty jersey_number field for
         # compatibility. They are not negatives and must never enter training.

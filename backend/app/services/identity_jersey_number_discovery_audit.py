@@ -390,12 +390,12 @@ def build_discovery_dataset_from_review_gallery(
 
 
 def combine_discovery_datasets(*datasets: dict[str, Any]) -> dict[str, Any]:
-    """Merge compatible discovery sources while preferring the gallery artifact row.
+    """Merge compatible discovery sources while preserving manual labels.
 
-    Artifact identity is the important deduplication key: the same image must never
-    become two audit cards merely because it appeared in both review products.
+    The source-aware artifact identity prevents the same crop being counted twice
+    while allowing two different matches to use the same relative crop filename.
     """
-    rows_by_artifact: dict[str, dict[str, Any]] = {}
+    rows_by_artifact: dict[tuple[str, str, str], dict[str, Any]] = {}
     team_label = "A"
     sources: list[str] = []
     for dataset in datasets:
@@ -409,17 +409,19 @@ def combine_discovery_datasets(*datasets: dict[str, Any]) -> dict[str, Any]:
         for row in dataset.get("samples") or []:
             if not isinstance(row, dict):
                 continue
-            artifact = str(row.get("artifact") or "")
-            if not artifact:
+            artifact_key = _source_aware_artifact_key(row)
+            if not artifact_key:
                 continue
-            existing = rows_by_artifact.get(artifact)
-            if existing is None or _sample_sort_key(row) < _sample_sort_key(existing):
-                rows_by_artifact[artifact] = deepcopy(row)
-    return _discovery_dataset(
+            existing = rows_by_artifact.get(artifact_key)
+            if existing is None or _sample_merge_sort_key(row) < _sample_merge_sort_key(existing):
+                rows_by_artifact[artifact_key] = deepcopy(row)
+    combined = _discovery_dataset(
         list(rows_by_artifact.values()),
         team_label,
         "+".join(sources) or "combined_review_sources",
     )
+    _refresh_summary(combined)
+    return combined
 
 
 def _discovery_dataset(rows: list[dict[str, Any]], team_label: str, source: str) -> dict[str, Any]:
@@ -706,6 +708,23 @@ def _sample_sort_key(sample: dict[str, Any]) -> tuple[Any, ...]:
         int(sample.get("frame") or 0),
         str(sample.get("sample_key") or ""),
     )
+
+
+def _sample_merge_sort_key(sample: dict[str, Any]) -> tuple[Any, ...]:
+    """Prefer an operator decision over an equivalent unreviewed crop."""
+    review_rank = 0 if str(sample.get("discovery_review_status") or "") == "labeled" else 1
+    return (review_rank, *_sample_sort_key(sample))
+
+
+def _source_aware_artifact_key(sample: dict[str, Any]) -> tuple[str, str, str] | None:
+    artifact = str(sample.get("artifact") or "").strip()
+    if not artifact:
+        return None
+    source_match = str(sample.get("source_match_key") or "").strip()
+    source_video = str(sample.get("source_video_key") or "").strip()
+    if source_match or source_video:
+        return (source_match, source_video, artifact)
+    return (str(sample.get("artifact_root") or "").strip(), "", artifact)
 
 
 def _normalize_roster_choices(values: list[dict[str, str]]) -> list[dict[str, str]]:

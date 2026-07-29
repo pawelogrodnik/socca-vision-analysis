@@ -12,6 +12,7 @@ from app.services.identity_jersey_number_panel_digitnet import decode_digits
 from app.services.identity_jersey_number_panel_digitnet import encode_digits
 from app.services.identity_jersey_number_panel_digitnet import preprocess_number_panel
 from app.services.identity_jersey_number_panel_digitnet_training import evaluate_panel_digitnet
+from app.services.identity_jersey_number_panel_digitnet_training import resolve_panel_training_selection
 from app.services.identity_jersey_number_panel_digitnet_training import resolve_panel_training_profile
 
 
@@ -35,9 +36,11 @@ class PanelDigitNetTest(unittest.TestCase):
         self.assertIsNone(decode_digits([2, BLANK_INDEX, 1]))
 
     def test_model_has_four_heads_and_canonical_shapes(self) -> None:
-        output = PanelDigitNetV1()(torch.zeros((2, 1, 64, 96)))
+        model = PanelDigitNetV1()
+        output = model(torch.zeros((2, 1, 64, 96)))
         self.assertEqual(tuple(output["visual_logits"].shape), (2, 3))
         self.assertEqual(tuple(output["digit_logits"].shape), (2, 3, 11))
+        self.assertEqual(tuple(model.encoder[-1].output_size), (1, 6))
 
     def test_preprocessing_returns_canonical_shape(self) -> None:
         panel = preprocess_number_panel(np.zeros((13, 17, 3), dtype=np.uint8))
@@ -75,6 +78,17 @@ class PanelDigitNetTest(unittest.TestCase):
         self.assertTrue(profile["balance_digit_classes"])
         with self.assertRaises(ValueError):
             resolve_panel_training_profile("not-a-real-profile")
+
+    def test_training_selection_must_be_nonempty_unique_and_present_in_dataset(self) -> None:
+        dataset = {"samples": [{"sample_key": "one"}, {"sample_key": "two"}]}
+        self.assertEqual(
+            resolve_panel_training_selection(dataset, {"sample_keys": ["two", "one"]}),
+            {"one", "two"},
+        )
+        with self.assertRaises(ValueError):
+            resolve_panel_training_selection(dataset, {"sample_keys": ["one", "one"]})
+        with self.assertRaises(ValueError):
+            resolve_panel_training_selection(dataset, {"sample_keys": ["missing"]})
 
 
 if __name__ == "__main__":

@@ -17,16 +17,22 @@ from torch import Tensor, nn
 PANEL_HEIGHT = 64
 PANEL_WIDTH = 96
 MAX_DIGITS = 3
+FEATURE_WIDTH_BINS = 6
 VISUAL_STATES = ("number_confirmed", "number_absent", "number_unreadable")
 VISUAL_STATE_TO_INDEX = {state: index for index, state in enumerate(VISUAL_STATES)}
 BLANK_INDEX = 0
 DIGIT_CLASS_COUNT = 11  # blank, then 0 through 9
 ALGORITHM_NAME = "identity_jersey_number_panel_digitnet"
-ALGORITHM_VERSION = "1.0.0-shadow"
+ALGORITHM_VERSION = "1.1.0-shadow"
 
 
 class PanelDigitNetV1(nn.Module):
-    """Shared compact CNN with one visual-state and three digit heads."""
+    """Shared compact CNN with one visual-state and three digit heads.
+
+    The encoder preserves coarse horizontal layout. A global spatial average
+    cannot distinguish the first digit of ``15`` from its second digit, which
+    makes it unsuitable for fixed-position digit heads.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -39,11 +45,12 @@ class PanelDigitNetV1(nn.Module):
             nn.MaxPool2d(kernel_size=2),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.AdaptiveAvgPool2d((1, FEATURE_WIDTH_BINS)),
         )
-        self.visual_head = nn.Linear(64, len(VISUAL_STATES))
+        feature_count = 64 * FEATURE_WIDTH_BINS
+        self.visual_head = nn.Linear(feature_count, len(VISUAL_STATES))
         self.digit_heads = nn.ModuleList(
-            nn.Linear(64, DIGIT_CLASS_COUNT) for _ in range(MAX_DIGITS)
+            nn.Linear(feature_count, DIGIT_CLASS_COUNT) for _ in range(MAX_DIGITS)
         )
 
     def forward(self, panels: Tensor) -> dict[str, Tensor]:
@@ -92,7 +99,11 @@ def architecture_metadata() -> dict[str, Any]:
     return {
         "name": "PanelDigitNetV1",
         "input_shape": [1, PANEL_HEIGHT, PANEL_WIDTH],
-        "shared_encoder": "conv16-relu-pool-conv32-relu-pool-conv64-relu-global_avg_pool",
+        "shared_encoder": (
+            "conv16-relu-pool-conv32-relu-pool-conv64-relu-"
+            f"adaptive_avg_pool_1x{FEATURE_WIDTH_BINS}"
+        ),
+        "feature_width_bins": FEATURE_WIDTH_BINS,
         "heads": {
             "visual": list(VISUAL_STATES),
             "digit_positions": MAX_DIGITS,

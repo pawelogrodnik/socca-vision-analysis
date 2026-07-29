@@ -10,6 +10,7 @@ from app.services.identity_jersey_number_panel_digitnet import PanelDigitNetV1
 from app.services.identity_jersey_number_panel_digitnet_training import build_panel_r3_split
 from app.services.identity_jersey_number_panel_digitnet_training import build_panel_training_sets
 from app.services.identity_jersey_number_panel_digitnet_training import evaluate_panel_digitnet_r3
+from app.services.identity_jersey_number_panel_digitnet_training import resolve_panel_training_selection
 from app.services.identity_jersey_number_panel_digitnet_training import TRAINING_PROFILES
 from app.services.identity_jersey_number_panel_digitnet_training import train_panel_digitnet
 
@@ -17,6 +18,12 @@ from app.services.identity_jersey_number_panel_digitnet_training import train_pa
 def main() -> None:
     parser = argparse.ArgumentParser(description="J8.4 diagnostic PanelDigitNetV1 trainer")
     parser.add_argument("--dataset", required=True, type=Path)
+    parser.add_argument(
+        "--selection",
+        required=True,
+        type=Path,
+        help="J8.3 human-approved panel_experiment_selection.json",
+    )
     parser.add_argument("--stage", required=True, choices=("r1", "r2", "r3"))
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--epochs", type=int, default=500)
@@ -24,8 +31,10 @@ def main() -> None:
     parser.add_argument("--profile", choices=tuple(sorted(TRAINING_PROFILES)), default="overfit_baseline")
     args = parser.parse_args()
     dataset = json.loads(args.dataset.read_text())
+    selection = json.loads(args.selection.read_text())
+    selected_sample_keys = resolve_panel_training_selection(dataset, selection)
     if args.stage == "r3":
-        split = build_panel_r3_split(dataset)
+        split = build_panel_r3_split(dataset, selected_sample_keys=selected_sample_keys)
         result = train_panel_digitnet(split["train"], epochs=args.epochs, device=args.device, profile=args.profile)
         network = PanelDigitNetV1()
         network.load_state_dict(result["checkpoint"]["state_dict"])
@@ -41,8 +50,13 @@ def main() -> None:
             "heldout_confirmed_numbers": split["heldout_confirmed_numbers"],
         }
     else:
-        sets = build_panel_training_sets(dataset)
+        sets = build_panel_training_sets(dataset, selected_sample_keys=selected_sample_keys)
         result = train_panel_digitnet(sets[args.stage], epochs=args.epochs, device=args.device, profile=args.profile)
+    result["report"]["selection"] = {
+        "selection_digest": selection.get("selection_digest"),
+        "selected_sample_count": len(selected_sample_keys),
+        "selection_path": str(args.selection),
+    }
     args.output_root.mkdir(parents=True, exist_ok=True)
     checkpoint_path = args.output_root / f"panel_digitnet_{args.stage}.pt"
     report_path = args.output_root / f"panel_digitnet_{args.stage}_report.json"

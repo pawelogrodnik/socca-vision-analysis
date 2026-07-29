@@ -148,6 +148,35 @@ class JerseyNumberDiscoveryAuditTests(unittest.TestCase):
         self.assertEqual(combined["summary"]["samples"], 2)
         self.assertEqual(combined["summary"]["source"], "identity_review_gallery")
 
+    def test_combination_prefers_operator_label_and_keeps_other_video_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            automated = _dataset(root)
+            labeled = deepcopy(automated)
+            labeled_row = labeled["samples"][0]
+            labeled_row.update({
+                "discovery_review_status": "labeled",
+                "jersey_number_state": "number_confirmed",
+                "label_state": "number_confirmed",
+                "jersey_number": "10",
+                "number": "10",
+                "number_panel_bbox_normalized": [0.3, 0.2, 0.6, 0.7],
+            })
+            other_video = deepcopy(automated)
+            other_video_row = deepcopy(other_video["samples"][0])
+            other_video_row["source_video_key"] = "video-b"
+            other_video["samples"] = [other_video_row]
+
+            combined = combine_discovery_datasets(automated, labeled, other_video)
+
+        self.assertEqual(combined["summary"]["samples"], 4)
+        matching_rows = [row for row in combined["samples"] if row["sample_key"] == "a-first"]
+        self.assertEqual(len(matching_rows), 2)
+        reviewed = next(row for row in matching_rows if row["source_video_key"] == "video")
+        self.assertEqual(reviewed["jersey_number"], "10")
+        self.assertEqual(reviewed["discovery_review_status"], "labeled")
+        self.assertEqual(combined["summary"]["states"]["number_confirmed"], 1)
+
     def test_apply_changes_only_labeled_samples_and_recomputes_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
