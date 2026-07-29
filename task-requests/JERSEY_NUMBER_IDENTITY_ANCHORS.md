@@ -1035,6 +1035,52 @@ backend/storage/benchmarks/player_identity/
     panel_digitnet_r3_report.json
 ```
 
+## J8.4 final closure 2026-07-29
+
+Zatwierdzony selection manifest przeszedl R2, ale pojedynczy wymagany R3 z
+holdoutem rozdzielonym po visibility episodes nie przeszedl safety gate'u.
+R3 nie byl ponawiany ani dostrajany po wyniku.
+
+```text
+R2: PASS
+  readable recall: 1.000000
+  negative specificity: 1.000000
+  exact sequence accuracy: 1.000000
+
+R3: FAIL
+  train / holdout samples: 65 / 15
+  held-out visibility episodes: 15
+  crop exact sequence accuracy: 0.285714
+  episode exact sequence accuracy: 0.285714
+  episode precision: 0.181818
+  episode recall: 0.285714
+  plain-shirt false confirmed reads: 0
+  real number 10: predicted 8 instead of 10
+  episode leakage: 0
+```
+
+Konczaca decyzja J8.4:
+
+```text
+DIAGNOSTIC_COMPLETE_NOT_ELIGIBLE
+FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN
+```
+
+Do czasu nowego, niezaleznego capture domain nie wolno zbierac kolejnych
+paneli z obecnego materialu, zmieniac architektury ani hiperparametrow,
+wykonywac kolejnego R3 albo laczyc predykcji jersey z candidate/production
+identity. Jersey evidence pozostaje opcjonalnym, niedostepnym zrodlem shadow,
+a nie blokada dalszego flow produktu.
+
+Kanoniczny closeout z digestami, checkpointem, lista blednych confirmed
+predictions i potwierdzeniem braku mutacji identity:
+
+```text
+backend/storage/benchmarks/player_identity/
+  j8-7-panel-digitnet-rerun-20260729-v2-selected-spatial/
+    j84_closeout_report.json
+```
+
 ## Second recovery checkpoint 2026-07-29
 
 Drugi manifest recovery dostarczył 14 dodatkowych pewnych numerów. Readiness po

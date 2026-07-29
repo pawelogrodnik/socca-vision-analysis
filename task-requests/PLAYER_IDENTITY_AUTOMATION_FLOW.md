@@ -831,12 +831,16 @@ IA3  Seed-aware candidate identity re-resolve
 IA4  Existing whole-subject review integration and card reduction
 IA5  H2 capture-domain re-anchor
 IA6  Automatic approved appearance gallery
-IA7  Jersey/ReID evidence fusion report
+IA7a Core evidence fusion report
+IA7b Optional jersey evidence (frozen until new independent capture domain)
 IA8  Exception-only review queue
 IA9  Adaptive audit and manual-work reduction benchmark
 ```
 
-Nie implementować IA7 przed istnieniem realnie użytecznego jersey recognizera. IA0–IA6 nie muszą czekać na J8.4.
+IA7a nie czeka na jersey recognizer i korzysta z operator seeds, hard
+constraints, safe lineage, appearance/ReID advisory oraz team/capture context.
+IA7b jest opcjonalne i FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN. IA0–IA6
+nie musza czekac na J8.4.
 
 ---
 
@@ -865,7 +869,8 @@ Nie implementować IA7 przed istnieniem realnie użytecznego jersey recognizera.
 ## Jersey i crop automation
 
 - [ ] operator seed może zasilać automatic appearance gallery;
-- [ ] jersey evidence jest zestawiane z roster/team/operator/ReID;
+- [ ] IA7a zestawia operator/team/lineage/ReID advisory bez jersey evidence;
+- [ ] IA7b doklada jersey evidence tylko gdy jest dostepne po nowym capture domain;
 - [ ] identity label nie jest automatycznie traktowany jako readable jersey sample;
 - [ ] per-match user flow nie wymaga ręcznego labelowania jersey panels;
 - [ ] research annotations pozostają osobnym curated workflow;

@@ -1085,9 +1085,22 @@ Nie tworzyć kolejnej architektury bez nowego dowodu diagnostycznego.
 
 # 8. Faza E — Evidence Fusion, IA7
 
-IA7 jest zablokowane do czasu użytecznego jersey recognizera.
+IA7 dzieli sie na dwa niezalezne zakresy:
 
-IA0–IA6 nie są od niego zależne.
+```text
+IA7a core evidence fusion
+  operator seeds
+  hard constraints
+  safe lineage
+  appearance/ReID advisory top-3
+  team/capture context
+
+IA7b optional jersey evidence
+  niedostepne i FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN
+```
+
+IA7a nie czeka na jersey recognizer. IA7b nie moze mutowac candidate ani
+production identity i nie jest blokada produktu.
 
 ## Cel
 
@@ -1341,7 +1354,8 @@ Przykłady:
 ```text
 IA1 UI może powstawać po IA0 contract
 IA0–IA6 nie muszą czekać na J8.4
-IA7 musi czekać na użyteczny jersey recognizer
+IA7a core evidence fusion nie czeka na jersey recognizer
+IA7b optional jersey evidence pozostaje zamrozone do nowego capture domain
 P1.24 musi czekać na IA9 + P1.23 revalidation
 ```
 
@@ -1376,11 +1390,32 @@ Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
 A  J8.3 panel closeout                         CLOSED — READY_FOR_J8_4_DIAGNOSTIC
 B  IA0–IA4 Initial Audit core                 CLOSED
 C  IA5–IA6 re-anchor + appearance gallery     IA5 CLOSED — IA6 VALIDATED, ADVISORY ONLY
-D  J8.4 useful jersey recognizer              R1-R3 COMPLETE — NOT ELIGIBLE (R3 safety gate failed)
-E  IA7 evidence fusion                        BLOCKED BY C + D
-F  IA8–IA9 exception-only/adaptive review     BLOCKED BY E
-G  P1.23 revalidation + P1.24 apply            BLOCKED BY F
+D  J8.4 useful jersey recognizer              FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN
+E  Product-flow benchmark                     NEXT — shadow-only, no production apply
+F  IA7a core evidence fusion                  READY AFTER PRODUCT-FLOW BENCHMARK
+G  IA7b optional jersey evidence              FROZEN UNTIL NEW INDEPENDENT CAPTURE DOMAIN
+H  IA8–IA9 exception-only/adaptive review     BLOCKED BY IA7a
+I  P1.23 revalidation + P1.24 apply            BLOCKED BY IA8–IA9
 ```
+
+## Product-flow benchmark after J8.4
+
+This is the next milestone. It is a measurement-only flow and must not rerun
+YOLO or apply candidate/production identity mutations.
+
+```text
+1. Show at most 8-12 Initial Identity Audit decisions.
+2. Ask at most 3-5 H2 re-anchor confirmations.
+3. Keep appearance/ReID as advisory top-3 recommendations only.
+4. Run a seed-aware downstream rebuild from frozen artifacts.
+5. Report review cards before/after, active operator time, players/subjects/
+   tracklets/frames safely resolved, unresolved coverage, false assignments,
+   and parallel/cross-team/structural conflicts.
+6. Confirm automatic assignments = 0 and production apply = 0.
+```
+
+The benchmark succeeds by proving lower safe manual workload, not by forcing
+coverage or substituting jersey evidence for operator knowledge.
 
 `BLOCKED BY A CLOSEOUT` oznacza zakończenie J8.3 decyzją, niekoniecznie pozytywny wynik modelowy.
 
@@ -1404,8 +1439,9 @@ READY_FOR_J8_4_DIAGNOSTIC
 ```
 
 Nie promować PanelDigitNetV1 ani nie rozpoczynać kolejnej architektury bez
-nowego materiału walidacyjnego. IA7 pozostaje zablokowane do czasu użytecznego
-jersey recognizera.
+nowego materiału walidacyjnego. IA7b pozostaje zamrozone; IA7a moze korzystac
+wyłącznie z operator seeds, hard constraints, safe lineage, advisory ReID oraz
+team/capture context.
 
 Po zamkniętym IA0 następne zadania są wykonywane dokładnie w kolejności:
 
@@ -1417,7 +1453,8 @@ IA1
 → IA5
 → IA6
 → J8.4
-→ IA7
+→ product-flow benchmark
+→ IA7a
 → IA8
 → IA9
 → P1.23 revalidation
