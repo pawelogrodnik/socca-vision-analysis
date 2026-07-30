@@ -11,6 +11,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.services.player_detection_quality_review import (
+    PlayerObservationQaStaleSourceError,
     analyze_player_detection_quality_review_files,
 )
 
@@ -18,8 +19,9 @@ from app.services.player_detection_quality_review import (
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate an offline player-detection QA export and attribute "
-            "missing boxes against frozen tracklets."
+            "Validate an offline downstream player-observation coverage QA "
+            "export and attribute visual losses across identity, tracklet, "
+            "and raw-track layers."
         )
     )
     parser.add_argument("--reviewed-audit", type=Path, required=True)
@@ -27,11 +29,24 @@ def main() -> None:
     parser.add_argument("--match-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    report = analyze_player_detection_quality_review_files(
-        reviewed_audit_path=args.reviewed_audit.resolve(),
-        audit_package_dir=args.audit_package_dir.resolve(),
-        match_path=args.match_dir.resolve(),
-    )
+    try:
+        report = analyze_player_detection_quality_review_files(
+            reviewed_audit_path=args.reviewed_audit.resolve(),
+            audit_package_dir=args.audit_package_dir.resolve(),
+            match_path=args.match_dir.resolve(),
+        )
+    except PlayerObservationQaStaleSourceError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": exc.status,
+                    "changed_artifacts": exc.changed_artifacts,
+                    "report_written": False,
+                },
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(2) from exc
     print(
         json.dumps(
             {
@@ -46,10 +61,10 @@ def main() -> None:
                 "raw_track_attribution": report["raw_track_attribution"][
                     "counts"
                 ],
-                "unresolved_overlay_projection": {
+                "projected_visual_recovery": {
                     key: value
                     for key, value in report[
-                        "unresolved_overlay_projection"
+                        "projected_visual_recovery"
                     ].items()
                     if key not in {"items", "identity_overlay_items"}
                 },

@@ -179,6 +179,9 @@ def build_second_half_identity_reanchor_document(
     suggestion_by_tracklet = _suggested_players_by_tracklet(
         suggestion_rows
     )
+    advisory_by_tracklet = _advisory_suggestions_by_tracklet(
+        selection.get("reid_advisory_suggestions") or []
+    )
     for frame in document.get("frames") or []:
         for observation in frame.get("observations") or []:
             tracklet_id = str(
@@ -188,6 +191,16 @@ def build_second_half_identity_reanchor_document(
             observation["suggested_player"] = suggestion_by_tracklet.get(
                 tracklet_id
             )
+            advisory = advisory_by_tracklet.get(tracklet_id)
+            if advisory:
+                observation["reid_suggestions"] = advisory["suggestions"]
+                if observation["suggested_player"] is None:
+                    observation["suggested_player"] = {
+                        **advisory["suggestions"][0],
+                        "team_label": advisory.get("team_label"),
+                        "suggestion_source": "cross_analysis_reid_top3_advisory",
+                        "advisory_only": True,
+                    }
     document.update(
         {
             "schema_version": SCHEMA_VERSION,
@@ -298,6 +311,22 @@ def _suggested_players_by_tracklet(
                 "player_id": row.get("player_id"),
                 "player_name": row.get("player_name"),
                 "team_label": row.get("team_label"),
+            }
+    return result
+
+
+def _advisory_suggestions_by_tracklet(
+    rows: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        suggestions = list(row.get("suggestions") or [])[:3]
+        if not suggestions:
+            continue
+        for tracklet_id in row.get("tracklet_ids") or []:
+            result[str(tracklet_id)] = {
+                "team_label": row.get("team_label"),
+                "suggestions": suggestions,
             }
     return result
 

@@ -14,6 +14,10 @@ from app.services.identity_initial_audit import (
     build_initial_identity_audit_document,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_product_flow_state import (
+    ProductFlowStateError,
+    benchmark_context_for_workspace,
+)
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -51,17 +55,35 @@ class InitialIdentityAuditStaleError(ValueError):
     pass
 
 
+class OperatorDecisionBudgetExceededError(ValueError):
+    code = "OPERATOR_BUDGET_EXCEEDED"
+
+    def __init__(self, *, stage: str, limit: int, attempted: int) -> None:
+        self.stage = stage
+        self.limit = limit
+        self.attempted = attempted
+        super().__init__(
+            f"{self.code}: {stage} allows {limit} active decisions; "
+            f"the update would create {attempted}"
+        )
+
+
 def load_initial_identity_audit_seeds(
     match_path: Path,
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
     selection = _load_selection(match_path)
-    return load_operator_identity_audit_seeds(
+    result = load_operator_identity_audit_seeds(
         match_path,
         match_document,
         selection=selection,
         seed_path=match_path / SEEDS_FILENAME,
         mode=MODE,
+    )
+    return attach_benchmark_operator_budget(
+        result,
+        match_path=match_path,
+        audit_stage="initial_identity_audit",
     )
 
 
@@ -108,7 +130,7 @@ def save_initial_identity_audit_seeds(
     updated_at: str | None = None,
 ) -> dict[str, Any]:
     selection = _load_selection(match_path)
-    return save_operator_identity_audit_seeds(
+    result = save_operator_identity_audit_seeds(
         match_path,
         match_document,
         updates,
@@ -118,6 +140,11 @@ def save_initial_identity_audit_seeds(
         audit_stage="initial_identity_audit",
         telemetry_events=telemetry_events,
         updated_at=updated_at,
+    )
+    return attach_benchmark_operator_budget(
+        result,
+        match_path=match_path,
+        audit_stage="initial_identity_audit",
     )
 
 
@@ -216,6 +243,11 @@ def save_operator_identity_audit_seeds(
         ),
     )
     _validate_same_frame_player_conflicts(decisions)
+    _validate_benchmark_budget_and_state(
+        match_path,
+        audit_stage=audit_stage,
+        decisions=decisions,
+    )
 
     telemetry = _merge_telemetry(
         document.get("operator_telemetry"),
@@ -673,6 +705,77 @@ def _public_document(
         "safety": document.get("safety") or {},
         "updated_at": document.get("updated_at"),
     }
+
+
+def attach_benchmark_operator_budget(
+    document: dict[str, Any],
+    *,
+    match_path: Path,
+    audit_stage: str,
+) -> dict[str, Any]:
+    context = benchmark_context_for_workspace(match_path)
+    if context is None:
+        return document
+    limit = _benchmark_limit(context["session"], audit_stage)
+    active = sum(
+        str(row.get("action") or "") != "skip"
+        for row in document.get("decisions") or []
+    )
+    return {
+        **document,
+        "operator_budget": {
+            "limit": limit,
+            "active_decisions": active,
+            "remaining": max(0, limit - active),
+            "reached": active >= limit,
+        },
+        "benchmark_state": context["state"],
+    }
+
+
+def _validate_benchmark_budget_and_state(
+    match_path: Path,
+    *,
+    audit_stage: str,
+    decisions: list[dict[str, Any]],
+) -> None:
+    context = benchmark_context_for_workspace(match_path)
+    if context is None:
+        return
+    expected_domain = (
+        "H1"
+        if audit_stage == "initial_identity_audit"
+        else "H2"
+    )
+    expected_state = f"{expected_domain}_READY"
+    if context["domain"] != expected_domain or context["state"] != expected_state:
+        raise ProductFlowStateError(
+            current_state=str(context["state"]),
+            requested_state=expected_state,
+        )
+    limit = _benchmark_limit(context["session"], audit_stage)
+    active = sum(
+        str(row.get("action") or "") != "skip" for row in decisions
+    )
+    if active > limit:
+        raise OperatorDecisionBudgetExceededError(
+            stage=expected_domain,
+            limit=limit,
+            attempted=active,
+        )
+
+
+def _benchmark_limit(
+    session: dict[str, Any],
+    audit_stage: str,
+) -> int:
+    budget = session.get("operator_budget") or {}
+    key = (
+        "h1_maximum_actions"
+        if audit_stage == "initial_identity_audit"
+        else "h2_maximum_confirmations"
+    )
+    return int(budget.get(key) or (12 if key.startswith("h1") else 5))
 
 
 def _production_identity_snapshot(

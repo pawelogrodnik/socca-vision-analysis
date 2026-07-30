@@ -1451,7 +1451,16 @@ export type InitialIdentityAuditObservation = {
     player_id: string;
     player_name: string;
     team_label: InitialIdentityAuditTeamLabel;
+    rank?: number;
+    advisory_only?: boolean;
+    suggestion_source?: string;
   } | null;
+  reid_suggestions?: Array<{
+    player_id: string;
+    player_name: string;
+    rank: number;
+    distance?: number | null;
+  }>;
 };
 
 export type InitialIdentityAuditFrame = {
@@ -1584,6 +1593,13 @@ export type InitialIdentityAuditSeedStoreDocument = {
     metrics: InitialIdentityAuditTelemetryMetrics;
   };
   safety: Record<string, boolean>;
+  operator_budget?: {
+    limit: number;
+    active_decisions: number;
+    remaining: number;
+    reached: boolean;
+  };
+  benchmark_state?: string;
   updated_at?: string | null;
 };
 

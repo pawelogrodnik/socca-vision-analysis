@@ -11,14 +11,30 @@ from typing import Any
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_unresolved_overlay import (
     build_unrepresented_tracklet_observations,
-    select_unresolved_overlay_rows,
+    build_visible_player_observations,
+    identity_observation_rows_by_frame,
+)
+from app.services.player_detection_quality_audit import (
+    build_player_observation_source_lineage,
+    build_renderer_visible_observations,
 )
 
 
-SCHEMA_VERSION = "0.1.0"
-REPORT_KIND = "player_detection_quality_review_report"
+SCHEMA_VERSION = "0.2.0"
+REPORT_KIND = "player_observation_coverage_qa_report"
 MINIMUM_IOU = 0.30
 MINIMUM_CONTAINMENT = 0.60
+
+
+class PlayerObservationQaStaleSourceError(ValueError):
+    status = "STALE_SOURCE_ARTIFACTS"
+
+    def __init__(self, changed_artifacts: list[str]) -> None:
+        self.changed_artifacts = sorted(changed_artifacts)
+        super().__init__(
+            "STALE_SOURCE_ARTIFACTS: "
+            + ", ".join(self.changed_artifacts)
+        )
 
 
 def analyze_player_detection_quality_review(
@@ -47,6 +63,13 @@ def analyze_player_detection_quality_review(
         for item, detection in detections
         if _effective_status(detection, decisions) == "false_detection"
     ]
+    waterfall_attribution = _build_waterfall_attribution(
+        missing_players,
+        items=items,
+        decisions=decisions,
+        tracklets_document=tracklets_document,
+        raw_tracks_document=raw_tracks_document,
+    )
     represented_tracklets = {
         int(item["frame_number"]): {
             str((detection.get("provenance") or {}).get("tracklet_id") or "")
@@ -85,7 +108,7 @@ def analyze_player_detection_quality_review(
     }
     valid_existing = len(detections) - len(effective_false)
     reference_players = valid_existing + len(missing_players)
-    unresolved_overlay_projection = _project_unresolved_overlay_recovery(
+    projected_visual_recovery = _project_unresolved_overlay_recovery(
         missing_players,
         tracklets_document=tracklets_document,
         global_identity_document=global_identity_document,
@@ -100,14 +123,17 @@ def analyze_player_detection_quality_review(
             "no_matching_frozen_tracklet",
         )
     }
-    missing_tracklet_team_mismatches = sum(
-        row.get("matched_tracklet") is not None
-        and row["matched_tracklet"].get("team_label_match") is False
-        for row in attributed_missing
-    )
+    missing_tracklet_team_mismatches = waterfall_attribution["counts"][
+        "team_conflict"
+    ]
     clean_tracklet_omission_ratio = _ratio(
         attribution_counts["present_in_clean_tracklet_not_shown"],
         len(missing_players),
+    )
+    conclusion = _build_conclusion(
+        waterfall_attribution["counts"],
+        sample_size=len(missing_players),
+        raw_tracks_available=raw_tracks_document is not None,
     )
     return {
         "schema_version": SCHEMA_VERSION,
@@ -167,29 +193,26 @@ def analyze_player_detection_quality_review(
                 "one_to_one_per_frame": True,
                 "already_displayed_tracklets_excluded": True,
             },
-            "counts": attribution_counts,
+            "counts": waterfall_attribution["counts"],
             "clean_tracklet_omission_ratio": clean_tracklet_omission_ratio,
+            "waterfall": [
+                "visible_product_observation",
+                "clean_tracklet",
+                "rejected_tracklet",
+                "raw_track",
+                "no_match",
+            ],
+            "items": waterfall_attribution["items"],
+        },
+        "legacy_identity_layer_diagnostics": {
+            "counts": attribution_counts,
             "items": attributed_missing,
         },
         "identity_layer_attribution": identity_layer_attribution,
         "raw_track_attribution": raw_track_attribution,
-        "unresolved_overlay_projection": unresolved_overlay_projection,
+        "projected_visual_recovery": projected_visual_recovery,
         "comments": frame_comments,
-        "conclusion": {
-            "primary_bottleneck": (
-                "global_identity_slot_coverage"
-                if clean_tracklet_omission_ratio >= 0.50
-                else "frozen_detection_or_tracking"
-            ),
-            "raw_yolo_recall_can_be_inferred": False,
-            "reason": (
-                "Most operator-drawn missing players already exist in clean "
-                "frozen tracklets. Some were already present as detected or "
-                "ambiguous identity-overlay positions but were omitted by the "
-                "old QA package; additional observations can be exposed safely "
-                "as visual-only unresolved boxes."
-            ),
-        },
+        "conclusion": conclusion,
         "safety": {
             "yolo_reruns": 0,
             "tracking_reruns": 0,
@@ -211,10 +234,35 @@ def analyze_player_detection_quality_review_files(
     expected_manifest = _load_json(audit_package_dir / "audit_manifest.json")
     tracklets_document = _load_json(match_path / "tracklets.json")
     global_identity_document = _load_json(match_path / "global_identity.json")
+    match_document = _load_json(match_path / "match.json")
+    analysis_report = _load_json(match_path / "analysis_report.json")
     raw_tracks_path = _resolve_raw_tracks_path(match_path)
     raw_tracks_document = (
         _load_json_value(raw_tracks_path) if raw_tracks_path is not None else None
     )
+    video_metadata = analysis_report.get("video") or {}
+    pitch_config = (
+        _load_json(match_path / "pitch_config.json")
+        if (match_path / "pitch_config.json").exists()
+        else None
+    )
+    visible_observations = build_renderer_visible_observations(
+        global_identity=global_identity_document,
+        tracklets_document=tracklets_document,
+        fps=max(1.0, float(video_metadata.get("fps") or 30.0)),
+        width=max(1, int(video_metadata.get("width") or 1)),
+        height=max(1, int(video_metadata.get("height") or 1)),
+        pitch_config=pitch_config,
+    )
+    current_lineage = build_player_observation_source_lineage(
+        match_document=match_document,
+        analysis_report=analysis_report,
+        global_identity=global_identity_document,
+        tracklets_document=tracklets_document,
+        raw_tracks_document=raw_tracks_document,
+        visible_observations_by_frame=visible_observations,
+    )
+    _validate_source_freshness(expected_manifest, current_lineage)
     report = analyze_player_detection_quality_review(
         reviewed_audit=reviewed_audit,
         expected_manifest=expected_manifest,
@@ -231,6 +279,33 @@ def analyze_player_detection_quality_review_files(
     return report
 
 
+def _validate_source_freshness(
+    expected_manifest: dict[str, Any],
+    current_lineage: dict[str, Any],
+) -> None:
+    stored_lineage = (
+        (expected_manifest.get("source") or {}).get("artifact_digests")
+        or {}
+    )
+    required = {
+        "global_identity",
+        "tracklets",
+        "rejected_tracklets",
+        "match_metadata",
+        "analysis_metadata",
+        "video_metadata",
+        "visible_observation_projection",
+        "raw_tracks",
+    }
+    changed = [
+        key
+        for key in sorted(required | set(stored_lineage))
+        if stored_lineage.get(key) != current_lineage.get(key)
+    ]
+    if changed:
+        raise PlayerObservationQaStaleSourceError(changed)
+
+
 def render_player_detection_quality_review_markdown(
     report: dict[str, Any],
 ) -> str:
@@ -239,67 +314,82 @@ def render_player_detection_quality_review_markdown(
     attribution = report["missing_attribution"]["counts"]
     identity_attribution = report["identity_layer_attribution"]["counts"]
     raw_attribution = report["raw_track_attribution"]["counts"]
-    overlay_projection = report["unresolved_overlay_projection"]
-    return (
-        "# Player detection QA — reviewed result\n\n"
-        f"- Frames reviewed: {summary['frames_reviewed']}\n"
-        f"- Existing boxes: {summary['existing_detections']}\n"
-        f"- Effective false detections: {summary['effective_false_detections']}\n"
-        f"- Missing player boxes: {summary['missing_player_boxes']}\n"
-        f"- Matched missing boxes with a conflicting tracklet team: "
-        f"{summary['missing_tracklet_team_mismatches']}\n"
-        f"- Displayed observation coverage: "
-        f"{summary['displayed_observation_coverage']:.1%}\n"
-        f"- Team A coverage: {teams['A']['displayed_observation_coverage']:.1%}\n"
-        f"- Team B coverage: {teams['B']['displayed_observation_coverage']:.1%}\n\n"
-        "## Missing-box attribution\n\n"
-        f"- Present in clean frozen tracklets but not shown: "
-        f"{attribution['present_in_clean_tracklet_not_shown']}\n"
-        f"- Present only in rejected tracklets: "
-        f"{attribution['present_in_rejected_tracklet']}\n"
-        f"- No matching frozen tracklet: "
-        f"{attribution['no_matching_frozen_tracklet']}\n\n"
-        "## Identity-layer attribution\n\n"
-        f"- Clean tracklet not assigned to any slot: "
-        f"{identity_attribution['tracklet_not_assigned_to_slot']}\n"
-        f"- Slot displays another tracklet in the same frame: "
-        f"{identity_attribution['slot_uses_different_tracklet_at_frame']}\n"
-        f"- Slot has no overlay position in the frame: "
-        f"{identity_attribution['slot_has_no_overlay_position']}\n"
-        f"- Other overlay eligibility loss: "
-        f"{identity_attribution['other_overlay_eligibility_loss']}\n\n"
-        "## Raw-track attribution\n\n"
-        f"- Present in raw tracks but absent from tracklets: "
-        f"{raw_attribution['present_in_raw_tracks_but_not_tracklets']}\n"
-        f"- No separate matching raw track: "
-        f"{raw_attribution['no_matching_raw_track']}\n"
-        f"- Not analyzed: {raw_attribution['not_analyzed']}\n\n"
-        "## Unresolved-overlay projection\n\n"
-        f"- Missing boxes already available in identity overlay: "
-        f"{overlay_projection['already_available_in_identity_overlay']}\n"
-        f"- Operator-drawn missing boxes recoverable as visual-only unresolved: "
-        f"{overlay_projection['recoverable_missing_boxes']}\n"
-        f"- Remaining missing boxes after visual recovery: "
-        f"{overlay_projection['remaining_missing_boxes']}\n"
-        f"- Projected observation coverage: "
-        f"{overlay_projection['projected_observation_coverage']:.1%}\n\n"
-        "## Conclusion\n\n"
-        "The old QA package omitted both identity-overlay observations and "
-        "clean tracklet observations that were not represented by a visible "
-        "identity slot. The stabilization renderer now keeps the latter visible "
-        "as untrusted `RAW?`, `A?`, or `B?` boxes without using them for stats. "
-        "This QA does not "
-        "by itself measure raw YOLO recall. No YOLO, tracking, candidate identity, "
-        "production identity or production stats artifact was mutated.\n"
-    )
+    overlay_projection = report["projected_visual_recovery"]
+    conclusion = report["conclusion"]
+    lines = [
+        "# Player observation coverage QA — reviewed result",
+        "",
+        f"- Frames reviewed: {summary['frames_reviewed']}",
+        f"- Existing boxes: {summary['existing_detections']}",
+        f"- Effective false visual observations: {summary['effective_false_detections']}",
+        f"- Manually added missing boxes: {summary['missing_player_boxes']}",
+        f"- Team conflicts: {summary['missing_tracklet_team_mismatches']}",
+        f"- Displayed observation coverage: {summary['displayed_observation_coverage']:.1%}",
+        f"- Team A coverage: {teams['A']['displayed_observation_coverage']:.1%}",
+        f"- Team B coverage: {teams['B']['displayed_observation_coverage']:.1%}",
+        "",
+        "## Waterfall attribution",
+        "",
+        f"- Already visible in product observation: {attribution['already_visible_in_product_observation']}",
+        f"- Clean tracklet but missing from product observation: {attribution['present_in_clean_tracklet_but_missing_from_product_observation']}",
+        f"- Rejected tracklet only: {attribution['present_only_in_rejected_tracklet']}",
+        f"- Raw track only: {attribution['present_in_raw_track_only']}",
+        f"- No matching track: {attribution['no_matching_track']}",
+        f"- Ambiguous match: {attribution['ambiguous_match']}",
+        f"- Team conflict: {attribution['team_conflict']}",
+        "",
+        "## Identity-layer diagnostics",
+        "",
+        f"- Clean tracklet not assigned to any slot: {identity_attribution['tracklet_not_assigned_to_slot']}",
+        f"- Slot displays another tracklet in the same frame: {identity_attribution['slot_uses_different_tracklet_at_frame']}",
+        f"- Slot has no overlay position in the frame: {identity_attribution['slot_has_no_overlay_position']}",
+        f"- Other overlay eligibility loss: {identity_attribution['other_overlay_eligibility_loss']}",
+        "",
+        "## Raw-track diagnostics",
+        "",
+        f"- Present in raw tracks but absent from tracklets: {raw_attribution['present_in_raw_tracks_but_not_tracklets']}",
+        f"- No separate matching raw track: {raw_attribution['no_matching_raw_track']}",
+        f"- Not analyzed: {raw_attribution['not_analyzed']}",
+        "",
+        "## Projected visual recovery",
+        "",
+        f"- Missing boxes already available in identity overlay: {overlay_projection['already_available_in_identity_overlay']}",
+        f"- Missing boxes projected as visual-only unresolved: {overlay_projection['recoverable_missing_boxes']}",
+        f"- Remaining missing boxes in projection: {overlay_projection['remaining_missing_boxes']}",
+        f"- Projected, not rendered, observation coverage: {overlay_projection['projected_observation_coverage']:.1%}",
+        "",
+        "## Conclusion",
+        "",
+        f"- Primary bottleneck: `{conclusion['primary_bottleneck']}`",
+        f"- Confidence: `{conclusion['confidence']}`",
+        "- Evidence:",
+        *[
+            f"  - {key}: {value}"
+            for key, value in conclusion["evidence"].items()
+        ],
+        f"- Recommended next step: {conclusion['recommended_next_step']}",
+        "- Limitations:",
+        *[
+            f"  - {limitation}"
+            for limitation in conclusion.get("limitations") or []
+        ],
+        "",
+        "No YOLO, tracking, candidate identity, production identity, or "
+        "production stats artifact was mutated.",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _validate_review(
     reviewed_audit: dict[str, Any],
     expected_manifest: dict[str, Any],
 ) -> None:
-    if reviewed_audit.get("audit_kind") != "player_detection_quality":
-        raise ValueError("Unsupported player-detection QA kind")
+    if reviewed_audit.get("audit_kind") not in {
+        "player_detection_quality",
+        "player_observation_coverage_qa",
+    }:
+        raise ValueError("Unsupported player-observation QA kind")
     for field in ("source", "video", "items"):
         if reviewed_audit.get(field) != expected_manifest.get(field):
             raise ValueError(f"Reviewed audit does not match manifest field: {field}")
@@ -400,6 +490,15 @@ def _attribute_missing_players(
         for annotation_index in annotation_indexes:
             annotation = missing_players[annotation_index]
             for candidate_index, candidate in enumerate(candidates):
+                if (
+                    _known_team(annotation.get("team_label"))
+                    in {"A", "B"}
+                    and _known_team(candidate.get("team_label"))
+                    in {"A", "B"}
+                    and _known_team(annotation.get("team_label"))
+                    != _known_team(candidate.get("team_label"))
+                ):
+                    continue
                 iou, containment = _bbox_overlap(
                     annotation["bbox_xyxy"],
                     candidate["bbox_xyxy"],
@@ -456,6 +555,403 @@ def _attribute_missing_players(
     return [row for row in result if row is not None]
 
 
+def _build_waterfall_attribution(
+    missing_players: list[dict[str, Any]],
+    *,
+    items: list[dict[str, Any]],
+    decisions: dict[str, str],
+    tracklets_document: dict[str, Any],
+    raw_tracks_document: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    selected_frames = {
+        int(annotation["frame_number"]) for annotation in missing_players
+    }
+    visible_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        frame = int(item["frame_number"])
+        for detection in item.get("detections") or []:
+            if _effective_status(detection, decisions) == "false_detection":
+                continue
+            visible_by_frame[frame].append(
+                {
+                    "candidate_id": str(detection["detection_key"]),
+                    "team_label": _known_team(detection.get("team_label")),
+                    "bbox_xyxy": detection["bbox_xyxy"],
+                    "provenance": detection.get("provenance") or {},
+                }
+            )
+
+    clean_by_frame = _waterfall_tracklet_candidates(
+        tracklets_document.get("tracklets") or [],
+        selected_frames,
+    )
+    rejected_by_frame = _waterfall_tracklet_candidates(
+        tracklets_document.get("rejected_tracklets") or [],
+        selected_frames,
+    )
+    raw_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for raw_track in raw_tracks_document or []:
+        raw_track_id = int(raw_track.get("track_id") or 0)
+        for position in raw_track.get("positions") or []:
+            frame = int(position.get("frame") or 0)
+            if (
+                frame not in selected_frames
+                or not _valid_bbox(position.get("bbox_xyxy"))
+            ):
+                continue
+            raw_by_frame[frame].append(
+                {
+                    "candidate_id": f"raw:{raw_track_id}",
+                    "raw_track_id": raw_track_id,
+                    "team_label": "U",
+                    "bbox_xyxy": position["bbox_xyxy"],
+                }
+            )
+
+    stages = (
+        (
+            "visible_product_observation",
+            visible_by_frame,
+            "already_visible_in_product_observation",
+        ),
+        (
+            "clean_tracklet",
+            clean_by_frame,
+            "present_in_clean_tracklet_but_missing_from_product_observation",
+        ),
+        (
+            "rejected_tracklet",
+            rejected_by_frame,
+            "present_only_in_rejected_tracklet",
+        ),
+        ("raw_track", raw_by_frame, "present_in_raw_track_only"),
+    )
+    unresolved = set(range(len(missing_players)))
+    results: dict[int, dict[str, Any]] = {}
+    for layer, candidates_by_frame, category in stages:
+        for frame in sorted(selected_frames):
+            annotation_indexes = sorted(
+                index
+                for index in unresolved
+                if int(missing_players[index]["frame_number"]) == frame
+            )
+            if not annotation_indexes:
+                continue
+            matches, conflicts = _match_waterfall_layer(
+                missing_players,
+                annotation_indexes,
+                candidates_by_frame.get(frame) or [],
+                layer=layer,
+                category=category,
+            )
+            for index, row in matches.items():
+                results[index] = row
+                unresolved.discard(index)
+            for index, row in conflicts.items():
+                if index in unresolved:
+                    results[index] = row
+                    unresolved.discard(index)
+    for index in sorted(unresolved):
+        annotation = missing_players[index]
+        results[index] = {
+            "annotation_index": index,
+            "frame_number": int(annotation["frame_number"]),
+            "team_label": annotation["team_label"],
+            "bbox_xyxy": annotation["bbox_xyxy"],
+            "attribution": "no_matching_track",
+            "matched_layer": None,
+            "matched_candidate": None,
+        }
+
+    categories = (
+        "already_visible_in_product_observation",
+        "present_in_clean_tracklet_but_missing_from_product_observation",
+        "present_only_in_rejected_tracklet",
+        "present_in_raw_track_only",
+        "no_matching_track",
+        "ambiguous_match",
+        "team_conflict",
+    )
+    ordered = [results[index] for index in range(len(missing_players))]
+    return {
+        "counts": {
+            category: sum(
+                row["attribution"] == category for row in ordered
+            )
+            for category in categories
+        },
+        "items": ordered,
+    }
+
+
+def _waterfall_tracklet_candidates(
+    tracklets: list[dict[str, Any]],
+    selected_frames: set[int],
+) -> dict[int, list[dict[str, Any]]]:
+    result: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for tracklet in tracklets:
+        tracklet_id = str(tracklet.get("tracklet_id") or "")
+        if not tracklet_id:
+            continue
+        team_label = _known_team(
+            tracklet.get("team_label") or tracklet.get("team_candidate")
+        )
+        for position in tracklet.get("positions_m") or []:
+            frame = int(position.get("frame") or 0)
+            if (
+                frame not in selected_frames
+                or not _valid_bbox(position.get("bbox_xyxy"))
+            ):
+                continue
+            result[frame].append(
+                {
+                    "candidate_id": f"tracklet:{tracklet_id}",
+                    "tracklet_id": tracklet_id,
+                    "team_label": team_label,
+                    "bbox_xyxy": position["bbox_xyxy"],
+                }
+            )
+    return result
+
+
+def _match_waterfall_layer(
+    annotations: list[dict[str, Any]],
+    annotation_indexes: list[int],
+    candidates: list[dict[str, Any]],
+    *,
+    layer: str,
+    category: str,
+) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]]]:
+    valid_pairs = []
+    conflict_pairs = []
+    for annotation_index in annotation_indexes:
+        annotation = annotations[annotation_index]
+        annotation_team = _known_team(annotation.get("team_label"))
+        for candidate_index, candidate in enumerate(candidates):
+            iou, containment = _bbox_overlap(
+                annotation["bbox_xyxy"],
+                candidate["bbox_xyxy"],
+            )
+            if iou < MINIMUM_IOU and containment < MINIMUM_CONTAINMENT:
+                continue
+            candidate_team = _known_team(candidate.get("team_label"))
+            pair = (
+                -max(iou, containment),
+                -iou,
+                -containment,
+                str(candidate.get("candidate_id") or ""),
+                annotation_index,
+                candidate_index,
+                iou,
+                containment,
+            )
+            if (
+                annotation_team in {"A", "B"}
+                and candidate_team in {"A", "B"}
+                and annotation_team != candidate_team
+            ):
+                conflict_pairs.append(pair)
+            else:
+                valid_pairs.append(pair)
+
+    matches: dict[int, dict[str, Any]] = {}
+    used_candidates: set[int] = set()
+    for pair in sorted(valid_pairs):
+        (
+            _score,
+            _iou_score,
+            _containment_score,
+            _candidate_key,
+            annotation_index,
+            candidate_index,
+            iou,
+            containment,
+        ) = pair
+        if annotation_index in matches or candidate_index in used_candidates:
+            continue
+        candidate = candidates[candidate_index]
+        candidate_team = _known_team(candidate.get("team_label"))
+        attribution = (
+            "ambiguous_match"
+            if candidate_team == "U" and layer != "raw_track"
+            else category
+        )
+        matches[annotation_index] = _waterfall_result(
+            annotations[annotation_index],
+            annotation_index=annotation_index,
+            attribution=attribution,
+            layer=layer,
+            candidate=candidate,
+            iou=iou,
+            containment=containment,
+            team_match=(
+                "unknown" if candidate_team == "U" else "same_team"
+            ),
+        )
+        used_candidates.add(candidate_index)
+
+    conflicts: dict[int, dict[str, Any]] = {}
+    for pair in sorted(conflict_pairs):
+        (
+            _score,
+            _iou_score,
+            _containment_score,
+            _candidate_key,
+            annotation_index,
+            candidate_index,
+            iou,
+            containment,
+        ) = pair
+        if annotation_index in matches or annotation_index in conflicts:
+            continue
+        candidate = candidates[candidate_index]
+        conflicts[annotation_index] = _waterfall_result(
+            annotations[annotation_index],
+            annotation_index=annotation_index,
+            attribution="team_conflict",
+            layer=layer,
+            candidate=candidate,
+            iou=iou,
+            containment=containment,
+            team_match="opposite_team",
+        )
+    return matches, conflicts
+
+
+def _waterfall_result(
+    annotation: dict[str, Any],
+    *,
+    annotation_index: int,
+    attribution: str,
+    layer: str,
+    candidate: dict[str, Any],
+    iou: float,
+    containment: float,
+    team_match: str,
+) -> dict[str, Any]:
+    return {
+        "annotation_index": annotation_index,
+        "frame_number": int(annotation["frame_number"]),
+        "team_label": annotation["team_label"],
+        "bbox_xyxy": annotation["bbox_xyxy"],
+        "attribution": attribution,
+        "matched_layer": layer,
+        "matched_candidate": {
+            **candidate,
+            "iou": round(iou, 4),
+            "containment": round(containment, 4),
+            "team_match": team_match,
+        },
+    }
+
+
+def _known_team(value: Any) -> str:
+    label = str(value or "U")
+    return label if label in {"A", "B"} else "U"
+
+
+def _build_conclusion(
+    counts: dict[str, int],
+    *,
+    sample_size: int,
+    raw_tracks_available: bool,
+) -> dict[str, Any]:
+    product_observation_losses = (
+        int(counts.get("already_visible_in_product_observation") or 0)
+        + int(
+            counts.get(
+                "present_in_clean_tracklet_but_missing_from_product_observation"
+            )
+            or 0
+        )
+    )
+    tracking_losses = (
+        int(counts.get("present_only_in_rejected_tracklet") or 0)
+        + int(counts.get("present_in_raw_track_only") or 0)
+    )
+    raw_or_pretracking_losses = int(counts.get("no_matching_track") or 0)
+    uncertainty = (
+        int(counts.get("ambiguous_match") or 0)
+        + int(counts.get("team_conflict") or 0)
+    )
+    evidence = {
+        "sample_size": sample_size,
+        "product_observation_coverage": product_observation_losses,
+        "tracking_or_tracklet_construction": tracking_losses,
+        "raw_detection_or_pre_tracking": raw_or_pretracking_losses,
+        "ambiguous_or_team_conflict": uncertainty,
+        "raw_tracks_available": raw_tracks_available,
+        "freshness_confirmed": True,
+    }
+    limitations = [
+        "This QA is not complete human ground truth for raw YOLO recall.",
+    ]
+    if sample_size < 10:
+        limitations.append("The reviewed missing-observation sample is small.")
+    if not raw_tracks_available:
+        limitations.append(
+            "Raw tracks are unavailable, so the final waterfall layer cannot "
+            "be verified."
+        )
+    if uncertainty:
+        limitations.append(
+            "Ambiguous geometry or team conflicts reduce attribution certainty."
+        )
+
+    groups = {
+        "product_observation_coverage": product_observation_losses,
+        "tracking_or_tracklet_construction": tracking_losses,
+        "raw_detection_or_pre_tracking": raw_or_pretracking_losses,
+    }
+    ranked = sorted(groups.items(), key=lambda item: (-item[1], item[0]))
+    top_name, top_count = ranked[0]
+    second_count = ranked[1][1]
+    attributable = sum(groups.values())
+    if (
+        sample_size < 10
+        or attributable == 0
+        or (not raw_tracks_available and raw_or_pretracking_losses > 0)
+        or uncertainty / max(sample_size, 1) >= 0.20
+    ):
+        bottleneck = "inconclusive"
+        confidence = "low"
+    elif (
+        top_count / max(attributable, 1) < 0.55
+        or (top_count - second_count) / max(attributable, 1) < 0.15
+    ):
+        bottleneck = "mixed"
+        confidence = "medium"
+    else:
+        bottleneck = top_name
+        confidence = "high" if sample_size >= 30 and uncertainty == 0 else "medium"
+
+    recommendations = {
+        "product_observation_coverage": (
+            "Keep the shared visible-observation projection aligned between "
+            "renderer and QA."
+        ),
+        "tracking_or_tracklet_construction": (
+            "Inspect rejected-tracklet and raw-only construction gates."
+        ),
+        "raw_detection_or_pre_tracking": (
+            "Prepare a bounded raw-detection ground-truth check before changing "
+            "YOLO."
+        ),
+        "mixed": "Address the largest verified waterfall layers separately.",
+        "inconclusive": (
+            "Collect more certain, freshness-verified observations before "
+            "changing the pipeline."
+        ),
+    }
+    return {
+        "primary_bottleneck": bottleneck,
+        "confidence": confidence,
+        "evidence": evidence,
+        "limitations": limitations,
+        "recommended_next_step": recommendations[bottleneck],
+    }
+
+
 def _project_unresolved_overlay_recovery(
     missing_players: list[dict[str, Any]],
     *,
@@ -486,65 +982,69 @@ def _project_unresolved_overlay_recovery(
     selected_frames = {
         int(annotation["frame_number"]) for annotation in missing_players
     }
-    all_identity_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    newly_available_identity_by_frame: dict[int, list[dict[str, Any]]] = (
-        defaultdict(list)
+    identity_by_frame = identity_observation_rows_by_frame(
+        global_identity_document,
+        frame_numbers=selected_frames,
     )
-    for slot in global_identity_document.get("slots") or []:
-        for row in slot.get("overlay_positions") or []:
-            frame_number = int(row.get("frame") or 0)
-            visual_source = str(
-                row.get("source") or row.get("status") or "detected"
+    unrepresented = build_unrepresented_tracklet_observations(
+        tracklets_document.get("tracklets") or [],
+        global_identity_document,
+        frame_numbers=selected_frames,
+    )
+    visible_by_frame = build_visible_player_observations(
+        identity_rows_by_frame=identity_by_frame,
+        unmatched_observations=[
+            row
+            for row in global_identity_document.get(
+                "unmatched_observations"
             )
-            if (
-                frame_number in selected_frames
-                and visual_source in {"detected", "ambiguous"}
-                and _valid_bbox(row.get("bbox_xyxy"))
-            ):
-                all_identity_by_frame[frame_number].append(row)
-                tracklet_id = str(
-                    row.get("tracklet_id")
-                    or row.get("candidate_tracklet_id")
-                    or ""
-                )
-                if tracklet_id not in represented_tracklets.get(
-                    frame_number,
-                    set(),
-                ):
-                    newly_available_identity_by_frame[frame_number].append(row)
-
-    unresolved = [
-        *(global_identity_document.get("unmatched_observations") or []),
-        *build_unrepresented_tracklet_observations(
-            tracklets_document.get("tracklets") or [],
-            global_identity_document,
-        ),
-    ]
-    candidates_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    unresolved_candidate_count = 0
-    for row in unresolved:
-        if not isinstance(row, dict) or not _valid_bbox(row.get("bbox_xyxy")):
-            continue
-        frame_number = int(row.get("frame") or 0)
-        if frame_number not in selected_frames:
-            continue
-        candidates_by_frame[frame_number].append(row)
-        unresolved_candidate_count += 1
-
-    visible_by_frame = {
-        frame_number: select_unresolved_overlay_rows(
-            all_identity_by_frame.get(frame_number, []),
-            candidates,
-        )
-        for frame_number, candidates in candidates_by_frame.items()
+            or []
+            if int(row.get("frame") or 0) in selected_frames
+        ],
+        unrepresented_tracklet_observations=unrepresented,
+        frame_numbers=selected_frames,
+    )
+    newly_available_identity_by_frame = {
+        frame: [
+            row
+            for row in rows
+            if str(row.get("observation_provenance") or "").startswith(
+                "identity_"
+            )
+            and str(
+                row.get("tracklet_id")
+                or row.get("candidate_tracklet_id")
+                or ""
+            )
+            not in represented_tracklets.get(frame, set())
+        ]
+        for frame, rows in visible_by_frame.items()
     }
+    unresolved_by_frame = {
+        frame: [
+            row
+            for row in rows
+            if row.get("observation_provenance")
+            in {"unmatched_raw", "unrepresented_clean_tracklet"}
+            and str(
+                row.get("tracklet_id")
+                or row.get("candidate_tracklet_id")
+                or ""
+            )
+            not in represented_tracklets.get(frame, set())
+        ]
+        for frame, rows in visible_by_frame.items()
+    }
+    unresolved_candidate_count = sum(
+        len(rows) for rows in unresolved_by_frame.values()
+    )
     identity_matches = _match_missing_to_visual_candidates(
         missing_players,
         newly_available_identity_by_frame,
     )
     unresolved_matches = _match_missing_to_visual_candidates(
         missing_players,
-        visible_by_frame,
+        unresolved_by_frame,
     )
     identity_annotation_indexes = {
         int(row["annotation_index"]) for row in identity_matches
@@ -563,7 +1063,7 @@ def _project_unresolved_overlay_recovery(
         "analyzed": True,
         "candidate_unresolved_observations": unresolved_candidate_count,
         "visible_after_duplicate_suppression": sum(
-            len(rows) for rows in visible_by_frame.values()
+            len(rows) for rows in unresolved_by_frame.values()
         ),
         "already_available_in_identity_overlay": len(identity_matches),
         "recoverable_missing_boxes": len(unresolved_matches),

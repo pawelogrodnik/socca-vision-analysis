@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Offline QA package for improving the player detector.
+"""Offline QA package for downstream player-observation coverage.
 
 The package is deliberately a static directory: no audit action calls the API.
 The reviewer opens ``review.html`` locally and downloads one reviewed JSON file.
@@ -16,15 +16,28 @@ from statistics import median
 from typing import Any
 
 import cv2
+import numpy as np
 
+from app.services.global_identity import (
+    build_stable_players_from_global_identity,
+)
 from app.services.identity_initial_audit_frame_selection import (
     filter_identity_audit_observations,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_unresolved_overlay import (
+    build_unrepresented_tracklet_observations,
+    build_visible_player_observations,
+    identity_observation_rows_by_frame,
+)
+from app.services.player_observation_qa_html import (
+    render_player_observation_qa_html,
+)
+from app.services.stabilization import _stable_overlay_frame_rows
 
 
-SCHEMA_VERSION = "0.1.0"
-AUDIT_KIND = "player_detection_quality"
+SCHEMA_VERSION = "0.2.0"
+AUDIT_KIND = "player_observation_coverage_qa"
 
 
 def build_player_detection_quality_audit(
@@ -34,7 +47,7 @@ def build_player_detection_quality_audit(
     maximum_frames: int = 24,
     minimum_gap_seconds: float = 5.0,
 ) -> dict[str, Any]:
-    """Create an offline, small, diverse detector QA package from frozen data."""
+    """Create a small offline observation-coverage QA package from frozen data."""
     match_document = _load_json(match_path / "match.json")
     analysis_report = _load_json(match_path / "analysis_report.json")
     global_identity = _load_json(match_path / "global_identity.json")
@@ -45,7 +58,25 @@ def build_player_detection_quality_audit(
     width = max(1, int(video_info.get("width") or 1))
     height = max(1, int(video_info.get("height") or 1))
 
-    observations_by_frame = _observations_by_frame(tracklets_document)
+    pitch_config = (
+        _load_json(match_path / "pitch_config.json")
+        if (match_path / "pitch_config.json").exists()
+        else None
+    )
+    observations_by_frame = build_renderer_visible_observations(
+        global_identity=global_identity,
+        tracklets_document=tracklets_document,
+        fps=fps,
+        width=width,
+        height=height,
+        pitch_config=pitch_config,
+    )
+    raw_tracks_path = _resolve_raw_tracks_path(match_path, analysis_report)
+    raw_tracks_document = (
+        _load_json_value(raw_tracks_path)
+        if raw_tracks_path is not None
+        else None
+    )
     known_false = _known_false_detections(match_path)
     selected = select_player_detection_qa_frames(
         observations_by_frame,
@@ -64,6 +95,14 @@ def build_player_detection_quality_audit(
         fps=fps,
         width=width,
         height=height,
+        source_lineage=build_player_observation_source_lineage(
+            match_document=match_document,
+            analysis_report=analysis_report,
+            global_identity=global_identity,
+            tracklets_document=tracklets_document,
+            raw_tracks_document=raw_tracks_document,
+            visible_observations_by_frame=observations_by_frame,
+        ),
     )
     _render_frames(manifest, video_path=video, output_dir=output_dir)
     _write_json(output_dir / "audit_manifest.json", manifest)
@@ -71,7 +110,7 @@ def build_player_detection_quality_audit(
         _render_html(manifest), encoding="utf-8"
     )
     (output_dir / "README.md").write_text(
-        "# Player detection QA\n\n"
+        "# Player observation coverage QA\n\n"
         "Open `review.html` directly in a browser. Select an existing bbox and "
         "mark it as a player or a shadow/false detection. To report a missed "
         "player, choose Team A or Team B and draw a box directly on the frame. "
@@ -80,6 +119,111 @@ def build_player_detection_quality_audit(
         encoding="utf-8",
     )
     return manifest
+
+
+def build_player_observation_source_lineage(
+    *,
+    match_document: dict[str, Any],
+    analysis_report: dict[str, Any],
+    global_identity: dict[str, Any],
+    tracklets_document: dict[str, Any],
+    raw_tracks_document: Any,
+    visible_observations_by_frame: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    return {
+        "global_identity": canonical_digest(global_identity),
+        "tracklets": canonical_digest(
+            tracklets_document.get("tracklets") or []
+        ),
+        "rejected_tracklets": canonical_digest(
+            tracklets_document.get("rejected_tracklets") or []
+        ),
+        "raw_tracks": (
+            canonical_digest(raw_tracks_document)
+            if raw_tracks_document is not None
+            else None
+        ),
+        "match_metadata": canonical_digest(match_document),
+        "analysis_metadata": canonical_digest(analysis_report),
+        "video_metadata": canonical_digest(
+            analysis_report.get("video") or {}
+        ),
+        "visible_observation_projection": canonical_digest(
+            visible_observations_by_frame
+        ),
+    }
+
+
+def build_renderer_visible_observations(
+    *,
+    global_identity: dict[str, Any],
+    tracklets_document: dict[str, Any],
+    fps: float,
+    width: int,
+    height: int,
+    pitch_config: dict[str, Any] | None,
+) -> dict[int, list[dict[str, Any]]]:
+    """Return exactly the rows consumed by the visual-diagnostics renderer."""
+
+    try:
+        stable_document = build_stable_players_from_global_identity(
+            global_identity
+        )
+    except (KeyError, TypeError, ValueError):
+        # A malformed or legacy identity document still needs a deterministic
+        # projection so freshness validation can reject it explicitly.
+        return _observations_by_frame(
+            tracklets_document,
+            global_identity=global_identity,
+        )
+    stable_document["unmatched_observations"] = list(
+        global_identity.get("unmatched_observations") or []
+    )
+    stable_document["unrepresented_tracklet_observations"] = (
+        build_unrepresented_tracklet_observations(
+            tracklets_document.get("tracklets") or [],
+            global_identity,
+        )
+    )
+    image_points = (
+        (pitch_config or {}).get("image_points")
+        if isinstance(pitch_config, dict)
+        else None
+    )
+    polygon = np.asarray(
+        image_points
+        if isinstance(image_points, list) and len(image_points) >= 3
+        else [[0, 0], [width, 0], [width, height], [0, height]],
+        dtype=np.float32,
+    )
+    rows_by_frame = _stable_overlay_frame_rows(
+        stable_document,
+        polygon,
+        fps=fps,
+        include_untrusted=False,
+        include_unmatched_raw=True,
+    )
+    return {
+        frame: [
+            {
+                "stable_subject_id": row.get("stable_subject_id"),
+                "tracklet_id": row.get("tracklet_id"),
+                "raw_track_id": row.get("raw_track_id"),
+                "team_label": str(row.get("team_label") or "U"),
+                "bbox_xyxy": _valid_bbox(row.get("bbox_xyxy")),
+                "confidence": row.get("confidence"),
+                "observation_provenance": row.get(
+                    "observation_provenance"
+                ),
+                "visual_trusted": bool(row.get("visual_trusted")),
+                "stats_eligible": bool(row.get("stats_eligible")),
+                "identity_eligible": bool(row.get("identity_eligible")),
+            }
+            for row in rows
+            if _valid_bbox(row.get("bbox_xyxy")) is not None
+        ]
+        for frame, rows in rows_by_frame.items()
+    }
 
 
 def select_player_detection_qa_frames(
@@ -164,6 +308,7 @@ def _build_manifest(
     fps: float,
     width: int,
     height: int,
+    source_lineage: dict[str, Any],
 ) -> dict[str, Any]:
     items = []
     for index, row in enumerate(selected_frames, start=1):
@@ -190,7 +335,16 @@ def _build_manifest(
                     "provenance": {
                         "stable_subject_id": detection.get("stable_subject_id"),
                         "tracklet_id": detection.get("tracklet_id"),
+                        "raw_track_id": detection.get("raw_track_id"),
+                        "observation_provenance": detection.get(
+                            "observation_provenance"
+                        ),
                     },
+                    "visual_trusted": bool(detection.get("visual_trusted")),
+                    "stats_eligible": bool(detection.get("stats_eligible")),
+                    "identity_eligible": bool(
+                        detection.get("identity_eligible")
+                    ),
                     "initial_review_status": (
                         "false_detection" if false_key in known_false else "pending"
                     ),
@@ -227,7 +381,8 @@ def _build_manifest(
             "analysis_run_id": analysis_report.get("run_id"),
             "global_identity_digest": canonical_digest(global_identity),
             "tracklets_digest": canonical_digest(tracklets_document),
-            "observation_layer": "clean_tracklets",
+            "observation_layer": "shared_visible_observation_projection",
+            "artifact_digests": source_lineage,
         },
         "video": {"fps": fps, "width": width, "height": height},
         "operator_contract": {
@@ -238,8 +393,8 @@ def _build_manifest(
             "raw_coordinates_required": False,
         },
         "ui": {
-            "title": "QA detekcji zawodnikow",
-            "download_filename": "player_detection_qa_reviewed.json",
+            "title": "QA pokrycia obserwacji zawodnikow",
+            "download_filename": "player_observation_qa_reviewed.json",
         },
         "summary": {
             "frames": len(items),
@@ -256,7 +411,45 @@ def _build_manifest(
 
 def _observations_by_frame(
     tracklets_document: dict[str, Any],
+    *,
+    global_identity: dict[str, Any] | None = None,
 ) -> dict[int, list[dict[str, Any]]]:
+    if global_identity is not None:
+        unrepresented = build_unrepresented_tracklet_observations(
+            tracklets_document.get("tracklets") or [],
+            global_identity,
+        )
+        visible = build_visible_player_observations(
+            identity_rows_by_frame=identity_observation_rows_by_frame(
+                global_identity
+            ),
+            unmatched_observations=global_identity.get(
+                "unmatched_observations"
+            )
+            or [],
+            unrepresented_tracklet_observations=unrepresented,
+        )
+        return {
+            frame: [
+                {
+                    "stable_subject_id": row.get("stable_subject_id"),
+                    "tracklet_id": row.get("tracklet_id"),
+                    "raw_track_id": row.get("raw_track_id"),
+                    "team_label": str(row.get("team_label") or "U"),
+                    "bbox_xyxy": _valid_bbox(row.get("bbox_xyxy")),
+                    "confidence": row.get("confidence"),
+                    "observation_provenance": row.get(
+                        "observation_provenance"
+                    ),
+                    "visual_trusted": bool(row.get("visual_trusted")),
+                    "stats_eligible": bool(row.get("stats_eligible")),
+                    "identity_eligible": bool(row.get("identity_eligible")),
+                }
+                for row in rows
+                if _valid_bbox(row.get("bbox_xyxy")) is not None
+            ]
+            for frame, rows in visible.items()
+        }
     result: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for tracklet in tracklets_document.get("tracklets") or []:
         tracklet_id = str(tracklet.get("tracklet_id") or "")
@@ -283,6 +476,12 @@ def _observations_by_frame(
                     "bbox_xyxy": bbox,
                     "confidence": position.get("confidence")
                     or tracklet.get("mean_confidence"),
+                    "observation_provenance": (
+                        "unrepresented_clean_tracklet"
+                    ),
+                    "visual_trusted": False,
+                    "stats_eligible": False,
+                    "identity_eligible": False,
                 }
             )
     for rows in result.values():
@@ -317,7 +516,25 @@ def _resolve_video_path(match_path: Path, match_document: dict[str, Any]) -> Pat
     configured = Path(str((match_document.get("video") or {}).get("path") or ""))
     if configured.exists():
         return configured
-    raise FileNotFoundError("Video for player detection QA is missing")
+    raise FileNotFoundError("Video for player-observation QA is missing")
+
+
+def _resolve_raw_tracks_path(
+    match_path: Path,
+    analysis_report: dict[str, Any],
+) -> Path | None:
+    local = match_path / "tracks.json"
+    if local.exists():
+        return local
+    source_dir = Path(
+        str((analysis_report.get("parameters") or {}).get("source_dir") or "")
+    )
+    artifact = str(
+        (analysis_report.get("artifacts") or {}).get("tracks_json")
+        or "tracks.json"
+    )
+    candidate = source_dir / artifact
+    return candidate if source_dir and candidate.exists() else None
 
 
 def _render_frames(
@@ -346,6 +563,8 @@ def _render_frames(
 
 
 def _render_html(manifest: dict[str, Any]) -> str:
+    return render_player_observation_qa_html(manifest)
+
     embedded = json.dumps(manifest, ensure_ascii=True).replace("</", "<\\/")
     title = escape(str((manifest.get("ui") or {}).get("title") or "Player detection QA"))
     filename = json.dumps(str((manifest.get("ui") or {}).get("download_filename") or "player_detection_qa_reviewed.json"))
@@ -375,6 +594,10 @@ def _valid_bbox(value: Any) -> list[float] | None:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_json_value(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 

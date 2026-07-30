@@ -58,7 +58,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!res.ok) {
     const contentType = res.headers.get('content-type') || '';
     const body = contentType.includes('application/json') ? await res.json().catch(() => null) : await res.text();
-    const detail = typeof body === 'object' && body !== null && 'detail' in body ? String((body as { detail: unknown }).detail) : String(body);
+    const rawDetail = typeof body === 'object' && body !== null && 'detail' in body
+      ? (body as { detail: unknown }).detail
+      : body;
+    const detail = typeof rawDetail === 'string'
+      ? rawDetail
+      : JSON.stringify(rawDetail);
     throw new Error(`${res.status}: ${detail}`);
   }
   return res.json() as Promise<T>;
@@ -336,6 +341,24 @@ export async function saveSecondHalfIdentityReanchorSeeds(
         telemetry_events: telemetryEvents,
       }),
     },
+  );
+}
+
+export async function finishProductFlowBenchmarkH1(
+  benchmarkId: string,
+): Promise<unknown> {
+  return request(
+    `/api/product-flow-benchmarks/${encodeURIComponent(benchmarkId)}/h1/finish`,
+    { method: 'POST' },
+  );
+}
+
+export async function finishProductFlowBenchmarkH2(
+  benchmarkId: string,
+): Promise<unknown> {
+  return request(
+    `/api/product-flow-benchmarks/${encodeURIComponent(benchmarkId)}/h2/finish`,
+    { method: 'POST' },
   );
 }
 

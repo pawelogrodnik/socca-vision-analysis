@@ -1391,8 +1391,8 @@ A  J8.3 panel closeout                         CLOSED — READY_FOR_J8_4_DIAGNOS
 B  IA0–IA4 Initial Audit core                 CLOSED
 C  IA5–IA6 re-anchor + appearance gallery     IA5 CLOSED — IA6 VALIDATED, ADVISORY ONLY
 D  J8.4 useful jersey recognizer              FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN
-E  Product-flow benchmark                     NEXT — shadow-only, no production apply
-F  IA7a core evidence fusion                  READY AFTER PRODUCT-FLOW BENCHMARK
+E  Product-flow benchmark                     IMPLEMENTATION + AUTOMATED VALIDATION COMPLETE — H1_READY FOR OPERATOR
+F  IA7a core evidence fusion                  BLOCKED UNTIL OPERATOR BENCHMARK REACHES REPORT_READY AND PASSES GATES
 G  IA7b optional jersey evidence              FROZEN UNTIL NEW INDEPENDENT CAPTURE DOMAIN
 H  IA8–IA9 exception-only/adaptive review     BLOCKED BY IA7a
 I  P1.23 revalidation + P1.24 apply            BLOCKED BY IA8–IA9
@@ -1400,8 +1400,47 @@ I  P1.23 revalidation + P1.24 apply            BLOCKED BY IA8–IA9
 
 ## Product-flow benchmark after J8.4
 
-This is the next milestone. It is a measurement-only flow and must not rerun
-YOLO or apply candidate/production identity mutations.
+Implementation and automated validation were completed on 2026-07-30. The
+milestone remains open until a real operator completes the new sequential
+session and its `REPORT_READY` artifact passes the gates below. The flow is
+measurement-only and must not rerun YOLO or apply candidate/production identity
+mutations.
+
+Canonical operator session:
+
+```text
+backend/storage/benchmarks/player_identity/product-flow-20260730-v3
+state: H1_READY
+H1 frames: 8
+H2 workspace: intentionally absent until H1 finish + downstream rebuild
+source inventory mutations at publication: 0
+```
+
+Persistent state machine:
+
+```text
+CREATING
+→ H1_READY
+→ H1_FINISHED
+→ H1_REBUILT
+→ H2_READY
+→ H2_FINISHED
+→ REPORT_READY
+
+any in-progress state → FAILED
+```
+
+The historical `product-flow-20260729-v1` session is not resumable evidence for
+this gate. It prepared H1 and H2 concurrently, used the generic
+`READY_FOR_OPERATOR` status and exceeded the intended operator budgets
+(`112` H1 decisions and `20` H2 decisions). Treat it as historical diagnostic
+input only, not as a passed benchmark.
+
+The superseded `product-flow-20260730-v2` session is also marked `FAILED`.
+It was used for a browser smoke test that exposed and verified a symlink
+workspace-context bug; its non-operator telemetry is intentionally excluded
+from benchmark evidence. The fix is covered by the product-flow regression
+suite, and `v3` is the clean operator session.
 
 ```text
 1. Show at most 8-12 Initial Identity Audit decisions.
@@ -1417,6 +1456,21 @@ YOLO or apply candidate/production identity mutations.
 The benchmark succeeds by proving lower safe manual workload, not by forcing
 coverage or substituting jersey evidence for operator knowledge.
 
+Player-observation QA correctness was also closed on 2026-07-30 at the
+implementation and automated-validation level:
+
+```text
+shared renderer/QA visible-observation projection
+freshness-checked source lineage
+visible → clean → rejected → raw → no-match waterfall
+team-safe deterministic one-to-one matching
+visual-only unresolved rows excluded from identity and trusted stats
+offline editor with delete/undo/team-toggle/local restore/reset
+```
+
+This does not claim full raw YOLO recall. Its conclusion is limited to
+freshness-verified downstream observation coverage.
+
 `BLOCKED BY A CLOSEOUT` oznacza zakończenie J8.3 decyzją, niekoniecznie pozytywny wynik modelowy.
 
 Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mogą być wykonywane. Faza D zostaje wstrzymana do poprawy danych, a IA7 może zostać częściowo przygotowane kontraktowo, lecz nie zamknięte bez realnego jersey evidence.
@@ -1428,8 +1482,10 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie następne zadanie to:
 
 ```text
-J8.4 R1-R3 zostało uruchomione diagnostycznie. R3 nie przeszedł safety gate'u,
-więc jersey work należy wstrzymać do czasu nowego niezależnego capture domain.
+Operator przechodzi H1 w product-flow-20260730-v3 (maksymalnie 12 aktywnych
+decyzji), kończy etap, a aplikacja buduje H2 dopiero z rzeczywistego wyniku H1.
+Następnie operator kończy maksymalnie 5 potwierdzeń H2 i oceniamy finalny
+REPORT_READY. Do tego czasu IA7a pozostaje zablokowane.
 ```
 
 J8.3 zostało zamknięte decyzją:

@@ -310,7 +310,12 @@ def load_combined_operator_seeds(match_path: Path) -> dict[str, Any]:
     equivalent: the combined document adds audit-stage lineage and can also
     contain second-half re-anchor decisions.
     """
-    benchmark_session = (load_identity_json(match_path / "match.json").get("benchmark_session") or {})
+    match_metadata_path = match_path / "match.json"
+    benchmark_session = (
+        load_identity_json(match_metadata_path).get("benchmark_session") or {}
+        if match_metadata_path.exists()
+        else {}
+    )
     reanchor_only = bool(benchmark_session.get("reanchor_only"))
     seed_sources = [
         {

@@ -19,6 +19,7 @@ import type {
 import {
   createInitialIdentityAuditEventId,
   initialIdentityAuditActionLabel,
+  initialIdentityAuditClearUpdate,
   initialIdentityAuditDecisionMap,
   initialIdentityAuditPlayerAction,
   initialIdentityAuditSeedUpdate,
@@ -30,11 +31,17 @@ import {
 interface InitialIdentityAuditPanelProps {
   match: Match;
   onStatus: (message: string) => void;
+  maximumActions?: number;
+  benchmarkState?: string;
+  onFinished?: () => Promise<void>;
 }
 
 export function InitialIdentityAuditPanel({
   match,
   onStatus,
+  maximumActions,
+  benchmarkState,
+  onFinished,
 }: InitialIdentityAuditPanelProps) {
   const [document, setDocument] = useState<InitialIdentityAuditDocument | null>(null);
   const [loading, setLoading] = useState(false);
@@ -193,6 +200,17 @@ export function InitialIdentityAuditPanel({
     observation: InitialIdentityAuditObservation,
     action: InitialIdentityAuditAction,
   ) {
+    const existingDecision = decisions[observation.observation_key];
+    const budgetReached = seedStore?.operator_budget?.reached
+      ?? (
+        maximumActions !== undefined
+        && Object.values(decisions).filter((decision) => decision.kind !== 'skip').length
+          >= maximumActions
+      );
+    if (budgetReached && !existingDecision && action.kind !== 'skip') {
+      onStatus('Limit aktywnych decyzji H1 zostal osiagniety. Mozesz zmienic lub usunac istniejaca decyzje.');
+      return;
+    }
     const decision: InitialIdentityAuditDecision = {
       ...action,
       observationKey: observation.observation_key,
@@ -256,14 +274,44 @@ export function InitialIdentityAuditPanel({
   async function finishAudit() {
     await enqueueSave([], [telemetryEvent('session_finished')]);
     setOpen(false);
-    onStatus(
-      `IA2 zapisany: ${Object.keys(decisions).length} decyzji operatora.`,
+    if (onFinished) {
+      onStatus('H1 zakonczony. Przebudowuje artefakty i przygotowuje H2...');
+      await onFinished();
+    } else {
+      onStatus(
+        `IA2 zapisany: ${Object.keys(decisions).length} decyzji operatora.`,
+      );
+    }
+  }
+
+  function clearSelectedDecision() {
+    if (!selectedObservationKey || !decisions[selectedObservationKey]) return;
+    setDecisions((current) => {
+      const next = { ...current };
+      delete next[selectedObservationKey];
+      return next;
+    });
+    void enqueueSave(
+      [initialIdentityAuditClearUpdate(selectedObservationKey)],
+      [telemetryEvent('action', {
+        audit_frame_key: frame?.audit_frame_key,
+        observation_key: selectedObservationKey,
+      })],
     );
   }
 
   const selectedDecision = selectedObservationKey
     ? decisions[selectedObservationKey]
     : undefined;
+  const activeDecisionCount = Object.values(decisions).filter(
+    (decision) => decision.kind !== 'skip',
+  ).length;
+  const actionBudgetReached = seedStore?.operator_budget?.reached
+    ?? (
+      maximumActions !== undefined
+      && activeDecisionCount >= maximumActions
+    );
+  const canCreateActiveDecision = !actionBudgetReached || Boolean(selectedDecision);
 
   return (
     <section className='initial-identity-audit-panel'>
@@ -272,6 +320,7 @@ export function InitialIdentityAuditPanel({
         <p className='muted'>
           Kilka najlepszych klatek przed pelnym review. Wybierz tylko pewne osoby;
           pozostale mozesz pominac.
+          {benchmarkState ? ` Stan benchmarku: ${benchmarkState}.` : ''}
         </p>
       </div>
       <button type='button' onClick={openAudit} disabled={loading}>
@@ -311,6 +360,11 @@ export function InitialIdentityAuditPanel({
                 Klatka {frameIndex + 1}/{document.frames.length}
                 {' · '}
                 Decyzje {Object.keys(decisions).length}
+                {seedStore?.operator_budget
+                  ? ` · Aktywne ${seedStore.operator_budget.active_decisions}/${seedStore.operator_budget.limit}`
+                  : maximumActions !== undefined
+                    ? ` · Limit aktywnych ${maximumActions}`
+                    : ''}
               </span>
             </div>
 
@@ -385,6 +439,16 @@ export function InitialIdentityAuditPanel({
                   </strong>
                 </div>
 
+                {selectedDecision && (
+                  <button
+                    type='button'
+                    disabled={saving}
+                    onClick={clearSelectedDecision}
+                  >
+                    Usun decyzje dla tego bboxa
+                  </button>
+                )}
+
                 <div className='initial-identity-audit-roster'>
                   {document.roster.map((team) => (
                     <div key={`${team.team_label}-${team.team_id ?? team.team_name}`}>
@@ -399,6 +463,7 @@ export function InitialIdentityAuditPanel({
                               type='button'
                               key={player.player_id}
                               className={active ? 'active' : ''}
+                              disabled={!canCreateActiveDecision}
                               onClick={() => chooseAction(action)}
                               aria-pressed={active}
                             >
@@ -414,20 +479,22 @@ export function InitialIdentityAuditPanel({
                 <div className='initial-identity-audit-generic-actions'>
                   <button
                     type='button'
+                    disabled={!canCreateActiveDecision}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'A' })}
                   >
                     Team A - nieznany
                   </button>
                   <button
                     type='button'
+                    disabled={!canCreateActiveDecision}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B - nieznany
                   </button>
-                  <button type='button' onClick={() => chooseAction({ kind: 'referee' })}>
+                  <button type='button' disabled={!canCreateActiveDecision} onClick={() => chooseAction({ kind: 'referee' })}>
                     Sedzia
                   </button>
-                  <button type='button' onClick={() => chooseAction({ kind: 'false_detection' })}>
+                  <button type='button' disabled={!canCreateActiveDecision} onClick={() => chooseAction({ kind: 'false_detection' })}>
                     Falszywa detekcja
                   </button>
                   <button type='button' onClick={() => chooseAction({ kind: 'skip' })}>

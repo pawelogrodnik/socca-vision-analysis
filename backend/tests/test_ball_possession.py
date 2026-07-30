@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -99,6 +100,58 @@ def stable_player_with_overlay_and_sparse_trajectory(player_id: str, team: str) 
 
 
 class BallPossessionTests(unittest.TestCase):
+    def test_unresolved_visual_rows_do_not_change_possession_candidates(self) -> None:
+        ball = {
+            "positions": [
+                {
+                    "frame": 1,
+                    "time_sec": 1 / 30,
+                    "pitch_m": [1.0, 1.0],
+                    "source": "detected",
+                }
+            ]
+        }
+        players = {
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 1,
+                            "time_sec": 1 / 30,
+                            "pitch_m": [1.0, 1.0],
+                            "source": "detected",
+                            "visual_trusted": True,
+                        }
+                    ],
+                }
+            ]
+        }
+        with_unresolved = copy.deepcopy(players)
+        with_unresolved["unmatched_observations"] = [
+            {
+                "frame": 1,
+                "time_sec": 1 / 30,
+                "pitch_m": [20.0, 20.0],
+                "source": "unmatched_raw",
+                "visual_trusted": False,
+                "stats_eligible": False,
+                "identity_eligible": False,
+            }
+        ]
+
+        baseline = build_possession_candidates_document(ball, players, fps=30)
+        candidate = build_possession_candidates_document(
+            ball,
+            with_unresolved,
+            fps=30,
+        )
+        baseline.pop("generated_at")
+        candidate.pop("generated_at")
+
+        self.assertEqual(candidate, baseline)
+
     def test_full_analysis_writes_attacking_momentum_artifact(self) -> None:
         with TemporaryDirectory() as temp_dir:
             match_dir = Path(temp_dir)

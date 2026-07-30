@@ -18,7 +18,8 @@ from app.services.player_detection_quality_audit import (
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Create a static player-detector QA package with an offline JSON export."
+            "Create a static player-observation coverage QA package with an "
+            "offline JSON export."
         )
     )
     parser.add_argument("--match-dir", type=Path, required=True)

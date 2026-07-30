@@ -10,7 +10,7 @@ from app.services.player_detection_quality_audit import (
 
 
 class PlayerDetectionQualityAuditTests(unittest.TestCase):
-    def test_qa_observations_come_from_clean_tracklets(self) -> None:
+    def test_legacy_qa_observations_come_from_clean_tracklets(self) -> None:
         observations = _observations_by_frame(
             {
                 "tracklets": [
@@ -46,10 +46,69 @@ class PlayerDetectionQualityAuditTests(unittest.TestCase):
                         "team_label": "A",
                         "bbox_xyxy": [10.0, 20.0, 30.0, 70.0],
                         "confidence": 0.9,
+                        "observation_provenance": (
+                            "unrepresented_clean_tracklet"
+                        ),
+                        "visual_trusted": False,
+                        "stats_eligible": False,
+                        "identity_eligible": False,
                     }
                 ]
             },
         )
+
+    def test_shared_projection_includes_explicit_provenance_and_eligibility(self) -> None:
+        tracklets = {
+            "tracklets": [
+                {
+                    "tracklet_id": "hidden",
+                    "team_label": "A",
+                    "positions_m": [
+                        {
+                            "frame": 10,
+                            "bbox_xyxy": [40, 20, 60, 70],
+                            "confidence": 0.8,
+                            "play_area_status": "inside_play",
+                        }
+                    ],
+                }
+            ]
+        }
+        global_identity = {
+            "slots": [
+                {
+                    "slot_id": "A01",
+                    "stable_subject_id": "subject-a",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 10,
+                            "source": "detected",
+                            "tracklet_id": "shown",
+                            "bbox_xyxy": [10, 20, 30, 70],
+                            "confidence": 0.9,
+                        }
+                    ],
+                }
+            ],
+            "unmatched_observations": [],
+        }
+
+        observations = _observations_by_frame(
+            tracklets,
+            global_identity=global_identity,
+        )
+
+        self.assertEqual(
+            [row["observation_provenance"] for row in observations[10]],
+            ["identity_slot", "unrepresented_clean_tracklet"],
+        )
+        self.assertTrue(observations[10][0]["visual_trusted"])
+        self.assertTrue(observations[10][0]["stats_eligible"])
+        self.assertTrue(observations[10][0]["identity_eligible"])
+        self.assertFalse(observations[10][1]["visual_trusted"])
+        self.assertFalse(observations[10][1]["stats_eligible"])
+        self.assertFalse(observations[10][1]["identity_eligible"])
 
     def test_overlay_keeps_image_aspect_ratio_when_crop_panel_opens(self) -> None:
         html = _render_html(
@@ -71,6 +130,13 @@ class PlayerDetectionQualityAuditTests(unittest.TestCase):
         self.assertIn("dorysowane:", html)
         self.assertIn("Komentarz do tej klatki", html)
         self.assertIn("frame_comments:", html)
+        self.assertIn("manual_annotation_id", html)
+        self.assertIn("localStorage.setItem", html)
+        self.assertIn("localStorage.getItem", html)
+        self.assertIn("deleteManual", html)
+        self.assertIn("toggleTeam", html)
+        self.assertIn("confirm(", html)
+        self.assertIn("history.pop()", html)
 
     def test_prioritizes_known_false_and_sparse_frames_with_spacing(self) -> None:
         observations = {

@@ -5,6 +5,7 @@ import unittest
 
 from app.services.identity_unresolved_overlay import (
     build_unrepresented_tracklet_observations,
+    build_visible_player_observations,
     select_unresolved_overlay_rows,
 )
 
@@ -107,6 +108,66 @@ class IdentityUnresolvedOverlayTests(unittest.TestCase):
         selected = select_unresolved_overlay_rows(existing_rows, unresolved)
 
         self.assertEqual([row["bbox_xyxy"] for row in selected], [[50, 10, 70, 50]])
+
+    def test_shared_builder_is_deterministic_and_does_not_mutate_sources(self) -> None:
+        identity_rows = {
+            10: [
+                {
+                    "frame": 10,
+                    "source": "detected",
+                    "tracklet_id": "shown",
+                    "team_label": "A",
+                    "bbox_xyxy": [10, 10, 30, 50],
+                }
+            ]
+        }
+        unmatched = [
+            {
+                "frame": 10,
+                "source": "unmatched_raw",
+                "raw_track_id": 9,
+                "team_label": "B",
+                "bbox_xyxy": [50, 10, 70, 50],
+            }
+        ]
+        unrepresented = [
+            {
+                "frame": 10,
+                "source": "unrepresented_tracklet",
+                "tracklet_id": "hidden",
+                "team_label": "A",
+                "bbox_xyxy": [80, 10, 100, 50],
+            }
+        ]
+        before = copy.deepcopy((identity_rows, unmatched, unrepresented))
+
+        first = build_visible_player_observations(
+            identity_rows_by_frame=identity_rows,
+            unmatched_observations=unmatched,
+            unrepresented_tracklet_observations=unrepresented,
+        )
+        second = build_visible_player_observations(
+            identity_rows_by_frame=copy.deepcopy(identity_rows),
+            unmatched_observations=list(reversed(copy.deepcopy(unmatched))),
+            unrepresented_tracklet_observations=list(
+                reversed(copy.deepcopy(unrepresented))
+            ),
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual((identity_rows, unmatched, unrepresented), before)
+        self.assertEqual(
+            [row["observation_provenance"] for row in first[10]],
+            [
+                "identity_slot",
+                "unmatched_raw",
+                "unrepresented_clean_tracklet",
+            ],
+        )
+        for row in first[10][1:]:
+            self.assertFalse(row["visual_trusted"])
+            self.assertFalse(row["stats_eligible"])
+            self.assertFalse(row["identity_eligible"])
 
 
 def _position(frame: int, bbox: list[int]) -> dict[str, object]:

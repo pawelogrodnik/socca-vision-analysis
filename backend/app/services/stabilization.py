@@ -30,8 +30,8 @@ from app.services.identity_occlusion_assignment_shadow import build_shadow_occlu
 from app.services.identity_stitching_shadow import build_shadow_stitching_candidates
 from app.services.identity_unresolved_overlay import (
     build_unrepresented_tracklet_observations,
+    build_visible_player_observations,
     is_unresolved_overlay_row,
-    select_unresolved_overlay_rows,
 )
 
 
@@ -2978,30 +2978,22 @@ def _stable_overlay_frame_rows(
             row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
             frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
     if include_unmatched_raw:
-        unresolved_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
-        unresolved_observations = [
-            *(stable_doc.get("unmatched_observations") or []),
-            *(stable_doc.get("unrepresented_tracklet_observations") or []),
-        ]
-        for observation in unresolved_observations:
-            if not isinstance(observation, dict) or not observation.get("bbox_xyxy"):
-                continue
-            frame = int(observation.get("frame") or 0)
-            unresolved_by_frame[frame].append(observation)
-        for frame, observations in unresolved_by_frame.items():
-            selected = select_unresolved_overlay_rows(
-                frame_rows.get(frame, []),
-                observations,
+        frame_rows = build_visible_player_observations(
+            identity_rows_by_frame=frame_rows,
+            unmatched_observations=stable_doc.get("unmatched_observations")
+            or [],
+            unrepresented_tracklet_observations=stable_doc.get(
+                "unrepresented_tracklet_observations"
             )
-            for observation in selected:
-                row = dict(observation)
-                row["stable_player_id"] = "RAW"
-                row["source"] = str(observation.get("source") or "unmatched_raw")
-                row["status"] = str(
-                    observation.get("status") or "unresolved_visual_only"
-                )
-                row["visual_trusted"] = False
-                frame_rows.setdefault(frame, []).append(row)
+            or [],
+        )
+        for rows in frame_rows.values():
+            for row in rows:
+                if is_unresolved_overlay_row(row):
+                    row["stable_player_id"] = "RAW"
+                    row["status"] = str(
+                        row.get("status") or "unresolved_visual_only"
+                    )
     return frame_rows
 
 

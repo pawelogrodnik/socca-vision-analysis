@@ -18,6 +18,7 @@ import type {
 import {
   createInitialIdentityAuditEventId,
   initialIdentityAuditActionLabel,
+  initialIdentityAuditClearUpdate,
   initialIdentityAuditDecisionMap,
   initialIdentityAuditPlayerAction,
   initialIdentityAuditSeedUpdate,
@@ -29,6 +30,9 @@ import {
 interface SecondHalfIdentityReanchorPanelProps {
   match: Match;
   onStatus: (message: string) => void;
+  maximumConfirmations?: number;
+  benchmarkState?: string;
+  onFinished?: () => Promise<void>;
 }
 
 function statusLabel(document: SecondHalfIdentityReanchorDocument): string {
@@ -59,6 +63,9 @@ function suggestedAction(
 export function SecondHalfIdentityReanchorPanel({
   match,
   onStatus,
+  maximumConfirmations,
+  benchmarkState,
+  onFinished,
 }: SecondHalfIdentityReanchorPanelProps) {
   const [document, setDocument] = useState<SecondHalfIdentityReanchorDocument | null>(null);
   const [seedStore, setSeedStore] = useState<InitialIdentityAuditSeedStoreDocument | null>(null);
@@ -82,6 +89,18 @@ export function SecondHalfIdentityReanchorPanel({
   const currentSuggestion = document && selectedObservation
     ? suggestedAction(selectedObservation, document)
     : null;
+  const selectedDecision = selectedObservationKey
+    ? decisions[selectedObservationKey]
+    : undefined;
+  const activeDecisionCount = Object.values(decisions).filter(
+    (decision) => decision.kind !== 'skip',
+  ).length;
+  const confirmationBudgetReached = seedStore?.operator_budget?.reached
+    ?? (
+      maximumConfirmations !== undefined
+      && activeDecisionCount >= maximumConfirmations
+    );
+  const canCreateConfirmation = !confirmationBudgetReached || Boolean(selectedDecision);
 
   useEffect(() => {
     let active = true;
@@ -157,6 +176,17 @@ export function SecondHalfIdentityReanchorPanel({
 
   async function applyAction(action: InitialIdentityAuditAction) {
     if (!selectedObservation) return;
+    const existingDecision = decisions[selectedObservation.observation_key];
+    const budgetReached = seedStore?.operator_budget?.reached
+      ?? (
+        maximumConfirmations !== undefined
+        && Object.values(decisions).filter((decision) => decision.kind !== 'skip').length
+          >= maximumConfirmations
+      );
+    if (budgetReached && !existingDecision && action.kind !== 'skip') {
+      onStatus('Limit potwierdzen H2 zostal osiagniety. Mozesz zmienic lub usunac istniejace potwierdzenie.');
+      return;
+    }
     const decision: InitialIdentityAuditDecision = {
       ...action,
       observationKey: selectedObservation.observation_key,
@@ -190,6 +220,50 @@ export function SecondHalfIdentityReanchorPanel({
     selectDefaultObservation(bounded);
   }
 
+  async function finishAudit() {
+    setSaving(true);
+    setFailure(null);
+    try {
+      const nextStore = await saveSecondHalfIdentityReanchorSeeds(
+        match.id,
+        [],
+        [event('session_finished')],
+      );
+      setSeedStore(nextStore);
+      setOpen(false);
+      if (onFinished) {
+        onStatus('H2 zakonczony. Tworze finalny raport benchmarku...');
+        await onFinished();
+      }
+    } catch (error) {
+      const message = errorMessage(error);
+      setFailure(message);
+      onStatus(message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clearSelectedDecision() {
+    if (!selectedObservationKey || !decisions[selectedObservationKey]) return;
+    setSaving(true);
+    try {
+      const nextStore = await saveSecondHalfIdentityReanchorSeeds(
+        match.id,
+        [initialIdentityAuditClearUpdate(selectedObservationKey)],
+        [event('action', selectedObservationKey)],
+      );
+      setSeedStore(nextStore);
+      setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+    } catch (error) {
+      const message = errorMessage(error);
+      setFailure(message);
+      onStatus(message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading && !document) {
     return (
       <section className='initial-identity-audit-panel'>
@@ -216,7 +290,10 @@ export function SecondHalfIdentityReanchorPanel({
     <section className='initial-identity-audit-panel'>
       <div>
         <h3>Re-anchor drugiej polowy</h3>
-        <p className='muted'>{statusLabel(document)}</p>
+        <p className='muted'>
+          {statusLabel(document)}
+          {benchmarkState ? ` Stan benchmarku: ${benchmarkState}.` : ''}
+        </p>
       </div>
       {document.status === 'ready' && (
         <button type='button' onClick={() => void openAudit()} disabled={loading}>
@@ -234,7 +311,7 @@ export function SecondHalfIdentityReanchorPanel({
                   {saving ? 'Zapisuje...' : 'Maksymalnie 3 klatki'}
                 </span>
               </div>
-              <button type='button' onClick={() => setOpen(false)} disabled={saving}>
+              <button type='button' onClick={() => void finishAudit()} disabled={saving}>
                 Zakoncz
               </button>
             </header>
@@ -247,6 +324,11 @@ export function SecondHalfIdentityReanchorPanel({
                 Klatka {frameIndex + 1}/{document.frames.length}
                 {' · '}
                 Potwierdzenia {seedStore?.decisions.length ?? 0}
+                {seedStore?.operator_budget
+                  ? ` · Aktywne ${seedStore.operator_budget.active_decisions}/${seedStore.operator_budget.limit}`
+                  : maximumConfirmations !== undefined
+                    ? ` · Limit aktywnych ${maximumConfirmations}`
+                    : ''}
               </span>
             </div>
 
@@ -317,10 +399,31 @@ export function SecondHalfIdentityReanchorPanel({
                   <button
                     type='button'
                     className='primary'
-                    disabled={saving}
+                    disabled={saving || !canCreateConfirmation}
                     onClick={() => void applyAction(currentSuggestion)}
                   >
                     Potwierdz: {initialIdentityAuditActionLabel(currentSuggestion)}
+                  </button>
+                )}
+
+                {(selectedObservation?.reid_suggestions?.length ?? 0) > 0 && (
+                  <div>
+                    <p className='muted'>ReID top-3 (tylko sugestie):</p>
+                    {selectedObservation?.reid_suggestions?.map((suggestion) => (
+                      <p key={`${suggestion.player_id}-${suggestion.rank}`}>
+                        {suggestion.rank}. {suggestion.player_name}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {selectedObservationKey && decisions[selectedObservationKey] && (
+                  <button
+                    type='button'
+                    disabled={saving}
+                    onClick={() => void clearSelectedDecision()}
+                  >
+                    Usun potwierdzenie
                   </button>
                 )}
 
@@ -344,7 +447,7 @@ export function SecondHalfIdentityReanchorPanel({
                               <button
                                 type='button'
                                 key={player.player_id}
-                                disabled={saving}
+                                disabled={saving || !canCreateConfirmation}
                                 onClick={() => void applyAction(action)}
                               >
                                 {initialIdentityAuditActionLabel(action)}
@@ -360,14 +463,14 @@ export function SecondHalfIdentityReanchorPanel({
                 <div className='initial-identity-audit-generic-actions'>
                   <button
                     type='button'
-                    disabled={!selectedObservation || saving}
+                    disabled={!selectedObservation || saving || !canCreateConfirmation}
                     onClick={() => void applyAction({ kind: 'false_detection' })}
                   >
                     Cien / falszywa detekcja
                   </button>
                   <button
                     type='button'
-                    disabled={!selectedObservation || saving}
+                    disabled={!selectedObservation || saving || !canCreateConfirmation}
                     onClick={() => void applyAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B

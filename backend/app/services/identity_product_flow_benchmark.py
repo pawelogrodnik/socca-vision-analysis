@@ -8,11 +8,13 @@ by a separately generated evaluation report after an operator completes a run.
 """
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 from typing import Any
+import uuid
 
 from app.services.identity_initial_audit import (
     AUDIT_DIRECTORY,
@@ -27,9 +29,37 @@ from app.services.identity_initial_audit_frame_selection import (
     filter_identity_audit_observations,
 )
 from app.services.identity_initial_audit_store import save_initial_identity_audit_seeds
+from app.services.identity_approved_appearance_reid import (
+    build_identity_approved_appearance_reid,
+    load_approved_appearance_embedder,
+)
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_product_flow_state import (
+    fail_product_flow_session,
+    load_product_flow_session,
+    transition_product_flow_session,
+    write_json_atomic,
+)
+from app.services.identity_seeded_candidate_assignments import (
+    rebuild_identity_seeded_candidate_assignments,
+)
+from app.services.identity_seeded_subject_review_rebuild import (
+    rebuild_identity_seeded_subject_review,
+)
+from app.services.identity_roster_anchor_crop_renderer import (
+    render_identity_roster_anchor_crops,
+)
+from app.services.identity_roster_anchor_crops_shadow import (
+    build_identity_roster_anchor_crops_shadow,
+)
+from app.services.identity_roster_anchor_shadow import (
+    build_identity_roster_anchor_shadow,
+)
 from app.services.identity_second_half_reanchor import prepare_second_half_identity_reanchor
 from app.services.identity_second_half_reanchor import build_second_half_identity_reanchor_document, REANCHOR_DIRECTORY, SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME, FRAME_DIRECTORY as REANCHOR_FRAME_DIRECTORY
+from app.services.identity_second_half_reanchor_store import (
+    save_second_half_identity_reanchor_seeds,
+)
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -56,106 +86,746 @@ def prepare_product_flow_benchmark(
     target_match_id: str,
     benchmark_id: str,
 ) -> dict[str, Any]:
-    """Create fresh H1/H2 workspaces from frozen artifacts, never old seeds."""
+    """Atomically publish H1 only; H2 cannot exist before H1 is rebuilt."""
     source = matches_root / source_match_id
     target = matches_root / target_match_id
     if not source.exists() or not target.exists():
         raise ProductFlowBenchmarkError("Requested H1/H2 analysis is missing")
     source_meta = _load(source / "match.json")
     target_meta = _load(target / "match.json")
-    _validate_pair(source_meta, target_meta)
-
+    h1_source = _latest_run_path(source, source_meta)
+    pair = _validate_pair(
+        source_meta,
+        target_meta,
+        source_path=h1_source,
+        target_path=target,
+    )
+    _require(h1_source, REQUIRED_H1_ARTIFACTS)
+    _require(target, REQUIRED_H2_ARTIFACTS)
     root = benchmark_root / benchmark_id
     if root.exists():
         raise ProductFlowBenchmarkError(f"Benchmark already exists: {benchmark_id}")
-    root.mkdir(parents=True)
-    h1_workspace = root / "h1_workspace"
-    h2_workspace = root / "h2_workspace"
-    h1_source = _latest_run_path(source, source_meta)
-    _require(h1_source, REQUIRED_H1_ARTIFACTS)
-    _require(target, REQUIRED_H2_ARTIFACTS)
-
-    _create_workspace(h1_workspace, source_meta, h1_source, benchmark_id, "H1")
-    _create_workspace(h2_workspace, target_meta, target, benchmark_id, "H2")
-    _build_h1_shadow_artifacts(h1_workspace)
-    _write_h2_phase_config(h2_workspace)
-
-    h1_meta = _load(h1_workspace / "match.json")
-    h2_meta = _load(h2_workspace / "match.json")
-    h1_audit = _prepare_h1_audit(h1_workspace, h1_meta)
-    # A zero-action initial store is needed only because the shared resolver
-    # combines stages. It is not an operator action and is never displayed.
-    save_initial_identity_audit_seeds(h1_workspace, h1_meta, [])
-    h2_reanchor = _prepare_h2_reanchor(h2_workspace, h2_meta)
-
-    manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "mode": MODE,
-        "status": "READY_FOR_OPERATOR",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "benchmark_id": benchmark_id,
-        "physical_match": {
-            "match_date": source_meta.get("match_date"),
-            "source_title": source_meta.get("title"),
-            "target_title": target_meta.get("title"),
-            "distinct_capture_domains": True,
-        },
-        "workspaces": {
-            "h1": _workspace_descriptor(h1_workspace, source_match_id, "H1", h1_audit),
-            "h2": _workspace_descriptor(h2_workspace, target_match_id, "H2", h2_reanchor),
-        },
-        "operator_budget": {
-            "h1_maximum_frames": 8,
-            "h1_maximum_actions": 12,
-            "h2_maximum_frames": 3,
-            "h2_maximum_confirmations": 5,
-            "early_finish_allowed": True,
-            "skip_always_available": True,
-        },
-        "ground_truth_policy": {
-            "historical_decisions_copied_into_session": False,
-            "historical_decisions_may_be_used_after_completion": True,
-        },
-        "safety": _safety(),
-    }
-    _write(root / "benchmark_session.json", manifest)
-    _write(root / "benchmark_before.json", build_product_flow_benchmark_report(root))
-    for domain, workspace in (("h1", h1_workspace), ("h2", h2_workspace)):
-        match_id = str(manifest["workspaces"][domain]["match_id"])
-        alias = matches_root / match_id
-        if alias.exists() or alias.is_symlink():
-            raise ProductFlowBenchmarkError(f"Benchmark match alias already exists: {match_id}")
-        alias.symlink_to(workspace.resolve(), target_is_directory=True)
-    return manifest
+    benchmark_root.mkdir(parents=True, exist_ok=True)
+    temporary_root = benchmark_root / (
+        f".{benchmark_id}.tmp-{uuid.uuid4().hex}"
+    )
+    published = False
+    created_aliases: list[Path] = []
+    try:
+        temporary_root.mkdir()
+        created_at = datetime.now(timezone.utc).isoformat()
+        initial = {
+            "schema_version": SCHEMA_VERSION,
+            "mode": MODE,
+            "state": "CREATING",
+            "status": "CREATING",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "benchmark_id": benchmark_id,
+            "physical_match": pair,
+            "source_locations": {
+                "h1_match": str(source.resolve()),
+                "h1_artifacts": str(h1_source.resolve()),
+                "h2_match": str(target.resolve()),
+                "h2_artifacts": str(target.resolve()),
+            },
+            "source_inventory": {
+                "h1": _source_inventory(
+                    match_path=source,
+                    artifact_path=h1_source,
+                    required=REQUIRED_H1_ARTIFACTS,
+                ),
+                "h2": _source_inventory(
+                    match_path=target,
+                    artifact_path=target,
+                    required=REQUIRED_H2_ARTIFACTS,
+                ),
+            },
+            "workspaces": {"h1": None, "h2": None},
+            "operator_budget": {
+                "h1_maximum_frames": 8,
+                "h1_maximum_actions": 12,
+                "h2_maximum_frames": 3,
+                "h2_maximum_confirmations": 5,
+                "early_finish_allowed": True,
+                "skip_always_available": True,
+            },
+            "ground_truth_policy": {
+                "historical_decisions_copied_into_session": False,
+                "historical_decisions_may_be_used_after_completion": True,
+            },
+            "audit_log": [],
+            "safety_contract": {
+                "automatic_assignments_allowed": False,
+                "production_apply_allowed": False,
+                "source_mutations_allowed": False,
+            },
+        }
+        write_json_atomic(
+            temporary_root / "benchmark_session.json",
+            initial,
+        )
+        h1_workspace = temporary_root / "h1_workspace"
+        _create_workspace(
+            h1_workspace,
+            source_meta,
+            h1_source,
+            benchmark_id,
+            "H1",
+        )
+        _build_h1_shadow_artifacts(h1_workspace)
+        h1_meta = _load(h1_workspace / "match.json")
+        h1_audit = _prepare_h1_audit(h1_workspace, h1_meta)
+        initial["workspaces"]["h1"] = _workspace_descriptor(
+            h1_workspace,
+            source_match_id,
+            "H1",
+            h1_audit,
+        )
+        write_json_atomic(
+            temporary_root / "benchmark_session.json",
+            initial,
+        )
+        ready = transition_product_flow_session(
+            temporary_root,
+            "H1_READY",
+            action="prepare_h1",
+            details={
+                "selected_frames": int(
+                    (h1_audit.get("summary") or {}).get(
+                        "selected_frames"
+                    )
+                    or 0
+                )
+            },
+        )
+        temporary_root.replace(root)
+        published = True
+        h1_alias = matches_root / str(ready["workspaces"]["h1"]["match_id"])
+        _publish_alias(h1_alias, root / "h1_workspace")
+        created_aliases.append(h1_alias)
+        return load_product_flow_session(root)
+    except Exception as exc:
+        if published and (root / "benchmark_session.json").exists():
+            fail_product_flow_session(
+                root,
+                action="create_benchmark_failed",
+                error=exc,
+            )
+        for alias in created_aliases:
+            if alias.is_symlink():
+                alias.unlink()
+        if temporary_root.exists():
+            shutil.rmtree(temporary_root)
+        if isinstance(exc, ProductFlowBenchmarkError):
+            raise
+        raise ProductFlowBenchmarkError(str(exc)) from exc
 
 
 def build_product_flow_benchmark_report(root: Path) -> dict[str, Any]:
-    manifest = _load(root / "benchmark_session.json")
-    rows = []
-    for label in ("h1", "h2"):
-        workspace = root / f"{label}_workspace"
-        candidate = _load(workspace / "identity_candidate_shadow.json")
-        timeline = _load(workspace / "identity_offline_shadow_timeline.json")
-        seeded_path = workspace / "identity_seeded_candidate_assignments.json"
-        seeded = _load(seeded_path) if seeded_path.exists() else None
-        rows.append(_domain_metrics(label.upper(), candidate, timeline, seeded))
-    before = _sum_metrics(rows, after=False)
-    after = _sum_metrics(rows, after=True)
+    manifest = load_product_flow_session(root)
+    domain_rows = {
+        label: _real_domain_metrics(root, label)
+        for label in ("h1", "h2")
+        if (root / f"{label}_workspace").exists()
+    }
+    mutations = _source_inventory_mutations(manifest)
+    events = manifest.get("audit_log") or []
+    reid = _load_optional(
+        root
+        / "h2_workspace"
+        / "identity_cross_analysis_reid_advisory.json"
+    )
+    reid_summary = (reid or {}).get("summary") or {}
+    automatic_assignments = sum(
+        int(
+            ((reid or {}).get("safety") or {}).get("automatic_merges")
+            or 0
+        )
+        for _ in [0]
+    )
+    production_applies = sum(
+        str(event.get("action") or "") == "production_apply"
+        for event in events
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": MODE,
-        "status": "before_ready" if not any(row["has_operator_actions"] for row in rows) else "after_available",
+        "status": manifest["state"],
         "benchmark_id": manifest["benchmark_id"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "before": before,
-        "after": after if any(row["has_operator_actions"] for row in rows) else None,
-        "capture_domains": rows,
-        "safety": _safety(),
+        "h1": domain_rows.get("h1"),
+        "h2": domain_rows.get("h2"),
+        "reid": {
+            "top3_suggestions_shown": int(
+                reid_summary.get("suggestions_shown") or 0
+            ),
+            "suggestions_accepted": _reid_outcome_count(
+                root, outcome="accepted"
+            ),
+            "suggestions_rejected": _reid_outcome_count(
+                root, outcome="rejected"
+            ),
+            "suggestions_skipped": _reid_outcome_count(
+                root, outcome="skipped"
+            ),
+            "false_assignments": None,
+        },
+        "conflicts": sum(
+            int((row or {}).get("conflicts") or 0)
+            for row in domain_rows.values()
+        ),
+        "safety": {
+            "automatic_assignments": automatic_assignments,
+            "production_apply_count": production_applies,
+            "source_artifact_mutations": len(mutations),
+            "source_mutation_details": mutations,
+            "yolo_reruns": sum(
+                str(event.get("action") or "") == "yolo_rerun"
+                for event in events
+            ),
+            "tracking_reruns": sum(
+                str(event.get("action") or "") == "tracking_rerun"
+                for event in events
+            ),
+        },
         "limitations": [
-            "No AFTER result is emitted until an operator saves at least one decision or finishes the audit.",
+            "False operator assignments require independent ground truth and are not inferred.",
             "Historical manual assignments are not operator actions in this benchmark.",
         ],
     }
+
+
+def finish_product_flow_h1(
+    *,
+    root: Path,
+    matches_root: Path,
+) -> dict[str, Any]:
+    """Finish H1, rebuild real shadow artifacts, then and only then publish H2."""
+
+    session = load_product_flow_session(root)
+    if session["state"] in {
+        "H2_READY",
+        "H2_FINISHED",
+        "REPORT_READY",
+    }:
+        return session
+    if session["state"] not in {"H1_READY", "H1_FINISHED", "H1_REBUILT"}:
+        raise ProductFlowBenchmarkError(
+            f"H1 cannot finish from state {session['state']}"
+        )
+    h2_temporary = root / f".h2_workspace.tmp-{uuid.uuid4().hex}"
+    h2_alias: Path | None = None
+    try:
+        h1_workspace = root / "h1_workspace"
+        h1_meta = _load(h1_workspace / "match.json")
+        if session["state"] == "H1_READY":
+            save_initial_identity_audit_seeds(
+                h1_workspace,
+                h1_meta,
+                [],
+                telemetry_events=[
+                    _finish_telemetry_event("H1", session["benchmark_id"])
+                ],
+            )
+            session = transition_product_flow_session(
+                root,
+                "H1_FINISHED",
+                action="operator_finish_h1",
+                details=_seed_metrics(
+                    h1_workspace / "identity_operator_seeds.json"
+                ),
+            )
+        if session["state"] == "H1_FINISHED":
+            seeded = rebuild_identity_seeded_candidate_assignments(
+                h1_workspace,
+                h1_meta,
+            )
+            rebuilt = rebuild_identity_seeded_subject_review(
+                h1_workspace,
+                h1_meta,
+                video_path=h1_workspace / "video.mp4",
+            )
+            reduction_path = (
+                h1_workspace
+                / "identity_seeded_review_reduction_report.json"
+            )
+            if not reduction_path.exists():
+                raise ProductFlowBenchmarkError(
+                    "Real IA4 reduction report was not generated"
+                )
+            safely_resolved = _safely_resolved_players(seeded)
+            write_json_atomic(
+                h1_workspace / "benchmark_h1_rebuild_result.json",
+                {
+                    "seeded_summary": seeded.get("summary") or {},
+                    "rebuild": rebuilt,
+                    "reduction_report_digest": canonical_digest(
+                        _load(reduction_path)
+                    ),
+                    "safely_resolved_players": safely_resolved,
+                },
+            )
+            session = transition_product_flow_session(
+                root,
+                "H1_REBUILT",
+                action="rebuild_h1_downstream",
+                details={
+                    "safely_resolved_players": len(safely_resolved),
+                    "review_reduction": (
+                        (_load(reduction_path).get("summary") or {})
+                    ),
+                    "appearance_gallery": (
+                        rebuilt.get(
+                            "approved_appearance_gallery_summary"
+                        )
+                        or {}
+                    ),
+                    "appearance_reid": (
+                        rebuilt.get("approved_appearance_reid_summary")
+                        or {}
+                    ),
+                },
+            )
+        if session["state"] == "H1_REBUILT":
+            locations = session["source_locations"]
+            target = Path(str(locations["h2_match"]))
+            target_artifacts = Path(str(locations["h2_artifacts"]))
+            target_meta = _load(target / "match.json")
+            _create_workspace(
+                h2_temporary,
+                target_meta,
+                target_artifacts,
+                str(session["benchmark_id"]),
+                "H2",
+            )
+            _write_h2_phase_config(h2_temporary)
+            advisory = _build_h2_cross_analysis_advisory(
+                h1_workspace=h1_workspace,
+                h2_workspace=h2_temporary,
+                h2_match_document=_load(h2_temporary / "match.json"),
+            )
+            h2_reanchor = _prepare_h2_reanchor(
+                h2_temporary,
+                _load(h2_temporary / "match.json"),
+                safely_resolved_players=_load(
+                    h1_workspace / "benchmark_h1_rebuild_result.json"
+                ).get("safely_resolved_players")
+                or [],
+                advisory_suggestions=advisory.get("suggestions") or [],
+            )
+            h2_workspace = root / "h2_workspace"
+            h2_temporary.replace(h2_workspace)
+            session["workspaces"]["h2"] = _workspace_descriptor(
+                h2_workspace,
+                str(
+                    session["physical_match"]["target_match_id"]
+                ),
+                "H2",
+                h2_reanchor,
+            )
+            write_json_atomic(root / "benchmark_session.json", session)
+            session = transition_product_flow_session(
+                root,
+                "H2_READY",
+                action="prepare_h2_from_h1_output",
+                details={
+                    "h1_safely_resolved_players": len(
+                        _load(
+                            h1_workspace
+                            / "benchmark_h1_rebuild_result.json"
+                        ).get("safely_resolved_players")
+                        or []
+                    ),
+                    "reid_ranked_subjects": int(
+                        (advisory.get("summary") or {}).get(
+                            "ranked_subjects"
+                        )
+                        or 0
+                    ),
+                    "automatic_assignments": int(
+                        (advisory.get("safety") or {}).get(
+                            "automatic_merges"
+                        )
+                        or 0
+                    ),
+                },
+            )
+            h2_alias = matches_root / str(
+                session["workspaces"]["h2"]["match_id"]
+            )
+            _publish_alias(h2_alias, h2_workspace)
+        mutations = _source_inventory_mutations(session)
+        if mutations:
+            raise ProductFlowBenchmarkError(
+                "Frozen source artifacts changed: "
+                + ", ".join(row["artifact"] for row in mutations)
+            )
+        return load_product_flow_session(root)
+    except Exception as exc:
+        if h2_temporary.exists():
+            shutil.rmtree(h2_temporary)
+        if h2_alias is not None and h2_alias.is_symlink():
+            h2_alias.unlink()
+        if (root / "benchmark_session.json").exists():
+            fail_product_flow_session(
+                root,
+                action="finish_h1_failed",
+                error=exc,
+            )
+        if isinstance(exc, ProductFlowBenchmarkError):
+            raise
+        raise ProductFlowBenchmarkError(str(exc)) from exc
+
+
+def finish_product_flow_h2(
+    *,
+    root: Path,
+) -> dict[str, Any]:
+    """Finish H2, rebuild final shadow artifacts and publish the real report."""
+
+    session = load_product_flow_session(root)
+    if session["state"] == "REPORT_READY":
+        return _load(root / "benchmark_report.json")
+    if session["state"] not in {"H2_READY", "H2_FINISHED"}:
+        raise ProductFlowBenchmarkError(
+            f"H2 cannot finish from state {session['state']}"
+        )
+    try:
+        h2_workspace = root / "h2_workspace"
+        h2_meta = _load(h2_workspace / "match.json")
+        if session["state"] == "H2_READY":
+            save_second_half_identity_reanchor_seeds(
+                h2_workspace,
+                h2_meta,
+                [],
+                telemetry_events=[
+                    _finish_telemetry_event("H2", session["benchmark_id"])
+                ],
+            )
+            session = transition_product_flow_session(
+                root,
+                "H2_FINISHED",
+                action="operator_finish_h2",
+                details=_seed_metrics(
+                    h2_workspace
+                    / REANCHOR_DIRECTORY
+                    / "identity_second_half_reanchor_seeds.json"
+                ),
+            )
+        seeded = rebuild_identity_seeded_candidate_assignments(
+            h2_workspace,
+            h2_meta,
+        )
+        rebuilt = rebuild_identity_seeded_subject_review(
+            h2_workspace,
+            h2_meta,
+            video_path=h2_workspace / "video.mp4",
+        )
+        write_json_atomic(
+            h2_workspace / "benchmark_h2_rebuild_result.json",
+            {
+                "seeded_summary": seeded.get("summary") or {},
+                "rebuild": rebuilt,
+                "safely_resolved_players": _safely_resolved_players(seeded),
+            },
+        )
+        report = build_product_flow_benchmark_report(root)
+        safety = report["safety"]
+        if (
+            int(safety["automatic_assignments"]) != 0
+            or int(safety["production_apply_count"]) != 0
+            or int(safety["source_artifact_mutations"]) != 0
+        ):
+            raise ProductFlowBenchmarkError(
+                "Benchmark safety invariants failed"
+            )
+        session = transition_product_flow_session(
+            root,
+            "REPORT_READY",
+            action="publish_final_report",
+            details={
+                "automatic_assignments": safety["automatic_assignments"],
+                "production_apply_count": safety["production_apply_count"],
+                "source_artifact_mutations": safety[
+                    "source_artifact_mutations"
+                ],
+            },
+        )
+        report = build_product_flow_benchmark_report(root)
+        write_json_atomic(root / "benchmark_report.json", report)
+        return report
+    except Exception as exc:
+        if (root / "benchmark_session.json").exists():
+            fail_product_flow_session(
+                root,
+                action="finish_h2_failed",
+                error=exc,
+            )
+        if isinstance(exc, ProductFlowBenchmarkError):
+            raise
+        raise ProductFlowBenchmarkError(str(exc)) from exc
+
+
+def _build_h2_cross_analysis_advisory(
+    *,
+    h1_workspace: Path,
+    h2_workspace: Path,
+    h2_match_document: dict[str, Any],
+) -> dict[str, Any]:
+    candidate = _load(h2_workspace / "identity_candidate_shadow.json")
+    timeline = _load(
+        h2_workspace / "identity_offline_shadow_timeline.json"
+    )
+    empty_assignments = {
+        "schema_version": SCHEMA_VERSION,
+        "assignments": [],
+    }
+    roster_documents = build_identity_roster_anchor_shadow(
+        candidate,
+        empty_assignments,
+        h2_match_document,
+    )
+    roster = roster_documents["identity_roster_anchor_shadow"]
+    crop_documents = build_identity_roster_anchor_crops_shadow(
+        roster,
+        timeline,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    crops = crop_documents["identity_roster_anchor_crops_shadow"]
+    for name, document in {**roster_documents, **crop_documents}.items():
+        write_json_atomic(h2_workspace / f"{name}.json", document)
+    render_identity_roster_anchor_crops(
+        h2_workspace / "video.mp4",
+        h2_workspace,
+        crops,
+    )
+    gallery = _load_optional(
+        h1_workspace / "identity_approved_appearance_gallery.json"
+    ) or {
+        "players": [],
+        "algorithm": {"name": "unavailable_h1_gallery"},
+    }
+    try:
+        embedder, model_status = load_approved_appearance_embedder(
+            Path(__file__).resolve().parents[2] / "models"
+        )
+    except Exception as exc:
+        embedder = None
+        model_status = {
+            "available": False,
+            "reason": "appearance_embedder_load_failed",
+            "error": str(exc),
+        }
+    documents = build_identity_approved_appearance_reid(
+        gallery,
+        crops,
+        match_path=h2_workspace,
+        embedder=embedder,
+        model_status=model_status,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    artifact = documents["identity_approved_appearance_reid_shadow"]
+    rankings = artifact.get("unresolved_rankings") or []
+    subject_tracklets = {
+        str(row.get("candidate_subject_id") or ""): sorted(
+            str(value) for value in row.get("tracklet_ids") or []
+        )
+        for row in candidate.get("subjects") or []
+    }
+    suggestions = [
+        {
+            "candidate_subject_id": row.get("candidate_subject_id"),
+            "team_label": row.get("team_label"),
+            "tracklet_ids": subject_tracklets.get(
+                str(row.get("candidate_subject_id") or ""),
+                [],
+            ),
+            "suggestions": list(row.get("suggestions") or [])[:3],
+            "advisory_only": True,
+        }
+        for row in rankings
+        if row.get("status") == "ranked"
+    ]
+    artifact = {
+        **artifact,
+        "mode": "cross_analysis_h1_to_h2_advisory_only",
+        "summary": {
+            **(artifact.get("summary") or {}),
+            "ranked_subjects": len(suggestions),
+            "suggestions_shown": sum(
+                len(row["suggestions"]) for row in suggestions
+            ),
+        },
+        "suggestions": suggestions,
+    }
+    for name, document in documents.items():
+        write_json_atomic(h2_workspace / f"{name}.json", document)
+    write_json_atomic(
+        h2_workspace / "identity_cross_analysis_reid_advisory.json",
+        artifact,
+    )
+    return artifact
+
+
+def _safely_resolved_players(
+    seeded: dict[str, Any],
+) -> list[dict[str, Any]]:
+    result = []
+    for assignment in seeded.get("accepted_assignments") or []:
+        player = assignment.get("assigned_player") or {}
+        if not player.get("player_id"):
+            continue
+        result.append(
+            {
+                "player_id": player.get("player_id"),
+                "player_name": player.get("player_name"),
+                "team_label": assignment.get("team_label"),
+                "candidate_subject_id": assignment.get(
+                    "candidate_subject_id"
+                ),
+                "tracklet_ids": sorted(
+                    str(value)
+                    for value in assignment.get("tracklet_ids") or []
+                ),
+            }
+        )
+    return sorted(
+        result,
+        key=lambda row: (
+            str(row.get("team_label") or ""),
+            str(row.get("player_id") or ""),
+        ),
+    )
+
+
+def _finish_telemetry_event(
+    stage: str,
+    benchmark_id: str,
+) -> dict[str, Any]:
+    return {
+        "event_id": f"benchmark:{benchmark_id}:{stage}:finish",
+        "session_id": f"benchmark:{benchmark_id}:{stage}",
+        "event_type": "session_finished",
+        "active_delta_seconds": 0.0,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _seed_metrics(path: Path) -> dict[str, Any]:
+    document = _load(path)
+    telemetry = document.get("operator_telemetry") or {}
+    metrics = telemetry.get("metrics") or {}
+    decisions = document.get("decisions") or []
+    return {
+        "operator_decisions": len(decisions),
+        "active_decisions": sum(
+            str(row.get("action") or "") != "skip" for row in decisions
+        ),
+        "skipped_decisions": sum(
+            str(row.get("action") or "") == "skip" for row in decisions
+        ),
+        "active_operator_seconds": float(
+            metrics.get("active_operator_seconds") or 0.0
+        ),
+    }
+
+
+def _real_domain_metrics(root: Path, label: str) -> dict[str, Any]:
+    workspace = root / f"{label}_workspace"
+    selection_path = (
+        workspace / AUDIT_DIRECTORY / SELECTION_FILENAME
+        if label == "h1"
+        else workspace / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
+    )
+    seed_path = (
+        workspace / "identity_operator_seeds.json"
+        if label == "h1"
+        else workspace
+        / REANCHOR_DIRECTORY
+        / "identity_second_half_reanchor_seeds.json"
+    )
+    seeded_path = workspace / "identity_seeded_candidate_assignments.json"
+    reduction_path = workspace / "identity_seeded_review_reduction_report.json"
+    selection = _load_optional(selection_path) or {}
+    seed_metrics = _seed_metrics(seed_path) if seed_path.exists() else {}
+    seeded = _load_optional(seeded_path) or {}
+    seeded_summary = seeded.get("summary") or {}
+    reduction = _load_optional(reduction_path) or {}
+    reduction_summary = reduction.get("summary") or {}
+    return {
+        "selected_frames": len(selection.get("selected_frames") or []),
+        **seed_metrics,
+        "finished": any(
+            str(event.get("to_state") or "")
+            in (
+                "H1_FINISHED" if label == "h1" else "H2_FINISHED",
+            )
+            for event in load_product_flow_session(root).get("audit_log")
+            or []
+        ),
+        "safely_resolved_players": int(
+            seeded_summary.get("subjects_resolved_after_seeding") or 0
+        ),
+        "review_cards_before": int(
+            reduction_summary.get("review_cards_before_seeding") or 0
+        ),
+        "review_cards_after": int(
+            reduction_summary.get("review_cards_after_seeding") or 0
+        ),
+        "unresolved_subjects_before": int(
+            seeded_summary.get("candidate_subjects") or 0
+        ),
+        "unresolved_subjects_after": int(
+            seeded_summary.get("unresolved_subjects") or 0
+        ),
+        "conflicts": int(seeded_summary.get("conflicts_created") or 0),
+    }
+
+
+def _reid_outcome_count(root: Path, *, outcome: str) -> int:
+    h2 = root / "h2_workspace"
+    seeds = _load_optional(
+        h2
+        / REANCHOR_DIRECTORY
+        / "identity_second_half_reanchor_seeds.json"
+    ) or {}
+    selection = _load_optional(
+        h2 / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
+    ) or {}
+    suggestions = {
+        str(observation.get("observation_key") or ""): (
+            observation.get("suggested_player") or {}
+        )
+        for frame in (
+            build_second_half_identity_reanchor_document(
+                selection,
+                _load(h2 / "match.json"),
+            ).get("frames")
+            or []
+        )
+        for observation in frame.get("observations") or []
+        if observation.get("suggested_player")
+    }
+    count = 0
+    for decision in seeds.get("decisions") or []:
+        suggestion = suggestions.get(
+            str(decision.get("observation_key") or "")
+        )
+        if not suggestion:
+            continue
+        action = str(decision.get("action") or "")
+        assigned = str(
+            (decision.get("assigned_player") or {}).get("player_id") or ""
+        )
+        suggested = str(suggestion.get("player_id") or "")
+        if outcome == "accepted" and assigned and assigned == suggested:
+            count += 1
+        elif outcome == "rejected" and assigned and assigned != suggested:
+            count += 1
+        elif outcome == "skipped" and action == "skip":
+            count += 1
+    return count
 
 
 def _build_h1_shadow_artifacts(workspace: Path) -> None:
@@ -206,15 +876,42 @@ def _prepare_h1_audit(workspace: Path, match_document: dict[str, Any]) -> dict[s
     return build_initial_identity_audit_document(selection, match_document)
 
 
-def _prepare_h2_reanchor(workspace: Path, match_document: dict[str, Any]) -> dict[str, Any]:
-    selection = _bounded_h1_selection(_load(workspace / "global_identity.json"), _load(workspace / "analysis_report.json"), maximum=3, capture_domain="analysis:343980c8", artifact_directory=REANCHOR_FRAME_DIRECTORY)
+def _prepare_h2_reanchor(
+    workspace: Path,
+    match_document: dict[str, Any],
+    *,
+    safely_resolved_players: list[dict[str, Any]],
+    advisory_suggestions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    capture_domain = str(
+        (match_document.get("benchmark_session") or {}).get(
+            "capture_domain"
+        )
+        or f"analysis:{match_document.get('id')}"
+    )
+    selection = _bounded_h1_selection(
+        _load(workspace / "global_identity.json"),
+        _load(workspace / "analysis_report.json"),
+        maximum=3,
+        capture_domain=capture_domain,
+        artifact_directory=REANCHOR_FRAME_DIRECTORY,
+    )
     selection["mode"] = "second_half_identity_reanchor_selection_shadow"
-    selection["second_half"] = {"start_time_sec": 0.0, "start_frame": 0, "safely_resolved_players_before_reanchor": []}
+    selection["second_half"] = {
+        "start_time_sec": 0.0,
+        "start_frame": 0,
+        "safely_resolved_players_before_reanchor": safely_resolved_players,
+    }
+    selection["reid_advisory_suggestions"] = advisory_suggestions
     frame_path = workspace / REANCHOR_DIRECTORY / "frames"
     frame_path.mkdir(parents=True, exist_ok=True)
     export_identity_audit_frames(workspace / "video.mp4", [int(row["frame"]) for row in selection.get("selected_frames") or []], frame_path)
     _write(workspace / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME, selection)
-    return build_second_half_identity_reanchor_document(selection, match_document, safely_resolved_players=[])
+    return build_second_half_identity_reanchor_document(
+        selection,
+        match_document,
+        safely_resolved_players=safely_resolved_players,
+    )
 
 
 def _bounded_h1_selection(identity: dict[str, Any], report: dict[str, Any], *, maximum: int = 8, capture_domain: str = "analysis:7655bf7c", artifact_directory: str = FRAME_DIRECTORY) -> dict[str, Any]:
@@ -297,7 +994,7 @@ def _create_workspace(workspace: Path, original_meta: dict[str, Any], source: Pa
                 break
     if not (workspace / "video.mp4").exists():
         raise ProductFlowBenchmarkError("Frozen source video is missing")
-    meta = {**original_meta, "id": f"benchmark-{benchmark_id}-{domain.lower()}", "title": f"Benchmark {domain}: {original_meta.get('title')}", "benchmark_session": {"id": benchmark_id, "domain": domain, "shadow_only": True, "reanchor_only": domain == "H2"}}
+    meta = {**original_meta, "id": f"benchmark-{benchmark_id}-{domain.lower()}", "title": f"Benchmark {domain}: {original_meta.get('title')}", "benchmark_session": {"id": benchmark_id, "domain": domain, "capture_domain": _capture_domain_from_metadata(original_meta), "shadow_only": True, "reanchor_only": domain == "H2"}}
     meta.pop("analysis_runs", None)
     meta.pop("latest_analysis_run_id", None)
     _write(workspace / "match.json", meta)
@@ -340,13 +1037,222 @@ def _safety() -> dict[str, Any]:
     return {"automatic_cross_analysis_assignments": 0, "automatic_reid_merges": 0, "candidate_identity_mutations": 0, "production_identity_mutations": 0, "production_stats_mutations": 0, "yolo_reruns": 0, "tracking_reruns": 0, "shadow_candidate_only": True, "reid_advisory_top_k": 3}
 
 
-def _validate_pair(source: dict[str, Any], target: dict[str, Any]) -> None:
+def _validate_pair(
+    source: dict[str, Any],
+    target: dict[str, Any],
+    *,
+    source_path: Path,
+    target_path: Path,
+) -> dict[str, Any]:
     if not source.get("match_date") or source.get("match_date") != target.get("match_date"):
         raise ProductFlowBenchmarkError("H1 and H2 do not prove the same physical match")
     source_teams = [str(team.get("id")) for team in source.get("teams") or []]
     target_teams = [str(team.get("id")) for team in target.get("teams") or []]
     if source_teams != target_teams:
         raise ProductFlowBenchmarkError("H1 and H2 roster/team contracts differ")
+    if source_path.resolve() == target_path.resolve():
+        raise ProductFlowBenchmarkError(
+            "H1 and H2 point to the same source workspace"
+        )
+    source_domain = _capture_domain_from_metadata(source)
+    target_domain = _capture_domain_from_metadata(target)
+    if source_domain == "unknown" or target_domain == "unknown":
+        raise ProductFlowBenchmarkError(
+            "Capture domains are not proven by match/video metadata"
+        )
+    if source_domain == target_domain:
+        raise ProductFlowBenchmarkError(
+            "H1 and H2 capture domains are not distinct"
+        )
+    source_video = _source_video_path(source_path, source)
+    target_video = _source_video_path(target_path, target)
+    if source_video.resolve() == target_video.resolve():
+        raise ProductFlowBenchmarkError(
+            "H1 and H2 resolve to the same video artifact"
+        )
+    return {
+        "match_date": source.get("match_date"),
+        "team_ids": source_teams,
+        "source_match_id": source.get("id"),
+        "target_match_id": target.get("id"),
+        "source_title": source.get("title"),
+        "target_title": target.get("title"),
+        "capture_domains": {
+            "h1": source_domain,
+            "h2": target_domain,
+        },
+        "capture_domain_evidence": {
+            "h1": {
+                "title": source.get("title"),
+                "video_filename": source.get("video_filename"),
+            },
+            "h2": {
+                "title": target.get("title"),
+                "video_filename": target.get("video_filename"),
+            },
+        },
+        "distinct_capture_domains": source_domain != target_domain,
+        "independent_source_workspaces": True,
+        "video_ranges": {
+            "h1": _video_range(source, source_domain),
+            "h2": _video_range(target, target_domain),
+        },
+        "video_digests": {
+            "h1": _file_digest(source_video),
+            "h2": _file_digest(target_video),
+        },
+    }
+
+
+def _capture_domain_from_metadata(document: dict[str, Any]) -> str:
+    explicit = str(document.get("capture_domain") or "").strip()
+    if explicit:
+        return explicit
+    text = " ".join(
+        str(document.get(key) or "")
+        for key in ("title", "video_filename")
+    ).lower()
+    first_tokens = (
+        "1 polowa",
+        "1 połowa",
+        "pierwsza polowa",
+        "pierwsza połowa",
+        "1st_half",
+        "first_half",
+    )
+    second_tokens = (
+        "2 polowa",
+        "2 połowa",
+        "drugiej polowy",
+        "drugiej połowy",
+        "druga polowa",
+        "druga połowa",
+        "2nd_half",
+        "second_half",
+    )
+    if any(token in text for token in first_tokens):
+        return "first_half"
+    if any(token in text for token in second_tokens):
+        return "second_half_fragment"
+    return "unknown"
+
+
+def _video_range(
+    document: dict[str, Any],
+    capture_domain: str,
+) -> dict[str, Any]:
+    video = document.get("video") or {}
+    return {
+        "capture_domain": capture_domain,
+        "start_time_sec": 0.0,
+        "end_time_sec": float(video.get("duration_sec") or 0.0),
+        "frame_count": int(video.get("frame_count") or 0),
+        "fps": float(video.get("fps") or 0.0),
+    }
+
+
+def _source_inventory(
+    *,
+    match_path: Path,
+    artifact_path: Path,
+    required: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    paths: list[tuple[str, Path]] = [
+        ("match/match.json", match_path / "match.json"),
+        ("match/video", _source_video_path(match_path, _load(match_path / "match.json"))),
+    ]
+    paths.extend(
+        (f"artifacts/{name}", artifact_path / name) for name in required
+    )
+    rows = []
+    for relative_path, path in paths:
+        if not path.exists():
+            raise ProductFlowBenchmarkError(
+                f"Inventory source is missing: {relative_path}"
+            )
+        rows.append(
+            {
+                "relative_path": relative_path,
+                "source_path": str(path.resolve()),
+                "size": path.stat().st_size,
+                "canonical_digest": _file_digest(path),
+            }
+        )
+    return sorted(rows, key=lambda row: row["relative_path"])
+
+
+def _source_inventory_mutations(
+    session: dict[str, Any],
+) -> list[dict[str, Any]]:
+    changed = []
+    for domain, rows in (session.get("source_inventory") or {}).items():
+        for stored in rows or []:
+            path = Path(str(stored.get("source_path") or ""))
+            current_size = path.stat().st_size if path.exists() else None
+            current_digest = _file_digest(path) if path.exists() else None
+            if (
+                current_size != stored.get("size")
+                or current_digest != stored.get("canonical_digest")
+            ):
+                changed.append(
+                    {
+                        "domain": domain,
+                        "artifact": stored.get("relative_path"),
+                        "expected_size": stored.get("size"),
+                        "current_size": current_size,
+                        "expected_digest": stored.get("canonical_digest"),
+                        "current_digest": current_digest,
+                    }
+                )
+    return sorted(
+        changed,
+        key=lambda row: (
+            str(row.get("domain") or ""),
+            str(row.get("artifact") or ""),
+        ),
+    )
+
+
+def _file_digest(path: Path) -> str:
+    if path.suffix.lower() == ".json":
+        return canonical_digest(json.loads(path.read_text(encoding="utf-8")))
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_video_path(
+    root: Path,
+    match_document: dict[str, Any],
+) -> Path:
+    candidates = [root / "video.mp4"]
+    metadata_path = str(
+        (match_document.get("video") or {}).get("path") or ""
+    )
+    if metadata_path:
+        candidates.append(Path(metadata_path))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    for parent in (root, root.parent, root.parent.parent):
+        for candidate in sorted(parent.glob("video.*")):
+            if candidate.is_file():
+                return candidate
+    raise ProductFlowBenchmarkError("Frozen source video is missing")
+
+
+def _publish_alias(alias: Path, workspace: Path) -> None:
+    if alias.exists() or alias.is_symlink():
+        raise ProductFlowBenchmarkError(
+            f"Benchmark match alias already exists: {alias.name}"
+        )
+    alias.symlink_to(workspace.resolve(), target_is_directory=True)
+
+
+def _load_optional(path: Path) -> dict[str, Any] | None:
+    return _load(path) if path.exists() else None
 
 
 def _latest_run_path(match: Path, meta: dict[str, Any]) -> Path:

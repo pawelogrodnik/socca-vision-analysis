@@ -132,6 +132,16 @@ export function initialIdentityAuditSeedUpdate(
   };
 }
 
+export function initialIdentityAuditClearUpdate(
+  observationKey: string,
+): InitialIdentityAuditSeedUpdate {
+  return {
+    update_id: createInitialIdentityAuditEventId(),
+    observation_key: observationKey,
+    action: 'clear',
+  };
+}
+
 export function observationBoxStyle(
   observation: InitialIdentityAuditObservation,
   video: VideoMetadata,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.services.stabilization import (
     _possession_rows_by_frame,
     _stable_overlay_frame_rows,
     _visual_counts,
+    _player_heatmap_rows,
     apply_stable_overlay_visual_counts,
     build_frame_detection_counts,
     build_player_heatmaps_document,
@@ -68,6 +70,64 @@ def tracklet(tracklet_id: str, start: float, end: float, first: list[float], las
 
 
 class StabilizationTests(unittest.TestCase):
+    def test_unresolved_visual_rows_do_not_change_stats_distance_or_heatmaps(self) -> None:
+        stable_doc = {
+            "source": "test",
+            "players": [
+                {
+                    "stable_player_id": "A01",
+                    "stable_subject_id": "subject-a",
+                    "team_label": "A",
+                    "movement_stats": {
+                        "playing_time_sec": 1.0,
+                        "observed_distance_m": 2.0,
+                        "total_distance_m": 2.0,
+                    },
+                    "overlay_positions": [
+                        {
+                            "frame": 1,
+                            "source": "detected",
+                            "pitch_m": [1.0, 2.0],
+                        }
+                    ],
+                }
+            ],
+        }
+        with_unresolved = copy.deepcopy(stable_doc)
+        with_unresolved["unmatched_observations"] = [
+            {
+                "frame": 1,
+                "source": "unmatched_raw",
+                "bbox_xyxy": [30, 10, 40, 30],
+                "pitch_m": [9.0, 9.0],
+                "visual_trusted": False,
+                "stats_eligible": False,
+                "identity_eligible": False,
+            }
+        ]
+        with_unresolved["unrepresented_tracklet_observations"] = [
+            {
+                "frame": 1,
+                "source": "unrepresented_tracklet",
+                "bbox_xyxy": [50, 10, 60, 30],
+                "pitch_m": [8.0, 8.0],
+                "visual_trusted": False,
+                "stats_eligible": False,
+                "identity_eligible": False,
+            }
+        ]
+
+        baseline_stats = build_player_stats_document(stable_doc)
+        unresolved_stats = build_player_stats_document(with_unresolved)
+        baseline_stats.pop("generated_at")
+        unresolved_stats.pop("generated_at")
+
+        self.assertEqual(unresolved_stats, baseline_stats)
+        self.assertEqual(
+            _player_heatmap_rows(with_unresolved["players"][0]),
+            [{"pitch_m": [1.0, 2.0], "source": "detected"}],
+        )
+
     def test_ball_overlay_positions_ignore_unknown_rows(self) -> None:
         rows = _ball_overlay_positions_by_frame(
             {

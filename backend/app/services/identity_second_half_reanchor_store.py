@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_initial_audit_store import (
+    attach_benchmark_operator_budget,
     load_operator_identity_audit_seeds,
     save_operator_identity_audit_seeds,
 )
@@ -22,12 +23,17 @@ def load_second_half_identity_reanchor_seeds(
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
     selection = load_second_half_reanchor_selection(match_path)
-    return load_operator_identity_audit_seeds(
+    result = load_operator_identity_audit_seeds(
         match_path,
         match_document,
         selection=selection,
         seed_path=_seed_path(match_path),
         mode=f"{MODE}_operator_seeds",
+    )
+    return attach_benchmark_operator_budget(
+        result,
+        match_path=match_path,
+        audit_stage=MODE,
     )
 
 
@@ -40,7 +46,7 @@ def save_second_half_identity_reanchor_seeds(
     updated_at: str | None = None,
 ) -> dict[str, Any]:
     selection = load_second_half_reanchor_selection(match_path)
-    return save_operator_identity_audit_seeds(
+    result = save_operator_identity_audit_seeds(
         match_path,
         match_document,
         updates,
@@ -50,6 +56,11 @@ def save_second_half_identity_reanchor_seeds(
         audit_stage=MODE,
         telemetry_events=telemetry_events,
         updated_at=updated_at,
+    )
+    return attach_benchmark_operator_budget(
+        result,
+        match_path=match_path,
+        audit_stage=MODE,
     )
 
 

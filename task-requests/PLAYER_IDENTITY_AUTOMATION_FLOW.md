@@ -846,6 +846,12 @@ nie musza czekac na J8.4.
 
 # 19. Acceptance criteria docelowego flow
 
+> Status tej checklisty jest historyczną specyfikacją docelowego UX. Bieżące
+> rozróżnienie `implementation complete`, `automated validation complete`,
+> `ready for operator`, `operator benchmark passed` i `ready for IA7a` jest
+> utrzymywane wyłącznie w
+> `task-requests/PLAYER_IDENTITY_DEVELOPMENT_PLAN.md`.
+
 ## Initial Audit
 
 - [ ] domyślnie maksymalnie 5–8 klatek;

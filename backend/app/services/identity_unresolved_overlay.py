@@ -9,11 +9,109 @@ UNRESOLVED_OVERLAY_SOURCES = frozenset(
         "unrepresented_tracklet",
     }
 )
+VISIBLE_OBSERVATION_PROVENANCE = frozenset(
+    {
+        "identity_slot",
+        "identity_ambiguous",
+        "unmatched_raw",
+        "unrepresented_clean_tracklet",
+    }
+)
+
+
+def build_visible_player_observations(
+    *,
+    identity_rows_by_frame: dict[int, list[dict[str, Any]]],
+    unmatched_observations: list[dict[str, Any]],
+    unrepresented_tracklet_observations: list[dict[str, Any]],
+    frame_numbers: set[int] | None = None,
+) -> dict[int, list[dict[str, Any]]]:
+    """Build the deterministic operator-visible observation layer.
+
+    Identity rows retain their eligibility. Unresolved rows are always
+    visual-only and are duplicate-suppressed against identity rows and against
+    one another.
+    """
+
+    selected_frames = frame_numbers
+    result: dict[int, list[dict[str, Any]]] = {}
+    unresolved_by_frame: dict[int, list[dict[str, Any]]] = {}
+    for observation in [
+        *unmatched_observations,
+        *unrepresented_tracklet_observations,
+    ]:
+        if not isinstance(observation, dict) or not _valid_bbox(
+            observation.get("bbox_xyxy")
+        ):
+            continue
+        frame = int(observation.get("frame") or 0)
+        if selected_frames is not None and frame not in selected_frames:
+            continue
+        unresolved_by_frame.setdefault(frame, []).append(observation)
+
+    frames = set(identity_rows_by_frame) | set(unresolved_by_frame)
+    if selected_frames is not None:
+        frames &= selected_frames
+    for frame in sorted(frames):
+        identity_rows = [
+            _normalize_identity_observation(row)
+            for row in identity_rows_by_frame.get(frame, [])
+            if isinstance(row, dict) and _valid_bbox(row.get("bbox_xyxy"))
+        ]
+        unresolved_rows = select_unresolved_overlay_rows(
+            identity_rows,
+            unresolved_by_frame.get(frame, []),
+        )
+        normalized_unresolved = [
+            _normalize_unresolved_observation(row) for row in unresolved_rows
+        ]
+        result[frame] = sorted(
+            [*identity_rows, *normalized_unresolved],
+            key=_visible_observation_sort_key,
+        )
+    return result
+
+
+def identity_observation_rows_by_frame(
+    global_identity: dict[str, Any],
+    *,
+    frame_numbers: set[int] | None = None,
+) -> dict[int, list[dict[str, Any]]]:
+    result: dict[int, list[dict[str, Any]]] = {}
+    for slot in global_identity.get("slots") or []:
+        for position in slot.get("overlay_positions") or []:
+            if not isinstance(position, dict) or not _valid_bbox(
+                position.get("bbox_xyxy")
+            ):
+                continue
+            frame = int(position.get("frame") or 0)
+            if frame_numbers is not None and frame not in frame_numbers:
+                continue
+            source = str(
+                position.get("source")
+                or position.get("status")
+                or "detected"
+            )
+            if source not in {"detected", "ambiguous"}:
+                continue
+            result.setdefault(frame, []).append(
+                {
+                    **position,
+                    "stable_subject_id": slot.get("stable_subject_id"),
+                    "stable_player_id": slot.get("stable_player_id"),
+                    "slot_id": slot.get("slot_id"),
+                    "team_label": slot.get("team_label"),
+                    "source": source,
+                }
+            )
+    return result
 
 
 def build_unrepresented_tracklet_observations(
     tracklets: list[dict[str, Any]],
     global_identity: dict[str, Any],
+    *,
+    frame_numbers: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return clean observations that have no bbox representation in identity overlay.
 
@@ -41,6 +139,8 @@ def build_unrepresented_tracklet_observations(
             if str(position.get("play_area_status") or "inside_play") != "inside_play":
                 continue
             frame = int(position.get("frame") or 0)
+            if frame_numbers is not None and frame not in frame_numbers:
+                continue
             key = (frame, tracklet_id)
             if key in represented_keys or key in existing_unmatched_keys:
                 continue
@@ -69,6 +169,55 @@ def build_unrepresented_tracklet_observations(
             }
             rows.append(row)
     return rows
+
+
+def _normalize_identity_observation(row: dict[str, Any]) -> dict[str, Any]:
+    source = str(row.get("source") or row.get("status") or "detected")
+    trusted = source == "detected" and row.get("visual_trusted") is not False
+    provenance = (
+        "identity_slot" if source == "detected" else "identity_ambiguous"
+    )
+    return {
+        **row,
+        "observation_provenance": provenance,
+        "visual_trusted": trusted,
+        "stats_eligible": trusted,
+        "identity_eligible": trusted,
+    }
+
+
+def _normalize_unresolved_observation(row: dict[str, Any]) -> dict[str, Any]:
+    source = str(row.get("source") or "unmatched_raw")
+    provenance = (
+        "unrepresented_clean_tracklet"
+        if source == "unrepresented_tracklet"
+        else "unmatched_raw"
+    )
+    return {
+        **row,
+        "observation_provenance": provenance,
+        "visual_trusted": False,
+        "stats_eligible": False,
+        "identity_eligible": False,
+    }
+
+
+def _visible_observation_sort_key(
+    row: dict[str, Any],
+) -> tuple[int, str, str, tuple[float, float, float, float]]:
+    provenance_order = {
+        "identity_slot": 0,
+        "identity_ambiguous": 1,
+        "unmatched_raw": 2,
+        "unrepresented_clean_tracklet": 3,
+    }
+    bbox = tuple(float(value) for value in row["bbox_xyxy"])
+    return (
+        provenance_order.get(str(row.get("observation_provenance")), 9),
+        str(row.get("team_label") or "U"),
+        str(row.get("tracklet_id") or row.get("raw_track_id") or ""),
+        bbox,
+    )
 
 
 def select_unresolved_overlay_rows(

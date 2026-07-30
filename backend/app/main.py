@@ -30,8 +30,13 @@ from app.services.identity_initial_audit import prepare_initial_identity_audit
 from app.services.identity_initial_audit_store import (
     InitialIdentityAuditConflictError,
     InitialIdentityAuditStaleError,
+    OperatorDecisionBudgetExceededError,
     load_initial_identity_audit_seeds,
     save_initial_identity_audit_seeds,
+)
+from app.services.identity_product_flow_state import (
+    ProductFlowStateError,
+    benchmark_context_for_workspace,
 )
 from app.services.identity_second_half_reanchor import (
     prepare_second_half_identity_reanchor,
@@ -51,6 +56,8 @@ from app.services.identity_seeded_subject_review_rebuild import (
 from app.services.identity_product_flow_benchmark import (
     ProductFlowBenchmarkError,
     build_product_flow_benchmark_report,
+    finish_product_flow_h1,
+    finish_product_flow_h2,
     prepare_product_flow_benchmark,
 )
 from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
@@ -807,7 +814,7 @@ def list_matches() -> list[dict[str, Any]]:
 def create_product_flow_benchmark(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     source_match_id = str(payload.get("source_match_id") or "7655bf7c")
     target_match_id = str(payload.get("target_match_id") or "343980c8")
-    benchmark_id = str(payload.get("benchmark_id") or "product-flow-20260729-v1")
+    benchmark_id = str(payload.get("benchmark_id") or "product-flow-20260730-v2")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}", benchmark_id):
         raise HTTPException(status_code=400, detail="Invalid benchmark_id")
     try:
@@ -829,6 +836,17 @@ def get_product_flow_benchmark(benchmark_id: str) -> dict[str, Any]:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Product-flow benchmark not found")
     document = json.loads(path.read_text(encoding="utf-8"))
+    if not document.get("state"):
+        legacy_source_status = document.get("status")
+        document["state"] = "FAILED"
+        document["status"] = "FAILED"
+        document["legacy_session"] = {
+            "reason": (
+                "Session predates the sequential H1→H2 state machine and "
+                "cannot be resumed safely."
+            ),
+            "source_status": legacy_source_status,
+        }
     for domain, workspace in (document.get("workspaces") or {}).items():
         if not isinstance(workspace, dict):
             continue
@@ -849,10 +867,53 @@ def refresh_product_flow_benchmark_report(benchmark_id: str) -> dict[str, Any]:
     if not (root / "benchmark_session.json").exists():
         raise HTTPException(status_code=404, detail="Product-flow benchmark not found")
     report = build_product_flow_benchmark_report(root)
+    if report.get("status") != "REPORT_READY":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "BENCHMARK_REPORT_NOT_READY",
+                "current_state": report.get("status"),
+            },
+        )
     (root / "benchmark_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     return report
+
+
+@app.post("/api/product-flow-benchmarks/{benchmark_id}/h1/finish")
+def finish_product_flow_benchmark_h1(
+    benchmark_id: str,
+) -> dict[str, Any]:
+    root = PRODUCT_FLOW_BENCHMARKS_DIR / benchmark_id
+    if not (root / "benchmark_session.json").exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Product-flow benchmark not found",
+        )
+    try:
+        return finish_product_flow_h1(
+            root=root,
+            matches_root=MATCHES_DIR,
+        )
+    except ProductFlowBenchmarkError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/product-flow-benchmarks/{benchmark_id}/h2/finish")
+def finish_product_flow_benchmark_h2(
+    benchmark_id: str,
+) -> dict[str, Any]:
+    root = PRODUCT_FLOW_BENCHMARKS_DIR / benchmark_id
+    if not (root / "benchmark_session.json").exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Product-flow benchmark not found",
+        )
+    try:
+        return finish_product_flow_h2(root=root)
+    except ProductFlowBenchmarkError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/matches/{match_id}")
@@ -1354,9 +1415,17 @@ def update_initial_identity_audit_seeds(
             updates,
             telemetry_events=telemetry_events,
         )
-        rebuild_status = rebuild_seeded_identity_after_operator_audit(
-            path,
-            match_document,
+        benchmark_context = benchmark_context_for_workspace(path)
+        rebuild_status = (
+            {
+                "status": "deferred_until_benchmark_stage_finish",
+                "benchmark_state": benchmark_context["state"],
+            }
+            if benchmark_context is not None
+            else rebuild_seeded_identity_after_operator_audit(
+                path,
+                match_document,
+            )
         )
         if rebuild_status.get("status") == "fresh":
             result["safety"] = {
@@ -1369,6 +1438,25 @@ def update_initial_identity_audit_seeds(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InitialIdentityAuditStaleError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OperatorDecisionBudgetExceededError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "stage": exc.stage,
+                "limit": exc.limit,
+                "attempted": exc.attempted,
+            },
+        ) from exc
+    except ProductFlowStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "current_state": exc.current_state,
+                "requested_state": exc.requested_state,
+            },
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1468,9 +1556,17 @@ def update_second_half_identity_reanchor_seeds(
             updates,
             telemetry_events=telemetry_events,
         )
-        rebuild_status = rebuild_seeded_identity_after_operator_audit(
-            path,
-            match_document,
+        benchmark_context = benchmark_context_for_workspace(path)
+        rebuild_status = (
+            {
+                "status": "deferred_until_benchmark_stage_finish",
+                "benchmark_state": benchmark_context["state"],
+            }
+            if benchmark_context is not None
+            else rebuild_seeded_identity_after_operator_audit(
+                path,
+                match_document,
+            )
         )
         if rebuild_status.get("status") == "fresh":
             result["safety"] = {
@@ -1485,6 +1581,25 @@ def update_second_half_identity_reanchor_seeds(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InitialIdentityAuditStaleError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OperatorDecisionBudgetExceededError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "stage": exc.stage,
+                "limit": exc.limit,
+                "attempted": exc.attempted,
+            },
+        ) from exc
+    except ProductFlowStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "current_state": exc.current_state,
+                "requested_state": exc.requested_state,
+            },
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
