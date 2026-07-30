@@ -28,6 +28,11 @@ from app.services.identity_fragment_consolidation_shadow import (
 from app.services.identity_offline_resolver_shadow import build_shadow_offline_identity
 from app.services.identity_occlusion_assignment_shadow import build_shadow_occlusion_assignments
 from app.services.identity_stitching_shadow import build_shadow_stitching_candidates
+from app.services.identity_unresolved_overlay import (
+    build_unrepresented_tracklet_observations,
+    is_unresolved_overlay_row,
+    select_unresolved_overlay_rows,
+)
 
 
 MAX_INTERPOLATION_GAP_FRAMES = 15
@@ -2973,28 +2978,31 @@ def _stable_overlay_frame_rows(
             row["live_movement"] = live_movement.get(int(row.get("frame") or 0))
             frame_rows.setdefault(int(row.get("frame") or 0), []).append(row)
     if include_unmatched_raw:
-        for observation in stable_doc.get("unmatched_observations") or []:
+        unresolved_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        unresolved_observations = [
+            *(stable_doc.get("unmatched_observations") or []),
+            *(stable_doc.get("unrepresented_tracklet_observations") or []),
+        ]
+        for observation in unresolved_observations:
             if not isinstance(observation, dict) or not observation.get("bbox_xyxy"):
                 continue
             frame = int(observation.get("frame") or 0)
-            if not _should_draw_unmatched_raw(frame_rows.get(frame, []), observation):
-                continue
-            row = dict(observation)
-            row["stable_player_id"] = "RAW"
-            row["source"] = "unmatched_raw"
-            row["status"] = "unmatched_raw"
-            row["visual_trusted"] = False
-            frame_rows.setdefault(frame, []).append(row)
+            unresolved_by_frame[frame].append(observation)
+        for frame, observations in unresolved_by_frame.items():
+            selected = select_unresolved_overlay_rows(
+                frame_rows.get(frame, []),
+                observations,
+            )
+            for observation in selected:
+                row = dict(observation)
+                row["stable_player_id"] = "RAW"
+                row["source"] = str(observation.get("source") or "unmatched_raw")
+                row["status"] = str(
+                    observation.get("status") or "unresolved_visual_only"
+                )
+                row["visual_trusted"] = False
+                frame_rows.setdefault(frame, []).append(row)
     return frame_rows
-
-
-def _should_draw_unmatched_raw(existing_rows: list[dict[str, Any]], observation: dict[str, Any]) -> bool:
-    team_label = str(observation.get("team_label") or "U")
-    stable_rows = [row for row in existing_rows if row.get("source") != "unmatched_raw"]
-    if team_label in {"A", "B"}:
-        visible_same_team = sum(1 for row in stable_rows if row.get("team_label") == team_label)
-        return visible_same_team < DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP
-    return len(stable_rows) < DEFAULT_ACTIVE_PLAYERS_CAP
 
 
 def _stable_overlay_visual_positions(
@@ -3339,11 +3347,13 @@ def _draw_stable_row(frame: Any, row: dict[str, Any]) -> None:
     import cv2
 
     source = row.get("source")
-    if source == "unmatched_raw":
+    if is_unresolved_overlay_row(row):
         color = (0, 230, 255)
         x1, y1, x2, y2 = [int(v) for v in row["bbox_xyxy"]]
         _draw_dashed_rectangle(frame, x1, y1, x2, y2, color, dash_length=5)
-        _draw_minimal_label(frame, "RAW?", x1, y1, color)
+        team_label = str(row.get("team_label") or "U")
+        label = f"{team_label}?" if team_label in {"A", "B"} else "RAW?"
+        _draw_minimal_label(frame, label, x1, y1, color)
         return
 
     color = _stable_bgr_color(row.get("team_label"))
@@ -3763,7 +3773,8 @@ def _apply_player_label_overrides(stable_doc: dict[str, Any], label_overrides: d
 
 
 def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
-    stable_rows = [row for row in rows if row.get("source") != "unmatched_raw"]
+    stable_rows = [row for row in rows if not is_unresolved_overlay_row(row)]
+    unresolved_rows = [row for row in rows if is_unresolved_overlay_row(row)]
     visible_detected = sum(1 for row in stable_rows if row.get("source") == "detected")
     visible_predicted = sum(1 for row in stable_rows if row.get("source") in {"predicted", "interpolated"})
     visible_interpolated = sum(1 for row in stable_rows if row.get("source") == "short_gap_interpolated")
@@ -3776,7 +3787,15 @@ def _visual_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
         "visible_predicted": visible_predicted,
         "visible_interpolated": visible_interpolated,
         "visible_ambiguous": visible_ambiguous,
-        "visible_unmatched_raw": len(rows) - len(stable_rows),
+        "visible_unresolved": len(unresolved_rows),
+        "visible_unmatched_raw": sum(
+            1 for row in unresolved_rows if row.get("source") == "unmatched_raw"
+        ),
+        "visible_unrepresented_tracklet": sum(
+            1
+            for row in unresolved_rows
+            if row.get("source") == "unrepresented_tracklet"
+        ),
         "visible_team_a": team_a,
         "visible_team_b": team_b,
     }
@@ -3795,6 +3814,7 @@ def apply_stable_overlay_visual_counts(
         pitch_polygon,
         fps=fps,
         include_untrusted=False,
+        include_unmatched_raw=True,
         camera_motion=camera_motion,
     )
     counts_by_frame = {frame: _visual_counts(rows) for frame, rows in frame_rows.items()}
@@ -3804,6 +3824,8 @@ def apply_stable_overlay_visual_counts(
     predicted_visible_values: list[int] = []
     visual_interpolated_values: list[int] = []
     ambiguous_visible_values: list[int] = []
+    unresolved_visible_values: list[int] = []
+    unrepresented_tracklet_visible_values: list[int] = []
     target_players = int(frame_detection_counts.get("target_players") or DEFAULT_ACTIVE_PLAYERS_CAP)
     for frame in frame_detection_counts.get("frames", []):
         frame_index = int(frame.get("frame") or 0)
@@ -3813,6 +3835,10 @@ def apply_stable_overlay_visual_counts(
         visual_interpolated = int(visual.get("visible_interpolated") or 0)
         predicted_visible = int(visual.get("visible_predicted") or 0)
         ambiguous_visible = int(visual.get("visible_ambiguous") or 0)
+        unresolved_visible = int(visual.get("visible_unresolved") or 0)
+        unrepresented_tracklet_visible = int(
+            visual.get("visible_unrepresented_tracklet") or 0
+        )
         updated = {
             **frame,
             "stable_detected": trusted_detected,
@@ -3823,6 +3849,10 @@ def apply_stable_overlay_visual_counts(
             "ambiguous_visible_boxes": ambiguous_visible,
             "visual_interpolated_boxes": visual_interpolated,
             "predicted_visible_boxes": predicted_visible,
+            "unresolved_visible_boxes": unresolved_visible,
+            "unrepresented_tracklet_visible_boxes": (
+                unrepresented_tracklet_visible
+            ),
             "stable_missing_vs_target": max(0, target_players - visible),
         }
         frames.append(updated)
@@ -3830,6 +3860,10 @@ def apply_stable_overlay_visual_counts(
         predicted_visible_values.append(predicted_visible)
         visual_interpolated_values.append(visual_interpolated)
         ambiguous_visible_values.append(ambiguous_visible)
+        unresolved_visible_values.append(unresolved_visible)
+        unrepresented_tracklet_visible_values.append(
+            unrepresented_tracklet_visible
+        )
 
     summary = dict(frame_detection_counts.get("summary") or {})
     summary.update(
@@ -3844,6 +3878,13 @@ def apply_stable_overlay_visual_counts(
             "ambiguous_visible_frames": sum(1 for value in ambiguous_visible_values if value > 0),
             "visual_interpolated_boxes": sum(visual_interpolated_values),
             "visual_interpolated_frames": sum(1 for value in visual_interpolated_values if value > 0),
+            "unresolved_visible_boxes": sum(unresolved_visible_values),
+            "unresolved_visible_frames": sum(
+                1 for value in unresolved_visible_values if value > 0
+            ),
+            "unrepresented_tracklet_visible_boxes": sum(
+                unrepresented_tracklet_visible_values
+            ),
             "ghost_bbox_count": sum(predicted_visible_values),
         }
     )
@@ -3868,7 +3909,7 @@ def _draw_stable_hud(
     visible = visual_counts or {}
     lines = [
         f"frame={frame_idx} t={time_sec:.1f}s raw={_count_value(frame_count, 'raw_detections')}",
-        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} hold={visible.get('visible_interpolated', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)} raw?={visible.get('visible_unmatched_raw', 0)}",
+        f"visible boxes={visible.get('visible_boxes', 0)} det={visible.get('visible_detected', 0)} hold={visible.get('visible_interpolated', 0)} amb={visible.get('visible_ambiguous', 0)} pred={visible.get('visible_predicted', 0)} unresolved?={visible.get('visible_unresolved', 0)}",
         f"slots active={active_slots} det={slot_detected} amb={_count_value(frame_count, 'slot_ambiguous')} miss={slot_missing} A={_count_value(frame_count, 'active_team_a')} B={_count_value(frame_count, 'active_team_b')}",
         f"match slots={summary.get('stable_players', 0)} risky={summary.get('risky_links', 0)} low={summary.get('low_confidence_players', 0)}",
     ]
@@ -4333,6 +4374,16 @@ def stabilize_match(
             {"current": int((global_identity.get("summary") or {}).get("stable_players") or 0), "unit": "players"},
         )
     stable_doc = build_stable_players_from_global_identity(global_identity)
+    unrepresented_tracklet_observations = build_unrepresented_tracklet_observations(
+        tracklets,
+        global_identity,
+    )
+    stable_doc["unrepresented_tracklet_observations"] = (
+        unrepresented_tracklet_observations
+    )
+    stable_doc["summary"]["unrepresented_tracklet_observations"] = len(
+        unrepresented_tracklet_observations
+    )
     _apply_player_label_overrides(stable_doc, player_label_overrides)
     ball_tracks_for_refine = _rebuild_ball_tracks_from_candidates(
         ball_tracks_doc,

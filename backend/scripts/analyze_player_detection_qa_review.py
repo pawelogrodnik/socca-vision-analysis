@@ -46,6 +46,13 @@ def main() -> None:
                 "raw_track_attribution": report["raw_track_attribution"][
                     "counts"
                 ],
+                "unresolved_overlay_projection": {
+                    key: value
+                    for key, value in report[
+                        "unresolved_overlay_projection"
+                    ].items()
+                    if key not in {"items", "identity_overlay_items"}
+                },
                 "primary_bottleneck": report["conclusion"]["primary_bottleneck"],
             },
             ensure_ascii=False,

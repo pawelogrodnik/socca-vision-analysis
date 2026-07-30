@@ -97,8 +97,16 @@ class PlayerDetectionQualityReviewTests(unittest.TestCase):
                 "not_analyzed": 0,
             },
         )
+        self.assertEqual(
+            report["unresolved_overlay_projection"]["recoverable_missing_boxes"],
+            1,
+        )
+        self.assertEqual(
+            report["unresolved_overlay_projection"]["recovered_by_source"],
+            {"unrepresented_tracklet": 1},
+        )
         self.assertIn(
-            "final rendered overlay loses all 3 boxes",
+            "without using them for stats",
             render_player_detection_quality_review_markdown(report),
         )
         self.assertEqual(report["safety"]["yolo_reruns"], 0)

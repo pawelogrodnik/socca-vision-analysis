@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_unresolved_overlay import (
+    build_unrepresented_tracklet_observations,
+    select_unresolved_overlay_rows,
+)
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -70,7 +74,6 @@ def analyze_player_detection_quality_review(
         attributed_missing,
         global_identity_document=global_identity_document,
     )
-
     teams = {
         team: _team_metrics(
             team,
@@ -82,6 +85,13 @@ def analyze_player_detection_quality_review(
     }
     valid_existing = len(detections) - len(effective_false)
     reference_players = valid_existing + len(missing_players)
+    unresolved_overlay_projection = _project_unresolved_overlay_recovery(
+        missing_players,
+        tracklets_document=tracklets_document,
+        global_identity_document=global_identity_document,
+        valid_existing_boxes=valid_existing,
+        represented_tracklets=represented_tracklets,
+    )
     attribution_counts = {
         key: sum(row["attribution"] == key for row in attributed_missing)
         for key in (
@@ -163,6 +173,7 @@ def analyze_player_detection_quality_review(
         },
         "identity_layer_attribution": identity_layer_attribution,
         "raw_track_attribution": raw_track_attribution,
+        "unresolved_overlay_projection": unresolved_overlay_projection,
         "comments": frame_comments,
         "conclusion": {
             "primary_bottleneck": (
@@ -173,9 +184,10 @@ def analyze_player_detection_quality_review(
             "raw_yolo_recall_can_be_inferred": False,
             "reason": (
                 "Most operator-drawn missing players already exist in clean "
-                "frozen tracklets but are absent from global-identity slot "
-                "positions. The stabilization renderer may still expose some "
-                "of them separately as unmatched RAW observations."
+                "frozen tracklets. Some were already present as detected or "
+                "ambiguous identity-overlay positions but were omitted by the "
+                "old QA package; additional observations can be exposed safely "
+                "as visual-only unresolved boxes."
             ),
         },
         "safety": {
@@ -227,6 +239,7 @@ def render_player_detection_quality_review_markdown(
     attribution = report["missing_attribution"]["counts"]
     identity_attribution = report["identity_layer_attribution"]["counts"]
     raw_attribution = report["raw_track_attribution"]["counts"]
+    overlay_projection = report["unresolved_overlay_projection"]
     return (
         "# Player detection QA — reviewed result\n\n"
         f"- Frames reviewed: {summary['frames_reviewed']}\n"
@@ -261,12 +274,21 @@ def render_player_detection_quality_review_markdown(
         f"- No separate matching raw track: "
         f"{raw_attribution['no_matching_raw_track']}\n"
         f"- Not analyzed: {raw_attribution['not_analyzed']}\n\n"
+        "## Unresolved-overlay projection\n\n"
+        f"- Missing boxes already available in identity overlay: "
+        f"{overlay_projection['already_available_in_identity_overlay']}\n"
+        f"- Operator-drawn missing boxes recoverable as visual-only unresolved: "
+        f"{overlay_projection['recoverable_missing_boxes']}\n"
+        f"- Remaining missing boxes after visual recovery: "
+        f"{overlay_projection['remaining_missing_boxes']}\n"
+        f"- Projected observation coverage: "
+        f"{overlay_projection['projected_observation_coverage']:.1%}\n\n"
         "## Conclusion\n\n"
-        "The dominant loss occurs after clean tracklets are built, in the "
-        "global-identity slot layer. The stabilization renderer can separately "
-        "show some unmatched observations as `RAW?`, so this result does not "
-        f"prove the final rendered overlay loses all "
-        f"{summary['missing_player_boxes']} boxes. This QA does not "
+        "The old QA package omitted both identity-overlay observations and "
+        "clean tracklet observations that were not represented by a visible "
+        "identity slot. The stabilization renderer now keeps the latter visible "
+        "as untrusted `RAW?`, `A?`, or `B?` boxes without using them for stats. "
+        "This QA does not "
         "by itself measure raw YOLO recall. No YOLO, tracking, candidate identity, "
         "production identity or production stats artifact was mutated.\n"
     )
@@ -432,6 +454,192 @@ def _attribute_missing_players(
                 attribution="no_matching_frozen_tracklet",
             )
     return [row for row in result if row is not None]
+
+
+def _project_unresolved_overlay_recovery(
+    missing_players: list[dict[str, Any]],
+    *,
+    tracklets_document: dict[str, Any],
+    global_identity_document: dict[str, Any] | None,
+    valid_existing_boxes: int,
+    represented_tracklets: dict[int, set[str]],
+) -> dict[str, Any]:
+    reference_boxes = valid_existing_boxes + len(missing_players)
+    if global_identity_document is None:
+        return {
+            "analyzed": False,
+            "candidate_unresolved_observations": 0,
+            "visible_after_duplicate_suppression": 0,
+            "already_available_in_identity_overlay": 0,
+            "recoverable_missing_boxes": 0,
+            "total_missing_boxes_visible_after_change": 0,
+            "remaining_missing_boxes": len(missing_players),
+            "projected_observation_coverage": _ratio(
+                valid_existing_boxes,
+                reference_boxes,
+            ),
+            "recovered_by_source": {},
+            "identity_overlay_items": [],
+            "items": [],
+        }
+
+    selected_frames = {
+        int(annotation["frame_number"]) for annotation in missing_players
+    }
+    all_identity_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    newly_available_identity_by_frame: dict[int, list[dict[str, Any]]] = (
+        defaultdict(list)
+    )
+    for slot in global_identity_document.get("slots") or []:
+        for row in slot.get("overlay_positions") or []:
+            frame_number = int(row.get("frame") or 0)
+            visual_source = str(
+                row.get("source") or row.get("status") or "detected"
+            )
+            if (
+                frame_number in selected_frames
+                and visual_source in {"detected", "ambiguous"}
+                and _valid_bbox(row.get("bbox_xyxy"))
+            ):
+                all_identity_by_frame[frame_number].append(row)
+                tracklet_id = str(
+                    row.get("tracklet_id")
+                    or row.get("candidate_tracklet_id")
+                    or ""
+                )
+                if tracklet_id not in represented_tracklets.get(
+                    frame_number,
+                    set(),
+                ):
+                    newly_available_identity_by_frame[frame_number].append(row)
+
+    unresolved = [
+        *(global_identity_document.get("unmatched_observations") or []),
+        *build_unrepresented_tracklet_observations(
+            tracklets_document.get("tracklets") or [],
+            global_identity_document,
+        ),
+    ]
+    candidates_by_frame: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    unresolved_candidate_count = 0
+    for row in unresolved:
+        if not isinstance(row, dict) or not _valid_bbox(row.get("bbox_xyxy")):
+            continue
+        frame_number = int(row.get("frame") or 0)
+        if frame_number not in selected_frames:
+            continue
+        candidates_by_frame[frame_number].append(row)
+        unresolved_candidate_count += 1
+
+    visible_by_frame = {
+        frame_number: select_unresolved_overlay_rows(
+            all_identity_by_frame.get(frame_number, []),
+            candidates,
+        )
+        for frame_number, candidates in candidates_by_frame.items()
+    }
+    identity_matches = _match_missing_to_visual_candidates(
+        missing_players,
+        newly_available_identity_by_frame,
+    )
+    unresolved_matches = _match_missing_to_visual_candidates(
+        missing_players,
+        visible_by_frame,
+    )
+    identity_annotation_indexes = {
+        int(row["annotation_index"]) for row in identity_matches
+    }
+    unresolved_matches = [
+        row
+        for row in unresolved_matches
+        if int(row["annotation_index"]) not in identity_annotation_indexes
+    ]
+    recovered_by_source: dict[str, int] = {}
+    for row in unresolved_matches:
+        source = str(row["matched_unresolved"]["source"])
+        recovered_by_source[source] = recovered_by_source.get(source, 0) + 1
+    total_visible = len(identity_matches) + len(unresolved_matches)
+    return {
+        "analyzed": True,
+        "candidate_unresolved_observations": unresolved_candidate_count,
+        "visible_after_duplicate_suppression": sum(
+            len(rows) for rows in visible_by_frame.values()
+        ),
+        "already_available_in_identity_overlay": len(identity_matches),
+        "recoverable_missing_boxes": len(unresolved_matches),
+        "total_missing_boxes_visible_after_change": total_visible,
+        "remaining_missing_boxes": len(missing_players) - total_visible,
+        "projected_observation_coverage": _ratio(
+            valid_existing_boxes + total_visible,
+            reference_boxes,
+        ),
+        "recovered_by_source": recovered_by_source,
+        "identity_overlay_items": identity_matches,
+        "items": unresolved_matches,
+    }
+
+
+def _match_missing_to_visual_candidates(
+    missing_players: list[dict[str, Any]],
+    candidates_by_frame: dict[int, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    annotation_indexes_by_frame: dict[int, list[int]] = defaultdict(list)
+    for index, annotation in enumerate(missing_players):
+        annotation_indexes_by_frame[int(annotation["frame_number"])].append(index)
+
+    result: list[dict[str, Any]] = []
+    for frame_number, annotation_indexes in annotation_indexes_by_frame.items():
+        candidates = candidates_by_frame.get(frame_number) or []
+        scored_pairs = []
+        for annotation_index in annotation_indexes:
+            annotation = missing_players[annotation_index]
+            for candidate_index, candidate in enumerate(candidates):
+                iou, containment = _bbox_overlap(
+                    annotation["bbox_xyxy"],
+                    candidate["bbox_xyxy"],
+                )
+                if iou >= MINIMUM_IOU or containment >= MINIMUM_CONTAINMENT:
+                    scored_pairs.append(
+                        (
+                            max(iou, containment),
+                            iou,
+                            containment,
+                            annotation_index,
+                            candidate_index,
+                        )
+                    )
+        used_annotations: set[int] = set()
+        used_candidates: set[int] = set()
+        for _, iou, containment, annotation_index, candidate_index in sorted(
+            scored_pairs,
+            reverse=True,
+        ):
+            if (
+                annotation_index in used_annotations
+                or candidate_index in used_candidates
+            ):
+                continue
+            annotation = missing_players[annotation_index]
+            candidate = candidates[candidate_index]
+            result.append(
+                {
+                    "annotation_index": annotation_index,
+                    "frame_number": frame_number,
+                    "team_label": annotation["team_label"],
+                    "bbox_xyxy": annotation["bbox_xyxy"],
+                    "matched_unresolved": {
+                        "source": candidate.get("source"),
+                        "tracklet_id": candidate.get("tracklet_id"),
+                        "team_label": candidate.get("team_label"),
+                        "bbox_xyxy": candidate.get("bbox_xyxy"),
+                        "iou": round(iou, 4),
+                        "containment": round(containment, 4),
+                    },
+                }
+            )
+            used_annotations.add(annotation_index)
+            used_candidates.add(candidate_index)
+    return result
 
 
 def _attribute_identity_layer_losses(

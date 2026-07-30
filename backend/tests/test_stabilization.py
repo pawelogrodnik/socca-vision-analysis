@@ -229,7 +229,7 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(counts["visible_ambiguous"], 1)
         self.assertEqual(counts["visible_detected"], 0)
 
-    def test_unmatched_raw_overlay_hides_extra_team_detection_when_team_full(self) -> None:
+    def test_unmatched_raw_overlay_remains_visible_when_team_slots_are_full(self) -> None:
         stable_doc = {
             "players": [
                 {
@@ -267,7 +267,56 @@ class StabilizationTests(unittest.TestCase):
         )[1]
 
         self.assertEqual(_visual_counts(rows)["visible_boxes"], 7)
-        self.assertEqual(_visual_counts(rows)["visible_unmatched_raw"], 0)
+        self.assertEqual(_visual_counts(rows)["visible_unmatched_raw"], 1)
+        self.assertEqual(_visual_counts(rows)["visible_unresolved"], 1)
+
+    def test_unrepresented_tracklet_is_visible_but_not_counted_as_stable(self) -> None:
+        stable_doc = {
+            "players": [],
+            "unrepresented_tracklet_observations": [
+                {
+                    "frame": 1,
+                    "time_sec": 1 / 30,
+                    "bbox_xyxy": [30, 10, 40, 30],
+                    "pitch_m": [2, 1],
+                    "source": "unrepresented_tracklet",
+                    "team_label": "B",
+                }
+            ],
+        }
+
+        rows = _stable_overlay_frame_rows(
+            stable_doc,
+            np.array(
+                [[0, 0], [100, 0], [100, 100], [0, 100]],
+                dtype=np.float32,
+            ),
+            fps=30,
+            include_unmatched_raw=True,
+        )[1]
+        counts = _visual_counts(rows)
+
+        self.assertEqual(counts["visible_boxes"], 0)
+        self.assertEqual(counts["visible_unresolved"], 1)
+        self.assertEqual(counts["visible_unrepresented_tracklet"], 1)
+
+        updated = apply_stable_overlay_visual_counts(
+            {
+                "target_players": 1,
+                "summary": {},
+                "frames": [{"frame": 1, "time_sec": 1 / 30}],
+            },
+            stable_doc,
+            np.array(
+                [[0, 0], [100, 0], [100, 100], [0, 100]],
+                dtype=np.float32,
+            ),
+            fps=30,
+        )
+
+        self.assertEqual(updated["frames"][0]["visible_stable_boxes"], 0)
+        self.assertEqual(updated["frames"][0]["unresolved_visible_boxes"], 1)
+        self.assertEqual(updated["summary"]["unresolved_visible_boxes"], 1)
 
     def test_split_tracks_breaks_unrealistic_jump(self) -> None:
         tracks = [
