@@ -28,6 +28,12 @@ import {
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
 import { RequiredFinalSaveQueue } from '../utils/requiredFinalSaveQueue';
+import {
+  secondHalfObservationLabel,
+  secondHalfSuggestionSourceLabel,
+  secondHalfTeamClass,
+  secondHalfVisibleSuggestion,
+} from '../utils/secondHalfIdentityReanchorPresentation';
 
 interface SecondHalfIdentityReanchorPanelProps {
   match: Match;
@@ -71,6 +77,12 @@ function actionForSuggestion(
       (candidate) => candidate.player_id === suggestion.player_id,
     );
     if (player) {
+      if (
+        observation.team_label !== 'U'
+        && team.team_label !== observation.team_label
+      ) {
+        return null;
+      }
       const action = initialIdentityAuditPlayerAction(player, team);
       if (action.kind !== 'player') return null;
       return {
@@ -125,10 +137,13 @@ export function SecondHalfIdentityReanchorPanel({
     ) ?? null,
     [frame, selectedObservationKey],
   );
+  const selectedVisibleSuggestion = selectedObservation
+    ? secondHalfVisibleSuggestion(selectedObservation)
+    : null;
   const currentSuggestion = document && selectedObservation
-    && selectedObservation.suggested_player
+    && selectedVisibleSuggestion
     ? actionForSuggestion(
-        selectedObservation.suggested_player,
+        selectedVisibleSuggestion,
         selectedObservation,
         document,
       )
@@ -193,7 +208,7 @@ export function SecondHalfIdentityReanchorPanel({
   function selectDefaultObservation(nextFrameIndex: number) {
     const nextFrame = document?.frames[nextFrameIndex];
     const suggestion = nextFrame?.observations.find(
-      (observation) => Boolean(observation.suggested_player),
+      (observation) => Boolean(secondHalfVisibleSuggestion(observation)),
     );
     setSelectedObservationKey(
       suggestion?.observation_key
@@ -454,7 +469,16 @@ export function SecondHalfIdentityReanchorPanel({
             </div>
 
             <main className='initial-identity-audit-main'>
-              <div className='initial-identity-audit-context'>
+              <div className='initial-identity-audit-context second-half'>
+                <div
+                  className='second-half-team-legend'
+                  aria-label='Legenda automatycznego przypisania do drużyny'
+                >
+                  <span className='team-a'>Team A</span>
+                  <span className='team-b'>Team B</span>
+                  <span className='team-unknown'>Nieznany team</span>
+                  <small>Imię z „?” jest hipotezą do potwierdzenia.</small>
+                </div>
                 <div
                   className='initial-identity-audit-frame'
                   style={{ aspectRatio: `${document.video.width} / ${document.video.height}` }}
@@ -466,12 +490,16 @@ export function SecondHalfIdentityReanchorPanel({
                   {frame.observations.map((observation, index) => {
                     const selected = observation.observation_key === selectedObservationKey;
                     const decided = decisions[observation.observation_key];
+                    const visibleSuggestion = secondHalfVisibleSuggestion(
+                      observation,
+                    );
                     return (
                       <button
                         type='button'
                         key={observation.observation_key}
                         className={[
                           'initial-identity-observation-box',
+                          secondHalfTeamClass(observation.team_label),
                           selected ? 'selected' : '',
                           decided ? 'decided' : '',
                         ].filter(Boolean).join(' ')}
@@ -480,10 +508,24 @@ export function SecondHalfIdentityReanchorPanel({
                           setSelectedObservationKey(observation.observation_key);
                           setShowRoster(false);
                         }}
-                        aria-label={`Zawodnik ${index + 1}`}
+                        aria-label={[
+                          `BBox ${index + 1}`,
+                          observation.team_label === 'U'
+                            ? 'nieznany team'
+                            : `Team ${observation.team_label}`,
+                          visibleSuggestion
+                            ? `sugestia ${visibleSuggestion.player_name}`
+                            : 'bez sugestii imiennej',
+                        ].join(', ')}
                         aria-pressed={selected}
                       >
-                        <span>{decided ? 'OK' : index + 1}</span>
+                        <span>
+                          {secondHalfObservationLabel(
+                            observation,
+                            index + 1,
+                            Boolean(decided),
+                          )}
+                        </span>
                       </button>
                     );
                   })}
@@ -515,6 +557,37 @@ export function SecondHalfIdentityReanchorPanel({
                     emptyLabel='Kliknij zawodnika.'
                   />
                 </div>
+
+                {selectedObservation && (
+                  <div className='second-half-detection-summary'>
+                    <strong>
+                      Automatyczny team:{' '}
+                      {selectedObservation.team_label === 'U'
+                        ? 'nieznany'
+                        : `Team ${selectedObservation.team_label}`}
+                    </strong>
+                    {selectedVisibleSuggestion ? (
+                      <>
+                        <span>
+                          Hipoteza imienna:{' '}
+                          <strong>
+                            {selectedVisibleSuggestion.player_name}
+                          </strong>
+                        </span>
+                        <small>
+                          Źródło:{' '}
+                          {secondHalfSuggestionSourceLabel(
+                            selectedVisibleSuggestion.suggestion_source,
+                          )}
+                          . To nie jest pewne rozpoznanie — potwierdź albo wybierz
+                          właściwego zawodnika.
+                        </small>
+                      </>
+                    ) : (
+                      <span>Brak sugestii imiennej dla tego bboxa.</span>
+                    )}
+                  </div>
+                )}
 
                 {currentSuggestion?.kind === 'player' && (
                   <div>
@@ -618,13 +691,30 @@ export function SecondHalfIdentityReanchorPanel({
                   >
                     Cien / falszywa detekcja
                   </button>
-                  <button
-                    type='button'
-                    disabled={!selectedObservation || saving || finishing || !canCreateConfirmation}
-                    onClick={() => void applyAction({ kind: 'team_unknown', teamLabel: 'B' })}
-                  >
-                    Team B
-                  </button>
+                  {selectedObservation?.team_label !== 'A' && (
+                    <button
+                      type='button'
+                      disabled={saving || finishing || !canCreateConfirmation}
+                      onClick={() => void applyAction({
+                        kind: 'team_unknown',
+                        teamLabel: 'A',
+                      })}
+                    >
+                      Team A
+                    </button>
+                  )}
+                  {selectedObservation?.team_label !== 'B' && (
+                    <button
+                      type='button'
+                      disabled={saving || finishing || !canCreateConfirmation}
+                      onClick={() => void applyAction({
+                        kind: 'team_unknown',
+                        teamLabel: 'B',
+                      })}
+                    >
+                      Team B
+                    </button>
+                  )}
                   <button
                     type='button'
                     disabled={!selectedObservation || saving || finishing}

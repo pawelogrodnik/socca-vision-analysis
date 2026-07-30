@@ -122,6 +122,54 @@ def fail_product_flow_session(
     )
 
 
+def retry_failed_product_flow_session(
+    root: Path,
+    *,
+    expected_previous_state: str,
+    action: str,
+) -> dict[str, Any]:
+    """Resume only the exact stage whose finalization just failed.
+
+    Operator decisions are already durable before downstream rebuilding starts.
+    A rebuild/report bug must therefore be retryable without reopening or
+    rewriting the completed audit.
+    """
+
+    document = load_product_flow_session(root)
+    audit_log = document.get("audit_log") or []
+    failed_event = audit_log[-1] if audit_log else {}
+    if (
+        document["state"] != "FAILED"
+        or failed_event.get("to_state") != "FAILED"
+        or failed_event.get("from_state") != expected_previous_state
+    ):
+        raise ProductFlowStateError(
+            current_state=str(document["state"]),
+            requested_state=expected_previous_state,
+        )
+    timestamp = datetime.now(timezone.utc).isoformat()
+    recovery_event = {
+        "sequence": len(audit_log) + 1,
+        "from_state": "FAILED",
+        "to_state": expected_previous_state,
+        "action": action,
+        "occurred_at": timestamp,
+        "details": {
+            "retries_failed_sequence": failed_event.get("sequence"),
+            "operator_decisions_reused": True,
+        },
+    }
+    recovered = {
+        **document,
+        "state": expected_previous_state,
+        "status": expected_previous_state,
+        "updated_at": timestamp,
+        "audit_log": [*audit_log, recovery_event],
+    }
+    write_json_atomic(root / SESSION_FILENAME, recovered)
+    return recovered
+
+
 def benchmark_context_for_workspace(match_path: Path) -> dict[str, Any] | None:
     resolved_match_path = match_path.resolve()
     session_path = resolved_match_path.parent / SESSION_FILENAME

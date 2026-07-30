@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "test:preflight": "node --test tests/requiredFinalSaveQueue.test.ts",
+    "test:preflight": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "build": "tsc && vite build",
     "preview": "vite preview --host 0.0.0.0"

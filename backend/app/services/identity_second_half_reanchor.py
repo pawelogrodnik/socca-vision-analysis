@@ -145,10 +145,18 @@ def prepare_second_half_identity_reanchor(
         export_identity_audit_frames(video_path, frames, frame_path)
         write_identity_json_atomic(selection_path, selection)
 
+    snapshot_players = (selection.get("second_half") or {}).get(
+        "safely_resolved_players_before_reanchor"
+    )
+    suggestion_players = (
+        snapshot_players
+        if isinstance(snapshot_players, list)
+        else safely_resolved_players
+    )
     return build_second_half_identity_reanchor_document(
         selection,
         match_document,
-        safely_resolved_players=safely_resolved_players,
+        safely_resolved_players=suggestion_players,
     )
 
 
@@ -166,19 +174,35 @@ def build_second_half_identity_reanchor_document(
         bounded_selection,
         match_document,
     )
+    second_half = selection.get("second_half") or {}
+    h1_safe_lineage_allowed = (
+        second_half.get("h1_safe_lineage_allowed") is not False
+    )
     suggestion_rows = (
-        safely_resolved_players
-        if safely_resolved_players is not None
-        else (
-            (selection.get("second_half") or {}).get(
-                "safely_resolved_players_before_reanchor"
+        (
+            safely_resolved_players
+            if safely_resolved_players is not None
+            else (
+                second_half.get(
+                    "safely_resolved_players_before_reanchor"
+                )
+                or []
             )
-            or []
         )
+        if h1_safe_lineage_allowed
+        else []
     )
     suggestion_by_tracklet = _suggested_players_by_tracklet(
         suggestion_rows
     )
+    roster_team_by_player = {
+        str(player.get("player_id") or ""): str(
+            team.get("team_label") or "U"
+        )
+        for team in document.get("roster") or []
+        for player in team.get("players") or []
+        if player.get("player_id")
+    }
     advisory_by_tracklet = _advisory_suggestions_by_tracklet(
         selection.get("reid_advisory_suggestions") or []
     )
@@ -189,6 +213,14 @@ def build_second_half_identity_reanchor_document(
                 or ""
             )
             safe_suggestion = suggestion_by_tracklet.get(tracklet_id)
+            observation_team = str(
+                observation.get("team_label") or "U"
+            )
+            if safe_suggestion is not None and not _teams_compatible(
+                observation_team,
+                str(safe_suggestion.get("team_label") or "U"),
+            ):
+                safe_suggestion = None
             observation["suggested_player"] = (
                 {
                     **safe_suggestion,
@@ -199,6 +231,20 @@ def build_second_half_identity_reanchor_document(
             )
             advisory = advisory_by_tracklet.get(tracklet_id)
             if advisory:
+                compatible_suggestions = [
+                    suggestion
+                    for suggestion in advisory["suggestions"]
+                    if (
+                        str(suggestion.get("player_id") or "")
+                        in roster_team_by_player
+                        and _teams_compatible(
+                            observation_team,
+                            roster_team_by_player[
+                                str(suggestion.get("player_id") or "")
+                            ],
+                        )
+                    )
+                ]
                 observation["reid_suggestions"] = [
                     {
                         **suggestion,
@@ -213,12 +259,22 @@ def build_second_half_identity_reanchor_document(
                             "observation_key"
                         ),
                     }
-                    for suggestion in advisory["suggestions"]
+                    for suggestion in compatible_suggestions
                 ]
-                if observation["suggested_player"] is None:
+                if (
+                    observation["suggested_player"] is None
+                    and observation["reid_suggestions"]
+                ):
                     observation["suggested_player"] = {
                         **observation["reid_suggestions"][0],
-                        "team_label": advisory.get("team_label"),
+                        "team_label": roster_team_by_player[
+                            str(
+                                observation["reid_suggestions"][0].get(
+                                    "player_id"
+                                )
+                                or ""
+                            )
+                        ],
                     }
     document.update(
         {
@@ -226,7 +282,7 @@ def build_second_half_identity_reanchor_document(
             "mode": MODE,
             "status": "ready",
             "reason": None,
-            "second_half": selection.get("second_half") or {},
+            "second_half": second_half,
             "safely_resolved_players": safely_resolved_players or [],
         }
     )
@@ -352,6 +408,17 @@ def _advisory_suggestions_by_tracklet(
                 "suggestions": suggestions,
             }
     return result
+
+
+def _teams_compatible(
+    observation_team: str,
+    player_team: str,
+) -> bool:
+    return (
+        observation_team not in {"A", "B"}
+        or player_team not in {"A", "B"}
+        or observation_team == player_team
+    )
 
 
 def _second_half_start_time(

@@ -459,6 +459,66 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
             "FAILED",
         )
 
+    def test_h2_finalization_can_retry_without_reopening_audit(self) -> None:
+        self._finish_h1()
+        seeded_result = _h2_seeded_result()
+
+        def stale_review(path, _match, **_kwargs):
+            stale_seeded = {
+                **seeded_result,
+                "summary": {"stale": 1},
+            }
+            _write(
+                path / "identity_seeded_review_reduction_report.json",
+                _reduction_report(stale_seeded, before=3, after=3),
+            )
+            return {"status": "fresh"}
+
+        with patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_candidate_assignments",
+            return_value=seeded_result,
+        ), patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_subject_review",
+            side_effect=stale_review,
+        ):
+            with self.assertRaisesRegex(
+                ProductFlowBenchmarkError,
+                "H2_REDUCTION_REPORT_INVALID",
+            ):
+                finish_product_flow_h2(root=self._benchmark_root())
+
+        def fresh_review(path, _match, **_kwargs):
+            _write(
+                path / "identity_seeded_review_reduction_report.json",
+                _reduction_report(seeded_result, before=3, after=3),
+            )
+            return {"status": "fresh"}
+
+        with patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_candidate_assignments",
+            return_value=seeded_result,
+        ), patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_subject_review",
+            side_effect=fresh_review,
+        ):
+            report = finish_product_flow_h2(root=self._benchmark_root())
+
+        session = load_product_flow_session(self._benchmark_root())
+        self.assertEqual(report["status"], "REPORT_READY")
+        self.assertEqual(session["state"], "REPORT_READY")
+        retry_event = next(
+            row
+            for row in session["audit_log"]
+            if row.get("action") == "retry_finish_h2"
+        )
+        self.assertTrue(
+            retry_event["details"]["operator_decisions_reused"]
+        )
+
     def test_generated_reid_not_displayed_is_not_counted_displayed(self) -> None:
         report = self._finish_full_flow()
         self.assertEqual(report["reid"]["reid_subjects_available"], 2)
@@ -473,6 +533,16 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(report["reid"]["reid_suggestions_accepted"], 0)
         self.assertEqual(report["reid"]["reid_suggestions_rejected"], 0)
+        self.assertEqual(
+            report["h1_safe_lineage"]["suggestions_accepted"],
+            1,
+        )
+        self.assertEqual(
+            report["h1_safe_lineage"][
+                "top1_accuracy_on_named_decisions"
+            ],
+            1.0,
+        )
 
     def test_displayed_reid_top1_is_accepted_with_rank(self) -> None:
         report = self._finish_flow_with_reid_decision(

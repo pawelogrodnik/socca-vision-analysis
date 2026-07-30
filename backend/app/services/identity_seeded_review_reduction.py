@@ -34,7 +34,18 @@ def load_fresh_seeded_assignments(
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     seeded_path = match_path / OUTPUT_FILENAME
     seeds_path = match_path / SEEDS_FILENAME
-    if not seeded_path.exists() or not seeds_path.exists():
+    reanchor_seeds_path = (
+        match_path
+        / "identity_second_half_reanchor"
+        / "identity_second_half_reanchor_seeds.json"
+    )
+    if (
+        not seeded_path.exists()
+        or (
+            not seeds_path.exists()
+            and not reanchor_seeds_path.exists()
+        )
+    ):
         return None, {
             "status": "missing",
             "reason_codes": ["seeded_assignments_or_operator_seeds_missing"],

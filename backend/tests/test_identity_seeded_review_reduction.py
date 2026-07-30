@@ -278,6 +278,60 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(freshness["status"], "fresh")
 
+    def test_freshness_accepts_reanchor_only_operator_seeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            match = {
+                "benchmark_session": {
+                    "reanchor_only": True,
+                }
+            }
+            (path / "match.json").write_text(
+                json.dumps(match),
+                encoding="utf-8",
+            )
+            reanchor_directory = path / "identity_second_half_reanchor"
+            reanchor_directory.mkdir()
+            selection = {"schema_version": "0.1.0", "selected_frames": []}
+            (reanchor_directory / "identity_second_half_reanchor_selection.json").write_text(
+                json.dumps(selection),
+                encoding="utf-8",
+            )
+            seeds = {
+                "schema_version": "0.1.0",
+                "source": {
+                    "selection_digest": "selection-h2",
+                    "selection_artifact_digest": canonical_digest(selection),
+                },
+                "decisions": [
+                    {
+                        "observation_key": "frame-h2-tracklet-1",
+                        "frame_number": 200,
+                        "action": "false_detection",
+                    }
+                ],
+            }
+            (
+                reanchor_directory
+                / "identity_second_half_reanchor_seeds.json"
+            ).write_text(json.dumps(seeds), encoding="utf-8")
+            combined = load_combined_operator_seeds(path)
+            seeded = seeded_document([accepted_assignment()])
+            seeded["source"] = {
+                "operator_seed_decisions_digest": (
+                    identity_operator_seed_decisions_digest(combined)
+                )
+            }
+            (path / OUTPUT_FILENAME).write_text(
+                json.dumps(seeded),
+                encoding="utf-8",
+            )
+
+            loaded, freshness = load_fresh_seeded_assignments(path)
+
+            self.assertIsNotNone(loaded)
+            self.assertEqual(freshness["status"], "fresh")
+
 
 if __name__ == "__main__":
     unittest.main()

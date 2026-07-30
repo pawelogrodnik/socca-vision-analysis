@@ -37,6 +37,7 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_product_flow_state import (
     fail_product_flow_session,
     load_product_flow_session,
+    retry_failed_product_flow_session,
     transition_product_flow_session,
     write_json_atomic,
 )
@@ -242,6 +243,10 @@ def build_product_flow_benchmark_report(root: Path) -> dict[str, Any]:
         / "identity_cross_analysis_reid_advisory.json"
     )
     reid_metrics = _reid_metrics(root, advisory=reid or {})
+    h1_lineage_metrics = _h1_lineage_metrics(root)
+    operator_findings = _load_optional(
+        root / "benchmark_operator_findings.json"
+    )
     automatic_assignments = sum(
         int(
             ((reid or {}).get("safety") or {}).get("automatic_merges")
@@ -265,6 +270,8 @@ def build_product_flow_benchmark_report(root: Path) -> dict[str, Any]:
             **reid_metrics,
             "false_assignments": None,
         },
+        "h1_safe_lineage": h1_lineage_metrics,
+        "operator_findings": operator_findings,
         "conflicts": sum(
             int((row or {}).get("conflicts") or 0)
             for row in domain_rows.values()
@@ -482,6 +489,12 @@ def finish_product_flow_h2(
     session = load_product_flow_session(root)
     if session["state"] == "REPORT_READY":
         return _load(root / "benchmark_report.json")
+    if session["state"] == "FAILED":
+        session = retry_failed_product_flow_session(
+            root,
+            expected_previous_state="H2_FINISHED",
+            action="retry_finish_h2",
+        )
     if session["state"] not in {"H2_READY", "H2_FINISHED"}:
         raise ProductFlowBenchmarkError(
             f"H2 cannot finish from state {session['state']}"
@@ -1029,6 +1042,83 @@ def _reid_metrics(
     }
 
 
+def _h1_lineage_metrics(root: Path) -> dict[str, Any]:
+    h2 = root / "h2_workspace"
+    selection = _load_optional(
+        h2 / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
+    )
+    match_document = _load_optional(h2 / "match.json")
+    seeds = _load_optional(
+        h2
+        / REANCHOR_DIRECTORY
+        / "identity_second_half_reanchor_seeds.json"
+    )
+    if not selection or not match_document:
+        return {
+            "suggestions_displayed": 0,
+            "named_decisions_reviewed": 0,
+            "suggestions_accepted": 0,
+            "suggestions_rejected": 0,
+            "suggestions_unreviewed": 0,
+            "top1_accuracy_on_named_decisions": None,
+        }
+    displayed = {
+        str(observation.get("observation_key") or ""): str(
+            (observation.get("suggested_player") or {}).get(
+                "player_id"
+            )
+            or ""
+        )
+        for frame in (
+            build_second_half_identity_reanchor_document(
+                selection,
+                match_document,
+            ).get("frames")
+            or []
+        )
+        for observation in frame.get("observations") or []
+        if (
+            (observation.get("suggested_player") or {}).get(
+                "suggestion_source"
+            )
+            == "h1_safe_lineage"
+        )
+    }
+    accepted = 0
+    rejected = 0
+    reviewed_keys: set[str] = set()
+    for decision in (seeds or {}).get("decisions") or []:
+        observation_key = str(decision.get("observation_key") or "")
+        if (
+            observation_key not in displayed
+            or observation_key in reviewed_keys
+            or decision.get("action") != "assign_roster_player"
+        ):
+            continue
+        assigned_player_id = str(
+            (decision.get("assigned_player") or {}).get("player_id")
+            or ""
+        )
+        if not assigned_player_id:
+            continue
+        reviewed_keys.add(observation_key)
+        if assigned_player_id == displayed[observation_key]:
+            accepted += 1
+        else:
+            rejected += 1
+    reviewed = accepted + rejected
+    return {
+        "suggestions_displayed": len(displayed),
+        "named_decisions_reviewed": reviewed,
+        "suggestions_accepted": accepted,
+        "suggestions_rejected": rejected,
+        "suggestions_unreviewed": max(0, len(displayed) - reviewed),
+        "top1_accuracy_on_named_decisions": (
+            accepted / reviewed if reviewed else None
+        ),
+    }
+
+
 def _build_h1_shadow_artifacts(workspace: Path) -> None:
     report = _load(workspace / "analysis_report.json")
     global_identity = _load(workspace / "global_identity.json")
@@ -1102,6 +1192,10 @@ def _prepare_h2_reanchor(
         "start_time_sec": 0.0,
         "start_frame": 0,
         "safely_resolved_players_before_reanchor": safely_resolved_players,
+        "h1_safe_lineage_allowed": False,
+        "h1_safe_lineage_block_reason": (
+            "independent_capture_domains_have_unrelated_tracklet_ids"
+        ),
     }
     selection["reid_advisory_suggestions"] = advisory_suggestions
     frame_path = workspace / REANCHOR_DIRECTORY / "frames"
