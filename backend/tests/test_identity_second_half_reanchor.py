@@ -288,6 +288,38 @@ class SecondHalfIdentityReanchorTests(unittest.TestCase):
         self.assertIsNone(observation["suggested_player"])
         self.assertEqual(observation["reid_suggestions"], [])
 
+    def test_suppressed_reid_suggestion_is_not_shown(self) -> None:
+        selection = copy.deepcopy(self.selection)
+        selection["reid_advisory_suggestions"] = [
+            {
+                "candidate_subject_id": "subject-a",
+                "team_label": "A",
+                "tracklet_ids": ["tracklet-a"],
+                "suggestions": [
+                    {
+                        "player_id": "player-1",
+                        "player_name": "Pawel",
+                        "rank": 1,
+                        "display_eligible": False,
+                    }
+                ],
+            }
+        ]
+
+        document = build_second_half_identity_reanchor_document(
+            selection,
+            self.match,
+            safely_resolved_players=[],
+        )
+        observation = document["frames"][0]["observations"][0]
+
+        self.assertIsNone(observation["suggested_player"])
+        self.assertEqual(observation["reid_suggestions"], [])
+        self.assertEqual(
+            observation["reid_suggestion_notice"]["status"],
+            "hidden_low_quality",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

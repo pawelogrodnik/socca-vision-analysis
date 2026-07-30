@@ -1467,6 +1467,10 @@ export type InitialIdentityAuditObservation = {
     candidate_subject_id?: string | null;
     observation_key: string;
   }>;
+  reid_suggestion_notice?: {
+    status: 'hidden_low_quality';
+    reason_codes: string[];
+  } | null;
 };
 
 export type InitialIdentityAuditFrame = {

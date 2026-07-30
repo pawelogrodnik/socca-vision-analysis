@@ -29,6 +29,8 @@ DEFAULT_PARAMETERS: dict[str, Any] = {
     "max_crops_per_candidate_subject": 3,
     "max_prototype_dispersion": 0.38,
     "ranking_top_k": 3,
+    "minimum_calibration_queries": 8,
+    "minimum_calibration_top1_accuracy": 0.75,
 }
 
 
@@ -658,6 +660,144 @@ def _leave_one_subject_out_evaluation(
             4,
         ),
         "rows": query_rows,
+    }
+
+
+def build_appearance_ranking_calibration(
+    gallery_doc: dict[str, Any],
+    *,
+    subject_vectors: dict[str, list[np.ndarray]],
+    model_status: dict[str, Any],
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    """Decide whether appearance rankings are safe enough to show to users.
+
+    A rank is not an identity claim.  In particular, the portable colour and
+    texture descriptor is useful for diagnostics but is not a validated
+    cross-camera person-ReID model.  We therefore preserve its diagnostic
+    output while suppressing its names in the operator audit.
+    """
+
+    player_vectors = {
+        str(player.get("player_id") or ""): [
+            vector
+            for subject_id in player.get("candidate_subject_ids") or []
+            for vector in subject_vectors.get(str(subject_id)) or []
+        ]
+        for player in gallery_doc.get("players") or []
+        if isinstance(player, dict) and player.get("player_id")
+    }
+    players_by_team: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for player in gallery_doc.get("players") or []:
+        if not isinstance(player, dict):
+            continue
+        player_id = str(player.get("player_id") or "")
+        if len(player_vectors.get(player_id) or []) >= 3:
+            players_by_team[str(player.get("team_label") or "U")].append(
+                player
+            )
+
+    rows: list[dict[str, Any]] = []
+    for team_label, players in sorted(players_by_team.items()):
+        if len(players) < 2:
+            continue
+        for player in players:
+            player_id = str(player.get("player_id") or "")
+            vectors = player_vectors[player_id]
+            for query_index, query in enumerate(vectors):
+                candidates: list[tuple[str, np.ndarray]] = []
+                for candidate in players:
+                    candidate_id = str(candidate.get("player_id") or "")
+                    candidate_vectors = player_vectors[candidate_id]
+                    reference_vectors = (
+                        [
+                            value
+                            for index, value in enumerate(candidate_vectors)
+                            if index != query_index
+                        ]
+                        if candidate_id == player_id
+                        else candidate_vectors
+                    )
+                    prototype = _prototype(reference_vectors)
+                    if prototype is not None:
+                        candidates.append((candidate_id, prototype))
+                ranking = sorted(
+                    (
+                        (
+                            candidate_id,
+                            1.0
+                            - float(
+                                np.clip(np.dot(query, prototype), -1.0, 1.0)
+                            ),
+                        )
+                        for candidate_id, prototype in candidates
+                    ),
+                    key=lambda item: (item[1], item[0]),
+                )
+                rank = next(
+                    (
+                        index
+                        for index, (candidate_id, _) in enumerate(
+                            ranking, start=1
+                        )
+                        if candidate_id == player_id
+                    ),
+                    None,
+                )
+                rows.append(
+                    {
+                        "team_label": team_label,
+                        "player_id": player_id,
+                        "query_index": query_index,
+                        "truth_rank": rank,
+                        "top1_correct": rank == 1,
+                        "top3_correct": rank is not None and rank <= 3,
+                        "best_distance": _rounded(
+                            ranking[0][1] if ranking else None,
+                            6,
+                        ),
+                        "top1_margin": _rounded(
+                            (
+                                ranking[1][1] - ranking[0][1]
+                                if len(ranking) > 1
+                                else None
+                            ),
+                            6,
+                        ),
+                    }
+                )
+    count = len(rows)
+    top1_accuracy = (
+        sum(bool(row["top1_correct"]) for row in rows) / count
+        if count
+        else None
+    )
+    reasons: list[str] = []
+    if str(model_status.get("quality_tier") or "") == "baseline_fallback":
+        reasons.append("baseline_descriptor_not_validated_for_cross_capture")
+    if count < int(parameters["minimum_calibration_queries"]):
+        reasons.append("insufficient_calibration_queries")
+    if (
+        top1_accuracy is not None
+        and top1_accuracy
+        < float(parameters["minimum_calibration_top1_accuracy"])
+    ):
+        reasons.append("calibration_top1_accuracy_below_threshold")
+    return {
+        "method": "leave_one_confirmed_crop_out_same_team",
+        "queries": count,
+        "top1_accuracy": _rounded(top1_accuracy, 4),
+        "top3_accuracy": _rounded(
+            (
+                sum(bool(row["top3_correct"]) for row in rows) / count
+                if count
+                else None
+            ),
+            4,
+        ),
+        "rows": rows,
+        "display_eligible": not reasons,
+        "suppression_reason_codes": reasons,
     }
 
 

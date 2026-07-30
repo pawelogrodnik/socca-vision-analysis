@@ -584,7 +584,12 @@ export function SecondHalfIdentityReanchorPanel({
                         </small>
                       </>
                     ) : (
-                      <span>Brak sugestii imiennej dla tego bboxa.</span>
+                      <span>
+                        {selectedObservation.reid_suggestion_notice?.status
+                        === 'hidden_low_quality'
+                          ? 'Sugestia imienna jest celowo ukryta: model wyglądu nie przeszedł kontroli jakości.'
+                          : 'Brak sugestii imiennej dla tego bboxa.'}
+                      </span>
                     )}
                   </div>
                 )}

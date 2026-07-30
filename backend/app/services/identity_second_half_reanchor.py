@@ -231,11 +231,28 @@ def build_second_half_identity_reanchor_document(
             )
             advisory = advisory_by_tracklet.get(tracklet_id)
             if advisory:
+                has_suppressed_suggestion = any(
+                    suggestion.get("display_eligible") is False
+                    for suggestion in advisory["suggestions"]
+                )
+                suppressed_reasons = sorted(
+                    {
+                        str(reason)
+                        for suggestion in advisory["suggestions"]
+                        if suggestion.get("display_eligible") is False
+                        for reason in suggestion.get(
+                            "suppression_reason_codes"
+                        )
+                        or []
+                        if reason
+                    }
+                )
                 compatible_suggestions = [
                     suggestion
                     for suggestion in advisory["suggestions"]
                     if (
-                        str(suggestion.get("player_id") or "")
+                        suggestion.get("display_eligible", True)
+                        and str(suggestion.get("player_id") or "")
                         in roster_team_by_player
                         and _teams_compatible(
                             observation_team,
@@ -261,6 +278,14 @@ def build_second_half_identity_reanchor_document(
                     }
                     for suggestion in compatible_suggestions
                 ]
+                if has_suppressed_suggestion and not observation[
+                    "reid_suggestions"
+                ]:
+                    observation["reid_suggestion_notice"] = {
+                        "status": "hidden_low_quality",
+                        "reason_codes": suppressed_reasons
+                        or ["ranking_not_operator_eligible"],
+                    }
                 if (
                     observation["suggested_player"] is None
                     and observation["reid_suggestions"]

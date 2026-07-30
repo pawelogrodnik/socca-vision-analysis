@@ -9,6 +9,7 @@ import numpy as np
 from app.services.identity_approved_appearance_reid import (
     DEFAULT_PARAMETERS,
     JsonEmbeddingCache,
+    build_appearance_ranking_calibration,
     _embed_candidate_subjects,
     _player_profiles,
     _prototype,
@@ -122,6 +123,12 @@ def build_cross_analysis_appearance_reid(
         player_prototypes=player_prototypes,
         parameters=params,
     )
+    calibration = build_appearance_ranking_calibration(
+        reference_gallery_for_embedding,
+        subject_vectors=reference_vectors,
+        model_status=model_status,
+        parameters=params,
+    )
     ranked_rows = [row for row in rankings if row.get("status") == "ranked"]
     artifact = {
         "schema_version": SCHEMA_VERSION,
@@ -162,6 +169,11 @@ def build_cross_analysis_appearance_reid(
             ),
             "players_with_prototype": len(player_prototypes),
             "unresolved_subjects_ranked": len(ranked_rows),
+            "operator_visible_ranked_subjects": (
+                len(ranked_rows)
+                if calibration["display_eligible"]
+                else 0
+            ),
             "cross_domain_players": 0,
             "automatic_merges": 0,
             "operator_actions_required": 0,
@@ -172,6 +184,7 @@ def build_cross_analysis_appearance_reid(
         },
         "player_profiles": player_profiles,
         "unresolved_rankings": rankings,
+        "ranking_display": calibration,
         "cross_domain_evidence": [],
         "evaluation": {
             "method": "cross_capture_advisory_without_h2_ground_truth",
@@ -280,6 +293,15 @@ def _unavailable_artifact(
         "rejected_crops": {"reference": {}, "target": {}},
         "player_profiles": [],
         "unresolved_rankings": [],
+        "ranking_display": {
+            "method": "leave_one_confirmed_crop_out_same_team",
+            "queries": 0,
+            "top1_accuracy": None,
+            "top3_accuracy": None,
+            "rows": [],
+            "display_eligible": False,
+            "suppression_reason_codes": ["appearance_embedder_unavailable"],
+        },
         "cross_domain_evidence": [],
         "evaluation": {
             "method": "cross_capture_advisory_without_h2_ground_truth",
@@ -305,11 +327,17 @@ def _documents(artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "algorithm": artifact.get("algorithm") or {},
         "model": artifact.get("model") or {},
         "summary": summary,
+        "ranking_display": artifact.get("ranking_display") or {},
         "gates": {
             "advisory_only": True,
             "team_safe_ranking": True,
             "automatic_false_merges": 0,
             "cross_capture_paths_separated": True,
+            "operator_names_visible": bool(
+                (artifact.get("ranking_display") or {}).get(
+                    "display_eligible"
+                )
+            ),
         },
     }
     return {

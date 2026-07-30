@@ -688,6 +688,8 @@ def _build_h2_cross_analysis_advisory(
     )
     artifact = documents["identity_cross_analysis_appearance_reid"]
     rankings = artifact.get("unresolved_rankings") or []
+    ranking_display = artifact.get("ranking_display") or {}
+    display_eligible = bool(ranking_display.get("display_eligible"))
     subject_tracklets = {
         str(row.get("candidate_subject_id") or ""): sorted(
             str(value) for value in row.get("tracklet_ids") or []
@@ -709,6 +711,10 @@ def _build_h2_cross_analysis_advisory(
                         "cross_analysis_reid_top3_advisory"
                     ),
                     "advisory_only": True,
+                    "display_eligible": display_eligible,
+                    "suppression_reason_codes": (
+                        ranking_display.get("suppression_reason_codes") or []
+                    ),
                     "candidate_subject_id": row.get(
                         "candidate_subject_id"
                     ),
@@ -728,6 +734,9 @@ def _build_h2_cross_analysis_advisory(
             **(artifact.get("summary") or {}),
             "selected_h2_candidate_subjects": len(selected_subject_ids),
             "ranked_subjects": len(suggestions),
+            "operator_visible_ranked_subjects": (
+                len(suggestions) if display_eligible else 0
+            ),
             "suggestions_shown": sum(
                 len(row["suggestions"]) for row in suggestions
             ),
@@ -834,12 +843,19 @@ def run_product_flow_cross_capture_reid_diagnostic(
     h1_output.mkdir(parents=True, exist_ok=True)
     h2_output.mkdir(parents=True, exist_ok=True)
 
+    h1_seeded = _load(
+        h1_workspace / "identity_seeded_candidate_assignments.json"
+    )
+    confirmed_h1_subject_ids = {
+        str(assignment.get("candidate_subject_id") or "")
+        for assignment in h1_seeded.get("accepted_assignments") or []
+        if assignment.get("candidate_subject_id")
+        and (assignment.get("assigned_player") or {}).get("player_id")
+    }
     h1_candidate, h1_timeline = _build_h1_shadow_artifacts(
         h1_workspace,
         output_root=h1_output,
-    )
-    h1_seeded = _load(
-        h1_workspace / "identity_seeded_candidate_assignments.json"
+        subject_ids=confirmed_h1_subject_ids,
     )
     h1_match = _load(h1_workspace / "match.json")
     h1_assignments = seeded_assignments_as_roster_assignments(
@@ -953,6 +969,8 @@ def run_product_flow_cross_capture_reid_diagnostic(
     reid_artifact = reid_documents[
         "identity_cross_analysis_appearance_reid"
     ]
+    ranking_display = reid_artifact.get("ranking_display") or {}
+    display_eligible = bool(ranking_display.get("display_eligible"))
     subject_tracklets = {
         str(row.get("candidate_subject_id") or ""): sorted(
             str(value) for value in row.get("tracklet_ids") or []
@@ -974,6 +992,10 @@ def run_product_flow_cross_capture_reid_diagnostic(
                         "cross_analysis_reid_top3_advisory"
                     ),
                     "advisory_only": True,
+                    "display_eligible": display_eligible,
+                    "suppression_reason_codes": (
+                        ranking_display.get("suppression_reason_codes") or []
+                    ),
                     "candidate_subject_id": row.get(
                         "candidate_subject_id"
                     ),
@@ -993,6 +1015,9 @@ def run_product_flow_cross_capture_reid_diagnostic(
             **(reid_artifact.get("summary") or {}),
             "selected_h2_candidate_subjects": len(selected_subject_ids),
             "ranked_subjects": len(suggestions),
+            "operator_visible_ranked_subjects": (
+                len(suggestions) if display_eligible else 0
+            ),
             "suggestions_shown": sum(
                 len(row["suggestions"]) for row in suggestions
             ),
@@ -1485,6 +1510,7 @@ def _build_h1_shadow_artifacts(
     workspace: Path,
     *,
     output_root: Path | None = None,
+    subject_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     report = _load(workspace / "analysis_report.json")
     global_identity = _load(workspace / "global_identity.json")
@@ -1493,7 +1519,9 @@ def _build_h1_shadow_artifacts(
     timeline_subjects = []
     for slot in global_identity.get("slots") or []:
         subject_id = str(slot.get("stable_subject_id") or "")
-        if not subject_id:
+        if not subject_id or (
+            subject_ids is not None and subject_id not in subject_ids
+        ):
             continue
         positions = [
             _frozen_h1_timeline_observation(row, slot=slot)

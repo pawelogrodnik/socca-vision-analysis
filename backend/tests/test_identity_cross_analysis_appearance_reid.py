@@ -83,6 +83,70 @@ class CrossAnalysisAppearanceReidTests(unittest.TestCase):
             ["no_confirmed_player_prototypes_for_team"],
         )
 
+    def test_baseline_descriptor_rankings_are_hidden_from_operator(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference_root = root / "h1"
+            target_root = root / "h2"
+            reference_root.mkdir()
+            target_root.mkdir()
+            gallery = {
+                "players": [
+                    {
+                        "player_id": "player-a",
+                        "player_name": "Player A",
+                        "team_label": "A",
+                        "capture_domains": [{
+                            "capture_domain": "H1",
+                            "crops": _write_crops(
+                                reference_root, "red", (0, 0, 220)
+                            ),
+                        }],
+                    },
+                    {
+                        "player_id": "player-b",
+                        "player_name": "Player B",
+                        "team_label": "A",
+                        "capture_domains": [{
+                            "capture_domain": "H1",
+                            "crops": _write_crops(
+                                reference_root, "blue", (220, 0, 0)
+                            ),
+                        }],
+                    },
+                ]
+            }
+            target = {
+                "cards": [{
+                    "candidate_subject_id": "target-a",
+                    "team_label": "A",
+                    "anchor_crops": _write_crops(
+                        target_root, "target", (0, 0, 220)
+                    ),
+                }]
+            }
+
+            result = build_cross_analysis_appearance_reid(
+                gallery,
+                target,
+                {"accepted_assignments": []},
+                reference_match_path=reference_root,
+                target_match_path=target_root,
+                embedder=PortableAppearanceEmbedder(),
+                model_status={"available": True, "quality_tier": "baseline_fallback"},
+            )
+
+        artifact = result["identity_cross_analysis_appearance_reid"]
+        self.assertFalse(artifact["ranking_display"]["display_eligible"])
+        self.assertIn(
+            "baseline_descriptor_not_validated_for_cross_capture",
+            artifact["ranking_display"]["suppression_reason_codes"],
+        )
+        self.assertEqual(
+            artifact["summary"]["operator_visible_ranked_subjects"],
+            0,
+        )
+
 
 def _write_crops(
     root: Path,
