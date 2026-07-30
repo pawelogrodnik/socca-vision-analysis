@@ -8,6 +8,7 @@ by a separately generated evaluation report after an operator completes a run.
 """
 
 from datetime import datetime, timezone
+import gc
 import hashlib
 import json
 import os
@@ -29,9 +30,14 @@ from app.services.identity_initial_audit_frame_selection import (
     filter_identity_audit_observations,
 )
 from app.services.identity_initial_audit_store import save_initial_identity_audit_seeds
+from app.services.identity_approved_appearance_gallery import (
+    build_identity_approved_appearance_gallery,
+)
 from app.services.identity_approved_appearance_reid import (
-    build_identity_approved_appearance_reid,
     load_approved_appearance_embedder,
+)
+from app.services.identity_cross_analysis_appearance_reid import (
+    build_cross_analysis_appearance_reid,
 )
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_product_flow_state import (
@@ -46,7 +52,9 @@ from app.services.identity_seeded_candidate_assignments import (
 )
 from app.services.identity_seeded_subject_review_rebuild import (
     rebuild_identity_seeded_subject_review,
+    seeded_assignments_as_roster_assignments,
 )
+from app.services.identity_same_match_reid import JsonEmbeddingCache
 from app.services.identity_roster_anchor_crop_renderer import (
     render_identity_roster_anchor_crops,
 )
@@ -348,6 +356,7 @@ def finish_product_flow_h1(
                 h1_meta,
                 video_path=h1_workspace / "video.mp4",
             )
+            gallery = _rebuild_h1_approved_appearance_gallery(h1_workspace)
             reduction, reduction_summary, reduction_digest = (
                 _validate_current_reduction_report(
                     h1_workspace,
@@ -378,10 +387,7 @@ def finish_product_flow_h1(
                         reduction_summary
                     ),
                     "appearance_gallery": (
-                        rebuilt.get(
-                            "approved_appearance_gallery_summary"
-                        )
-                        or {}
+                        gallery.get("summary") or {}
                     ),
                     "appearance_reid": (
                         rebuilt.get("approved_appearance_reid_summary")
@@ -640,15 +646,47 @@ def _build_h2_cross_analysis_advisory(
             "reason": "appearance_embedder_load_failed",
             "error": str(exc),
         }
-    documents = build_identity_approved_appearance_reid(
+    selected_subject_ids = _h2_reanchor_candidate_subject_ids(
+        h2_workspace,
+        candidate,
+    )
+    selected_crops = {
+        **crops,
+        "cards": [
+            card
+            for card in crops.get("cards") or []
+            if str(card.get("candidate_subject_id") or "")
+            in selected_subject_ids
+        ],
+    }
+    reference_cache = target_cache = None
+    if embedder is not None:
+        cache_kwargs = {
+            "model_name": str(embedder.model_name),
+            "model_version": str(embedder.model_version),
+            "embedding_dimension": int(embedder.embedding_dimension),
+        }
+        reference_cache = JsonEmbeddingCache.load(
+            h1_workspace / "cross_analysis_appearance_embeddings_cache.json",
+            **cache_kwargs,
+        )
+        target_cache = JsonEmbeddingCache.load(
+            h2_workspace / "cross_analysis_appearance_embeddings_cache.json",
+            **cache_kwargs,
+        )
+    documents = build_cross_analysis_appearance_reid(
         gallery,
-        crops,
-        match_path=h2_workspace,
+        selected_crops,
+        empty_assignments,
+        reference_match_path=h1_workspace,
+        target_match_path=h2_workspace,
         embedder=embedder,
         model_status=model_status,
+        reference_embedding_cache=reference_cache,
+        target_embedding_cache=target_cache,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
-    artifact = documents["identity_approved_appearance_reid_shadow"]
+    artifact = documents["identity_cross_analysis_appearance_reid"]
     rankings = artifact.get("unresolved_rankings") or []
     subject_tracklets = {
         str(row.get("candidate_subject_id") or ""): sorted(
@@ -688,6 +726,7 @@ def _build_h2_cross_analysis_advisory(
         "mode": "cross_analysis_h1_to_h2_advisory_only",
         "summary": {
             **(artifact.get("summary") or {}),
+            "selected_h2_candidate_subjects": len(selected_subject_ids),
             "ranked_subjects": len(suggestions),
             "suggestions_shown": sum(
                 len(row["suggestions"]) for row in suggestions
@@ -702,6 +741,329 @@ def _build_h2_cross_analysis_advisory(
         artifact,
     )
     return artifact
+
+
+def _rebuild_h1_approved_appearance_gallery(
+    workspace: Path,
+) -> dict[str, Any]:
+    """Recreate H1 reference crops from frozen observation quality fields.
+
+    The legacy H1 adapter originally discarded confidence, pitch and visual
+    trust data.  The crop selector correctly rejected the resulting empty
+    placeholders, which in turn left the H1 appearance gallery empty.  This
+    adapter preserves the frozen evidence and builds references only from
+    operator-confirmed anchors.
+    """
+
+    seeded_path = workspace / "identity_seeded_candidate_assignments.json"
+    if not seeded_path.exists():
+        return {
+            "summary": {
+                "available": False,
+                "reason": "seeded_assignments_not_persisted",
+            }
+        }
+    candidate, timeline = _build_h1_shadow_artifacts(workspace)
+    seeded = _load(seeded_path)
+    roster_assignments = seeded_assignments_as_roster_assignments(
+        candidate,
+        seeded,
+    )
+    roster_documents = build_identity_roster_anchor_shadow(
+        candidate,
+        roster_assignments,
+        _load(workspace / "match.json"),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    roster = roster_documents["identity_roster_anchor_shadow"]
+    confirmed_cards = [
+        card
+        for card in roster.get("cards") or []
+        if card.get("status") == "confirmed_manual_anchor"
+    ]
+    crop_documents = build_identity_roster_anchor_crops_shadow(
+        {**roster, "cards": confirmed_cards},
+        timeline,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    crops = crop_documents["identity_roster_anchor_crops_shadow"]
+    for name, document in {
+        **roster_documents,
+        **crop_documents,
+    }.items():
+        write_json_atomic(workspace / f"{name}.json", document)
+    render_identity_roster_anchor_crops(
+        workspace / "video.mp4",
+        workspace,
+        crops,
+    )
+    gallery_documents = build_identity_approved_appearance_gallery(
+        seeded,
+        crops,
+        match_phase_config_doc=_load_optional(
+            workspace / "match_phase_config.json"
+        ),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    for name, document in gallery_documents.items():
+        write_json_atomic(workspace / f"{name}.json", document)
+    return gallery_documents["identity_approved_appearance_gallery"]
+
+
+def run_product_flow_cross_capture_reid_diagnostic(
+    *,
+    root: Path,
+) -> dict[str, Any]:
+    """Create post-benchmark ReID evidence without reopening an audit.
+
+    The diagnostic uses frozen H1/H2 detections and already saved operator
+    seeds.  It deliberately writes into a new diagnostic directory so the
+    completed benchmark receipt remains historical evidence.
+    """
+
+    session = load_product_flow_session(root)
+    if session["state"] != "REPORT_READY":
+        raise ProductFlowBenchmarkError(
+            "Cross-capture ReID diagnostic requires REPORT_READY"
+        )
+    h1_workspace = root / "h1_workspace"
+    h2_workspace = root / "h2_workspace"
+    diagnostic_root = root / "cross_capture_reid_diagnostic"
+    h1_output = diagnostic_root / "h1"
+    h2_output = diagnostic_root / "h2"
+    h1_output.mkdir(parents=True, exist_ok=True)
+    h2_output.mkdir(parents=True, exist_ok=True)
+
+    h1_candidate, h1_timeline = _build_h1_shadow_artifacts(
+        h1_workspace,
+        output_root=h1_output,
+    )
+    h1_seeded = _load(
+        h1_workspace / "identity_seeded_candidate_assignments.json"
+    )
+    h1_match = _load(h1_workspace / "match.json")
+    h1_assignments = seeded_assignments_as_roster_assignments(
+        h1_candidate,
+        h1_seeded,
+    )
+    h1_roster_documents = build_identity_roster_anchor_shadow(
+        h1_candidate,
+        h1_assignments,
+        h1_match,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    h1_roster = h1_roster_documents["identity_roster_anchor_shadow"]
+    confirmed_cards = [
+        card
+        for card in h1_roster.get("cards") or []
+        if card.get("status") == "confirmed_manual_anchor"
+    ]
+    h1_crop_documents = build_identity_roster_anchor_crops_shadow(
+        {**h1_roster, "cards": confirmed_cards},
+        h1_timeline,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    h1_crops = h1_crop_documents["identity_roster_anchor_crops_shadow"]
+    for name, document in {
+        **h1_roster_documents,
+        **h1_crop_documents,
+    }.items():
+        write_json_atomic(h1_output / f"{name}.json", document)
+    rendered_h1 = render_identity_roster_anchor_crops(
+        h1_workspace / "video.mp4",
+        h1_output,
+        h1_crops,
+    )
+    h1_gallery_documents = build_identity_approved_appearance_gallery(
+        h1_seeded,
+        h1_crops,
+        match_phase_config_doc=_load_optional(
+            h1_workspace / "match_phase_config.json"
+        ),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    for name, document in h1_gallery_documents.items():
+        write_json_atomic(h1_output / f"{name}.json", document)
+
+    # The frozen H1 timeline is intentionally comprehensive (and large).  It
+    # is no longer needed after crop selection, so release it before parsing
+    # the separate H2 candidate/crop artifacts.
+    del h1_timeline
+    del h1_candidate
+    gc.collect()
+
+    h2_candidate = _load(h2_workspace / "identity_candidate_shadow.json")
+    h2_crops = _load(
+        h2_workspace / "identity_roster_anchor_crops_shadow.json"
+    )
+    selected_subject_ids = _h2_reanchor_candidate_subject_ids(
+        h2_workspace,
+        h2_candidate,
+    )
+    selected_h2_crops = {
+        **h2_crops,
+        "cards": [
+            card
+            for card in h2_crops.get("cards") or []
+            if str(card.get("candidate_subject_id") or "")
+            in selected_subject_ids
+        ],
+    }
+    h2_seeded = _load(
+        h2_workspace / "identity_seeded_candidate_assignments.json"
+    )
+    try:
+        embedder, model_status = load_approved_appearance_embedder(
+            Path(__file__).resolve().parents[2] / "models"
+        )
+    except Exception as exc:
+        embedder = None
+        model_status = {
+            "available": False,
+            "reason": "appearance_embedder_load_failed",
+            "error": str(exc),
+        }
+    reference_cache = target_cache = None
+    if embedder is not None:
+        cache_kwargs = {
+            "model_name": str(embedder.model_name),
+            "model_version": str(embedder.model_version),
+            "embedding_dimension": int(embedder.embedding_dimension),
+        }
+        reference_cache = JsonEmbeddingCache.load(
+            h1_output / "appearance_embeddings_cache.json",
+            **cache_kwargs,
+        )
+        target_cache = JsonEmbeddingCache.load(
+            h2_output / "appearance_embeddings_cache.json",
+            **cache_kwargs,
+        )
+    reid_documents = build_cross_analysis_appearance_reid(
+        h1_gallery_documents["identity_approved_appearance_gallery"],
+        selected_h2_crops,
+        h2_seeded,
+        reference_match_path=h1_output,
+        target_match_path=h2_workspace,
+        embedder=embedder,
+        model_status=model_status,
+        reference_embedding_cache=reference_cache,
+        target_embedding_cache=target_cache,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    reid_artifact = reid_documents[
+        "identity_cross_analysis_appearance_reid"
+    ]
+    subject_tracklets = {
+        str(row.get("candidate_subject_id") or ""): sorted(
+            str(value) for value in row.get("tracklet_ids") or []
+        )
+        for row in h2_candidate.get("subjects") or []
+    }
+    suggestions = [
+        {
+            "candidate_subject_id": row.get("candidate_subject_id"),
+            "team_label": row.get("team_label"),
+            "tracklet_ids": subject_tracklets.get(
+                str(row.get("candidate_subject_id") or ""),
+                [],
+            ),
+            "suggestions": [
+                {
+                    **suggestion,
+                    "suggestion_source": (
+                        "cross_analysis_reid_top3_advisory"
+                    ),
+                    "advisory_only": True,
+                    "candidate_subject_id": row.get(
+                        "candidate_subject_id"
+                    ),
+                    "observation_key": None,
+                }
+                for suggestion in list(row.get("suggestions") or [])[:3]
+            ],
+            "advisory_only": True,
+        }
+        for row in reid_artifact.get("unresolved_rankings") or []
+        if row.get("status") == "ranked"
+    ]
+    advisory = {
+        **reid_artifact,
+        "suggestions": suggestions,
+        "summary": {
+            **(reid_artifact.get("summary") or {}),
+            "selected_h2_candidate_subjects": len(selected_subject_ids),
+            "ranked_subjects": len(suggestions),
+            "suggestions_shown": sum(
+                len(row["suggestions"]) for row in suggestions
+            ),
+        },
+    }
+    for name, document in reid_documents.items():
+        write_json_atomic(h2_output / f"{name}.json", document)
+    write_json_atomic(
+        diagnostic_root / "identity_cross_analysis_reid_advisory.json",
+        advisory,
+    )
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "product_flow_cross_capture_reid_diagnostic",
+        "status": "ready",
+        "source_benchmark_id": session["benchmark_id"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "h1": {
+            "confirmed_cards": len(confirmed_cards),
+            "rendered_crops": len(rendered_h1),
+            "gallery": (
+                h1_gallery_documents[
+                    "identity_approved_appearance_gallery"
+                ].get("summary")
+                or {}
+            ),
+        },
+        "h2": {
+            "selected_candidate_subjects": len(selected_subject_ids),
+            "advisory": advisory.get("summary") or {},
+        },
+        "safety": {
+            "reran_yolo": False,
+            "reran_tracking": False,
+            "mutates_candidate_identity": False,
+            "mutates_production_identity": False,
+            "automatic_merges": 0,
+        },
+    }
+    write_json_atomic(diagnostic_root / "diagnostic_report.json", result)
+    return result
+
+
+def _h2_reanchor_candidate_subject_ids(
+    h2_workspace: Path,
+    candidate_document: dict[str, Any],
+) -> set[str]:
+    selection = _load_optional(
+        h2_workspace / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
+    )
+    if selection is None:
+        selection = _bounded_h1_selection(
+            _load(h2_workspace / "global_identity.json"),
+            _load(h2_workspace / "analysis_report.json"),
+            maximum=3,
+            capture_domain="second_half_fragment",
+            artifact_directory=REANCHOR_FRAME_DIRECTORY,
+        )
+    selected_tracklets = {
+        str(row.get("tracklet_id") or "")
+        for frame in selection.get("selected_frames") or []
+        for row in frame.get("visible_detections") or []
+        if row.get("tracklet_id")
+    }
+    return {
+        str(row.get("candidate_subject_id") or "")
+        for row in candidate_document.get("subjects") or []
+        if selected_tracklets.intersection(
+            {str(value) for value in row.get("tracklet_ids") or []}
+        )
+    }
 
 
 def _safely_resolved_players(
@@ -1119,7 +1481,11 @@ def _h1_lineage_metrics(root: Path) -> dict[str, Any]:
     }
 
 
-def _build_h1_shadow_artifacts(workspace: Path) -> None:
+def _build_h1_shadow_artifacts(
+    workspace: Path,
+    *,
+    output_root: Path | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     report = _load(workspace / "analysis_report.json")
     global_identity = _load(workspace / "global_identity.json")
     fps = max(1.0, float((report.get("video") or {}).get("fps") or 30.0))
@@ -1130,17 +1496,63 @@ def _build_h1_shadow_artifacts(workspace: Path) -> None:
         if not subject_id:
             continue
         positions = [
-            {"frame": int(row.get("frame") or 0), "time_sec": float(row.get("time_sec") or 0.0), "status": str(row.get("status") or "detected"), "tracklet_id": row.get("tracklet_id"), "bbox_xyxy": row.get("bbox_xyxy"), "visual_trusted": row.get("visual_trusted", True)}
-            for row in slot.get("overlay_positions") or [] if row.get("bbox_xyxy")
+            _frozen_h1_timeline_observation(row, slot=slot)
+            for row in slot.get("overlay_positions") or []
+            if row.get("bbox_xyxy")
         ]
         detected = [row for row in positions if row["status"] == "detected"]
         tracklet_ids = [str(value) for value in slot.get("tracklet_ids") or []]
         subjects.append({"candidate_subject_id": subject_id, "team_label": slot.get("team_label"), "role": "field_player", "tracklet_ids": tracklet_ids, "production_subject_ids": [subject_id], "start_frame": int(slot.get("slot_spawn_frame") or 0), "end_frame": max((row["frame"] for row in positions), default=0), "detected_frames": len(detected), "quality_flags": [], "requires_review": True})
         timeline_subjects.append({"shadow_subject_id": subject_id, "team_label": slot.get("team_label"), "tracklet_ids": tracklet_ids, "start_frame": int(slot.get("slot_spawn_frame") or 0), "end_frame": max((row["frame"] for row in positions), default=0), "observations": positions})
-    candidate = {"schema_version": "0.1.0", "mode": "frozen_h1_lineage_candidate_shadow", "algorithm": {"name": "frozen_h1_slot_adapter", "version": "0.1.0"}, "subjects": subjects, "summary": {"candidate_subjects": len(subjects)}, "safety": {"mutates_production_identity": False, "eligible_for_player_stats": False}}
+    candidate = {"schema_version": "0.1.0", "mode": "frozen_h1_lineage_candidate_shadow", "algorithm": {"name": "frozen_h1_slot_adapter", "version": "0.2.0"}, "subjects": subjects, "summary": {"candidate_subjects": len(subjects)}, "safety": {"mutates_production_identity": False, "eligible_for_player_stats": False}}
     timeline = {"schema_version": "0.1.0", "mode": "frozen_h1_lineage_candidate_shadow", "algorithm": candidate["algorithm"], "subjects": timeline_subjects, "summary": {"subjects": len(timeline_subjects), "fps": fps}}
-    _write(workspace / "identity_candidate_shadow.json", candidate)
-    _write(workspace / "identity_offline_shadow_timeline.json", timeline)
+    target = output_root or workspace
+    target.mkdir(parents=True, exist_ok=True)
+    _write(target / "identity_candidate_shadow.json", candidate)
+    _write(target / "identity_offline_shadow_timeline.json", timeline)
+    return candidate, timeline
+
+
+def _frozen_h1_timeline_observation(
+    row: dict[str, Any],
+    *,
+    slot: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve available frozen visual-quality evidence for crop selection."""
+
+    status = str(row.get("status") or "detected")
+    visual_trusted = row.get("visual_trusted") is not False
+    pitch = row.get("pitch_m") or []
+    has_pitch_position = (
+        isinstance(pitch, list)
+        and len(pitch) == 2
+        and all(isinstance(value, (int, float)) for value in pitch)
+    )
+    detected = status == "detected"
+    return {
+        "frame": int(row.get("frame") or 0),
+        "time_sec": float(row.get("time_sec") or 0.0),
+        "status": status,
+        "tracklet_id": row.get("tracklet_id"),
+        "bbox_xyxy": row.get("bbox_xyxy"),
+        "confidence": float(
+            row.get("confidence")
+            or slot.get("mean_detection_confidence")
+            or 0.0
+        ),
+        "team_confidence": float(slot.get("team_confidence") or 0.0),
+        "visual_trusted": visual_trusted,
+        "appearance_reliable": detected and visual_trusted,
+        "appearance_reliable_ratio": 1.0 if visual_trusted else 0.0,
+        "footpoint_reliable": detected and visual_trusted and has_pitch_position,
+        "play_area_status": (
+            "inside_play"
+            if detected and visual_trusted and has_pitch_position
+            else "unknown"
+        ),
+        "quality_class": "trusted" if visual_trusted else "untrusted",
+        "quality_provenance": "frozen_global_identity_adapter",
+    }
 
 
 def _prepare_h1_audit(workspace: Path, match_document: dict[str, Any]) -> dict[str, Any]:

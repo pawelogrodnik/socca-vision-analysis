@@ -23,6 +23,7 @@ from app.services.identity_initial_audit_store import (
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_product_flow_benchmark import (
     ProductFlowBenchmarkError,
+    _frozen_h1_timeline_observation,
     _source_inventory_mutations,
     build_product_flow_benchmark_report,
     finish_product_flow_h1,
@@ -71,6 +72,30 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_frozen_h1_adapter_preserves_crop_quality_evidence(self) -> None:
+        observation = _frozen_h1_timeline_observation(
+            {
+                "frame": 42,
+                "time_sec": 1.4,
+                "status": "detected",
+                "tracklet_id": "tracklet-42",
+                "bbox_xyxy": [10, 20, 40, 100],
+                "confidence": 0.91,
+                "visual_trusted": True,
+                "pitch_m": [20.0, 10.0],
+            },
+            slot={
+                "mean_detection_confidence": 0.8,
+                "team_confidence": 0.97,
+            },
+        )
+
+        self.assertEqual(observation["confidence"], 0.91)
+        self.assertTrue(observation["appearance_reliable"])
+        self.assertTrue(observation["footpoint_reliable"])
+        self.assertEqual(observation["play_area_status"], "inside_play")
+        self.assertEqual(observation["quality_class"], "trusted")
 
     # 1
     def test_creates_isolated_h1_workspace(self) -> None:
