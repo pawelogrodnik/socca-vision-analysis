@@ -11,6 +11,7 @@ import { IdentityAuditObservationPreview } from './IdentityAuditObservationPrevi
 import type {
   InitialIdentityAuditObservation,
   InitialIdentityAuditSeedStoreDocument,
+  InitialIdentityAuditSeedUpdate,
   InitialIdentityAuditTelemetryEvent,
   Match,
   SecondHalfIdentityReanchorDocument,
@@ -26,6 +27,7 @@ import {
   type InitialIdentityAuditAction,
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
+import { RequiredFinalSaveQueue } from '../utils/requiredFinalSaveQueue';
 
 interface SecondHalfIdentityReanchorPanelProps {
   match: Match;
@@ -34,6 +36,20 @@ interface SecondHalfIdentityReanchorPanelProps {
   benchmarkState?: string;
   onFinished?: () => Promise<void>;
 }
+
+type ReanchorSaveRequest = {
+  updates: InitialIdentityAuditSeedUpdate[];
+  telemetryEvents: InitialIdentityAuditTelemetryEvent[];
+};
+
+type ReanchorSuggestion = {
+  player_id: string;
+  player_name: string;
+  rank?: number;
+  advisory_only?: boolean;
+  suggestion_source?: string;
+  candidate_subject_id?: string | null;
+};
 
 function statusLabel(document: SecondHalfIdentityReanchorDocument): string {
   if (document.status === 'not_applicable') {
@@ -45,17 +61,34 @@ function statusLabel(document: SecondHalfIdentityReanchorDocument): string {
   return `Gotowy: ${document.frames.length} klatki, tylko szybkie potwierdzenia.`;
 }
 
-function suggestedAction(
+function actionForSuggestion(
+  suggestion: ReanchorSuggestion,
   observation: InitialIdentityAuditObservation,
   document: SecondHalfIdentityReanchorDocument,
 ): InitialIdentityAuditAction | null {
-  const suggestion = observation.suggested_player;
-  if (!suggestion) return null;
   for (const team of document.roster) {
     const player = team.players.find(
       (candidate) => candidate.player_id === suggestion.player_id,
     );
-    if (player) return initialIdentityAuditPlayerAction(player, team);
+    if (player) {
+      const action = initialIdentityAuditPlayerAction(player, team);
+      if (action.kind !== 'player') return null;
+      return {
+        ...action,
+        suggestionContext: {
+          suggestion_source: (
+            suggestion.suggestion_source ?? 'h1_safe_lineage'
+          ),
+          advisory_only: suggestion.advisory_only ?? false,
+          rank: suggestion.rank ?? null,
+          candidate_subject_id: (
+            suggestion.candidate_subject_id ?? null
+          ),
+          observation_key: observation.observation_key,
+          player_id: suggestion.player_id,
+        },
+      };
+    }
   }
   return null;
 }
@@ -75,9 +108,15 @@ export function SecondHalfIdentityReanchorPanel({
   const [showRoster, setShowRoster] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const [open, setOpen] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const sessionIdRef = useRef('');
+  const saveQueueRef = useRef(
+    new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>(),
+  );
+  const failedSaveRequestRef = useRef<ReanchorSaveRequest | null>(null);
+  const finishingRef = useRef(false);
 
   const frame = document?.frames[frameIndex] ?? null;
   const selectedObservation = useMemo(
@@ -87,7 +126,12 @@ export function SecondHalfIdentityReanchorPanel({
     [frame, selectedObservationKey],
   );
   const currentSuggestion = document && selectedObservation
-    ? suggestedAction(selectedObservation, document)
+    && selectedObservation.suggested_player
+    ? actionForSuggestion(
+        selectedObservation.suggested_player,
+        selectedObservation,
+        document,
+      )
     : null;
   const selectedDecision = selectedObservationKey
     ? decisions[selectedObservationKey]
@@ -110,6 +154,13 @@ export function SecondHalfIdentityReanchorPanel({
     setDecisions({});
     setOpen(false);
     setFailure(null);
+    setSaving(false);
+    setFinishing(false);
+    saveQueueRef.current = (
+      new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>()
+    );
+    failedSaveRequestRef.current = null;
+    finishingRef.current = false;
     void getSecondHalfIdentityReanchor(match.id)
       .then((nextDocument) => {
         if (active) setDocument(nextDocument);
@@ -152,6 +203,48 @@ export function SecondHalfIdentityReanchorPanel({
     setShowRoster(false);
   }
 
+  async function performSave(
+    request: ReanchorSaveRequest,
+  ): Promise<InitialIdentityAuditSeedStoreDocument> {
+    setSaving(true);
+    try {
+      const nextStore = await saveSecondHalfIdentityReanchorSeeds(
+        match.id,
+        request.updates,
+        request.telemetryEvents,
+      );
+      setSeedStore(nextStore);
+      setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+      if (
+        failedSaveRequestRef.current === null
+        || failedSaveRequestRef.current === request
+      ) {
+        failedSaveRequestRef.current = null;
+        setFailure(null);
+      }
+      return nextStore;
+    } catch (error) {
+      const message = errorMessage(error);
+      failedSaveRequestRef.current ??= request;
+      setFailure(message);
+      onStatus(message);
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function retryFailedSave() {
+    const request = failedSaveRequestRef.current;
+    if (!request || finishingRef.current) return;
+    try {
+      await saveQueueRef.current.enqueue(() => performSave(request));
+      onStatus('Zapis H2 zostal ponowiony poprawnie. Mozesz zakonczyc etap.');
+    } catch {
+      // performSave keeps the actionable error visible in the modal.
+    }
+  }
+
   async function openAudit() {
     if (!document || document.status !== 'ready') return;
     setLoading(true);
@@ -175,7 +268,7 @@ export function SecondHalfIdentityReanchorPanel({
   }
 
   async function applyAction(action: InitialIdentityAuditAction) {
-    if (!selectedObservation) return;
+    if (!selectedObservation || finishingRef.current) return;
     const existingDecision = decisions[selectedObservation.observation_key];
     const budgetReached = seedStore?.operator_budget?.reached
       ?? (
@@ -191,22 +284,16 @@ export function SecondHalfIdentityReanchorPanel({
       ...action,
       observationKey: selectedObservation.observation_key,
     };
-    setSaving(true);
-    setFailure(null);
+    const request: ReanchorSaveRequest = {
+      updates: [initialIdentityAuditSeedUpdate(decision)],
+      telemetryEvents: [
+        event('action', selectedObservation.observation_key),
+      ],
+    };
     try {
-      const nextStore = await saveSecondHalfIdentityReanchorSeeds(
-        match.id,
-        [initialIdentityAuditSeedUpdate(decision)],
-        [event('action', selectedObservation.observation_key)],
-      );
-      setSeedStore(nextStore);
-      setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
-    } catch (error) {
-      const message = errorMessage(error);
-      setFailure(message);
-      onStatus(message);
-    } finally {
-      setSaving(false);
+      await saveQueueRef.current.enqueue(() => performSave(request));
+    } catch {
+      // performSave keeps the modal open and the save error visible.
     }
   }
 
@@ -221,46 +308,63 @@ export function SecondHalfIdentityReanchorPanel({
   }
 
   async function finishAudit() {
-    setSaving(true);
-    setFailure(null);
+    if (finishingRef.current) return;
+    if (failedSaveRequestRef.current) {
+      const message = 'Nie mozna zakonczyc H2: poprzedni zapis nie powiodl sie. Ponow zapis i sprobuj ponownie.';
+      setFailure(message);
+      onStatus(message);
+      return;
+    }
+    finishingRef.current = true;
+    setFinishing(true);
+    const finalRequest: ReanchorSaveRequest = {
+      updates: [],
+      telemetryEvents: [event('session_finished')],
+    };
     try {
-      const nextStore = await saveSecondHalfIdentityReanchorSeeds(
-        match.id,
-        [],
-        [event('session_finished')],
+      await saveQueueRef.current.finalize(
+        async () => {
+          if (failedSaveRequestRef.current) {
+            throw new Error(
+              'Nie mozna zakonczyc H2: oczekujacy autosave nie powiodl sie.',
+            );
+          }
+          return performSave(finalRequest);
+        },
+        async (finalStore) => {
+          setSeedStore(finalStore);
+          setDecisions(initialIdentityAuditDecisionMap(finalStore.decisions));
+          if (onFinished) {
+            onStatus('H2 zakonczony. Tworze finalny raport benchmarku...');
+            await onFinished();
+          }
+        },
       );
-      setSeedStore(nextStore);
       setOpen(false);
-      if (onFinished) {
-        onStatus('H2 zakonczony. Tworze finalny raport benchmarku...');
-        await onFinished();
-      }
     } catch (error) {
       const message = errorMessage(error);
       setFailure(message);
       onStatus(message);
     } finally {
-      setSaving(false);
+      finishingRef.current = false;
+      setFinishing(false);
     }
   }
 
   async function clearSelectedDecision() {
-    if (!selectedObservationKey || !decisions[selectedObservationKey]) return;
-    setSaving(true);
+    if (
+      finishingRef.current
+      || !selectedObservationKey
+      || !decisions[selectedObservationKey]
+    ) return;
+    const request: ReanchorSaveRequest = {
+      updates: [initialIdentityAuditClearUpdate(selectedObservationKey)],
+      telemetryEvents: [event('action', selectedObservationKey)],
+    };
     try {
-      const nextStore = await saveSecondHalfIdentityReanchorSeeds(
-        match.id,
-        [initialIdentityAuditClearUpdate(selectedObservationKey)],
-        [event('action', selectedObservationKey)],
-      );
-      setSeedStore(nextStore);
-      setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
-    } catch (error) {
-      const message = errorMessage(error);
-      setFailure(message);
-      onStatus(message);
-    } finally {
-      setSaving(false);
+      await saveQueueRef.current.enqueue(() => performSave(request));
+    } catch {
+      // performSave keeps the modal open and the save error visible.
     }
   }
 
@@ -311,12 +415,29 @@ export function SecondHalfIdentityReanchorPanel({
                   {saving ? 'Zapisuje...' : 'Maksymalnie 3 klatki'}
                 </span>
               </div>
-              <button type='button' onClick={() => void finishAudit()} disabled={saving}>
-                Zakoncz
+              <button
+                type='button'
+                onClick={() => void finishAudit()}
+                disabled={saving || finishing || Boolean(failedSaveRequestRef.current)}
+              >
+                {finishing ? 'Koncze...' : 'Zakoncz'}
               </button>
             </header>
 
-            {failure && <p className='error'>{failure}</p>}
+            {failure && (
+              <div>
+                <p className='error'>{failure}</p>
+                {failedSaveRequestRef.current && (
+                  <button
+                    type='button'
+                    disabled={saving || finishing}
+                    onClick={() => void retryFailedSave()}
+                  >
+                    Ponow zapis
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className='initial-identity-audit-progress'>
               <progress value={frameIndex + 1} max={document.frames.length} />
@@ -395,32 +516,61 @@ export function SecondHalfIdentityReanchorPanel({
                   />
                 </div>
 
-                {currentSuggestion && (
-                  <button
-                    type='button'
-                    className='primary'
-                    disabled={saving || !canCreateConfirmation}
-                    onClick={() => void applyAction(currentSuggestion)}
-                  >
-                    Potwierdz: {initialIdentityAuditActionLabel(currentSuggestion)}
-                  </button>
+                {currentSuggestion?.kind === 'player' && (
+                  <div>
+                    <p className='muted'>
+                      {currentSuggestion.suggestionContext?.suggestion_source
+                        === 'h1_safe_lineage'
+                        ? 'Sugestia z bezpiecznej linii H1:'
+                        : 'Sugestia ReID advisory:'}
+                    </p>
+                    <button
+                      type='button'
+                      className='primary'
+                      disabled={saving || finishing || !canCreateConfirmation}
+                      onClick={() => void applyAction(currentSuggestion)}
+                    >
+                      Potwierdz: {initialIdentityAuditActionLabel(currentSuggestion)}
+                    </button>
+                  </div>
                 )}
 
                 {(selectedObservation?.reid_suggestions?.length ?? 0) > 0 && (
                   <div>
                     <p className='muted'>ReID top-3 (tylko sugestie):</p>
-                    {selectedObservation?.reid_suggestions?.map((suggestion) => (
-                      <p key={`${suggestion.player_id}-${suggestion.rank}`}>
-                        {suggestion.rank}. {suggestion.player_name}
-                      </p>
-                    ))}
+                    {selectedObservation?.reid_suggestions?.map((suggestion) => {
+                      const action = document
+                        ? actionForSuggestion(
+                            suggestion,
+                            selectedObservation,
+                            document,
+                          )
+                        : null;
+                      return (
+                        <button
+                          type='button'
+                          key={`${suggestion.player_id}-${suggestion.rank}`}
+                          disabled={
+                            !action
+                            || saving
+                            || finishing
+                            || !canCreateConfirmation
+                          }
+                          onClick={() => {
+                            if (action) void applyAction(action);
+                          }}
+                        >
+                          {suggestion.rank}. {suggestion.player_name}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 
                 {selectedObservationKey && decisions[selectedObservationKey] && (
                   <button
                     type='button'
-                    disabled={saving}
+                    disabled={saving || finishing}
                     onClick={() => void clearSelectedDecision()}
                   >
                     Usun potwierdzenie
@@ -429,7 +579,7 @@ export function SecondHalfIdentityReanchorPanel({
 
                 <button
                   type='button'
-                  disabled={!selectedObservation || saving}
+                  disabled={!selectedObservation || saving || finishing}
                   onClick={() => setShowRoster((current) => !current)}
                 >
                   {showRoster ? 'Ukryj sklad' : 'Inny zawodnik'}
@@ -447,7 +597,7 @@ export function SecondHalfIdentityReanchorPanel({
                               <button
                                 type='button'
                                 key={player.player_id}
-                                disabled={saving || !canCreateConfirmation}
+                                disabled={saving || finishing || !canCreateConfirmation}
                                 onClick={() => void applyAction(action)}
                               >
                                 {initialIdentityAuditActionLabel(action)}
@@ -463,21 +613,21 @@ export function SecondHalfIdentityReanchorPanel({
                 <div className='initial-identity-audit-generic-actions'>
                   <button
                     type='button'
-                    disabled={!selectedObservation || saving || !canCreateConfirmation}
+                    disabled={!selectedObservation || saving || finishing || !canCreateConfirmation}
                     onClick={() => void applyAction({ kind: 'false_detection' })}
                   >
                     Cien / falszywa detekcja
                   </button>
                   <button
                     type='button'
-                    disabled={!selectedObservation || saving || !canCreateConfirmation}
+                    disabled={!selectedObservation || saving || finishing || !canCreateConfirmation}
                     onClick={() => void applyAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B
                   </button>
                   <button
                     type='button'
-                    disabled={!selectedObservation || saving}
+                    disabled={!selectedObservation || saving || finishing}
                     onClick={() => void applyAction({ kind: 'skip' })}
                   >
                     Pomin / nie wiem

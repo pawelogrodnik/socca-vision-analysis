@@ -20,6 +20,7 @@ from app.services.identity_initial_audit_store import (
     OperatorDecisionBudgetExceededError,
     save_initial_identity_audit_seeds,
 )
+from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_product_flow_benchmark import (
     ProductFlowBenchmarkError,
     _source_inventory_mutations,
@@ -38,6 +39,7 @@ from app.services.identity_product_flow_state import (
 from app.services.identity_second_half_reanchor import (
     REANCHOR_DIRECTORY,
     SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME,
+    build_second_half_identity_reanchor_document,
 )
 from app.services.identity_second_half_reanchor_store import (
     save_second_half_identity_reanchor_seeds,
@@ -160,7 +162,7 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 ProductFlowBenchmarkError,
-                "reduction report",
+                "H1_REDUCTION_REPORT_MISSING",
             ):
                 finish_product_flow_h1(
                     root=self._benchmark_root(),
@@ -389,6 +391,130 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
         second.pop("generated_at")
         self.assertEqual(first, second)
 
+    def test_h2_current_reduction_report_allows_report_ready(self) -> None:
+        report = self._finish_full_flow()
+        self.assertEqual(report["status"], "REPORT_READY")
+        receipt = _load(
+            self._benchmark_root()
+            / "h2_workspace"
+            / "benchmark_h2_rebuild_result.json"
+        )
+        self.assertTrue(receipt["reduction_report_digest"])
+
+    def test_h2_missing_reduction_fails_without_success_report(self) -> None:
+        self._finish_h1()
+        before = load_product_flow_session(self._benchmark_root())
+        with patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_candidate_assignments",
+            return_value=_h2_seeded_result(),
+        ), patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_subject_review",
+            return_value={"status": "fresh"},
+        ):
+            with self.assertRaisesRegex(
+                ProductFlowBenchmarkError,
+                "H2_REDUCTION_REPORT_MISSING",
+            ):
+                finish_product_flow_h2(root=self._benchmark_root())
+        failed = load_product_flow_session(self._benchmark_root())
+        self.assertEqual(failed["state"], "FAILED")
+        self.assertIn(
+            "H2_REDUCTION_REPORT_MISSING",
+            failed["audit_log"][-1]["details"]["reason"],
+        )
+        self.assertFalse(
+            (self._benchmark_root() / "benchmark_report.json").exists()
+        )
+        self.assertEqual(_source_inventory_mutations(before), [])
+
+    def test_h2_stale_reduction_report_is_rejected(self) -> None:
+        self._finish_h1()
+
+        def stale_review(path, _match, **_kwargs):
+            stale_seeded = {**_h2_seeded_result(), "summary": {"stale": 1}}
+            _write(
+                path / "identity_seeded_review_reduction_report.json",
+                _reduction_report(stale_seeded, before=3, after=3),
+            )
+            return {"status": "fresh"}
+
+        with patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_candidate_assignments",
+            return_value=_h2_seeded_result(),
+        ), patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_subject_review",
+            side_effect=stale_review,
+        ):
+            with self.assertRaisesRegex(
+                ProductFlowBenchmarkError,
+                "H2_REDUCTION_REPORT_INVALID",
+            ):
+                finish_product_flow_h2(root=self._benchmark_root())
+        self.assertEqual(
+            load_product_flow_session(self._benchmark_root())["state"],
+            "FAILED",
+        )
+
+    def test_generated_reid_not_displayed_is_not_counted_displayed(self) -> None:
+        report = self._finish_full_flow()
+        self.assertEqual(report["reid"]["reid_subjects_available"], 2)
+        self.assertEqual(report["reid"]["reid_suggestions_generated"], 6)
+        self.assertEqual(report["reid"]["reid_suggestions_displayed"], 3)
+        self.assertEqual(report["reid"]["reid_observations_displayed"], 1)
+
+    def test_h1_safe_lineage_decision_is_not_reid_outcome(self) -> None:
+        report = self._finish_flow_with_reid_decision(
+            source="h1_safe_lineage",
+            player_id="player-a",
+        )
+        self.assertEqual(report["reid"]["reid_suggestions_accepted"], 0)
+        self.assertEqual(report["reid"]["reid_suggestions_rejected"], 0)
+
+    def test_displayed_reid_top1_is_accepted_with_rank(self) -> None:
+        report = self._finish_flow_with_reid_decision(
+            source="cross_analysis_reid_top3_advisory",
+            player_id="player-1",
+            rank=1,
+        )
+        self.assertEqual(report["reid"]["reid_suggestions_accepted"], 1)
+        self.assertEqual(report["reid"]["accepted_ranks"], [1])
+
+    def test_displayed_reid_rank2_is_accepted_with_rank(self) -> None:
+        report = self._finish_flow_with_reid_decision(
+            source="cross_analysis_reid_top3_advisory",
+            player_id="player-2",
+            rank=2,
+        )
+        self.assertEqual(report["reid"]["reid_suggestions_accepted"], 1)
+        self.assertEqual(report["reid"]["accepted_ranks"], [2])
+
+    def test_different_player_is_reid_rejection(self) -> None:
+        report = self._finish_flow_with_reid_decision(
+            source=None,
+            player_id="player-other",
+        )
+        self.assertEqual(report["reid"]["reid_suggestions_rejected"], 1)
+
+    def test_reid_observation_skip_is_counted(self) -> None:
+        report = self._finish_flow_with_reid_decision(
+            source=None,
+            action="skip",
+        )
+        self.assertEqual(report["reid"]["reid_suggestions_skipped"], 1)
+
+    def test_retried_reid_decision_is_counted_once(self) -> None:
+        report = self._finish_flow_with_reid_decision(
+            source="cross_analysis_reid_top3_advisory",
+            player_id="player-1",
+            rank=1,
+            retry=True,
+        )
+        self.assertEqual(report["reid"]["reid_suggestions_accepted"], 1)
+
     def _prepare(self) -> dict:
         return prepare_product_flow_benchmark(
             matches_root=self.matches,
@@ -417,17 +543,12 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
 
     def _finish_h1(self):
         self._prepare()
-        reduction = {
-            "summary": {
-                "review_cards_before_seeding": 4,
-                "review_cards_after_seeding": 3,
-            }
-        }
+        seeded_result = _seeded_result()
 
         def review_side_effect(path, _match, **_kwargs):
             _write(
                 path / "identity_seeded_review_reduction_report.json",
-                reduction,
+                _reduction_report(seeded_result, before=4, after=3),
             )
             return {
                 "status": "fresh",
@@ -439,9 +560,20 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
 
         def h2_prepare_side_effect(path, _match, **_kwargs):
             selection = _selection(1)
+            selection["second_half"] = {
+                "start_time_sec": 0.0,
+                "start_frame": 0,
+                "safely_resolved_players_before_reanchor": (
+                    _kwargs.get("safely_resolved_players") or []
+                ),
+            }
             selection["reid_advisory_suggestions"] = _advisory()[
                 "suggestions"
             ]
+            _write(
+                path / "identity_cross_analysis_reid_advisory.json",
+                _advisory(),
+            )
             target = path / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
             target.parent.mkdir(parents=True, exist_ok=True)
             _write(target, selection)
@@ -450,7 +582,7 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
         candidate = patch(
             "app.services.identity_product_flow_benchmark."
             "rebuild_identity_seeded_candidate_assignments",
-            return_value=_seeded_result(),
+            return_value=seeded_result,
         )
         review = patch(
             "app.services.identity_product_flow_benchmark."
@@ -489,33 +621,105 @@ class IdentityProductFlowBenchmarkTests(unittest.TestCase):
 
     def _finish_full_flow(self) -> dict:
         self._finish_h1()
+        seeded_result = _h2_seeded_result()
 
         def review_side_effect(path, _match, **_kwargs):
             _write(
                 path / "identity_seeded_review_reduction_report.json",
-                {
-                    "summary": {
-                        "review_cards_before_seeding": 3,
-                        "review_cards_after_seeding": 3,
-                    }
-                },
+                _reduction_report(seeded_result, before=3, after=3),
             )
             return {"status": "fresh"}
 
         with patch(
             "app.services.identity_product_flow_benchmark."
             "rebuild_identity_seeded_candidate_assignments",
-            return_value={
-                **_seeded_result(),
-                "accepted_assignments": [],
-                "summary": {
-                    "operator_decisions": 0,
-                    "candidate_subjects": 3,
-                    "subjects_resolved_after_seeding": 0,
-                    "unresolved_subjects": 3,
-                    "conflicts_created": 0,
-                },
-            },
+            return_value=seeded_result,
+        ), patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_subject_review",
+            side_effect=review_side_effect,
+        ):
+            return finish_product_flow_h2(root=self._benchmark_root())
+
+    def _finish_flow_with_reid_decision(
+        self,
+        *,
+        source: str | None,
+        player_id: str | None = None,
+        rank: int | None = None,
+        action: str = "assign_roster_player",
+        retry: bool = False,
+    ) -> dict:
+        self._finish_h1()
+        workspace = self._benchmark_root() / "h2_workspace"
+        match = _load(workspace / "match.json")
+        selection = _load(
+            workspace / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
+        )
+        selection["second_half"][
+            "safely_resolved_players_before_reanchor"
+        ] = [
+            {
+                "player_id": "player-a",
+                "player_name": "Player A",
+                "team_label": "A",
+                "candidate_subject_id": "h1-safe-subject",
+                "tracklet_ids": ["tracklet-0"],
+            }
+        ]
+        _write(
+            workspace / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME,
+            selection,
+        )
+        document = build_second_half_identity_reanchor_document(
+            selection,
+            match,
+        )
+        observation = document["frames"][0]["observations"][0]
+        update = {
+            "update_id": "reid-decision",
+            "observation_key": observation["observation_key"],
+            "action": action,
+        }
+        if player_id is not None:
+            update["player_id"] = player_id
+        if source is not None:
+            update["suggestion_context"] = {
+                "suggestion_source": source,
+                "advisory_only": (
+                    source == "cross_analysis_reid_top3_advisory"
+                ),
+                "rank": rank,
+                "candidate_subject_id": (
+                    "h2-subject"
+                    if source == "cross_analysis_reid_top3_advisory"
+                    else "h1-safe-subject"
+                ),
+                "observation_key": observation["observation_key"],
+                "player_id": player_id,
+            }
+        updates = [update, dict(update)] if retry else [update]
+        save_second_half_identity_reanchor_seeds(
+            workspace,
+            match,
+            updates,
+        )
+        return self._finish_h2_with_current_reduction()
+
+    def _finish_h2_with_current_reduction(self) -> dict:
+        seeded_result = _h2_seeded_result()
+
+        def review_side_effect(path, _match, **_kwargs):
+            _write(
+                path / "identity_seeded_review_reduction_report.json",
+                _reduction_report(seeded_result, before=3, after=3),
+            )
+            return {"status": "fresh"}
+
+        with patch(
+            "app.services.identity_product_flow_benchmark."
+            "rebuild_identity_seeded_candidate_assignments",
+            return_value=seeded_result,
         ), patch(
             "app.services.identity_product_flow_benchmark."
             "rebuild_identity_seeded_subject_review",
@@ -652,7 +856,22 @@ def _match_document(
                         "name": "Player A",
                         "number": "1",
                         "role": "player",
-                    }
+                    },
+                    *[
+                        {
+                            "id": f"player-{index}",
+                            "name": f"Player {index}",
+                            "number": str(index + 1),
+                            "role": "player",
+                        }
+                        for index in range(1, 4)
+                    ],
+                    {
+                        "id": "player-other",
+                        "name": "Other Player",
+                        "number": "9",
+                        "role": "player",
+                    },
                 ],
             },
             {"id": "team-b", "name": "Verisk", "players": []},
@@ -736,21 +955,89 @@ def _seeded_result() -> dict:
     }
 
 
+def _h2_seeded_result() -> dict:
+    return {
+        **_seeded_result(),
+        "accepted_assignments": [],
+        "summary": {
+            "operator_decisions": 0,
+            "candidate_subjects": 3,
+            "subjects_resolved_after_seeding": 0,
+            "unresolved_subjects": 3,
+            "conflicts_created": 0,
+        },
+    }
+
+
+def _reduction_report(
+    seeded: dict,
+    *,
+    before: int,
+    after: int,
+) -> dict:
+    return {
+        "schema_version": "0.1.0",
+        "mode": "seed_aware_review_reduction_shadow",
+        "status": "fresh",
+        "source": {
+            "seeded_assignments_digest": canonical_digest(seeded),
+        },
+        "metrics": {
+            "review_cards_before_seeding": before,
+            "review_cards_after_seeding": after,
+        },
+        "safety": {
+            "mutates_production_identity": False,
+            "writes_shadow_review_state_only": True,
+        },
+    }
+
+
 def _advisory() -> dict:
     return {
-        "summary": {"ranked_subjects": 1, "suggestions_shown": 3},
+        "summary": {"ranked_subjects": 2, "suggestions_shown": 6},
         "safety": {"automatic_merges": 0, "advisory_only": True},
         "suggestions": [
             {
                 "candidate_subject_id": "h2-subject",
                 "team_label": "A",
-                "tracklet_ids": ["h2-tracklet"],
+                "tracklet_ids": ["tracklet-0"],
                 "advisory_only": True,
                 "suggestions": [
-                    {"player_id": f"player-{index}", "rank": index}
+                    {
+                        "player_id": f"player-{index}",
+                        "player_name": f"Player {index}",
+                        "rank": index,
+                        "suggestion_source": (
+                            "cross_analysis_reid_top3_advisory"
+                        ),
+                        "advisory_only": True,
+                        "candidate_subject_id": "h2-subject",
+                        "observation_key": None,
+                    }
                     for index in range(1, 4)
                 ],
-            }
+            },
+            {
+                "candidate_subject_id": "not-displayed-subject",
+                "team_label": "A",
+                "tracklet_ids": ["not-visible-tracklet"],
+                "advisory_only": True,
+                "suggestions": [
+                    {
+                        "player_id": f"player-{index}",
+                        "player_name": f"Player {index}",
+                        "rank": index,
+                        "suggestion_source": (
+                            "cross_analysis_reid_top3_advisory"
+                        ),
+                        "advisory_only": True,
+                        "candidate_subject_id": "not-displayed-subject",
+                        "observation_key": None,
+                    }
+                    for index in range(1, 4)
+                ],
+            },
         ],
     }
 

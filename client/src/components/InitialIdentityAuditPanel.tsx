@@ -27,6 +27,7 @@ import {
   type InitialIdentityAuditAction,
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
+import { RequiredFinalSaveQueue } from '../utils/requiredFinalSaveQueue';
 
 interface InitialIdentityAuditPanelProps {
   match: Match;
@@ -35,6 +36,11 @@ interface InitialIdentityAuditPanelProps {
   benchmarkState?: string;
   onFinished?: () => Promise<void>;
 }
+
+type AuditSaveRequest = {
+  updates: InitialIdentityAuditSeedUpdate[];
+  telemetryEvents: InitialIdentityAuditTelemetryEvent[];
+};
 
 export function InitialIdentityAuditPanel({
   match,
@@ -52,8 +58,13 @@ export function InitialIdentityAuditPanel({
   const [decisions, setDecisions] = useState<Record<string, InitialIdentityAuditDecision>>({});
   const [seedStore, setSeedStore] = useState<InitialIdentityAuditSeedStoreDocument | null>(null);
   const [saving, setSaving] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const saveQueueRef = useRef(
+    new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>(),
+  );
+  const failedSaveRequestRef = useRef<AuditSaveRequest | null>(null);
+  const finishingRef = useRef(false);
   const pendingSavesRef = useRef(0);
   const sessionIdRef = useRef('');
   const lastActivityAtRef = useRef(0);
@@ -77,8 +88,13 @@ export function InitialIdentityAuditPanel({
     setDecisions({});
     setSeedStore(null);
     setSaving(false);
+    setFinishing(false);
     setSaveError(null);
-    saveQueueRef.current = Promise.resolve();
+    saveQueueRef.current = (
+      new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>()
+    );
+    failedSaveRequestRef.current = null;
+    finishingRef.current = false;
     pendingSavesRef.current = 0;
     sessionIdRef.current = '';
     lastActivityAtRef.current = 0;
@@ -106,31 +122,34 @@ export function InitialIdentityAuditPanel({
     };
   }
 
-  function enqueueSave(
-    updates: InitialIdentityAuditSeedUpdate[],
-    telemetryEvents: InitialIdentityAuditTelemetryEvent[],
-  ): Promise<void> {
+  async function performSave(
+    request: AuditSaveRequest,
+  ): Promise<InitialIdentityAuditSeedStoreDocument> {
     const requestedMatchId = match.id;
     pendingSavesRef.current += 1;
     setSaving(true);
-    setSaveError(null);
-
-    const operation = saveQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        const nextStore = await saveInitialIdentityAuditSeeds(
-          requestedMatchId,
-          updates,
-          telemetryEvents,
-        );
-        if (activeMatchIdRef.current === requestedMatchId) {
-          setSeedStore(nextStore);
-          setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+    try {
+      const nextStore = await saveInitialIdentityAuditSeeds(
+        requestedMatchId,
+        request.updates,
+        request.telemetryEvents,
+      );
+      if (activeMatchIdRef.current === requestedMatchId) {
+        setSeedStore(nextStore);
+        setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+        if (
+          failedSaveRequestRef.current === null
+          || failedSaveRequestRef.current === request
+        ) {
+          failedSaveRequestRef.current = null;
+          setSaveError(null);
         }
-      })
-      .catch(async (error: unknown) => {
-        if (activeMatchIdRef.current !== requestedMatchId) return;
+      }
+      return nextStore;
+    } catch (error) {
+      if (activeMatchIdRef.current === requestedMatchId) {
         const message = errorMessage(error);
+        failedSaveRequestRef.current ??= request;
         setSaveError(message);
         onStatus(message);
         try {
@@ -142,18 +161,38 @@ export function InitialIdentityAuditPanel({
         } catch {
           // Keep the original save error visible. A later reopen retries loading.
         }
-      })
-      .finally(() => {
-        pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
-        if (
-          activeMatchIdRef.current === requestedMatchId
-          && pendingSavesRef.current === 0
-        ) {
-          setSaving(false);
-        }
-      });
-    saveQueueRef.current = operation;
-    return operation;
+      }
+      throw error;
+    } finally {
+      pendingSavesRef.current = Math.max(0, pendingSavesRef.current - 1);
+      if (
+        activeMatchIdRef.current === requestedMatchId
+        && pendingSavesRef.current === 0
+      ) {
+        setSaving(false);
+      }
+    }
+  }
+
+  function enqueueBackgroundSave(
+    updates: InitialIdentityAuditSeedUpdate[],
+    telemetryEvents: InitialIdentityAuditTelemetryEvent[],
+  ): void {
+    const request = { updates, telemetryEvents };
+    void saveQueueRef.current
+      .enqueue(() => performSave(request))
+      .catch(() => undefined);
+  }
+
+  async function retryFailedSave() {
+    const request = failedSaveRequestRef.current;
+    if (!request || finishingRef.current) return;
+    try {
+      await saveQueueRef.current.enqueue(() => performSave(request));
+      onStatus('Zapis zostal ponowiony poprawnie. Mozesz zakonczyc audyt.');
+    } catch {
+      // performSave keeps the actionable error visible in the modal.
+    }
   }
 
   async function openAudit() {
@@ -181,7 +220,7 @@ export function InitialIdentityAuditPanel({
         + `${nextStore.decisions.length} zapisanych decyzji.`,
       );
       const firstFrame = nextDocument.frames[0];
-      void enqueueSave([], [
+      enqueueBackgroundSave([], [
         telemetryEvent('session_started'),
         ...(firstFrame
           ? [telemetryEvent('frame_shown', {
@@ -200,6 +239,7 @@ export function InitialIdentityAuditPanel({
     observation: InitialIdentityAuditObservation,
     action: InitialIdentityAuditAction,
   ) {
+    if (finishingRef.current) return;
     const existingDecision = decisions[observation.observation_key];
     const budgetReached = seedStore?.operator_budget?.reached
       ?? (
@@ -220,7 +260,7 @@ export function InitialIdentityAuditPanel({
       [observation.observation_key]: decision,
     }));
     setSelectedObservationKey(observation.observation_key);
-    void enqueueSave(
+    enqueueBackgroundSave(
       [initialIdentityAuditSeedUpdate(decision)],
       [telemetryEvent('action', {
         audit_frame_key: frame?.audit_frame_key,
@@ -239,8 +279,9 @@ export function InitialIdentityAuditPanel({
   }
 
   function chooseObservation(observation: InitialIdentityAuditObservation) {
+    if (finishingRef.current) return;
     setSelectedObservationKey(observation.observation_key);
-    void enqueueSave([], [
+    enqueueBackgroundSave([], [
       telemetryEvent('crop_clicked', {
         audit_frame_key: frame?.audit_frame_key,
         observation_key: observation.observation_key,
@@ -253,7 +294,7 @@ export function InitialIdentityAuditPanel({
   }
 
   function moveFrame(nextIndex: number) {
-    if (!document) return;
+    if (!document || finishingRef.current) return;
     const boundedIndex = Math.min(
       document.frames.length - 1,
       Math.max(0, nextIndex),
@@ -263,7 +304,7 @@ export function InitialIdentityAuditPanel({
     setArmedAction(null);
     const nextFrame = document.frames[boundedIndex];
     if (nextFrame) {
-      void enqueueSave([], [
+      enqueueBackgroundSave([], [
         telemetryEvent('frame_shown', {
           audit_frame_key: nextFrame.audit_frame_key,
         }),
@@ -272,26 +313,65 @@ export function InitialIdentityAuditPanel({
   }
 
   async function finishAudit() {
-    await enqueueSave([], [telemetryEvent('session_finished')]);
-    setOpen(false);
-    if (onFinished) {
-      onStatus('H1 zakonczony. Przebudowuje artefakty i przygotowuje H2...');
-      await onFinished();
-    } else {
-      onStatus(
-        `IA2 zapisany: ${Object.keys(decisions).length} decyzji operatora.`,
+    if (finishingRef.current) return;
+    if (failedSaveRequestRef.current || saveError) {
+      const message = 'Nie mozna zakonczyc H1: poprzedni zapis nie powiodl sie. Ponow zapis i sprobuj ponownie.';
+      setSaveError(message);
+      onStatus(message);
+      return;
+    }
+    finishingRef.current = true;
+    setFinishing(true);
+    const finalRequest: AuditSaveRequest = {
+      updates: [],
+      telemetryEvents: [telemetryEvent('session_finished')],
+    };
+    try {
+      await saveQueueRef.current.finalize(
+        async () => {
+          if (failedSaveRequestRef.current) {
+            throw new Error(
+              'Nie mozna zakonczyc H1: oczekujacy autosave nie powiodl sie.',
+            );
+          }
+          return performSave(finalRequest);
+        },
+        async (finalStore) => {
+          setSeedStore(finalStore);
+          setDecisions(initialIdentityAuditDecisionMap(finalStore.decisions));
+          if (onFinished) {
+            onStatus('H1 zakonczony. Przebudowuje artefakty i przygotowuje H2...');
+            await onFinished();
+          } else {
+            onStatus(
+              `IA2 zapisany: ${finalStore.decisions.length} decyzji operatora.`,
+            );
+          }
+        },
       );
+      setOpen(false);
+    } catch (error) {
+      const message = errorMessage(error);
+      setSaveError(message);
+      onStatus(message);
+    } finally {
+      finishingRef.current = false;
+      setFinishing(false);
     }
   }
 
   function clearSelectedDecision() {
-    if (!selectedObservationKey || !decisions[selectedObservationKey]) return;
+    if (
+      finishingRef.current
+      || !selectedObservationKey
+      || !decisions[selectedObservationKey]
+    ) return;
     setDecisions((current) => {
       const next = { ...current };
       delete next[selectedObservationKey];
       return next;
     });
-    void enqueueSave(
+    enqueueBackgroundSave(
       [initialIdentityAuditClearUpdate(selectedObservationKey)],
       [telemetryEvent('action', {
         audit_frame_key: frame?.audit_frame_key,
@@ -346,13 +426,24 @@ export function InitialIdentityAuditPanel({
               <button
                 type='button'
                 onClick={() => void finishAudit()}
-                disabled={saving}
+                disabled={saving || finishing || Boolean(saveError)}
               >
-                Zakoncz audyt
+                {finishing ? 'Koncze...' : 'Zakoncz audyt'}
               </button>
             </header>
 
-            {saveError && <p className='error'>{saveError}</p>}
+            {saveError && (
+              <div>
+                <p className='error'>{saveError}</p>
+                <button
+                  type='button'
+                  disabled={saving || finishing}
+                  onClick={() => void retryFailedSave()}
+                >
+                  Ponow zapis
+                </button>
+              </div>
+            )}
 
             <div className='initial-identity-audit-progress'>
               <progress value={frameIndex + 1} max={document.frames.length} />
@@ -442,7 +533,7 @@ export function InitialIdentityAuditPanel({
                 {selectedDecision && (
                   <button
                     type='button'
-                    disabled={saving}
+                    disabled={saving || finishing}
                     onClick={clearSelectedDecision}
                   >
                     Usun decyzje dla tego bboxa
@@ -463,7 +554,7 @@ export function InitialIdentityAuditPanel({
                               type='button'
                               key={player.player_id}
                               className={active ? 'active' : ''}
-                              disabled={!canCreateActiveDecision}
+                              disabled={!canCreateActiveDecision || finishing}
                               onClick={() => chooseAction(action)}
                               aria-pressed={active}
                             >
@@ -479,25 +570,25 @@ export function InitialIdentityAuditPanel({
                 <div className='initial-identity-audit-generic-actions'>
                   <button
                     type='button'
-                    disabled={!canCreateActiveDecision}
+                    disabled={!canCreateActiveDecision || finishing}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'A' })}
                   >
                     Team A - nieznany
                   </button>
                   <button
                     type='button'
-                    disabled={!canCreateActiveDecision}
+                    disabled={!canCreateActiveDecision || finishing}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B - nieznany
                   </button>
-                  <button type='button' disabled={!canCreateActiveDecision} onClick={() => chooseAction({ kind: 'referee' })}>
+                  <button type='button' disabled={!canCreateActiveDecision || finishing} onClick={() => chooseAction({ kind: 'referee' })}>
                     Sedzia
                   </button>
-                  <button type='button' disabled={!canCreateActiveDecision} onClick={() => chooseAction({ kind: 'false_detection' })}>
+                  <button type='button' disabled={!canCreateActiveDecision || finishing} onClick={() => chooseAction({ kind: 'false_detection' })}>
                     Falszywa detekcja
                   </button>
-                  <button type='button' onClick={() => chooseAction({ kind: 'skip' })}>
+                  <button type='button' disabled={finishing} onClick={() => chooseAction({ kind: 'skip' })}>
                     Pomin / nie wiem
                   </button>
                 </div>

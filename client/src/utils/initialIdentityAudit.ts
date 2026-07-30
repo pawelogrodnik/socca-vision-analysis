@@ -16,6 +16,7 @@ export type InitialIdentityAuditAction =
       playerName: string;
       playerNumber?: string | null;
       teamLabel: 'A' | 'B' | 'U';
+      suggestionContext?: InitialIdentityAuditSeedUpdate['suggestion_context'];
     }
   | { kind: 'team_unknown'; teamLabel: 'A' | 'B' }
   | { kind: 'referee' | 'false_detection' | 'skip' };
@@ -75,6 +76,7 @@ export function initialIdentityAuditDecisionFromStored(
       playerName: stored.assigned_player.player_name,
       playerNumber: stored.assigned_player.player_number,
       teamLabel: stored.assigned_team?.team_label ?? 'U',
+      suggestionContext: stored.suggestion_context,
     };
   }
   if (stored.action === 'team_a_unknown' || stored.action === 'team_b_unknown') {
@@ -119,6 +121,7 @@ export function initialIdentityAuditSeedUpdate(
       observation_key: decision.observationKey,
       action: 'assign_roster_player',
       player_id: decision.playerId,
+      suggestion_context: decision.suggestionContext,
     };
   }
   return {

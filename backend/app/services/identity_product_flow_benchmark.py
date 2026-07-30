@@ -78,6 +78,11 @@ class ProductFlowBenchmarkError(ValueError):
     pass
 
 
+def _reduction_error(stage: str, reason: str, *, missing: bool) -> ProductFlowBenchmarkError:
+    code = f"{stage.upper()}_REDUCTION_REPORT_{'MISSING' if missing else 'INVALID'}"
+    return ProductFlowBenchmarkError(f"{code}: {reason}")
+
+
 def prepare_product_flow_benchmark(
     *,
     matches_root: Path,
@@ -236,7 +241,7 @@ def build_product_flow_benchmark_report(root: Path) -> dict[str, Any]:
         / "h2_workspace"
         / "identity_cross_analysis_reid_advisory.json"
     )
-    reid_summary = (reid or {}).get("summary") or {}
+    reid_metrics = _reid_metrics(root, advisory=reid or {})
     automatic_assignments = sum(
         int(
             ((reid or {}).get("safety") or {}).get("automatic_merges")
@@ -257,18 +262,7 @@ def build_product_flow_benchmark_report(root: Path) -> dict[str, Any]:
         "h1": domain_rows.get("h1"),
         "h2": domain_rows.get("h2"),
         "reid": {
-            "top3_suggestions_shown": int(
-                reid_summary.get("suggestions_shown") or 0
-            ),
-            "suggestions_accepted": _reid_outcome_count(
-                root, outcome="accepted"
-            ),
-            "suggestions_rejected": _reid_outcome_count(
-                root, outcome="rejected"
-            ),
-            "suggestions_skipped": _reid_outcome_count(
-                root, outcome="skipped"
-            ),
+            **reid_metrics,
             "false_assignments": None,
         },
         "conflicts": sum(
@@ -341,27 +335,28 @@ def finish_product_flow_h1(
                 h1_workspace,
                 h1_meta,
             )
+            _remove_previous_reduction_report(h1_workspace)
             rebuilt = rebuild_identity_seeded_subject_review(
                 h1_workspace,
                 h1_meta,
                 video_path=h1_workspace / "video.mp4",
             )
-            reduction_path = (
-                h1_workspace
-                / "identity_seeded_review_reduction_report.json"
-            )
-            if not reduction_path.exists():
-                raise ProductFlowBenchmarkError(
-                    "Real IA4 reduction report was not generated"
+            reduction, reduction_summary, reduction_digest = (
+                _validate_current_reduction_report(
+                    h1_workspace,
+                    seeded,
+                    stage="H1",
                 )
+            )
             safely_resolved = _safely_resolved_players(seeded)
             write_json_atomic(
                 h1_workspace / "benchmark_h1_rebuild_result.json",
                 {
                     "seeded_summary": seeded.get("summary") or {},
                     "rebuild": rebuilt,
-                    "reduction_report_digest": canonical_digest(
-                        _load(reduction_path)
+                    "reduction_report_digest": reduction_digest,
+                    "reduction_report_source": (
+                        reduction.get("source") or {}
                     ),
                     "safely_resolved_players": safely_resolved,
                 },
@@ -373,7 +368,7 @@ def finish_product_flow_h1(
                 details={
                     "safely_resolved_players": len(safely_resolved),
                     "review_reduction": (
-                        (_load(reduction_path).get("summary") or {})
+                        reduction_summary
                     ),
                     "appearance_gallery": (
                         rebuilt.get(
@@ -517,16 +512,28 @@ def finish_product_flow_h2(
             h2_workspace,
             h2_meta,
         )
+        _remove_previous_reduction_report(h2_workspace)
         rebuilt = rebuild_identity_seeded_subject_review(
             h2_workspace,
             h2_meta,
             video_path=h2_workspace / "video.mp4",
+        )
+        reduction, _reduction_summary, reduction_digest = (
+            _validate_current_reduction_report(
+                h2_workspace,
+                seeded,
+                stage="H2",
+            )
         )
         write_json_atomic(
             h2_workspace / "benchmark_h2_rebuild_result.json",
             {
                 "seeded_summary": seeded.get("summary") or {},
                 "rebuild": rebuilt,
+                "reduction_report_digest": reduction_digest,
+                "reduction_report_source": (
+                    reduction.get("source") or {}
+                ),
                 "safely_resolved_players": _safely_resolved_players(seeded),
             },
         )
@@ -556,6 +563,9 @@ def finish_product_flow_h2(
         write_json_atomic(root / "benchmark_report.json", report)
         return report
     except Exception as exc:
+        report_path = root / "benchmark_report.json"
+        if report_path.exists():
+            report_path.unlink()
         if (root / "benchmark_session.json").exists():
             fail_product_flow_session(
                 root,
@@ -641,7 +651,20 @@ def _build_h2_cross_analysis_advisory(
                 str(row.get("candidate_subject_id") or ""),
                 [],
             ),
-            "suggestions": list(row.get("suggestions") or [])[:3],
+            "suggestions": [
+                {
+                    **suggestion,
+                    "suggestion_source": (
+                        "cross_analysis_reid_top3_advisory"
+                    ),
+                    "advisory_only": True,
+                    "candidate_subject_id": row.get(
+                        "candidate_subject_id"
+                    ),
+                    "observation_key": None,
+                }
+                for suggestion in list(row.get("suggestions") or [])[:3]
+            ],
             "advisory_only": True,
         }
         for row in rankings
@@ -731,6 +754,101 @@ def _seed_metrics(path: Path) -> dict[str, Any]:
     }
 
 
+def _remove_previous_reduction_report(workspace: Path) -> None:
+    path = workspace / "identity_seeded_review_reduction_report.json"
+    if path.exists():
+        path.unlink()
+
+
+def _validate_current_reduction_report(
+    workspace: Path,
+    seeded: dict[str, Any],
+    *,
+    stage: str,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    path = workspace / "identity_seeded_review_reduction_report.json"
+    if not path.exists():
+        raise _reduction_error(
+            stage,
+            "current downstream rebuild did not create the artifact",
+            missing=True,
+        )
+    try:
+        document = _load(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise _reduction_error(
+            stage,
+            f"artifact cannot be read: {exc}",
+            missing=False,
+        ) from exc
+    metrics = document.get("metrics")
+    source = document.get("source")
+    safety = document.get("safety")
+    if (
+        document.get("mode") != "seed_aware_review_reduction_shadow"
+        or document.get("status") != "fresh"
+        or not isinstance(metrics, dict)
+        or not isinstance(source, dict)
+        or not isinstance(safety, dict)
+    ):
+        raise _reduction_error(
+            stage,
+            "artifact contract, fresh status, metrics or safety is invalid",
+            missing=False,
+        )
+    expected_seeded_digest = canonical_digest(seeded)
+    if source.get("seeded_assignments_digest") != expected_seeded_digest:
+        raise _reduction_error(
+            stage,
+            "artifact does not originate from current seeded assignments",
+            missing=False,
+        )
+    if (
+        safety.get("mutates_production_identity") is not False
+        or safety.get("writes_shadow_review_state_only") is not True
+    ):
+        raise _reduction_error(
+            stage,
+            "artifact safety contract is invalid",
+            missing=False,
+        )
+    return document, metrics, canonical_digest(document)
+
+
+def _load_receipted_reduction_report(
+    workspace: Path,
+    *,
+    label: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    report_path = workspace / "identity_seeded_review_reduction_report.json"
+    receipt_path = workspace / f"benchmark_{label}_rebuild_result.json"
+    if not report_path.exists() or not receipt_path.exists():
+        raise _reduction_error(
+            label,
+            "report or current rebuild receipt is missing",
+            missing=True,
+        )
+    report = _load(report_path)
+    receipt = _load(receipt_path)
+    if (
+        receipt.get("reduction_report_digest")
+        != canonical_digest(report)
+    ):
+        raise _reduction_error(
+            label,
+            "report digest does not match the current rebuild receipt",
+            missing=False,
+        )
+    metrics = report.get("metrics")
+    if not isinstance(metrics, dict):
+        raise _reduction_error(
+            label,
+            "report metrics are missing",
+            missing=False,
+        )
+    return report, metrics
+
+
 def _real_domain_metrics(root: Path, label: str) -> dict[str, Any]:
     workspace = root / f"{label}_workspace"
     selection_path = (
@@ -746,13 +864,14 @@ def _real_domain_metrics(root: Path, label: str) -> dict[str, Any]:
         / "identity_second_half_reanchor_seeds.json"
     )
     seeded_path = workspace / "identity_seeded_candidate_assignments.json"
-    reduction_path = workspace / "identity_seeded_review_reduction_report.json"
     selection = _load_optional(selection_path) or {}
     seed_metrics = _seed_metrics(seed_path) if seed_path.exists() else {}
     seeded = _load_optional(seeded_path) or {}
     seeded_summary = seeded.get("summary") or {}
-    reduction = _load_optional(reduction_path) or {}
-    reduction_summary = reduction.get("summary") or {}
+    _reduction, reduction_summary = _load_receipted_reduction_report(
+        workspace,
+        label=label,
+    )
     return {
         "selected_frames": len(selection.get("selected_frames") or []),
         **seed_metrics,
@@ -783,7 +902,11 @@ def _real_domain_metrics(root: Path, label: str) -> dict[str, Any]:
     }
 
 
-def _reid_outcome_count(root: Path, *, outcome: str) -> int:
+def _reid_metrics(
+    root: Path,
+    *,
+    advisory: dict[str, Any],
+) -> dict[str, Any]:
     h2 = root / "h2_workspace"
     seeds = _load_optional(
         h2
@@ -793,10 +916,32 @@ def _reid_outcome_count(root: Path, *, outcome: str) -> int:
     selection = _load_optional(
         h2 / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
     ) or {}
-    suggestions = {
-        str(observation.get("observation_key") or ""): (
-            observation.get("suggested_player") or {}
+    generated_rows = [
+        row
+        for row in advisory.get("suggestions") or []
+        if isinstance(row, dict)
+    ]
+    generated_suggestions = [
+        suggestion
+        for row in generated_rows
+        for suggestion in row.get("suggestions") or []
+        if (
+            isinstance(suggestion, dict)
+            and suggestion.get("suggestion_source")
+            == "cross_analysis_reid_top3_advisory"
         )
+    ]
+    displayed_by_observation = {
+        str(observation.get("observation_key") or ""): [
+            suggestion
+            for suggestion in observation.get("reid_suggestions") or []
+            if (
+                isinstance(suggestion, dict)
+                and suggestion.get("suggestion_source")
+                == "cross_analysis_reid_top3_advisory"
+                and suggestion.get("advisory_only") is True
+            )
+        ]
         for frame in (
             build_second_half_identity_reanchor_document(
                 selection,
@@ -805,27 +950,83 @@ def _reid_outcome_count(root: Path, *, outcome: str) -> int:
             or []
         )
         for observation in frame.get("observations") or []
-        if observation.get("suggested_player")
+        if observation.get("reid_suggestions")
     }
-    count = 0
+    displayed_by_observation = {
+        key: rows
+        for key, rows in displayed_by_observation.items()
+        if key and rows
+    }
+    accepted = 0
+    rejected = 0
+    skipped = 0
+    accepted_ranks: list[int] = []
+    processed_observations: set[str] = set()
     for decision in seeds.get("decisions") or []:
-        suggestion = suggestions.get(
-            str(decision.get("observation_key") or "")
-        )
-        if not suggestion:
+        observation_key = str(decision.get("observation_key") or "")
+        if (
+            not observation_key
+            or observation_key in processed_observations
+            or observation_key not in displayed_by_observation
+        ):
             continue
+        processed_observations.add(observation_key)
+        suggestions = displayed_by_observation[observation_key]
         action = str(decision.get("action") or "")
+        context = decision.get("suggestion_context") or {}
+        if context.get("suggestion_source") == "h1_safe_lineage":
+            continue
+        if action == "skip":
+            skipped += 1
+            continue
+        if action != "assign_roster_player":
+            continue
         assigned = str(
             (decision.get("assigned_player") or {}).get("player_id") or ""
         )
-        suggested = str(suggestion.get("player_id") or "")
-        if outcome == "accepted" and assigned and assigned == suggested:
-            count += 1
-        elif outcome == "rejected" and assigned and assigned != suggested:
-            count += 1
-        elif outcome == "skipped" and action == "skip":
-            count += 1
-    return count
+        if (
+            context.get("suggestion_source")
+            == "cross_analysis_reid_top3_advisory"
+        ):
+            selected = next(
+                (
+                    suggestion
+                    for suggestion in suggestions
+                    if str(suggestion.get("player_id") or "") == assigned
+                    and int(suggestion.get("rank") or 0)
+                    == int(context.get("rank") or 0)
+                ),
+                None,
+            )
+            if selected is not None:
+                accepted += 1
+                accepted_ranks.append(int(selected.get("rank") or 0))
+                continue
+        if assigned:
+            rejected += 1
+    accepted_rank_counts = {
+        str(rank): accepted_ranks.count(rank)
+        for rank in sorted(set(accepted_ranks))
+    }
+    return {
+        "reid_subjects_available": len(
+            {
+                str(row.get("candidate_subject_id") or "")
+                for row in generated_rows
+                if row.get("candidate_subject_id")
+            }
+        ),
+        "reid_suggestions_generated": len(generated_suggestions),
+        "reid_suggestions_displayed": sum(
+            len(rows) for rows in displayed_by_observation.values()
+        ),
+        "reid_observations_displayed": len(displayed_by_observation),
+        "reid_suggestions_accepted": accepted,
+        "reid_suggestions_rejected": rejected,
+        "reid_suggestions_skipped": skipped,
+        "accepted_ranks": sorted(accepted_ranks),
+        "accepted_rank_counts": accepted_rank_counts,
+    }
 
 
 def _build_h1_shadow_artifacts(workspace: Path) -> None:

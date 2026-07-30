@@ -1454,12 +1454,18 @@ export type InitialIdentityAuditObservation = {
     rank?: number;
     advisory_only?: boolean;
     suggestion_source?: string;
+    candidate_subject_id?: string | null;
+    observation_key?: string | null;
   } | null;
   reid_suggestions?: Array<{
     player_id: string;
     player_name: string;
     rank: number;
     distance?: number | null;
+    suggestion_source: 'cross_analysis_reid_top3_advisory';
+    advisory_only: true;
+    candidate_subject_id?: string | null;
+    observation_key: string;
   }>;
 };
 
@@ -1569,6 +1575,14 @@ export type InitialIdentityAuditStoredDecision = {
     player_role: string;
   } | null;
   team_assignment_corrected: boolean;
+  suggestion_context?: {
+    suggestion_source: string;
+    advisory_only: boolean;
+    rank?: number | null;
+    candidate_subject_id?: string | null;
+    observation_key: string;
+    player_id?: string | null;
+  } | null;
   updated_at?: string | null;
 };
 
@@ -1608,6 +1622,14 @@ export type InitialIdentityAuditSeedUpdate = {
   observation_key: string;
   action: InitialIdentityAuditSeedAction | 'clear';
   player_id?: string;
+  suggestion_context?: {
+    suggestion_source: string;
+    advisory_only: boolean;
+    rank?: number | null;
+    candidate_subject_id?: string | null;
+    observation_key: string;
+    player_id?: string | null;
+  } | null;
 };
 
 export type InitialIdentityAuditTelemetryEvent = {

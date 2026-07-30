@@ -226,6 +226,13 @@ def save_operator_identity_audit_seeds(
                 observation,
                 action=action,
                 player_id=update.get("player_id"),
+                suggestion_context=_validated_suggestion_context(
+                    selection,
+                    observation,
+                    action=action,
+                    player_id=update.get("player_id"),
+                    value=update.get("suggestion_context"),
+                ),
                 roster_index=roster_index,
                 team_index=team_index,
                 timestamp=timestamp,
@@ -404,6 +411,7 @@ def _build_decision(
     *,
     action: str,
     player_id: Any,
+    suggestion_context: dict[str, Any] | None,
     roster_index: dict[str, dict[str, Any]],
     team_index: dict[str, dict[str, Any]],
     timestamp: str,
@@ -470,10 +478,97 @@ def _build_decision(
             and assigned_team_label != automatic_team
         ),
         "provenance": observation.get("provenance"),
+        "suggestion_context": suggestion_context,
         "capture_domain": observation.get("capture_domain"),
         "audit_stage": audit_stage,
         "updated_at": timestamp,
     }
+
+
+def _validated_suggestion_context(
+    selection: dict[str, Any],
+    observation: dict[str, Any],
+    *,
+    action: str,
+    player_id: Any,
+    value: Any,
+) -> dict[str, Any] | None:
+    if value in (None, {}):
+        return None
+    if action != "assign_roster_player" or not isinstance(value, dict):
+        raise ValueError(
+            "suggestion_context is allowed only for roster assignments"
+        )
+    observation_key = str(observation.get("observation_key") or "")
+    context_observation_key = str(value.get("observation_key") or "")
+    normalized_player_id = str(player_id or "")
+    context_player_id = str(value.get("player_id") or "")
+    if (
+        context_observation_key != observation_key
+        or context_player_id != normalized_player_id
+    ):
+        raise ValueError("suggestion_context does not match the decision")
+    tracklet_id = str(
+        (observation.get("provenance") or {}).get("tracklet_id") or ""
+    )
+    source = str(value.get("suggestion_source") or "")
+    if source == "h1_safe_lineage":
+        candidates = (
+            (selection.get("second_half") or {}).get(
+                "safely_resolved_players_before_reanchor"
+            )
+            or []
+        )
+        matching = next(
+            (
+                row
+                for row in candidates
+                if normalized_player_id == str(row.get("player_id") or "")
+                and tracklet_id
+                in {
+                    str(item)
+                    for item in row.get("tracklet_ids") or []
+                }
+            ),
+            None,
+        )
+        if matching is None:
+            raise ValueError("H1 safe-lineage suggestion is stale")
+        return {
+            "suggestion_source": source,
+            "advisory_only": False,
+            "rank": None,
+            "candidate_subject_id": matching.get(
+                "candidate_subject_id"
+            ),
+            "observation_key": observation_key,
+            "player_id": normalized_player_id,
+        }
+    if source != "cross_analysis_reid_top3_advisory":
+        raise ValueError("Unsupported suggestion_source")
+    requested_rank = int(value.get("rank") or 0)
+    for row in selection.get("reid_advisory_suggestions") or []:
+        if tracklet_id not in {
+            str(item) for item in row.get("tracklet_ids") or []
+        }:
+            continue
+        for suggestion in list(row.get("suggestions") or [])[:3]:
+            if (
+                str(suggestion.get("player_id") or "")
+                == normalized_player_id
+                and int(suggestion.get("rank") or 0) == requested_rank
+            ):
+                return {
+                    "suggestion_source": source,
+                    "advisory_only": True,
+                    "rank": requested_rank,
+                    "candidate_subject_id": row.get(
+                        "candidate_subject_id"
+                    ),
+                    "observation_key": observation_key,
+                    "player_id": normalized_player_id,
+                }
+    raise ValueError("Cross-analysis ReID suggestion is stale")
 
 
 def _validate_same_frame_player_conflicts(
@@ -685,6 +780,7 @@ def _public_document(
                     "team_assignment_corrected": bool(
                         row.get("team_assignment_corrected")
                     ),
+                    "suggestion_context": row.get("suggestion_context"),
                     "audit_stage": row.get("audit_stage"),
                     "updated_at": row.get("updated_at"),
                 }

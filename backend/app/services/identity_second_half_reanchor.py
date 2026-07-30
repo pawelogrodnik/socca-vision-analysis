@@ -188,18 +188,37 @@ def build_second_half_identity_reanchor_document(
                 (observation.get("provenance") or {}).get("tracklet_id")
                 or ""
             )
-            observation["suggested_player"] = suggestion_by_tracklet.get(
-                tracklet_id
+            safe_suggestion = suggestion_by_tracklet.get(tracklet_id)
+            observation["suggested_player"] = (
+                {
+                    **safe_suggestion,
+                    "observation_key": observation.get("observation_key"),
+                }
+                if safe_suggestion is not None
+                else None
             )
             advisory = advisory_by_tracklet.get(tracklet_id)
             if advisory:
-                observation["reid_suggestions"] = advisory["suggestions"]
+                observation["reid_suggestions"] = [
+                    {
+                        **suggestion,
+                        "suggestion_source": (
+                            "cross_analysis_reid_top3_advisory"
+                        ),
+                        "advisory_only": True,
+                        "candidate_subject_id": advisory.get(
+                            "candidate_subject_id"
+                        ),
+                        "observation_key": observation.get(
+                            "observation_key"
+                        ),
+                    }
+                    for suggestion in advisory["suggestions"]
+                ]
                 if observation["suggested_player"] is None:
                     observation["suggested_player"] = {
-                        **advisory["suggestions"][0],
+                        **observation["reid_suggestions"][0],
                         "team_label": advisory.get("team_label"),
-                        "suggestion_source": "cross_analysis_reid_top3_advisory",
-                        "advisory_only": True,
                     }
     document.update(
         {
@@ -311,6 +330,9 @@ def _suggested_players_by_tracklet(
                 "player_id": row.get("player_id"),
                 "player_name": row.get("player_name"),
                 "team_label": row.get("team_label"),
+                "candidate_subject_id": row.get("candidate_subject_id"),
+                "suggestion_source": "h1_safe_lineage",
+                "advisory_only": False,
             }
     return result
 
@@ -326,6 +348,7 @@ def _advisory_suggestions_by_tracklet(
         for tracklet_id in row.get("tracklet_ids") or []:
             result[str(tracklet_id)] = {
                 "team_label": row.get("team_label"),
+                "candidate_subject_id": row.get("candidate_subject_id"),
                 "suggestions": suggestions,
             }
     return result
