@@ -18,6 +18,7 @@ from typing import Any
 import uuid
 
 import cv2
+import numpy as np
 
 from app.services.identity_initial_audit import (
     AUDIT_DIRECTORY,
@@ -81,6 +82,9 @@ from app.services.identity_reid_runtime_probe import (
 )
 from app.services.identity_reid_active_model_binding import (
     build_reid_active_model_binding,
+)
+from app.services.identity_rosetta_openvino_reid import (
+    load_rosetta_openvino_embedder,
 )
 from app.services.identity_second_half_reanchor import prepare_second_half_identity_reanchor
 from app.services.identity_second_half_reanchor import build_second_half_identity_reanchor_document, REANCHOR_DIRECTORY, SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME, FRAME_DIRECTORY as REANCHOR_FRAME_DIRECTORY
@@ -869,9 +873,19 @@ def run_product_flow_cross_capture_reid_diagnostic(
         _load_or_build_diagnostic_h1_references(h1_workspace, h1_output)
     )
     smoke_crop_path = _first_gallery_crop_path(h1_gallery, h1_output)
-    probe = build_reid_runtime_probe(
-        models_dir=Path(__file__).resolve().parents[2] / "models",
-        crop_path=smoke_crop_path,
+    models_dir = Path(__file__).resolve().parents[2] / "models"
+    rosetta_embedder = load_rosetta_openvino_embedder(models_dir)
+    probe = (
+        {
+            "status": "NATIVE_OPENVINO_SKIPPED_ROSETTA_RUNTIME_AVAILABLE",
+            "model": {"selected_runtime": "openvino_rosetta_x86_cpu_subprocess"},
+            "capabilities": {"model_files_present": True},
+        }
+        if rosetta_embedder is not None
+        else build_reid_runtime_probe(
+            models_dir=models_dir,
+            crop_path=smoke_crop_path,
+        )
     )
     write_json_atomic(
         diagnostic_root / "apple_silicon_runtime_probe.json",
@@ -897,7 +911,25 @@ def run_product_flow_cross_capture_reid_diagnostic(
             in selected_subject_ids
         ],
     }
-    if probe.get("status") == "PREFERRED_REID_RUNTIME_AVAILABLE":
+    if rosetta_embedder is not None:
+        preferred_embedder = rosetta_embedder
+        smoke = _read_reid_smoke_crop(smoke_crop_path)
+        if smoke is None:
+            preferred_embedder = None
+            preferred_model_status = {"available": False, "reason": "smoke_crop_missing"}
+        else:
+            first = preferred_embedder.embed(smoke)
+            second = preferred_embedder.embed(smoke)
+            preferred_model_status = {
+                "available": bool(np.allclose(first, second, rtol=1e-5, atol=1e-6)),
+                "model_name": preferred_embedder.model_name,
+                "model_version": preferred_embedder.model_version,
+                "quality_tier": "preferred_reid_model",
+                "runtime": "openvino_rosetta_x86_cpu_subprocess",
+                "selected_runtime": "openvino_rosetta_x86_cpu_subprocess",
+                "embedding_dimension": int(first.size),
+            }
+    elif probe.get("status") == "PREFERRED_REID_RUNTIME_AVAILABLE":
         try:
             preferred_embedder, preferred_model_status = (
                 load_approved_appearance_embedder(
@@ -913,13 +945,31 @@ def run_product_flow_cross_capture_reid_diagnostic(
                 "error": str(exc),
             }
     else:
-        preferred_embedder = None
-        preferred_model_status = {
-            **(probe.get("model") or {}),
-            "available": False,
-            "reason": "runtime_probe_not_available",
-            "runtime_probe_status": probe.get("status"),
-        }
+        preferred_embedder = load_rosetta_openvino_embedder(models_dir)
+        if preferred_embedder is None:
+            preferred_model_status = {
+                **(probe.get("model") or {}),
+                "available": False,
+                "reason": "runtime_probe_not_available",
+                "runtime_probe_status": probe.get("status"),
+            }
+        else:
+            smoke = _read_reid_smoke_crop(smoke_crop_path)
+            if smoke is None:
+                preferred_embedder = None
+                preferred_model_status = {"available": False, "reason": "smoke_crop_missing"}
+            else:
+                first = preferred_embedder.embed(smoke)
+                second = preferred_embedder.embed(smoke)
+                preferred_model_status = {
+                    "available": bool(np.allclose(first, second, rtol=1e-5, atol=1e-6)),
+                    "model_name": preferred_embedder.model_name,
+                    "model_version": preferred_embedder.model_version,
+                    "quality_tier": "preferred_reid_model",
+                    "runtime": "openvino_rosetta_x86_cpu_subprocess",
+                    "selected_runtime": "openvino_rosetta_x86_cpu_subprocess",
+                    "embedding_dimension": int(first.size),
+                }
     portable_embedder = PortableAppearanceEmbedder()
     portable_model_status = {
         "available": True,
@@ -1578,7 +1628,10 @@ def _cross_capture_validation_status(
 ) -> str:
     if not (probe.get("capabilities") or {}).get("model_files_present"):
         return "MODEL_FILES_MISSING_USER_APPROVAL_REQUIRED"
-    if probe.get("status") != "PREFERRED_REID_RUNTIME_AVAILABLE":
+    if probe.get("status") not in {
+        "PREFERRED_REID_RUNTIME_AVAILABLE",
+        "NATIVE_OPENVINO_SKIPPED_ROSETTA_RUNTIME_AVAILABLE",
+    }:
         return "PREFERRED_REID_RUNTIME_BLOCKED_USER_APPROVAL_REQUIRED"
     if int(evaluation.get("queries") or 0) < int(
         (gate.get("parameters") or {}).get(
