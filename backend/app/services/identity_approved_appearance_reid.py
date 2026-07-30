@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import math
 from pathlib import Path
-import platform
 from typing import Any
 
 import cv2
 import numpy as np
 
 from app.services.identity_same_match_reid import (
+    collect_reid_runtime_capabilities,
     JsonEmbeddingCache,
     PersonReIdEmbedder,
     load_default_embedder,
@@ -137,28 +137,29 @@ class PortableAppearanceEmbedder:
 def load_approved_appearance_embedder(
     models_dir: Path,
 ) -> tuple[PersonReIdEmbedder, dict[str, Any]]:
-    """Load the preferred ReID model or a portable advisory fallback."""
-    apple_silicon = (
-        platform.system() == "Darwin"
-        and platform.machine().lower() in {"arm64", "aarch64"}
-    )
-    if apple_silicon:
-        embedder = None
-        model_status = {
-            "available": False,
-            "reason": "openvino_runtime_unsupported_on_apple_silicon",
-        }
-    else:
-        embedder, model_status = load_default_embedder(models_dir)
+    """Load a preferred runtime by capability, then fall back safely.
+
+    Platform identity is diagnostic context only.  Every supported runtime is
+    attempted when local model files are present, including on Apple Silicon.
+    """
+    capabilities = collect_reid_runtime_capabilities(models_dir)
+    embedder, load_status = load_default_embedder(models_dir)
+    model_status = {**capabilities, **load_status}
     if embedder is not None:
-        return embedder, model_status
+        return embedder, {
+            **model_status,
+            "quality_tier": "preferred_reid_model",
+            "fallback_used": False,
+        }
     fallback = PortableAppearanceEmbedder()
     return fallback, {
+        **model_status,
         "model_name": fallback.model_name,
         "model_version": fallback.model_version,
         "available": True,
         "runtime": "portable_opencv_descriptor",
         "quality_tier": "baseline_fallback",
+        "fallback_used": True,
         "fallback_reason": model_status.get("reason"),
         "preferred_model_status": model_status,
     }
@@ -783,9 +784,80 @@ def build_appearance_ranking_calibration(
         < float(parameters["minimum_calibration_top1_accuracy"])
     ):
         reasons.append("calibration_top1_accuracy_below_threshold")
+    per_player = [
+        {
+            "player_id": player_id,
+            "team_label": next(
+                (
+                    str(player.get("team_label") or "U")
+                    for player in gallery_doc.get("players") or []
+                    if str(player.get("player_id") or "") == player_id
+                ),
+                "U",
+            ),
+            "queries": len(player_rows),
+            "top1_accuracy": _rounded(
+                sum(bool(row["top1_correct"]) for row in player_rows)
+                / len(player_rows),
+                4,
+            ),
+            "top3_accuracy": _rounded(
+                sum(bool(row["top3_correct"]) for row in player_rows)
+                / len(player_rows),
+                4,
+            ),
+        }
+        for player_id, player_rows in sorted(
+            (
+                (
+                    player_id,
+                    [
+                        row
+                        for row in rows
+                        if row["player_id"] == player_id
+                    ],
+                )
+                for player_id in player_vectors
+            ),
+            key=lambda item: item[0],
+        )
+        if player_rows
+    ]
+    per_team = [
+        {
+            "team_label": team_label,
+            "queries": len(team_rows),
+            "top1_accuracy": _rounded(
+                sum(bool(row["top1_correct"]) for row in team_rows)
+                / len(team_rows),
+                4,
+            ),
+            "top3_accuracy": _rounded(
+                sum(bool(row["top3_correct"]) for row in team_rows)
+                / len(team_rows),
+                4,
+            ),
+        }
+        for team_label, team_rows in sorted(
+            (
+                (
+                    team_label,
+                    [
+                        row for row in rows
+                        if row["team_label"] == team_label
+                    ],
+                )
+                for team_label in {row["team_label"] for row in rows}
+            ),
+            key=lambda item: item[0],
+        )
+        if team_rows
+    ]
     return {
-        "method": "leave_one_confirmed_crop_out_same_team",
+        "method": "internal_reference_calibration",
         "queries": count,
+        "players": len(per_player),
+        "teams": len(per_team),
         "top1_accuracy": _rounded(top1_accuracy, 4),
         "top3_accuracy": _rounded(
             (
@@ -796,6 +868,22 @@ def build_appearance_ranking_calibration(
             4,
         ),
         "rows": rows,
+        "per_player_results": per_player,
+        "per_team_results": per_team,
+        "candidate_count_distribution": dict(
+            sorted(
+                Counter(
+                    sum(
+                        1
+                        for player in players_by_team.get(
+                            row["team_label"],
+                        )
+                        if player.get("player_id")
+                    )
+                    for row in rows
+                ).items()
+            )
+        ),
         "display_eligible": not reasons,
         "suppression_reason_codes": reasons,
     }

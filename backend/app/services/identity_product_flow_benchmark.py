@@ -39,6 +39,13 @@ from app.services.identity_approved_appearance_reid import (
 from app.services.identity_cross_analysis_appearance_reid import (
     build_cross_analysis_appearance_reid,
 )
+from app.services.identity_cross_capture_crop_diagnostics import (
+    build_cross_capture_crop_diagnostics,
+)
+from app.services.identity_cross_capture_reid_validation import (
+    build_operator_name_display_gate,
+    evaluate_h1_to_h2_cross_capture,
+)
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_product_flow_state import (
     fail_product_flow_session,
@@ -64,6 +71,7 @@ from app.services.identity_roster_anchor_crops_shadow import (
 from app.services.identity_roster_anchor_shadow import (
     build_identity_roster_anchor_shadow,
 )
+from app.services.identity_reid_runtime_probe import build_reid_runtime_probe
 from app.services.identity_second_half_reanchor import prepare_second_half_identity_reanchor
 from app.services.identity_second_half_reanchor import build_second_half_identity_reanchor_document, REANCHOR_DIRECTORY, SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME, FRAME_DIRECTORY as REANCHOR_FRAME_DIRECTORY
 from app.services.identity_second_half_reanchor_store import (
@@ -843,69 +851,18 @@ def run_product_flow_cross_capture_reid_diagnostic(
     h1_output.mkdir(parents=True, exist_ok=True)
     h2_output.mkdir(parents=True, exist_ok=True)
 
-    h1_seeded = _load(
-        h1_workspace / "identity_seeded_candidate_assignments.json"
+    h1_gallery, h1_crops, confirmed_cards, rendered_h1 = (
+        _load_or_build_diagnostic_h1_references(h1_workspace, h1_output)
     )
-    confirmed_h1_subject_ids = {
-        str(assignment.get("candidate_subject_id") or "")
-        for assignment in h1_seeded.get("accepted_assignments") or []
-        if assignment.get("candidate_subject_id")
-        and (assignment.get("assigned_player") or {}).get("player_id")
-    }
-    h1_candidate, h1_timeline = _build_h1_shadow_artifacts(
-        h1_workspace,
-        output_root=h1_output,
-        subject_ids=confirmed_h1_subject_ids,
+    probe = build_reid_runtime_probe(
+        models_dir=Path(__file__).resolve().parents[2] / "models",
+        crop_path=_first_gallery_crop_path(h1_gallery, h1_output),
     )
-    h1_match = _load(h1_workspace / "match.json")
-    h1_assignments = seeded_assignments_as_roster_assignments(
-        h1_candidate,
-        h1_seeded,
+    write_json_atomic(
+        diagnostic_root / "apple_silicon_runtime_probe.json",
+        probe,
     )
-    h1_roster_documents = build_identity_roster_anchor_shadow(
-        h1_candidate,
-        h1_assignments,
-        h1_match,
-        generated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    h1_roster = h1_roster_documents["identity_roster_anchor_shadow"]
-    confirmed_cards = [
-        card
-        for card in h1_roster.get("cards") or []
-        if card.get("status") == "confirmed_manual_anchor"
-    ]
-    h1_crop_documents = build_identity_roster_anchor_crops_shadow(
-        {**h1_roster, "cards": confirmed_cards},
-        h1_timeline,
-        generated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    h1_crops = h1_crop_documents["identity_roster_anchor_crops_shadow"]
-    for name, document in {
-        **h1_roster_documents,
-        **h1_crop_documents,
-    }.items():
-        write_json_atomic(h1_output / f"{name}.json", document)
-    rendered_h1 = render_identity_roster_anchor_crops(
-        h1_workspace / "video.mp4",
-        h1_output,
-        h1_crops,
-    )
-    h1_gallery_documents = build_identity_approved_appearance_gallery(
-        h1_seeded,
-        h1_crops,
-        match_phase_config_doc=_load_optional(
-            h1_workspace / "match_phase_config.json"
-        ),
-        generated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    for name, document in h1_gallery_documents.items():
-        write_json_atomic(h1_output / f"{name}.json", document)
 
-    # The frozen H1 timeline is intentionally comprehensive (and large).  It
-    # is no longer needed after crop selection, so release it before parsing
-    # the separate H2 candidate/crop artifacts.
-    del h1_timeline
-    del h1_candidate
     gc.collect()
 
     h2_candidate = _load(h2_workspace / "identity_candidate_shadow.json")
@@ -955,7 +912,7 @@ def run_product_flow_cross_capture_reid_diagnostic(
             **cache_kwargs,
         )
     reid_documents = build_cross_analysis_appearance_reid(
-        h1_gallery_documents["identity_approved_appearance_gallery"],
+        h1_gallery,
         selected_h2_crops,
         h2_seeded,
         reference_match_path=h1_output,
@@ -969,7 +926,114 @@ def run_product_flow_cross_capture_reid_diagnostic(
     reid_artifact = reid_documents[
         "identity_cross_analysis_appearance_reid"
     ]
-    ranking_display = reid_artifact.get("ranking_display") or {}
+    evaluation_documents = build_cross_analysis_appearance_reid(
+        h1_gallery,
+        selected_h2_crops,
+        {"accepted_assignments": []},
+        reference_match_path=h1_output,
+        target_match_path=h2_workspace,
+        embedder=embedder,
+        model_status=model_status,
+        reference_embedding_cache=reference_cache,
+        target_embedding_cache=target_cache,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    evaluation_rankings = evaluation_documents[
+        "identity_cross_analysis_appearance_reid"
+    ].get("unresolved_rankings") or []
+    h2_reanchor_seeds = _load_optional(
+        h2_workspace
+        / REANCHOR_DIRECTORY
+        / "identity_second_half_reanchor_seeds.json"
+    ) or {"decisions": []}
+    player_team_by_id = {
+        str(player.get("player_id") or ""): str(
+            player.get("team_label") or "U"
+        )
+        for player in h1_gallery.get("players") or []
+        if player.get("player_id")
+    }
+    cross_capture_evaluation = evaluate_h1_to_h2_cross_capture(
+        evaluation_rankings,
+        h2_operator_decisions=h2_reanchor_seeds.get("decisions") or [],
+        h2_candidate_document=h2_candidate,
+        player_team_by_id=player_team_by_id,
+    )
+    display_gate = build_operator_name_display_gate(
+        model_status=model_status,
+        internal_calibration=(
+            reid_artifact.get("internal_reference_calibration") or {}
+        ),
+        cross_capture_evaluation=cross_capture_evaluation,
+    )
+    crop_diagnostics = build_cross_capture_crop_diagnostics(
+        reference_gallery=h1_gallery,
+        target_anchor_crops=selected_h2_crops,
+        reference_root=h1_output,
+        target_root=h2_workspace,
+        output_directory=diagnostic_root / "crop_diagnostics",
+        reference_crop_report=_load_optional(
+            h1_output / "identity_roster_anchor_crops_shadow_report.json"
+        ),
+        target_crop_report=_load_optional(
+            h2_workspace / "identity_roster_anchor_crops_shadow_report.json"
+        ),
+    )
+    model_comparison = {
+        "portable_opencv_descriptor": {
+            "runtime": "portable_opencv_descriptor",
+            "model_version": "opencv-color-texture-v1",
+            "embedding_dimension": 192,
+            "internal_h1": reid_artifact.get(
+                "internal_reference_calibration"
+            ) or {},
+            "cross_capture": cross_capture_evaluation,
+        },
+        "person_reidentification_retail_0288": {
+            "runtime": probe.get("model", {}).get("selected_runtime"),
+            "model_version": probe.get("model", {}).get("model_version"),
+            "embedding_dimension": (
+                probe.get("inference", {}).get("embedding_dimension")
+            ),
+            "status": probe.get("status"),
+            "cross_capture": None,
+        },
+    }
+    reid_artifact = {
+        **reid_artifact,
+        "internal_reference_calibration": (
+            reid_artifact.get("internal_reference_calibration") or {}
+        ),
+        "cross_capture_evaluation": cross_capture_evaluation,
+        "ranking_display": display_gate,
+        "model_comparison": model_comparison,
+    }
+    reid_documents["identity_cross_analysis_appearance_reid"] = reid_artifact
+    cross_capture_report = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "cross_capture_reid_validation_read_only",
+        "runtime_probe": probe,
+        "internal_reference_calibration": reid_artifact[
+            "internal_reference_calibration"
+        ],
+        "cross_capture_evaluation": cross_capture_evaluation,
+        "operator_name_display_gate": display_gate,
+        "crop_diagnostics": crop_diagnostics,
+        "model_comparison": model_comparison,
+        "safety": {
+            "reran_yolo": False,
+            "reran_tracking": False,
+            "automatic_assignments": 0,
+            "production_applies": 0,
+            "source_artifact_mutations": 0,
+            "ground_truth_used_as_ranking_input": False,
+        },
+    }
+    write_json_atomic(
+        diagnostic_root / "cross_capture_reid_validation.json",
+        cross_capture_report,
+    )
+    ranking_display = display_gate
     display_eligible = bool(ranking_display.get("display_eligible"))
     subject_tracklets = {
         str(row.get("candidate_subject_id") or ""): sorted(
@@ -1032,22 +1096,33 @@ def run_product_flow_cross_capture_reid_diagnostic(
     result = {
         "schema_version": SCHEMA_VERSION,
         "mode": "product_flow_cross_capture_reid_diagnostic",
-        "status": "ready",
+        "status": "APPLE_SILICON_RUNTIME_PROBE_COMPLETE",
+        "validation_status": _cross_capture_validation_status(
+            cross_capture_evaluation,
+            display_gate,
+        ),
+        "operator_name_status": "OPERATOR_NAMES_REMAIN_HIDDEN",
         "source_benchmark_id": session["benchmark_id"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "h1": {
             "confirmed_cards": len(confirmed_cards),
             "rendered_crops": len(rendered_h1),
             "gallery": (
-                h1_gallery_documents[
-                    "identity_approved_appearance_gallery"
-                ].get("summary")
-                or {}
+                h1_gallery.get("summary") or {}
             ),
         },
         "h2": {
             "selected_candidate_subjects": len(selected_subject_ids),
             "advisory": advisory.get("summary") or {},
+        },
+        "artifacts": {
+            "runtime_probe": str(
+                diagnostic_root / "apple_silicon_runtime_probe.json"
+            ),
+            "cross_capture_validation": str(
+                diagnostic_root / "cross_capture_reid_validation.json"
+            ),
+            "crop_diagnostics": crop_diagnostics.get("montages") or {},
         },
         "safety": {
             "reran_yolo": False,
@@ -1059,6 +1134,121 @@ def run_product_flow_cross_capture_reid_diagnostic(
     }
     write_json_atomic(diagnostic_root / "diagnostic_report.json", result)
     return result
+
+
+def _first_gallery_crop_path(
+    gallery: dict[str, Any],
+    root: Path,
+) -> Path | None:
+    for player in gallery.get("players") or []:
+        for domain in player.get("capture_domains") or []:
+            for crop in domain.get("crops") or []:
+                artifact = str(crop.get("artifact") or "")
+                if artifact:
+                    return root / artifact
+    return None
+
+
+def _load_or_build_diagnostic_h1_references(
+    h1_workspace: Path,
+    h1_output: Path,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[Path]]:
+    """Reuse prior diagnostic H1 references to avoid rebuilding a huge timeline."""
+
+    existing_gallery = _load_optional(
+        h1_output / "identity_approved_appearance_gallery.json"
+    )
+    existing_crops = _load_optional(
+        h1_output / "identity_roster_anchor_crops_shadow.json"
+    )
+    if existing_gallery is not None and existing_crops is not None:
+        cards = list(existing_crops.get("cards") or [])
+        return (
+            existing_gallery,
+            existing_crops,
+            cards,
+            [
+                h1_output / str(crop.get("artifact") or "")
+                for card in cards
+                for crop in card.get("anchor_crops") or []
+                if crop.get("artifact")
+            ],
+        )
+    h1_seeded = _load(
+        h1_workspace / "identity_seeded_candidate_assignments.json"
+    )
+    confirmed_h1_subject_ids = {
+        str(assignment.get("candidate_subject_id") or "")
+        for assignment in h1_seeded.get("accepted_assignments") or []
+        if assignment.get("candidate_subject_id")
+        and (assignment.get("assigned_player") or {}).get("player_id")
+    }
+    h1_candidate, h1_timeline = _build_h1_shadow_artifacts(
+        h1_workspace,
+        output_root=h1_output,
+        subject_ids=confirmed_h1_subject_ids,
+    )
+    h1_assignments = seeded_assignments_as_roster_assignments(
+        h1_candidate,
+        h1_seeded,
+    )
+    roster_documents = build_identity_roster_anchor_shadow(
+        h1_candidate,
+        h1_assignments,
+        _load(h1_workspace / "match.json"),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    roster = roster_documents["identity_roster_anchor_shadow"]
+    confirmed_cards = [
+        card
+        for card in roster.get("cards") or []
+        if card.get("status") == "confirmed_manual_anchor"
+    ]
+    crop_documents = build_identity_roster_anchor_crops_shadow(
+        {**roster, "cards": confirmed_cards},
+        h1_timeline,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    crops = crop_documents["identity_roster_anchor_crops_shadow"]
+    for name, document in {**roster_documents, **crop_documents}.items():
+        write_json_atomic(h1_output / f"{name}.json", document)
+    rendered = render_identity_roster_anchor_crops(
+        h1_workspace / "video.mp4",
+        h1_output,
+        crops,
+    )
+    gallery_documents = build_identity_approved_appearance_gallery(
+        h1_seeded,
+        crops,
+        match_phase_config_doc=_load_optional(
+            h1_workspace / "match_phase_config.json"
+        ),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+    for name, document in gallery_documents.items():
+        write_json_atomic(h1_output / f"{name}.json", document)
+    return (
+        gallery_documents["identity_approved_appearance_gallery"],
+        crops,
+        confirmed_cards,
+        rendered,
+    )
+
+
+def _cross_capture_validation_status(
+    evaluation: dict[str, Any],
+    gate: dict[str, Any],
+) -> str:
+    if int(evaluation.get("queries") or 0) < int(
+        (gate.get("parameters") or {}).get(
+            "minimum_cross_capture_queries",
+            5,
+        )
+    ):
+        return "INSUFFICIENT_CROSS_CAPTURE_GROUND_TRUTH"
+    if gate.get("display_eligible"):
+        return "CROSS_CAPTURE_REID_QUALITY_GATE_PASSED"
+    return "CROSS_CAPTURE_REID_QUALITY_GATE_FAILED"
 
 
 def _h2_reanchor_candidate_subject_ids(

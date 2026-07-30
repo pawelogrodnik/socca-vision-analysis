@@ -129,6 +129,20 @@ def build_cross_analysis_appearance_reid(
         model_status=model_status,
         parameters=params,
     )
+    internal_calibration = calibration
+    ranking_display = {
+        **internal_calibration,
+        "display_eligible": False,
+        "suppression_reason_codes": sorted(
+            set(
+                list(
+                    internal_calibration.get("suppression_reason_codes")
+                    or []
+                )
+                + ["insufficient_cross_capture_ground_truth"]
+            )
+        ),
+    }
     ranked_rows = [row for row in rankings if row.get("status") == "ranked"]
     artifact = {
         "schema_version": SCHEMA_VERSION,
@@ -171,7 +185,7 @@ def build_cross_analysis_appearance_reid(
             "unresolved_subjects_ranked": len(ranked_rows),
             "operator_visible_ranked_subjects": (
                 len(ranked_rows)
-                if calibration["display_eligible"]
+                if ranking_display["display_eligible"]
                 else 0
             ),
             "cross_domain_players": 0,
@@ -184,7 +198,8 @@ def build_cross_analysis_appearance_reid(
         },
         "player_profiles": player_profiles,
         "unresolved_rankings": rankings,
-        "ranking_display": calibration,
+        "internal_reference_calibration": internal_calibration,
+        "ranking_display": ranking_display,
         "cross_domain_evidence": [],
         "evaluation": {
             "method": "cross_capture_advisory_without_h2_ground_truth",

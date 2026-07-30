@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -57,6 +58,39 @@ class IdentityApprovedAppearanceReIdTests(unittest.TestCase):
         self.assertIsInstance(embedder, PortableAppearanceEmbedder)
         self.assertTrue(status["available"])
         self.assertEqual(status["quality_tier"], "baseline_fallback")
+
+    def test_loader_selects_preferred_runtime_on_apple_silicon_when_it_works(self) -> None:
+        preferred = MeanColorEmbedder()
+        with patch(
+            "app.services.identity_approved_appearance_reid."
+            "collect_reid_runtime_capabilities",
+            return_value={
+                "platform_system": "Darwin",
+                "platform_machine": "arm64",
+                "model_files_present": True,
+            },
+        ), patch(
+            "app.services.identity_approved_appearance_reid."
+            "load_default_embedder",
+            return_value=(
+                preferred,
+                {
+                    "selected_runtime": "openvino_cpu",
+                    "attempted_runtimes": [
+                        "opencv_dnn_openvino",
+                        "openvino_cpu",
+                    ],
+                },
+            ),
+        ):
+            embedder, status = load_approved_appearance_embedder(
+                Path("/models")
+            )
+
+        self.assertIs(embedder, preferred)
+        self.assertEqual(status["selected_runtime"], "openvino_cpu")
+        self.assertEqual(status["quality_tier"], "preferred_reid_model")
+        self.assertFalse(status["fallback_used"])
 
     def test_ranks_unresolved_subject_and_preserves_capture_domains(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

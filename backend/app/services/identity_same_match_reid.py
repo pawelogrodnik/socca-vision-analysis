@@ -7,6 +7,8 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import platform
+import sys
 from typing import Any, Protocol
 
 import cv2
@@ -262,28 +264,73 @@ def default_model_paths(models_dir: Path) -> tuple[Path, Path]:
     )
 
 
+def collect_reid_runtime_capabilities(models_dir: Path) -> dict[str, Any]:
+    """Report actual local runtime capabilities without selecting a model."""
+
+    xml_path, bin_path = default_model_paths(models_dir)
+    capabilities: dict[str, Any] = {
+        "platform_system": platform.system(),
+        "platform_machine": platform.machine(),
+        "python_version": sys.version.split()[0],
+        "opencv_version": cv2.__version__,
+        "model_xml_path": str(xml_path),
+        "model_bin_path": str(bin_path),
+        "model_files_present": xml_path.exists() and bin_path.exists(),
+        "openvino_import_available": False,
+        "openvino_version": None,
+        "openvino_available_devices": [],
+        "openvino_probe_error": None,
+    }
+    try:
+        import openvino as ov
+
+        capabilities["openvino_import_available"] = True
+        capabilities["openvino_version"] = getattr(
+            ov,
+            "__version__",
+            None,
+        )
+        try:
+            capabilities["openvino_available_devices"] = list(
+                ov.Core().available_devices
+            )
+        except Exception as exc:
+            capabilities["openvino_probe_error"] = str(exc)
+    except Exception as exc:
+        capabilities["openvino_probe_error"] = str(exc)
+    return capabilities
+
+
 def load_default_embedder(models_dir: Path) -> tuple[PersonReIdEmbedder | None, dict[str, Any]]:
     xml_path, bin_path = default_model_paths(models_dir)
+    model_files_present = xml_path.exists() and bin_path.exists()
     model_status = {
         "model_name": DEFAULT_MODEL_NAME,
         "model_version": DEFAULT_MODEL_VERSION,
         "xml_path": str(xml_path),
         "bin_path": str(bin_path),
-        "available": xml_path.exists() and bin_path.exists(),
+        "available": model_files_present,
+        "model_files_present": model_files_present,
+        "attempted_runtimes": [],
+        "selected_runtime": None,
     }
     if not model_status["available"]:
         model_status["reason"] = "model_files_missing"
         return None, model_status
     load_errors: list[dict[str, str]] = []
+    model_status["attempted_runtimes"].append("opencv_dnn_openvino")
     try:
         embedder = OpenCvPersonReIdEmbedder.from_openvino_ir(xml_path, bin_path)
         model_status["runtime"] = "opencv_dnn_openvino"
+        model_status["selected_runtime"] = "opencv_dnn_openvino"
         return embedder, model_status
     except Exception as exc:
         load_errors.append({"runtime": "opencv_dnn_openvino", "error": str(exc)})
+    model_status["attempted_runtimes"].append("openvino_cpu")
     try:
         embedder = OpenVinoRuntimePersonReIdEmbedder.from_openvino_ir(xml_path, bin_path)
         model_status["runtime"] = "openvino_cpu"
+        model_status["selected_runtime"] = "openvino_cpu"
         model_status["load_warnings"] = load_errors
         return embedder, model_status
     except Exception as exc:
