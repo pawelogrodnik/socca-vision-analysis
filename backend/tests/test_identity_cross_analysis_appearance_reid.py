@@ -11,6 +11,7 @@ from app.services.identity_approved_appearance_reid import (
     PortableAppearanceEmbedder,
 )
 from app.services.identity_cross_analysis_appearance_reid import (
+    build_cross_analysis_appearance_reid_report,
     build_cross_analysis_appearance_reid,
 )
 
@@ -146,6 +147,36 @@ class CrossAnalysisAppearanceReidTests(unittest.TestCase):
             artifact["summary"]["operator_visible_ranked_subjects"],
             0,
         )
+
+    def test_final_report_matches_final_gate_and_evaluation_digests(self) -> None:
+        artifact = {
+            "schema_version": "0.1.0",
+            "generated_at": "2026-01-01T00:00:00Z",
+            "mode": "cross_analysis_h1_to_h2_advisory_only",
+            "algorithm": {"name": "test"},
+            "model": {"model_name": "portable"},
+            "summary": {"players_with_prototype": 1},
+            "ranking_display": {
+                "display_eligible": False,
+                "suppression_reason_codes": ["insufficient_cross_capture_ground_truth"],
+            },
+            "operator_names_visible": False,
+            "cross_capture_evaluation": {"queries": 1},
+            "model_comparison": {"portable": {"status": "completed"}},
+        }
+
+        report = build_cross_analysis_appearance_reid_report(artifact)
+
+        self.assertEqual(report["model"], artifact["model"])
+        self.assertEqual(
+            report["ranking_display"], artifact["ranking_display"]
+        )
+        self.assertEqual(
+            report["operator_names_visible"],
+            artifact["operator_names_visible"],
+        )
+        self.assertTrue(report["cross_capture_evaluation_digest"])
+        self.assertTrue(report["model_comparison_digest"])
 
 
 def _write_crops(

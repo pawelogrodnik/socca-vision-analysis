@@ -17,6 +17,8 @@ import shutil
 from typing import Any
 import uuid
 
+import cv2
+
 from app.services.identity_initial_audit import (
     AUDIT_DIRECTORY,
     FRAME_DIRECTORY,
@@ -34,9 +36,11 @@ from app.services.identity_approved_appearance_gallery import (
     build_identity_approved_appearance_gallery,
 )
 from app.services.identity_approved_appearance_reid import (
+    PortableAppearanceEmbedder,
     load_approved_appearance_embedder,
 )
 from app.services.identity_cross_analysis_appearance_reid import (
+    build_cross_analysis_appearance_reid_report,
     build_cross_analysis_appearance_reid,
 )
 from app.services.identity_cross_capture_crop_diagnostics import (
@@ -850,13 +854,18 @@ def run_product_flow_cross_capture_reid_diagnostic(
     h2_output = diagnostic_root / "h2"
     h1_output.mkdir(parents=True, exist_ok=True)
     h2_output.mkdir(parents=True, exist_ok=True)
+    source_inventory_digest_before = canonical_digest(
+        session.get("source_inventory") or {}
+    )
+    source_mutations_before = _source_inventory_mutations(session)
 
     h1_gallery, h1_crops, confirmed_cards, rendered_h1 = (
         _load_or_build_diagnostic_h1_references(h1_workspace, h1_output)
     )
+    smoke_crop_path = _first_gallery_crop_path(h1_gallery, h1_output)
     probe = build_reid_runtime_probe(
         models_dir=Path(__file__).resolve().parents[2] / "models",
-        crop_path=_first_gallery_crop_path(h1_gallery, h1_output),
+        crop_path=smoke_crop_path,
     )
     write_json_atomic(
         diagnostic_root / "apple_silicon_runtime_probe.json",
@@ -882,70 +891,69 @@ def run_product_flow_cross_capture_reid_diagnostic(
             in selected_subject_ids
         ],
     }
-    h2_seeded = _load(
-        h2_workspace / "identity_seeded_candidate_assignments.json"
-    )
-    try:
-        embedder, model_status = load_approved_appearance_embedder(
-            Path(__file__).resolve().parents[2] / "models"
-        )
-    except Exception as exc:
-        embedder = None
-        model_status = {
+    if probe.get("status") == "PREFERRED_REID_RUNTIME_AVAILABLE":
+        try:
+            preferred_embedder, preferred_model_status = (
+                load_approved_appearance_embedder(
+                    Path(__file__).resolve().parents[2] / "models",
+                    smoke_crop_bgr=_read_reid_smoke_crop(smoke_crop_path),
+                )
+            )
+        except Exception as exc:
+            preferred_embedder = None
+            preferred_model_status = {
+                "available": False,
+                "reason": "appearance_embedder_load_failed",
+                "error": str(exc),
+            }
+    else:
+        preferred_embedder = None
+        preferred_model_status = {
+            **(probe.get("model") or {}),
             "available": False,
-            "reason": "appearance_embedder_load_failed",
-            "error": str(exc),
+            "reason": "runtime_probe_not_available",
+            "runtime_probe_status": probe.get("status"),
         }
-    reference_cache = target_cache = None
-    if embedder is not None:
-        cache_kwargs = {
-            "model_name": str(embedder.model_name),
-            "model_version": str(embedder.model_version),
-            "embedding_dimension": int(embedder.embedding_dimension),
-        }
-        reference_cache = JsonEmbeddingCache.load(
-            h1_output / "appearance_embeddings_cache.json",
-            **cache_kwargs,
-        )
-        target_cache = JsonEmbeddingCache.load(
-            h2_output / "appearance_embeddings_cache.json",
-            **cache_kwargs,
-        )
-    reid_documents = build_cross_analysis_appearance_reid(
+    portable_embedder = PortableAppearanceEmbedder()
+    portable_model_status = {
+        "available": True,
+        "model_name": portable_embedder.model_name,
+        "model_version": portable_embedder.model_version,
+        "quality_tier": "baseline_fallback",
+        "runtime": "portable_opencv_descriptor",
+        "selected_runtime": None,
+        "fallback_used": True,
+    }
+    portable_documents = _build_cross_capture_model_run(
         h1_gallery,
         selected_h2_crops,
-        h2_seeded,
-        reference_match_path=h1_output,
-        target_match_path=h2_workspace,
-        embedder=embedder,
-        model_status=model_status,
-        reference_embedding_cache=reference_cache,
-        target_embedding_cache=target_cache,
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        reference_root=h1_output,
+        target_root=h2_workspace,
+        diagnostic_h1_root=h1_output,
+        diagnostic_h2_root=h2_output,
+        cache_prefix="portable",
+        embedder=portable_embedder,
+        model_status=portable_model_status,
     )
-    reid_artifact = reid_documents[
+    reid_artifact = portable_documents[
         "identity_cross_analysis_appearance_reid"
     ]
-    evaluation_documents = build_cross_analysis_appearance_reid(
-        h1_gallery,
-        selected_h2_crops,
-        {"accepted_assignments": []},
-        reference_match_path=h1_output,
-        target_match_path=h2_workspace,
-        embedder=embedder,
-        model_status=model_status,
-        reference_embedding_cache=reference_cache,
-        target_embedding_cache=target_cache,
-        generated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    evaluation_rankings = evaluation_documents[
-        "identity_cross_analysis_appearance_reid"
-    ].get("unresolved_rankings") or []
     h2_reanchor_seeds = _load_optional(
         h2_workspace
         / REANCHOR_DIRECTORY
         / "identity_second_half_reanchor_seeds.json"
     ) or {"decisions": []}
+    historical_ground_truth = _historical_ground_truth_availability(
+        h2_workspace,
+        h2_reanchor_seeds,
+    )
+    h2_reanchor_selection = _load(
+        h2_workspace / REANCHOR_DIRECTORY / REANCHOR_SELECTION_FILENAME
+    )
+    h2_reanchor_document = build_second_half_identity_reanchor_document(
+        h2_reanchor_selection,
+        _load(h2_workspace / "match.json"),
+    )
     player_team_by_id = {
         str(player.get("player_id") or ""): str(
             player.get("team_label") or "U"
@@ -954,17 +962,59 @@ def run_product_flow_cross_capture_reid_diagnostic(
         if player.get("player_id")
     }
     cross_capture_evaluation = evaluate_h1_to_h2_cross_capture(
-        evaluation_rankings,
+        reid_artifact.get("unresolved_rankings") or [],
         h2_operator_decisions=h2_reanchor_seeds.get("decisions") or [],
         h2_candidate_document=h2_candidate,
+        h2_reanchor_document=h2_reanchor_document,
         player_team_by_id=player_team_by_id,
     )
+    preferred_documents: dict[str, dict[str, Any]] | None = None
+    preferred_evaluation: dict[str, Any] | None = None
+    if (
+        preferred_embedder is not None
+        and preferred_model_status.get("quality_tier")
+        == "preferred_reid_model"
+    ):
+        preferred_documents = _build_cross_capture_model_run(
+            h1_gallery,
+            selected_h2_crops,
+            reference_root=h1_output,
+            target_root=h2_workspace,
+            diagnostic_h1_root=h1_output,
+            diagnostic_h2_root=h2_output,
+            cache_prefix="preferred",
+            embedder=preferred_embedder,
+            model_status=preferred_model_status,
+        )
+        preferred_evaluation = evaluate_h1_to_h2_cross_capture(
+            preferred_documents[
+                "identity_cross_analysis_appearance_reid"
+            ].get("unresolved_rankings")
+            or [],
+            h2_operator_decisions=h2_reanchor_seeds.get("decisions") or [],
+            h2_candidate_document=h2_candidate,
+            h2_reanchor_document=h2_reanchor_document,
+            player_team_by_id=player_team_by_id,
+        )
     display_gate = build_operator_name_display_gate(
-        model_status=model_status,
+        model_status={
+            **(
+                preferred_model_status.get("preferred_model_status")
+                or preferred_model_status
+            ),
+            "quality_tier": "preferred_reid_model",
+        },
         internal_calibration=(
-            reid_artifact.get("internal_reference_calibration") or {}
+            (
+                preferred_documents[
+                    "identity_cross_analysis_appearance_reid"
+                ].get("internal_reference_calibration")
+                if preferred_documents
+                else {}
+            )
+            or {}
         ),
-        cross_capture_evaluation=cross_capture_evaluation,
+        cross_capture_evaluation=preferred_evaluation or {},
     )
     crop_diagnostics = build_cross_capture_crop_diagnostics(
         reference_gallery=h1_gallery,
@@ -979,25 +1029,46 @@ def run_product_flow_cross_capture_reid_diagnostic(
             h2_workspace / "identity_roster_anchor_crops_shadow_report.json"
         ),
     )
+    crop_diagnostics["prototype_dispersion"] = {
+        "h1_per_player": [
+            {
+                "player_id": row.get("player_id"),
+                "player_name": row.get("player_name"),
+                "prototype_dispersion": row.get("prototype_dispersion"),
+            }
+            for row in reid_artifact.get("player_profiles") or []
+        ],
+        "h2_per_subject": reid_artifact.get(
+            "target_subject_profiles"
+        ) or [],
+    }
     model_comparison = {
-        "portable_opencv_descriptor": {
-            "runtime": "portable_opencv_descriptor",
-            "model_version": "opencv-color-texture-v1",
-            "embedding_dimension": 192,
-            "internal_h1": reid_artifact.get(
-                "internal_reference_calibration"
-            ) or {},
-            "cross_capture": cross_capture_evaluation,
-        },
-        "person_reidentification_retail_0288": {
-            "runtime": probe.get("model", {}).get("selected_runtime"),
-            "model_version": probe.get("model", {}).get("model_version"),
-            "embedding_dimension": (
-                probe.get("inference", {}).get("embedding_dimension")
-            ),
-            "status": probe.get("status"),
-            "cross_capture": None,
-        },
+        "portable_opencv_descriptor": _model_comparison_metrics(
+            reid_artifact,
+            cross_capture_evaluation,
+            display_gate_passed=False,
+        ),
+        "person_reidentification_retail_0288": (
+            _model_comparison_metrics(
+                preferred_documents[
+                    "identity_cross_analysis_appearance_reid"
+                ],
+                preferred_evaluation or {},
+                display_gate_passed=bool(
+                    display_gate.get("display_eligible")
+                ),
+            )
+            if preferred_documents is not None
+            else {
+                "model_name": probe.get("model", {}).get("model_name"),
+                "model_version": probe.get("model", {}).get("model_version"),
+                "quality_tier": "preferred_reid_model",
+                "runtime": probe.get("model", {}).get("selected_runtime"),
+                "embedding_dimension": None,
+                "status": "unavailable",
+                "metrics": None,
+            }
+        ),
     }
     reid_artifact = {
         **reid_artifact,
@@ -1005,10 +1076,22 @@ def run_product_flow_cross_capture_reid_diagnostic(
             reid_artifact.get("internal_reference_calibration") or {}
         ),
         "cross_capture_evaluation": cross_capture_evaluation,
+        "cross_capture_evaluation_digest": canonical_digest(
+            cross_capture_evaluation
+        ),
         "ranking_display": display_gate,
+        "operator_names_visible": bool(
+            display_gate.get("display_eligible")
+        ),
         "model_comparison": model_comparison,
+        "model_comparison_digest": canonical_digest(model_comparison),
     }
-    reid_documents["identity_cross_analysis_appearance_reid"] = reid_artifact
+    reid_documents = {
+        "identity_cross_analysis_appearance_reid": reid_artifact,
+        "identity_cross_analysis_appearance_reid_report": (
+            build_cross_analysis_appearance_reid_report(reid_artifact)
+        ),
+    }
     cross_capture_report = {
         "schema_version": SCHEMA_VERSION,
         "mode": "cross_capture_reid_validation_read_only",
@@ -1020,6 +1103,7 @@ def run_product_flow_cross_capture_reid_diagnostic(
         "operator_name_display_gate": display_gate,
         "crop_diagnostics": crop_diagnostics,
         "model_comparison": model_comparison,
+        "historical_ground_truth": historical_ground_truth,
         "safety": {
             "reran_yolo": False,
             "reran_tracking": False,
@@ -1027,6 +1111,13 @@ def run_product_flow_cross_capture_reid_diagnostic(
             "production_applies": 0,
             "source_artifact_mutations": 0,
             "ground_truth_used_as_ranking_input": False,
+            "historical_ground_truth_loaded_after_ranking": False,
+            "source_inventory_digest_before": source_inventory_digest_before,
+            "source_inventory_digest_after": canonical_digest(
+                session.get("source_inventory") or {}
+            ),
+            "source_mutations_before": source_mutations_before,
+            "source_mutations_after": _source_inventory_mutations(session),
         },
     }
     write_json_atomic(
@@ -1082,8 +1173,28 @@ def run_product_flow_cross_capture_reid_diagnostic(
             "operator_visible_ranked_subjects": (
                 len(suggestions) if display_eligible else 0
             ),
-            "suggestions_shown": sum(
+            "suggestions_generated": sum(
                 len(row["suggestions"]) for row in suggestions
+            ),
+            "ranked_subjects_generated": len(suggestions),
+            "suggestions_operator_eligible": (
+                sum(len(row["suggestions"]) for row in suggestions)
+                if display_eligible
+                else 0
+            ),
+            "ranked_subjects_operator_eligible": (
+                len(suggestions) if display_eligible else 0
+            ),
+            "suggestions_displayed": 0,
+            "ranked_subjects_displayed": 0,
+            "suggestions_hidden": sum(
+                len(row["suggestions"]) for row in suggestions
+            ),
+            "ranking_suppression_reason_codes": (
+                ranking_display.get("suppression_reason_codes") or []
+            ),
+            "operator_names_eligible_for_future_bounded_followup": (
+                display_eligible
             ),
         },
     }
@@ -1098,10 +1209,15 @@ def run_product_flow_cross_capture_reid_diagnostic(
         "mode": "product_flow_cross_capture_reid_diagnostic",
         "status": "APPLE_SILICON_RUNTIME_PROBE_COMPLETE",
         "validation_status": _cross_capture_validation_status(
+            probe,
             cross_capture_evaluation,
             display_gate,
         ),
-        "operator_name_status": "OPERATOR_NAMES_REMAIN_HIDDEN",
+        "operator_name_status": (
+            "OPERATOR_NAMES_ELIGIBLE_FOR_BOUNDED_H2_FOLLOWUP"
+            if display_gate.get("display_eligible")
+            else "OPERATOR_NAMES_REMAIN_HIDDEN"
+        ),
         "source_benchmark_id": session["benchmark_id"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "h1": {
@@ -1147,6 +1263,122 @@ def _first_gallery_crop_path(
                 if artifact:
                     return root / artifact
     return None
+
+
+def _read_reid_smoke_crop(path: Path | None) -> Any:
+    if path is None or not path.exists():
+        return None
+    image = cv2.imread(str(path))
+    return image if image is not None and image.size else None
+
+
+def _build_cross_capture_model_run(
+    gallery: dict[str, Any],
+    target_crops: dict[str, Any],
+    *,
+    reference_root: Path,
+    target_root: Path,
+    diagnostic_h1_root: Path,
+    diagnostic_h2_root: Path,
+    cache_prefix: str,
+    embedder: Any,
+    model_status: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    model_status = {
+        **model_status,
+        "embedding_dimension": int(embedder.embedding_dimension),
+    }
+    cache_kwargs = {
+        "model_name": str(embedder.model_name),
+        "model_version": str(embedder.model_version),
+        "embedding_dimension": int(embedder.embedding_dimension),
+    }
+    reference_cache = JsonEmbeddingCache.load(
+        diagnostic_h1_root / f"{cache_prefix}_h1_embeddings_cache.json",
+        **cache_kwargs,
+    )
+    target_cache = JsonEmbeddingCache.load(
+        diagnostic_h2_root / f"{cache_prefix}_h2_embeddings_cache.json",
+        **cache_kwargs,
+    )
+    return build_cross_analysis_appearance_reid(
+        gallery,
+        target_crops,
+        {"accepted_assignments": []},
+        reference_match_path=reference_root,
+        target_match_path=target_root,
+        embedder=embedder,
+        model_status=model_status,
+        reference_embedding_cache=reference_cache,
+        target_embedding_cache=target_cache,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _model_comparison_metrics(
+    artifact: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    display_gate_passed: bool,
+) -> dict[str, Any]:
+    summary = artifact.get("summary") or {}
+    calibration = artifact.get("internal_reference_calibration") or {}
+    model = artifact.get("model") or {}
+    return {
+        "model_name": model.get("model_name"),
+        "model_version": model.get("model_version"),
+        "quality_tier": model.get("quality_tier"),
+        "runtime": model.get("runtime"),
+        "embedding_dimension": model.get("embedding_dimension"),
+        "status": "completed",
+        "reference_embedded_crops": summary.get("reference_embedded_crops"),
+        "target_embedded_crops": summary.get("target_embedded_crops"),
+        "rejected_crops": summary.get("rejected_crops"),
+        "players_with_prototype": summary.get("players_with_prototype"),
+        "subjects_with_prototype": summary.get(
+            "candidate_subjects_with_prototype"
+        ),
+        "internal_queries": calibration.get("queries"),
+        "internal_top1": calibration.get("top1_accuracy"),
+        "internal_top3": calibration.get("top3_accuracy"),
+        "cross_capture_queries": evaluation.get("queries"),
+        "cross_capture_top1": evaluation.get("top1_accuracy"),
+        "cross_capture_top3": evaluation.get("top3_accuracy"),
+        "mean_truth_rank": evaluation.get("mean_truth_rank"),
+        "median_truth_rank": evaluation.get("median_truth_rank"),
+        "abstentions": evaluation.get("abstentions"),
+        "cross_team_violations": evaluation.get("cross_team_violations"),
+        "display_gate_passed": display_gate_passed,
+    }
+
+
+def _historical_ground_truth_availability(
+    h2_workspace: Path,
+    h2_reanchor_seeds: dict[str, Any],
+) -> dict[str, Any]:
+    """Record why derivative H2 assignments are not independent ground truth."""
+
+    derived_path = h2_workspace / "identity_seeded_candidate_assignments.json"
+    derived = _load_optional(derived_path)
+    return {
+        "status": "not_used_no_independent_compatible_manual_assignments",
+        "inspected_artifacts": [
+            str(
+                h2_workspace
+                / REANCHOR_DIRECTORY
+                / "identity_second_half_reanchor_seeds.json"
+            ),
+            str(derived_path),
+        ],
+        "operator_decisions": len(h2_reanchor_seeds.get("decisions") or []),
+        "derived_seeded_assignments": len(
+            (derived or {}).get("accepted_assignments") or []
+        ),
+        "artifact_path": None,
+        "canonical_digest": None,
+        "ground_truth_used_as_ranking_input": False,
+        "historical_ground_truth_loaded_after_ranking": False,
+    }
 
 
 def _load_or_build_diagnostic_h1_references(
@@ -1236,9 +1468,14 @@ def _load_or_build_diagnostic_h1_references(
 
 
 def _cross_capture_validation_status(
+    probe: dict[str, Any],
     evaluation: dict[str, Any],
     gate: dict[str, Any],
 ) -> str:
+    if not (probe.get("capabilities") or {}).get("model_files_present"):
+        return "MODEL_FILES_MISSING_USER_APPROVAL_REQUIRED"
+    if probe.get("status") != "PREFERRED_REID_RUNTIME_AVAILABLE":
+        return "PREFERRED_REID_RUNTIME_BLOCKED_USER_APPROVAL_REQUIRED"
     if int(evaluation.get("queries") or 0) < int(
         (gate.get("parameters") or {}).get(
             "minimum_cross_capture_queries",

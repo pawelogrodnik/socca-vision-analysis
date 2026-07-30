@@ -301,7 +301,15 @@ def collect_reid_runtime_capabilities(models_dir: Path) -> dict[str, Any]:
     return capabilities
 
 
-def load_default_embedder(models_dir: Path) -> tuple[PersonReIdEmbedder | None, dict[str, Any]]:
+def load_default_embedder(
+    models_dir: Path,
+    *,
+    smoke_crop_bgr: np.ndarray | None = None,
+    repeatability_rtol: float = 1e-5,
+    repeatability_atol: float = 1e-6,
+) -> tuple[PersonReIdEmbedder | None, dict[str, Any]]:
+    """Select a preferred runtime only after a real inference smoke test."""
+
     xml_path, bin_path = default_model_paths(models_dir)
     model_files_present = xml_path.exists() and bin_path.exists()
     model_status = {
@@ -313,36 +321,159 @@ def load_default_embedder(models_dir: Path) -> tuple[PersonReIdEmbedder | None, 
         "model_files_present": model_files_present,
         "attempted_runtimes": [],
         "selected_runtime": None,
+        "runtime_attempts": [],
+        "repeatability_tolerance": {
+            "rtol": repeatability_rtol,
+            "atol": repeatability_atol,
+        },
     }
     if not model_status["available"]:
         model_status["reason"] = "model_files_missing"
         return None, model_status
-    load_errors: list[dict[str, str]] = []
-    model_status["attempted_runtimes"].append("opencv_dnn_openvino")
-    try:
-        embedder = OpenCvPersonReIdEmbedder.from_openvino_ir(xml_path, bin_path)
-        model_status["runtime"] = "opencv_dnn_openvino"
-        model_status["selected_runtime"] = "opencv_dnn_openvino"
-        return embedder, model_status
-    except Exception as exc:
-        load_errors.append({"runtime": "opencv_dnn_openvino", "error": str(exc)})
-    model_status["attempted_runtimes"].append("openvino_cpu")
-    try:
-        embedder = OpenVinoRuntimePersonReIdEmbedder.from_openvino_ir(xml_path, bin_path)
-        model_status["runtime"] = "openvino_cpu"
-        model_status["selected_runtime"] = "openvino_cpu"
-        model_status["load_warnings"] = load_errors
-        return embedder, model_status
-    except Exception as exc:
-        load_errors.append({"runtime": "openvino_cpu", "error": str(exc)})
+    candidates = [
+        (
+            "opencv_dnn_openvino",
+            lambda: OpenCvPersonReIdEmbedder.from_openvino_ir(
+                xml_path,
+                bin_path,
+            ),
+        ),
+        (
+            "openvino_cpu",
+            lambda: OpenVinoRuntimePersonReIdEmbedder.from_openvino_ir(
+                xml_path,
+                bin_path,
+            ),
+        ),
+    ]
+    for runtime, factory in candidates:
+        model_status["attempted_runtimes"].append(runtime)
+        attempt: dict[str, Any] = {
+            "runtime": runtime,
+            "model_loaded": False,
+            "inference_attempted": False,
+            "inference_passed": False,
+            "embedding_dimension": None,
+            "finite": None,
+            "norm": None,
+            "normalized": None,
+            "repeatability_passed": None,
+            "error_type": None,
+            "error_message": None,
+        }
+        try:
+            embedder = factory()
+            attempt["model_loaded"] = True
+        except Exception as exc:
+            attempt["error_type"] = "load_error"
+            attempt["error_message"] = str(exc)
+            model_status["runtime_attempts"].append(attempt)
+            continue
+        if smoke_crop_bgr is None or smoke_crop_bgr.size == 0:
+            attempt["error_type"] = "embedding_contract_error"
+            attempt["error_message"] = "real_smoke_crop_required_for_selection"
+            model_status["runtime_attempts"].append(attempt)
+            continue
+        attempt["inference_attempted"] = True
+        contract = _validate_reid_embedding_contract(
+            embedder,
+            smoke_crop_bgr,
+            repeatability_rtol=repeatability_rtol,
+            repeatability_atol=repeatability_atol,
+        )
+        attempt.update(contract)
+        model_status["runtime_attempts"].append(attempt)
+        if contract["inference_passed"]:
+            model_status.update(
+                {
+                    "available": True,
+                    "runtime": runtime,
+                    "selected_runtime": runtime,
+                    "load_errors": [
+                        {
+                            "runtime": row["runtime"],
+                            "error": row["error_message"],
+                        }
+                        for row in model_status["runtime_attempts"]
+                        if row["error_type"] == "load_error"
+                    ],
+                }
+            )
+            return embedder, model_status
     model_status.update(
         {
             "available": False,
-            "reason": "model_load_failed",
-            "load_errors": load_errors,
+            "reason": _preferred_runtime_failure_reason(
+                model_status["runtime_attempts"]
+            ),
+            "load_errors": [
+                {
+                    "runtime": row["runtime"],
+                    "error": row["error_message"],
+                }
+                for row in model_status["runtime_attempts"]
+                if row["error_type"] == "load_error"
+            ],
         }
     )
     return None, model_status
+
+
+def _validate_reid_embedding_contract(
+    embedder: PersonReIdEmbedder,
+    crop_bgr: np.ndarray,
+    *,
+    repeatability_rtol: float,
+    repeatability_atol: float,
+) -> dict[str, Any]:
+    try:
+        first = np.asarray(embedder.embed(crop_bgr), dtype=np.float32).reshape(-1)
+        second = np.asarray(embedder.embed(crop_bgr), dtype=np.float32).reshape(-1)
+    except Exception as exc:
+        return {
+            "inference_passed": False,
+            "error_type": "inference_error",
+            "error_message": str(exc),
+        }
+    norm = float(np.linalg.norm(first))
+    finite = bool(np.all(np.isfinite(first)))
+    expected_dimension = int(embedder.embedding_dimension)
+    dimension_valid = first.size == expected_dimension
+    non_zero = math.isfinite(norm) and norm > 1e-12
+    normalized = math.isclose(norm, 1.0, rel_tol=1e-4, abs_tol=1e-4)
+    repeatable = bool(
+        np.allclose(
+            first,
+            second,
+            rtol=repeatability_rtol,
+            atol=repeatability_atol,
+        )
+    )
+    passed = finite and dimension_valid and non_zero and normalized and repeatable
+    return {
+        "inference_passed": passed,
+        "embedding_dimension": int(first.size),
+        "finite": finite,
+        "norm": round(norm, 8),
+        "normalized": normalized,
+        "repeatability_passed": repeatable,
+        "error_type": None if passed else "embedding_contract_error",
+        "error_message": (
+            None
+            if passed
+            else "embedding_dimension_finite_norm_or_repeatability_failed"
+        ),
+    }
+
+
+def _preferred_runtime_failure_reason(
+    attempts: list[dict[str, Any]],
+) -> str:
+    if any(row.get("error_type") == "inference_error" for row in attempts):
+        return "preferred_runtime_inference_failed"
+    if any(row.get("error_type") == "load_error" for row in attempts):
+        return "preferred_runtime_load_failed"
+    return "preferred_runtime_smoke_crop_unavailable"
 
 
 def build_same_match_reid_evidence(

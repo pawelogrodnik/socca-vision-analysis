@@ -21,16 +21,32 @@ def evaluate_h1_to_h2_cross_capture(
     *,
     h2_operator_decisions: list[dict[str, Any]],
     h2_candidate_document: dict[str, Any],
+    h2_reanchor_document: dict[str, Any],
     player_team_by_id: dict[str, str],
 ) -> dict[str, Any]:
     """Evaluate rankings with H2 decisions, never feeding them into ranking."""
 
-    candidates_by_tracklet: dict[str, list[str]] = defaultdict(list)
+    candidates_by_tracklet: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for candidate in h2_candidate_document.get("subjects") or []:
         candidate_id = str(candidate.get("candidate_subject_id") or "")
         for tracklet_id in candidate.get("tracklet_ids") or []:
             if candidate_id:
-                candidates_by_tracklet[str(tracklet_id)].append(candidate_id)
+                candidates_by_tracklet[str(tracklet_id)].append(candidate)
+    observations_by_key = {
+        str(observation.get("observation_key") or ""): {
+            "frame_number": frame.get("frame_number"),
+            "bbox_xyxy": observation.get("bbox_xyxy"),
+            "tracklet_id": (
+                observation.get("provenance") or {}
+            ).get("tracklet_id"),
+            "stable_subject_id": (
+                observation.get("provenance") or {}
+            ).get("stable_subject_id"),
+        }
+        for frame in h2_reanchor_document.get("frames") or []
+        for observation in frame.get("observations") or []
+        if observation.get("observation_key")
+    }
     ranking_by_subject = {
         str(row.get("candidate_subject_id") or ""): row
         for row in rankings
@@ -38,6 +54,7 @@ def evaluate_h1_to_h2_cross_capture(
     }
     decisions_by_subject: dict[str, list[dict[str, Any]]] = defaultdict(list)
     unmapped_decisions: list[dict[str, Any]] = []
+    invalid_ground_truth: list[dict[str, Any]] = []
     for decision in h2_operator_decisions:
         if decision.get("action") != "assign_roster_player":
             continue
@@ -49,26 +66,67 @@ def evaluate_h1_to_h2_cross_capture(
         tracklet_id = str(
             (decision.get("provenance") or {}).get("tracklet_id") or ""
         )
-        candidate_ids = sorted(set(candidates_by_tracklet.get(tracklet_id) or []))
+        observation_key = str(decision.get("observation_key") or "")
         payload = {
-            "observation_key": decision.get("observation_key"),
+            "observation_key": observation_key or None,
+            "frame_number": decision.get("frame_number"),
             "tracklet_id": tracklet_id or None,
+            "stable_subject_id": (
+                (decision.get("provenance") or {}).get("stable_subject_id")
+            ),
+            "bbox_xyxy": decision.get("bbox_xyxy"),
             "ground_truth_player_id": player_id,
             "ground_truth_team": team_label,
         }
-        if len(candidate_ids) != 1:
+        if not player_id or player_id not in player_team_by_id or team_label not in {"A", "B"}:
+            invalid_ground_truth.append(
+                {**payload, "reason": "invalid_roster_player_or_team"}
+            )
+            continue
+        observation = observations_by_key.get(observation_key)
+        if (
+            observation is None
+            or int(observation.get("frame_number") or -1)
+            != int(decision.get("frame_number") or -2)
+            or str(observation.get("tracklet_id") or "") != tracklet_id
+        ):
+            unmapped_decisions.append(
+                {
+                    **payload,
+                    "reason": "unmapped_exact_observation",
+                }
+            )
+            continue
+        candidates = list(candidates_by_tracklet.get(tracklet_id) or [])
+        if len(candidates) != 1:
             unmapped_decisions.append(
                 {
                     **payload,
                     "reason": (
-                        "no_candidate_subject_for_exact_observation"
-                        if not candidate_ids
-                        else "ambiguous_candidate_subject_for_exact_observation"
+                        "unmapped_exact_observation"
+                        if not candidates
+                        else "ambiguous_exact_observation"
                     ),
                 }
             )
             continue
-        decisions_by_subject[candidate_ids[0]].append(payload)
+        candidate = candidates[0]
+        candidate_team = str(candidate.get("team_label") or "U")
+        if candidate_team != team_label:
+            invalid_ground_truth.append(
+                {
+                    **payload,
+                    "candidate_subject_id": candidate.get(
+                        "candidate_subject_id"
+                    ),
+                    "candidate_team": candidate_team,
+                    "reason": "candidate_team_incompatible_with_truth",
+                }
+            )
+            continue
+        decisions_by_subject[
+            str(candidate.get("candidate_subject_id") or "")
+        ].append(payload)
 
     rows: list[dict[str, Any]] = []
     conflicts: list[dict[str, Any]] = []
@@ -101,15 +159,27 @@ def evaluate_h1_to_h2_cross_capture(
             ),
             None,
         )
+        invalid_ranked_players = [
+            player_id
+            for player_id in ranked_player_ids
+            if player_id not in player_team_by_id
+        ]
         cross_team_violations = sum(
             player_team_by_id.get(player_id) not in {None, truth_team}
             for player_id in ranked_player_ids
+            if player_id in player_team_by_id
         )
         abstained = not suggestions
         rows.append(
             {
                 "candidate_subject_id": candidate_id,
-                "observation_provenance": decisions[0],
+                "observation_provenance": {
+                    **decisions[0],
+                    "source_observation_keys": sorted(
+                        str(row.get("observation_key") or "")
+                        for row in decisions
+                    ),
+                },
                 "ground_truth_player_id": truth_player_id,
                 "ground_truth_team": truth_team,
                 "ranked_candidate_player_ids": ranked_player_ids,
@@ -121,6 +191,7 @@ def evaluate_h1_to_h2_cross_capture(
                 "top3_correct": truth_rank is not None and truth_rank <= 3,
                 "abstained": abstained,
                 "cross_team_violations": cross_team_violations,
+                "invalid_ranked_players": invalid_ranked_players,
             }
         )
     query_count = len(rows)
@@ -139,9 +210,13 @@ def evaluate_h1_to_h2_cross_capture(
         "cross_team_violations": sum(
             int(row["cross_team_violations"]) for row in rows
         ),
+        "invalid_ranked_players": sum(
+            len(row["invalid_ranked_players"]) for row in rows
+        ),
         "rows": rows,
         "unmapped_operator_decisions": unmapped_decisions,
         "conflicting_ground_truth": conflicts,
+        "invalid_ground_truth": invalid_ground_truth,
     }
 
 

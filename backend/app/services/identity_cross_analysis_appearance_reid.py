@@ -13,9 +13,11 @@ from app.services.identity_approved_appearance_reid import (
     _embed_candidate_subjects,
     _player_profiles,
     _prototype,
+    _prototype_with_dispersion,
     _rank_unresolved_subjects,
 )
 from app.services.identity_same_match_reid import PersonReIdEmbedder
+from app.services.identity_jersey_number_common import canonical_digest
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -93,11 +95,30 @@ def build_cross_analysis_appearance_reid(
         for player in player_profiles
         if player.get("status") == "ready" and player.get("prototype")
     }
-    target_subject_prototypes = {
-        subject_id: _prototype(vectors)
-        for subject_id, vectors in target_vectors.items()
-        if len(vectors) >= int(params["min_embeddings_per_subject"])
-    }
+    target_subject_profiles = []
+    target_subject_prototypes = {}
+    for subject_id, vectors in target_vectors.items():
+        prototype, dispersion = _prototype_with_dispersion(vectors)
+        if (
+            prototype is not None
+            and len(vectors) >= int(params["min_embeddings_per_subject"])
+        ):
+            target_subject_prototypes[subject_id] = prototype
+        target_subject_profiles.append(
+            {
+                "candidate_subject_id": subject_id,
+                "embedding_count": len(vectors),
+                "prototype_dispersion": (
+                    round(float(dispersion), 6)
+                    if dispersion is not None
+                    else None
+                ),
+                "status": (
+                    "ready" if subject_id in target_subject_prototypes
+                    else "unavailable"
+                ),
+            }
+        )
     accepted_target_subjects = {
         str(assignment.get("candidate_subject_id") or ""): {
             "player_id": (assignment.get("assigned_player") or {}).get(
@@ -197,6 +218,10 @@ def build_cross_analysis_appearance_reid(
             "target": dict(sorted(target_rejected.items())),
         },
         "player_profiles": player_profiles,
+        "target_subject_profiles": sorted(
+            target_subject_profiles,
+            key=lambda row: str(row["candidate_subject_id"]),
+        ),
         "unresolved_rankings": rankings,
         "internal_reference_calibration": internal_calibration,
         "ranking_display": ranking_display,
@@ -307,6 +332,7 @@ def _unavailable_artifact(
         },
         "rejected_crops": {"reference": {}, "target": {}},
         "player_profiles": [],
+        "target_subject_profiles": [],
         "unresolved_rankings": [],
         "ranking_display": {
             "method": "leave_one_confirmed_crop_out_same_team",
@@ -329,8 +355,21 @@ def _unavailable_artifact(
 
 
 def _documents(artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    report = build_cross_analysis_appearance_reid_report(artifact)
+    return {
+        "identity_cross_analysis_appearance_reid": artifact,
+        "identity_cross_analysis_appearance_reid_report": report,
+    }
+
+
+def build_cross_analysis_appearance_reid_report(
+    artifact: dict[str, Any],
+) -> dict[str, Any]:
     summary = artifact.get("summary") or {}
-    report = {
+    cross_capture_evaluation = artifact.get("cross_capture_evaluation") or {}
+    model_comparison = artifact.get("model_comparison") or {}
+    ranking_display = artifact.get("ranking_display") or {}
+    return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": artifact.get("generated_at"),
         "mode": MODE,
@@ -342,20 +381,25 @@ def _documents(artifact: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "algorithm": artifact.get("algorithm") or {},
         "model": artifact.get("model") or {},
         "summary": summary,
-        "ranking_display": artifact.get("ranking_display") or {},
+        "ranking_display": ranking_display,
+        "operator_names_visible": bool(
+            artifact.get("operator_names_visible")
+        ),
+        "cross_capture_evaluation_digest": (
+            artifact.get("cross_capture_evaluation_digest")
+            or canonical_digest(cross_capture_evaluation)
+        ),
+        "model_comparison_digest": (
+            artifact.get("model_comparison_digest")
+            or canonical_digest(model_comparison)
+        ),
         "gates": {
             "advisory_only": True,
             "team_safe_ranking": True,
             "automatic_false_merges": 0,
             "cross_capture_paths_separated": True,
             "operator_names_visible": bool(
-                (artifact.get("ranking_display") or {}).get(
-                    "display_eligible"
-                )
+                ranking_display.get("display_eligible")
             ),
         },
-    }
-    return {
-        "identity_cross_analysis_appearance_reid": artifact,
-        "identity_cross_analysis_appearance_reid_report": report,
     }

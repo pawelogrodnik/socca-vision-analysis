@@ -50,14 +50,22 @@ def build_cross_capture_crop_diagnostics(
     ]
     h1_montage = output_directory / "h1_reference_crops_montage.jpg"
     h2_montage = output_directory / "h2_query_crops_montage.jpg"
-    _write_montage(reference_groups, reference_root, h1_montage)
-    _write_montage(target_groups, target_root, h2_montage)
+    h1_montage_result = _write_montage(
+        reference_groups,
+        reference_root,
+        h1_montage,
+    )
+    h2_montage_result = _write_montage(
+        target_groups,
+        target_root,
+        h2_montage,
+    )
     return {
         "h1": _quality_summary(reference_groups, reference_root, reference_crop_report),
         "h2": _quality_summary(target_groups, target_root, target_crop_report),
         "montages": {
-            "h1_reference_crops": str(h1_montage),
-            "h2_query_crops": str(h2_montage),
+            "h1_reference_crops": h1_montage_result,
+            "h2_query_crops": h2_montage_result,
         },
         "safety": {
             "read_only": True,
@@ -130,7 +138,7 @@ def _write_montage(
     groups: list[tuple[str, list[dict[str, Any]]]],
     root: Path,
     output_path: Path,
-) -> None:
+) -> dict[str, str | None]:
     cells: list[np.ndarray] = []
     for label, crops in groups:
         if not crops:
@@ -157,8 +165,10 @@ def _write_montage(
         )
         cells.append(canvas)
     if not cells:
-        output_path.write_bytes(b"")
-        return
+        return {
+            "montage_status": "unavailable_no_valid_crops",
+            "montage_path": None,
+        }
     columns = 5
     rows = (len(cells) + columns - 1) // columns
     montage = np.full((rows * 190, columns * 180, 3), 12, dtype=np.uint8)
@@ -169,6 +179,10 @@ def _write_montage(
             column * 180 : (column + 1) * 180,
         ] = cell
     cv2.imwrite(str(output_path), montage)
+    return {
+        "montage_status": "ready",
+        "montage_path": str(output_path),
+    }
 
 
 def _numeric_summary(values: list[float]) -> dict[str, float | int | None]:

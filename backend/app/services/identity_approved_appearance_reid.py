@@ -136,6 +136,8 @@ class PortableAppearanceEmbedder:
 
 def load_approved_appearance_embedder(
     models_dir: Path,
+    *,
+    smoke_crop_bgr: np.ndarray | None = None,
 ) -> tuple[PersonReIdEmbedder, dict[str, Any]]:
     """Load a preferred runtime by capability, then fall back safely.
 
@@ -143,7 +145,10 @@ def load_approved_appearance_embedder(
     attempted when local model files are present, including on Apple Silicon.
     """
     capabilities = collect_reid_runtime_capabilities(models_dir)
-    embedder, load_status = load_default_embedder(models_dir)
+    embedder, load_status = load_default_embedder(
+        models_dir,
+        smoke_crop_bgr=smoke_crop_bgr,
+    )
     model_status = {**capabilities, **load_status}
     if embedder is not None:
         return embedder, {

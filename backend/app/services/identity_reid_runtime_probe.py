@@ -2,8 +2,6 @@ from __future__ import annotations
 
 """Small, repeatable local probe for the preferred person-ReID runtime."""
 
-import hashlib
-import math
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +9,6 @@ import cv2
 import numpy as np
 
 from app.services.identity_same_match_reid import (
-    PersonReIdEmbedder,
     collect_reid_runtime_capabilities,
     load_default_embedder,
 )
@@ -28,17 +25,19 @@ def build_reid_runtime_probe(
     """Probe local model runtimes with one existing crop, without downloads."""
 
     capabilities = collect_reid_runtime_capabilities(models_dir)
-    embedder, load_status = load_default_embedder(models_dir)
+    image = _load_real_crop(crop_path)
+    embedder, load_status = load_default_embedder(
+        models_dir,
+        smoke_crop_bgr=image,
+    )
     selected_runtime = load_status.get("selected_runtime")
-    inference = _probe_inference(embedder, crop_path)
-    ready = embedder is not None and inference["status"] == "passed"
+    attempts = load_status.get("runtime_attempts") or []
+    ready = embedder is not None and selected_runtime is not None
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "apple_silicon_reid_runtime_probe_read_only",
         "status": (
-            "PREFERRED_REID_RUNTIME_AVAILABLE"
-            if ready
-            else "PREFERRED_REID_RUNTIME_BLOCKED"
+            _probe_status(capabilities, attempts, ready)
         ),
         "capabilities": capabilities,
         "model": {
@@ -49,9 +48,22 @@ def build_reid_runtime_probe(
             or [],
             "selected_runtime": selected_runtime,
             "load_errors": load_status.get("load_errors") or [],
+            "runtime_attempts": attempts,
+            "repeatability_tolerance": load_status.get(
+                "repeatability_tolerance"
+            ) or {},
             "fallback_used": False,
         },
-        "inference": inference,
+        "inference": (
+            next(
+                (
+                    row
+                    for row in attempts
+                    if row.get("runtime") == selected_runtime
+                ),
+                None,
+            )
+        ),
         "safety": {
             "reran_yolo": False,
             "reran_tracking": False,
@@ -65,49 +77,34 @@ def build_reid_runtime_probe(
     }
 
 
-def _probe_inference(
-    embedder: PersonReIdEmbedder | None,
-    crop_path: Path | None,
-) -> dict[str, Any]:
-    if embedder is None:
-        return {
-            "status": "not_run_preferred_runtime_unavailable",
-            "crop_path": str(crop_path) if crop_path else None,
-        }
+def _load_real_crop(crop_path: Path | None) -> np.ndarray | None:
     if crop_path is None or not crop_path.exists():
-        return {
-            "status": "not_run_real_crop_missing",
-            "crop_path": str(crop_path) if crop_path else None,
-        }
+        return None
     image = cv2.imread(str(crop_path))
     if image is None or image.size == 0:
-        return {
-            "status": "not_run_real_crop_invalid",
-            "crop_path": str(crop_path),
-        }
-    try:
-        first = np.asarray(embedder.embed(image), dtype=np.float32).reshape(-1)
-        second = np.asarray(embedder.embed(image), dtype=np.float32).reshape(-1)
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "crop_path": str(crop_path),
-            "error": str(exc),
-        }
-    norm = float(np.linalg.norm(first))
-    finite = bool(np.all(np.isfinite(first)))
-    deterministic = bool(np.array_equal(first, second))
-    normalized = math.isclose(norm, 1.0, rel_tol=1e-4, abs_tol=1e-4)
-    non_zero = norm > 1e-12
-    passed = finite and non_zero and normalized and deterministic
-    return {
-        "status": "passed" if passed else "failed_validation",
-        "crop_path": str(crop_path),
-        "crop_sha256": hashlib.sha256(image.tobytes()).hexdigest(),
-        "embedding_dimension": int(first.size),
-        "finite_values": finite,
-        "non_zero_norm": non_zero,
-        "l2_normalized": normalized,
-        "embedding_norm": round(norm, 8),
-        "deterministic_repeated_inference": deterministic,
-    }
+        return None
+    return image
+
+
+def _probe_status(
+    capabilities: dict[str, Any],
+    attempts: list[dict[str, Any]],
+    ready: bool,
+) -> str:
+    if not capabilities.get("model_files_present"):
+        return "MODEL_FILES_MISSING"
+    if ready:
+        return "PREFERRED_REID_RUNTIME_AVAILABLE"
+    if not capabilities.get("openvino_import_available"):
+        return "OPENVINO_PACKAGE_MISSING"
+    if attempts and attempts[0].get("error_type") == "load_error":
+        if len(attempts) == 1:
+            return "OPENCV_DNN_LOAD_FAILED"
+    if attempts and attempts[0].get("error_type") == "inference_error":
+        if len(attempts) == 1:
+            return "OPENCV_DNN_INFERENCE_FAILED"
+    if len(attempts) > 1 and attempts[1].get("error_type") == "load_error":
+        return "OPENVINO_LOAD_FAILED"
+    if len(attempts) > 1 and attempts[1].get("error_type") == "inference_error":
+        return "OPENVINO_INFERENCE_FAILED"
+    return "PREFERRED_REID_RUNTIME_BLOCKED"

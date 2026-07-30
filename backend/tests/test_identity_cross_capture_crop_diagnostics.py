@@ -39,7 +39,12 @@ class CrossCaptureCropDiagnosticsTests(unittest.TestCase):
             self.assertEqual(result["h1"]["crop_count"], 1)
             self.assertEqual(result["h2"]["missing_artifacts"], 0)
             self.assertTrue(
-                Path(result["montages"]["h1_reference_crops"]).exists()
+                Path(
+                    result["montages"]["h1_reference_crops"][
+                        "montage_path"
+                    ]
+                    or ""
+                ).exists()
             )
             self.assertTrue(result["safety"]["read_only"])
 

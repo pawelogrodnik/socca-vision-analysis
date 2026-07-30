@@ -1455,6 +1455,28 @@ shadow boxes require a separate detector-quality path. IA7a remains blocked
 until real cross-domain evidence exists and a new bounded benchmark improves
 safe review reduction.
 
+### ReID diagnostic correctness closeout (2026-07-30)
+
+The separate, read-only `cross_capture_reid_diagnostic/` follow-up for canonical
+`product-flow-20260730-v4` repaired runtime selection, separated portable and
+preferred-model evidence, and made the H1→H2 ground-truth mapping exact
+observation based. It did not alter this historical benchmark outcome.
+
+```text
+diagnostic status: PREFERRED_REID_RUNTIME_BLOCKED_USER_APPROVAL_REQUIRED
+operator names: OPERATOR_NAMES_REMAIN_HIDDEN
+preferred model files: present
+OpenCV DNN OpenVINO: load failed (backend plugin unavailable)
+OpenVINO Runtime CPU: load failed (internal runtime error)
+portable baseline: diagnostic only; never operator-visible
+automatic assignments / source mutations: 0 / 0
+IA7a: BLOCKED
+```
+
+No model was downloaded and no package was installed. The next action needs
+explicit user approval for a local preferred-runtime repair; it must be followed
+by a new read-only probe before any bounded H2 follow-up can be considered.
+
 Persistent state machine:
 
 ```text
