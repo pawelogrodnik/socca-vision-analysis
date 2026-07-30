@@ -1152,6 +1152,71 @@ a { color: #93c5fd; }
   border-radius: 8px;
   background: #0f172a;
 }
+
+.bounded-h2-progress {
+  margin: 1rem 0;
+  color: #94a3b8;
+}
+
+.bounded-h2-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 0.7fr);
+  gap: 1rem;
+}
+
+.bounded-h2-frame {
+  position: relative;
+}
+
+.bounded-h2-frame > img {
+  display: block;
+  width: 100%;
+}
+
+.bounded-h2-box {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px solid #ef4444;
+  pointer-events: none;
+}
+
+.bounded-h2-box.team-b {
+  border-color: #3b82f6;
+}
+
+.bounded-h2-actions,
+.bounded-h2-context {
+  padding: 1rem;
+  border: 1px solid #334155;
+  border-radius: 0.75rem;
+  background: #0f172a;
+}
+
+.bounded-h2-crop {
+  display: block;
+  max-width: 180px;
+  max-height: 280px;
+  margin: 0 auto 1rem;
+}
+
+.bounded-h2-roster,
+.bounded-h2-generic,
+.bounded-h2-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.bounded-h2-roster button.active {
+  outline: 3px solid #22c55e;
+}
+
+@media (max-width: 900px) {
+  .bounded-h2-layout {
+    grid-template-columns: 1fr;
+  }
+}
 .initial-identity-audit-panel h3,
 .initial-identity-audit-panel p,
 .initial-identity-audit-header h2,

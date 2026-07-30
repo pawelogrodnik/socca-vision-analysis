@@ -44,6 +44,9 @@ import type {
   TeamConfigReviewState,
   TrackletReviewState
 } from './types';
+import type {
+  BoundedH2Session,
+} from './components/boundedH2ReIdTypes';
 
 const API_BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE_URL || '');
 
@@ -80,6 +83,39 @@ export function artifactUrl(matchId: string, artifactName: string): string {
 
 export function frameUrl(matchId: string, second: number): string {
   return `${API_BASE}/api/matches/${matchId}/frame?second=${second}&_=${Date.now()}`;
+}
+
+export function boundedH2ArtifactUrl(
+  sessionId: string,
+  artifact: string,
+): string {
+  const encoded = artifact.split('/').map(encodeURIComponent).join('/');
+  return `${API_BASE}/api/bounded-h2-reid-sessions/${encodeURIComponent(sessionId)}/artifact/${encoded}`;
+}
+
+export async function getBoundedH2ReIdSession(
+  sessionId: string,
+): Promise<BoundedH2Session> {
+  return request<BoundedH2Session>(
+    `/api/bounded-h2-reid-sessions/${encodeURIComponent(sessionId)}`,
+  );
+}
+
+export async function saveBoundedH2ReIdDecision(
+  sessionId: string,
+  payload: {
+    updates: Array<Record<string, unknown>>;
+    finished?: boolean;
+  },
+): Promise<BoundedH2Session> {
+  return request<BoundedH2Session>(
+    `/api/bounded-h2-reid-sessions/${encodeURIComponent(sessionId)}/decisions`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export async function createMatch(input: {

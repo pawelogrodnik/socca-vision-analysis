@@ -26,6 +26,10 @@ from app.services.identity_crop_review import (
     refresh_identity_crop_assignments,
     save_identity_crop_assignments,
 )
+from app.services.identity_bounded_h2_reid_followup import (
+    load_bounded_h2_reid_followup,
+    save_bounded_h2_reid_decisions,
+)
 from app.services.identity_initial_audit import prepare_initial_identity_audit
 from app.services.identity_initial_audit_store import (
     InitialIdentityAuditConflictError,
@@ -914,6 +918,52 @@ def finish_product_flow_benchmark_h2(
         return finish_product_flow_h2(root=root)
     except ProductFlowBenchmarkError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/bounded-h2-reid-sessions/{session_id}")
+def get_bounded_h2_reid_session(session_id: str) -> dict[str, Any]:
+    session_path = PRODUCT_FLOW_BENCHMARKS_DIR / session_id
+    if not (session_path / "bounded_h2_selection.json").is_file():
+        raise HTTPException(status_code=404, detail="Bounded H2 session not found")
+    try:
+        return load_bounded_h2_reid_followup(session_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.put("/api/bounded-h2-reid-sessions/{session_id}/decisions")
+def update_bounded_h2_reid_session(
+    session_id: str,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    session_path = PRODUCT_FLOW_BENCHMARKS_DIR / session_id
+    if not (session_path / "bounded_h2_selection.json").is_file():
+        raise HTTPException(status_code=404, detail="Bounded H2 session not found")
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    try:
+        return save_bounded_h2_reid_decisions(
+            session_path,
+            updates=updates,
+            finished=bool(payload.get("finished")),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/bounded-h2-reid-sessions/{session_id}/artifact/{artifact_path:path}"
+)
+def get_bounded_h2_reid_artifact(
+    session_id: str,
+    artifact_path: str,
+) -> FileResponse:
+    session_path = (PRODUCT_FLOW_BENCHMARKS_DIR / session_id).resolve()
+    target = (session_path / artifact_path).resolve()
+    if session_path not in target.parents or not target.is_file():
+        raise HTTPException(status_code=404, detail="Bounded H2 artifact not found")
+    return FileResponse(target)
 
 
 @app.get("/api/matches/{match_id}")

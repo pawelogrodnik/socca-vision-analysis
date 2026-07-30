@@ -1496,6 +1496,39 @@ identity mutation, YOLO or tracking rerun occurred. A separate approval is
 needed for further local runtime investigation or an alternate compatible
 OpenVINO package/version.
 
+### Rosetta preferred-ReID productionization and bounded H2 gate (2026-07-30)
+
+Native macOS ARM64 OpenVINO remains blocked in the CPU plugin during model
+compilation. A dedicated Rosetta x86_64 subprocess runtime now has an explicit
+candidate/probe/activation contract and a single-compile batch worker. Runtime
+availability requires a real x86_64 handshake, model digest verification,
+synthetic inference, two real-crop inferences, embedding validation and
+repeatability.
+
+```text
+native arm64 OpenVINO: BLOCKED — CPU compile internal error
+Rosetta x86 runtime: ROSETTA_REID_RUNTIME_AVAILABLE
+Python: 3.9.6 x86_64
+OpenVINO: 2025.3.0
+NumPy: 2.0.2
+real runtime integration test: PASSED
+preferred v4 replay: PREFERRED_REID_REPLAY_COMPLETE
+H1 internal queries / top-1 / top-3: 21 / 0.0476 / 0.1429
+valid historical H2 queries: 1
+bounded H2 session: product-flow-20260730-v5-reid-followup
+bounded H2 cards: 5
+bounded H2 decisions: 0
+bounded H2 status: BOUNDED_H2_OPERATOR_INPUT_REQUIRED
+operator names: OPERATOR_NAMES_REMAIN_HIDDEN
+IA7a: NOT_STARTED — full preferred quality gate has not passed
+```
+
+The v5 follow-up freezes preferred rankings before opening its empty operator
+decision store. Selection is independent of ground-truth identity and excludes
+the one previously valid H2 query. Portable rankings are absent from the
+operator surface. Historical v4 source artifacts, production identity,
+candidate identity, YOLO and tracking remain unchanged.
+
 Persistent state machine:
 
 ```text
