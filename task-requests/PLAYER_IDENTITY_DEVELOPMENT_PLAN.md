@@ -1473,9 +1473,28 @@ automatic assignments / source mutations: 0 / 0
 IA7a: BLOCKED
 ```
 
-No model was downloaded and no package was installed. The next action needs
-explicit user approval for a local preferred-runtime repair; it must be followed
-by a new read-only probe before any bounded H2 follow-up can be considered.
+### Isolated preferred-runtime repair gate (2026-07-30)
+
+An explicitly approved, separate `backend/.venv-reid-probe` was created with
+OpenVINO `2025.4.1`, NumPy and OpenCV only. It did not modify
+`backend/.venv-mps`. The isolated runtime can create `ov.Core()`, see `CPU`,
+and read the existing IR v10 XML/BIN, but `compile_model(..., "CPU")` still
+returns OpenVINO's internal runtime error. The IR files are readable and have
+recorded SHA-256 digests, so there is no evidence to request a new model.
+
+```text
+preferred runtime: PREFERRED_REID_RUNTIME_BLOCKED
+preferred read-only replay: NOT_STARTED — blocked by runtime
+evidence collection readiness: NOT_READY — preferred ranking unavailable
+bounded H2 session: NOT_CREATED
+cross-capture gate: NOT_EVALUATED
+IA7a: BLOCKED
+```
+
+The cycle stops at this gate. No H2 operator decisions, new benchmark session,
+identity mutation, YOLO or tracking rerun occurred. A separate approval is
+needed for further local runtime investigation or an alternate compatible
+OpenVINO package/version.
 
 Persistent state machine:
 
