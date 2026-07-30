@@ -82,6 +82,15 @@ def build_reid_runtime_repair_request(
 ) -> dict[str, Any]:
     """Describe, but never perform, the minimum local runtime repair."""
 
+    if probe.get("status") == "PREFERRED_REID_RUNTIME_AVAILABLE":
+        return {
+            "approval_required": False,
+            "reason": None,
+            "selected_runtime": probe.get("selected_runtime")
+            or (probe.get("model") or {}).get("selected_runtime"),
+            "download_performed": False,
+            "installation_performed": False,
+        }
     capabilities = probe.get("capabilities") or {}
     attempts = probe.get("model", {}).get("runtime_attempts") or []
     return {

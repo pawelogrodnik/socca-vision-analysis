@@ -339,6 +339,7 @@ def _embed_candidate_subjects(
     rows: list[dict[str, Any]] = []
     rejected: dict[str, int] = defaultdict(int)
     maximum = int(parameters["max_crops_per_candidate_subject"])
+    pending: list[tuple[str, dict[str, Any], str, np.ndarray]] = []
     for card in anchor_crops_doc.get("cards") or []:
         if not isinstance(card, dict):
             continue
@@ -367,13 +368,8 @@ def _embed_candidate_subjects(
                 else None
             )
             if vector is None:
-                try:
-                    vector = _normalize(embedder.embed(image))
-                except (ValueError, RuntimeError, cv2.error):
-                    rejected["embedding_failed"] += 1
-                    continue
-                if embedding_cache is not None:
-                    embedding_cache.put(digest, vector)
+                pending.append((subject_id, crop, digest, image))
+                continue
             subject_vectors[subject_id].append(vector)
             rows.append(
                 {
@@ -384,6 +380,47 @@ def _embed_candidate_subjects(
                     "_vector": vector,
                 }
             )
+    if pending:
+        try:
+            if hasattr(embedder, "embed_batch"):
+                pending_vectors = np.asarray(
+                    embedder.embed_batch([row[3] for row in pending]),
+                    dtype=np.float32,
+                )
+            else:
+                pending_vectors = np.stack(
+                    [embedder.embed(row[3]) for row in pending]
+                ).astype(np.float32)
+            if pending_vectors.shape != (
+                len(pending),
+                int(embedder.embedding_dimension),
+            ):
+                raise ValueError("Embedding batch shape mismatch")
+        except (ValueError, RuntimeError, cv2.error):
+            rejected["embedding_failed"] += len(pending)
+        else:
+            for (subject_id, crop, digest, _image), raw_vector in zip(
+                pending,
+                pending_vectors,
+                strict=True,
+            ):
+                try:
+                    vector = _normalize(raw_vector)
+                except ValueError:
+                    rejected["embedding_failed"] += 1
+                    continue
+                if embedding_cache is not None:
+                    embedding_cache.put(digest, vector)
+                subject_vectors[subject_id].append(vector)
+                rows.append(
+                    {
+                        "candidate_subject_id": subject_id,
+                        "anchor_crop_id": crop.get("anchor_crop_id"),
+                        "frame": crop.get("frame"),
+                        "artifact": crop.get("artifact"),
+                        "_vector": vector,
+                    }
+                )
     return dict(subject_vectors), rows, dict(rejected)
 
 

@@ -143,6 +143,57 @@ class IdentitySameMatchReIdTests(unittest.TestCase):
             second_documents["identity_same_match_reid"]["pairs"],
         )
 
+    def test_embedding_cache_namespace_tracks_runtime_and_preprocessing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "embeddings.json"
+            first = JsonEmbeddingCache.load(
+                cache_path,
+                model_name="model",
+                model_version="digest-a",
+                embedding_dimension=3,
+                cache_namespace={
+                    "runtime_version": "1",
+                    "preprocessing_version": "a",
+                },
+            )
+            first.put("crop", np.asarray([1.0, 0.0, 0.0], dtype=np.float32))
+            first.save()
+
+            same = JsonEmbeddingCache.load(
+                cache_path,
+                model_name="model",
+                model_version="digest-a",
+                embedding_dimension=3,
+                cache_namespace={
+                    "runtime_version": "1",
+                    "preprocessing_version": "a",
+                },
+            )
+            changed_runtime = JsonEmbeddingCache.load(
+                cache_path,
+                model_name="model",
+                model_version="digest-a",
+                embedding_dimension=3,
+                cache_namespace={
+                    "runtime_version": "2",
+                    "preprocessing_version": "a",
+                },
+            )
+            changed_preprocessing = JsonEmbeddingCache.load(
+                cache_path,
+                model_name="model",
+                model_version="digest-a",
+                embedding_dimension=3,
+                cache_namespace={
+                    "runtime_version": "1",
+                    "preprocessing_version": "b",
+                },
+            )
+
+        self.assertIsNotNone(same.get("crop"))
+        self.assertIsNone(changed_runtime.get("crop"))
+        self.assertIsNone(changed_preprocessing.get("crop"))
+
     def test_overlap_and_unreliable_appearance_are_rejected(self) -> None:
         timeline = _timeline_doc()
         timeline["subjects"][0]["observations"][0]["appearance_reliable"] = False

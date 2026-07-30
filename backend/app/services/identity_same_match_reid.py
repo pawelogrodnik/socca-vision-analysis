@@ -59,12 +59,14 @@ class JsonEmbeddingCache:
         model_name: str,
         model_version: str,
         embedding_dimension: int,
+        cache_namespace: dict[str, Any] | None = None,
         entries: dict[str, list[float]] | None = None,
     ) -> None:
         self.path = path
         self.model_name = model_name
         self.model_version = model_version
         self.embedding_dimension = int(embedding_dimension)
+        self.cache_namespace = dict(cache_namespace or {})
         self.entries = dict(entries or {})
         self.hits = 0
         self.misses = 0
@@ -78,6 +80,7 @@ class JsonEmbeddingCache:
         model_name: str,
         model_version: str,
         embedding_dimension: int,
+        cache_namespace: dict[str, Any] | None = None,
     ) -> JsonEmbeddingCache:
         entries: dict[str, list[float]] = {}
         if path.exists():
@@ -89,6 +92,8 @@ class JsonEmbeddingCache:
                     and document.get("model_version") == model_version
                     and document.get("preprocessing_version") == EMBEDDING_PREPROCESSING_VERSION
                     and int(document.get("embedding_dimension") or 0) == int(embedding_dimension)
+                    and (document.get("cache_namespace") or {})
+                    == (cache_namespace or {})
                 )
                 if compatible and isinstance(document.get("entries"), dict):
                     entries = document["entries"]
@@ -99,6 +104,7 @@ class JsonEmbeddingCache:
             model_name=model_name,
             model_version=model_version,
             embedding_dimension=embedding_dimension,
+            cache_namespace=cache_namespace,
             entries=entries,
         )
 
@@ -132,6 +138,7 @@ class JsonEmbeddingCache:
             "model_version": self.model_version,
             "preprocessing_version": EMBEDDING_PREPROCESSING_VERSION,
             "embedding_dimension": self.embedding_dimension,
+            "cache_namespace": self.cache_namespace,
             "entries": dict(sorted(self.entries.items())),
         }
         temporary = self.path.with_suffix(f"{self.path.suffix}.tmp")
@@ -150,6 +157,7 @@ class JsonEmbeddingCache:
             "misses": self.misses,
             "writes": self.writes,
             "preprocessing_version": EMBEDDING_PREPROCESSING_VERSION,
+            "cache_namespace": self.cache_namespace,
         }
 
     def _key(self, crop_digest: str) -> str:
@@ -158,6 +166,12 @@ class JsonEmbeddingCache:
                 self.model_name,
                 self.model_version,
                 EMBEDDING_PREPROCESSING_VERSION,
+                json.dumps(
+                    self.cache_namespace,
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
                 crop_digest,
             )
         )

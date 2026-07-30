@@ -77,14 +77,14 @@ from app.services.identity_roster_anchor_shadow import (
     build_identity_roster_anchor_shadow,
 )
 from app.services.identity_reid_runtime_probe import (
-    build_reid_runtime_probe,
     build_reid_runtime_repair_request,
 )
 from app.services.identity_reid_active_model_binding import (
     build_reid_active_model_binding,
 )
 from app.services.identity_rosetta_openvino_reid import (
-    load_rosetta_openvino_embedder,
+    activate_rosetta_openvino_runtime,
+    discover_rosetta_openvino_runtime,
 )
 from app.services.identity_second_half_reanchor import prepare_second_half_identity_reanchor
 from app.services.identity_second_half_reanchor import build_second_half_identity_reanchor_document, REANCHOR_DIRECTORY, SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME, FRAME_DIRECTORY as REANCHOR_FRAME_DIRECTORY
@@ -874,19 +874,97 @@ def run_product_flow_cross_capture_reid_diagnostic(
     )
     smoke_crop_path = _first_gallery_crop_path(h1_gallery, h1_output)
     models_dir = Path(__file__).resolve().parents[2] / "models"
-    rosetta_embedder = load_rosetta_openvino_embedder(models_dir)
-    probe = (
-        {
-            "status": "NATIVE_OPENVINO_SKIPPED_ROSETTA_RUNTIME_AVAILABLE",
-            "model": {"selected_runtime": "openvino_rosetta_x86_cpu_subprocess"},
-            "capabilities": {"model_files_present": True},
+    runtime_diagnostics = diagnostic_root / "runtime_lab"
+    smoke_crop = _read_reid_smoke_crop(smoke_crop_path)
+    runtime_candidate = discover_rosetta_openvino_runtime(models_dir)
+    preferred_embedder = None
+    if smoke_crop is None:
+        rosetta_probe = {
+            "status": "ROSETTA_REID_RUNTIME_BLOCKED",
+            "available": False,
+            "reason": "smoke_crop_missing",
+            "candidate": runtime_candidate.manifest(),
         }
-        if rosetta_embedder is not None
-        else build_reid_runtime_probe(
-            models_dir=models_dir,
-            crop_path=smoke_crop_path,
-        )
-    )
+        preferred_model_status = {
+            **rosetta_probe,
+            "quality_tier": "preferred_reid_model",
+            "selected_runtime": None,
+        }
+    else:
+        try:
+            preferred_embedder, preferred_model_status = (
+                activate_rosetta_openvino_runtime(
+                    runtime_candidate,
+                    real_crop_bgr=smoke_crop,
+                    diagnostics_directory=runtime_diagnostics,
+                )
+            )
+        except Exception as exc:
+            preferred_embedder = None
+            preferred_model_status = {
+                "status": "ROSETTA_REID_RUNTIME_BLOCKED",
+                "available": False,
+                "reason": "runtime_activation_exception",
+                "error_stage": "activation",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "quality_tier": "preferred_reid_model",
+                "selected_runtime": None,
+            }
+        rosetta_probe = {
+            key: value
+            for key, value in preferred_model_status.items()
+            if key
+            not in {
+                "quality_tier",
+                "fallback_used",
+                "cache_namespace",
+            }
+        }
+    native_probe = {
+        "status": "NATIVE_OPENVINO_ARM64_PREVIOUSLY_PROVEN_BLOCKED",
+        "available": False,
+        "reason": "cpu_plugin_compile_internal_error",
+        "executed_in_this_replay": False,
+    }
+    probe = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "preferred_reid_runtime_selection",
+        "status": (
+            "PREFERRED_REID_RUNTIME_AVAILABLE"
+            if preferred_embedder is not None
+            and preferred_model_status.get("available") is True
+            else "ROSETTA_REID_RUNTIME_BLOCKED"
+        ),
+        "native_runtime_probe": native_probe,
+        "rosetta_runtime_probe": rosetta_probe,
+        "selected_runtime": (
+            preferred_model_status.get("selected_runtime")
+            if preferred_embedder is not None
+            else None
+        ),
+        "selection_reason": (
+            "real_rosetta_x86_compile_inference_and_repeatability_passed"
+            if preferred_embedder is not None
+            else "no_preferred_runtime_passed_probe"
+        ),
+        "capabilities": {
+            "model_files_present": bool(runtime_candidate.present),
+        },
+        "model": {
+            "model_name": preferred_model_status.get("model_name"),
+            "model_version": preferred_model_status.get("model_version"),
+            "selected_runtime": preferred_model_status.get(
+                "selected_runtime"
+            ),
+            "runtime_version": preferred_model_status.get(
+                "runtime_version"
+            ),
+            "runtime_architecture": preferred_model_status.get(
+                "runtime_architecture"
+            ),
+        },
+    }
     write_json_atomic(
         diagnostic_root / "apple_silicon_runtime_probe.json",
         probe,
@@ -911,65 +989,6 @@ def run_product_flow_cross_capture_reid_diagnostic(
             in selected_subject_ids
         ],
     }
-    if rosetta_embedder is not None:
-        preferred_embedder = rosetta_embedder
-        smoke = _read_reid_smoke_crop(smoke_crop_path)
-        if smoke is None:
-            preferred_embedder = None
-            preferred_model_status = {"available": False, "reason": "smoke_crop_missing"}
-        else:
-            first = preferred_embedder.embed(smoke)
-            second = preferred_embedder.embed(smoke)
-            preferred_model_status = {
-                "available": bool(np.allclose(first, second, rtol=1e-5, atol=1e-6)),
-                "model_name": preferred_embedder.model_name,
-                "model_version": preferred_embedder.model_version,
-                "quality_tier": "preferred_reid_model",
-                "runtime": "openvino_rosetta_x86_cpu_subprocess",
-                "selected_runtime": "openvino_rosetta_x86_cpu_subprocess",
-                "embedding_dimension": int(first.size),
-            }
-    elif probe.get("status") == "PREFERRED_REID_RUNTIME_AVAILABLE":
-        try:
-            preferred_embedder, preferred_model_status = (
-                load_approved_appearance_embedder(
-                    Path(__file__).resolve().parents[2] / "models",
-                    smoke_crop_bgr=_read_reid_smoke_crop(smoke_crop_path),
-                )
-            )
-        except Exception as exc:
-            preferred_embedder = None
-            preferred_model_status = {
-                "available": False,
-                "reason": "appearance_embedder_load_failed",
-                "error": str(exc),
-            }
-    else:
-        preferred_embedder = load_rosetta_openvino_embedder(models_dir)
-        if preferred_embedder is None:
-            preferred_model_status = {
-                **(probe.get("model") or {}),
-                "available": False,
-                "reason": "runtime_probe_not_available",
-                "runtime_probe_status": probe.get("status"),
-            }
-        else:
-            smoke = _read_reid_smoke_crop(smoke_crop_path)
-            if smoke is None:
-                preferred_embedder = None
-                preferred_model_status = {"available": False, "reason": "smoke_crop_missing"}
-            else:
-                first = preferred_embedder.embed(smoke)
-                second = preferred_embedder.embed(smoke)
-                preferred_model_status = {
-                    "available": bool(np.allclose(first, second, rtol=1e-5, atol=1e-6)),
-                    "model_name": preferred_embedder.model_name,
-                    "model_version": preferred_embedder.model_version,
-                    "quality_tier": "preferred_reid_model",
-                    "runtime": "openvino_rosetta_x86_cpu_subprocess",
-                    "selected_runtime": "openvino_rosetta_x86_cpu_subprocess",
-                    "embedding_dimension": int(first.size),
-                }
     portable_embedder = PortableAppearanceEmbedder()
     portable_model_status = {
         "available": True,
@@ -1028,30 +1047,45 @@ def run_product_flow_cross_capture_reid_diagnostic(
     preferred_evaluation: dict[str, Any] | None = None
     if (
         preferred_embedder is not None
+        and preferred_model_status.get("available") is True
         and preferred_model_status.get("quality_tier")
         == "preferred_reid_model"
     ):
-        preferred_documents = _build_cross_capture_model_run(
-            h1_gallery,
-            selected_h2_crops,
-            reference_root=h1_output,
-            target_root=h2_workspace,
-            diagnostic_h1_root=h1_output,
-            diagnostic_h2_root=h2_output,
-            cache_prefix="preferred",
-            embedder=preferred_embedder,
-            model_status=preferred_model_status,
-        )
-        preferred_evaluation = evaluate_h1_to_h2_cross_capture(
-            preferred_documents[
-                "identity_cross_analysis_appearance_reid"
-            ].get("unresolved_rankings")
-            or [],
-            h2_operator_decisions=h2_reanchor_seeds.get("decisions") or [],
-            h2_candidate_document=h2_candidate,
-            h2_reanchor_document=h2_reanchor_document,
-            player_team_by_id=player_team_by_id,
-        )
+        try:
+            preferred_documents = _build_cross_capture_model_run(
+                h1_gallery,
+                selected_h2_crops,
+                reference_root=h1_output,
+                target_root=h2_workspace,
+                diagnostic_h1_root=h1_output,
+                diagnostic_h2_root=h2_output,
+                cache_prefix="preferred",
+                embedder=preferred_embedder,
+                model_status=preferred_model_status,
+            )
+            preferred_evaluation = evaluate_h1_to_h2_cross_capture(
+                preferred_documents[
+                    "identity_cross_analysis_appearance_reid"
+                ].get("unresolved_rankings")
+                or [],
+                h2_operator_decisions=h2_reanchor_seeds.get("decisions") or [],
+                h2_candidate_document=h2_candidate,
+                h2_reanchor_document=h2_reanchor_document,
+                player_team_by_id=player_team_by_id,
+            )
+        except Exception as exc:
+            preferred_documents = None
+            preferred_evaluation = None
+            preferred_embedder = None
+            preferred_model_status = {
+                **preferred_model_status,
+                "available": False,
+                "reason": "preferred_artifact_build_failed",
+                "error_stage": "preferred_artifact_build",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "selected_runtime": None,
+            }
     display_gate = build_operator_name_display_gate(
         model_status={
             **(
@@ -1446,6 +1480,9 @@ def _build_cross_capture_model_run(
         "model_name": str(embedder.model_name),
         "model_version": str(embedder.model_version),
         "embedding_dimension": int(embedder.embedding_dimension),
+        "cache_namespace": dict(
+            getattr(embedder, "cache_namespace", {}) or {}
+        ),
     }
     reference_cache = JsonEmbeddingCache.load(
         diagnostic_h1_root / f"{cache_prefix}_h1_embeddings_cache.json",
