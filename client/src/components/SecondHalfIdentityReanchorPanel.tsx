@@ -361,6 +361,13 @@ export function SecondHalfIdentityReanchorPanel({
                   <button
                     type='button'
                     disabled={!selectedObservation || saving}
+                    onClick={() => void applyAction({ kind: 'false_detection' })}
+                  >
+                    Cien / falszywa detekcja
+                  </button>
+                  <button
+                    type='button'
+                    disabled={!selectedObservation || saving}
                     onClick={() => void applyAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B

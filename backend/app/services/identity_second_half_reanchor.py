@@ -57,12 +57,21 @@ def prepare_second_half_identity_reanchor(
         float((analysis_report.get("video") or {}).get("fps") or 30.0),
     )
     second_half_start_frame = max(0, round(second_half_start_sec * fps))
+    audit_path = match_path / REANCHOR_DIRECTORY
+    selection_path = audit_path / SELECTION_FILENAME
     safely_resolved_players = _safely_resolved_h2_players(
         match_path,
         match_document,
         second_half_start_frame=second_half_start_frame,
     )
-    if len(safely_resolved_players) >= MINIMUM_SAFE_H2_PLAYERS:
+    # H2 may become safely covered as a direct result of the first few H2
+    # confirmations.  That must not invalidate the operator's open session
+    # or turn the next save into a 409.  The auto-skip is only for a session
+    # that has not collected any operator decisions yet.
+    if (
+        len(safely_resolved_players) >= MINIMUM_SAFE_H2_PLAYERS
+        and not _has_existing_operator_decisions(audit_path)
+    ):
         return _status_document(
             "skipped_already_resolved",
             "first_half_seeds_safely_cover_second_half",
@@ -71,8 +80,6 @@ def prepare_second_half_identity_reanchor(
             safely_resolved_players=safely_resolved_players,
         )
 
-    audit_path = match_path / REANCHOR_DIRECTORY
-    selection_path = audit_path / SELECTION_FILENAME
     selection = None
     if not force and selection_path.exists():
         candidate = load_identity_json(selection_path)
@@ -210,6 +217,14 @@ def load_second_half_reanchor_selection(match_path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError("Second-half re-anchor selection is missing")
     return load_identity_json(path)
+
+
+def _has_existing_operator_decisions(audit_path: Path) -> bool:
+    seed_path = audit_path / "identity_second_half_reanchor_seeds.json"
+    if not seed_path.exists():
+        return False
+    seed_document = load_identity_json(seed_path)
+    return bool(seed_document.get("decisions") or [])
 
 
 def _safely_resolved_h2_players(

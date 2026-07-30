@@ -48,6 +48,11 @@ from app.services.identity_seeded_candidate_assignments import (
 from app.services.identity_seeded_subject_review_rebuild import (
     rebuild_identity_seeded_subject_review,
 )
+from app.services.identity_product_flow_benchmark import (
+    ProductFlowBenchmarkError,
+    build_product_flow_benchmark_report,
+    prepare_product_flow_benchmark,
+)
 from app.services.identity_review_gallery import build_identity_review_gallery, load_identity_review_gallery
 from app.services.identity_review_segments import save_identity_review_splits
 from app.services.identity_roster_subject_review_store import (
@@ -147,6 +152,9 @@ def match_dir(match_id: str) -> Path:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Match not found")
     return path
+
+
+PRODUCT_FLOW_BENCHMARKS_DIR = MATCHES_DIR.parent / "benchmarks" / "player_identity"
 
 
 def match_video_path(path: Path) -> Path:
@@ -793,6 +801,58 @@ def list_matches() -> list[dict[str, Any]]:
         if meta_path.exists():
             matches.append(json.loads(meta_path.read_text(encoding="utf-8")))
     return matches
+
+
+@app.post("/api/product-flow-benchmarks")
+def create_product_flow_benchmark(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    source_match_id = str(payload.get("source_match_id") or "7655bf7c")
+    target_match_id = str(payload.get("target_match_id") or "343980c8")
+    benchmark_id = str(payload.get("benchmark_id") or "product-flow-20260729-v1")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,80}", benchmark_id):
+        raise HTTPException(status_code=400, detail="Invalid benchmark_id")
+    try:
+        return prepare_product_flow_benchmark(
+            matches_root=MATCHES_DIR,
+            benchmark_root=PRODUCT_FLOW_BENCHMARKS_DIR,
+            source_match_id=source_match_id,
+            target_match_id=target_match_id,
+            benchmark_id=benchmark_id,
+        )
+    except ProductFlowBenchmarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/product-flow-benchmarks/{benchmark_id}")
+def get_product_flow_benchmark(benchmark_id: str) -> dict[str, Any]:
+    root = PRODUCT_FLOW_BENCHMARKS_DIR / benchmark_id
+    path = root / "benchmark_session.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Product-flow benchmark not found")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for domain, workspace in (document.get("workspaces") or {}).items():
+        if not isinstance(workspace, dict):
+            continue
+        match_id = str(workspace.get("match_id") or "")
+        if not match_id:
+            continue
+        metadata = read_match_meta(match_dir(match_id))
+        workspace["match"] = {
+            key: metadata.get(key)
+            for key in ("id", "title", "teams", "format", "status")
+        }
+    return document
+
+
+@app.post("/api/product-flow-benchmarks/{benchmark_id}/report")
+def refresh_product_flow_benchmark_report(benchmark_id: str) -> dict[str, Any]:
+    root = PRODUCT_FLOW_BENCHMARKS_DIR / benchmark_id
+    if not (root / "benchmark_session.json").exists():
+        raise HTTPException(status_code=404, detail="Product-flow benchmark not found")
+    report = build_product_flow_benchmark_report(root)
+    (root / "benchmark_report.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return report
 
 
 @app.get("/api/matches/{match_id}")

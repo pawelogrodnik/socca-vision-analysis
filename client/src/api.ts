@@ -45,7 +45,7 @@ import type {
   TrackletReviewState
 } from './types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE_URL || '');
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;

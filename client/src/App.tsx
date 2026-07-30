@@ -7,6 +7,7 @@ import { TeamEditPage } from './components/TeamEditPage';
 import { TeamStatsPage } from './components/TeamStatsPage';
 import { TeamsPage } from './components/TeamsPage';
 import { Viewer } from './components/Viewer';
+import { ProductFlowBenchmarkPage } from './components/ProductFlowBenchmarkPage';
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
       <Route path='/teams/:teamId/stats' element={<TeamStatsPage />} />
       <Route path='/teams/:teamId' element={<TeamEditPage mode='edit' />} />
       <Route path='/players/:playerId' element={<PlayerProfilePage />} />
+      <Route path='/product-flow-benchmarks/:benchmarkId' element={<ProductFlowBenchmarkPage />} />
       <Route path='*' element={<Navigate to='/' replace />} />
     </Routes>
   );
