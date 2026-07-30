@@ -75,7 +75,13 @@ from app.services.identity_roster_anchor_crops_shadow import (
 from app.services.identity_roster_anchor_shadow import (
     build_identity_roster_anchor_shadow,
 )
-from app.services.identity_reid_runtime_probe import build_reid_runtime_probe
+from app.services.identity_reid_runtime_probe import (
+    build_reid_runtime_probe,
+    build_reid_runtime_repair_request,
+)
+from app.services.identity_reid_active_model_binding import (
+    build_reid_active_model_binding,
+)
 from app.services.identity_second_half_reanchor import prepare_second_half_identity_reanchor
 from app.services.identity_second_half_reanchor import build_second_half_identity_reanchor_document, REANCHOR_DIRECTORY, SELECTION_FILENAME as REANCHOR_SELECTION_FILENAME, FRAME_DIRECTORY as REANCHOR_FRAME_DIRECTORY
 from app.services.identity_second_half_reanchor_store import (
@@ -935,7 +941,7 @@ def run_product_flow_cross_capture_reid_diagnostic(
         embedder=portable_embedder,
         model_status=portable_model_status,
     )
-    reid_artifact = portable_documents[
+    portable_artifact = portable_documents[
         "identity_cross_analysis_appearance_reid"
     ]
     h2_reanchor_seeds = _load_optional(
@@ -962,7 +968,7 @@ def run_product_flow_cross_capture_reid_diagnostic(
         if player.get("player_id")
     }
     cross_capture_evaluation = evaluate_h1_to_h2_cross_capture(
-        reid_artifact.get("unresolved_rankings") or [],
+        portable_artifact.get("unresolved_rankings") or [],
         h2_operator_decisions=h2_reanchor_seeds.get("decisions") or [],
         h2_candidate_document=h2_candidate,
         h2_reanchor_document=h2_reanchor_document,
@@ -1016,6 +1022,13 @@ def run_product_flow_cross_capture_reid_diagnostic(
         ),
         cross_capture_evaluation=preferred_evaluation or {},
     )
+    portable_display_gate = build_operator_name_display_gate(
+        model_status=portable_artifact.get("model") or {},
+        internal_calibration=(
+            portable_artifact.get("internal_reference_calibration") or {}
+        ),
+        cross_capture_evaluation=cross_capture_evaluation,
+    )
     crop_diagnostics = build_cross_capture_crop_diagnostics(
         reference_gallery=h1_gallery,
         target_anchor_crops=selected_h2_crops,
@@ -1036,15 +1049,15 @@ def run_product_flow_cross_capture_reid_diagnostic(
                 "player_name": row.get("player_name"),
                 "prototype_dispersion": row.get("prototype_dispersion"),
             }
-            for row in reid_artifact.get("player_profiles") or []
+            for row in portable_artifact.get("player_profiles") or []
         ],
-        "h2_per_subject": reid_artifact.get(
+        "h2_per_subject": portable_artifact.get(
             "target_subject_profiles"
         ) or [],
     }
     model_comparison = {
         "portable_opencv_descriptor": _model_comparison_metrics(
-            reid_artifact,
+            portable_artifact,
             cross_capture_evaluation,
             display_gate_passed=False,
         ),
@@ -1070,21 +1083,56 @@ def run_product_flow_cross_capture_reid_diagnostic(
             }
         ),
     }
+    subject_tracklets = {
+        str(row.get("candidate_subject_id") or ""): sorted(
+            str(value) for value in row.get("tracklet_ids") or []
+        )
+        for row in h2_candidate.get("subjects") or []
+    }
+    active_model_binding = build_reid_active_model_binding(
+        portable_artifact=portable_artifact,
+        portable_evaluation=cross_capture_evaluation,
+        portable_display_gate=portable_display_gate,
+        preferred_artifact=(
+            preferred_documents[
+                "identity_cross_analysis_appearance_reid"
+            ]
+            if preferred_documents is not None
+            else None
+        ),
+        preferred_evaluation=preferred_evaluation,
+        preferred_display_gate=display_gate,
+        subject_tracklets=subject_tracklets,
+    )
     reid_artifact = {
-        **reid_artifact,
-        "internal_reference_calibration": (
-            reid_artifact.get("internal_reference_calibration") or {}
-        ),
-        "cross_capture_evaluation": cross_capture_evaluation,
-        "cross_capture_evaluation_digest": canonical_digest(
-            cross_capture_evaluation
-        ),
+        "schema_version": SCHEMA_VERSION,
+        "mode": "cross_capture_reid_active_model_binding_read_only",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "model": active_model_binding["active_operator_model"] or {},
+        "summary": {
+            "active_operator_run_available": bool(
+                active_model_binding["active_operator_run"]
+            ),
+            "portable_ranked_subjects": len(
+                active_model_binding["diagnostic_models"]["portable"]
+                .get("suggestions")
+                or []
+            ),
+            "preferred_ranked_subjects": len(
+                active_model_binding["diagnostic_models"]["preferred"]
+                .get("suggestions")
+                or []
+            ),
+        },
+        **active_model_binding,
         "ranking_display": display_gate,
-        "operator_names_visible": bool(
-            display_gate.get("display_eligible")
-        ),
+        "operator_names_visible": False,
         "model_comparison": model_comparison,
         "model_comparison_digest": canonical_digest(model_comparison),
+        "cross_capture_evaluation_digest": canonical_digest(
+            active_model_binding["active_operator_cross_capture_evaluation"]
+            or {}
+        ),
     }
     reid_documents = {
         "identity_cross_analysis_appearance_reid": reid_artifact,
@@ -1096,13 +1144,62 @@ def run_product_flow_cross_capture_reid_diagnostic(
         "schema_version": SCHEMA_VERSION,
         "mode": "cross_capture_reid_validation_read_only",
         "runtime_probe": probe,
-        "internal_reference_calibration": reid_artifact[
-            "internal_reference_calibration"
+        "runtime_repair_request": build_reid_runtime_repair_request(probe),
+        "portable_internal_calibration": active_model_binding[
+            "portable_internal_calibration"
         ],
-        "cross_capture_evaluation": cross_capture_evaluation,
+        "preferred_internal_calibration": active_model_binding[
+            "preferred_internal_calibration"
+        ],
+        "active_operator_internal_calibration": active_model_binding[
+            "active_operator_internal_calibration"
+        ],
+        "portable_cross_capture_evaluation": active_model_binding[
+            "portable_cross_capture_evaluation"
+        ],
+        "preferred_cross_capture_evaluation": active_model_binding[
+            "preferred_cross_capture_evaluation"
+        ],
+        "active_operator_cross_capture_evaluation": active_model_binding[
+            "active_operator_cross_capture_evaluation"
+        ],
+        "portable_cross_capture_evaluation_digest": canonical_digest(
+            active_model_binding["portable_cross_capture_evaluation"] or {}
+        ),
+        "preferred_cross_capture_evaluation_digest": canonical_digest(
+            active_model_binding["preferred_cross_capture_evaluation"] or {}
+        ),
+        "active_operator_cross_capture_evaluation_digest": canonical_digest(
+            active_model_binding[
+                "active_operator_cross_capture_evaluation"
+            ]
+            or {}
+        ),
+        "active_operator_model": active_model_binding[
+            "active_operator_model"
+        ],
+        "active_operator_model_name": active_model_binding[
+            "active_operator_model_name"
+        ],
+        "active_operator_runtime": active_model_binding[
+            "active_operator_runtime"
+        ],
+        "active_operator_artifact_digest": active_model_binding[
+            "active_operator_artifact_digest"
+        ],
+        "portable_diagnostic_artifact_digest": active_model_binding[
+            "portable_diagnostic_artifact_digest"
+        ],
+        "preferred_diagnostic_artifact_digest": active_model_binding[
+            "preferred_diagnostic_artifact_digest"
+        ],
+        "operator_advisory_digest": active_model_binding[
+            "operator_advisory_digest"
+        ],
         "operator_name_display_gate": display_gate,
         "crop_diagnostics": crop_diagnostics,
         "model_comparison": model_comparison,
+        "model_comparison_digest": canonical_digest(model_comparison),
         "historical_ground_truth": historical_ground_truth,
         "safety": {
             "reran_yolo": False,
@@ -1124,77 +1221,60 @@ def run_product_flow_cross_capture_reid_diagnostic(
         diagnostic_root / "cross_capture_reid_validation.json",
         cross_capture_report,
     )
-    ranking_display = display_gate
-    display_eligible = bool(ranking_display.get("display_eligible"))
-    subject_tracklets = {
-        str(row.get("candidate_subject_id") or ""): sorted(
-            str(value) for value in row.get("tracklet_ids") or []
-        )
-        for row in h2_candidate.get("subjects") or []
-    }
-    suggestions = [
-        {
-            "candidate_subject_id": row.get("candidate_subject_id"),
-            "team_label": row.get("team_label"),
-            "tracklet_ids": subject_tracklets.get(
-                str(row.get("candidate_subject_id") or ""),
-                [],
-            ),
-            "suggestions": [
-                {
-                    **suggestion,
-                    "suggestion_source": (
-                        "cross_analysis_reid_top3_advisory"
-                    ),
-                    "advisory_only": True,
-                    "display_eligible": display_eligible,
-                    "suppression_reason_codes": (
-                        ranking_display.get("suppression_reason_codes") or []
-                    ),
-                    "candidate_subject_id": row.get(
-                        "candidate_subject_id"
-                    ),
-                    "observation_key": None,
-                }
-                for suggestion in list(row.get("suggestions") or [])[:3]
-            ],
-            "advisory_only": True,
-        }
-        for row in reid_artifact.get("unresolved_rankings") or []
-        if row.get("status") == "ranked"
-    ]
+    operator_advisory = active_model_binding["operator_advisory"]
+    diagnostic_models = active_model_binding["diagnostic_models"]
+    active_operator_run = active_model_binding["active_operator_run"]
     advisory = {
-        **reid_artifact,
-        "suggestions": suggestions,
+        "schema_version": SCHEMA_VERSION,
+        "mode": "cross_capture_reid_operator_advisory_read_only",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        **active_model_binding,
+        "ranking_display": display_gate,
+        "operator_names_visible": False,
+        "cross_capture_evaluation_digest": canonical_digest(
+            active_model_binding["active_operator_cross_capture_evaluation"]
+            or {}
+        ),
+        "model_comparison_digest": canonical_digest(model_comparison),
         "summary": {
-            **(reid_artifact.get("summary") or {}),
             "selected_h2_candidate_subjects": len(selected_subject_ids),
-            "ranked_subjects": len(suggestions),
-            "operator_visible_ranked_subjects": (
-                len(suggestions) if display_eligible else 0
+            "portable_suggestions_generated": sum(
+                len(row.get("suggestions") or [])
+                for row in diagnostic_models["portable"]["suggestions"]
+            ),
+            "preferred_suggestions_generated": sum(
+                len(row.get("suggestions") or [])
+                for row in diagnostic_models["preferred"]["suggestions"]
             ),
             "suggestions_generated": sum(
-                len(row["suggestions"]) for row in suggestions
+                len(row.get("suggestions") or [])
+                for row in operator_advisory["suggestions"]
             ),
-            "ranked_subjects_generated": len(suggestions),
+            "ranked_subjects_generated": len(operator_advisory["rankings"]),
             "suggestions_operator_eligible": (
-                sum(len(row["suggestions"]) for row in suggestions)
-                if display_eligible
+                sum(
+                    len(row.get("suggestions") or [])
+                    for row in operator_advisory["suggestions"]
+                )
+                if active_operator_run is not None
                 else 0
             ),
             "ranked_subjects_operator_eligible": (
-                len(suggestions) if display_eligible else 0
+                len(operator_advisory["rankings"])
+                if active_operator_run is not None
+                else 0
             ),
             "suggestions_displayed": 0,
             "ranked_subjects_displayed": 0,
             "suggestions_hidden": sum(
-                len(row["suggestions"]) for row in suggestions
+                len(row.get("suggestions") or [])
+                for row in operator_advisory["suggestions"]
             ),
             "ranking_suppression_reason_codes": (
-                ranking_display.get("suppression_reason_codes") or []
+                display_gate.get("suppression_reason_codes") or []
             ),
             "operator_names_eligible_for_future_bounded_followup": (
-                display_eligible
+                active_operator_run is not None
             ),
         },
     }
@@ -1207,10 +1287,16 @@ def run_product_flow_cross_capture_reid_diagnostic(
     result = {
         "schema_version": SCHEMA_VERSION,
         "mode": "product_flow_cross_capture_reid_diagnostic",
-        "status": "APPLE_SILICON_RUNTIME_PROBE_COMPLETE",
+        "status": _cross_capture_validation_status(
+            probe,
+            preferred_evaluation or {},
+            display_gate,
+        ),
+        "runtime_probe_status": probe.get("status"),
+        "runtime_repair_request": build_reid_runtime_repair_request(probe),
         "validation_status": _cross_capture_validation_status(
             probe,
-            cross_capture_evaluation,
+            preferred_evaluation or {},
             display_gate,
         ),
         "operator_name_status": (
@@ -1237,6 +1323,24 @@ def run_product_flow_cross_capture_reid_diagnostic(
             ),
             "cross_capture_validation": str(
                 diagnostic_root / "cross_capture_reid_validation.json"
+            ),
+            "active_operator_artifact_digest": active_model_binding[
+                "active_operator_artifact_digest"
+            ],
+            "portable_diagnostic_artifact_digest": active_model_binding[
+                "portable_diagnostic_artifact_digest"
+            ],
+            "preferred_diagnostic_artifact_digest": active_model_binding[
+                "preferred_diagnostic_artifact_digest"
+            ],
+            "operator_advisory_digest": active_model_binding[
+                "operator_advisory_digest"
+            ],
+            "active_operator_cross_capture_evaluation_digest": canonical_digest(
+                active_model_binding[
+                    "active_operator_cross_capture_evaluation"
+                ]
+                or {}
             ),
             "crop_diagnostics": crop_diagnostics.get("montages") or {},
         },
@@ -1484,7 +1588,7 @@ def _cross_capture_validation_status(
     ):
         return "INSUFFICIENT_CROSS_CAPTURE_GROUND_TRUTH"
     if gate.get("display_eligible"):
-        return "CROSS_CAPTURE_REID_QUALITY_GATE_PASSED"
+        return "READY_FOR_BOUNDED_H2_FOLLOWUP"
     return "CROSS_CAPTURE_REID_QUALITY_GATE_FAILED"
 
 

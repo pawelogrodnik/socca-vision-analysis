@@ -1551,11 +1551,12 @@ Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mog�
 Przy aktualnym planie następne zadanie to:
 
 ```text
-Naprawić tworzenie H1 approved appearance gallery (obecny benchmark: 7
-bezpiecznie rozwiązanych zawodników, ale 0 wybranych cropów), następnie
-wygenerować prawdziwe cross-capture ReID top-3 bez używania zgodności lokalnych
-tracklet_id. Dopiero potem uruchomić nowy bounded H2 benchmark. IA7a pozostaje
-zablokowane do pozytywnego wyniku tego gate'u.
+H1 approved appearance gallery jest naprawiona. Portable i preferred ReID mają
+osobne diagnostyczne artifacty, a wyłącznie preferred model może kiedyś stać
+się active operator source po przejściu własnego gate'u. Lokalny preferred
+runtime jest obecnie zablokowany; nazwy pozostają ukryte. Naprawa runtime'u
+wymaga jawnej zgody użytkownika, po której należy uruchomić wyłącznie
+read-only probe i ponownie ocenić gate. IA7a pozostaje zablokowane.
 ```
 
 J8.3 zostało zamknięte decyzją:

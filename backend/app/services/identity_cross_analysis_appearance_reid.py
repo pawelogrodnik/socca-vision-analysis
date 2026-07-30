@@ -380,6 +380,20 @@ def build_cross_analysis_appearance_reid_report(
         ),
         "algorithm": artifact.get("algorithm") or {},
         "model": artifact.get("model") or {},
+        "active_operator_model": artifact.get("active_operator_model"),
+        "active_operator_model_name": artifact.get(
+            "active_operator_model_name"
+        ),
+        "active_operator_runtime": artifact.get("active_operator_runtime"),
+        "active_operator_artifact_digest": artifact.get(
+            "active_operator_artifact_digest"
+        ),
+        "portable_diagnostic_artifact_digest": artifact.get(
+            "portable_diagnostic_artifact_digest"
+        ),
+        "preferred_diagnostic_artifact_digest": artifact.get(
+            "preferred_diagnostic_artifact_digest"
+        ),
         "summary": summary,
         "ranking_display": ranking_display,
         "operator_names_visible": bool(
@@ -392,6 +406,9 @@ def build_cross_analysis_appearance_reid_report(
         "model_comparison_digest": (
             artifact.get("model_comparison_digest")
             or canonical_digest(model_comparison)
+        ),
+        "operator_advisory_digest": artifact.get(
+            "operator_advisory_digest"
         ),
         "gates": {
             "advisory_only": True,

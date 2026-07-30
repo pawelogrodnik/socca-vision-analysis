@@ -210,6 +210,28 @@ class CrossCaptureReidValidationTests(unittest.TestCase):
             gate["suppression_reason_codes"],
         )
 
+    def test_invalid_ranked_player_blocks_preferred_gate(self) -> None:
+        gate = build_operator_name_display_gate(
+            model_status={
+                "quality_tier": "preferred_reid_model",
+                "selected_runtime": "openvino_cpu",
+            },
+            internal_calibration={"queries": 12, "top1_accuracy": 1.0},
+            cross_capture_evaluation={
+                "queries": 8,
+                "top1_accuracy": 1.0,
+                "top3_accuracy": 1.0,
+                "cross_team_violations": 0,
+                "invalid_ranked_players": 1,
+            },
+        )
+
+        self.assertFalse(gate["display_eligible"])
+        self.assertIn(
+            "invalid_ranked_player_detected",
+            gate["suppression_reason_codes"],
+        )
+
 
 def _reanchor_document() -> dict[str, object]:
     return {

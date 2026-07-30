@@ -256,6 +256,8 @@ def build_operator_name_display_gate(
         reasons.append("cross_capture_quality_below_threshold")
     if int(cross_capture_evaluation.get("cross_team_violations") or 0):
         reasons.append("cross_team_violation_detected")
+    if int(cross_capture_evaluation.get("invalid_ranked_players") or 0):
+        reasons.append("invalid_ranked_player_detected")
     return {
         "parameters": params,
         "display_eligible": not reasons,

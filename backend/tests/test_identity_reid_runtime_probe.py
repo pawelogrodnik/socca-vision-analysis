@@ -11,7 +11,10 @@ import numpy as np
 from app.services.identity_approved_appearance_reid import (
     PortableAppearanceEmbedder,
 )
-from app.services.identity_reid_runtime_probe import build_reid_runtime_probe
+from app.services.identity_reid_runtime_probe import (
+    build_reid_runtime_probe,
+    build_reid_runtime_repair_request,
+)
 from app.services.identity_same_match_reid import load_default_embedder
 
 
@@ -126,6 +129,24 @@ class ReidRuntimeProbeTests(unittest.TestCase):
         self.assertIsNone(embedder)
         self.assertEqual(status["reason"], "model_files_missing")
         self.assertEqual(status["runtime_attempts"], [])
+
+    def test_repair_request_is_explicit_but_non_mutating(self) -> None:
+        request = build_reid_runtime_repair_request({
+            "capabilities": {
+                "model_files_present": True,
+                "python_version": "3.11.15",
+                "platform_machine": "arm64",
+                "opencv_version": "4.11.0",
+                "openvino_import_available": True,
+                "openvino_version": "2025.4.1",
+                "openvino_available_devices": ["CPU"],
+            },
+            "model": {"runtime_attempts": []},
+        })
+
+        self.assertTrue(request["approval_required"])
+        self.assertIn("openvino==2025.4.1", request["proposed_command"])
+        self.assertFalse(request["installation_performed"])
 
 
 class _FailingEmbedder:

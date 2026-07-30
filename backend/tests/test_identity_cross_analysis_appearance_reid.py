@@ -161,6 +161,12 @@ class CrossAnalysisAppearanceReidTests(unittest.TestCase):
                 "suppression_reason_codes": ["insufficient_cross_capture_ground_truth"],
             },
             "operator_names_visible": False,
+            "active_operator_model_name": None,
+            "active_operator_runtime": None,
+            "active_operator_artifact_digest": None,
+            "portable_diagnostic_artifact_digest": "portable-digest",
+            "preferred_diagnostic_artifact_digest": None,
+            "operator_advisory_digest": "advisory-digest",
             "cross_capture_evaluation": {"queries": 1},
             "model_comparison": {"portable": {"status": "completed"}},
         }
@@ -177,6 +183,14 @@ class CrossAnalysisAppearanceReidTests(unittest.TestCase):
         )
         self.assertTrue(report["cross_capture_evaluation_digest"])
         self.assertTrue(report["model_comparison_digest"])
+        self.assertEqual(
+            report["active_operator_model_name"],
+            artifact["active_operator_model_name"],
+        )
+        self.assertEqual(
+            report["operator_advisory_digest"],
+            artifact["operator_advisory_digest"],
+        )
 
 
 def _write_crops(

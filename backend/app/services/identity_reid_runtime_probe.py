@@ -77,6 +77,51 @@ def build_reid_runtime_probe(
     }
 
 
+def build_reid_runtime_repair_request(
+    probe: dict[str, Any],
+) -> dict[str, Any]:
+    """Describe, but never perform, the minimum local runtime repair."""
+
+    capabilities = probe.get("capabilities") or {}
+    attempts = probe.get("model", {}).get("runtime_attempts") or []
+    return {
+        "approval_required": True,
+        "reason": "preferred_openvino_runtime_load_failed",
+        "runtime_attempts": attempts,
+        "model_files_present": bool(capabilities.get("model_files_present")),
+        "model_xml_path": capabilities.get("model_xml_path"),
+        "model_bin_path": capabilities.get("model_bin_path"),
+        "python_version": capabilities.get("python_version"),
+        "architecture": capabilities.get("platform_machine"),
+        "opencv_version": capabilities.get("opencv_version"),
+        "openvino_import_available": capabilities.get(
+            "openvino_import_available"
+        ),
+        "openvino_version": capabilities.get("openvino_version"),
+        "openvino_available_devices": capabilities.get(
+            "openvino_available_devices"
+        ),
+        "proposed_command": (
+            "backend/.venv-mps/bin/python -m pip install --force-reinstall "
+            '--no-cache-dir "openvino==2025.4.1"'
+        ),
+        "packages": ["openvino==2025.4.1"],
+        "estimated_download_size": "approximately 100–250 MB; not downloaded or measured",
+        "current_venv_modified": True,
+        "risk": (
+            "Replaces the OpenVINO wheel in the current analysis venv; the "
+            "OpenCV DNN OpenVINO plugin may remain unavailable, but the "
+            "separate OpenVINO Runtime CPU path is the intended repair target."
+        ),
+        "rollback_command": (
+            "backend/.venv-mps/bin/python -m pip install --force-reinstall "
+            '--no-cache-dir "openvino==2025.4.1"'
+        ),
+        "download_performed": False,
+        "installation_performed": False,
+    }
+
+
 def _load_real_crop(crop_path: Path | None) -> np.ndarray | None:
     if crop_path is None or not crop_path.exists():
         return None
