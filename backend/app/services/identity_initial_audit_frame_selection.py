@@ -10,7 +10,7 @@ from app.services.identity_jersey_number_common import canonical_digest
 
 SCHEMA_VERSION = "0.1.0"
 ALGORITHM_NAME = "identity_initial_audit_frame_selection"
-ALGORITHM_VERSION = "0.1.0"
+ALGORITHM_VERSION = "0.2.0"
 
 DEFAULT_PARAMETERS: dict[str, Any] = {
     "target_frame_count": 8,
@@ -22,6 +22,8 @@ DEFAULT_PARAMETERS: dict[str, Any] = {
     "switch_risk_window_sec": 0.75,
     "edge_margin_ratio": 0.015,
     "overlap_iou_threshold": 0.10,
+    "minimum_observation_confidence": 0.15,
+    "duplicate_containment_threshold": 0.80,
     "weights": {
         "visible_players": 0.20,
         "team_balance": 0.08,
@@ -106,7 +108,15 @@ def build_initial_identity_audit_frame_selection(
         ]
     candidates: list[dict[str, Any]] = []
     for frame in candidate_frames:
-        frame_observations = observations.get(frame) or []
+        frame_observations, observation_filter = (
+            filter_identity_audit_observations(
+                observations.get(frame) or [],
+                minimum_confidence=float(config["minimum_observation_confidence"]),
+                duplicate_containment_threshold=float(
+                    config["duplicate_containment_threshold"]
+                ),
+            )
+        )
         if len(frame_observations) < int(config["minimum_visible_players"]):
             continue
         components = _frame_score_components(
@@ -129,6 +139,7 @@ def build_initial_identity_audit_frame_selection(
                 "intrinsic_score": round(intrinsic_score, 6),
                 "score_components": components,
                 "visible_detections": frame_observations,
+                "observation_filter": observation_filter,
                 "capture_domain": _capture_domain(frame, camera_samples),
             }
         )
@@ -226,6 +237,10 @@ def build_initial_identity_audit_frame_selection(
                 selected_rows,
                 minimum_gap_sec=float(config["minimum_frame_gap_sec"]),
             ),
+            "observations_excluded_before_selection": sum(
+                int((row.get("observation_filter") or {}).get("excluded") or 0)
+                for row in selected_rows
+            ),
         },
         "selected_frames": selected_rows,
         "baseline_comparison": {
@@ -312,6 +327,62 @@ def _observations_by_frame(
     for rows in observations.values():
         rows.sort(key=lambda row: (row["team_label"], row["stable_subject_id"]))
     return dict(observations)
+
+
+def filter_identity_audit_observations(
+    observations: list[dict[str, Any]],
+    *,
+    minimum_confidence: float,
+    duplicate_containment_threshold: float,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Keep only audit-worthy observations without changing team labels.
+
+    This is deliberately a selection-time quality gate, not a correction to
+    Team A/B classification. A low-confidence shadow or a nested duplicate
+    should not make a frame appear to contain more unique players than it does.
+    """
+    confident: list[dict[str, Any]] = []
+    low_confidence = 0
+    for observation in observations:
+        confidence = observation.get("confidence")
+        if (
+            isinstance(confidence, (int, float))
+            and float(confidence) < minimum_confidence
+        ):
+            low_confidence += 1
+            continue
+        confident.append(observation)
+
+    kept: list[dict[str, Any]] = []
+    duplicate = 0
+    for observation in sorted(
+        confident,
+        key=lambda row: (
+            -_bbox_area(row["bbox_xyxy"]),
+            -float(row.get("confidence") or 0.0),
+            str(row.get("stable_subject_id") or ""),
+        ),
+    ):
+        if any(
+            observation.get("team_label") == existing.get("team_label")
+            and _bbox_containment_ratio(
+                observation["bbox_xyxy"],
+                existing["bbox_xyxy"],
+            ) >= duplicate_containment_threshold
+            for existing in kept
+        ):
+            duplicate += 1
+            continue
+        kept.append(observation)
+
+    kept.sort(key=lambda row: (row["team_label"], row["stable_subject_id"]))
+    return kept, {
+        "input": len(observations),
+        "kept": len(kept),
+        "excluded": low_confidence + duplicate,
+        "low_confidence": low_confidence,
+        "same_team_duplicate": duplicate,
+    }
 
 
 def _tracklet_ranges(
@@ -663,6 +734,17 @@ def _bbox_iou(left: list[float], right: list[float]) -> float:
     left_area = (left[2] - left[0]) * (left[3] - left[1])
     right_area = (right[2] - right[0]) * (right[3] - right[1])
     return intersection / max(1e-9, left_area + right_area - intersection)
+
+
+def _bbox_area(bbox: list[float]) -> float:
+    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+
+def _bbox_containment_ratio(left: list[float], right: list[float]) -> float:
+    intersection_width = max(0.0, min(left[2], right[2]) - max(left[0], right[0]))
+    intersection_height = max(0.0, min(left[3], right[3]) - max(left[1], right[1]))
+    intersection = intersection_width * intersection_height
+    return intersection / max(1e-9, min(_bbox_area(left), _bbox_area(right)))
 
 
 def _percentile(values: list[float], quantile: float) -> float:

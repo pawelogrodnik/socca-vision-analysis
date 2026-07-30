@@ -23,6 +23,8 @@ from app.services.identity_initial_audit import (
 )
 from app.services.identity_initial_audit_frame_selection import (
     ALGORITHM_NAME as IA0_ALGORITHM_NAME,
+    DEFAULT_PARAMETERS as IA0_DEFAULT_PARAMETERS,
+    filter_identity_audit_observations,
 )
 from app.services.identity_initial_audit_store import save_initial_identity_audit_seeds
 from app.services.identity_jersey_number_common import canonical_digest
@@ -237,8 +239,20 @@ def _bounded_h1_selection(identity: dict[str, Any], report: dict[str, Any], *, m
                 "team_label": slot.get("team_label"), "role": "field_player", "source": position.get("source"),
                 "bbox_xyxy": position.get("bbox_xyxy"), "confidence": position.get("confidence"),
             })
+    filtered_positions_by_frame = {
+        frame: filter_identity_audit_observations(
+            rows,
+            minimum_confidence=float(
+                IA0_DEFAULT_PARAMETERS["minimum_observation_confidence"]
+            ),
+            duplicate_containment_threshold=float(
+                IA0_DEFAULT_PARAMETERS["duplicate_containment_threshold"]
+            ),
+        )[0]
+        for frame, rows in positions_by_frame.items()
+    }
     candidates = [
-        (frame, rows) for frame, rows in positions_by_frame.items()
+        (frame, rows) for frame, rows in filtered_positions_by_frame.items()
         if frame % 150 == 0 and len(rows) >= 7
     ]
     candidates.sort(key=lambda row: (-len(row[1]), row[0]))

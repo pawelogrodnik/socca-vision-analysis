@@ -6,6 +6,7 @@ import unittest
 from app.services.identity_initial_audit_frame_selection import (
     build_initial_identity_audit_frame_selection,
     collect_candidate_frame_numbers,
+    filter_identity_audit_observations,
 )
 
 
@@ -92,6 +93,47 @@ class InitialIdentityAuditFrameSelectionTests(unittest.TestCase):
         )
         self.assertTrue(frames)
         self.assertTrue(all(frame % 30 == 0 for frame in frames))
+
+    def test_excludes_low_confidence_and_same_team_nested_duplicates(self) -> None:
+        observations = [
+            {
+                "stable_subject_id": "team-a-player",
+                "team_label": "A",
+                "bbox_xyxy": [100.0, 100.0, 140.0, 200.0],
+                "confidence": 0.90,
+            },
+            {
+                "stable_subject_id": "team-a-shadow",
+                "team_label": "A",
+                "bbox_xyxy": [300.0, 300.0, 350.0, 340.0],
+                "confidence": 0.05,
+            },
+            {
+                "stable_subject_id": "team-b-player",
+                "team_label": "B",
+                "bbox_xyxy": [500.0, 100.0, 550.0, 210.0],
+                "confidence": 0.80,
+            },
+            {
+                "stable_subject_id": "team-b-duplicate",
+                "team_label": "B",
+                "bbox_xyxy": [505.0, 105.0, 540.0, 190.0],
+                "confidence": 0.95,
+            },
+        ]
+
+        filtered, summary = filter_identity_audit_observations(
+            observations,
+            minimum_confidence=0.15,
+            duplicate_containment_threshold=0.80,
+        )
+
+        self.assertEqual(summary["low_confidence"], 1)
+        self.assertEqual(summary["same_team_duplicate"], 1)
+        self.assertEqual(
+            [(row["stable_subject_id"], row["team_label"]) for row in filtered],
+            [("team-a-player", "A"), ("team-b-player", "B")],
+        )
 
 
 def _global_identity() -> dict:
