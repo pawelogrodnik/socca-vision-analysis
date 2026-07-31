@@ -728,11 +728,11 @@ IA8 exception-only queue                     PARTIAL
 IA9 adaptive audit                           NOT STARTED
 
 PRODUCT DELIVERY
-P-MVP1 reviewed identity snapshot            NOT STARTED
-P-MVP2 reviewed video                        NOT STARTED
-P-MVP3 minimap/radar                         NOT STARTED
-P-MVP4 reviewed stats + coverage              PARTIAL FOUNDATIONS ONLY
-P-MVP5 correction + cheap rerender            NOT STARTED
+P-MVP1 reviewed identity snapshot            IMPLEMENTED / REAL 91s SMOKE
+P-MVP2 reviewed video                        IMPLEMENTED / REAL H.264 SMOKE
+P-MVP3 minimap/radar                         IMPLEMENTED / REAL SMOKE
+P-MVP4 reviewed stats + coverage              IMPLEMENTED / BASIC READINESS
+P-MVP5 correction + cheap rerender            PARTIAL — timestamp lookup; review handoff next
 
 PRODUCTION
 full-match quality gate                      NOT PASSED

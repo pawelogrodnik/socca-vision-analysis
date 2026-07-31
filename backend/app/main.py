@@ -70,6 +70,15 @@ from app.services.identity_roster_subject_review_store import (
     load_identity_roster_subject_review,
     save_identity_roster_subject_review,
 )
+from app.services.identity_reviewed_output_jobs import (
+    generate_reviewed_output,
+    reviewed_output_status,
+)
+from app.services.identity_reviewed_snapshot import (
+    finalize_reviewed_identity,
+    get_reviewed_identity_status,
+    reviewed_assignment_at,
+)
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -1745,6 +1754,53 @@ def review_identity_crops(match_id: str, payload: dict[str, Any] = Body(...)) ->
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity")
+def get_reviewed_identity(match_id: str) -> dict[str, Any]:
+    return get_reviewed_identity_status(match_dir(match_id))
+
+
+@app.post("/api/matches/{match_id}/reviewed-identity/finalize")
+def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return finalize_reviewed_identity(path, read_match_meta(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/at")
+def get_reviewed_identity_at(match_id: str, time_sec: float = Query(..., ge=0)) -> dict[str, Any]:
+    path = match_dir(match_id); snapshot = get_reviewed_identity_status(path)
+    if snapshot.get("status") in {"missing", "stale"}:
+        raise HTTPException(status_code=409, detail="Sfinalizuj reviewed identity przed wyszukaniem klatki.")
+    metadata = read_video_metadata(match_video_path(path))
+    return {"time_sec": time_sec, "frame": round(time_sec * float(metadata.get("fps") or 25)), "entities": reviewed_assignment_at(snapshot, time_sec, float(metadata.get("fps") or 25))}
+
+
+@app.post("/api/matches/{match_id}/reviewed-output/generate")
+def generate_match_reviewed_output(match_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    path = match_dir(match_id); snapshot = get_reviewed_identity_status(path)
+    if snapshot.get("status") in {"missing", "stale"}:
+        raise HTTPException(status_code=409, detail="Najpierw sfinalizuj reviewed identity.")
+    options = {"include_minimap": bool(payload.get("include_minimap", True)), "include_ball": bool(payload.get("include_ball", True)), "show_roster_number": bool(payload.get("show_roster_number", False))}
+    return generate_reviewed_output(path, snapshot, read_match_meta(path), options)
+
+
+@app.get("/api/matches/{match_id}/reviewed-output/status")
+def get_match_reviewed_output_status(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    return reviewed_output_status(path, get_reviewed_identity_status(path))
+
+
+@app.get("/api/matches/{match_id}/reviewed-output/video")
+def get_match_reviewed_video(match_id: str) -> FileResponse:
+    path = match_dir(match_id) / "reviewed_video.mp4"
+    if not path.exists(): raise HTTPException(status_code=404, detail="Reviewed video is not available")
+    return FileResponse(path, media_type="video/mp4", filename="reviewed_video.mp4")
 
 
 @app.get("/api/matches/{match_id}/resolved-player-stats")

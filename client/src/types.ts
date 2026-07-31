@@ -1699,6 +1699,39 @@ export type Match = MatchMetadataPayload & {
   player_identity_assignments?: PlayerIdentityAssignmentsDocument;
 };
 
+export type ReviewedIdentitySummary = {
+  tracklets_total: number;
+  confirmed: number;
+  probable: number;
+  unresolved: number;
+  conflicted: number;
+  blocked: number;
+  confirmed_players: number;
+  confirmed_detected_frame_coverage: number | null;
+};
+
+export type ReviewedIdentityDocument = {
+  status: 'missing' | 'stale' | 'blocked' | 'partial_reviewed' | 'complete_reviewed';
+  semantic_digest?: string;
+  summary: ReviewedIdentitySummary | null;
+  readiness?: { identity?: string; reason?: string };
+};
+
+export type ReviewedOutputJob = {
+  status: 'missing' | 'queued' | 'running' | 'completed' | 'failed' | 'stale';
+  error?: { message?: string } | null;
+};
+
+export type ReviewedIdentityAt = {
+  time_sec: number;
+  frame: number;
+  entities: Array<{
+    display_label: string;
+    fallback_label: string;
+    identity_status: string;
+  }>;
+};
+
 export type AnalysisPayload = {
   adapter: 'yolo' | 'motion';
   max_seconds: number;
