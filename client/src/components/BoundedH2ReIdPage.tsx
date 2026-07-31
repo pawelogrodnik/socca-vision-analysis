@@ -42,6 +42,13 @@ export function BoundedH2ReIdPage() {
   const team = session?.roster.find(
     (row) => row.team_label === card?.team_label,
   );
+  const cropUsesDifferentObservation = Boolean(
+    card?.display_crop_observation
+    && (
+      card.display_crop_observation.frame !== card.frame
+      || card.display_crop_observation.tracklet_id !== card.tracklet_id
+    )
+  );
 
   async function decide(
     current: BoundedH2Card,
@@ -159,6 +166,12 @@ export function BoundedH2ReIdPage() {
             <p>
               Team {card.team_label} · klatka {card.frame}
             </p>
+            {cropUsesDifferentObservation && (
+              <p className='muted'>
+                Zbliżenie pochodzi z innej obserwacji tego samego zawodnika;
+                decyzję podejmujesz dla ramki zaznaczonej na pełnej klatce.
+              </p>
+            )}
             <p className='muted'>
               Sugestie modelu są advisory-only i pozostają ukryte.
             </p>

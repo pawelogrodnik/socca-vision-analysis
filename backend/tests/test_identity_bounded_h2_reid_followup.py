@@ -8,6 +8,7 @@ import unittest
 from app.services.identity_bounded_h2_reid_followup import (
     _select_temporally_diverse,
     save_bounded_h2_reid_decisions,
+    verify_frozen_bounded_h2_rankings,
 )
 from app.services.identity_jersey_number_common import canonical_digest
 
@@ -119,6 +120,57 @@ class BoundedH2ReIdFollowupTests(unittest.TestCase):
                         "player_id": "player-b",
                     }],
                 )
+
+    def test_session_cannot_finish_with_missing_card_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = _selection()
+            second_card = {**selection["cards"][0]}
+            second_card["candidate_subject_id"] = "subject-b"
+            second_card["observation_key"] = "observation-b"
+            second_card["tracklet_id"] = "tracklet-b"
+            selection["cards"].append(second_card)
+            selection["selection_digest"] = canonical_digest(selection)
+            _write(root / "bounded_h2_selection.json", selection)
+            _write(
+                root / "operator_decisions.json",
+                {"selection_digest": selection["selection_digest"], "decisions": [], "finished": False},
+            )
+
+            with self.assertRaisesRegex(ValueError, "missing card decisions"):
+                save_bounded_h2_reid_decisions(
+                    root,
+                    updates=[{
+                        "selection_digest": selection["selection_digest"],
+                        "candidate_subject_id": "subject-a",
+                        "observation_key": "observation-a",
+                        "frame": 100,
+                        "tracklet_id": "tracklet-a",
+                        "action": "unknown",
+                    }],
+                    finished=True,
+                )
+
+    def test_frozen_ranking_verification_detects_roster_and_team_errors(self) -> None:
+        selection = _selection()
+        selection["selection_digest"] = canonical_digest(selection)
+        frozen = {
+            "rankings": [{
+                "candidate_subject_id": "subject-a",
+                "team_label": "A",
+                "suggestions": [
+                    {"player_id": "player-a"},
+                    {"player_id": "player-a"},
+                    {"player_id": "player-missing"},
+                ],
+            }],
+        }
+        verification = verify_frozen_bounded_h2_rankings(selection, frozen)
+
+        self.assertEqual(verification["totals"]["duplicate_ranked_players"], 1)
+        self.assertEqual(verification["totals"]["missing_roster_players"], 1)
+        self.assertEqual(verification["totals"]["invalid_ranked_players"], 2)
+        self.assertFalse(verification["historical_result_independently_confirmed"])
 
 
 def _eligible(subject_id: str, frame: int, score: float) -> dict:

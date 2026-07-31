@@ -23,6 +23,19 @@ export type BoundedH2Card = {
   crop_artifact: string;
   frame_width: number;
   frame_height: number;
+  decision_observation?: {
+    observation_key: string;
+    frame: number;
+    tracklet_id: string;
+    bbox_xyxy: [number, number, number, number];
+    full_frame_artifact: string;
+  };
+  display_crop_observation?: {
+    anchor_crop_id?: string | null;
+    frame?: number | null;
+    tracklet_id?: string | null;
+    artifact: string;
+  };
   preferred_advisory: {
     visible: boolean;
     reason: string;

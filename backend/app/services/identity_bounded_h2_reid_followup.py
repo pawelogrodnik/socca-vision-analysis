@@ -167,10 +167,23 @@ def prepare_bounded_h2_reid_followup(
             "bbox_xyxy": observation.get("bbox_xyxy"),
             "source_artifact_digest": _file_sha256(source_frame),
         }
+        display_crop_observation = {
+            "anchor_crop_id": row["crop"].get("anchor_crop_id"),
+            "frame": row["crop"].get("frame"),
+            "tracklet_id": row["crop"].get("tracklet_id"),
+            "bbox_xyxy": row["crop"].get("bbox_xyxy"),
+            "artifact": crop_artifact,
+            "source_artifact": row["crop"].get("artifact"),
+        }
         cards.append(
             {
                 "card_id": f"bounded-h2-{index:02d}",
                 **exact_mapping,
+                "decision_observation": {
+                    **exact_mapping,
+                    "full_frame_artifact": frame_artifact,
+                },
+                "display_crop_observation": display_crop_observation,
                 "team_label": row["ranking"].get("team_label"),
                 "frame_artifact": frame_artifact,
                 "crop_artifact": crop_artifact,
@@ -385,6 +398,13 @@ def save_bounded_h2_reid_decisions(
             "team_label": card.get("team_label"),
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
+    if finished:
+        missing_subjects = sorted(set(cards) - set(decisions))
+        if missing_subjects:
+            raise ValueError(
+                "Cannot finish bounded H2 session with missing card decisions: "
+                + ", ".join(missing_subjects)
+            )
     next_store = {
         **store,
         "decisions": sorted(
@@ -415,6 +435,11 @@ def evaluate_bounded_h2_reid_followup(
     frozen_by_subject = {
         str(row.get("candidate_subject_id") or ""): row
         for row in frozen.get("rankings") or []
+    }
+    ranking_verification = verify_frozen_bounded_h2_rankings(selection, frozen)
+    verification_by_subject = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in ranking_verification["rows"]
     }
     new_rows = []
     action_counts = {
@@ -448,6 +473,10 @@ def evaluate_bounded_h2_reid_followup(
         ):
             action_counts["conflicts"] += 1
             continue
+        row_verification = verification_by_subject.get(
+            str(decision.get("candidate_subject_id") or ""),
+            _empty_ranking_verification(),
+        )
         ranked_ids = [
             str(row.get("player_id") or "")
             for row in frozen_row.get("suggestions") or []
@@ -471,8 +500,18 @@ def evaluate_bounded_h2_reid_followup(
                 "top1_correct": truth_rank == 1,
                 "top3_correct": truth_rank is not None and truth_rank <= 3,
                 "abstained": truth_rank is None,
-                "cross_team_violations": 0,
-                "invalid_ranked_players": [],
+                "cross_team_violations": row_verification[
+                    "cross_team_violations"
+                ],
+                "invalid_ranked_players": row_verification[
+                    "invalid_ranked_players"
+                ],
+                "duplicate_ranked_players": row_verification[
+                    "duplicate_ranked_players"
+                ],
+                "missing_roster_players": row_verification[
+                    "missing_roster_players"
+                ],
                 "ranking_digest": selection["ranking_digest"],
             }
         )
@@ -514,6 +553,12 @@ def evaluate_bounded_h2_reid_followup(
         ),
         "invalid_ranked_players": sum(
             len(row.get("invalid_ranked_players") or []) for row in rows
+        ),
+        "duplicate_ranked_players": sum(
+            len(row.get("duplicate_ranked_players") or []) for row in new_rows
+        ),
+        "missing_roster_players": sum(
+            len(row.get("missing_roster_players") or []) for row in new_rows
         ),
         "action_counts": action_counts,
         "rows": rows,
@@ -561,6 +606,97 @@ def evaluate_bounded_h2_reid_followup(
     }
     _write(session_path / "bounded_h2_evaluation.json", result)
     return result
+
+
+def verify_frozen_bounded_h2_rankings(
+    selection: dict[str, Any],
+    frozen_rankings: dict[str, Any],
+) -> dict[str, Any]:
+    """Independently validate every frozen bounded-H2 ranking against roster."""
+
+    roster = {
+        str(player.get("player_id") or ""): str(team.get("team_label") or "")
+        for team in selection.get("roster") or []
+        if isinstance(team, dict)
+        for player in team.get("players") or []
+        if isinstance(player, dict) and player.get("player_id")
+    }
+    rows = []
+    for ranking in frozen_rankings.get("rankings") or []:
+        if not isinstance(ranking, dict):
+            continue
+        team_label = str(ranking.get("team_label") or "")
+        seen: set[str] = set()
+        cross_team = 0
+        invalid: list[str] = []
+        duplicates: list[str] = []
+        missing: list[str] = []
+        for suggestion in ranking.get("suggestions") or []:
+            player_id = str((suggestion or {}).get("player_id") or "")
+            if not player_id:
+                invalid.append("<empty>")
+                continue
+            if player_id in seen:
+                duplicates.append(player_id)
+                invalid.append(player_id)
+                continue
+            seen.add(player_id)
+            player_team = roster.get(player_id)
+            if player_team is None:
+                missing.append(player_id)
+                invalid.append(player_id)
+            elif player_team != team_label:
+                cross_team += 1
+                invalid.append(player_id)
+        rows.append(
+            {
+                "candidate_subject_id": ranking.get("candidate_subject_id"),
+                "team_label": team_label,
+                "cross_team_violations": cross_team,
+                "invalid_ranked_players": sorted(set(invalid)),
+                "duplicate_ranked_players": sorted(set(duplicates)),
+                "missing_roster_players": sorted(set(missing)),
+                "ranking_is_valid": not (
+                    cross_team or invalid or duplicates or missing
+                ),
+            }
+        )
+    totals = {
+        "cross_team_violations": sum(
+            int(row["cross_team_violations"]) for row in rows
+        ),
+        "invalid_ranked_players": sum(
+            len(row["invalid_ranked_players"]) for row in rows
+        ),
+        "duplicate_ranked_players": sum(
+            len(row["duplicate_ranked_players"]) for row in rows
+        ),
+        "missing_roster_players": sum(
+            len(row["missing_roster_players"]) for row in rows
+        ),
+    }
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "bounded_h2_frozen_ranking_verification",
+        "selection_digest": selection.get("selection_digest"),
+        "ranking_digest": canonical_digest(frozen_rankings),
+        "rankings_checked": len(rows),
+        "rows": rows,
+        "totals": totals,
+        "historical_result_independently_confirmed": not any(
+            totals.values()
+        ),
+        "safety": _safety(),
+    }
+
+
+def _empty_ranking_verification() -> dict[str, Any]:
+    return {
+        "cross_team_violations": 0,
+        "invalid_ranked_players": [],
+        "duplicate_ranked_players": [],
+        "missing_roster_players": [],
+    }
 
 
 def _select_temporally_diverse(
