@@ -2,1594 +2,695 @@
 
 ## 0. Cel dokumentu
 
-Celem tego dokumentu jest doprowadzenie systemu identyfikacji zawodników do stanu, w którym operator nie przypisuje ręcznie setek pojedynczych cropów po każdym meczu.
+Ten dokument definiuje ścieżkę od candidate/reviewed player identity do bezpiecznego controlled production apply.
 
-Docelowy workflow produktowy:
+Nie definiuje już kolejności najbliższego product MVP. Ta kolejność znajduje się w:
 
 ```text
-analiza meczu
-→ automatyczne candidate stable subjects
-→ whole-subject review
-→ przypisanie subjectów do rosteru
-→ minimalne review konfliktów i nierozstrzygniętych fragmentów
-→ candidate player timeline i statystyki
-→ kontrolowana promocja do produkcji
+task-requests/PLAYER_IDENTITY_DEVELOPMENT_PLAN.md
 ```
 
-Najważniejsza zasada:
+Najważniejsze rozdzielenie:
 
-> Brak przypisania jest bezpieczniejszy niż błędne przypisanie. System może pozostawić fragment jako `unresolved`, ale nie może ukrywać niepewności przez agresywny merge, deduplikację albo interpolację.
+```text
+reviewed local output
+→ może powstać przed pełnym production gate
+
+production identity apply
+→ pozostaje zablokowane do końcowej rewalidacji i transakcyjnego apply
+```
+
+Reviewed video, minimapa i reviewed candidate stats nie są automatycznym production promotion.
 
 ---
 
-# 1. Aktualny baseline
+# 1. Najważniejsza zasada
 
-Dokument został zaktualizowany po zakończeniu P1.20A, P1.20B i kandydackiego P1.21 względem aktualnego flow bazującego na commicie:
+> Brak przypisania jest bezpieczniejszy niż błędne przypisanie.
 
-```text
-592fc6e1b7c6101250747b1623ef3f53bae5f03d
-```
-
-Repo posiada działający human-in-the-loop pipeline:
+System może pozostawić fragment jako:
 
 ```text
-P1.15 roster-anchor shadow
-→ P1.16 representative anchor crops
-→ P1.17 whole-subject review contract
-→ P1.18 review API/store
-→ P1.19 local operator UI
-→ P1.20 controlled promotion plan dry-run
+unresolved
+conflicted
+blocked
 ```
 
-Historia szczegółowych implementacji P0–P1.20 pozostaje dostępna w Git history. Aktualne lokalne zmiany P1.20A–P1.21 nie wykonują produkcyjnego apply i pozostają candidate-only.
-
-Przed rozpoczęciem każdego kolejnego milestone agent ma:
-
-1. pobrać aktualny `HEAD`;
-2. zweryfikować istniejące artefakty, funkcje i schema versions;
-3. nie zakładać, że prywatne helpery zachowały stare nazwy;
-4. utrzymać backward compatibility z aktualnym review flow;
-5. nie modyfikować produkcyjnego identity bez jawnego milestone promotion;
-6. nie uruchamiać ponownie YOLO, jeżeli zadanie dotyczy wyłącznie downstream identity artifacts;
-7. zachować shadow/candidate separation do czasu P1.24.
+Nie może zwiększać coverage przez ukryty false merge lub agresywną interpolację tożsamości.
 
 ---
 
-# 2. Stan po P1.20
+# 2. Aktualny stan na HEAD c4559ff4
 
-## 2.1. Co działa
-
-### Shadow diagnostics i resolver research
-
-Repo posiada między innymi:
-
-- tracklet quality classification;
-- occlusion i footpoint reliability;
-- stitching candidates;
-- joint assignment po overlapie;
-- offline identity shadow resolver;
-- shadow timeline z `detected`, `predicted`, `occluded`, `missing`;
-- fragment consolidation;
-- visual-content gates;
-- same-match ReID;
-- active-roster shadow view;
-- frozen benchmarki i goldsety.
-
-### Whole-subject operator workflow
-
-Operator może przeglądać cały candidate stable subject jako jedną jednostkę zamiast przypisywać pojedyncze cropy.
-
-P1.19 dostarcza:
-
-- modal whole-subject review;
-- anchor cropy;
-- Team A/B/Unknown filters;
-- roster select;
-- rekomendację, blockery i quality flags;
-- decyzje `confirm_recommended_player`, `assign_roster_player`, `mark_unresolved`;
-- atomowy shadow store;
-- freshness decyzji względem review artifact digest.
-
-Pierwszy audyt Team A dla `published-46904e8c`:
+## 2.1. Zaimplementowany fundament
 
 ```text
-45/45 reviewed cards
-31 subjects assigned
-14 subjects unresolved
-7 real players covered
-12/12 recommendations accepted
-recommendation precision = 1.0
+P1.20A promotion safety audit
+P1.20B structural conflict remediation
+P1.21 partial candidate apply
+candidate assignments/timeline/stats/heatmaps
+candidate-vs-production diff
+operator telemetry
+Initial Identity Audit i operator seeds
+seed-aware review reduction
+appearance/ReID advisory infrastructure
+Match Identity Resolver shadow contract
 ```
 
-### P1.20 promotion plan
-
-P1.20 buduje read-only plan promocji decyzji whole-subject review do dokładnych obserwacji klatkowych zawodników.
-
-Dry-run:
+## 2.2. Co nie jest produkcyjnie udowodnione
 
 ```text
-source observations:       18 402
-canonical observations:    18 247
-duplicates removed:           155
-hard conflicts:                  0
-players with coverage:           7
-blocking errors:                 0
+pełnomaczowe KPI na wystarczającej liczbie meczów
+0 known false assignments po finalnym review
+wymagane coverage dla wszystkich graczy
+stabilna obsługa zmian zawodników
+pełna integracja finalnych decyzji review
+transactional production apply
+rollback
 ```
 
-P1.20 nadal:
+## 2.3. Historyczne benchmarki
 
-- nie zapisuje `player_identity_assignments.json`;
-- nie modyfikuje produkcyjnego identity;
-- nie przebudowuje statystyk;
-- nie przebudowuje heatmap;
-- wymaga osobnego apply step.
+Poprzednie benchmarki wykazały, że:
 
-## 2.2. Co jeszcze nie zostało udowodnione
+- whole-subject review może być kosztowne;
+- candidate pipeline może generować false assignments;
+- coverage może być znacząco niższe od docelowego;
+- production promotion nie jest bezpieczne bez finalnego review i rewalidacji.
 
-P1.20 potwierdza poprawność kontraktu i lineage dla jednego audytu, ale nie potwierdza jeszcze:
-
-- że 155 deduplikacji jest bezpiecznych semantycznie;
-- że ten sam realny zawodnik nie występuje równocześnie w dwóch odległych miejscach;
-- że liczba aktywnych zawodników na klatkę nie przekracza składu na boisku;
-- że unresolved subjects stanowią mały procent czasu, a nie znaczną część meczu;
-- że coverage każdego zawodnika jest wystarczające do statystyk;
-- że whole-subject review skaluje się do pełnego meczu;
-- że review trwa mniej niż 15 minut;
-- że candidate stats są lepsze od obecnych statystyk produkcyjnych;
-- że system generalizuje na inne mecze i warunki.
-
-Dlatego następny etap nie powinien bezpośrednio nadpisywać produkcyjnych assignments.
+Historyczne szczegóły pozostają w Git history oraz benchmark artifacts.
 
 ---
 
-# 3. Zasady gate’ów i KPI
+# 3. Warstwy danych
 
-## 3.1. Hard safety gates
-
-Hard safety gates blokują promotion/candidate apply:
+System rozróżnia cztery poziomy:
 
 ```text
-stale lineage
-cross-team player conflict
-same source observation assigned to multiple players
-parallel distant observations of the same player
-structural-conflict subject promoted without remediation
-sustained team on-pitch limit overflow
-trusted multiple-goalkeeper conflict
+production
+candidate
+reviewed
+shadow/research
 ```
 
-## 3.2. Readiness metrics
+## 3.1. Production
 
-Readiness metrics opisują jakość, ale nie muszą blokować pierwszych candidate artifacts:
+Aktualnie używane opublikowane identity i statystyki.
 
-```text
-resolved coverage
-unresolved coverage
-review time
-number of decisions
-player timeline gaps
-feature availability
-```
+Nie mogą zostać zmienione bez controlled apply.
 
-## 3.3. Docelowe KPI produktu
+## 3.2. Candidate
 
-```text
-median manual review time < 15 minut na pełny mecz
-resolved detected coverage > 95% dla analizowanej drużyny
-0 znanych false assignments po review
-0 równoległych, odległych obserwacji tego samego zawodnika
-0 cross-team identity links
-0 unresolved structural conflicts w produkcji
-```
+Automatyczne i częściowo ręcznie zatwierdzone artefakty przeznaczone do review/benchmarku.
 
-`95% coverage` i `<15 minut review` są KPI docelowymi do kalibracji w P1.22, a nie bieżącymi warunkami ukończenia P1.20A lub utworzenia pierwszego partial candidate.
-
-Na etapie walidacji wynik:
-
-```text
-80% bezpiecznie przypisane
-20% jawnie unresolved
-0 false assignments
-```
-
-jest lepszy niż:
-
-```text
-97% przypisane
-ukryte false merges
-```
-
----
-
-# 4. P1.20A — Promotion Safety Audit
-
-## Status
-
-```text
-IMPLEMENTED / VERIFIED ON FROZEN EASY90 INPUT
-```
-
-## 4.1. Cel
-
-Rozszerzyć `identity_roster_subject_promotion` tak, aby plan jawnie rozróżniał:
-
-```text
-safe observations
-safe duplicates
-review warnings
-structural conflicts
-blocking safety violations
-```
-
-`ready_for_controlled_apply` nie może oznaczać wyłącznie pustej listy błędów strukturalnych.
-
-## 4.2. Klasyfikacja duplikatów
-
-Obecne obserwacje usuwane przez deduplikację trzeba sklasyfikować.
-
-Nowe klasy:
-
-```text
-same_source_duplicate
-boundary_split_duplicate
-near_identical_spatial_duplicate
-parallel_nearby_duplicate
-parallel_distant_conflict
-structural_subject_conflict
-unknown_duplicate
-```
-
-### Safe duplicates
-
-Automatyczna deduplikacja jest dozwolona, gdy zachodzi co najmniej jeden warunek:
-
-- ten sam `tracklet_id` i ta sama klatka;
-- praktycznie identyczny bbox lub pitch position;
-- dokładna granica dwóch subjectów wynikająca ze splitu;
-- ten sam source observation występujący w dwóch reprezentacjach tego samego player ID.
-
-### Blocking conflicts
-
-Plan ma zostać zablokowany, gdy dwa różne tracklety przypisane temu samemu zawodnikowi:
-
-- występują w tej samej klatce;
-- są przestrzennie oddalone ponad konfigurowalny próg;
-- nie są duplicate detections tej samej osoby;
-- nie mają jawnego boundary/lineage explanation.
-
-Reason code:
-
-```text
-same_player_parallel_spatial_conflict
-```
-
-Nie wolno wybierać jednego zwycięzcy i ukrywać drugiej obserwacji zwykłym warningiem.
-
-## 4.3. Structural conflict gate
-
-Podzielić blockery na:
-
-### Review conflicts
-
-Mogą zostać ręcznie rozstrzygnięte przez whole-subject assignment:
-
-```text
-missing recommendation
-weak ranking
-insufficient visual evidence
-no reliable ReID
-```
-
-### Structural conflicts
-
-Nie mogą zostać promowane jako cały subject bez wcześniejszej remediation:
-
-```text
-merges_production_subjects
-merges_multiple_production_subjects
-cross_production_transition
-uncertain_transition
-parallel_roster_candidate_conflict
-parallel_subject_observations
-mixed_team_evidence
-structural_identity_conflict
-```
-
-Dla structural conflict dozwolone powinno być wyłącznie:
-
-```text
-mark_unresolved
-split_subject
-assign_fragment
-open_event_review
-```
-
-P1.20A ma blokować promocję całego structural-conflict subjectu do jednego roster playera.
-
-Jednocześnie P1.20A nie może tworzyć deadlocku całego pipeline. Nierozstrzygnięty structural fragment może zostać wykluczony z partial candidate po P1.20B zamiast blokować wszystkie bezpieczne obserwacje meczu.
-
-## 4.4. Coverage — poprawne mianowniki
-
-Nie wolno liczyć:
-
-```text
-player detected frames / full match frames
-```
-
-bez wiarygodnego on-pitch interval zawodnika.
-
-Raportować osobno:
-
-### Team assignment coverage
-
-```text
-promoted reliable detected team observations
-/
-all reliable detected observations audytowanej drużyny
-```
-
-### Review resolution ratio
-
-```text
-promoted detected frames
-/
-promoted + unresolved detected frames objęte review
-```
-
-### Player confirmed-interval coverage
-
-Tylko gdy istnieje ręcznie potwierdzony on-pitch interval:
-
-```text
-promoted detected frames playera
-/
-frames w potwierdzonym on-pitch interval
-```
-
-### Unknown denominator
-
-Gdy nie znamy czasu wejścia/zejścia:
-
-```json
-{
-  "detected_coverage_ratio": null,
-  "coverage_denominator": "unknown",
-  "reason": "on_pitch_interval_not_confirmed"
-}
-```
-
-Dodatkowo raportować:
-
-```text
-potential_player_gaps
-team_level_unresolved_frames
-reviewed_detected_frames
-promoted_detected_frames
-unresolved_detected_frames
-promoted_detected_ratio
-unresolved_detected_ratio
-longest_unresolved_interval_sec
-unresolved_intervals_over_1s
-unresolved_intervals_over_3s
-```
-
-## 4.5. Konserwatywny per-frame roster validation
-
-Do twardego limitu aktywnych zawodników liczyć wyłącznie obserwacje spełniające wszystkie warunki:
-
-```text
-operator-confirmed player_id
-status = detected
-inside_play
-po bezpiecznej deduplikacji
-unikalny player_id
-```
-
-Nie liczyć automatycznie jako hard conflict:
-
-```text
-predicted
-occluded
-missing
-unresolved subjects
-outside_play
-boundary/bench observations
-niepewne momenty zmiany
-```
-
-Rozróżnić:
-
-```text
-team_active_player_limit_spike
-team_active_player_limit_sustained
-```
-
-Pojedynczy krótkotrwały spike powinien być warningiem. Dopiero sustained overflow przez konfigurowalny czas/klatki jest błędem blokującym.
-
-Expected player count powinien pochodzić z match/team configuration z bezpiecznym fallbackiem.
-
-## 4.6. Bramkarze — trusted role only
-
-`multiple_goalkeepers_active` może być hard blockiem tylko, gdy rola GK pochodzi z:
-
-```text
-explicit roster role
-operator-confirmed role
-trusted match configuration
-```
-
-Nie używać jako hard gate wyłącznie:
-
-```text
-kolorystycznego outliera
-pozycji na boisku
-visual guess
-team appearance clustering
-```
-
-Semantyka:
-
-```text
-2 explicit confirmed goalkeepers active
-→ block
-
-1 confirmed GK + 1 visual GK candidate
-→ warning
-
-role unknown
-→ no goalkeeper hard gate
-```
-
-## 4.7. Unresolved weighted coverage i downstream impact
-
-Core identity safety nie może zależeć od dostępności artefaktów piłki.
-
-### Core identity report
-
-Zawsze raportować:
-
-```text
-unresolved detected frames
-unresolved ratios
-longest intervals
-identity/stat eligibility flags
-```
-
-### Optional downstream impact
-
-Jeżeli artefakty piłki/eventów istnieją, można dodatkowo raportować:
-
-```text
-unresolved_during_ball_possession
-unresolved_during_player_event
-unresolved_affects_passes
-unresolved_affects_turnovers
-```
-
-Brak ball artifacts nie może blokować identity promotion/candidate apply.
-
-Powinien dawać statusy w rodzaju:
-
-```text
-player_identity: ready_with_review
-possession_readiness: not_available
-passes_readiness: not_available
-```
-
-## 4.8. Per-player readiness
-
-Dodać raport per roster player:
-
-```json
-{
-  "player_id": "...",
-  "detected_frames": 0,
-  "distance_eligible_frames": 0,
-  "heatmap_eligible_frames": 0,
-  "coverage_denominator": "confirmed_on_pitch|review_scope|unknown",
-  "detected_coverage_ratio": null,
-  "distance_eligible_ratio": null,
-  "heatmap_eligible_ratio": null,
-  "subject_fragments": 0,
-  "timeline_gaps": 0,
-  "longest_gap_sec": 0.0,
-  "parallel_conflicts": 0,
-  "readiness": "ready|ready_with_review|experimental|not_available",
-  "reasons": []
-}
-```
-
-Nie uznawać zawodnika za gotowego tylko dlatego, że ma co najmniej jedną obserwację.
-
-## 4.9. Pełne lineage digests
-
-Review artifact i promotion plan mają zawierać digests:
-
-```text
-candidate identity artifact
-shadow timeline artifact
-anchor crops artifact
-roster/match configuration
-team configuration
-review contract
-operator decisions
-algorithm parameters
-```
-
-Zmiana któregokolwiek z tych źródeł ma oznaczać decyzje lub plan jako `stale`.
-
-Nie wystarczy porównanie samych IDs, zakresów i trackletów.
-
-## 4.10. Nowe artefakty
-
-Proponowane:
-
-```text
-identity_roster_subject_promotion_safety_report.json
-identity_roster_subject_duplicate_audit.json
-identity_roster_subject_readiness.json
-```
-
-Nazwy mogą zostać dostosowane do istniejących conventions, ale odpowiedzialności muszą pozostać rozdzielone.
-
-## 4.11. Gate P1.20A
-
-P1.20A przechodzi, gdy system poprawnie wykrywa i raportuje:
-
-```text
-stale lineage
-structural conflicts
-safe vs unsafe duplicates
-parallel spatial conflicts
-conservative active-player overflow
-trusted goalkeeper conflicts
-coverage with explicit denominator semantics
-optional downstream readiness
-```
-
-P1.20A nie wymaga jeszcze:
-
-```text
-95% coverage
-review < 15 minutes
-0 unresolved fragments
-```
-
-## 4.12. Testy
-
-Dodać minimum:
-
-- same tracklet boundary duplicate is safe;
-- near-identical duplicate is safe;
-- distant simultaneous observations block;
-- structural-conflict subject assignment blocks;
-- review-only conflict can be assigned;
-- one-frame active player spike warns;
-- sustained active player overflow blocks;
-- substitution without simultaneous overflow passes;
-- two explicit trusted goalkeepers block;
-- visual GK guess does not hard-block;
-- stale candidate/timeline digest blocks;
-- player coverage denominator can be unknown;
-- team/review coverage is correct;
-- missing ball artifacts do not block identity;
-- deterministic output;
-- production artifacts remain unchanged.
-
----
-
-# 5. P1.20B — Minimal Structural Conflict Remediation
-
-## Status
-
-```text
-IMPLEMENTED / REQUIRED REMEDIATION PATH AVAILABLE
-```
-
-## 5.1. Cel
-
-Zapewnić minimalny sposób naprawy konfliktów wykrytych przez P1.20A, aby pipeline nie był zablokowany do czasu zaawansowanego P1.25.
-
-To nie jest jeszcze pełny event-level editor.
-
-## 5.2. Minimalne akcje
-
-```text
-split subject at tracklet boundary
-split subject at transition frame
-assign one fragment to roster player
-mark one fragment unresolved
-exclude structural fragment from candidate promotion
-clear remediation decision
-```
-
-## 5.3. Reguły
-
-- split musi działać na stabilnych frame/tracklet keys;
-- decyzja ma zapisywać source digest;
-- po zmianie candidate/timeline decyzja staje się stale;
-- jeden fragment może pozostać unresolved;
-- bezpieczne fragmenty tego samego meczu mogą przejść dalej;
-- remediation nie zapisuje produkcyjnego identity.
-
-## 5.4. Artefakty
-
-Proponowane:
-
-```text
-identity_roster_subject_remediation_decisions_shadow.json
-identity_roster_subject_remediation_plan.json
-```
-
-## 5.5. Definition of Done
-
-```text
-structural subject can be split or partially excluded
-unsafe whole-subject promotion is blocked
-safe observations remain eligible for partial candidate
-production hashes remain unchanged
-```
-
----
-
-# 6. P1.21 — Partial Candidate Apply
-
-## Status
-
-```text
-IMPLEMENTED AS CANDIDATE-ONLY / NOT PROMOTED TO PRODUCTION
-```
-
-## Cel
-
-Zastosować zatwierdzony i bezpieczny plan wyłącznie do równoległych candidate artifacts.
-
-Nierozstrzygnięte lub structural-conflict fragmenty mogą zostać pominięte jako `unresolved`, zamiast blokować wszystkie poprawne obserwacje meczu.
-
-Nie nadpisywać jeszcze produkcyjnych:
-
-```text
-player_identity_assignments.json
-resolved_player_stats.json
-player_heatmaps.json
-```
-
-## 6.1. Candidate artifacts
-
-Wygenerować:
+Przykłady:
 
 ```text
 player_identity_assignments_candidate_v2.json
 resolved_player_timeline_candidate_v2.json
 resolved_player_stats_candidate_v2.json
 player_heatmaps_candidate_v2.json
-identity_candidate_apply_manifest.json
 ```
 
-Opcjonalnie:
+## 3.3. Reviewed
+
+Finalny lokalny snapshot po zakończonym review:
 
 ```text
-player_events_candidate_v2.json
-player_passes_candidate_v2.json
+reviewed_identity_snapshot.json
+reviewed_player_timeline.json
+reviewed_player_stats.json
+reviewed_player_heatmaps.json
+reviewed_identity_video.mp4
 ```
 
-jeżeli obecna architektura pozwala je przebudować bez zmiany produkcji.
+Reviewed artifacts mogą być używane do lokalnej analizy i wizualnej walidacji przed production apply.
 
-## 6.2. Zasady candidate timeline
+## 3.4. Shadow/research
 
 ```text
-detected + operator-confirmed
-→ pełne candidate identity
-
-predicted / occluded
-→ zachowanie ciągłości, ale bez observed distance
-
-unresolved / missing / excluded structural fragment
-→ brak player identity contribution
+ReID rankings
+identity resolver proposals
+jersey evidence
+training reports
+research benchmarks
 ```
 
-Nie używać predicted positions jako rzeczywistych obserwacji do distance i heatmap.
+Nie są bezpośrednim źródłem confirmed production identity.
 
-## 6.3. Partial candidate status
+---
 
-Candidate manifest ma jawnie wskazywać:
+# 4. Hard safety gates
+
+Hard safety gates blokują confirmed promotion lub production apply:
 
 ```text
-complete_candidate
-partial_candidate
-blocked
+stale lineage
+cross-team player assignment
+same source observation assigned to multiple players
+parallel distant observations assigned to the same player
+structural-conflict subject promoted without remediation
+trusted operator decision contradiction
+sustained active-player overflow
+trusted multiple-goalkeeper conflict
+invalid roster player
+unexplained final snapshot conflict
 ```
 
-`partial_candidate` jest poprawnym wynikiem do benchmarku i walidacji statystyk, ale nie jest automatycznie production-ready.
-
-## 6.4. Candidate vs production diff
-
-Dodać raport:
+Hard constraint ma pierwszeństwo przed:
 
 ```text
-identity_candidate_vs_production_diff.json
+ReID score
+model confidence
+coverage gain
+stats completeness
 ```
 
-Per player:
+---
+
+# 5. Coverage semantics
+
+Nie liczyć player coverage względem pełnego wideo, jeśli nie znamy on-pitch interval.
+
+Raportować osobno:
+
+## 5.1. Team assignment coverage
 
 ```text
-playing time delta
-detected coverage delta
-distance delta
-heatmap coverage delta
-subject count delta
-longest gap delta
-identity switch boundaries
-new unresolved intervals
-removed/added observations
-coverage denominator status
+reliable observations z pewnym teamem
+/
+wszystkie reliable player observations
 ```
 
-Globalnie:
+## 5.2. Confirmed identity coverage
 
 ```text
-production assigned frames
-candidate assigned frames
-production ambiguous frames
-candidate unresolved frames
-parallel conflicts
-cross-team conflicts
-excluded structural fragments
+confirmed named observations/time
+/
+review-scope observations/time
 ```
 
-## 6.5. Safety
-
-Candidate apply:
-
-- zapisuje pliki atomowo;
-- nie modyfikuje produkcji;
-- posiada manifest z input hashes;
-- jest powtarzalny;
-- może zostać bezpiecznie usunięty i przebudowany;
-- nie publikuje candidate stats w public package;
-- nie wymaga 95% coverage;
-- nie obniża hard constraints dla większego coverage.
-
-## Definition of Done
+## 5.3. Unresolved coverage
 
 ```text
-candidate artifacts generated
+unresolved observations/time
+/
+review-scope observations/time
+```
+
+## 5.4. Player confirmed-interval coverage
+
+Tylko przy znanym on-pitch interval:
+
+```text
+confirmed player observations
+/
+frames/time w potwierdzonym interval
+```
+
+Przy nieznanym denominator:
+
+```json
+{
+  "coverage_ratio": null,
+  "coverage_denominator": "unknown",
+  "reason": "on_pitch_interval_not_confirmed"
+}
+```
+
+## 5.5. Feature coverage
+
+Oddzielnie dla:
+
+```text
+heatmap
+observed distance
+possession attribution
+passes attribution
+events attribution
+```
+
+---
+
+# 6. Reviewed identity snapshot — nowy etap przed rewalidacją
+
+## Status
+
+```text
+NEXT PRODUCT MILESTONE
+```
+
+## Cel
+
+Połączyć wszystkie końcowe decyzje operatora i bezpieczne candidate outcomes w jeden deterministyczny snapshot.
+
+## Źródła
+
+```text
+Initial Identity Audit decisions
+whole-subject review decisions
+remediation decisions
+team constraints
+safe confirmed resolver outcomes
+explicit unresolved/conflicted states
+```
+
+## Wymagania
+
+- operator decisions są kanoniczne;
+- ReID/continuity są tylko suggestion evidence;
+- cross-team i parallel conflicts blokują confirmed;
+- unresolved ma stabilny fallback Axx/Bxx;
+- snapshot ma pełne source digests;
+- output jest deterministic i atomic;
+- zmiana inputu oznacza snapshot jako stale;
+- production files pozostają bez zmian.
+
+## Output
+
+```text
+reviewed_identity_snapshot.json
+reviewed_identity_report.json
+```
+
+Ten snapshot staje się jedynym wejściem do reviewed wideo i lokalnych reviewed statystyk.
+
+---
+
+# 7. Reviewed output validation
+
+Reviewed wideo jest nowym głównym narzędziem human QA.
+
+Operator ma sprawdzić:
+
+```text
+confirmed names
+ID switch boundaries
+false merges
+false splits
+tracklet/subject propagation
+conflicted/unresolved labels
+bbox-person correspondence
+```
+
+Korekta z wideo:
+
+```text
+operator decision update
+→ snapshot stale
+→ downstream snapshot rebuild
+→ video/stats rerender
+```
+
+Bez YOLO/tracking rerun.
+
+Reviewed output validation nie zastępuje pełnego production benchmarku, ale dostarcza mocniejsze ground truth dla kolejnego etapu.
+
+---
+
+# 8. Revalidation roadmap
+
+## S1 — Reviewed snapshot correctness
+
+### Gate
+
+```text
+0 cross-team confirmed assignments
+0 parallel same-player confirmed conflicts
+0 invalid roster assignments
+all conflicts visible
+all inputs digest-bound
 production hashes unchanged
-candidate timeline validates with 0 hard conflicts
-unresolved fragments remain explicit
-candidate stats can be compared with production
 ```
 
----
+## S2 — Reviewed video audit
 
-# 7. P1.22 — Full-Match Operator Benchmark
+### Gate
 
-## Cel
-
-Sprawdzić prawdziwy koszt pracy operatora i generalizację workflow oraz skalibrować docelowe KPI.
-
-## 7.1. Materiał
-
-Minimum:
+Na bounded real material:
 
 ```text
-Match A — obecny mecz / znany materiał
-Match B — inne światło, stroje lub ustawienie kamery
-Match C — held-out, bez strojenia parametrów pod wynik
+all displayed names visually checked
+known wrong names = 0 after correction
+fallback labels stable
+every correction traceable to source decision
+rerender succeeds without heavy pipeline rerun
 ```
 
-Nie ograniczać oceny do `easy90` i `hard3m`.
-
-## 7.2. Review session telemetry
-
-UI/store ma zapisywać:
-
-```text
-review_session_started_at
-review_session_completed_at
-active_review_seconds
-cards_opened
-cards_decided
-cards_reopened
-decisions_changed
-confirm_recommendation_count
-manual_assignment_count
-unresolved_count
-remediation_actions_count
-average_seconds_per_card
-cards_per_minute
-```
-
-`active_review_seconds` powinno ograniczać naliczanie długich okresów bez aktywności operatora.
-
-## 7.3. Metryki pełnego meczu
-
-```text
-manual review time
-manual decisions
-candidate subjects reviewed
-subjects assigned
-subjects unresolved
-promoted detected ratio
-unresolved detected ratio
-false assignment count
-parallel conflict count
-player coverage denominator distribution
-player coverage distribution where denominator is known
-longest player gap
-```
-
-## 7.4. Human audit sample
-
-Po review ręcznie sprawdzić co najmniej:
-
-- wszystkie structural conflicts;
-- wszystkie dalekie parallel duplicates;
-- wszystkie granice subjectów dla jednego player ID;
-- wszystkie długie unresolved intervals;
-- wszystkie duże skoki pozycji;
-- początek i koniec timeline każdego zawodnika;
-- okresy zmian zawodników;
-- fragmenty z posiadaniem piłki i player events, jeżeli te artefakty istnieją.
-
-## 7.5. Kalibracja KPI
-
-Po pierwszym pełnym meczu raportować wyniki bez wymuszania docelowych progów.
-
-Po co najmniej trzech meczach, w tym jednym held-out, ocenić realność:
-
-```text
-median review time < 15 min
-resolved detected coverage > 95%
-0 known false assignments after review
-```
-
-KPI mogą zostać doprecyzowane na podstawie rzeczywistego denominator coverage i udziału rezerwowych/zmian.
-
-## Gate P1.22
-
-```text
-telemetry available
-at least three matches evaluated
-at least one held-out match
-0 hidden structural conflicts
-0 impossible parallel player positions
-human-audited false assignments reported explicitly
-```
-
----
-
-# 8. P1.23 — Candidate Stats Validation
-
-## Cel
-
-Sprawdzić, czy candidate identity daje sensowne statystyki zawodników i nie tylko ładniejsze przypisania.
-
-## 8.1. Walidacja timeline
+## S3 — Reviewed stats validation
 
 Dla każdego zawodnika sprawdzić:
 
 ```text
-first observation
-last observation
+first/last confirmed observation
 playing intervals
-known/unknown on-pitch denominator
-substitution boundaries
-number of fragments
-longest gap
+long gaps
 large spatial jumps
 parallel observations
-predicted/occluded share
-```
-
-## 8.2. Walidacja statystyk
-
-Porównać candidate vs production:
-
-```text
-playing time
-distance
 heatmap shape
-possession involvement
-passes
-turnovers
-player events
+observed distance
+possession/pass attribution, jeśli dostępne
+feature coverage/readiness
 ```
 
-Brak ball artifacts nie może obniżać identity readiness. Powinien ustawić zależne feature readiness na `not_available`.
+Każda duża delta ma prowadzić do źródłowych trackletów/subjects/decisions.
 
-## 8.3. Explainable deltas
+## S4 — Operator benchmark
 
-Każda duża zmiana powinna mieć możliwość przejścia do źródłowych subjectów i decyzji operatora.
-
-Przykład:
+Mierzyć na realnych materiałach:
 
 ```text
-Player A distance +620 m
-→ 3 nowe subject fragments
-→ frames 12000–14800
-→ review cards X/Y/Z
+active operator time
+manual decisions
+confirmed coverage
+unresolved coverage
+video-driven corrections
+known false assignments after final correction
+ID switches
+false merges/splits
+stats coverage
 ```
 
-## 8.4. Readiness per feature
-
-Przykład:
-
-```json
-{
-  "player_identity": "ready",
-  "playing_time": "ready_with_review",
-  "heatmap": "ready_with_review",
-  "distance": "experimental",
-  "player_possession": "not_available",
-  "player_passes": "not_available"
-}
-```
-
-Feature może być niedostępny mimo gotowego identity, jeżeli wymagane dane wejściowe są zbyt słabe lub nie istnieją.
-
-## Gate P1.23
+Docelowo minimum:
 
 ```text
-0 known false assignments in audited sample
-0 impossible spatial jumps affecting stats
-predicted/occluded excluded from observed distance
-large stat deltas manually explained
-candidate output reviewed on held-out match
-feature readiness independent from unavailable optional inputs
+więcej niż jeden fizyczny mecz
+co najmniej jeden held-out materiał
+różne warunki światła/kamery
+```
+
+Pierwsze lokalne MVP może działać przed zamknięciem S4.
+
+## S5 — Production readiness decision
+
+Dopiero po S1–S4 odpowiedzieć:
+
+```text
+READY_FOR_CONTROLLED_APPLY
+NOT_READY_FALSE_ASSIGNMENTS
+NOT_READY_COVERAGE
+NOT_READY_OPERATOR_COST
+NOT_READY_DOWNSTREAM_STATS
 ```
 
 ---
 
-# 9. P1.24 — Controlled Production Apply
+# 9. Candidate and reviewed stats rules
 
-## Cel
+## 9.1. Detected
 
-Dopiero po pozytywnym P1.20A–P1.23 umożliwić jawne zastosowanie candidate identity do produkcji.
+Confirmed detected observations mogą zasilać:
 
-## 9.1. Apply UX
+```text
+playing time
+heatmap
+observed distance
+player possession/events
+```
+
+zgodnie z feature readiness.
+
+## 9.2. Predicted/occluded
+
+Mogą wspierać continuity, ale:
+
+```text
+nie są observed distance
+nie są raw heatmap samples
+nie są automatycznie confirmed player evidence
+```
+
+## 9.3. Unresolved/conflicted
+
+```text
+nie zasilają named player stats
+mogą zasilać team-level stats przy pewnym teamie
+pozostają jawne w coverage
+```
+
+## 9.4. Optional inputs
+
+Brak ball/event artifacts:
+
+```text
+possession/passes = not_available
+```
+
+Nie obniża identity/heatmap readiness.
+
+---
+
+# 10. ReID i resolver w stabilization flow
+
+ReID może pomagać w:
+
+```text
+prioritization
+ranking
+review suggestion
+cross-capture advisory
+```
+
+Nie może:
+
+```text
+ominąć operator review po failed gate
+potwierdzić imienia na finalnym wideo samym top-1
+wykonać irreversible merge
+obniżyć hard constraints
+```
+
+Match Identity Resolver:
+
+- wykrywa conflicts;
+- buduje explainable edge scores;
+- proponuje assignment;
+- może abstain;
+- nie jest osobnym production apply path.
+
+Praktyczna wartość ReID jest mierzona przez:
+
+```text
+manual decisions saved
+unresolved reduction
+ID-switch reduction
+false merge/split delta
+```
+
+---
+
+# 11. Controlled production apply
+
+## Status
+
+```text
+BLOCKED UNTIL REVIEWED REVALIDATION PASSES
+```
+
+## 11.1. UX
 
 Operator musi zobaczyć:
 
 ```text
-input plan and digests
+reviewed snapshot digest
 review completeness
 unresolved coverage
-coverage denominator semantics
 blocking warnings
-candidate vs production diff
-files to be replaced
+reviewed-vs-production diff
+stats readiness
+files to replace
 ```
 
 Apply wymaga jawnego potwierdzenia.
 
-## 9.2. Backup i transaction manifest
+## 11.2. Transaction
 
 Przed zapisem:
 
 ```text
-backup current assignments
-backup resolved timeline/stats/heatmaps
+backup production identity
+backup timeline/stats/heatmaps
 write transaction manifest
-mark downstream package stale
+mark packages stale
 ```
 
-Zapis atomowy lub kontrolowana transakcja plikowa.
+## 11.3. Rebuild
 
-Manifest:
-
-```json
-{
-  "transaction_id": "...",
-  "source_commit": "...",
-  "input_digests": {},
-  "backups": [],
-  "written_files": [],
-  "rebuild_steps": [],
-  "validation": {},
-  "status": "prepared|applied|validated|rolled_back|failed"
-}
-```
-
-## 9.3. Rebuild downstream
-
-Po apply przebudować co najmniej:
+Po apply przebudować:
 
 ```text
 player identity assignments
-resolved player timeline
-resolved player stats
+player timeline
+player stats
 player heatmaps
-player-level events/passes, jeśli zależne i dostępne
+player events/passes, jeśli zależne
 analysis readiness
 package/publication freshness
 ```
 
-Nie pozostawiać nowego identity z poprzednimi statystykami.
-
-## 9.4. Post-apply validation
+## 11.4. Validation
 
 ```text
-0 hard identity conflicts
+0 hard conflicts
 0 stale downstream artifacts
 all output hashes recorded
-readiness gates recalculated
-package remains unpublished/stale until rebuild completes
+public package remains blocked until rebuild complete
 ```
 
-## 9.5. Rollback
+## 11.5. Rollback
 
-Rollback ma:
+Rollback przywraca backups, przebudowuje downstream i zachowuje operator audit history.
 
-- przywracać backup;
-- przebudowywać zależne artefakty;
-- zapisywać status i reason;
-- nie usuwać audytu operatora ani remediation decisions.
+Nie wdrażać auto-apply.
 
 ---
 
-# 10. P1.25 — Advanced Event-Level and Orphan Review
+# 12. Advanced review
 
-P1.25 pozostaje etapem zaawansowanym. Minimalny split/remediation wymagany do odblokowania candidate flow znajduje się już w P1.20B.
+Pełny event/timeline editor nie jest najbliższym milestone.
 
-P1.25 ma zostać zaprojektowany na podstawie realnych danych z P1.22.
-
-## 10.1. Priorytetowe przypadki
+Rozbudowywać tylko przypadki potwierdzone przez reviewed video i benchmark:
 
 ```text
-structural-conflict subjects requiring richer context
 long unresolved fragments
 identity switch boundaries
-overlap exits
-parallel subject conflicts
-orphan fragments affecting possession/events
-```
-
-## 10.2. Jednostka review
-
-Nie pojedynczy crop.
-
-Preferowane:
-
-```text
-clip before
-transition/overlap
-clip after
-incoming identities
-outgoing candidates
-recommended mapping
-```
-
-Akcje:
-
-```text
-keep
-swap
-split subject
-assign fragment
-mark unresolved
-mark noise
-```
-
-## 10.3. Priorytetyzacja
-
-Najpierw pokazywać fragmenty o największym wpływie:
-
-```text
-long duration
-structural conflict
-large candidate stat impact
-ball possession involvement, jeśli dostępne
-player event involvement, jeśli dostępne
-```
-
-Krótkie noise tracklety bez wpływu na wynik nie powinny zaśmiecać operatora.
-
----
-
-# 11. P2 — Automatyzacja po stabilnym workflow
-
-Dopiero po pozytywnym pełnomaczowym benchmarku rozważyć:
-
-## P2.1. Roster-confirmed ReID prototypes
-
-```text
-real player
-→ operator-approved anchor crops
-→ robust prototype
-→ unresolved fragment ranking
-```
-
-Prototype może zawierać tylko zatwierdzone reliable crops.
-
-## P2.2. Anchor-conditioned offline optimizer
-
-Koszt:
-
-```text
-motion
-+ time gap
-+ team
-+ trusted role
-+ occlusion context
-+ footpoint reliability
-+ visual-content validity
-+ approved roster ReID
-```
-
-Hard constraints zawsze mają pierwszeństwo.
-
-## P2.3. Persistent gallery między meczami
-
-Dopiero gdy single-match gallery nie jest zatruwana false merges.
-
-Cross-match identity pozostaje sugestią wymagającą potwierdzenia operatora.
-
-## P2.4. Targeted player YOLO improvement
-
-Trenować tylko po benchmarku pokazującym, że głównym źródłem fragmentacji są:
-
-```text
-missed detections
-merged player detections
-severe overlap recall
-bbox instability
-```
-
-Nie trenować dużego modelu wyłącznie dlatego, że liczba raw tracków jest wysoka.
-
----
-
-# 12. Data contracts
-
-## 12.1. Stable keys
-
-Każdy review subject, fragment, decision, promotion row i apply transaction musi posiadać stabilny klucz niezależny od kolejności listy.
-
-## 12.2. Exact source observations
-
-Promocja musi wskazywać dokładnie:
-
-```text
-frame
-tracklet_id
-candidate_subject_id
-fragment_id, jeśli subject został podzielony
-player_id
-source review/remediation decision
-```
-
-## 12.3. Reliability
-
-Każda obserwacja powinna zachować:
-
-```text
-status
-confidence
-footpoint_reliable
-appearance_reliable
-play_area_status
-position_source
-eligible_for_distance
-eligible_for_heatmap
-```
-
-## 12.4. Freshness
-
-Zmiana któregokolwiek wejścia identity powoduje stale downstream artifacts:
-
-```text
-candidate graph
-shadow timeline
-team config
-roster
-review contract
-operator decisions
-remediation decisions
-manual splits
-algorithm version
-parameters
-```
-
----
-
-# 13. Quality i readiness
-
-Minimalny dokument readiness:
-
-```text
-identity_roster_subject_readiness.json
-```
-
-Statusy:
-
-```text
-ready
-ready_with_review
-experimental
-not_available
-```
-
-Zakres:
-
-```text
-team-level identity
-player-level identity
-playing time
-distance
-heatmaps
-player possession
-player passes
-player events
-```
-
-Nie przenosić logiki readiness do komponentów React.
-
-Readiness ma rozróżniać:
-
-```text
-hard safety
-coverage/readiness
-optional feature availability
-```
-
----
-
-# 14. CI i testy
-
-Repo nie powinno polegać wyłącznie na lokalnej deklaracji agenta.
-
-Dodać lub rozszerzyć GitHub Actions:
-
-```text
-backend unit tests
-identity contract tests
-promotion safety tests
-candidate apply tests
-client typecheck
-client production build
-```
-
-Benchmarki z ciężkimi modelami mogą pozostać osobnym manual workflow, ale lekkie frozen artifact evaluators powinny działać w CI.
-
-Każdy milestone ma potwierdzić:
-
-```text
-deterministic output
-no unexpected production mutations
-stale input detection
-atomic writes
-failure rollback or safe abort
-```
-
----
-
-# 15. KPI
-
-## Główne KPI produktowe
-
-```text
-manual review time per match
-manual decisions per match
-team assignment coverage
-review resolution ratio
-player confirmed-interval coverage, jeśli denominator jest znany
-unresolved detected coverage
-false assignments after review
-parallel spatial conflicts
-player timeline gaps
-candidate vs production stat deltas
-```
-
-## KPI diagnostyczne
-
-```text
-raw tracklets per player
-candidate subjects per player
-subjects assigned per player
+substitution boundaries
 structural conflicts
-safe duplicates
-unsafe duplicates
+orphan fragments affecting stats/events
+```
+
+Pierwszy correction flow powinien prowadzić z timestampu wideo do istniejącego review, bez budowy rozbudowanego edytora.
+
+---
+
+# 13. KPI
+
+## Główne
+
+```text
+active operator time per upload/match
+manual decisions
+confirmed identity coverage
+unresolved time coverage
+known false names after final review
+ID switches
+false merges
+false splits
+video-driven corrections
+stats coverage/readiness
+```
+
+## Diagnostyczne
+
+```text
+raw tracklets
+candidate subjects
+subjects assigned
+structural conflicts
+safe/unsafe duplicates
 ReID suggestion precision
-coverage denominator unknown count
+ReID suggestions accepted/rejected
+coverage denominator unknown
+rerender duration
 ```
 
-Nie uznawać za sukces samego spadku liczby subjectów, jeżeli wynika z false merges.
+Nie uznawać za sukces spadku liczby subjectów wynikającego z false merge.
 
 ---
 
-# 16. Zmieniona kolejność implementacji
+# 14. Aktualna kolejność stabilization
 
 ```text
-P1.20A  Promotion Safety Audit
-P1.20B  Minimal Structural Conflict Remediation
-P1.21   Partial Candidate Apply
-P1.22   Full-Match Operator Benchmark and KPI Calibration
-P1.23   Candidate Stats Validation
-P1.24   Controlled Production Apply
-P1.25   Advanced Event-Level / Orphan Review driven by benchmark evidence
-P2      Approved-anchor automation and cross-match assistance
+1. Build reviewed identity snapshot
+2. Audit reviewed video on real material
+3. Generate reviewed stats/readiness
+4. Fix errors through cheap correction/rerender
+5. Run operator benchmark on additional material
+6. Revalidate identity and stats
+7. Decide controlled production readiness
+8. Implement transactional apply and rollback
 ```
 
-Najbliższy task dla agenta:
+ReID i jersey research nie blokują kroków 1–4.
+
+---
+
+# 15. Acceptance criteria
+
+## Reviewed snapshot
+
+- [ ] one canonical reviewed identity source;
+- [ ] deterministic and digest-bound;
+- [ ] operator decisions canonical;
+- [ ] unresolved/conflicted explicit;
+- [ ] production unchanged.
+
+## Reviewed output
+
+- [ ] confirmed names visually verified;
+- [ ] fallback Axx/Bxx stable;
+- [ ] correction traceable;
+- [ ] rerender without YOLO/tracking;
+- [ ] stats coverage visible.
+
+## Revalidation
+
+- [ ] 0 known false assignments after final review;
+- [ ] 0 cross-team confirmed assignments;
+- [ ] 0 impossible parallel confirmed players;
+- [ ] large stat deltas explained;
+- [ ] at least one held-out real material audited;
+- [ ] operator cost measured.
+
+## Controlled apply
+
+- [ ] explicit confirmation;
+- [ ] backups;
+- [ ] transaction manifest;
+- [ ] atomic writes;
+- [ ] downstream rebuild;
+- [ ] post-apply validation;
+- [ ] rollback tested.
+
+---
+
+# 16. Anti-goals
+
+Nie:
 
 ```text
-P1.22 Full-Match Operator Benchmark and KPI Calibration
-```
-
-P1.20A wykrył konflikty strukturalne, dlatego P1.20B został wdrożony przed P1.21. P1.21 wygenerował poprawny `partial_candidate`; produkcyjny apply nadal pozostaje zabroniony.
-
-Nie implementować jeszcze produkcyjnego apply adaptera.
-
-## Wynik P1.20A–P1.21 na frozen easy90
-
-```text
-benchmark match:                 published-46904e8c / match 46904e8c
-promotion source observations:  12 537
-canonical observations:         12 473
-duplicate observations removed:     64
-safe duplicate observations:        40
-unsafe parallel observations:       24
-structural subjects:                  9
-partial candidate observations: 12 449
-partial candidate hard conflicts:     0
-unresolved subjects:                 14
-excluded fragments:                  33
-production hashes unchanged:       true
-canonical output deterministic:    true
-```
-
-Artefakty referencyjne:
-
-```text
-backend/storage/benchmarks/player_identity/p120a-promotion-safety-20260721-v3
-backend/storage/benchmarks/player_identity/p121-partial-candidate-20260721-final
+nadpisywać production przed candidate/reviewed validation
+ukrywać conflicts przez wybór wyższego confidence
+wymuszać assignment unresolved fragmentu
+liczyć predicted jako observed distance
+publikować candidate/reviewed stats automatycznie
+obniżać hard constraints dla coverage
+blokować reviewed MVP pełnym three-match gate
+budować persistent gallery przed stabilnym single-match flow
+budować kolejne research layers bez wpływu na operator cost lub correctness
 ```
 
 ---
 
-# 17. Acceptance Criteria całej zmienionej roadmapy
+# 17. Raport agenta po milestone
 
-## P1.20A
-
-- [x] wszystkie duplikaty są sklasyfikowane;
-- [x] distant parallel observations blokują plan;
-- [x] structural-conflict whole-subject assignments są blokowane;
-- [x] aktywni zawodnicy są liczeni tylko z confirmed detected inside-play observations;
-- [x] sustained team active-player overflow jest blokowany;
-- [x] pojedynczy overflow spike jest warningiem;
-- [x] goalkeeper hard gate używa tylko trusted role;
-- [x] pełne lineage digests są sprawdzane;
-- [x] coverage ma jawny denominator;
-- [x] unresolved time-weighted coverage jest raportowane;
-- [x] brak ball artifacts nie blokuje identity;
-- [x] per-player readiness jest raportowane;
-- [x] produkcyjne artefakty pozostają bez zmian.
-
-## P1.20B
-
-- [x] structural subject można podzielić na fragmenty;
-- [x] fragment można przypisać lub pozostawić unresolved;
-- [x] remediation posiada freshness digest;
-- [x] safe fragments mogą przejść do partial candidate;
-- [x] produkcyjne identity pozostaje bez zmian.
-
-## P1.21
-
-- [x] candidate assignments/timeline/stats/heatmaps powstają obok produkcji;
-- [x] partial candidate jest obsługiwany jawnie;
-- [x] candidate vs production diff jest dostępny;
-- [x] predicted/occluded nie są liczone jako observed distance;
-- [x] unresolved/excluded fragments nie zasilają player stats;
-- [x] output jest atomowy i deterministyczny;
-- [x] public package nie używa candidate artifacts.
-
-## P1.22
-
-- [ ] co najmniej trzy mecze są ocenione;
-- [x] co najmniej jeden mecz jest held-out;
-- [x] review time jest mierzone;
-- [x] false assignments są audytowane;
-- [x] unresolved coverage jest mierzona czasowo, nie tylko liczbą kart;
-- [ ] KPI 95% i 15 minut są ocenione na danych pełnomaczowych.
-
-### Status implementacji P1.22 (2026-07-21)
-
-Pierwsza runda benchmarku operatora została zamknięta i jest w pełni zmierzona.
-Gate P1.22 nie został zaliczony; wyniki jawnie pokazują regres bezpieczeństwa,
-więc candidate identity nie może zastąpić produkcji. Pełny gate nadal wymaga
-trzeciego meczu i oceny KPI na danych pełnomaczowych:
-
-- UI i backend zapisują telemetry sesji review, z limitem 30 sekund dla
-  pojedynczego okresu aktywności;
-- telemetry obejmuje otwarcia i ponowne otwarcia kart, zmiany decyzji,
-  przypisania manualne, unresolved oraz akcje remediation;
-- `evaluate_identity_operator_benchmark.py` porównuje produkcyjny timeline z
-  partial candidate i generuje metryki, interaktywną galerię różnic oraz
-  opcjonalny lekki film porównawczy;
-- unresolved coverage jest liczona z czasowych obserwacji promotion planu, a
-  nie z liczby kart review;
-- pierwszy raport easy90 znajduje się w
-  `backend/storage/benchmarks/player_identity/p122-operator-benchmark-easy90-20260721-v1`;
-- review Team A dla hard3m (`7655bf7c`) jest zakończone: 173 karty
-  audytowalne, 162 przypisania, 59 decyzji unresolved i 1117.7 s aktywnej pracy;
-- review Team A dla held-out 5 min (`343980c8`) jest zakończone: 175 kart
-  audytowalnych, 150 przypisań, 25 decyzji unresolved i 898.9 s aktywnej pracy;
-- karty `no_visual_evidence` i `needs_more_visual_evidence` są jawnie
-  nieaudytowalne i nie blokują promotion planu;
-- partial candidate dla obu materiałów ma 0 hard conflicts i nie zmienia
-  produkcyjnych artefaktów;
-- finalne raporty bezpieczeństwa operatora znajdują się w:
-  - `backend/storage/benchmarks/player_identity/p122-operator-hard3m-20260721-final-v4`;
-  - `backend/storage/benchmarks/player_identity/p122-operator-heldout5m-20260721-final-v4`;
-- finalne audyty zawierają odpowiednio 56 i 105 kart; dla
-  `candidate_large_jump` pokazują rzeczywiste klatki przed i po skoku;
-- hard3m: 54 poprawne, 2 błędne, precision `0.964286`, aktywny review time
-  `1117.7 s`, promoted coverage `86.88%` i unresolved coverage `11.79%`;
-- held-out 5 min: 93 poprawne, 10 błędnych, 2 niejasne, precision `0.902913`,
-  aktywny review time `898.9 s`, promoted coverage `73.18%` i unresolved
-  coverage `26.42%`;
-- łącznie wykryto 12 identity-level false assignments. Jest to wynik
-  nieakceptowalny dla promotion gate, ale benchmark jako pomiar jest zamknięty;
-- oba katalogi meczów nie posiadają produkcyjnego timeline realnych zawodników,
-  dlatego raporty działają jawnie jako `candidate_safety_audit`, a nie udają
-  porównania production vs candidate;
-- produkcyjne identity, statystyki i publiczne raporty pozostają niezmienione.
-
-Historyczna sesja easy90 nie posiada wiarygodnego czasu review, ponieważ odbyła
-się przed wdrożeniem telemetry. Czas będzie mierzony dla hard3m i heldoutu;
-easy90 może zostać ponownie zmierzony tylko przez nową sesję operatora.
-
-## P1.23
-
-- [x] candidate timeline każdego zawodnika jest sprawdzony;
-- [x] duże stat deltas mają explainable source;
-- [x] brak impossible spatial jumps wpływających na statystyki;
-- [x] feature-level readiness jest wyliczane;
-- [x] brak optional input nie blokuje identity readiness.
-
-### Status implementacji P1.23 (2026-07-21)
-
-Zaimplementowano candidate-only walidację timeline, statystyk i readiness bez
-zmiany produkcyjnego identity, statystyk ani raportów publicznych:
-
-- `identity_candidate_stats_validation.py` sprawdza per zawodnik pierwszą i
-  ostatnią obserwację, przedziały gry, luki, potencjalne granice zmian,
-  fragmentację, równoległe obserwacje, udział `predicted/occluded` oraz skoki
-  przestrzenne;
-- duże różnice względem dostępnego baseline'u zawierają źródłowe subjecty,
-  klucze kart review i zakres klatek;
-- brak produkcyjnych statystyk graczy jest raportowany jako
-  `production_baseline_unavailable`, a nie jako pozorna duża regresja;
-- readiness jest liczony osobno dla identity, czasu gry, heatmap, dystansu,
-  possession, podań, turnoverów i eventów;
-- brak opcjonalnych ball/event artifacts ustawia zależny feature na
-  `not_available`, ale nie obniża identity readiness;
-- testy potwierdzają, że `predicted/occluded` nie zasilają observed distance ani
-  heatmapy;
-- generator zapisuje wynik atomowo i sprawdza hashami, że produkcyjne artefakty
-  pozostały niezmienione.
-
-Raporty P1.23 v2 znajdują się w:
-
-- `backend/storage/benchmarks/player_identity/p123-stats-easy90-20260721-v2`;
-- `backend/storage/benchmarks/player_identity/p123-stats-hard3m-20260721-v2`;
-- `backend/storage/benchmarks/player_identity/p123-stats-heldout5m-20260721-v2`.
-
-Wynik automatycznego gate'u na wszystkich trzech materiałach: 0 hard conflicts,
-0 parallel observations oraz 0 impossible spatial jumps wpływających na
-statystyki. Easy90 ma trzy duże delty z pełnym explainable source. Hard3m i
-heldout5m nie mają produkcyjnego baseline'u realnych zawodników, dlatego ich
-porównanie statystyczne jest jawnie oznaczone jako niedostępne.
-
-Gate P1.23 pozostaje otwarty do czasu zakończenia finalnego audytu kart
-bezpieczeństwa z P1.22 i ręcznego wyjaśnienia trzech delt easy90. P1.24 nie
-został rozpoczęty.
-
-## P1.24
-
-- [ ] apply wymaga jawnego potwierdzenia;
-- [ ] istnieje backup i transaction manifest;
-- [ ] zapis jest atomowy;
-- [ ] downstream artifacts są przebudowane;
-- [ ] package freshness jest poprawne;
-- [ ] rollback został przetestowany.
-
-## Cel końcowy
-
-- [ ] median manual review time < 15 minut;
-- [ ] resolved detected coverage > 95% dla analizowanej drużyny albo jawnie skalibrowany równoważny KPI;
-- [ ] 0 znanych false assignments po review;
-- [ ] 0 unresolved structural conflicts w produkcji;
-- [ ] 0 równoległych odległych obserwacji jednego zawodnika;
-- [ ] player-level stats posiadają jawny readiness status.
-
----
-
-# 18. Anti-goals
-
-W kolejnych milestone’ach nie należy:
-
-- nadpisywać produkcji bez candidate stage;
-- ukrywać konfliktów przez wybór obserwacji o wyższym confidence;
-- traktować wszystkich duplikatów jako bezpieczne;
-- wymuszać przypisania unresolved fragmentu;
-- używać predicted positions jako observed distance;
-- liczyć player coverage względem pełnego meczu bez potwierdzonego on-pitch interval;
-- używać visual GK guess jako hard gate;
-- blokować identity z powodu braku ball artifacts;
-- publikować candidate stats;
-- obniżać hard constraints, aby zwiększyć coverage;
-- optymalizować wyłącznie pod `easy90` i `hard3m`;
-- budować persistent gallery przed full-match validation;
-- dodawać kolejnych warstw research bez wpływu na review time lub correctness.
-
----
-
-# 19. Raport końcowy agenta po każdym milestone
-
-Agent ma podać:
-
-## Baseline
+Każdy raport zawiera:
 
 ```text
-input commit
-output commit
-benchmark matches
-schema versions
-```
-
-## Zmienione pliki
-
-Lista plików.
-
-## Flow
-
-Krótki diagram wejścia → output.
-
-## Safety
-
-```text
+input/output commit
+changed files
+real artifact/demo
+source digests
 hard conflicts
-stale inputs
 production hashes
-atomicity
-rollback behavior
+confirmed/unresolved coverage
+operator actions/time
+known false assignments
+ID switches/false merges/splits
+stats readiness
+commands/tests
+known limitations
+next stop/go decision
 ```
 
-## Coverage semantics
-
-```text
-team assignment coverage
-review resolution ratio
-player coverage denominator status
-unresolved detected coverage
-```
-
-## Wyniki
-
-```text
-review time
-assigned coverage
-unresolved coverage
-false assignments
-parallel conflicts
-candidate vs production deltas
-```
-
-## Testy
-
-```text
-backend unit tests
-integration tests
-client typecheck/build
-frozen benchmark evaluators
-```
-
-## Znane ograniczenia
-
-Bez ukrywania przypadków, których system nie rozwiązuje.
-
-## Następna rekomendacja
-
-Agent nie może automatycznie przechodzić do produkcyjnego apply tylko dlatego, że testy jednostkowe są zielone. Każdy promotion milestone wymaga jawnego spełnienia odpowiednich safety gate’ów z tego dokumentu.
+Zielone testy bez realnego reviewed artifactu nie zamykają product milestone.
