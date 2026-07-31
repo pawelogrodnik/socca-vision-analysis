@@ -23,6 +23,15 @@ def _crop(player_id: str, index: int) -> AuditCrop:
         bbox_xyxy=(0.0, 0.0, 10.0, 20.0),
         artifact=Path("unused.jpg"),
         selection_score=1.0,
+        candidate_subject_id=f"subject-{player_id}",
+        tracklet_id=f"tracklet-{player_id}-{index}",
+        capture_domain="H1",
+        source_workspace="h1_workspace",
+        source_match="h1",
+        source_frame=index,
+        audit_source="test",
+        audit_decision_digest="digest",
+        crop_sha256=f"sha-{player_id}-{index}",
     )
 
 
@@ -52,7 +61,7 @@ class ReIdQualityBakeoffTests(unittest.TestCase):
         ], dtype=np.float32)
         result = embedding_health(crops, vectors)
         self.assertTrue(result["finite"])
-        self.assertLess(result["roc_auc_same_vs_different"], .8)
+        self.assertLess(result["same_team_roc_auc"], .8)
 
 
 if __name__ == "__main__":

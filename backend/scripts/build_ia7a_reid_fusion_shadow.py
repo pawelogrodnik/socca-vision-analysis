@@ -17,10 +17,14 @@ def main() -> int:
     parser.add_argument("--bakeoff-root", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
     options = parser.parse_args()
-    bakeoff = _load(options.bakeoff_root / "reid_quality_bakeoff_report.json")
+    report_path = options.bakeoff_root / "final_h2_finetuned_holdout.json"
+    bakeoff = _load(
+        report_path if report_path.is_file()
+        else options.bakeoff_root / "reid_quality_bakeoff_report.json"
+    )
     decisions = _load(options.session_root / "operator_decisions.json")
-    gate = bakeoff.get("gate") or {}
-    reid_enabled = bool(gate.get("passed"))
+    gate = bakeoff.get("canonical_gate") or bakeoff.get("gate") or {}
+    reid_enabled = bool(gate.get("display_eligible") or gate.get("passed"))
     observations = []
     for decision in decisions.get("decisions") or []:
         if decision.get("action") != "player":
@@ -35,6 +39,7 @@ def main() -> int:
                 "weight": 1.0,
             },
             "reid_evidence": {
+                "status": "eligible_shadow_only" if reid_enabled else "disabled_quality_gate_failed",
                 "enabled": reid_enabled,
                 "weight": 0.0 if not reid_enabled else 0.20,
                 "reason": "cross_capture_gate_failed" if not reid_enabled else "gated_shadow_only",

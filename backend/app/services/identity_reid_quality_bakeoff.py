@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
-from typing import Any, Iterable
+from typing import Any
 
 import cv2
 import numpy as np
@@ -44,6 +44,15 @@ class AuditCrop:
     bbox_xyxy: tuple[float, float, float, float]
     artifact: Path
     selection_score: float
+    candidate_subject_id: str
+    tracklet_id: str
+    capture_domain: str
+    source_workspace: str
+    source_match: str
+    source_frame: int
+    audit_source: str
+    audit_decision_digest: str
+    crop_sha256: str
 
 
 class OsnetAinEmbedder:
@@ -58,6 +67,9 @@ class OsnetAinEmbedder:
         self.python = python
         if not OSNET_SITE_PACKAGES.is_dir() or not OSNET_WEIGHTS.is_file():
             raise FileNotFoundError("OSNet isolated runtime or official weights unavailable")
+        self.weights_sha256 = _file_sha256(OSNET_WEIGHTS)
+        self.architecture = "osnet_ain_x1_0"
+        self.torch_version = "2.4.1"
 
     def embed_batch(self, crops: list[np.ndarray]) -> np.ndarray:
         if not crops:
@@ -90,20 +102,47 @@ class OsnetAinEmbedder:
             )
             if completed.returncode != 0 or not outputs.is_file():
                 raise RuntimeError("OSNet worker failed: " + (completed.stderr or completed.stdout))
+            try:
+                handshake = json.loads(response.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                raise RuntimeError("OSNet worker did not return a valid handshake") from error
+            expected_sha = _file_sha256(OSNET_WEIGHTS)
+            if (
+                handshake.get("schema_version") != "1.0.0"
+                or handshake.get("status") != "ok"
+                or handshake.get("model_name") != self.model_name
+                or handshake.get("weights_sha256") != expected_sha
+                or int(handshake.get("embedding_dimension") or 0) != self.embedding_dimension
+                or int(handshake.get("input_count") or 0) != len(crops)
+                or not handshake.get("finite")
+                or float(handshake.get("norm_min") or 0) < 0.99
+                or float(handshake.get("norm_max") or 0) > 1.01
+            ):
+                raise RuntimeError("OSNet worker handshake violates the embedding contract")
             values = np.asarray(np.load(outputs, allow_pickle=False), dtype=np.float32)
             if values.shape != (len(crops), self.embedding_dimension):
                 raise ValueError("OSNet worker returned unexpected embedding shape")
             return values
 
 
-def collect_h1_crops(h1_root: Path) -> list[AuditCrop]:
+def collect_h1_crops(
+    h1_root: Path,
+    *,
+    max_crops_per_player: int | None = None,
+) -> list[AuditCrop]:
     gallery = _load(h1_root / "identity_approved_appearance_gallery.json")
+    audit_digest = _file_sha256(
+        h1_root.parent.parent / "h1_workspace" / "identity_operator_seeds.json"
+    )
     crops: list[AuditCrop] = []
     for player in gallery.get("players") or []:
         for domain in player.get("capture_domains") or []:
             for crop in domain.get("crops") or []:
                 bbox = crop.get("bbox_xyxy") or []
                 if len(bbox) != 4 or not crop.get("artifact"):
+                    continue
+                artifact = h1_root / str(crop["artifact"])
+                if not artifact.is_file():
                     continue
                 crops.append(AuditCrop(
                     player_id=str(player.get("player_id")),
@@ -112,23 +151,34 @@ def collect_h1_crops(h1_root: Path) -> list[AuditCrop]:
                     anchor_crop_id=str(crop.get("anchor_crop_id") or crop.get("artifact")),
                     frame=int(crop.get("frame") or 0),
                     bbox_xyxy=tuple(float(value) for value in bbox),
-                    artifact=h1_root / str(crop["artifact"]),
+                    artifact=artifact,
                     selection_score=float(crop.get("selection_score") or 0.0),
+                    candidate_subject_id=str(
+                        crop.get("candidate_subject_id")
+                        or (player.get("candidate_subject_ids") or [""])[0]
+                    ),
+                    tracklet_id=str(crop.get("tracklet_id") or ""),
+                    capture_domain=str(crop.get("capture_domain") or domain.get("capture_domain") or "H1"),
+                    source_workspace="h1_workspace",
+                    source_match=str(crop.get("source_match_key") or "benchmark-product-flow-20260730-v4-h1"),
+                    source_frame=int(crop.get("frame") or 0),
+                    audit_source="h1_operator_seed_and_approved_gallery",
+                    audit_decision_digest=audit_digest,
+                    crop_sha256=_file_sha256(artifact),
                 ))
     by_player: dict[str, list[AuditCrop]] = defaultdict(list)
     for crop in crops:
         by_player[crop.player_id].append(crop)
-    return sorted(
-        (
-            crop
-            for player_crops in by_player.values()
-            for crop in sorted(
-                player_crops,
-                key=lambda row: (-row.selection_score, row.frame, row.anchor_crop_id),
-            )[:3]
-        ),
-        key=lambda row: (row.player_id, row.frame, row.anchor_crop_id),
-    )
+    selected = []
+    for player_crops in by_player.values():
+        ordered = sorted(
+            player_crops,
+            key=lambda row: (-row.selection_score, row.frame, row.anchor_crop_id),
+        )
+        selected.extend(
+            ordered if max_crops_per_player is None else ordered[:max_crops_per_player]
+        )
+    return sorted(selected, key=lambda row: (row.player_id, row.frame, row.anchor_crop_id))
 
 
 def crop_variants(crops: list[AuditCrop], *, video_path: Path) -> dict[str, list[np.ndarray]]:
@@ -167,7 +217,10 @@ def embed_variant(
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Content-addressed cache, intentionally separate for every model/crop variant."""
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache = _load(cache_path) if cache_path.exists() else {"entries": {}}
+    namespace = cache_namespace(embedder=embedder, crop_variant=cache_path.stem)
+    cache = _load(cache_path) if cache_path.exists() else {"entries": {}, "namespace": namespace}
+    if cache.get("namespace") != namespace:
+        cache = {"entries": {}, "namespace": namespace}
     entries = dict(cache.get("entries") or {})
     vectors: list[np.ndarray | None] = [None] * len(images)
     pending: list[tuple[int, str, np.ndarray]] = []
@@ -189,9 +242,9 @@ def embed_variant(
             normalised = _normalise(np.asarray(vector, dtype=np.float32))
             vectors[index] = normalised
             entries[digest] = [float(value) for value in normalised]
-    cache_path.write_text(json.dumps({"entries": entries}, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+    cache_path.write_text(json.dumps({"entries": entries, "namespace": namespace}, sort_keys=True, separators=(",", ":")), encoding="utf-8")
     return np.stack([value for value in vectors if value is not None]), {
-        "cache_path": str(cache_path), "hits": hits, "misses": len(pending), "entries": len(entries),
+        "cache_path": str(cache_path), "hits": hits, "misses": len(pending), "entries": len(entries), "namespace": namespace,
     }
 
 
@@ -210,10 +263,14 @@ def evaluate_crop_loo(
     for index, crop in enumerate(crops):
         candidate_scores: list[tuple[str, float]] = []
         for player_id in by_team[crop.team_label]:
-            references = [vectors[i] for i in by_player[player_id] if not (player_id == crop.player_id and i == index)]
+            reference_indices = [i for i in by_player[player_id] if not (player_id == crop.player_id and i == index)]
+            references = [vectors[i] for i in reference_indices]
             if not references:
                 continue
-            candidate_scores.append((player_id, _score(vectors[index], references, prototype, ranking)))
+            candidate_scores.append((player_id, _score(
+                vectors[index], references, prototype, ranking,
+                quality_weights=[_quality_weight(crops[i]) for i in reference_indices],
+            )))
         ordered = sorted(candidate_scores, key=lambda row: (row[1], row[0]))
         rank = next((position for position, (player_id, _) in enumerate(ordered, 1) if player_id == crop.player_id), None)
         rows.append({
@@ -268,10 +325,15 @@ def image_quality_records(crops: list[AuditCrop], images: list[np.ndarray]) -> l
 
 def embedding_health(crops: list[AuditCrop], vectors: np.ndarray) -> dict[str, Any]:
     similarities = np.clip(vectors @ vectors.T, -1.0, 1.0)
-    same, different = [], []
+    same, same_team_different, different_team = [], [], []
     for first in range(len(crops)):
         for second in range(first + 1, len(crops)):
-            target = same if crops[first].player_id == crops[second].player_id else different
+            if crops[first].player_id == crops[second].player_id:
+                target = same
+            elif crops[first].team_label == crops[second].team_label:
+                target = same_team_different
+            else:
+                target = different_team
             target.append(float(similarities[first, second]))
     return {
         "embedding_dimension": int(vectors.shape[1]),
@@ -279,10 +341,12 @@ def embedding_health(crops: list[AuditCrop], vectors: np.ndarray) -> dict[str, A
         "norm_min": round(float(np.linalg.norm(vectors, axis=1).min()), 6),
         "norm_max": round(float(np.linalg.norm(vectors, axis=1).max()), 6),
         "same_person_similarity": _distribution(same),
-        "different_person_similarity": _distribution(different),
-        "roc_auc_same_vs_different": round(_auc(same, different), 6),
-        "equal_error_rate": _eer(same, different),
-        "near_duplicate_pairs": int(sum(value >= .9999 for value in same + different)),
+        "different_player_same_team_similarity": _distribution(same_team_different),
+        "different_team_similarity_diagnostic": _distribution(different_team),
+        "same_team_roc_auc": round(_auc(same, same_team_different), 6),
+        "same_team_equal_error_rate": _eer(same, same_team_different),
+        "same_team_distance_overlap": round(_overlap(same, same_team_different), 6),
+        "near_duplicate_pairs": int(sum(value >= .9999 for value in same + same_team_different + different_team)),
         "effective_rank": round(float(_effective_rank(vectors)), 4),
     }
 
@@ -314,7 +378,14 @@ def write_montage(crops: list[AuditCrop], images: list[np.ndarray], evaluation: 
     cv2.imwrite(str(output), np.vstack(rows))
 
 
-def _score(query: np.ndarray, references: list[np.ndarray], prototype: str, ranking: str) -> float:
+def _score(
+    query: np.ndarray,
+    references: list[np.ndarray],
+    prototype: str,
+    ranking: str,
+    *,
+    quality_weights: list[float] | None = None,
+) -> float:
     values = np.asarray([1.0 - float(np.clip(query @ reference, -1.0, 1.0)) for reference in references])
     if ranking == "minimum_cosine":
         return float(values.min())
@@ -322,11 +393,16 @@ def _score(query: np.ndarray, references: list[np.ndarray], prototype: str, rank
         return float(np.median(values))
     if ranking == "hybrid_min_median":
         return float(.5 * values.min() + .5 * np.median(values))
-    vector = _prototype(references, prototype)
+    vector = _prototype(references, prototype, quality_weights=quality_weights)
     return 1.0 - float(np.clip(query @ vector, -1.0, 1.0))
 
 
-def _prototype(values: list[np.ndarray], method: str) -> np.ndarray:
+def _prototype(
+    values: list[np.ndarray],
+    method: str,
+    *,
+    quality_weights: list[float] | None = None,
+) -> np.ndarray:
     matrix = np.stack(values)
     if method == "medoid":
         distances = 1.0 - np.clip(matrix @ matrix.T, -1.0, 1.0)
@@ -336,7 +412,8 @@ def _prototype(values: list[np.ndarray], method: str) -> np.ndarray:
         keep = np.argsort(1.0 - matrix @ centre)[:max(2, len(values) - 1)]
         return _normalise(matrix[keep].mean(axis=0))
     if method == "quality_weighted_mean":
-        weights = np.linspace(1.0, .7, len(values), dtype=np.float32)
+        weights = np.asarray(quality_weights or [1.0] * len(values), dtype=np.float32)
+        weights /= max(float(weights.sum()), 1e-12)
         return _normalise((matrix * weights[:, None]).sum(axis=0))
     return _normalise(matrix.mean(axis=0))
 
@@ -361,6 +438,13 @@ def _auc(positives: list[float], negatives: list[float]) -> float:
     if not positives or not negatives:
         return float("nan")
     return sum((positive > negative) + .5 * (positive == negative) for positive in positives for negative in negatives) / (len(positives) * len(negatives))
+
+
+def _overlap(positives: list[float], negatives: list[float]) -> float:
+    if not positives or not negatives:
+        return float("nan")
+    threshold = (float(np.median(positives)) + float(np.median(negatives))) / 2.0
+    return (sum(value <= threshold for value in positives) + sum(value >= threshold for value in negatives)) / (len(positives) + len(negatives))
 
 
 def _eer(positives: list[float], negatives: list[float]) -> dict[str, Any]:
@@ -409,3 +493,38 @@ def _normalise(vector: np.ndarray) -> np.ndarray:
 
 def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _quality_weight(crop: AuditCrop) -> float:
+    image = cv2.imread(str(crop.artifact))
+    if image is None or image.size == 0:
+        return 0.01
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = min(float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 80.0, 1.0)
+    contrast = min(float(gray.std()) / 50.0, 1.0)
+    area = min(float(image.shape[0] * image.shape[1]) / 5000.0, 1.0)
+    edge_clip = 1.0 if min(image.shape[:2]) < 16 else 0.0
+    # v1: 45% curator score + 20% size + 20% sharpness + 15% contrast - clipping.
+    return max(0.01, .45 * min(crop.selection_score / 1.2, 1.0) + .20 * area + .20 * blur + .15 * contrast - .35 * edge_clip)
+
+
+def cache_namespace(*, embedder: Any, crop_variant: str, checkpoint_run_id: str = "pretrained") -> dict[str, Any]:
+    """All model/checkpoint properties are part of the cache contract."""
+    weights = getattr(embedder, "weights_sha256", None)
+    if not weights and getattr(embedder, "model_name", "") == OsnetAinEmbedder.model_name:
+        weights = _file_sha256(OSNET_WEIGHTS)
+    return {
+        "weights_sha256": weights or "not_applicable",
+        "architecture": getattr(embedder, "architecture", getattr(embedder, "model_name", "unknown")),
+        "model_version": getattr(embedder, "model_version", "unknown"),
+        "runtime": getattr(embedder, "runtime_name", "unknown"),
+        "torch_version": getattr(embedder, "torch_version", "not_applicable"),
+        "preprocessing_version": "osnet-rgb-imagenet-256x128-v1",
+        "crop_variant_version": crop_variant,
+        "embedding_dimension": int(getattr(embedder, "embedding_dimension", 0)),
+        "checkpoint_run_id": checkpoint_run_id,
+    }

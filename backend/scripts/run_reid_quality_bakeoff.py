@@ -65,7 +65,8 @@ def main() -> int:
         return 2
 
     crops = collect_h1_crops(
-        options.source_root / "cross_capture_reid_diagnostic" / "h1"
+        options.source_root / "cross_capture_reid_diagnostic" / "h1",
+        max_crops_per_player=3,
     )
     variants = crop_variants(crops, video_path=h1 / "video.mp4")
     quality = image_quality_records(crops, variants["A_original_bbox"])
