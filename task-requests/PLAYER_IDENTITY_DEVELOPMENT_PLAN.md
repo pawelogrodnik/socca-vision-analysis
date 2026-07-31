@@ -1517,17 +1517,21 @@ H1 internal queries / top-1 / top-3: 21 / 0.0476 / 0.1429
 valid historical H2 queries: 1
 bounded H2 session: product-flow-20260730-v5-reid-followup
 bounded H2 cards: 5
-bounded H2 decisions: 0
-bounded H2 status: BOUNDED_H2_OPERATOR_INPUT_REQUIRED
+bounded H2 decisions: 5 real named operator decisions, session finished
+cross-capture queries / top-1 / top-3: 6 / 0.3333 / 0.6667
+cross-capture mean / median truth rank: 1.5 / 2
+cross-team violations / invalid ranked players: 0 / 0
+bounded H2 status: CROSS_CAPTURE_REID_QUALITY_GATE_FAILED
 operator names: OPERATOR_NAMES_REMAIN_HIDDEN
-IA7a: NOT_STARTED — full preferred quality gate has not passed
+IA7a: NOT_STARTED — internal and cross-capture preferred quality gates failed
 ```
 
-The v5 follow-up freezes preferred rankings before opening its empty operator
-decision store. Selection is independent of ground-truth identity and excludes
-the one previously valid H2 query. Portable rankings are absent from the
-operator surface. Historical v4 source artifacts, production identity,
-candidate identity, YOLO and tracking remain unchanged.
+The v5 follow-up froze preferred rankings before the five operator decisions.
+Selection was independent of ground-truth identity and excluded the one
+previously valid H2 query. The final evaluation used those frozen rankings;
+ground truth did not influence their generation. Portable rankings remain
+absent from the operator surface. Historical v4 source artifacts, production
+identity, candidate identity, YOLO and tracking remain unchanged.
 
 Persistent state machine:
 
