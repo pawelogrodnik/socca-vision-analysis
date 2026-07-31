@@ -4,1687 +4,890 @@
 
 Ten plik jest nadrzędnym planem **kolejności developmentu** dla obszaru player identity.
 
-Nie zastępuje szczegółowych roadmap:
+Obowiązuje razem z:
 
 ```text
-task-requests/JERSEY_NUMBER_IDENTITY_ANCHORS.md
-task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
 task-requests/PLAYER_IDENTITY_AUTOMATION_FLOW.md
+task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
+task-requests/JERSEY_NUMBER_IDENTITY_ANCHORS.md
 AGENTS.md
 ```
 
-Ich role są różne:
+Role dokumentów:
 
 ```text
-PLAYER_IDENTITY_STABILIZATION_ROADMAP
-→ fundament identity, safety, candidate artifacts, review i controlled apply
-
-JERSEY_NUMBER_IDENTITY_ANCHORS
-→ percepcja numerów koszulek i jersey-number evidence
+PLAYER_IDENTITY_DEVELOPMENT_PLAN
+→ aktualna kolejność prac i decyzje stop/go
 
 PLAYER_IDENTITY_AUTOMATION_FLOW
-→ docelowy minimal-review product flow i fusion dowodów
+→ docelowy product flow oraz operator UX
 
-PLAYER_IDENTITY_DEVELOPMENT_PLAN
-→ dokładna kolejność wykonywania milestone'ów oraz zależności między roadmapami
+PLAYER_IDENTITY_STABILIZATION_ROADMAP
+→ safety, candidate artifacts, revalidation i controlled apply
+
+JERSEY_NUMBER_IDENTITY_ANCHORS
+→ opcjonalny jersey-number evidence research
 ```
 
-Jeżeli szczegółowa roadmapa opisuje własną kolejność lokalnych kroków, agent wykonuje ją **wewnątrz aktualnej fazy z tego dokumentu**.
+Jeżeli dokumenty są sprzeczne, obowiązuje kolejność:
 
-Jeżeli dokumenty wydają się sprzeczne:
+1. `AGENTS.md` i hard safety invariants;
+2. ten development plan;
+3. aktualny kod i rzeczywiste artifacts;
+4. szczegółowe roadmapy.
 
-1. nie zgadywać;
-2. sprawdzić aktualny `HEAD` i faktycznie istniejące artifacts;
-3. preferować bezpieczeństwo oraz minimalny koszt pracy operatora;
-4. zaktualizować ten plan albo jawnie zgłosić konflikt przed implementacją.
+Historyczne milestone logs pozostają dostępne w Git history oraz w katalogach:
+
+```text
+backend/storage/benchmarks/player_identity/
+```
+
+Ten dokument nie ma być kolejnym długim dziennikiem eksperymentów. Ma mówić agentowi **co robić teraz, czego nie robić i jaki realny rezultat ma zobaczyć użytkownik**.
 
 ---
 
-# 1. Najważniejsza decyzja o kolejności
+# 1. Decyzja produktowa z 2026-07-31
 
-Nie wykonywać trzech roadmap sekwencyjnie w taki sposób:
+Aplikacja jest początkowo narzędziem do analizy meczów drużyny Corgi.
 
-```text
-całe jersey anchors
-→ cała player stabilization
-→ cała player automation
-```
-
-Prawidłowa kolejność:
+Typowy materiał:
 
 ```text
-1. domknąć tylko bieżący J8.3 jersey panel closeout
-2. zbudować Initial Identity Audit i seed-aware automation IA0–IA6
-3. wrócić do J8.4 i uzyskać użyteczny jersey recognizer
-4. połączyć operator seeds + lineage + jersey + ReID w IA7
-5. przebudować review do exception-only w IA8–IA9
-6. ponownie zwalidować candidate stats i dopiero potem rozważyć P1.24 controlled apply
+jedna połowa około 20 minut
+lub
+maksymalnie dwa osobne uploady po około 20 minut
 ```
 
-W skrócie:
+Manualna praca operatora jest akceptowalna, jeżeli:
+
+- dotyczy kilku lub kilkudziesięciu high-value decyzji;
+- nie wymaga oznaczania setek cropów;
+- jedna decyzja może rozwiązać wiele klatek/trackletów;
+- wynik można szybko zweryfikować na wygenerowanym wideo.
+
+Najbliższym celem nie jest perfekcyjne automatyczne ReID.
+
+Najbliższym celem jest działający przepływ:
 
 ```text
-J8.3
-→ IA0–IA6
-→ J8.4 + jersey validation
-→ IA7–IA9
-→ P1.23 revalidation
-→ P1.24 controlled production apply
-→ P1.25 tylko według realnych braków z benchmarku
+upload + analiza
+→ krótki identity audit
+→ review trackletów/subjectów
+→ finalizacja reviewed identity
+→ Generate reviewed video
+→ imiona tylko dla potwierdzonych przypisań
+→ A01/B01 dla niepewnych przypisań
+→ minimapa/radar
+→ podstawowe statystyki z jawnym coverage
 ```
 
-Powód:
-
-- stabilization foundation już w dużej mierze istnieje;
-- obecny whole-subject review jest zbyt kosztowny i nadal generuje false assignments;
-- Initial Identity Audit może dostarczyć realny zysk bez gotowego OCR numerów;
-- operator seeds i appearance galleries mogą później poprawić dataset oraz użyteczność jersey recognition;
-- jersey jest silnym dodatkowym dowodem, ale nie powinien blokować pierwszej automatyzacji;
-- production apply nie może nastąpić przed wspólnym benchmarkiem nowego flow.
+ReID, jersey recognition i automatyczny resolver są źródłami sugestii. Nie mogą blokować dostarczenia tego przepływu.
 
 ---
 
-# 2. Zasady obowiązujące w każdej fazie
+# 2. Nienaruszalne zasady
 
-## 2.1. Agent zawsze zaczyna od aktualnego stanu
+## 2.1. Human-in-the-loop
 
-Przed rozpoczęciem milestone'u agent ma:
-
-1. pobrać aktualny `HEAD`;
-2. przeczytać `AGENTS.md`;
-3. przeczytać ten development plan;
-4. przeczytać szczegółową roadmapę aktualnej fazy;
-5. sprawdzić istniejące schema versions, artifacts, UI oraz testy;
-6. nie zakładać, że status zapisany wcześniej nadal jest aktualny;
-7. zaktualizować status milestone'u na podstawie kodu i realnych artifacts, nie samej nazwy commitu.
-
-## 2.2. Jeden główny milestone na cykl
-
-Agent nie powinien w jednym dużym cyklu jednocześnie:
+Użytkownik dostarcza wyłącznie wiedzę, którą zna jako człowiek:
 
 ```text
-budować nowego UI
-+ zmieniać resolver
-+ trenować nowy jersey model
-+ wykonywać production apply
+to jest Paweł
+to jest inny zawodnik Team A
+to jest Team B
+to jest sędzia
+to jest false detection
+nie wiem / pomiń
 ```
 
-Każdy cykl powinien kończyć się:
-
-```text
-what changed
-what was tested
-real artifact/demo result
-measured operator impact, jeśli dotyczy
-known limitations
-next allowed milestone
-explicit stop/go decision
-```
-
-## 2.3. Shadow/candidate first
-
-Do czasu jawnego P1.24:
-
-```text
-production player identity pozostaje niezmienione
-production stats pozostają niezmienione
-public package nie używa candidate artifacts
-```
-
-Manualny operator seed może wpływać na shadow/candidate resolver i rekomendacje, ale nie wykonuje automatycznego production promotion.
-
-## 2.4. Nie uruchamiać ponownie ciężkiego pipeline'u bez potrzeby
-
-Zmiany dotyczące:
-
-```text
-operator decisions
-identity seeds
-jersey evidence
-appearance galleries
-candidate assignments
-review queue
-```
-
-mają korzystać z istniejących detekcji i tracków.
-
-```text
-no full-match YOLO rerun
-```
-
-chyba że milestone jawnie dotyczy player detectora lub istniejące artifacts są niekompatybilne/stale.
-
-## 2.5. Minimalny koszt operatora
-
-Każdy audyt i review podlega kontraktowi z `AGENTS.md`:
-
-```text
-user supplies human knowledge
-application supplies all technical metadata
-```
-
-Agent nie może wymagać od użytkownika:
-
-```text
-x1/y1/x2/y2
-normalized coordinates
-tracklet_id / subject_id
-hashes i digests
-numeric confidence
-IoU / blur / perspective scores
-ręcznej listy setek samples
-```
-
-Normalny product flow ma wymagać małej liczby high-value decyzji. Research dataset workflow musi być oddzielony od per-match user workflow.
-
----
-
-# 3. Stan wejściowy i istniejący fundament
-
-Przed rozpoczęciem planu repo posiada już między innymi:
-
-```text
-raw tracking
-tracklet splitting
-stable subjects
-team candidates
-lineage i structural blockers
-whole-subject review
-operator decision store
-promotion safety planning
-partial candidate assignments
-candidate timeline/stats artifacts
-review telemetry
-jersey-number evidence contracts i dataset infrastructure
-```
-
-Ten fundament nie jest końcowym produktem.
-
-Obecny benchmark pokazał, że:
-
-```text
-review-every-card jest zbyt kosztowny
-liczba kart jest wysoka
-false identity assignments nadal występują
-production promotion nie jest jeszcze bezpieczne
-```
-
-Dlatego najbliższy produktowy cel to nie dalsze zwiększanie liczby formularzy review, lecz:
-
-```text
-kilka pewnych operator seeds
-→ maksymalne bezpieczne wykorzystanie automatyczne
-→ review tylko wyjątków
-```
-
----
-
-# 4. Faza A — J8.3 Jersey Panel Closeout
-
-## Status wejściowy
-
-```text
-J8.1 freeze recognizers: closed
-J8.2 panel annotation contract: closed
-J8.3 panel audit implementation: closed
-J8.3 real dataset run + human approval + findings: closed
-J8.3 final decision: READY_FOR_J8_4_DIAGNOSTIC
-J8.4 PanelDigitNetV1: R1-R3 complete / diagnostic only / not eligible
-```
-
-Agent ma najpierw zweryfikować, czy ten status nadal odpowiada aktualnemu `HEAD`.
-
-Checkpoint 2026-07-27:
-
-```text
-J8.3 implementation + canonical subset: complete
-bounded panel-box audit package: generated (58 samples)
-operator panel-box review: complete (58/58)
-confirmed panel boxes: 19
-canonical experiment: 19/19 audited, 0 invalid
-readable panels: 16 / 50
-readable visibility episodes: 13 / 20
-absent/unreadable negatives: 3 / 30
-human montage approval: approved and digest-bound
-final decision: AVAILABLE_DATA_NOT_SUFFICIENT
-J8.4: blocked until dataset readiness improves
-```
-
-Refresh 2026-07-28 (after applying the 19 saved panel decisions):
-
-```text
-selected panel definitions: 58 total, 19 audited, 39 still missing
-readable confirmed panels: 16 / required 50
-readable visibility episodes: 13 / required 20
-absent/unreadable negatives: 3 / required 30
-all currently known confirmed labels in the dataset: 28 across 24 visibility episodes
-even annotating every remaining known confirmed label cannot reach the 50-crop threshold
-minimum new readable confirmed examples required from a broader source: 22
-J8.4: still blocked; prepare a small, high-value discovery/recovery package instead of asking for exhaustive re-annotation
-```
-
-Recovery package 2026-07-28:
-
-```text
-source: first-half match 7655bf7c, Team A only
-package size: 65 independent visibility episodes (bounded below the 80-card cap)
-target: 22 new certain readable panels and 27 useful negative panels
-purpose: panel_readiness_recovery
-operator may Skip / finish early; this is an offline research package, not normal match review
-artifact: backend/storage/benchmarks/player_identity/j8-4-number-recovery-first-half-20260728-v1/index.html
-next: apply the reviewed manifest, rebuild readiness and decide whether J8.4 can start
-```
-
-The readiness artifact can temporarily report `FIX_PANEL_PIPELINE_FIRST` while the
-selected canonical subset has missing panel definitions. That status only describes
-the incomplete subset. The operational J8.3 decision remains
-`AVAILABLE_DATA_NOT_SUFFICIENT`: completing that subset alone cannot reach the
-required number of readable positive examples.
-
-Recovery refresh 2026-07-29:
-
-```text
-first recovery manifest applied: 10 confirmed, 3 absent, 1 unreadable, 29 skipped
-readable confirmed panels: 24 / 50
-readable visibility episodes: 23 / 20 (requirement met)
-absent/unreadable negatives: 30 / 30 (requirement met)
-remaining data gap: 26 certain readable number panels
-skipped samples are persisted and excluded from later recovery queues
-second package: 64 fresh, independent visibility episodes
-artifact: backend/storage/benchmarks/player_identity/
-  j8-4-number-recovery-second-followup-first-half-20260729-v1/index.html
-J8.4 remains blocked until the 26 additional positive labels are collected
-```
-
-Second recovery refresh 2026-07-29:
-
-```text
-second reviewed manifest: 14 additional confirmed readable numbers
-readable confirmed panels: 38 / 50
-readable visibility episodes: 33 / 20 (requirement met)
-absent/unreadable negatives: 30 / 30 (requirement met)
-remaining data gap: 12 certain readable number panels
-final bounded follow-up: 48 fresh independent episodes
-artifact: backend/storage/benchmarks/player_identity/
-  j8-4-number-recovery-final-followup-first-half-20260729-v1/index.html
-J8.4 remains blocked only by these 12 positive labels
-```
-
-## Cel fazy
-
-Odpowiedzieć na pytanie:
-
-> Czy tight number-panel crops po finalnym preprocessingu są wystarczająco czytelne, spójne i poprawnie opisane, aby rozpocząć jeden prosty model panelowy?
-
-## Zakres
-
-Wykonać wyłącznie closeout z `JERSEY_NUMBER_IDENTITY_ANCHORS.md`, w szczególności:
-
-```text
-J8.3a annotation semantics
-J8.3b canonical panel subset
-J8.3c readiness gates
-J8.3d digit-height diagnostics
-real montage
-human approval tied to digests
-J8.3 findings
-```
-
-## Ograniczenie pracy ręcznej
-
-To jest ograniczony research/admin workflow, nie docelowy per-match flow.
-
-Agent ma:
-
-- automatycznie wybrać i przygotować samples;
-- pokazać montage;
-- wymagać tylko prostego approve/reject oraz krótkich findings;
-- nie wymagać ręcznego wpisywania bbox coordinates;
-- nie rozszerzać pracy na wszystkie dostępne cropy, gdy canonical subset wystarcza.
-
-## Gate końcowy
-
-Faza kończy się dokładnie jedną decyzją:
-
-```text
-PROCEED_TO_J8_4_LATER
-FIX_PANEL_PIPELINE_FIRST
-AVAILABLE_DATA_NOT_SUFFICIENT
-```
-
-Ważne:
-
-```text
-PROCEED_TO_J8_4_LATER
-```
-
-nie oznacza, że agent natychmiast zaczyna J8.4 w tym samym cyklu.
-
-Po J8.3 należy przejść do Fazy B.
-
----
-
-# 5. Faza B — Initial Identity Automation Core, IA0–IA4
-
-Ta faza ma najwyższy priorytet produktowy po J8.3.
-
-Nie wymaga działającego jersey recognizera.
-
-## IA0 — Frozen-artifact frame selection prototype
-
-### Cel
-
-Automatycznie wybrać małą liczbę łatwych i wysokowartościowych klatek z istniejących artifacts.
-
-### Domyślny budżet
-
-```text
-5–8 frames
-10 frames hard default maximum
-stop earlier when no new easy/high-value identity is available
-```
-
-### Scoring powinien uwzględniać
-
-```text
-visible player count
-new/unseeded player coverage
-bbox size
-low overlap
-tracklet continuity
-low edge cutting
-low blur
-low ID-switch suspicion
-time diversity
-capture-domain diversity
-```
-
-### Output
-
-Read-only, deterministyczny artifact z:
-
-```text
-selected frame
-reason/score components
-visible detections
-tracklet/subject provenance
-thumbnail/full-frame artifact references
-selection digest
-```
-
-### Gate
-
-- klatki faktycznie są łatwiejsze niż losowy baseline;
-- nie ma wielu prawie identycznych klatek;
-- output jest deterministyczny;
-- żadnego UI wymagającego raw coordinates.
-
-### Status 2026-07-27
-
-```text
-CLOSED — IA0_ACCEPTED
-```
-
-Zaimplementowano:
-
-- read-only selektor pracujący na frozen `global_identity.json`,
-  `tracklets.json`, `analysis_report.json` i opcjonalnym camera motion;
-- deterministyczny scoring jakości, różnorodności czasowej i pokrycia
-  dotychczas niewidzianych subjectów;
-- twardy limit 10 klatek oraz domyślny budżet 8 klatek;
-- eksport pełnych stop-klatek i lekkich miniaturek bez ponownego YOLO;
-- canonical digests wejść, `selection_digest`, provenance i safety contract;
-- testy budżetu, deterministyczności, odstępów czasowych, jakości,
-  provenance oraz braku mutacji wejściowego identity.
-
-Akceptacja na frozen easy90:
-
-```text
-run: 20260715T111009Z-yolo-ultralytics-chunked-598d1dee
-artifact: backend/storage/benchmarks/player_identity/ia0-frame-selection-easy90-20260727-v1
-candidate frames: 180
-selected frames: 8
-unique visible subjects: 19
-selected mean intrinsic score: 0.839489
-random baseline mean intrinsic score: 0.745798
-near-duplicate pairs: 0
-selection digest: a8095f335a09fd3d6123c518b78fc713caf97c493e0ddbb237cdc006fe807820
-```
-
-Powtórne uruchomienie wygenerowało identyczne selected rows i ten sam
-`selection_digest`. Kontrola wizualna montage potwierdziła czytelne,
-zróżnicowane czasowo klatki bez masowego overlapu. IA1 może korzystać z
-pełnych klatek i detection provenance zapisanych przez IA0.
-
-## IA1 — Initial Identity Audit read-only UI
-
-### Cel
-
-Pokazać pełną stop-klatkę z klikalnymi bboxami.
-
-### Akcje
-
-```text
-named Team A roster player
-Team A — unknown player
-Team B — unknown player
-referee
-false detection
-skip / not sure
-```
-
-### UX
-
-```text
-click bbox → choose action/player
-or
-click roster player → click bbox
-```
-
-Kliknięcie może pokazać powiększony crop i lekki neighboring-frame strip, ale nie może wymuszać długiego clip review.
-
-### Gate
-
-- użytkownik rozumie akcję bez dokumentacji technicznej;
-- brak pól coordinate/confidence/internal ID;
-- `Skip / Nie wiem` zawsze dostępne;
-- widoczny progress;
-- możliwość zakończenia przed pełnym pokryciem.
-
-### Status 2026-07-27
-
-```text
-CLOSED — IA1_ACCEPTED
-```
-
-Zaimplementowano:
-
-- read-only endpoint i cache per match, korzystające wyłącznie z frozen
-  artifacts oraz stop-klatek wybranych przez IA0;
-- pełną stop-klatkę z klikalnymi bboxami i czytelnym cropem wybranej
-  obserwacji;
-- obie szybkie ścieżki operatora: `bbox → zawodnik/akcja` oraz
-  `zawodnik/akcja → bbox`;
-- akcje roster player, nieznany Team A/B, sędzia, false detection oraz
-  `Pomiń / nie wiem`;
-- widoczny postęp, licznik decyzji, nawigację między klatkami i możliwość
-  zakończenia audytu w dowolnym momencie;
-- jednorazowe uzbrajanie akcji, żeby wybór osoby nie został przypadkiem
-  przeniesiony na kolejny bbox;
-- automatyczny reset read-only dokumentu i lokalnych decyzji po zmianie
-  meczu;
-- operator-safe public contract bez coordinates, confidence i internal IDs;
-  techniczne provenance pozostaje w artifacts backendu.
-
-Walidacja lokalna:
-
-```text
-match: 46904e8c
-selected frames: 8
-visible observations: 94
-YOLO rerun: no
-backend focused tests: 11 passed
-frontend strict typecheck: passed
-frontend build: passed
-operator flow: bbox→player, player→bbox, skip, navigation, early finish passed
-```
-
-IA1 zamknęło read-only kontrakt interakcji. Zapis decyzji i telemetry został
-następnie dołączony w IA2; propagacja i seed-aware rebuild nadal należą do
-IA3–IA4.
-
-## IA2 — Atomic operator-seed store and telemetry
-
-### Cel
-
-Zapisać observation-level gold seeds bez modyfikacji production identity.
-
-### Seed oznacza
-
-```text
-na tej konkretnej obserwacji to na pewno Roman
-```
-
-Nie oznacza:
-
-```text
-cały raw tracker_id to Roman
-```
-
-### Minimalny zapis
-
-System sam zapisuje:
+Aplikacja samodzielnie zapisuje:
 
 ```text
 frame/timestamp
 bbox
-track_id / tracklet_id / subject_id
-player_id
-team_id
-roster number
-source/provenance
-capture domain
-digests/schema version
+track_id
+tracklet_id
+candidate_subject_id
+team/player IDs
+source digests
+provenance
+quality metadata
 ```
 
-### Telemetry
+## 2.2. Brak wymuszonego assignmentu
 
 ```text
-audit_frames_shown
-audit_crops_clicked
-audit_actions
-active_operator_seconds
-unique_players_seeded
-team_assignments_corrected
-false_detections_marked
+unresolved
 ```
 
-### Gate
+jest prawidłowym wynikiem.
 
-- atomic save;
-- resume works;
-- stale artifact detection;
-- production hashes unchanged;
-- duplicate assignment conflict na tej samej klatce jest blokowany lub jawnie obsługiwany.
+Brak przypisania jest bezpieczniejszy niż błędne imię.
 
-### Status 2026-07-27
+## 2.3. Display policy
+
+W reviewed video i zwykłym product UI:
 
 ```text
-CLOSED — IA2_ACCEPTED
+confirmed
+→ imię/nazwa rosterowa
+
+probable
+unresolved
+conflicted
+→ stabilny anonimowy label A01/A02/B01/B02
+
+blocked / invalid detection
+→ brak imienia; Unknown albo ukrycie zależnie od kontekstu
 ```
 
-Zaimplementowano:
+Nie używać `Paweł?` jako domyślnej etykiety. Imię oznacza potwierdzoną tożsamość.
 
-- osobny `identity_operator_seeds.json` z observation-level decisions,
-  technicznym provenance, capture domain, roster metadata i source digests;
-- autosave po każdej akcji, idempotentne `update_id`, zapis atomowy przez
-  plik tymczasowy oraz wznowienie audytu po ponownym otwarciu;
-- publiczny kontrakt bez bboxów i internal provenance przy zachowaniu pełnych
-  danych technicznych w artefakcie backendu;
-- telemetry sesji, pokazanych klatek, kliknięć cropów, decyzji i aktywnego
-  czasu operatora;
-- stale selection detection, która nie przyjmuje decyzji dla zmienionego
-  zestawu klatek;
-- blokadę przypisania jednego realnego zawodnika do dwóch obserwacji w tej
-  samej klatce;
-- snapshot i kontrolę hashy production identity przed i po zapisie;
-- integrację UI z autosave, widocznym stanem zapisu, resume i bezpiecznym
-  komunikatem błędu.
+## 2.4. Candidate/shadow before production
 
-Walidacja lokalna:
+Do jawnego controlled apply:
 
 ```text
-backend focused tests: 16 passed
-frontend strict typecheck: passed
-frontend production build: passed
-atomic temporary files after save: 0
-production identity mutation during seed save: 0
-YOLO rerun: no
-downstream identity rebuild: no
+production identity pozostaje niezmienione
+public package nie używa candidate identity
+production stats nie są automatycznie zastępowane
 ```
 
-## IA3 — Seed-aware candidate identity re-resolve
+Lokalne reviewed video i reviewed candidate stats **nie są production apply** i mogą powstać wcześniej.
+
+## 2.5. Brak ciężkich rerunów po review
+
+Zmiana operator decision ma powodować wyłącznie tani downstream rebuild:
+
+```text
+no full-match YOLO rerun
+no tracking rerun
+```
+
+chyba że osobny detector-quality milestone jawnie wymaga rerunu.
+
+## 2.6. Jedno źródło prawdy po review
+
+Nie rozwijać dalej kilku równoległych końcowych resolverów.
+
+Wprowadzić jeden kanoniczny artifact:
+
+```text
+reviewed_identity_snapshot.json
+```
+
+który łączy:
+
+```text
+operator seeds
+whole-subject decisions
+manual remediation
+safe confirmed resolver outcomes
+explicit unresolved/conflicted statuses
+```
+
+Ten snapshot jest wejściem do:
+
+```text
+reviewed video
+reviewed timeline
+reviewed stats
+reviewed heatmaps
+minimapy
+```
+
+---
+
+# 3. Stan repo na HEAD c4559ff4
+
+## 3.1. Fundament wykonany
+
+Repo posiada już:
+
+```text
+player detection i tracking
+tracklet splitting
+stable/candidate subjects
+team candidates
+Initial Identity Audit
+operator seed store i telemetry
+seed-aware candidate resolve
+whole-subject review
+seed-aware review reduction
+promotion safety i remediation
+partial candidate assignments
+a candidate timeline/stats/heatmaps
+candidate-vs-production diff
+appearance galleries
+preferred ReID runtime i historical H1/H2 gate
+OSNet fine-tuning infrastructure
+tracklet-level ReID evidence contract
+Match Identity Resolver shadow
+identity candidate overlay renderer
+pitch mapping do współrzędnych boiska
+```
+
+## 3.2. Potwierdzone ograniczenia
+
+Historyczny preferred ReID gate:
+
+```text
+H1 queries/top-1/top-3: 21 / 0.0476 / 0.1429
+H2 queries/top-1/top-3: 6 / 0.3333 / 0.6667
+status: CROSS_CAPTURE_REID_QUALITY_GATE_FAILED
+operator names: hidden
+```
+
+Aktualny kod zawiera poprawiony training/evaluation pipeline, ale repo nie zawiera jeszcze wiarygodnego końcowego raportu z rzeczywiście wykonanych runów:
+
+```text
+Run A pretrained full-body
+Run B fine-tuned full-body
+Run C fine-tuned torso
+H1 winner
+frozen H2 replay
+Resolver A/B/C comparison
+```
+
+Nie traktować samego istnienia skryptów jako dowodu poprawy jakości.
+
+## 3.3. Największa luka produktowa
+
+Brakuje zamkniętego flow:
+
+```text
+review complete
+→ finalize reviewed identity snapshot
+→ generate reviewed video
+→ generate reviewed stats with coverage
+```
+
+Istniejące elementy są nadal rozproszone pomiędzy:
+
+```text
+operator seed pipeline
+whole-subject review
+promotion/remediation pipeline
+new match identity resolver
+candidate overlay renderer
+candidate stats generator
+```
+
+Najbliższe prace mają je połączyć, a nie tworzyć piąty równoległy resolver.
+
+---
+
+# 4. Dwa tory dalszego developmentu
+
+Od tego miejsca development dzieli się na:
+
+```text
+TOR P — Product delivery
+TOR A — Automation/research
+```
+
+Tor P ma pierwszeństwo.
+
+Tor A nie może blokować Toru P.
+
+---
+
+# 5. TOR P — Product delivery
+
+## P-MVP1 — Finalize reviewed identity snapshot
 
 ### Cel
 
-Wykorzystać operator seeds do automatycznego rozwiązania większej liczby trackletów/subjects bez ponownego YOLO.
+Po zakończeniu review utworzyć jeden deterministyczny snapshot zawierający finalny stan każdego trackletu/subjectu.
 
-### Propagacja musi przejść przez
+### Wejścia
 
 ```text
-local tracklet continuity
-lineage freshness
-team consistency
-temporal overlap constraints
-parallel-position constraints
-structural blockers
+match/roster
+tracklets i candidate subjects
+Initial Identity Audit decisions
+whole-subject review decisions
+manual remediation decisions
+safe resolver proposals
+team constraints
 ```
 
-Operator seed ma najwyższy priorytet dla wskazanej obserwacji, ale nie omija twardych safety gates przy propagacji.
+### Minimalny rekord
+
+```json
+{
+  "tracklet_id": "tracklet-123",
+  "candidate_subject_id": "subject-17",
+  "team_label": "A",
+  "canonical_player_id": "player-7",
+  "display_label": "Paweł",
+  "identity_status": "confirmed",
+  "identity_source": "operator_review",
+  "eligible_for_player_stats": true,
+  "source_digests": {}
+}
+```
+
+Niepewny rekord:
+
+```json
+{
+  "tracklet_id": "tracklet-456",
+  "candidate_subject_id": "subject-31",
+  "team_label": "A",
+  "canonical_player_id": null,
+  "display_label": "A04",
+  "identity_status": "unresolved",
+  "identity_source": null,
+  "eligible_for_player_stats": false,
+  "source_digests": {}
+}
+```
+
+### Wymagania
+
+- operator-confirmed decisions mają najwyższy priorytet;
+- `probable` nie jest automatycznie `confirmed`;
+- cross-team assignment jest hard-blocked;
+- parallel same-player conflict pozostaje jawny;
+- unresolved otrzymuje stabilny fallback label;
+- ten sam input daje identyczny snapshot i digest;
+- snapshot jest stale po zmianie którejkolwiek decyzji lub źródłowego artifactu;
+- brak production mutation.
 
 ### Output
 
 ```text
-identity_operator_seeds.json
-identity_seeded_candidate_assignments.json
-seed propagation provenance
-accepted/rejected propagation reasons
-conflicts
+reviewed_identity_snapshot.json
+reviewed_identity_report.json
 ```
 
-### Gate
-
-- 0 ukrytych cross-team links;
-- 0 impossible parallel same-player assignments;
-- unresolved pozostaje jawne;
-- production identity unchanged;
-- deterministyczny rebuild z frozen tracks.
-
-### Status 2026-07-27
+### Definition of Done
 
 ```text
-CLOSED — IA3_ACCEPTED
+jeden kanoniczny reviewed snapshot istnieje
+wszystkie końcowe renderery/statystyki czytają ten sam kontrakt
+nie ma dwóch konkurencyjnych źródeł finalnego player_id
 ```
-
-Zaimplementowano:
-
-- osobny shadow-only artefakt
-  `identity_seeded_candidate_assignments.json`, który nie jest wejściem do
-  statystyk ani production identity;
-- propagację named operator seed wyłącznie przez dokładne lineage
-  `frame + tracklet_id` do jednego candidate subjectu;
-- twarde gate'y drużyny, świeżości selection, blockerów strukturalnych i
-  równoległych obserwacji tej samej realnej osoby;
-- jawne `accepted_assignments`, `rejected_propagations`, `conflicts` oraz
-  `unresolved_subjects` wraz z przyczynami i provenance;
-- deterministyczne łączenie wielu zgodnych seedów jednego subjectu oraz
-  blokadę sprzecznych nazwisk dla tego samego subjectu;
-- automatyczny tani rebuild po zapisie IA2 seeds oraz osobne endpointy
-  odczytu i ręcznego rebuilda;
-- atomowy zapis i kontrolę hashy production identity przed i po rebuildzie.
-
-Walidacja lokalna:
-
-```text
-backend focused tests: 12 passed
-deterministic repeated build/rebuild: passed
-cross-team propagation: blocked and reported
-parallel same-player assignment: blocked and reported
-hard structural blocker: blocked and reported
-atomic temporary files after rebuild: 0
-production identity mutation during rebuild: 0
-YOLO rerun: no
-overlay render: no
-```
-
-## IA4 — Existing whole-subject review integration and reduction
-
-### Cel
-
-Nowy audit ma skrócić późniejszy review, a nie dodać kolejny obowiązkowy ekran.
-
-Po IA3:
-
-- seeded/bezpiecznie rozwiązane karty mają zniknąć z normalnej kolejki albo zostać oznaczone jako completed;
-- rekomendacje whole-subject review mają wykorzystywać operator seeds;
-- tego samego zawodnika nie wolno przypisywać ponownie bez konkretnego konfliktu;
-- konflikty i unresolved mają pozostać widoczne.
-
-### Wymagany raport
-
-```text
-review_cards_before_seeding
-review_cards_after_seeding
-subjects_resolved_after_seeding
-tracklets_resolved_after_seeding
-frames_resolved_after_seeding
-manual decisions before/after
-active time before/after, jeżeli mierzalne
-conflicts created
-false assignments found
-```
-
-### Gate Fazy B
-
-Faza B jest zakończona tylko wtedy, gdy pełny przepływ działa:
-
-```text
-selected frames
-→ intuitive audit
-→ saved seeds
-→ downstream candidate resolve
-→ reduced/prioritized existing review
-```
-
-Samo utworzenie UI bez downstream reduction nie zamyka Fazy B.
-
-### Status implementacji — 2026-07-27
-
-`CLOSED`.
-
-Zaimplementowano:
-
-- fresh IA3 seeded assignments są automatycznie włączane do whole-subject review;
-- bezpiecznie rozwiązane karty dostają `completed_by_initial_audit` i znikają z domyślnej kolejki `Do review`;
-- konflikty seed/manual oraz seed/seed pozostają widoczne jako `blocked_seed_conflict` i można je rozstrzygnąć;
-- zawodnik zajęty przez nakładający się seeded subject nie może zostać ponownie wybrany bez jawnego konfliktu;
-- zapis Initial Identity Audit przebudowuje IA3 i od razu odświeża redukcję whole-subject review, bez YOLO;
-- `identity_seeded_review_reduction_report.json` zapisuje wymagane metryki redukcji, konflikty i false assignments;
-- frontend rozróżnia decyzje operatora od kart rozwiązanych przez initial audit i pokazuje efekt redukcji;
-- production identity, statystyki i heatmapy pozostają nietknięte.
-
-Gate Fazy B potwierdzony testami kontraktowymi:
-
-```text
-selected frames
-→ saved seeds
-→ downstream candidate resolve
-→ reduced/prioritized existing review
-```
-
-Live-check na `461e4dd9` (`20260727T132244Z-yolo-ultralytics-chunked-725dbdd1`):
-
-```text
-operator actions: 50
-unique named players: 7
-safe subjects resolved: 12
-tracklets resolved: 13
-frames resolved: 2692
-review cards: 109 -> 97
-parallel same-player conflicts detected and blocked: 3
-unsafe accepted parallel assignments: 0
-production identity mutations: 0
-YOLO / tracking / overlay rerun: no
-```
-
-Naprawiono również bootstrap fresh-match review oraz freshness operator seeds:
-
-- whole-subject review jest budowany po pierwszym audycie nawet wtedy, gdy wcześniej nie istniał;
-- telemetry i techniczne timestampy nie unieważniają decyzji operatora;
-- zmiana merytorycznej decyzji nadal poprawnie oznacza downstream jako stale;
-- bezpiecznie zablokowany konflikt jest zapisywany do review, a nie traktowany jako awaria rebuilda.
 
 ---
 
-# 6. Faza C — Cross-half Anchoring and Automatic Appearance, IA5–IA6
-
-## IA5 — Second-half capture-domain re-anchor
+## P-MVP2 — Generate reviewed video
 
 ### Cel
 
-Dostarczyć kilka potwierdzonych identities w H2, ponieważ H2 różni się kątem, stroną kamery i światłem.
-
-### Budżet
+Po review użytkownik może kliknąć:
 
 ```text
-2–3 easy H2 frames
-3–5 confirmed players as target
-skip entirely when H1 evidence already resolves H2 safely
+Generate reviewed video
 ```
 
-UI powinno głównie potwierdzać sugestie:
+### Wideo pokazuje
 
 ```text
-Roman #6
-[Confirm] [Different player] [Team B] [Skip]
+bbox
+kolor drużyny
+confirmed name
+Axx/Bxx fallback dla reszty
+opcjonalny conflict/review marker
+czas meczu
+opcjonalną piłkę
 ```
 
-Nie wykonywać pełnego drugiego lineup audit.
+### Zasady
 
-### Status 2026-07-27
+- imię tylko dla `confirmed`;
+- label `Axx/Bxx` jest stabilny w obrębie eksportu;
+- niepewna sugestia ReID nie jest pokazywana jako imię;
+- invalid/false detection nie dostaje player name;
+- renderer korzysta z istniejącego H.264/FFmpeg flow;
+- rerender po korekcie nie uruchamia YOLO ani trackingu;
+- output zawiera snapshot digest i source provenance.
+
+### Output
 
 ```text
-CLOSED — IA5_ACCEPTED
+reviewed_identity_video.mp4
+reviewed_identity_video_manifest.json
 ```
 
-Zaimplementowano:
+### Rola produktu
 
-- jawne wykrywanie początku H2 wyłącznie z `match_phase_config.json`;
-- świadome `not_applicable`, gdy druga połowa nie jest skonfigurowana,
-  bez zgadywania jej początku z połowy długości materiału;
-- automatyczne pominięcie re-anchor, jeżeli co najmniej trzech graczy
-  posiada już bezpieczne pokrycie H2;
-- wybór maksymalnie trzech łatwych i zróżnicowanych klatek H2;
-- confirmation-first UI z akcjami `Potwierdź`, `Inny zawodnik`, `Team B`
-  oraz `Pomiń / nie wiem`;
-- współdzielony zapis operator seeds i downstream rebuild z frozen
-  detections/tracks, bez ponownego YOLO;
-- deterministyczny limit klatek także na granicy kontraktu dokumentu,
-  niezależnie od zawartości cache;
-- testy explicit-phase, limitu trzech klatek, aktualnych sugestii,
-  braku mutacji wejścia i współdzielonego seed-aware rebuilda.
-
-Akceptacja na runie:
+Reviewed video jest jednocześnie:
 
 ```text
-20260727T132244Z-yolo-ultralytics-chunked-725dbdd1
-match: 461e4dd9
-status: not_applicable
-reason: second_half_not_configured
-frames: 0
+wartością dla użytkownika
+QA player identity
+narzędziem do wykrycia ID switches
+narzędziem do wykrycia false merge/split
+podstawą zaufania do statystyk
 ```
 
-To jest oczekiwany wynik dla 90-sekundowego klipu bez jawnej H2.
+Nie jest już elementem `poza MVP`.
 
-## IA6 — Automatic approved appearance gallery
+---
+
+## P-MVP3 — Minimap/radar
 
 ### Cel
 
-Po operator-confirmed seed automatycznie wybrać reliable appearance crops.
+Dodać do reviewed video małe boisko 2D pokazujące aktualne ustawienie zawodników.
+
+### Dane
+
+Korzystać z istniejących:
 
 ```text
-Roman H1 seed
-→ safe local fragment
-→ automatic reliable crop selection
-→ Roman H1 gallery
-
-Roman H2 re-anchor
-→ Roman H2 gallery
-→ match-specific cross-domain prototype
+pitch calibration/homography
+pitch_m positions
+team labels
+ball position, jeżeli dostępna
+reviewed identity snapshot
 ```
 
-Użytkownik nie oznacza każdego appearance cropa.
-
-System sam selekcjonuje, o ile dostępne:
+### Pierwsza wersja
 
 ```text
-front/back/side
-near/far
-sun/shade
-H1/H2
-low occlusion
-valid visual content
+Team A marker
+Team B marker
+ball marker
+confirmed player initials/number opcjonalnie
+unresolved jako anonimowy marker teamu
+krótkie wygładzanie pozycji
 ```
 
-### Zastosowanie
+Minimapa nie może wymagać działającego ReID.
 
-Na tym etapie ReID służy do:
+### Definition of Done
 
-```text
-ranking unresolved fragments
-candidate suggestions
-cross-half matching
-```
-
-Nie wykonuje nieodwracalnego cross-subject merge.
-
-### Gate Fazy C
-
-- potwierdzony cross-half prototype dla części graczy;
-- measurable top-k usefulness na unresolved fragments;
-- brak automatycznych false merges;
-- crop selection automatyczne;
-- operator work nie rośnie względem IA0–IA4.
-
-### Status 2026-07-28
-
-```text
-IMPLEMENTED — IA6_CODE_COMPLETE
-VALIDATED_ADVISORY_ONLY — CROSS_ANALYSIS_BASELINE_PASSED
-```
-
-Zaimplementowano:
-
-- automatyczną galerię appearance wyłącznie z operator-confirmed subjects;
-- limit i selekcję reliable cropów per gracz oraz jawna domenę H1/H2;
-- automatyczne ponowne wykorzystanie cropów whole-subject review,
-  bez dodatkowej pracy operatora;
-- robust prototype per subject i per real player;
-- leave-one-subject-out evaluation oraz advisory top-3 ranking dla
-  nierozwiązanych subjectów;
-- przenośny fallback appearance dla Apple Silicon, gdy model OpenVINO
-  nie może zostać uruchomiony;
-- jawne oznaczenie fallbacku jako `baseline_fallback`, aby nie mieszać
-  jego wyników z docelowym modelem ReID;
-- cache embeddingów oraz osobne shadow artifacts i quality report;
-- integrację z frozen downstream rebuildem, bez YOLO, trackingu
-  i renderowania pełnego overlayu;
-- fail-open warning contract oraz test niezmienności production identity;
-- testy deterministyczności, separacji H1/H2, rankingu, braku
-  automatycznych merge oraz pełnej integracji z IA4/IA5.
-
-Live-check:
-
-```text
-run: 20260727T132244Z-yolo-ultralytics-chunked-725dbdd1
-match: 461e4dd9
-gallery players: 6
-accepted candidate subjects: 12
-selected gallery crops: 42
-embedded crops: 268
-subject prototypes: 89
-player prototypes: 6
-unresolved subjects ranked: 25
-leave-one-subject-out queries: 12
-top-1 accuracy: 33.3%
-top-3 accuracy: 50.0%
-automatic merges: 0
-operator actions required: 0
-production identity changed: no
-```
-
-Wynik potwierdza działający kontrakt i mierzalny baseline, ale nie
-zamyka jeszcze pełnego gate'u Fazy C:
-
-- klip nie posiada H2, więc `cross_domain_players=0`;
-- portable descriptor jest tylko bezpiecznym rankingiem bazowym;
-- przed promocją IA6 potrzeba potwierdzenia, że top-k przewyższa prosty
-  baseline na nierozwiązanych fragmentach w osobnych analizach tego samego
-  fizycznego meczu.
-
-Cross-analysis live validation, 2026-07-28:
-
-```text
-source analysis: 7655bf7c
-target analysis: 343980c8
-source manual assignments: 162
-target manual assignments: 150
-source player profiles: 10
-target subject queries: 125
-top-1 accuracy: 37.6%
-top-3 accuracy: 60.0%
-same-team random top-1: 10.0%
-same-team random top-3: 30.0%
-top-1 lift vs random: 3.76x
-top-3 lift vs random: 2.00x
-automatic merges: 0
-production identity changed: no
-```
-
-To jest właściwy kontrakt dla produktu: połówki są osobnymi uploadami i
-osobnymi analizami. Benchmark może wykorzystywać je jako różne domeny
-capture, ale nie scala ich automatycznie ani nie wymaga stworzenia jednego
-plikowego "pełnego meczu". Wynik jest wystarczający dla advisory ranking,
-ale za słaby dla automatycznego przypisania realnego zawodnika.
-
-Gate porównawczy IA6 jest zatem spełniony: ranking pokonuje prosty losowy
-baseline tej samej drużyny. Nie jest to jednak zgoda na automatyczny merge;
-każda sugestia pozostaje decyzją review lub seedem o jawnej proweniencji.
-
-Po Fazie C przejść do Fazy D.
+- orientacja minimapy jest zgodna z pitch config;
+- markery nie wychodzą poza boisko bez jawnego clamp/statusu;
+- brak pozycji oznacza brak markera, nie wymyśloną interpolację;
+- minimapa działa jako opcja renderera.
 
 ---
 
-# 7. Faza D — J8.4 PanelDigitNetV1 and Jersey Validation
+## P-MVP4 — Reviewed stats with coverage
 
-Do tej fazy przechodzimy dopiero po:
+### Cel
 
-```text
-J8.3 closeout
-IA0–IA6 working on frozen/current match artifacts
-```
+Generować podstawowe statystyki z tego samego reviewed snapshotu.
 
-## Cel
-
-Uzyskać pierwszy rzeczywiście użyteczny, high-precision jersey recognizer, który dostarcza identity evidence, a nie tylko safe abstention.
-
-## Zakres
-
-Wykonać J8.4 zgodnie z `JERSEY_NUMBER_IDENTITY_ANCHORS.md`:
+### Pierwszy zakres
 
 ```text
-tight panel input
-small PanelDigitNetV1
-readable/absent/unreadable handling
-three digit positions
-small-set overfit proof
-real fixture validation
-plain-shirt specificity
-cross-capture-domain evaluation
+playing/detected time
+heatmap
+average position
+observed distance — experimental/readiness-gated
+team shape/minimap-derived diagnostics
+team possession, jeżeli ball pipeline jest gotowy
+individual possession/contact/pass tylko dla potwierdzonych identity windows
 ```
 
-Nie wracać do rozszerzania:
+### Główna zasada
 
-```text
-OpenCV template baseline
-whole-number centroid baseline
-CRNN-CTC tuning
-```
-
-chyba że szczegółowa roadmapa zostanie jawnie zmieniona na podstawie nowych danych.
-
-## Dane z Initial Audit
-
-Operator-confirmed identity może dostarczyć roster number, ale:
-
-```text
-Roman #6 identity label
-≠
-every Roman crop is a readable number-6 sample
-```
-
-Candidate training sample wymaga automatycznej oceny panel visibility/readability i safe lineage.
-
-## Walidacja
-
-Przy jednym fizycznym meczu raportować jawnie:
-
-```text
-physical matches = 1
-capture domains = 2
-```
-
-Mierzyć co najmniej:
-
-```text
-H1 → H2
-H2 → H1
-pooled result
-worst-domain result
-crop precision/recall
-episode precision/recall
-false confirmed reads
-real fixtures
-plain-shirt negatives
-```
-
-Nie nazywać tego cross-match generalization.
-
-## Gate Fazy D
-
-Jersey recognizer jest gotowy do IA7 dopiero gdy:
-
-- daje co najmniej jeden realny poprawny jersey episode/anchor;
-- precision/specifity spełniają zdefiniowane safety gates;
-- plain-shirt false confirmed reads pozostają na wymaganym poziomie;
-- real fixture nie kończy wyłącznie safe abstention;
-- wynik jest stabilny przynajmniej w jednym cross-half direction i jawnie raportowany w drugim;
-- model pozostaje shadow evidence i nie mutuje production identity.
-
-Jeżeli gate nie przechodzi:
-
-```text
-fix data/crops/calibration
-or
-pause jersey work
-```
-
-Nie tworzyć kolejnej architektury bez nowego dowodu diagnostycznego.
-
----
-
-# 8. Faza E — Evidence Fusion, IA7
-
-IA7 dzieli sie na dwa niezalezne zakresy:
-
-```text
-IA7a core evidence fusion
-  operator seeds
-  hard constraints
-  safe lineage
-  appearance/ReID advisory top-3
-  team/capture context
-
-IA7b optional jersey evidence
-  niedostepne i FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN
-```
-
-IA7a nie czeka na jersey recognizer. IA7b nie moze mutowac candidate ani
-production identity i nie jest blokada produktu.
-
-## Cel
-
-Połączyć w jednym explainable resolverze:
-
-```text
-operator-confirmed observation
-hard structural/temporal constraints
-safe tracklet continuity
-accepted subject lineage
-trusted jersey episode
-same-team unique roster lookup
-roster-confirmed match-specific ReID
-automatic team/role evidence
-motion/spatial context
-capture-domain context
-```
-
-## Priorytet
-
-```text
-1. operator-confirmed observation for exact observation
-2. hard safety constraints
-3. safe continuity/lineage
-4. trusted jersey + roster uniqueness
-5. roster-confirmed ReID
-6. weaker automatic context
-```
-
-## Konflikty
+Statystyka bez pełnego identity coverage musi jawnie raportować coverage.
 
 Przykład:
 
-```text
-operator seed: Roman #6
-jersey episode: #15
+```json
+{
+  "player_id": "player-7",
+  "player_name": "Paweł",
+  "identity_coverage": 0.87,
+  "heatmap_coverage": 0.84,
+  "possession_coverage": 0.71,
+  "passes_coverage": 0.63,
+  "readiness": {
+    "heatmap": "ready_with_review",
+    "distance": "experimental",
+    "possession": "ready_with_review",
+    "passes": "experimental"
+  }
+}
 ```
 
-Wynik:
+Nie przypisywać unresolved fragmentów do konkretnego zawodnika tylko po to, żeby podnieść coverage.
+
+### Output
 
 ```text
-needs_review
+reviewed_player_timeline.json
+reviewed_player_stats.json
+reviewed_player_heatmaps.json
+reviewed_stats_readiness.json
 ```
-
-Nie:
-
-```text
-silent automatic choice
-```
-
-## Output
-
-```text
-identity_evidence_fusion_report.json
-per assignment accepted evidence
-rejected evidence
-blockers
-confidence/calibration source
-operator-friendly explanation summary
-full developer provenance
-```
-
-## Gate
-
-- każdy candidate assignment jest explainable;
-- hard conflicts blokują;
-- evidence fusion poprawia coverage lub ranking;
-- nie zwiększa known false assignments;
-- review nie jest dzielony na osobne obowiązkowe jersey/ReID/operator audits.
 
 ---
 
-# 9. Faza F — Exception-only Product, IA8–IA9
+## P-MVP5 — Video-driven correction and cheap rerender
 
-## IA8 — Exception-only review queue
+### Cel
 
-Whole-subject review ma zmienić rolę z:
+Po obejrzeniu reviewed video operator może poprawić konkretny błąd bez powrotu do research tooling.
+
+### Minimalny flow
 
 ```text
-review every card
+open reviewed video
+→ jump to timestamp/frame
+→ open corresponding subject/tracklet review
+→ correct assignment / mark unresolved
+→ rebuild reviewed snapshot
+→ rerender only downstream outputs
 ```
 
-na:
+Nie budować od razu pełnego timeline editora.
+
+Pierwsza wersja może używać timestamp linków i istniejących ekranów review.
+
+---
+
+# 6. TOR A — Automation/research
+
+## A1 — Final bounded ReID decision
+
+Aktualna infrastruktura ReID jest wystarczająca do jednego końcowego, ograniczonego eksperymentu.
+
+Wykonać wyłącznie:
 
 ```text
-review only high-value exceptions
+Run A — pretrained OSNet full-body
+Run B — fine-tuned OSNet full-body
+Run C — fine-tuned OSNet torso
 ```
 
-Domyślna kolejka obejmuje:
+Wszystkie na tym samym H1 split, same-team ranking i tracklet-level evaluation.
+
+Przed finalnym runem dopilnować:
+
+- Stage 2 startuje z najlepszego checkpointu Stage 1;
+- validation query nie używa własnych cropów w galerii;
+- nowe tracklety mogą dostać automatycznie wybrane 2–4 representative crops;
+- H2 pozostaje finalnym holdoutem;
+- winner jest zamrożony na H1.
+
+### Decyzja po eksperymencie
+
+ReID pozostaje aktywnie rozwijane tylko wtedy, gdy wykazuje praktyczny zysk:
 
 ```text
-operator vs jersey conflict
-cross-team link
-parallel distant same-player candidate
-structural conflict
+mniej manualnych decyzji
+mniej unresolved trackletów
+mniej ID switches
+bez wzrostu false merges/splits
+```
+
+Możliwy wynik:
+
+```text
+REID_ELIGIBLE_FOR_SHADOW_SUGGESTIONS
+REID_ADVISORY_ONLY
+REID_FROZEN_NO_PRODUCT_GAIN
+```
+
+Nie uruchamiać kolejnego model bakeoffu bez nowego materiału lub nowego, konkretnego błędu diagnostycznego.
+
+## A2 — Resolver integration, nie drugi finalny pipeline
+
+Match Identity Resolver pozostaje źródłem:
+
+```text
+rankingu
+explainable evidence
+conflict detection
+safe continuity proposals
+```
+
+Nie jest osobnym finalnym źródłem prawdy obok reviewed snapshotu.
+
+Resolver proposal może zostać:
+
+```text
+confirmed przez operatora
+odrzucony
+pozostawiony unresolved
+```
+
+Tylko bezpiecznie potwierdzone wyniki trafiają do `reviewed_identity_snapshot.json` jako `confirmed`.
+
+## A3 — Exception-only review
+
+Po działającym P-MVP1–P-MVP4 kolejkę review redukować do przypadków o największym wpływie:
+
+```text
+operator/evidence conflict
+cross-team candidate
+parallel same-player conflict
 possible ID switch boundary
 long unresolved interval
 possible substitution/new player
-H1/H2 appearance conflict
-low-confidence fragment with large stats impact
+low-margin high-duration candidate
+fragment z dużym wpływem na statystyki
 ```
 
-Poza domyślną kolejką lub na końcu:
+## A4 — Adaptive audit
+
+Dopiero po zebraniu telemetry z prawdziwych reviewed meczów system może dynamicznie wybierać następne klatki na podstawie expected information gain.
+
+Nie optymalizować adaptacyjnego audytu bez pomiaru:
 
 ```text
-short noise fragments
-low-impact unresolved detections
-redundant crops from one episode
-already safely resolved subjects
+które decyzje faktycznie redukują późniejsze review
 ```
 
-## IA9 — Adaptive audit and manual-work benchmark
+## A5 — Full-match benchmark
 
-System powinien dynamicznie wybierać kolejne klatki tylko wtedy, gdy oczekiwany information gain jest wysoki.
+Pełny benchmark służy do decyzji o automatyzacji i produkcyjnym apply.
 
-Audit może zakończyć się automatycznie, gdy:
+Nie blokuje lokalnego reviewed MVP.
 
-```text
-no new easy player is available
-safe coverage gain becomes negligible
-remaining cases belong to exception review
-```
-
-## Wymagany benchmark
-
-Porównać stary i nowy flow:
+Mierzyć:
 
 ```text
 active operator time
-number of actions
-frames shown
-players seeded
-review cards before/after
-manual assignments before/after
-safe resolved coverage
-unresolved time coverage
+manual decisions
+confirmed coverage
+unresolved coverage
 known false assignments
-parallel/cross-team conflicts
-H1↔H2 continuity
+ID switches
+false merges
+false splits
+reviewed video corrections
+stats coverage
 ```
 
-## Gate Fazy F
+## A6 — Controlled production apply
 
-Nowy flow jest gotowy do finalnej rewalidacji, gdy wykazuje co najmniej jeden znaczący zysk:
+Pozostaje ostatnim etapem.
+
+Wymaga:
 
 ```text
-fewer review cards
-fewer manual actions
-lower active time
-higher safe resolved coverage
-better cross-half continuity
+explicit approval
+candidate-vs-production diff
+backup
+transaction manifest
+atomic writes
+full downstream rebuild
+post-apply validation
+rollback
 ```
 
-bez pogorszenia:
+Nie implementować auto-apply.
+
+---
+
+# 7. Jersey recognition
+
+Jersey recognition pozostaje opcjonalnym evidence source.
+
+Stan:
 
 ```text
-known false assignments
-cross-team conflicts
-parallel-position conflicts
-structural safety
+nie blokuje P-MVP1–P-MVP5
+nie blokuje A1–A3
+nie wymaga per-match ręcznego panel labeling
+```
+
+Wrócić do niego tylko gdy:
+
+- istnieje nowy niezależny capture domain lub nowy materiał;
+- readable panel dataset spełnia readiness;
+- oczekiwany zysk dotyczy realnego problemu z review;
+- model może działać high-precision z bezpiecznym abstention.
+
+Nie rozpoczynać kolejnej architektury jersey bez nowego dowodu diagnostycznego.
+
+---
+
+# 8. Status board
+
+Stan na `c4559ff4`:
+
+```text
+FOUNDATION
+IA0 frame selection                         CLOSED
+IA1 Initial Identity Audit UI               CLOSED
+IA2 operator seed store                     CLOSED
+IA3 seed-aware candidate resolve            CLOSED
+IA4 seeded review reduction                 CLOSED
+IA5 optional H2 re-anchor                    IMPLEMENTED
+IA6 appearance gallery/advisory ranking      IMPLEMENTED — ADVISORY ONLY
+promotion safety/remediation                IMPLEMENTED
+partial candidate stats/heatmaps            IMPLEMENTED
+
+AUTOMATION
+preferred historical ReID gate              FAILED
+OSNet fine-tuning protocol code              IMPLEMENTED
+real bounded fine-tuning result              NOT PROVEN IN REPO
+Match Identity Resolver shadow contract      IMPLEMENTED / PARTIAL
+IA7a evidence-fusion contract                SHADOW IMPLEMENTED / PRODUCT NOT INTEGRATED
+IA8 exception-only queue                     PARTIAL
+IA9 adaptive audit                           NOT STARTED
+
+PRODUCT DELIVERY
+P-MVP1 reviewed identity snapshot            NOT STARTED
+P-MVP2 reviewed video                        NOT STARTED
+P-MVP3 minimap/radar                         NOT STARTED
+P-MVP4 reviewed stats + coverage              PARTIAL FOUNDATIONS ONLY
+P-MVP5 correction + cheap rerender            NOT STARTED
+
+PRODUCTION
+full-match quality gate                      NOT PASSED
+controlled production apply                  NOT STARTED
 ```
 
 ---
 
-# 10. Faza G — Stabilization Revalidation and Controlled Apply
+# 9. Aktualna kolejność prac
 
-Po IA8–IA9 wrócić do końcowych milestone'ów `PLAYER_IDENTITY_STABILIZATION_ROADMAP.md`.
-
-## P1.23 — Candidate Stats Revalidation
-
-Nie wystarczy stary raport sprzed Initial Audit/fusion.
-
-Ponownie sprawdzić:
+Obowiązująca kolejność:
 
 ```text
-player timeline
-playing intervals
-longest gaps
-large spatial jumps
-parallel observations
-playing time
-distance
-heatmap
-possession/events, jeśli dostępne
-candidate vs production diff
-feature readiness
+1. P-MVP1 Finalize reviewed identity snapshot
+2. P-MVP2 Generate reviewed video
+3. P-MVP3 Add minimap/radar
+4. P-MVP4 Reviewed stats with coverage
+5. P-MVP5 Video-driven correction and rerender
+6. A1 Final bounded ReID decision
+7. A2 Integrate useful resolver suggestions into review
+8. A3 Exception-only queue
+9. A4 Adaptive audit
+10. A5 Full-match benchmark
+11. A6 Controlled production apply
 ```
 
-Każda duża stat delta musi prowadzić do źródłowych seeds, subjects, fragments i evidence.
+A1 może być wykonywane równolegle, jeżeli nie opóźnia P-MVP1–P-MVP4.
 
-## P1.24 — Controlled Production Apply
-
-Dopiero po pozytywnej rewalidacji:
-
-```text
-review completeness understood
-hard conflicts = 0
-known false assignments after final review = 0
-candidate artifacts deterministic
-production diff reviewed
-backup/transaction/rollback ready
-downstream rebuild tested
-```
-
-Production apply pozostaje:
-
-```text
-explicit
-transactional
-reversible
-auditable
-```
-
-Nie wdrażać auto-apply.
-
-## P1.25 — Advanced orphan/event review
-
-P1.25 nie jest obowiązkowym kolejnym dużym projektem.
-
-Implementować wyłącznie przypadki potwierdzone przez IA9/P1.23 benchmark jako istotne, np.:
-
-```text
-identity switch boundaries
-long unresolved fragments
-substitution boundaries
-orphan fragments affecting stats/events
-```
-
-Nie budować rozbudowanego edytora dla edge cases, które nie wpływają na wynik.
+Jersey work pozostaje zamrożone i nie jest elementem critical path.
 
 ---
 
-# 11. Zadania dozwolone równolegle
+# 10. Jeden główny milestone na cykl
 
-Można równolegle wykonywać lekkie prace, które nie zmieniają kolejności gate'ów:
-
-```text
-testy kontraktów
-CI dla frozen artifact evaluators
-telemetry improvements
-deterministic artifact generation
-UI accessibility/keyboard shortcuts
-documentation/status updates
-small dataset inspection tools
-```
-
-Nie wolno równolegle odblokowywać fazy zależnej od niespełnionego gate'u.
-
-Przykłady:
+Agent nie powinien w jednym cyklu jednocześnie:
 
 ```text
-IA1 UI może powstawać po IA0 contract
-IA0–IA6 nie muszą czekać na J8.4
-IA7a core evidence fusion nie czeka na jersey recognizer
-IA7b optional jersey evidence pozostaje zamrozone do nowego capture domain
-P1.24 musi czekać na IA9 + P1.23 revalidation
+przepisywać review UI
++ trenować nowy model
++ budować minimapę
++ implementować production apply
 ```
+
+Każdy cykl ma zakończyć się:
+
+```text
+what changed
+real artifact/demo result
+what was tested
+operator impact
+known limitations
+explicit stop/go
+next allowed milestone
+```
+
+Dla product milestone wymagany jest widoczny output, nie tylko schema i unit tests.
 
 ---
 
-# 12. Zadania obecnie zabronione lub odłożone
+# 11. KPI najbliższego MVP
 
-Do czasu przejścia odpowiednich gate'ów nie implementować jako core requirement:
+MVP nie wymaga 95% automatycznej identyfikacji.
+
+Wymaga:
 
 ```text
-production auto-apply
-cross-match persistent player gallery
+reviewed video powstaje po review
+confirmed names są poprawne w audytowanym materiale
+niepewne tracklety pozostają Axx/Bxx
+coverage jest jawne
+statystyki nie wykorzystują ukrytych false assignments
+rerender nie uruchamia YOLO/tracking
+manualna praca nie polega na setkach cropów
+```
+
+Mierzyć:
+
+```text
+time from upload to reviewed output
+active operator seconds
+audit decisions
+whole-subject decisions
+video-driven corrections
+confirmed identity coverage
+unresolved coverage
+known false names in final video
+ID switches visible in final video
+per-feature stats coverage
+```
+
+Pierwszy użyteczny wynik może być:
+
+```text
+70–90% bezpiecznie confirmed
+10–30% jawnie Axx/Bxx
+0 znanych błędnych imion po review
+```
+
+To jest lepsze niż agresywne 100% z false assignments.
+
+---
+
+# 12. Anti-goals
+
+Do czasu zebrania realnych wyników nie wykonywać jako critical path:
+
+```text
+kolejnych dużych ReID model bakeoffów
+persistent gallery między meczami
 face recognition
-full autonomous substitution assignment
-full timeline editor
-named MP4 generation
-mandatory per-match jersey panel labeling
-manual annotation of hundreds of appearance crops
-new large jersey architecture without diagnostic evidence
-full-match YOLO rerun after every operator correction
+pełnego globalnego timeline editora
+pełnej automatycznej obsługi zmian
+auto-apply do produkcji
+manualnego oznaczania setek appearance crops
+mandatory jersey panel audit per match
+ukrywania unresolved przez podobne appearance
 ```
 
-Named MP4 może wrócić później jako opcjonalny validation/export feature, ale nie jest częścią najbliższego development path.
+Nie liczyć za sukces:
+
+```text
+samej liczby nowych plików
+zielonych unit tests bez realnego artifactu
+wysokiego train accuracy
+spadku liczby subjectów wynikającego z false merge
+```
 
 ---
 
-# 13. Status board do utrzymywania przez agenta
+# 13. Definition of Done planu
 
-Agent ma aktualizować tę tabelę po zamknięciu fazy lub zmianie kolejności.
-
-```text
-A  J8.3 panel closeout                         CLOSED — READY_FOR_J8_4_DIAGNOSTIC
-B  IA0–IA4 Initial Audit core                 CLOSED
-C  IA5–IA6 re-anchor + appearance gallery     IA5 CLOSED — IA6 VALIDATED, ADVISORY ONLY
-D  J8.4 useful jersey recognizer              FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN
-E  Product-flow benchmark                     H1 OPERATOR COMPLETE + VERIFIED — H2_READY
-F  IA7a core evidence fusion                  BLOCKED UNTIL OPERATOR BENCHMARK REACHES REPORT_READY AND PASSES GATES
-G  IA7b optional jersey evidence              FROZEN UNTIL NEW INDEPENDENT CAPTURE DOMAIN
-H  IA8–IA9 exception-only/adaptive review     BLOCKED BY IA7a
-I  P1.23 revalidation + P1.24 apply            BLOCKED BY IA8–IA9
-```
-
-## Product-flow benchmark after J8.4
-
-Implementation and automated validation were completed on 2026-07-30. The
-operator preflight correctness cycle was completed on 2026-07-30. Required
-final saves now gate H1/H2 transitions, H2 requires a fresh receipted reduction
-report, and ReID telemetry counts only displayed cross-analysis advisory
-suggestions with explicit provenance. The
-milestone remains open until a real operator completes the new sequential
-session and its `REPORT_READY` artifact passes the gates below. The flow is
-measurement-only and must not rerun YOLO or apply candidate/production identity
-mutations.
-
-Canonical operator session:
+Plan jest zakończony, gdy normalny lokalny flow dla meczu Corgi wygląda tak:
 
 ```text
-backend/storage/benchmarks/player_identity/product-flow-20260730-v4
-implementation HEAD: 99f119c142cc36c4049adf8ad3422607162eaa9f
-state: REPORT_READY
-H1 frames: 8
-H1 active decisions: 12
-H1 unique players seeded / safely resolved: 7 / 7
-H1 review cards before / after: 25 / 18
-H1 conflicts / false assignments: 0 / 0
-H2 frames / active decisions: 3 / 5
-H2 visible observations / H1-lineage suggestions: 38 / 9
-H2 H1-lineage suggestions reviewed / accepted / rejected: 3 / 0 / 3
-H2 H1-lineage top-1 accuracy on named decisions: 0%
-operator-confirmed H1-lineage errors: 7 / 9 displayed suggestions
-operator-confirmed H1-lineage accuracy: 0 / 7 (2 suggestions unreviewed)
-H2 safely resolved players: 1
-H2 review cards before / after: 1346 / 1345
-cross-analysis ReID suggestions displayed: 0
-operator team corrections saved in audit: 0
-operator-reported team errors in reviewed bboxes: 0
-cross-team name-suggestion violations: 2 (H2 frame 3, bbox 8 and 13)
-operator findings: missed player detections and one player-shadow bbox
-source inventory mutations after final report: 0
-```
-
-The operator confirmed that frame 3 bbox 8 and bbox 13 were correctly labelled
-Team B. The error was strictly in identity suggestions: the system attached
-Krzysiek and Mati GK from the Team A/Corgi roster to Team B observations. This
-is a hard cross-team invariant violation, not a team-classification error.
-Named roster suggestions must be filtered by the observation team on both the
-backend contract and the UI boundary.
-
-Gate outcome: `REPORT_READY_NEGATIVE_IDENTITY_EVIDENCE`. The benchmark is
-technically valid and preserved all safety invariants, but it does not pass the
-safe-workload-reduction quality gate. H1 and H2 came from independent capture
-domains and independent tracker runs. Their local `tracklet_id` values are not
-cross-domain identity keys; matching them produced three wrong suggestions in
-three reviewed cases. Cross-capture H1 safe-lineage suggestions are therefore
-blocked. The team classifier remains promising, while missed detections and
-shadow boxes require a separate detector-quality path. IA7a remains blocked
-until real cross-domain evidence exists and a new bounded benchmark improves
-safe review reduction.
-
-### ReID diagnostic correctness closeout (2026-07-30)
-
-The separate, read-only `cross_capture_reid_diagnostic/` follow-up for canonical
-`product-flow-20260730-v4` repaired runtime selection, separated portable and
-preferred-model evidence, and made the H1→H2 ground-truth mapping exact
-observation based. It did not alter this historical benchmark outcome.
-
-```text
-diagnostic status: PREFERRED_REID_RUNTIME_BLOCKED_USER_APPROVAL_REQUIRED
-operator names: OPERATOR_NAMES_REMAIN_HIDDEN
-preferred model files: present
-OpenCV DNN OpenVINO: load failed (backend plugin unavailable)
-OpenVINO Runtime CPU: load failed (internal runtime error)
-portable baseline: diagnostic only; never operator-visible
-automatic assignments / source mutations: 0 / 0
-IA7a: BLOCKED
-```
-
-### Isolated preferred-runtime repair gate (2026-07-30)
-
-An explicitly approved, separate `backend/.venv-reid-probe` was created with
-OpenVINO `2025.4.1`, NumPy and OpenCV only. It did not modify
-`backend/.venv-mps`. The isolated runtime can create `ov.Core()`, see `CPU`,
-and read the existing IR v10 XML/BIN, but `compile_model(..., "CPU")` still
-returns OpenVINO's internal runtime error. The IR files are readable and have
-recorded SHA-256 digests, so there is no evidence to request a new model.
-
-```text
-preferred runtime: PREFERRED_REID_RUNTIME_BLOCKED
-preferred read-only replay: NOT_STARTED — blocked by runtime
-evidence collection readiness: NOT_READY — preferred ranking unavailable
-bounded H2 session: NOT_CREATED
-cross-capture gate: NOT_EVALUATED
-IA7a: BLOCKED
-```
-
-The cycle stops at this gate. No H2 operator decisions, new benchmark session,
-identity mutation, YOLO or tracking rerun occurred. A separate approval is
-needed for further local runtime investigation or an alternate compatible
-OpenVINO package/version.
-
-### Rosetta preferred-ReID productionization and bounded H2 gate (2026-07-30)
-
-Native macOS ARM64 OpenVINO remains blocked in the CPU plugin during model
-compilation. A dedicated Rosetta x86_64 subprocess runtime now has an explicit
-candidate/probe/activation contract and a single-compile batch worker. Runtime
-availability requires a real x86_64 handshake, model digest verification,
-synthetic inference, two real-crop inferences, embedding validation and
-repeatability.
-
-```text
-native arm64 OpenVINO: BLOCKED — CPU compile internal error
-Rosetta x86 runtime: ROSETTA_REID_RUNTIME_AVAILABLE
-Python: 3.9.6 x86_64
-OpenVINO: 2025.3.0
-NumPy: 2.0.2
-real runtime integration test: PASSED
-preferred v4 replay: PREFERRED_REID_REPLAY_COMPLETE
-H1 internal queries / top-1 / top-3: 21 / 0.0476 / 0.1429
-valid historical H2 queries: 1
-bounded H2 session: product-flow-20260730-v5-reid-followup
-bounded H2 cards: 5
-bounded H2 decisions: 5 real named operator decisions, session finished
-cross-capture queries / top-1 / top-3: 6 / 0.3333 / 0.6667
-cross-capture mean / median truth rank: 1.5 / 2
-cross-team violations / invalid ranked players: 0 / 0
-bounded H2 status: CROSS_CAPTURE_REID_QUALITY_GATE_FAILED
-operator names: OPERATOR_NAMES_REMAIN_HIDDEN
-IA7a: NOT_STARTED — internal and cross-capture preferred quality gates failed
-```
-
-The v5 follow-up froze preferred rankings before the five operator decisions.
-Selection was independent of ground-truth identity and excluded the one
-previously valid H2 query. The final evaluation used those frozen rankings;
-ground truth did not influence their generation. Portable rankings remain
-absent from the operator surface. Historical v4 source artifacts, production
-identity, candidate identity, YOLO and tracking remain unchanged.
-
-Persistent state machine:
-
-```text
-CREATING
-→ H1_READY
-→ H1_FINISHED
-→ H1_REBUILT
-→ H2_READY
-→ H2_FINISHED
-→ REPORT_READY
-
-any in-progress state → FAILED
-```
-
-The historical `product-flow-20260729-v1` session is not resumable evidence for
-this gate. It prepared H1 and H2 concurrently, used the generic
-`READY_FOR_OPERATOR` status and exceeded the intended operator budgets
-(`112` H1 decisions and `20` H2 decisions). Treat it as historical diagnostic
-input only, not as a passed benchmark.
-
-The superseded `product-flow-20260730-v2` session is also marked `FAILED`.
-It was used for a browser smoke test that exposed and verified a symlink
-workspace-context bug; its non-operator telemetry is intentionally excluded
-from benchmark evidence. The fix is covered by the product-flow regression
-suite.
-
-The former canonical `product-flow-20260730-v3` is marked `FAILED` and is now a
-historical preflight session, not valid final operator evidence after the
-preflight code change. The separate `product-flow-20260730-v4-smoke` session
-was used only to read `H1_READY`, eight visible frames, the `0/12` limit and
-the absence of H2. Opening its audit generated session telemetry, so it was
-also marked `FAILED` and excluded from evidence. Canonical `v4` was created
-after that smoke test and has never been opened by the agent.
-
-```text
-1. Show at most 8-12 Initial Identity Audit decisions.
-2. Ask at most 3-5 H2 re-anchor confirmations.
-3. Keep appearance/ReID as advisory top-3 recommendations only.
-4. Run a seed-aware downstream rebuild from frozen artifacts.
-5. Report review cards before/after, active operator time, players/subjects/
-   tracklets/frames safely resolved, unresolved coverage, false assignments,
-   and parallel/cross-team/structural conflicts.
-6. Confirm automatic assignments = 0 and production apply = 0.
-```
-
-The benchmark succeeds by proving lower safe manual workload, not by forcing
-coverage or substituting jersey evidence for operator knowledge.
-
-Player-observation QA correctness was also closed on 2026-07-30 at the
-implementation and automated-validation level:
-
-```text
-shared renderer/QA visible-observation projection
-freshness-checked source lineage
-visible → clean → rejected → raw → no-match waterfall
-team-safe deterministic one-to-one matching
-visual-only unresolved rows excluded from identity and trusted stats
-offline editor with delete/undo/team-toggle/local restore/reset
-```
-
-This does not claim full raw YOLO recall. Its conclusion is limited to
-freshness-verified downstream observation coverage.
-
-`BLOCKED BY A CLOSEOUT` oznacza zakończenie J8.3 decyzją, niekoniecznie pozytywny wynik modelowy.
-
-Jeżeli J8.3 kończy się `AVAILABLE_DATA_NOT_SUFFICIENT`, Fazy B i C nadal mogą być wykonywane. Faza D zostaje wstrzymana do poprawy danych, a IA7 może zostać częściowo przygotowane kontraktowo, lecz nie zamknięte bez realnego jersey evidence.
-
----
-
-# 14. Następne zadanie dla agenta
-
-Przy aktualnym planie następne zadanie to:
-
-```text
-H1 approved appearance gallery jest naprawiona. Portable i preferred ReID mają
-osobne diagnostyczne artifacty, a wyłącznie preferred model może kiedyś stać
-się active operator source po przejściu własnego gate'u. Lokalny preferred
-runtime jest obecnie zablokowany; nazwy pozostają ukryte. Naprawa runtime'u
-wymaga jawnej zgody użytkownika, po której należy uruchomić wyłącznie
-read-only probe i ponownie ocenić gate. IA7a pozostaje zablokowane.
-```
-
-J8.3 zostało zamknięte decyzją:
-
-```text
-READY_FOR_J8_4_DIAGNOSTIC
-```
-
-Nie promować PanelDigitNetV1 ani nie rozpoczynać kolejnej architektury bez
-nowego materiału walidacyjnego. IA7b pozostaje zamrozone; IA7a moze korzystac
-wyłącznie z operator seeds, hard constraints, safe lineage, advisory ReID oraz
-team/capture context.
-
-Po zamkniętym IA0 następne zadania są wykonywane dokładnie w kolejności:
-
-```text
-IA1
-→ IA2
-→ IA3
-→ IA4
-→ IA5
-→ IA6
-→ J8.4
-→ product-flow benchmark
-→ IA7a
-→ IA8
-→ IA9
-→ P1.23 revalidation
-→ P1.24
-```
-
-Każdy krok może być podzielony na mniejsze commity, ale nie wolno ominąć gate'u poprzedniej fazy.
-
----
-
-# 15. Definition of Done całego planu
-
-Plan jest zakończony dopiero, gdy normalny flow użytkownika wygląda w przybliżeniu tak:
-
-```text
-upload + roster
+upload + roster + pitch calibration
 → automatic analysis
-→ a few easy identity confirmations
-→ automatic seed propagation
-→ automatic appearance/jersey/ReID evidence fusion
-→ a small exception queue
-→ candidate stats validation
-→ explicit final approval
+→ kilka easy identity confirmations
+→ review istotnych subjectów/wyjątków
+→ finalize reviewed identity
+→ reviewed MP4 z imionami i Axx/Bxx fallback
+→ minimapa
+→ podstawowe statystyki z coverage
+→ opcjonalna korekta i tani rerender
 ```
 
-Docelowy użytkownik nie:
+Użytkownik nie:
 
 ```text
-labels hundreds of crops
-reviews every stable subject
-repeats the same player assignment
-calculates coordinates
-enters confidence values
-runs developer scripts manually
-```
-
-Końcowy sukces jest mierzony przez:
-
-```text
-minimal active operator time
-minimal manual decisions
-high safe resolved coverage
-0 known false assignments after review
-0 hidden structural/cross-team/parallel conflicts
-explainable provenance for every promoted assignment
+oznacza setek cropów
+wpisuje coordinates/confidence/internal IDs
+powtarza tego samego assignmentu w wielu ekranach
+uruchamia developer scripts ręcznie
+czeka na perfekcyjne ReID, aby zobaczyć wynik
 ```
 
 Najważniejsza zasada wykonawcza:
 
-> Najpierw budujemy niewielką liczbę bardzo mocnych human anchors i system, który potrafi je bezpiecznie skalować. Dopiero potem dokładamy jersey recognition jako dodatkowy dowód, łączymy źródła i redukujemy review do wyjątków. Production apply jest ostatnim krokiem, nie skrótem.
+> Najpierw dostarczamy wiarygodny reviewed output i realną wartość dla Corgi. Automatyzację rozwijamy tylko wtedy, gdy mierzalnie zmniejsza liczbę decyzji operatora bez zwiększania błędnych przypisań.
