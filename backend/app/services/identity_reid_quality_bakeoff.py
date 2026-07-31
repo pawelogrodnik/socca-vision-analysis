@@ -153,10 +153,7 @@ def collect_h1_crops(
                     bbox_xyxy=tuple(float(value) for value in bbox),
                     artifact=artifact,
                     selection_score=float(crop.get("selection_score") or 0.0),
-                    candidate_subject_id=str(
-                        crop.get("candidate_subject_id")
-                        or (player.get("candidate_subject_ids") or [""])[0]
-                    ),
+                    candidate_subject_id=str(crop.get("candidate_subject_id") or ""),
                     tracklet_id=str(crop.get("tracklet_id") or ""),
                     capture_domain=str(crop.get("capture_domain") or domain.get("capture_domain") or "H1"),
                     source_workspace="h1_workspace",

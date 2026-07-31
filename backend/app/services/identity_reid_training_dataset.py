@@ -91,6 +91,7 @@ def _record(crop: AuditCrop) -> dict[str, Any]:
         "source_match": crop.source_match,
         "frame": crop.frame,
         "source_frame": crop.source_frame,
+        "bbox_xyxy": list(crop.bbox_xyxy),
         "crop_path": str(crop.artifact),
         "crop_sha256": crop.crop_sha256,
         "perceptual_hash": perceptual_hash,
@@ -110,13 +111,23 @@ def _record(crop: AuditCrop) -> dict[str, Any]:
 def _mark_integrity(rows: list[dict[str, Any]], config: dict[str, Any]) -> None:
     owners: dict[str, set[str]] = defaultdict(set)
     subjects: dict[str, set[str]] = defaultdict(set)
+    tracklets: dict[str, set[str]] = defaultdict(set)
+    subject_teams: dict[str, set[str]] = defaultdict(set)
     hashes: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         owners[row["crop_sha256"]].add(row["player_id"])
-        subjects[row["candidate_subject_id"]].add(row["player_id"])
+        if row["candidate_subject_id"]:
+            subjects[row["candidate_subject_id"]].add(row["player_id"])
+            subject_teams[row["candidate_subject_id"]].add(row["team_label"])
+        if row["tracklet_id"]:
+            tracklets[row["tracklet_id"]].add(row["candidate_subject_id"])
         hashes[row["crop_sha256"]].append(row)
     for row in rows:
         reasons = row["rejection_reasons"]
+        if not row["candidate_subject_id"]:
+            reasons.append("ambiguous_candidate_subject")
+        if not row["tracklet_id"]:
+            reasons.append("missing_tracklet_provenance")
         aspect = row["width"] / max(row["height"], 1)
         if row["width"] < int(config["minimum_width"]) or row["height"] < int(config["minimum_height"]):
             reasons.append("extremely_small_crop")
@@ -126,8 +137,12 @@ def _mark_integrity(rows: list[dict[str, Any]], config: dict[str, Any]) -> None:
             reasons.append("extreme_blur")
         if len(owners[row["crop_sha256"]]) > 1:
             reasons.append("shared_crop_between_players")
-        if len(subjects[row["candidate_subject_id"]]) > 1:
+        if row["candidate_subject_id"] and len(subjects[row["candidate_subject_id"]]) > 1:
             reasons.append("shared_subject_between_players")
+        if row["candidate_subject_id"] and len(subject_teams[row["candidate_subject_id"]]) > 1:
+            reasons.append("subject_team_conflict")
+        if row["tracklet_id"] and len(tracklets[row["tracklet_id"]]) > 1:
+            reasons.append("shared_tracklet_between_subjects")
         if len(hashes[row["crop_sha256"]]) > 1:
             reasons.append("duplicate_crop")
     for index, first in enumerate(rows):
@@ -190,14 +205,16 @@ def _assign_group_safe_split(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for tracklet_id, values in ordered:
             for row in values:
                 assignments[row["sample_id"]] = "validation" if tracklet_id == validation_group else "train"
-    status = "TRAINING_SPLIT_LIMITED_BY_IDENTITY_DIVERSITY"
+    status = "WITHIN_MATCH_TRACKLET_HOLDOUT"
     return {
         "status": status,
         "method": "tracklet_grouped_temporally_separated_within_player",
-        "subject_safe": True,
+        "subject_safe": False,
         "tracklet_safe": True,
         "capture_domain_status": "single_H1_domain; no domain_holdout_available",
-        "limitations": limitations or ["one_candidate_subject_per_player; tracklet-grouped validation used"],
+        "subject_level_holdout_status": "SUBJECT_LEVEL_HOLDOUT_UNAVAILABLE",
+        "cross_match_holdout_status": "CROSS_MATCH_HOLDOUT_UNAVAILABLE",
+        "limitations": limitations or ["one_candidate_subject_per_player; within-match tracklet holdout used"],
         "assignments": assignments,
         "digest": canonical_digest(assignments),
     }
