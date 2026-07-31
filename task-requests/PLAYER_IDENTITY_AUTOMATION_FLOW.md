@@ -1,26 +1,24 @@
 # Player Identity Automation and Minimal-Review Flow
 
-## Status i relacja do istniejących dokumentów
+## 0. Status i relacja do innych dokumentów
+
+Ten dokument definiuje **product flow i operator UX** dla player identity.
+
+Obowiązuje razem z:
 
 ```text
-UZUPEŁNIENIE task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
-UZUPEŁNIENIE task-requests/JERSEY_NUMBER_IDENTITY_ANCHORS.md
-OBOWIĄZUJE RAZEM Z AGENTS.md — Mandatory human-audit and operator UX contract
-SHADOW/CANDIDATE FIRST
-PRODUCTION APPLY POZOSTAJE ZABLOKOWANY DO ODPOWIEDNIEGO MILESTONE'U
+task-requests/PLAYER_IDENTITY_DEVELOPMENT_PLAN.md
+task-requests/PLAYER_IDENTITY_STABILIZATION_ROADMAP.md
+AGENTS.md
 ```
 
-Istniejące roadmapy opisują osobno:
+Nadrzędna kolejność prac znajduje się w:
 
-- stabilizację trackletów i stable subjects;
-- whole-subject review;
-- candidate identity i bezpieczną promocję;
-- jersey-number evidence;
-- future roster-confirmed ReID.
+```text
+task-requests/PLAYER_IDENTITY_DEVELOPMENT_PLAN.md
+```
 
-Brakowało jednak jednego jawnego dokumentu opisującego, jak te elementy mają docelowo działać jako jeden produktowy flow i jak wraz z rozwojem automatyzacji ma maleć liczba ręcznych audytów.
-
-Ten dokument definiuje ten brakujący przepływ.
+Ten dokument nie odblokowuje production apply. Wszystkie automatyczne assignmenty pozostają candidate/shadow do jawnego controlled apply.
 
 ---
 
@@ -30,883 +28,702 @@ Docelowy produkt nie może wymagać od użytkownika:
 
 ```text
 setek ręcznie oznaczanych cropów
-przeglądania wszystkich stable subjects
+przeglądania każdego raw trackletu
 powtarzania tego samego assignmentu w kilku ekranach
-ręcznego wpisywania bbox coordinates
-ręcznego podawania confidence lub technicznych ID
-ręcznej anotacji numerów po każdym meczu
+ręcznego wpisywania coordinates/confidence/internal IDs
+ręcznej anotacji numerów koszulek po każdym meczu
+czekania na perfekcyjne ReID przed zobaczeniem wyniku
 ```
 
-Docelowy model pracy:
+Dopuszczalny model pracy dla pierwszego MVP:
 
 ```text
-system wykonuje maksymalnie dużo automatycznie
-→ użytkownik dostarcza kilka pewnych informacji, których model nie może znać
-→ resolver skaluje te informacje na cały mecz
-→ użytkownik przegląda wyłącznie konflikty i przypadki istotne dla statystyk
+kilka lub kilkadziesiąt high-value decyzji
+→ system skaluje je na wiele klatek
+→ użytkownik dostaje reviewed video i statystyki
 ```
 
-Najważniejsze KPI produktu:
+Manualna praca jest częścią produktu, jeżeli:
+
+- jest ograniczona;
+- jest zrozumiała bez wiedzy technicznej;
+- ma duży wpływ na coverage;
+- można łatwo zweryfikować wynik na finalnym wideo.
+
+Najważniejsze KPI:
 
 ```text
-minimalny active operator time
-minimalna liczba decyzji użytkownika
-maksymalna bezpieczna resolved coverage
-0 znanych false assignments po finalnym review
-0 ukrytych cross-team lub parallel-position conflicts
+active operator time
+manual decisions
+confirmed identity coverage
+unresolved coverage
+known false names after review
+ID switches/false merges visible in final output
+stats coverage
 ```
-
-Manualna praca jest dopuszczalna tylko wtedy, gdy:
-
-- dostarcza wysokowartościowy gold anchor;
-- rozwiązuje konflikt, którego automat nie może bezpiecznie rozstrzygnąć;
-- waliduje wynik mający istotny wpływ na statystyki;
-- rozwija model w osobnym, ograniczonym workflow badawczym.
 
 ---
 
-# 2. Docelowy end-to-end flow
+# 2. Aktualny end-to-end target
 
 ```text
-1. Upload i konfiguracja rosteru
+1. Upload wideo i rosteru
 2. Kalibracja boiska
 3. Player/ball detection i tracking
-4. Tracklet splitting, team candidates i stable subjects
-5. Automatyczny wybór kilku najlepszych klatek do Initial Identity Audit
-6. Szybki audit: kilka pewnych player/team observation seeds
-7. Seed-aware identity resolve bez ponownego YOLO
-8. Automatyczne zbudowanie match-specific appearance galleries
-9. Automatyczne jersey-number episodes i roster lookup
-10. Fusion wszystkich dowodów w candidate identity resolverze
-11. Opcjonalny krótki second-half re-anchor dla nowego capture domain
-12. Exception-only review
-13. Candidate player timeline i stats validation
-14. Jawne finalne zatwierdzenie/promotion w dozwolonym milestone
+4. Tracklet splitting, team candidates i candidate subjects
+5. Automatyczny wybór kilku łatwych klatek
+6. Initial Identity Audit — observation-level seeds
+7. Seed-aware candidate resolve i redukcja whole-subject review
+8. Whole-subject/exception review
+9. Finalize reviewed identity snapshot
+10. Generate reviewed video
+11. Opcjonalna minimapa/radar
+12. Reviewed timeline/stats/heatmaps z coverage
+13. Korekta wykryta na wideo i tani downstream rerender
+14. Dopiero później pełny benchmark i controlled production apply
 ```
 
-Ciężki etap detekcji ma zostać wykonany raz. Zmiany decyzji operatora mają przebudowywać wyłącznie downstream identity artifacts.
+Zmiana operator decision:
 
 ```text
-operator decision changed
-→ no full-match YOLO rerun
-→ rebuild candidate identity / recommendations / timeline / stats diff
+no full-match YOLO rerun
+no tracking rerun
+→ rebuild reviewed identity
+→ rebuild video/stats/minimap
 ```
 
 ---
 
-# 3. Dwa capture domains w obecnym materiale
+# 3. Jednostki tożsamości
 
-Aktualnie dostępny jest jeden fizyczny mecz, ale dwa istotnie różne capture domains:
-
-```text
-H1:
-- słońce
-- pierwszy kąt i nachylenie kamery
-- kamera po jednej stronie boiska
-- pierwszy background
-
-H2:
-- brak bezpośredniego słońca
-- inne nachylenie kamery
-- kamera po przeciwnej stronie boiska
-- inny background i appearance distribution
-```
-
-System i raporty mają jawnie rozróżniać:
+System rozróżnia:
 
 ```text
-distinct physical matches = 1
-distinct capture domains = 2
+detection_id
+track_id
+tracklet_id
+candidate_subject_id
+canonical_player_id
 ```
 
-Nie wolno przedstawiać tego jako cross-match generalization. Można natomiast walidować:
+## `track_id`
 
-```text
-within-match cross-capture-domain robustness
-H1 → H2
-H2 → H1
-```
+Lokalny identyfikator trackera. Może się zmienić po zgubieniu zawodnika. Nie jest `player_id`.
 
-Initial Identity Audit powinien głównie pokryć H1, a krótki re-anchor powinien dostarczyć kilka potwierdzonych tożsamości w H2.
+## `tracklet_id`
+
+Ciągła obserwacja jednej osoby w ograniczonym czasie.
+
+## `candidate_subject_id`
+
+Hipoteza grupująca tracklety. Może być błędna, conflicted lub unresolved.
+
+## `canonical_player_id`
+
+Trwały identyfikator rosteru. Może pojawić się w finalnym reviewed snapshot tylko po spełnieniu kontraktu potwierdzenia.
 
 ---
 
-# 4. Initial Identity Audit — szybki gold-anchor step
+# 4. Initial Identity Audit
 
 ## 4.1. Cel
 
-Initial Identity Audit nie służy do ręcznego opisania całego meczu. Służy do dostarczenia niewielkiej liczby bardzo pewnych observation-level identity seeds.
+Initial Identity Audit dostarcza niewielką liczbę bardzo pewnych observation-level anchors.
 
 ```text
-kilka pewnych observation seeds
-→ wiele automatycznie rozwiązanych trackletów i subjects
+kilka pewnych obserwacji
+→ wiele downstream suggestions/resolved fragments
 ```
 
-## 4.2. Budżet interakcji
-
-Domyślnie:
+Seed oznacza:
 
 ```text
-5–8 automatycznie wybranych klatek
-maksymalnie 10 klatek bez jawnego wyboru użytkownika
-około 8–12 pewnych assignmentów jako target, nie obowiązek
-wcześniejszy stop, gdy brak kolejnego łatwego/high-value przypadku
-```
-
-Nie wolno przekształcić tego etapu w obowiązkowe oznaczanie dziesiątek lub setek cropów.
-
-## 4.3. UI
-
-Każda klatka pokazuje pełny kontekst meczu z klikalnymi wykrytymi bboxami.
-
-Po kliknięciu bboxa dostępne są proste akcje:
-
-```text
-konkretny zawodnik z rosteru Team A
-Team A — zawodnik nieznany
-Team B — zawodnik nieznany
-sędzia
-fałszywa detekcja
-pomiń / nie wiem
-```
-
-Wybranie zawodnika z rosteru automatycznie ustawia:
-
-```text
-player_id
-team_id
-roster jersey number, jeżeli istnieje
-source = operator_initial_identity_audit
-certainty = certain
-frame / timestamp / bbox / tracklet / subject provenance
-```
-
-Użytkownik nie podaje confidence i nie wpisuje współrzędnych.
-
-## 4.4. Team correction
-
-Przypisanie:
-
-```text
-Roman #6 · Team A
-```
-
-na bboxie automatycznie sklasyfikowanym jako Team B oznacza jednocześnie:
-
-```text
-operator-confirmed player = Roman
-operator-confirmed team = A
-automatic team B rejected for this observation
-team contradiction recorded
-```
-
-Nie wolno wymagać osobnego formularza do zmiany teamu.
-
-## 4.5. Jednostka seeda
-
-Seed początkowo oznacza:
-
-```text
-na tej konkretnej obserwacji to na pewno Roman
+na tej obserwacji to na pewno Paweł
 ```
 
 Nie oznacza automatycznie:
 
 ```text
-cały raw tracker_id przez cały mecz to Roman
+cały tracker/subject to Paweł
 ```
 
-Rozszerzenie seeda musi przejść przez:
+## 4.2. Budżet
+
+Domyślnie:
 
 ```text
-local tracklet continuity
-lineage freshness
+5–8 wybranych klatek
+maksymalnie 10 bez jawnego rozszerzenia
+około 8–12 aktywnych decyzji jako target
+możliwość wcześniejszego zakończenia
+```
+
+## 4.3. Akcje
+
+```text
+konkretny gracz z rosteru Team A
+Team A — unknown
+Team B — unknown
+referee
+false detection
+skip / not sure
+```
+
+Operator nie podaje confidence ani technicznych IDs.
+
+## 4.4. Automatyczny zapis
+
+Aplikacja zapisuje:
+
+```text
+frame/timestamp
+bbox
+tracklet/subject provenance
+player/team IDs
+roster number
+capture domain
+source digests
+schema/algorithm version
+```
+
+---
+
+# 5. Seed-aware resolve i review reduction
+
+Operator seed może propagować się tylko przez:
+
+```text
+exact observation lineage
+safe local continuity
 team consistency
 temporal overlap constraints
-parallel-position constraints
+parallel same-player constraints
 structural blockers
+fresh source digests
+```
+
+Po bezpiecznej propagacji:
+
+- rozwiązane karty znikają z domyślnej kolejki;
+- conflicts pozostają widoczne;
+- nie wolno ponownie wymagać tego samego assignmentu bez konkretnego konfliktu;
+- unresolved pozostaje legalne.
+
+Wymagany raport:
+
+```text
+review_cards_before
+review_cards_after
+subjects_resolved
+tracklets_resolved
+frames_resolved
+manual decisions before/after
+active operator time
+conflicts
+known false assignments
 ```
 
 ---
 
-# 5. Automatyczny wybór klatek
+# 6. Reviewed identity snapshot
 
-Klatki mają być dobierane pod maksymalny expected information gain przy minimalnym koszcie użytkownika.
-
-Pozytywne sygnały:
+Po zakończeniu review aplikacja tworzy jeden kanoniczny artifact:
 
 ```text
-dużo widocznych zawodników
-nowi, jeszcze niezakotwiczeni zawodnicy
-wysokiej jakości detekcje
-duże bboxy
-niski overlap
-ciągłość trackletu przed i po klatce
-mało edge-cut detections
-niski motion blur
-różnorodność czasowa i capture-domain diversity
+reviewed_identity_snapshot.json
 ```
 
-Negatywne sygnały:
+Jest to jedyne finalne candidate/reviewed źródło tożsamości dla eksportów i lokalnych statystyk.
+
+## 6.1. Źródła
 
 ```text
-duży overlap zawodników
-podejrzany ID switch
-wielu graczy w jednym bboxie
-bardzo krótki tracklet
-niemal identyczna klatka już pokazana
-mała szansa na nową identity informację
+Initial Identity Audit decisions
+whole-subject review decisions
+manual remediation
+safe resolver proposals
+team/temporal/structural constraints
 ```
 
-Każda kolejna klatka powinna idealnie:
-
-- pokazać nowego startera;
-- dostarczyć lepszy widok wcześniej niepewnego zawodnika;
-- potwierdzić H2 appearance dla zawodnika zakotwiczonego w H1.
-
----
-
-# 6. Wspólny identity evidence graph
-
-Wszystkie źródła informacji mają trafiać do jednego explainable resolvera.
-
-## 6.1. Źródła dowodów
+## 6.2. Statusy
 
 ```text
-operator-confirmed observation seed
-safe local tracklet continuity
-accepted stable-subject lineage
-jersey-number visibility episode
-same-team unique roster lookup
-match-specific appearance/ReID similarity
-automatic team classification
-role evidence
-motion / time-gap / spatial continuity
-capture-domain information
+confirmed
+probable
+unresolved
+conflicted
+blocked
 ```
 
-## 6.2. Priorytet dowodów
-
-Rekomendowana hierarchia:
+## 6.3. Display contract
 
 ```text
-1. operator-confirmed observation
-2. hard structural and temporal safety constraints
-3. safe tracklet continuity
-4. accepted subject lineage
-5. trusted jersey-number episode + same-team unique roster lookup
-6. roster-confirmed match-specific ReID
-7. automatic team/role evidence
-8. motion and positional context
+confirmed
+→ roster name
+
+probable/unresolved/conflicted
+→ stable Axx/Bxx label
+
+blocked/invalid
+→ Unknown albo brak renderowania
 ```
 
-Operator seed jest najsilniejszym pozytywnym dowodem dla wskazanej obserwacji, ale nie może omijać twardych konfliktów dla propagacji na inne fragmenty.
+Imię nie może pochodzić wyłącznie z niesprawdzonego ReID top-1.
 
-## 6.3. Fusion example
-
-```text
-operator seed: Roman #6 Team A on frame 1200
-+ safe tracklet continuity
-+ jersey episode reads #6
-+ roster says Team A #6 = Roman
-+ appearance matches approved Roman gallery
-+ no temporal/parallel conflict
-→ high-confidence Roman candidate
-```
-
-Konflikt example:
+## 6.4. Stats contract
 
 ```text
-operator seed: Roman #6
-jersey episode: #15
-→ do not silently choose one
-→ create explainable conflict review item
+confirmed
+→ eligible for player-specific stats
+
+probable/unresolved/conflicted
+→ excluded from named player stats
+→ może zasilać team-level stats, jeśli team jest pewny
 ```
 
 ---
 
-# 7. Match-specific appearance/ReID gallery
+# 7. Reviewed video
 
-Po operator-confirmed seed system ma automatycznie wybierać reliable crops z bezpiecznych fragmentów.
+Named reviewed MP4 jest częścią najbliższego MVP.
 
-```text
-operator-confirmed Roman observation
-→ safe local tracklet segment
-→ automatic reliable-crop selection
-→ Roman H1 appearance gallery
-```
+## 7.1. Trigger
 
-Po H2 re-anchor:
+Po review użytkownik ma przycisk:
 
 ```text
-Roman confirmed in H2
-→ Roman H2 appearance gallery
-→ cross-domain match-specific prototype
+Generate reviewed video
 ```
 
-Użytkownik nie oznacza ręcznie każdego appearance cropa.
-
-System sam wybiera próbki reprezentujące, o ile są dostępne:
+## 7.2. Overlay
 
 ```text
-front / back / side
-near / far
-sun / shade
-H1 / H2
-low occlusion
-valid visual content
+bbox
+team color
+confirmed name
+Axx/Bxx fallback
+conflict/review marker
+match time
+optional ball marker
+optional minimap
 ```
 
-Tylko automatycznie wybrane reliable crops mogą zasilać roster-confirmed ReID prototype.
+## 7.3. Safety
 
-ReID na tym etapie służy do:
+- imię tylko dla `confirmed`;
+- probable ReID nie może być pokazane jako imię;
+- fallback ID jest stabilny w obrębie eksportu;
+- false detections nie są traktowane jako gracze;
+- output zapisuje snapshot digest;
+- rerender jest downstream-only.
+
+## 7.4. QA role
+
+Reviewed video służy do wykrywania:
 
 ```text
-ranking unresolved fragments
-candidate suggestions
-cross-half matching
+wrong confirmed player
+ID switch
+false merge
+false split
+bbox przypisanego do niewłaściwej osoby
+zbyt agresywnej propagacji
 ```
 
-Nie może samodzielnie wykonywać nieodwracalnego cross-subject merge.
+Korekta wykryta na wideo musi prowadzić do źródłowej karty/trackletu, a następnie do taniego rerenderu.
 
 ---
 
-# 8. Jersey recognition w docelowym flow
+# 8. Minimap/radar
 
-## 8.1. Rola jersey recognition
+Minimapa wykorzystuje istniejące mapowanie pozycji na boisko.
 
-Jersey recognition nie jest osobnym końcowym produktem ani jedyną drogą do identity.
-
-Ma działać jako dodatkowy high-value evidence source:
+## 8.1. Pierwsza wersja
 
 ```text
-team + jersey number
-→ same-team roster lookup
-→ identity candidate
-→ confirmation or conflict against operator seed / lineage / ReID
+Team A markers
+Team B markers
+ball marker, jeśli dostępny
+confirmed initials/number opcjonalnie
+unresolved jako anonimowe team markers
 ```
 
-Nawet umiarkowany recall może być użyteczny, jeżeli precision pozostaje bardzo wysoka.
+## 8.2. Zasady
 
-## 8.2. Po Initial Identity Audit
-
-Przypisanie:
-
-```text
-Roman #6
-```
-
-zapewnia automatycznie label rosterowy numeru `6`. System może następnie szukać czytelnych jersey panels na bezpiecznych fragmentach Romana.
-
-Ważne:
-
-```text
-identity label Roman #6
-≠
-każdy crop Romana jest poprawnym jersey training sample
-```
-
-Candidate jersey panel jest użyteczny dopiero, gdy automat oceni m.in.:
-
-```text
-plecy/panel widoczne
-wystarczająca wielkość
-niski overlap/occlusion
-poprawny panel crop
-wystarczająca czytelność
-```
-
-## 8.3. Zestawienie dowodów w review
-
-Po uruchomieniu użytecznego jersey recognizera review card może pokazać jedną spójną sugestię:
-
-```text
-Suggestion: Roman #6
-Evidence:
-- operator seed in H1
-- jersey #6 episode
-- Team A roster uniqueness
-- appearance match in H2
-- safe lineage
-```
-
-Nie tworzyć osobnych obowiązkowych audytów dla każdego evidence source.
+- nie wymaga ReID;
+- nie wymyśla pozycji przy braku wiarygodnej obserwacji;
+- jawnie respektuje clamp/outside-play status;
+- stosuje lekkie wygładzanie, bez agresywnej interpolacji;
+- korzysta z tej samej osi/orientacji co heatmapy.
 
 ---
 
-# 9. Polityka anotowania cropów
+# 9. Reviewed stats i coverage
 
-## 9.1. Product/user workflow
+Każda statystyka indywidualna musi mieć jawne coverage/readiness.
 
-W normalnym flow meczu użytkownik nie powinien:
+## 9.1. Pierwszy zakres
 
 ```text
-oznaczać setek appearance crops
-oznaczać setek jersey panels
-wpisywać bbox coordinates
-oceniać blur/perspective/IoU/confidence
+playing/detected time
+heatmap
+average position
+observed distance
+team shape
+team possession, jeśli ball pipeline jest gotowy
+player possession/contact/pass tylko dla confirmed windows
 ```
 
-Initial Identity Audit dostarcza kilka gold identity labels. Reszta crop selection ma być automatyczna.
+## 9.2. Coverage
 
-## 9.2. Research/admin workflow
-
-Obecny J8.3 panel dataset closeout nadal ma sens jako ograniczona, jednorazowa praca potrzebna do uruchomienia pierwszego PanelDigitNet experiment.
-
-To jest osobny workflow:
+Raportować co najmniej:
 
 ```text
-curated research subset
-→ panel montage
-→ minimal human approval
-→ model experiment
+confirmed identity coverage
+unresolved identity coverage
+heatmap coverage
+observed-distance coverage
+possession attribution coverage
+pass attribution coverage
 ```
 
-Nie jest częścią obowiązkowego per-match user flow.
+Nie wypełniać luk błędnym assignmentem tylko po to, aby wynik wyglądał kompletnie.
 
-## 9.3. Docelowe active learning
-
-Po uruchomieniu modelu system powinien automatycznie zbierać candidate samples:
+## 9.3. Readiness
 
 ```text
-operator-confirmed identity
-+ roster number
-+ safe tracklet lineage
-+ automatically selected readable panel
-→ candidate labeled sample
+ready
+ready_with_review
+experimental
+not_available
 ```
 
-Człowiek ma oglądać wyłącznie mały, zróżnicowany zestaw:
+Brak ball artifacts nie może obniżać gotowości identity/heatmap.
+
+---
+
+# 10. Evidence graph i resolver
+
+Wszystkie automatyczne źródła trafiają do jednego explainable resolvera.
+
+## 10.1. Evidence
 
 ```text
-model conflicts
-new visual conditions
-uncertain but high-value panels
-false-positive candidates
-rare digits/numbers
+operator-confirmed observation
+team constraints
+safe continuity
+accepted subject lineage
+jersey episode, jeśli trusted
+match-specific ReID
+motion/spatial context
+capture domain
 ```
 
-Nie pokazywać setek redundantnych sąsiednich klatek z jednego visibility episode.
-
-## 9.4. Kiedy ręczna anotacja przestaje być potrzebna
-
-Ręczny panel-labeling można ograniczyć lub wyłączyć z bieżącego rozwoju, gdy:
+## 10.2. Priorytet
 
 ```text
-panel recognizer przechodzi defined precision/specificity gates
-real fixtures są poprawnie rozpoznawane
-plain-shirt false confirmed reads = 0 w audytowanym zbiorze
-operator-confirmed identities dostarczają wystarczające auto-labeled samples
-kolejne ręczne sample nie poprawiają worst-domain metrics
+1. exact operator confirmation
+2. hard safety constraints
+3. safe continuity/lineage
+4. trusted jersey + unique same-team roster lookup
+5. gated match-specific ReID
+6. weaker context
+```
+
+## 10.3. Rola resolvera
+
+Resolver generuje:
+
+```text
+suggestions
+rankings
+explanations
+conflicts
+abstentions
+```
+
+Resolver nie jest drugim finalnym źródłem prawdy obok reviewed snapshotu.
+
+## 10.4. Conflicts
+
+Przykład:
+
+```text
+operator: Paweł
+ReID: Bartek
+```
+
+Wynik:
+
+```text
+operator retained
+conflict recorded
+manual review if propagation is affected
+```
+
+Nie silent override.
+
+---
+
+# 11. ReID policy
+
+ReID jest advisory evidence.
+
+## 11.1. Dozwolone użycie
+
+```text
+ranking unresolved tracklets
+suggestion in review
+cross-capture comparison
+operator workload reduction
+```
+
+## 11.2. Niedozwolone użycie
+
+```text
+automatic confirmed name after failed gate
+irreversible cross-subject merge
+name on final video without confirmation
+training/model selection on H2 holdout
+```
+
+## 11.3. Product metric
+
+Najważniejsze pytanie:
+
+```text
+ile decyzji operatora ReID oszczędziło
+bez zwiększenia false merges/splits?
+```
+
+Model nie musi być perfekcyjny. Musi być praktycznie użyteczny.
+
+## 11.4. Stop rule
+
+Po jednym końcowym bounded eksperymencie:
+
+```text
+wyraźny zysk
+→ shadow suggestions
+
+brak zysku
+→ freeze ReID
+→ rozwój produktu trwa dalej
 ```
 
 ---
 
-# 10. Second-half re-anchor
+# 12. Jersey recognition policy
 
-Ponieważ H2 ma inny capture domain, system może pokazać 2–3 dodatkowe łatwe klatki.
+Jersey recognition jest opcjonalnym high-precision evidence source.
 
-Nie jest to pełny drugi lineup audit.
+Nie jest warunkiem reviewed MVP.
 
-UI powinno głównie pokazywać gotowe sugestie:
+Per-match user flow nie wymaga ręcznej anotacji paneli.
 
-```text
-Roman #6
-[Potwierdź] [Inny zawodnik] [Team B] [Pomiń]
-```
+Research/admin workflow może używać ograniczonych curated subsets, ale tylko gdy istnieje konkretny cel diagnostyczny.
 
-Cel:
+Jersey evidence może zostać użyte, gdy:
 
 ```text
-3–5 zawodników potwierdzonych w H2
-→ cross-domain appearance prototypes
-→ mocniejsze H1 ↔ H2 matching
+panel jest czytelny
+precision/specificity spełniają gate
+same-team roster number jest jednoznaczny
+brak konfliktu operatora
 ```
 
-Gdy H1 evidence już jednoznacznie rozwiązuje H2 bez konfliktów, re-anchor może zostać skrócony albo pominięty.
+Przy konflikcie wynik to `needs_review`, nie automatyczny wybór.
 
 ---
 
-# 11. Review po automatycznym resolve
+# 13. Exception-only review
 
-## 11.1. Whole-subject review zmienia rolę
+Po wdrożeniu reviewed output normalny review ma ewoluować w stronę wyjątków.
 
-Obecny whole-subject review ma ewoluować z:
-
-```text
-review every card
-```
-
-w:
-
-```text
-exception-only review
-```
-
-Po seed-aware resolve zwykła kolejka nie powinna ponownie pokazywać bezpiecznie rozwiązanych subjectów.
-
-## 11.2. Co trafia do review
-
-```text
-operator seed vs jersey conflict
-operator/team contradiction wymagający szerszej propagacji
-parallel distant same-player candidate
-cross-team candidate link
-structural-conflict subject
-possible ID switch boundary
-long unresolved interval
-possible substitution/new player
-low-confidence fragment o dużym wpływie na stats
-H1/H2 appearance conflict
-```
-
-## 11.3. Priorytetyzacja
-
-Najpierw:
+Priorytetowe przypadki:
 
 ```text
 hard safety conflicts
+possible ID switch
+long unresolved interval
 large stats impact
-long duration
-ball/event involvement, jeśli dostępne
-substitution boundaries
+possible substitution/new player
+operator/ReID conflict
+cross-team proposal
+parallel same-player proposal
 ```
 
-Na końcu lub poza domyślną kolejką:
+Niskoprioritetowe:
 
 ```text
 krótkie noise fragments
 low-impact unresolved detections
-redundant crops z tego samego episode
+redundant crops jednego episode
 ```
 
-## 11.4. Brak powtarzania pracy
-
-Assignment wykonany w Initial Identity Audit musi zasilać późniejsze rekomendacje i resolved state.
-
-Nie wolno wymagać:
-
-```text
-Roman assigned in Initial Audit
-→ Roman assigned again in whole-subject review
-→ Roman assigned again in jersey review
-```
-
-Jeden operator seed może być ponownie pokazany tylko wtedy, gdy istnieje konkretny explainable conflict.
+Assignment wykonany w Initial Audit nie może być powtarzany bez konkretnego konfliktu.
 
 ---
 
-# 12. Progressive reduction of manual work
+# 14. Adaptive audit
 
-## Etap A — szybki human seeding
+Adaptive audit jest późniejszym etapem.
 
-```text
-5–8 klatek
-8–12 pewnych assignmentów
-krótki H2 re-anchor
-exception review
-```
-
-## Etap B — assisted confirmation
-
-Po stabilnym jersey/ReID:
+System może wybierać kolejną klatkę tylko na podstawie zmierzonego expected information gain:
 
 ```text
-system sugeruje nazwę na klatce
-użytkownik głównie potwierdza
-mniej ręcznego wyszukiwania w rosterze
+nowy zawodnik
+coverage gain
+rozwiązanie długiego unresolved interval
+rozstrzygnięcie wysokiego stats impact
+cross-domain re-anchor
 ```
 
-## Etap C — adaptive audit
-
-```text
-system ocenia, których zawodników nadal potrzebuje
-pokazuje tylko klatki maksymalizujące nową informację
-kończy audit automatycznie po osiągnięciu wystarczającego safe coverage
-```
-
-## Etap D — exception-only product
-
-```text
-większość identity rozwiązana automatycznie
-użytkownik widzi tylko kilka konfliktów lub nowych zawodników
-```
-
-## Etap E — near-automatic target
-
-```text
-roster + historical approved gallery, jeżeli bezpieczna
-+ jersey recognition
-+ match-specific re-anchor
-+ safe identity optimizer
-→ użytkownik zatwierdza finalny wynik i nieliczne wyjątki
-```
-
-Cross-match gallery pozostaje późniejszą sugestią i nie może być wdrażana, dopóki single-match gallery jest podatna na false merges.
+Nie optymalizować adaptive audit przed zebraniem telemetry z kilku realnych reviewed exports.
 
 ---
 
-# 13. Zmiany zawodników
+# 15. Telemetry i KPI
 
-Initial Identity Audit skupia się na starterach.
-
-Nie wymagać ręcznej stop-klatki przy każdej zmianie.
-
-Docelowy flow:
-
-```text
-nowy unresolved player-like subject
-+ brak bezpiecznego dopasowania do aktywnego startera
-+ czas/pozycja wskazują możliwą zmianę
-→ substitution/new-player review candidate
-```
-
-Użytkownik wybiera dopiero w review:
-
-```text
-nowy zawodnik z rosteru
-opcjonalnie: zastąpił zawodnika X
-nie wiem / unresolved
-```
-
-Do czasu implementacji niezawodnego substitution logic nowy zawodnik nie może zostać agresywnie przypisany do istniejącego startera tylko na podstawie podobnego appearance.
-
----
-
-# 14. Artefakty i provenance
-
-Proponowane rozdzielenie:
-
-```text
-identity_initial_audit.json
-identity_initial_audit_decisions.json
-identity_operator_seeds.json
-identity_seeded_candidate_assignments.json
-identity_evidence_fusion_report.json
-identity_exception_review.json
-identity_review_reduction_report.json
-```
-
-Każdy propagated assignment ma wskazywać:
-
-```text
-source operator seed
-source frame and bbox
-tracklet path
-subject/fragment lineage
-jersey episodes used
-appearance prototype version
-team/roster constraints
-accepted and rejected evidence
-blockers
-algorithm version and digests
-```
-
-UI ma pokazywać prosty explanation summary. Pełne szczegóły pozostają w developer/debug view i JSON artifacts.
-
----
-
-# 15. Telemetry i KPI automatyzacji
-
-Minimalne metryki Initial Audit:
+## Operator
 
 ```text
 audit_frames_shown
-audit_crops_clicked
 audit_actions
 active_operator_seconds
 unique_players_seeded
-H1_players_seeded
-H2_players_reanchored
-team_assignments_corrected
-false_detections_marked
+whole_subject_decisions
+exception_decisions
+video_driven_corrections
 ```
 
-Efekt downstream:
+## Identity
 
 ```text
-tracklets_resolved_after_seeding
-subjects_resolved_after_seeding
-frames_resolved_after_seeding
-review_cards_before_seeding
-review_cards_after_seeding
-manual_decisions_before_seeding estimate
-manual_decisions_after_seeding
-unresolved_time_coverage
-conflicts_created
-false_assignments_found
+confirmed tracklets
+probable tracklets
+unresolved tracklets
+conflicted tracklets
+confirmed time coverage
+unresolved time coverage
+ID switches
+false merges
+false splits
+cross-team violations
 ```
 
-Jersey/ReID contribution:
+## Automation contribution
 
 ```text
-subjects_resolved_by_operator_seed_only
-subjects_resolved_with_jersey_support
-subjects_resolved_with_reid_support
-subjects_resolved_with_combined_evidence
-jersey_conflicts
-reid_conflicts
+resolved by operator seed
+resolved with lineage/continuity
+suggested by ReID
+ReID suggestions accepted/rejected
+jersey-supported assignments
+manual decisions saved
 ```
 
-Success nie oznacza tylko utworzenia nowego UI.
-
-Feature musi wykazać co najmniej jeden zysk bez pogorszenia bezpieczeństwa:
+## Product output
 
 ```text
-fewer later review cards
-fewer later manual decisions
-lower active review time
-higher safe resolved coverage
-better H1 ↔ H2 continuity
+reviewed video generation time
+rerender time
+named-label errors found
+minimap coverage
+stats coverage per feature
 ```
 
 ---
 
-# 16. Safety i activation gates
+# 16. Scope najbliższego MVP
 
-Automatyczny candidate assignment może być utworzony tylko przy braku:
+W scope:
 
 ```text
-cross-team conflict
-parallel distant same-player observations
-stale lineage
-structural blocker
-same observation assigned to multiple players
-trusted jersey contradiction without review
-operator-seed contradiction
+Initial Identity Audit
+whole-subject/exception review
+reviewed identity snapshot
+reviewed video
+confirmed name vs Axx/Bxx policy
+minimapa/radar
+reviewed stats with coverage
+cheap correction/rerender
 ```
 
-Przy konflikcie wynik:
+Poza najbliższym MVP:
 
 ```text
-needs_review
-```
-
-Nie:
-
-```text
-aggressive automatic merge
-```
-
-Produkcja pozostaje niezmieniona do jawnego controlled apply.
-
----
-
-# 17. Scope MVP
-
-Najbliższy MVP obejmuje:
-
-```text
-automatyczny wybór 5–8 klatek
-klikalne bboxy
-roster/team/referee/false/skip actions
-observation-level operator seeds
-team contradiction correction
-seed-aware downstream re-resolve bez YOLO
-review-card reduction report
-opcjonalny 2–3 frame H2 re-anchor
-```
-
-Poza MVP:
-
-```text
-named MP4 export
-pełny timeline editor
-manualne rysowanie wszystkich missed detections
-automatyczne retraining podczas audytu
-cross-match persistent gallery
-pełna automatyczna obsługa zmian
 production auto-apply
+persistent cross-match gallery
+face recognition
+pełny timeline editor
+pełna automatyczna obsługa zmian
+mandatory jersey workflow
+ciągłe retraining podczas review
 ```
 
 ---
 
-# 18. Kolejność implementacji
+# 17. Acceptance criteria
 
-```text
-IA0  Contracts and frozen-artifact frame selection prototype
-IA1  Initial Identity Audit read-only UI
-IA2  Atomic operator-seed store and telemetry
-IA3  Seed-aware candidate identity re-resolve
-IA4  Existing whole-subject review integration and card reduction
-IA5  H2 capture-domain re-anchor
-IA6  Automatic approved appearance gallery
-IA7a Core evidence fusion report
-IA7b Optional jersey evidence (frozen until new independent capture domain)
-IA8  Exception-only review queue
-IA9  Adaptive audit and manual-work reduction benchmark
-```
+## Review
 
-IA7a nie czeka na jersey recognizer i korzysta z operator seeds, hard
-constraints, safe lineage, appearance/ReID advisory oraz team/capture context.
-IA7b jest opcjonalne i FROZEN_UNTIL_NEW_INDEPENDENT_CAPTURE_DOMAIN. IA0–IA6
-nie musza czekac na J8.4.
+- [x] bounded Initial Audit istnieje;
+- [x] skip/not sure jest dostępne;
+- [x] operator nie wpisuje technicznych danych;
+- [x] seed-aware review reduction istnieje;
+- [ ] końcowy review tworzy jeden canonical snapshot;
+- [ ] conflict/unresolved pozostają jawne.
 
----
+## Reviewed output
 
-# 19. Acceptance criteria docelowego flow
+- [ ] przycisk `Generate reviewed video`;
+- [ ] imiona tylko dla confirmed;
+- [ ] Axx/Bxx fallback dla pozostałych;
+- [ ] snapshot digest w video manifest;
+- [ ] minimapa jako opcjonalny overlay;
+- [ ] korekta i downstream-only rerender.
 
-> Status tej checklisty jest historyczną specyfikacją docelowego UX. Bieżące
-> rozróżnienie `implementation complete`, `automated validation complete`,
-> `ready for operator`, `operator benchmark passed` i `ready for IA7a` jest
-> utrzymywane wyłącznie w
-> `task-requests/PLAYER_IDENTITY_DEVELOPMENT_PLAN.md`.
+## Stats
 
-## Initial Audit
+- [x] candidate stats/heatmap foundations istnieją;
+- [ ] reviewed snapshot jest ich kanonicznym wejściem;
+- [ ] per-feature coverage/readiness jest widoczne;
+- [ ] unresolved nie zasila named player stats.
 
-- [ ] domyślnie maksymalnie 5–8 klatek;
-- [ ] brak obowiązkowego oznaczenia wszystkich bboxów;
-- [ ] `Pomiń / Nie wiem` zawsze dostępne;
-- [ ] brak raw coordinates i numeric confidence w operator UI;
-- [ ] assignment gracza automatycznie ustawia team i roster number;
-- [ ] błędny automatic team assignment można poprawić jednym wyborem gracza;
-- [ ] każda akcja zapisuje observation-level provenance;
-- [ ] audit można zakończyć wcześniej.
+## Automation
 
-## Downstream integration
+- [x] appearance/ReID advisory infrastructure istnieje;
+- [x] resolver shadow contract istnieje;
+- [ ] realny bounded ReID result jest zapisany;
+- [ ] ReID contribution jest mierzona liczbą oszczędzonych decyzji;
+- [ ] resolver suggestions są częścią wspólnego review, nie osobnym finałem.
 
-- [ ] brak full-match YOLO rerun po operator seed;
-- [ ] seeded identity zasila subject recommendations;
-- [ ] bezpiecznie rozwiązane karty nie wymagają ponownego assignmentu;
-- [ ] conflicts pozostają jawne;
-- [ ] production artifacts pozostają niezmienione;
-- [ ] raport pokazuje review cards przed i po seeding.
+## Safety
 
-## Jersey i crop automation
-
-- [ ] operator seed może zasilać automatic appearance gallery;
-- [ ] IA7a zestawia operator/team/lineage/ReID advisory bez jersey evidence;
-- [ ] IA7b doklada jersey evidence tylko gdy jest dostepne po nowym capture domain;
-- [ ] identity label nie jest automatycznie traktowany jako readable jersey sample;
-- [ ] per-match user flow nie wymaga ręcznego labelowania jersey panels;
-- [ ] research annotations pozostają osobnym curated workflow;
-- [ ] active learning deduplikuje sąsiednie klatki jednego episode.
-
-## Target minimal-review state
-
-- [ ] whole-subject review działa jako exception queue;
-- [ ] operator nie powtarza tego samego assignmentu w wielu ekranach;
-- [ ] manual work jest mierzona i maleje wraz z kolejnymi etapami;
-- [ ] automatyzacja nie obniża hard safety gates;
-- [ ] finalny wynik pozostaje explainable i audytowalny.
+- [ ] 0 cross-team confirmed assignments;
+- [ ] 0 ukrytych parallel same-player conflicts;
+- [ ] 0 znanych błędnych imion po finalnym review;
+- [ ] production identity pozostaje niezmienione;
+- [ ] rerender nie uruchamia YOLO/tracking.
 
 ---
 
-# 20. Instrukcja dla następnego agenta
+# 18. Instrukcja dla agenta
 
-Przed implementacją:
+Przed każdym identity milestone:
 
 1. przeczytaj `AGENTS.md`;
-2. przeczytaj `PLAYER_IDENTITY_STABILIZATION_ROADMAP.md`;
-3. przeczytaj `JERSEY_NUMBER_IDENTITY_ANCHORS.md`;
-4. przeanalizuj aktualny whole-subject review flow i artifacts;
-5. nie twórz kolejnego niezależnego audytu wymagającego powtórzenia istniejącej pracy;
-6. nie uruchamiaj ponownie YOLO dla zmian downstream identity;
-7. nie wymagaj od użytkownika coordinate/confidence/internal-ID inputs;
-8. zacznij od IA0/IA1 i frozen artifacts;
-9. zakończ pierwszy cykl działającym krótkim UI na kilku klatkach, nie kompletnym autonomicznym resolverem;
-10. raportuj realny operator interaction count i przewidywany wpływ na późniejsze review.
+2. przeczytaj `PLAYER_IDENTITY_DEVELOPMENT_PLAN.md`;
+3. sprawdź aktualny HEAD i istniejące artifacts;
+4. ustal, który pojedynczy product milestone realizujesz;
+5. nie dodawaj nowego równoległego resolvera;
+6. nie uruchamiaj YOLO/tracking dla downstream identity zmian;
+7. zakończ realnym artifactem/demo;
+8. raportuj operator impact i known limitations;
+9. nie promuj do produkcji bez controlled apply milestone;
+10. nie pozwól, aby research opóźnił reviewed MVP.
 
 Najważniejsza reguła:
 
-> Użytkownik ma powiedzieć wyłącznie to, co wie jako człowiek znający mecz i zawodników. Aplikacja ma samodzielnie wykonać całą pracę techniczną i wykorzystać tę wiedzę możliwie szeroko, bez bezpiecznego omijania konfliktów.
+> System ma wykorzystać niewielką liczbę pewnych decyzji operatora do stworzenia wiarygodnego, łatwego do zweryfikowania wideo i statystyk. Niepewność ma być widoczna jako Axx/Bxx lub unresolved, a nie ukrywana pod błędnym imieniem.
