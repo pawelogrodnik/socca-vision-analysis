@@ -62,7 +62,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         documents["subjects"],
         documents["slot_review"],
     )
-    reviews = _review_decisions(documents["review_decisions"])
+    reviews = _review_decisions(documents["review_decisions"], documents["slot_review"])
     seeded_document, seeded_freshness = load_fresh_seeded_assignments(match_path)
     seeded = _safe_seeded_assignments(seeded_document or {}) if seeded_freshness.get("status") == "fresh" else {}
     observation_overrides = build_observation_overrides(
@@ -83,15 +83,17 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             decision, accepted_seed
         )
         manual_action = stable_row.get("manual_action")
-        if manual_action in {"referee", "false_detection", "team_unknown", "unresolved"}:
+        if manual_action in {"assign_team", "referee", "false_detection", "team_unknown", "unresolved"}:
             status = str(manual_action)
             player_id = None
-            source = "manual_review"
+            source = "operator_team_assignment" if manual_action == "assign_team" else "manual_review"
+        if status == "assign_team":
+            status = "unresolved"
         blockers.extend(stable_row["hard_blockers"])
         team_label = (
             "U"
             if manual_action == "team_unknown"
-            else str(tracklet.get("team_label") or "U")
+            else str(stable_row.get("effective_team_label") or tracklet.get("team_label") or "U")
         )
         team_id = (
             ""
@@ -99,6 +101,8 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             else str(tracklet.get("team_id") or "")
         )
         player = roster.get(player_id or "")
+        if player and team_label == "U":
+            team_label = str(player["team_label"])
         assignment_conflicts: list[dict[str, Any]] = []
         if len(accepted_seeds) > 1:
             blockers.append("ambiguous_seeded_subject_membership")
@@ -341,12 +345,26 @@ def _source_digest(documents: dict[str, dict[str, Any]], match_doc: dict[str, An
     return canonical_digest(value)
 
 
-def _review_decisions(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def _review_decisions(
+    doc: dict[str, Any],
+    slot_review: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     values: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in doc.get("decisions") or []:
         subject = str(row.get("candidate_subject_id") or "")
         if subject and str(row.get("decision")) in {"assign_roster_player", "confirm_recommended_player", "mark_unresolved"}:
             values[subject].append(dict(row))
+    for row in (slot_review or {}).get("decisions") or []:
+        subject = str(row.get("candidate_subject_id") or "")
+        if subject and str(row.get("action")) == "assign_roster_player":
+            values[subject].append(
+                {
+                    "candidate_subject_id": subject,
+                    "decision": "assign_roster_player",
+                    "player_id": row.get("player_id"),
+                    "source": "manual_reviewed_slot_assignment",
+                }
+            )
     return values
 
 

@@ -31,6 +31,7 @@ CORRECTION_ACTIONS = frozenset(
     {
         "assign_roster_player",
         "assign_existing_slot",
+        "assign_team",
         "create_new_stable_player",
         "referee",
         "false_detection",
@@ -54,8 +55,6 @@ def save_reviewed_identity_correction(
     comment = str(payload.get("comment") or "").strip() or None
 
     if action == "assign_roster_player":
-        if not card_key:
-            raise ValueError(f"Candidate subject has no whole-subject review card: {subject_id}")
         player_id = str(payload.get("player_id") or "").strip()
         player = next(
             (row for row in match_roster(match_doc) if row["player_id"] == player_id),
@@ -63,25 +62,43 @@ def save_reviewed_identity_correction(
         )
         if player is None:
             raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
-        if player["team_label"] != context["team_label"]:
+        source_team_label = str(context["team_label"])
+        if source_team_label not in {"U", player["team_label"]}:
             raise ValueError(
                 f"Cross-team roster assignment is not allowed: subject {subject_id} is "
                 f"team {context['team_label']}, player is team {player['team_label']}"
             )
-        save_identity_roster_subject_review(
-            match_path,
-            [
-                {
-                    "review_card_key": card_key,
-                    "decision": "assign_roster_player",
+        if card_key:
+            save_identity_roster_subject_review(
+                match_path,
+                [
+                    {
+                        "review_card_key": card_key,
+                        "decision": "assign_roster_player",
+                        "player_id": player_id,
+                        "comment": comment,
+                    }
+                ],
+                match_doc=match_doc,
+                allow_seeded_override=True,
+            )
+            clear_reviewed_slot_assignment(match_path, subject_id)
+        else:
+            candidate_document = load_required(
+                match_path / "identity_candidate_shadow.json"
+            )
+            prepared = prepare_reviewed_slot_assignments(
+                match_path,
+                candidate_document,
+                [{
+                    "candidate_subject_id": subject_id,
+                    "action": action,
                     "player_id": player_id,
+                    "team_label": player["team_label"],
                     "comment": comment,
-                }
-            ],
-            match_doc=match_doc,
-            allow_seeded_override=True,
-        )
-        clear_reviewed_slot_assignment(match_path, subject_id)
+                }],
+            )
+            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
         allocated_slot = None
     else:
         candidate_document = load_required(
@@ -94,7 +111,7 @@ def save_reviewed_identity_correction(
         }
         if action == "assign_existing_slot":
             update["stable_slot_id"] = payload.get("stable_slot_id")
-        if action == "create_new_stable_player":
+        if action in {"assign_team", "create_new_stable_player"}:
             requested_team = str(payload.get("team_label") or context["team_label"]).upper()
             update["team_label"] = requested_team
         prepared = prepare_reviewed_slot_assignments(

@@ -59,6 +59,9 @@ test('filters roster and canonical/manual slot options to the subject team', () 
   const context: ReviewedCorrectionContext = {
     candidate_subject_id: 'subject-1',
     team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
     tracklet_ids: ['tracklet-1'],
     review_card_key: 'card-1',
     current_decision: null,
@@ -76,6 +79,35 @@ test('filters roster and canonical/manual slot options to the subject team', () 
   const options = correctionOptionsForSubject(context);
   assert.deepEqual(options.roster.map((row) => row.player_id), ['a']);
   assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['A03', 'A11']);
+});
+
+test('unknown-team context exposes both teams but filters options after the operator selects one', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'subject-u',
+    team_label: 'U',
+    source_team_label: 'U',
+    effective_team_label: 'U',
+    available_team_labels: ['A', 'B'],
+    tracklet_ids: ['tracklet-u'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [
+      { player_id: 'a', player_name: 'A', team_label: 'A' },
+      { player_id: 'b', player_name: 'B', team_label: 'B' },
+    ],
+    slot_options: [
+      { stable_slot_id: 'A03', team_label: 'A', source: 'global_identity', status: 'canonical' },
+      { stable_slot_id: 'B03', team_label: 'B', source: 'global_identity', status: 'canonical' },
+    ],
+  };
+  const options = correctionOptionsForSubject(context, 'B');
+  assert.deepEqual(options.roster.map((row) => row.player_id), ['b']);
+  assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['B03']);
+  assert.deepEqual(
+    buildReviewedCorrectionPayload('subject-u', { ...base, action: 'assign_team', teamLabel: 'B' }),
+    { candidate_subject_id: 'subject-u', action: 'assign_team', team_label: 'B' },
+  );
 });
 
 test('reviewed output presentation uses operator-facing labels and one initial CTA', () => {
@@ -114,9 +146,13 @@ test('reviewed output UI keeps the simple correction flow and stale safeguards v
   assert.match(atTime, /Szczegóły techniczne/);
   assert.match(form, /allocated_stable_slot_id|onSaved/);
   assert.match(form, /setError\(errorMessage\(reason\)\)/);
-  assert.match(form, /context\?\.team_label/);
+  assert.match(form, /context\?\.source_team_label/);
   assert.match(form, /Zawodnik z kadry/);
-  assert.match(form, /Ten sam gracz co Axx/);
+  assert.match(form, /Do której drużyny należy ta osoba/);
+  assert.match(form, /Tylko \$\{teamName\} — pozostaw \$\{teamLabel\}\?/);
+  assert.match(form, /assign_team/);
+  assert.match(form, /Co wiesz o tym zawodniku/);
+  assert.match(form, /sourceTeamUnknown/);
   assert.match(form, /!action/);
   assert.ok(reportPage.indexOf('<ReviewedMatchOutputPanel') < reportPage.indexOf('<MatchReportContent'));
 });

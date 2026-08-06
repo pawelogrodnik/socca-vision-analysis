@@ -90,14 +90,21 @@ def resolve_stable_anonymous_entities(
     resolved: dict[str, dict[str, Any]] = {}
 
     for tracklet_id, tracklet in sorted(tracklets.items()):
-        team = str(tracklet.get("team_label") or "U")
+        source_team = str(tracklet.get("team_label") or "U")
         subjects = sorted(subject_membership.get(tracklet_id) or [])
         subject_id = subjects[0] if len(subjects) == 1 else None
         manual = manual_by_subject.get(subject_id or "")
+        manual_action = str((manual or {}).get("action") or "") or None
+        manual_team = str((manual or {}).get("team_label") or "").upper()
+        team = (
+            manual_team
+            if manual_action in {"assign_team", "assign_existing_slot", "create_new_stable_player", "assign_roster_player"}
+            and manual_team in {"A", "B"}
+            else source_team
+        )
         claims = claims_by_tracklet.get(tracklet_id, [])
         claim_labels = sorted({str(row["stable_slot_id"]) for row in claims})
         blockers: list[str] = []
-        manual_action = str((manual or {}).get("action") or "") or None
         stable_slot_id: str | None = None
         anchor_source: str | None = None
         anchor_status = "unanchored"
@@ -129,7 +136,7 @@ def resolve_stable_anonymous_entities(
                 else:
                     anchor_source = "manual_new_player_confirmation"
                     anchor_status = "manual_new_slot"
-        elif manual_action in {"referee", "false_detection", "team_unknown"}:
+        elif manual_action in {"assign_team", "referee", "false_detection", "team_unknown"}:
             stable_slot_id = None
             anchor_source = "manual_review"
             anchor_status = manual_action
@@ -169,6 +176,8 @@ def resolve_stable_anonymous_entities(
         resolved[tracklet_id] = {
             "candidate_subject_id": subject_id,
             "candidate_subject_ids": subjects,
+            "source_team_label": source_team,
+            "effective_team_label": team,
             "fragment_id": subject_id or f"tracklet:{tracklet_id}",
             "stable_anonymous_slot_id": stable_slot_id,
             "stable_anonymous_entity_id": stable_slot_id,
@@ -261,7 +270,7 @@ def _allocate_manual_new_slots(
             str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
             for tracklet_id in tracklet_ids
         }
-        if observed_teams != {team}:
+        if observed_teams not in ({team}, {"U"}):
             rejected[subject_id] = "manual_new_player_team_mismatch"
             continue
         frames = {

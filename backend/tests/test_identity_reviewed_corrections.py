@@ -144,6 +144,107 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 )
             self.assertEqual(_decision_files(root), before)
 
+    def test_unknown_team_assignment_is_reviewed_only_and_deterministic(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            baseline = finalize_reviewed_identity(root, _match())
+            immutable_before = _immutable_identity_files(root)
+            first = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {"candidate_subject_id": "su", "action": "assign_team", "team_label": "B"},
+            )
+            same = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {"candidate_subject_id": "su", "action": "assign_team", "team_label": "B", "comment": "non-semantic"},
+            )
+            self.assertTrue(first["snapshot"]["stale"])
+            self.assertEqual(first["semantic_decision_digest"], same["semantic_decision_digest"])
+            self.assertEqual(get_reviewed_identity_status(root)["status"], "stale")
+            saved = first["saved_decision"]
+            self.assertEqual(saved["action"], "assign_team")
+            self.assertEqual(saved["team_label"], "B")
+            self.assertIsNone(saved["stable_slot_id"])
+            self.assertEqual(_immutable_identity_files(root), immutable_before)
+            result = finalize_reviewed_identity(root, _match())
+            row = _subject_row(result, "su")
+            self.assertEqual(row["team_label"], "B")
+            self.assertEqual(row["fallback_label"], "B?")
+            self.assertIsNone(row["stable_anonymous_slot_id"])
+            self.assertIsNone(row["canonical_player_id"])
+            self.assertEqual(row["identity_status"], "unresolved")
+            self.assertEqual(row["identity_source"], "operator_team_assignment")
+            self.assertFalse(row["eligible_for_player_stats"])
+            slot_document = _load(root / "reviewed_identity_slot_assignments.json")
+            self.assertEqual(slot_document["reviewed_slots"], [])
+            self.assertNotIn("U01", str(slot_document))
+            self.assertEqual(
+                baseline["fragmentation_diagnostics"]["reviewed_slot_registry_entries"],
+                result["fragmentation_diagnostics"]["reviewed_slot_registry_entries"],
+            )
+            self.assertEqual(result["fragmentation_diagnostics"]["automatic_permanent_allocations"], 0)
+
+    def test_unknown_subject_can_use_team_b_slot_or_roster_without_cross_team_escape(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            saved = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {"candidate_subject_id": "su", "action": "assign_existing_slot", "stable_slot_id": "B03"},
+            )
+            self.assertEqual(saved["saved_decision"]["team_label"], "B")
+            result = finalize_reviewed_identity(root, _match())
+            row = _subject_row(result, "su")
+            self.assertEqual(row["team_label"], "B")
+            self.assertEqual(row["stable_anonymous_slot_id"], "B03")
+            self.assertEqual(_load(root / "reviewed_identity_slot_assignments.json")["reviewed_slots"], [])
+            self.assertEqual(result["frame_uniqueness_diagnostics"]["duplicate_stable_slot_claim_groups"], 0)
+            with self.assertRaisesRegex(ValueError, "team mismatch"):
+                save_reviewed_identity_correction(
+                    root, _match(), {"candidate_subject_id": "s1", "action": "assign_existing_slot", "stable_slot_id": "B03"}
+                )
+            with self.assertRaisesRegex(ValueError, "team mismatch"):
+                save_reviewed_identity_correction(
+                    root, _match(), {"candidate_subject_id": "s2", "action": "assign_existing_slot", "stable_slot_id": "A03"}
+                )
+            with self.assertRaisesRegex(ValueError, "team mismatch"):
+                save_reviewed_identity_correction(
+                    root, _match(), {"candidate_subject_id": "s1", "action": "assign_team", "team_label": "B"}
+                )
+
+        with _workspace() as root:
+            _fixture(root)
+            save_reviewed_identity_correction(
+                root,
+                _match(),
+                {"candidate_subject_id": "su", "action": "assign_roster_player", "player_id": "p2"},
+            )
+            result = finalize_reviewed_identity(root, _match())
+            row = _subject_row(result, "su")
+            self.assertEqual(row["team_label"], "B")
+            self.assertEqual(row["canonical_player_id"], "p2")
+            self.assertEqual(row["identity_status"], "confirmed")
+            self.assertEqual(result["frame_uniqueness_diagnostics"]["duplicate_canonical_player_claim_groups"], 0)
+            with self.assertRaisesRegex(ValueError, "Cross-team"):
+                save_reviewed_identity_correction(
+                    root, _match(), {"candidate_subject_id": "s1", "action": "assign_roster_player", "player_id": "p2"}
+                )
+
+    def test_unknown_team_new_player_uses_bounded_target_team_slot(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            first = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {"candidate_subject_id": "su", "action": "create_new_stable_player", "team_label": "B"},
+            )
+            self.assertEqual(first["allocated_stable_slot_id"], "B04")
+            result = finalize_reviewed_identity(root, _match())
+            row = _subject_row(result, "su")
+            self.assertEqual(row["team_label"], "B")
+            self.assertEqual(row["stable_anonymous_slot_id"], "B04")
+
     def test_context_and_existing_slots_are_team_filtered(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -345,6 +446,15 @@ def _fixture(root: Path, active_team_a: int | None = None) -> None:
                 {"frame": 20, "status": "detected", "pitch_m": [1.0, 2.0], "bbox_xyxy": [1, 2, 5, 9]},
             ],
         },
+        {
+            "tracklet_id": "tu",
+            "team_label": "U",
+            "team_id": "",
+            "positions_m": [
+                {"frame": 30, "status": "detected", "pitch_m": [5.0, 2.0], "bbox_xyxy": [5, 2, 9, 9]},
+                {"frame": 31, "status": "detected", "pitch_m": [5.5, 2.0], "bbox_xyxy": [6, 2, 10, 9]},
+            ],
+        },
     ]
     _write(root / "match.json", _match())
     _write(root / "tracklets.json", {"tracklets": tracklets})
@@ -354,12 +464,13 @@ def _fixture(root: Path, active_team_a: int | None = None) -> None:
             "subjects": [
                 {"candidate_subject_id": "s1", "tracklet_ids": ["t1", "t1b"]},
                 {"candidate_subject_id": "s2", "tracklet_ids": ["t2"]},
+                {"candidate_subject_id": "su", "tracklet_ids": ["tu"]},
             ]
         },
     )
     slots = [
         {"stable_player_id": slot_id, "team_label": slot_id[0], "tracklet_ids": []}
-        for slot_id in ("A01", "A02", "A03", "B01", "B02")
+        for slot_id in ("A01", "A02", "A03", "B01", "B02", "B03")
     ]
     global_identity: dict = {"slots": slots}
     if active_team_a is not None:
@@ -406,6 +517,17 @@ def _tracklets(root: Path) -> dict[str, dict]:
     return {
         row["tracklet_id"]: row
         for row in json.loads((root / "tracklets.json").read_text(encoding="utf-8"))["tracklets"]
+    }
+
+
+def _subject_row(snapshot: dict, subject_id: str) -> dict:
+    return next(row for row in snapshot["tracklet_assignments"] if row["candidate_subject_id"] == subject_id)
+
+
+def _immutable_identity_files(root: Path) -> dict[str, bytes]:
+    return {
+        name: (root / name).read_bytes()
+        for name in ("tracklets.json", "global_identity.json", "stable_players.json")
     }
 
 

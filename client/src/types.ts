@@ -1786,6 +1786,7 @@ export type ReviewedIdentityAtEntity = {
 export type ReviewedCorrectionAction =
   | 'assign_roster_player'
   | 'assign_existing_slot'
+  | 'assign_team'
   | 'create_new_stable_player'
   | 'referee'
   | 'false_detection'
@@ -1809,6 +1810,9 @@ export type ReviewedCorrectionSlotOption = {
 export type ReviewedCorrectionContext = {
   candidate_subject_id: string;
   team_label: string;
+  source_team_label: string;
+  effective_team_label: string;
+  available_team_labels: string[];
   tracklet_ids: string[];
   review_card_key: string | null;
   roster_options: ReviewedCorrectionRosterOption[];

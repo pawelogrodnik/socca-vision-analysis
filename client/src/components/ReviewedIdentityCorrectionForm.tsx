@@ -23,18 +23,21 @@ type Props = {
   onSaved: (result: ReviewedCorrectionResponse) => void;
 };
 
-type ActionCard = {
-  action: ReviewedCorrectionAction;
-  label: string;
-};
+type ActionCard = { action: ReviewedCorrectionAction; label: string; description?: string };
 
-const ACTION_CARDS: ActionCard[] = [
+const STANDARD_ACTION_CARDS: ActionCard[] = [
   { action: 'assign_roster_player', label: 'Zawodnik z kadry' },
-  { action: 'assign_existing_slot', label: 'Ten sam gracz co Axx' },
+  { action: 'assign_existing_slot', label: 'Ten sam gracz co Axx/Bxx' },
   { action: 'create_new_stable_player', label: 'Nowy zawodnik' },
   { action: 'referee', label: 'Sędzia' },
   { action: 'false_detection', label: 'Fałszywa detekcja' },
   { action: 'team_unknown', label: 'Nieznana drużyna' },
+  { action: 'unresolved', label: 'Nie wiem' },
+];
+
+const UNKNOWN_TEAM_SPECIAL_ACTIONS: ActionCard[] = [
+  { action: 'referee', label: 'Sędzia' },
+  { action: 'false_detection', label: 'Fałszywa detekcja' },
   { action: 'unresolved', label: 'Nie wiem' },
 ];
 
@@ -45,18 +48,28 @@ function correctionRange(entity: ReviewedIdentityAtEntity): string | null {
   return `${formatReviewTime(entity.frame_start / fps)}–${formatReviewTime(entity.frame_end / fps)}`;
 }
 
-export function ReviewedIdentityCorrectionForm({
-  matchId,
-  entity,
-  onCancel,
-  onSaved,
-}: Props) {
+function actionCardsForUnknownTeam(teamLabel: string): ActionCard[] {
+  const teamName = teamLabelForOperator(teamLabel);
+  const slotPrefix = `${teamLabel}xx`;
+  return [
+    { action: 'assign_team', label: `Tylko ${teamName} — pozostaw ${teamLabel}?` },
+    { action: 'assign_roster_player', label: `Zawodnik z kadry ${teamName}` },
+    { action: 'assign_existing_slot', label: `Ten sam zawodnik co ${slotPrefix}` },
+    {
+      action: 'create_new_stable_player',
+      label: `Nowy zawodnik ${teamName}`,
+      description: 'Utworzy nowego, odrębnego anonimowego zawodnika.',
+    },
+  ];
+}
+
+export function ReviewedIdentityCorrectionForm({ matchId, entity, onCancel, onSaved }: Props) {
   const subjectId = entity.candidate_subject_id;
   const [context, setContext] = useState<Awaited<ReturnType<typeof getReviewedCorrectionContext>> | null>(null);
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
+  const [selectedTeamLabel, setSelectedTeamLabel] = useState(entity.team_label === 'U' ? '' : entity.team_label);
   const [playerId, setPlayerId] = useState(entity.canonical_player_id ?? '');
   const [stableSlotId, setStableSlotId] = useState(entity.stable_anonymous_slot_id ?? '');
-  const [teamLabel, setTeamLabel] = useState(entity.team_label);
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -67,31 +80,59 @@ export function ReviewedIdentityCorrectionForm({
     getReviewedCorrectionContext(matchId, subjectId)
       .then((value) => {
         setContext(value);
-        setTeamLabel(value.team_label);
+        setSelectedTeamLabel((current) => current || (
+          value.source_team_label === 'U' ? '' : value.effective_team_label
+        ));
       })
       .catch((reason) => setError(errorMessage(reason)))
       .finally(() => setBusy(false));
   }, [matchId, subjectId]);
 
+  const sourceTeamLabel = context?.source_team_label ?? entity.team_label;
+  const sourceTeamUnknown = sourceTeamLabel === 'U';
   const options = useMemo(
-    () => context ? correctionOptionsForSubject(context) : { roster: [], slots: [] },
-    [context],
+    () => context ? correctionOptionsForSubject(context, selectedTeamLabel) : { roster: [], slots: [] },
+    [context, selectedTeamLabel],
   );
   const range = correctionRange(entity);
+  const actionCards = sourceTeamUnknown
+    ? actionCardsForUnknownTeam(selectedTeamLabel)
+    : STANDARD_ACTION_CARDS;
+  const choiceComplete = Boolean(action)
+    && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))
+    && (action !== 'assign_roster_player' || Boolean(playerId))
+    && (action !== 'assign_existing_slot' || Boolean(stableSlotId))
+    && (action !== 'create_new_stable_player' || ['A', 'B'].includes(selectedTeamLabel));
+
+  function chooseTeam(teamLabel: string) {
+    setSelectedTeamLabel(teamLabel);
+    setAction(null);
+    setPlayerId('');
+    setStableSlotId('');
+    setError('');
+  }
 
   function selectAction(nextAction: ReviewedCorrectionAction) {
+    if (
+      sourceTeamUnknown
+      && ['referee', 'false_detection', 'unresolved'].includes(nextAction)
+    ) {
+      setSelectedTeamLabel('');
+      setPlayerId('');
+      setStableSlotId('');
+    }
     setAction(nextAction);
     setError('');
   }
 
   function actionIsAvailable(card: ActionCard): boolean {
-    if (card.action === 'assign_roster_player') return Boolean(context?.review_card_key && options.roster.length);
-    if (card.action === 'assign_existing_slot') return Boolean(options.slots.length);
+    if (card.action === 'assign_roster_player') return options.roster.length > 0;
+    if (card.action === 'assign_existing_slot') return options.slots.length > 0;
     return true;
   }
 
   async function save() {
-    if (!subjectId || !action) return;
+    if (!subjectId || !action || !choiceComplete) return;
     setError('');
     setBusy(true);
     try {
@@ -99,7 +140,7 @@ export function ReviewedIdentityCorrectionForm({
         action,
         playerId,
         stableSlotId,
-        teamLabel,
+        teamLabel: selectedTeamLabel,
         comment,
       });
       onSaved(await saveReviewedIdentityCorrection(matchId, payload));
@@ -121,8 +162,47 @@ export function ReviewedIdentityCorrectionForm({
     <h4>Popraw przypisanie</h4>
     <p>Ta poprawka zostanie zastosowana do całego fragmentu zawodnika.</p>
     {range && <p className='reviewed-correction-range'>Zakres: {range}<br />{entity.detected_evidence_count} wykryte obserwacje</p>}
-    <div className='reviewed-action-cards' role='radiogroup' aria-label='Rodzaj poprawki'>
-      {ACTION_CARDS.map((card) => <button
+
+    {sourceTeamUnknown ? <>
+      <section className='reviewed-correction-step'>
+        <h5>Do której drużyny należy ta osoba?</h5>
+        <div className='reviewed-action-cards reviewed-team-cards' role='radiogroup' aria-label='Wybór drużyny'>
+          {['A', 'B'].map((teamLabel) => <button
+            type='button'
+            key={teamLabel}
+            role='radio'
+            aria-checked={selectedTeamLabel === teamLabel}
+            className={`reviewed-action-card${selectedTeamLabel === teamLabel ? ' selected' : ''}`}
+            onClick={() => chooseTeam(teamLabel)}
+            disabled={busy || !context?.available_team_labels.includes(teamLabel)}
+          >{teamLabelForOperator(teamLabel)}</button>)}
+          {UNKNOWN_TEAM_SPECIAL_ACTIONS.map((card) => <button
+            type='button'
+            key={card.action}
+            role='radio'
+            aria-checked={action === card.action}
+            className={`reviewed-action-card${action === card.action ? ' selected' : ''}`}
+            onClick={() => selectAction(card.action)}
+            disabled={busy}
+          >{card.label}</button>)}
+        </div>
+      </section>
+      {selectedTeamLabel && <section className='reviewed-correction-step'>
+        <h5>Co wiesz o tym zawodniku?</h5>
+        <div className='reviewed-action-cards' role='radiogroup' aria-label='Zakres wiedzy o zawodniku'>
+          {actionCards.map((card) => <button
+            type='button'
+            key={card.action}
+            role='radio'
+            aria-checked={action === card.action}
+            className={`reviewed-action-card${action === card.action ? ' selected' : ''}`}
+            onClick={() => selectAction(card.action)}
+            disabled={busy || !actionIsAvailable(card)}
+          >{card.label}</button>)}
+        </div>
+      </section>}
+    </> : <div className='reviewed-action-cards' role='radiogroup' aria-label='Rodzaj poprawki'>
+      {actionCards.map((card) => <button
         type='button'
         key={card.action}
         role='radio'
@@ -131,7 +211,9 @@ export function ReviewedIdentityCorrectionForm({
         onClick={() => selectAction(card.action)}
         disabled={busy || !actionIsAvailable(card)}
       >{card.label}</button>)}
-    </div>
+    </div>}
+
+    {action === 'assign_team' && <p className='reviewed-correction-range'>Przypiszę tylko {teamLabelForOperator(selectedTeamLabel)}. Nie powstanie nowy slot ani indywidualne statystyki zawodnika.</p>}
     {action === 'assign_roster_player' && <label>Zawodnik z kadry
       <select value={playerId} onChange={(event) => setPlayerId(event.target.value)} disabled={busy}>
         <option value=''>Wybierz zawodnika</option>
@@ -140,23 +222,13 @@ export function ReviewedIdentityCorrectionForm({
         </option>)}
       </select>
     </label>}
-    {action === 'assign_existing_slot' && <label>Wybierz istniejący slot
+    {action === 'assign_existing_slot' && <label>Wybierz istniejącego zawodnika
       <select value={stableSlotId} onChange={(event) => setStableSlotId(event.target.value)} disabled={busy}>
         <option value=''>Wybierz gracza</option>
-        {options.slots.map((slot) => <option key={slot.stable_slot_id} value={slot.stable_slot_id}>
-          {slot.stable_slot_id}
-        </option>)}
+        {options.slots.map((slot) => <option key={slot.stable_slot_id} value={slot.stable_slot_id}>{slot.stable_slot_id}</option>)}
       </select>
     </label>}
-    {action === 'create_new_stable_player' && (['A', 'B'].includes(context?.team_label ?? '')
-      ? <p>Nowy zawodnik zostanie dodany do: <strong>{teamLabelForOperator(context?.team_label)}</strong></p>
-      : <label>Drużyna
-        <select value={teamLabel} onChange={(event) => setTeamLabel(event.target.value)} disabled={busy}>
-          <option value=''>Wybierz drużynę</option>
-          <option value='A'>Team A</option>
-          <option value='B'>Team B</option>
-        </select>
-      </label>)}
+    {action === 'create_new_stable_player' && <p className='reviewed-correction-range'>Utworzy nowego, odrębnego anonimowego zawodnika w {teamLabelForOperator(selectedTeamLabel)}.</p>}
     <label>Dodatkowy komentarz (opcjonalnie)
       <textarea value={comment} onChange={(event) => setComment(event.target.value)} disabled={busy} />
     </label>
@@ -164,11 +236,11 @@ export function ReviewedIdentityCorrectionForm({
       <summary>Szczegóły techniczne</summary>
       <p>candidate_subject_id: {subjectId}</p>
       <p>tracklet_ids: {(context?.tracklet_ids ?? entity.candidate_subject_ids).join(', ') || entity.tracklet_id}</p>
-      <p>Aktualnie: {entity.identity_status} · slot: {entity.stable_anonymous_slot_id ?? 'brak'} · player ID: {entity.canonical_player_id ?? 'brak'}</p>
+      <p>source team: {sourceTeamLabel} · effective team: {selectedTeamLabel || 'brak'} · status: {entity.identity_status}</p>
     </details>
     {error && <p className='status error'>{error}</p>}
     <div className='row'>
-      <button type='button' onClick={() => void save()} disabled={busy || !context || !action}>Zapisz poprawkę</button>
+      <button type='button' onClick={() => void save()} disabled={busy || !context || !choiceComplete}>Zapisz poprawkę</button>
       <button type='button' className='secondary' onClick={onCancel} disabled={busy}>Anuluj</button>
     </div>
   </div>;

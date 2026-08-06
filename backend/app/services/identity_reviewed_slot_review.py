@@ -21,6 +21,8 @@ FILENAME = "reviewed_identity_slot_assignments.json"
 ALLOWED_ACTIONS = frozenset(
     {
         "assign_existing_slot",
+        "assign_roster_player",
+        "assign_team",
         "create_new_stable_player",
         "referee",
         "false_detection",
@@ -167,6 +169,24 @@ def prepare_reviewed_slot_assignments(
                 ambiguous_subjects,
                 subject_teams,
             )
+        elif action == "assign_roster_player":
+            team_label = str(raw.get("team_label") or "").upper()
+            _validate_subject_team(
+                subject_id,
+                team_label,
+                ambiguous_subjects,
+                subject_teams,
+            )
+            stable_slot_id = None
+        elif action == "assign_team":
+            team_label = str(raw.get("team_label") or "").upper()
+            _validate_subject_team(
+                subject_id,
+                team_label,
+                ambiguous_subjects,
+                subject_teams,
+            )
+            stable_slot_id = None
         elif action == "create_new_stable_player":
             stable_slot_id = str(raw["stable_slot_id"])
             team_label = str(raw["team_label"])
@@ -186,6 +206,8 @@ def prepare_reviewed_slot_assignments(
             ),
             "reviewed_at": _now(),
         }
+        if action == "assign_roster_player":
+            decision["player_id"] = str(raw.get("player_id") or "") or None
         if _semantic_decision(previous) == _semantic_decision(decision):
             decision["reviewed_at"] = (
                 previous.get("reviewed_at") or decision["reviewed_at"]
@@ -248,8 +270,8 @@ def _normalize_updates(
         if action not in ALLOWED_ACTIONS:
             raise ValueError(f"Unsupported reviewed slot action: {action}")
         team_label = str(raw.get("team_label") or "").upper() or None
-        if action == "create_new_stable_player" and team_label not in {"A", "B"}:
-            raise ValueError("create_new_stable_player requires team_label A or B")
+        if action in {"assign_team", "create_new_stable_player", "assign_roster_player"} and team_label not in {"A", "B"}:
+            raise ValueError(f"{action} requires team_label A or B")
         output.append(
             {
                 **raw,
@@ -304,7 +326,7 @@ def _validate_subject_team(
     teams = subject_teams.get(subject_id) or set()
     if len(teams) > 1:
         raise ValueError(f"mixed-team subject: {subject_id}")
-    if teams and teams != {expected_team}:
+    if teams and teams not in ({expected_team}, {"U"}):
         actual = next(iter(teams))
         raise ValueError(
             f"team mismatch: subject {subject_id} is team {actual}, slot is team {expected_team}"
@@ -376,6 +398,7 @@ def _semantic_decision(row: dict[str, Any]) -> dict[str, Any]:
             "candidate_subject_id",
             "action",
             "stable_slot_id",
+            "player_id",
             "team_label",
             "source",
         )

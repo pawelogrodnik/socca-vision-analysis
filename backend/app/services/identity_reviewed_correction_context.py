@@ -22,26 +22,32 @@ def reviewed_correction_context(
     candidate_subject_id: str,
 ) -> dict[str, Any]:
     context = build_subject_context(match_path, candidate_subject_id)
-    team_label = context["team_label"]
+    source_team_label = context["team_label"]
+    current = current_reviewed_decision(match_path, candidate_subject_id)
+    effective_team_label = str(
+        (current or {}).get("team_label") or source_team_label
+    ).upper()
+    available_team_labels = ["A", "B"] if source_team_label == "U" else [source_team_label]
     roster_options = [
-        player for player in match_roster(match_doc) if player["team_label"] == team_label
+        player for player in match_roster(match_doc) if player["team_label"] in available_team_labels
     ]
     slot_document = load_reviewed_slot_assignments(match_path)
     registry = build_reviewed_slot_registry(match_path, slot_document)
     return {
         "candidate_subject_id": candidate_subject_id,
-        "team_label": team_label,
+        "team_label": source_team_label,
+        "source_team_label": source_team_label,
+        "effective_team_label": effective_team_label,
+        "available_team_labels": available_team_labels,
         "tracklet_ids": context["tracklet_ids"],
         "review_card_key": review_card_key(match_path, candidate_subject_id),
         "roster_options": roster_options,
         "slot_options": [
             registry[key]
             for key in sorted(registry)
-            if registry[key].get("team_label") == team_label
+            if registry[key].get("team_label") in available_team_labels
         ],
-        "current_decision": current_reviewed_decision(
-            match_path, candidate_subject_id
-        ),
+        "current_decision": current,
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
     }
 
@@ -68,6 +74,7 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                         "candidate_subject_id": row.get("candidate_subject_id"),
                         "action": row.get("action"),
                         "stable_slot_id": row.get("stable_slot_id"),
+                        "player_id": row.get("player_id"),
                         "team_label": row.get("team_label"),
                     }
                     for row in slots.get("decisions") or []

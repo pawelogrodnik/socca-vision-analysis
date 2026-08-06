@@ -12,13 +12,16 @@ export type ReviewedCorrectionFormValues = {
   comment: string;
 };
 
-export function correctionOptionsForSubject(context: ReviewedCorrectionContext) {
+export function correctionOptionsForSubject(
+  context: ReviewedCorrectionContext,
+  selectedTeamLabel = context.effective_team_label,
+) {
   return {
     roster: context.roster_options.filter(
-      (option) => option.team_label === context.team_label,
+      (option) => option.team_label === selectedTeamLabel,
     ),
     slots: context.slot_options.filter(
-      (option) => option.team_label === context.team_label,
+      (option) => option.team_label === selectedTeamLabel,
     ),
   };
 }
@@ -39,7 +42,7 @@ export function buildReviewedCorrectionPayload(
     if (!values.stableSlotId) throw new Error('Wybierz istniejący stable slot.');
     payload.stable_slot_id = values.stableSlotId;
   }
-  if (values.action === 'create_new_stable_player') {
+  if (values.action === 'assign_team' || values.action === 'create_new_stable_player') {
     if (!['A', 'B'].includes(values.teamLabel)) {
       throw new Error('Wybierz Team A albo Team B.');
     }
@@ -52,6 +55,7 @@ export function buildReviewedCorrectionPayload(
 export const REVIEWED_CORRECTION_ACTION_LABELS: Record<ReviewedCorrectionAction, string> = {
   assign_roster_player: 'Przypisz zawodnika z rosteru',
   assign_existing_slot: 'Przypisz istniejący stable slot',
+  assign_team: 'Przypisz tylko drużynę',
   create_new_stable_player: 'Potwierdź nowego zawodnika drużyny',
   referee: 'Oznacz sędziego',
   false_detection: 'Oznacz false detection',

@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-08-06T13:11:56.190616+00:00",
+  "source_match": "668ae4c0",
+  "unknown_subject": "shadow-u-4a0504fa8498cc1d",
+  "frozen_artifact_clones": true,
+  "cases": [
+    {
+      "action": "assign_team",
+      "saved_decision": {
+        "candidate_subject_id": "shadow-u-4a0504fa8498cc1d",
+        "action": "assign_team",
+        "stable_slot_id": null,
+        "team_label": "B",
+        "source": "manual_review",
+        "comment": "frozen U? smoke",
+        "reviewed_at": "2026-08-06T13:11:56.810194+00:00"
+      },
+      "assignment": {
+        "team_label": "B",
+        "display_label": "B?",
+        "fallback_label": "B?",
+        "identity_status": "unresolved",
+        "identity_source": "operator_team_assignment",
+        "stable_anonymous_slot_id": null,
+        "canonical_player_id": null,
+        "eligible_for_player_stats": false
+      },
+      "stable_slot_count_before": 22,
+      "stable_slot_count_after": 22,
+      "manual_reviewed_slots_after": 0,
+      "automatic_permanent_allocations": 0,
+      "duplicate_stable_labels": 0,
+      "duplicate_canonical_players": 0,
+      "stats_players": 0,
+      "render": {
+        "codec_name": "h264",
+        "pix_fmt": "yuv420p"
+      }
+    },
+    {
+      "action": "assign_existing_slot",
+      "saved_decision": {
+        "candidate_subject_id": "shadow-u-4a0504fa8498cc1d",
+        "action": "assign_existing_slot",
+        "stable_slot_id": "B03",
+        "team_label": "B",
+        "source": "manual_review",
+        "comment": "frozen U? smoke",
+        "reviewed_at": "2026-08-06T13:12:43.735670+00:00"
+      },
+      "assignment": {
+        "team_label": "B",
+        "display_label": "B03",
+        "fallback_label": "B03",
+        "identity_status": "unresolved",
+        "identity_source": null,
+        "stable_anonymous_slot_id": "B03",
+        "canonical_player_id": null,
+        "eligible_for_player_stats": false
+      },
+      "stable_slot_count_before": 22,
+      "stable_slot_count_after": 22,
+      "manual_reviewed_slots_after": 0,
+      "automatic_permanent_allocations": 0,
+      "duplicate_stable_labels": 0,
+      "duplicate_canonical_players": 0,
+      "stats_players": 0,
+      "render": {
+        "codec_name": "h264",
+        "pix_fmt": "yuv420p"
+      }
+    }
+  ],
+  "total_smoke_seconds": 87.606,
+  "safety": {
+    "source_immutable_before": {
+      "tracklets.json": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "player_identity_assignments.json": null
+    },
+    "source_immutable_after": {
+      "tracklets.json": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "player_identity_assignments.json": null
+    },
+    "production_mutation_count": 0,
+    "published_mutation_count": 0,
+    "reran_yolo": false,
+    "reran_tracking": false,
+    "reran_reid": false,
+    "reran_ball_detection": false
+  }
+}

@@ -710,7 +710,7 @@ def _operator_roster_options(
         if not isinstance(team, dict):
             continue
         current_label = "A" if team_index == 0 else "B" if team_index == 1 else "U"
-        if current_label != team_label:
+        if team_label in {"A", "B"} and current_label != team_label:
             continue
         for player in team.get("players") or []:
             if not isinstance(player, dict) or not player.get("id"):
