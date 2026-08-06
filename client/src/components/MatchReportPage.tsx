@@ -124,6 +124,8 @@ export function MatchReportPage() {
         />
       )}
 
+      {match && <ReviewedMatchOutputPanel matchId={match.id} />}
+
       {reportSource && (
         <MatchReportContent
           source={reportSource}
@@ -131,7 +133,6 @@ export function MatchReportPage() {
           artifactHref={(artifactName) => artifactUrl(reportSource.id, artifactName)}
         />
       )}
-      {match && <ReviewedMatchOutputPanel matchId={match.id} />}
     </main>
   );
 }

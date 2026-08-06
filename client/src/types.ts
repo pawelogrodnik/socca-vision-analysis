@@ -1720,6 +1720,9 @@ export type ReviewedIdentityDocument = {
 export type ReviewedOutputJob = {
   status: 'missing' | 'queued' | 'running' | 'completed' | 'failed' | 'stale';
   job_key?: string;
+  created_at?: string;
+  started_at?: string;
+  completed_at?: string;
   video_digest?: string;
   source_snapshot_digest?: string;
   error?: { message?: string } | null;

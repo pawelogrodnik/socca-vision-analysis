@@ -7,6 +7,13 @@ import {
   buildReviewedCorrectionPayload,
   correctionOptionsForSubject,
 } from '../src/utils/reviewedIdentityCorrection.ts';
+import {
+  formatElapsedTime,
+  formatReviewTime,
+  reviewedIdentityStatusLabel,
+  reviewedRenderStatusLabel,
+  shouldShowInitialReviewCta,
+} from '../src/utils/reviewedOutputPresentation.ts';
 
 const base = {
   playerId: '',
@@ -71,20 +78,45 @@ test('filters roster and canonical/manual slot options to the subject team', () 
   assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['A03', 'A11']);
 });
 
-test('reviewed output UI keeps the correction flow and stale safeguards visible', () => {
+test('reviewed output presentation uses operator-facing labels and one initial CTA', () => {
+  assert.equal(reviewedIdentityStatusLabel('missing'), 'Review nieprzygotowane');
+  assert.equal(reviewedIdentityStatusLabel('partial_reviewed'), 'Review rozpoczęte');
+  assert.equal(reviewedRenderStatusLabel('running'), 'Trwa przygotowywanie wideo');
+  assert.equal(reviewedRenderStatusLabel('stale'), 'Wideo nieaktualne po poprawkach');
+  assert.equal(shouldShowInitialReviewCta('missing', 'missing'), true);
+  assert.equal(shouldShowInitialReviewCta('partial_reviewed', 'missing'), true);
+  assert.equal(shouldShowInitialReviewCta('partial_reviewed', 'completed'), false);
+  assert.equal(formatReviewTime(42.3), '00:42.3');
+  assert.equal(formatElapsedTime('2026-08-06T10:00:00.000Z', Date.parse('2026-08-06T10:02:03.000Z')), '2 min 3 s');
+});
+
+test('reviewed output UI keeps the simple correction flow and stale safeguards visible', () => {
   const root = new URL('../src/components/', import.meta.url);
   const output = readFileSync(new URL('ReviewedMatchOutputPanel.tsx', root), 'utf8');
   const atTime = readFileSync(new URL('ReviewedIdentityAtTimePanel.tsx', root), 'utf8');
   const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', root), 'utf8');
+  const reportPage = readFileSync(new URL('MatchReportPage.tsx', root), 'utf8');
 
-  assert.match(output, /Sprawdź przypisania w tym momencie/);
-  assert.match(output, /Finalize and regenerate/);
-  assert.match(output, /To wideo pokazuje stan sprzed zapisanych poprawek/);
+  assert.match(output, /Przygotuj wideo do review/);
+  assert.match(output, /finalizeReviewedIdentity\(matchId\)/);
+  assert.match(output, /generateReviewedOutput\(matchId/);
+  assert.match(output, /Review wymaga decyzji\. Wideo nie zostało uruchomione/);
+  assert.match(output, /Przygotowuję wideo do review/);
+  assert.match(output, /Sprawdź osoby w klatce/);
+  assert.match(output, /Zastosuj poprawki i odśwież wideo/);
+  assert.match(output, /Ustawienia wideo/);
+  assert.match(output, /Statystyki po review/);
   assert.match(output, /videoRef\.current\.currentTime/);
   assert.match(output, /setStats\(null\)/);
-  assert.match(atTime, /Popraw przypisanie/);
+  assert.match(atTime, /Osoby widoczne w tej klatce/);
+  assert.match(atTime, /Zidentyfikuj/);
   assert.match(atTime, /candidate_subject_id/);
+  assert.match(atTime, /Szczegóły techniczne/);
   assert.match(form, /allocated_stable_slot_id|onSaved/);
   assert.match(form, /setError\(errorMessage\(reason\)\)/);
   assert.match(form, /context\?\.team_label/);
+  assert.match(form, /Zawodnik z kadry/);
+  assert.match(form, /Ten sam gracz co Axx/);
+  assert.match(form, /!action/);
+  assert.ok(reportPage.indexOf('<ReviewedMatchOutputPanel') < reportPage.indexOf('<MatchReportContent'));
 });
