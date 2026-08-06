@@ -14,8 +14,10 @@ from app.services.identity_operator_seed_digest import (
     identity_operator_seed_decisions_digest,
 )
 from app.services.identity_seeded_candidate_assignments import (
+    CANDIDATE_FILENAME,
     OUTPUT_FILENAME,
     SeededCandidateAssignmentsStaleError,
+    TIMELINE_FILENAME,
     load_combined_operator_seeds,
 )
 
@@ -87,6 +89,26 @@ def load_fresh_seeded_assignments(
             ),
             "current_operator_seed_decisions_digest": current_decisions_digest,
             "current_operator_seeds_document_digest": current_document_digest,
+        }
+    artifact_mismatches: list[str] = []
+    for source_key, filename in (
+        ("candidate_identity_digest", CANDIDATE_FILENAME),
+        ("timeline_digest", TIMELINE_FILENAME),
+    ):
+        expected = str(source.get(source_key) or "")
+        if not expected:
+            continue
+        artifact_path = match_path / filename
+        if not artifact_path.exists():
+            artifact_mismatches.append(f"{source_key}_source_missing")
+            continue
+        current = canonical_digest(load_identity_json(artifact_path))
+        if current != expected:
+            artifact_mismatches.append(f"{source_key}_mismatch")
+    if artifact_mismatches:
+        return None, {
+            "status": "stale",
+            "reason_codes": artifact_mismatches,
         }
     if (seeded.get("safety") or {}).get("production_identity_untouched") is not True:
         return None, {

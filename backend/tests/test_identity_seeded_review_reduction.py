@@ -332,6 +332,31 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             self.assertEqual(freshness["status"], "fresh")
 
+    def test_freshness_rejects_changed_candidate_or_timeline_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            seeds = {"schema_version": "0.1.0", "decisions": []}
+            candidate = {"subjects": []}
+            timeline = {"subjects": []}
+            seeded = seeded_document([accepted_assignment()])
+            seeded["source"] = {
+                "operator_seed_decisions_digest": identity_operator_seed_decisions_digest(seeds),
+                "candidate_identity_digest": canonical_digest(candidate),
+                "timeline_digest": canonical_digest(timeline),
+            }
+            (path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
+            (path / OUTPUT_FILENAME).write_text(json.dumps(seeded), encoding="utf-8")
+            (path / "identity_candidate_shadow.json").write_text(json.dumps(candidate), encoding="utf-8")
+            (path / "identity_offline_shadow_timeline.json").write_text(json.dumps(timeline), encoding="utf-8")
+            loaded, freshness = load_fresh_seeded_assignments(path)
+            self.assertIsNotNone(loaded)
+            self.assertEqual(freshness["status"], "fresh")
+            candidate["subjects"].append({"candidate_subject_id": "changed"})
+            (path / "identity_candidate_shadow.json").write_text(json.dumps(candidate), encoding="utf-8")
+            loaded, freshness = load_fresh_seeded_assignments(path)
+            self.assertIsNone(loaded)
+            self.assertIn("candidate_identity_digest_mismatch", freshness["reason_codes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -54,6 +54,65 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             second = finalize_reviewed_identity(root, second_match)
             self.assertEqual(first["semantic_digest"], second["semantic_digest"])
 
+    def test_candidate_fragments_reuse_base_stable_slot(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            candidates = {
+                "subjects": [
+                    {"candidate_subject_id": "s1", "candidate_player_id": "A01~2", "tracklet_ids": ["t1"]},
+                    {"candidate_subject_id": "s2", "candidate_player_id": "A01~7", "tracklet_ids": ["t2"]},
+                ]
+            }
+            (root / "identity_candidate_shadow.json").write_text(json.dumps(candidates))
+            result = finalize_reviewed_identity(root, _match())
+            self.assertEqual(
+                [row["fallback_label"] for row in result["tracklet_assignments"]],
+                ["A01", "A01"],
+            )
+            self.assertEqual(result["fragmentation_diagnostics"]["stable_anonymous_entities_total"], 1)
+
+    def test_ambiguous_subject_membership_is_a_hard_conflict(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            candidates = {
+                "subjects": [
+                    {"candidate_subject_id": "s1", "candidate_player_id": "A01", "tracklet_ids": ["t1"]},
+                    {"candidate_subject_id": "s-extra", "candidate_player_id": "A02", "tracklet_ids": ["t1"]},
+                ]
+            }
+            (root / "identity_candidate_shadow.json").write_text(json.dumps(candidates))
+            result = finalize_reviewed_identity(root, _match())
+            row = {item["tracklet_id"]: item for item in result["tracklet_assignments"]}["t1"]
+            self.assertEqual(row["identity_status"], "conflicted")
+            self.assertIn("ambiguous_candidate_subject_membership", row["hard_blockers"])
+
+    def test_exact_seed_overrides_only_its_detected_observation(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            tracklets["tracklets"][0]["positions_m"] = [
+                {"frame": 0, "status": "detected"},
+                {"frame": 1, "status": "detected"},
+            ]
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
+            seeds = {
+                "decisions": [{
+                    "observation_key": "o1",
+                    "frame_number": 1,
+                    "action": "assign_roster_player",
+                    "assigned_team": {"team_label": "A"},
+                    "assigned_player": {"player_id": "p1"},
+                    "provenance": {"tracklet_id": "t1"},
+                }]
+            }
+            (root / "identity_operator_seeds.json").write_text(json.dumps(seeds))
+            result = finalize_reviewed_identity(root, _match())
+            row = {item["tracklet_id"]: item for item in result["tracklet_assignments"]}["t1"]
+            self.assertEqual(row["identity_status"], "unresolved")
+            self.assertEqual(result["observation_overrides"][0]["display_label"], "Paweł")
+            self.assertEqual(result["summary"]["exact_named_observations"], 1)
+            self.assertEqual(result["summary"]["confirmed_detected_observations"], 1)
+
 
 class _workspace:
     def __enter__(self) -> Path:

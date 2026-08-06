@@ -1707,7 +1707,7 @@ export type ReviewedIdentitySummary = {
   conflicted: number;
   blocked: number;
   confirmed_players: number;
-  confirmed_detected_frame_coverage: number | null;
+  confirmed_detected_observation_ratio: number | null;
 };
 
 export type ReviewedIdentityDocument = {
@@ -1719,7 +1719,30 @@ export type ReviewedIdentityDocument = {
 
 export type ReviewedOutputJob = {
   status: 'missing' | 'queued' | 'running' | 'completed' | 'failed' | 'stale';
+  job_key?: string;
+  video_digest?: string;
   error?: { message?: string } | null;
+};
+
+export type ReviewedPlayerStats = {
+  player_id: string;
+  player_name: string;
+  team_label: string;
+  detected_time_sec: number;
+  observed_distance_m: number;
+  heatmap_samples: number;
+};
+
+export type ReviewedStatsResponse = {
+  stats: {
+    source_snapshot_digest: string;
+    players: ReviewedPlayerStats[];
+    global_coverage: {
+      coverage_unit?: string;
+      confirmed_ratio?: number | null;
+    };
+  };
+  readiness: { status: string };
 };
 
 export type ReviewedIdentityAt = {

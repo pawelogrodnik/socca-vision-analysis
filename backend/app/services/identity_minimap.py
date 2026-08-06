@@ -25,9 +25,20 @@ def draw_reviewed_minimap(frame: Any, rows: list[dict[str, Any]], *, pitch_width
         cv2.circle(frame, (x, y), 5, color, -1)
         if row.get("identity_status") == "conflicted": cv2.circle(frame, (x, y), 8, (0, 200, 255), 1)
         rendered += 1
-    if include_ball and ball and isinstance(ball.get("pitch_m"), list):
-        x, y = map_pitch_point(ball["pitch_m"], x0, y0, map_width, map_height, pitch_width, pitch_length); cv2.circle(frame, (x, y), 4, (0, 230, 255), -1)
-    return {"status": "available", "players_rendered": rendered, "orientation": "pitch_m_x_to_horizontal_pitch_m_y_to_vertical", "smoothing": "none_for_MVP; source tracklet positions are already smoothed"}
+    ball_point = reviewed_ball_pitch_point(ball) if include_ball else None
+    if ball_point:
+        x, y = map_pitch_point(ball_point, x0, y0, map_width, map_height, pitch_width, pitch_length)
+        cv2.circle(frame, (x, y), 4, (0, 230, 255), -1)
+    return {"status": "available", "players_rendered": rendered, "ball_rendered": bool(ball_point), "ball_policy": "detected_only; unknown and interpolated rows are omitted", "orientation": "pitch_m_x_to_horizontal_pitch_m_y_to_vertical", "smoothing": "none_for_MVP; source tracklet positions are already smoothed"}
+
+
+def reviewed_ball_pitch_point(ball: dict[str, Any] | None) -> list[float] | None:
+    if not ball or str(ball.get("source") or ball.get("status") or "detected") != "detected":
+        return None
+    point = ball.get("position_m")
+    if not isinstance(point, list) or len(point) < 2:
+        return None
+    return [float(point[0]), float(point[1])]
 
 
 def map_pitch_point(point: list[float], x0: int, y0: int, width: int, height: int, pitch_width: float, pitch_length: float) -> tuple[int, int]:

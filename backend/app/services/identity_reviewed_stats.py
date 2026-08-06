@@ -9,18 +9,28 @@ from typing import Any
 
 from app.services.global_identity import calculate_movement_stats
 from app.services.identity_initial_audit_store import write_identity_json_atomic
-from app.services.identity_jersey_number_common import canonical_digest
+from app.services.video import read_match_video_metadata
 
 
 def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: dict[str, Any], pitch_config: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
     tracklets = {str(row.get("tracklet_id")): row for row in _load(match_path / "tracklets.json").get("tracklets") or []}
-    fps = float((match_doc.get("video") or {}).get("fps") or 30.0)
+    video_metadata = read_match_video_metadata(match_path, match_doc)
+    fps = float(video_metadata["fps"])
+    if fps <= 0:
+        raise ValueError("Source video does not expose a valid FPS value")
     observations_by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    overrides = {
+        (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
+        for row in snapshot.get("observation_overrides") or []
+    }
     for assignment in snapshot.get("tracklet_assignments") or []:
-        if not assignment.get("eligible_for_player_stats") or assignment.get("identity_status") != "confirmed": continue
         for position in tracklets.get(str(assignment["tracklet_id"]), {}).get("positions_m") or []:
             if str(position.get("status") or "detected") != "detected": continue
-            observations_by_player[str(assignment["canonical_player_id"])].append({**position, "tracklet_id": assignment["tracklet_id"], "candidate_subject_id": assignment.get("candidate_subject_id"), "player_name": assignment.get("player_name"), "team_label": assignment.get("team_label"), "roster_number": assignment.get("roster_number"), "eligible_for_distance": True, "eligible_for_heatmap": True})
+            frame = int(position.get("frame") or 0)
+            effective = {**assignment, **(overrides.get((str(assignment["tracklet_id"]), frame)) or {})}
+            if effective.get("identity_status") != "confirmed" or not effective.get("canonical_player_id"):
+                continue
+            observations_by_player[str(effective["canonical_player_id"])].append({**position, "tracklet_id": assignment["tracklet_id"], "candidate_subject_id": assignment.get("candidate_subject_id"), "observation_identity_source": effective.get("identity_source"), "observation_key": effective.get("observation_key"), "player_name": effective.get("player_name"), "team_label": effective.get("team_label"), "roster_number": effective.get("roster_number"), "eligible_for_distance": True, "eligible_for_heatmap": True})
     players = []
     heatmaps = []
     timeline = []
@@ -38,15 +48,15 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         heatmaps.append({"player_id": player_id, "team_label": player["team_label"], "samples": len(positions), "positions_m": positions, "bin_dimensions": [12, 8]})
     snapshot_digest = str(snapshot["semantic_digest"])
     coverage = _coverage(snapshot)
-    shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
+    shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "video_timing": {"fps": fps, "frame_count": video_metadata["frame_count"], "duration_sec": video_metadata["duration_sec"], "source": video_metadata["source"], "filename": video_metadata["filename"]}, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
     documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "global_coverage": coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_stats_readiness.json": {**shared, "status": "completed", "global_coverage": coverage, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
     for name, document in documents.items(): write_identity_json_atomic(match_path / name, document)
     return documents
 
 
 def _coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
-    summary = snapshot.get("summary") or {}; total = int(summary.get("tracklets_total") or 0)
-    return {"reliable_player_observations_total": total, "confirmed_observations": summary.get("confirmed"), "unresolved_observations": summary.get("unresolved"), "conflicted_observations": summary.get("conflicted"), "ignored_observations": 0, "confirmed_ratio": summary.get("confirmed_detected_frame_coverage"), "unresolved_ratio": summary.get("unresolved_detected_frame_coverage")}
+    summary = snapshot.get("summary") or {}
+    return {"coverage_unit": summary.get("coverage_unit"), "reliable_player_observations_total": summary.get("reliable_player_observations_total"), "confirmed_observations": summary.get("confirmed_detected_observations"), "unresolved_observations": summary.get("unresolved_detected_observations"), "conflicted_observations": summary.get("conflicted_detected_observations"), "ignored_observations": summary.get("ignored_detected_observations"), "confirmed_ratio": summary.get("confirmed_detected_observation_ratio"), "unresolved_ratio": summary.get("unresolved_detected_observation_ratio")}
 def _fragments(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     out=[]; current=[]
     for row in rows:

@@ -46,6 +46,7 @@ import type {
   ReviewedIdentityDocument,
   ReviewedIdentityAt,
   ReviewedOutputJob,
+  ReviewedStatsResponse,
 } from './types';
 import type {
   BoundedH2Session,
@@ -203,8 +204,12 @@ export async function getReviewedIdentityAt(matchId: string, timeSec: number): P
   return request<ReviewedIdentityAt>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/at?time_sec=${encodeURIComponent(timeSec)}`);
 }
 
-export function reviewedVideoUrl(matchId: string): string {
-  return `${API_BASE}/api/matches/${encodeURIComponent(matchId)}/reviewed-output/video`;
+export function reviewedVideoUrl(matchId: string, digest: string): string {
+  return `${API_BASE}/api/matches/${encodeURIComponent(matchId)}/reviewed-output/video?digest=${encodeURIComponent(digest)}`;
+}
+
+export async function getReviewedStats(matchId: string): Promise<ReviewedStatsResponse> {
+  return request<ReviewedStatsResponse>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-output/stats`);
 }
 
 export async function updateMatchMetadata(matchId: string, payload: MatchMetadataPayload): Promise<Match> {

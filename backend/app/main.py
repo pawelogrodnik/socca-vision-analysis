@@ -71,6 +71,7 @@ from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
 from app.services.identity_reviewed_output_jobs import (
+    ReviewedOutputBusyError,
     generate_reviewed_output,
     reviewed_output_status,
 )
@@ -101,7 +102,7 @@ from app.services.team_registry import delete_team as registry_delete_team
 from app.services.team_registry import get_team as registry_get_team
 from app.services.team_registry import list_teams as registry_list_teams
 from app.services.team_registry import update_team as registry_update_team
-from app.services.video import extract_frame, read_video_metadata
+from app.services.video import extract_frame, read_video_metadata, resolve_match_video_path
 
 app = FastAPI(title="Orlik Vision API", version="0.6.0")
 app.add_middleware(
@@ -178,9 +179,10 @@ PRODUCT_FLOW_BENCHMARKS_DIR = MATCHES_DIR.parent / "benchmarks" / "player_identi
 
 
 def match_video_path(path: Path) -> Path:
-    for candidate in path.glob("video.*"):
-        return candidate
-    raise HTTPException(status_code=404, detail="Video file not found")
+    try:
+        return resolve_match_video_path(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def parse_metadata_form(
@@ -1787,7 +1789,10 @@ def generate_match_reviewed_output(match_id: str, payload: dict[str, Any] = Body
     if snapshot.get("status") in {"missing", "stale"}:
         raise HTTPException(status_code=409, detail="Najpierw sfinalizuj reviewed identity.")
     options = {"include_minimap": bool(payload.get("include_minimap", True)), "include_ball": bool(payload.get("include_ball", True)), "show_roster_number": bool(payload.get("show_roster_number", False))}
-    return generate_reviewed_output(path, snapshot, read_match_meta(path), options)
+    try:
+        return generate_reviewed_output(path, snapshot, read_match_meta(path), options)
+    except ReviewedOutputBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/api/matches/{match_id}/reviewed-output/status")
@@ -1797,10 +1802,39 @@ def get_match_reviewed_output_status(match_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/matches/{match_id}/reviewed-output/video")
-def get_match_reviewed_video(match_id: str) -> FileResponse:
-    path = match_dir(match_id) / "reviewed_video.mp4"
-    if not path.exists(): raise HTTPException(status_code=404, detail="Reviewed video is not available")
-    return FileResponse(path, media_type="video/mp4", filename="reviewed_video.mp4")
+def get_match_reviewed_video(match_id: str, digest: str | None = Query(default=None)) -> FileResponse:
+    match_path = match_dir(match_id)
+    snapshot = get_reviewed_identity_status(match_path)
+    job = reviewed_output_status(match_path, snapshot)
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Reviewed video is not current and completed")
+    if job.get("source_snapshot_digest") != snapshot.get("semantic_digest"):
+        raise HTTPException(status_code=409, detail="Reviewed video was generated from an older identity snapshot")
+    video_digest = str(job.get("video_digest") or "")
+    if digest is not None and digest != video_digest:
+        raise HTTPException(status_code=409, detail="Requested reviewed video digest is stale")
+    path = match_path / "reviewed_video.mp4"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Reviewed video is not available")
+    return FileResponse(path, media_type="video/mp4", filename="reviewed_video.mp4", headers={"ETag": video_digest})
+
+
+@app.get("/api/matches/{match_id}/reviewed-output/stats")
+def get_match_reviewed_stats(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    snapshot = get_reviewed_identity_status(path)
+    job = reviewed_output_status(path, snapshot)
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Reviewed stats are not current and completed")
+    stats_path = path / "reviewed_player_stats.json"
+    readiness_path = path / "reviewed_stats_readiness.json"
+    if not stats_path.exists() or not readiness_path.exists():
+        raise HTTPException(status_code=404, detail="Reviewed stats are not available")
+    stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+    if stats.get("source_snapshot_digest") != snapshot.get("semantic_digest"):
+        raise HTTPException(status_code=409, detail="Reviewed stats were generated from an older identity snapshot")
+    return {"stats": stats, "readiness": readiness}
 
 
 @app.get("/api/matches/{match_id}/resolved-player-stats")
