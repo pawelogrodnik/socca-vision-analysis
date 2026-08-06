@@ -136,6 +136,14 @@ test('reviewed output UI keeps the simple correction flow and stale safeguards v
   assert.match(output, /Przygotowuję wideo do review/);
   assert.match(output, /Sprawdź osoby w klatce/);
   assert.match(output, /Zastosuj poprawki i odśwież wideo/);
+  assert.match(output, /Sprawdzone przypadki/);
+  assert.match(output, /Pozostało ważnych/);
+  assert.match(output, /Problemy strukturalne/);
+  assert.match(output, /Pokrycie review/);
+  assert.match(output, /Co zostało do sprawdzenia/);
+  assert.match(output, /getReviewedIdentityReviewProgress/);
+  assert.match(output, /affected_detected_observations/);
+  assert.doesNotMatch(output, /frames_per_sec|eta_sec|progress bar/i);
   assert.match(output, /Ustawienia wideo/);
   assert.match(output, /Statystyki po review/);
   assert.match(output, /videoRef\.current\.currentTime/);

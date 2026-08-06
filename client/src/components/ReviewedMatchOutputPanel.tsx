@@ -4,6 +4,7 @@ import {
   finalizeReviewedIdentity,
   generateReviewedOutput,
   getReviewedIdentity,
+  getReviewedIdentityReviewProgress,
   getReviewedIdentityAt,
   getReviewedOutputStatus,
   getReviewedStats,
@@ -15,6 +16,7 @@ import type {
   ReviewedIdentityAt,
   ReviewedIdentityAtEntity,
   ReviewedIdentityDocument,
+  ReviewedIdentityReviewProgress,
   ReviewedOutputJob,
   ReviewedStatsResponse,
 } from '../types';
@@ -29,8 +31,22 @@ import { clearReviewedDerivedOutput } from '../utils/reviewedOutputState';
 import { ReviewedIdentityAtTimePanel } from './ReviewedIdentityAtTimePanel';
 import { ReviewedPlayerStatsTable } from './ReviewedPlayerStatsTable';
 
+function teamLabelForProgress(teamLabel: string): string {
+  if (teamLabel === 'A') return 'Team A';
+  if (teamLabel === 'B') return 'Team B';
+  return 'Team nieznany';
+}
+
+function reasonForProgress(reasonCodes: string[]): string {
+  if (reasonCodes.includes('long_unresolved_subject')) return 'długi nierozpoznany fragment';
+  if (reasonCodes.includes('review_card_requires_operator')) return 'wymaga potwierdzenia operatora';
+  if (reasonCodes.includes('review_card_conflict')) return 'konflikt wymagający sprawdzenia';
+  return 'wymaga sprawdzenia';
+}
+
 export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   const [identity, setIdentity] = useState<ReviewedIdentityDocument | null>(null);
+  const [progress, setProgress] = useState<ReviewedIdentityReviewProgress | null>(null);
   const [job, setJob] = useState<ReviewedOutputJob | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -46,12 +62,14 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
 
   async function refresh() {
     try {
-      const [nextIdentity, nextJob] = await Promise.all([
+      const [nextIdentity, nextJob, nextProgress] = await Promise.all([
         getReviewedIdentity(matchId),
         getReviewedOutputStatus(matchId),
+        getReviewedIdentityReviewProgress(matchId),
       ]);
       setIdentity(nextIdentity);
       setJob(nextJob);
+      setProgress(nextProgress);
       const outputIsCurrent = nextJob.status === 'completed'
         && nextIdentity.status !== 'stale'
         && nextJob.source_snapshot_digest === nextIdentity.semantic_digest;
@@ -89,6 +107,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
       setAtTime(cleared.atTime);
       const nextIdentity = await finalizeReviewedIdentity(matchId);
       setIdentity(nextIdentity);
+      setProgress(await getReviewedIdentityReviewProgress(matchId));
       const nextJob = await getReviewedOutputStatus(matchId);
       setJob(nextJob);
       setMessage(nextJob.status === 'completed'
@@ -123,6 +142,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
     try {
       const nextIdentity = await finalizeReviewedIdentity(matchId);
       setIdentity(nextIdentity);
+      setProgress(await getReviewedIdentityReviewProgress(matchId));
       if (nextIdentity.status === 'blocked') {
         setMessage('Review wymaga decyzji. Wideo nie zostało uruchomione.');
         return;
@@ -157,13 +177,19 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
     setDirty(true);
     setStats(null);
     if (identity) setIdentity({ ...identity, status: 'stale' });
+    setProgress(result.review_progress);
     const allocation = result.allocated_stable_slot_id
       ? ` Utworzono nowego zawodnika jako ${result.allocated_stable_slot_id}.`
       : '';
-    setMessage(`Zapisano poprawkę.${allocation} Wideo i statystyki wymagają odświeżenia.`);
+    const impact = result.decision_impact;
+    setMessage(
+      `Zapisano decyzję.${allocation} Objęła ${impact.affected_tracklets} tracklety i ${impact.affected_detected_observations} wykrytych obserwacji. `
+      + `Pozostało około ${impact.important_decisions_remaining_after} ważnych decyzji. `
+      + 'Obecne wideo pokazuje stan sprzed zmian; możesz kontynuować review albo odświeżyć wynik.',
+    );
   }
 
-  const summary = identity?.summary;
+  const humanSummary = progress?.summary;
   const renderInProgress = job?.status === 'queued' || job?.status === 'running';
   const canGenerate = identity?.status === 'partial_reviewed' || identity?.status === 'complete_reviewed';
   const showInitialCta = shouldShowInitialReviewCta(identity?.status, job?.status);
@@ -183,12 +209,24 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
       </div>
     </div>
 
-    {summary && <div className='reviewed-metric-grid' aria-label='Podsumowanie review'>
-      <div className='reviewed-metric-card'><span>Potwierdzone</span><strong>{summary.confirmed}</strong><small>fragmentów</small></div>
-      <div className='reviewed-metric-card'><span>Nierozpoznane</span><strong>{summary.unresolved}</strong><small>fragmentów</small></div>
-      <div className='reviewed-metric-card'><span>Wymaga sprawdzenia</span><strong>{summary.conflicted}</strong><small>przypadków</small></div>
-      <div className='reviewed-metric-card'><span>Pokrycie tożsamości</span><strong>{summary.confirmed_detected_observation_ratio === null ? '—' : `${Math.round(summary.confirmed_detected_observation_ratio * 100)}%`}</strong><small>wykrytych obserwacji</small></div>
+    {humanSummary && progress && <div className='reviewed-metric-grid' aria-label='Podsumowanie review'>
+      <div className='reviewed-metric-card'><span>Sprawdzone przypadki</span><strong>{humanSummary.review_units_completed} / {humanSummary.review_units_actionable_total}</strong><small>logicznych fragmentów</small></div>
+      <div className='reviewed-metric-card'><span>Pozostało ważnych</span><strong>około {humanSummary.important_decisions_remaining}</strong><small>decyzji</small></div>
+      <div className='reviewed-metric-card'><span>Problemy strukturalne</span><strong>{humanSummary.structural_blockers}</strong><small>przypadków</small></div>
+      <div className='reviewed-metric-card'><span>Pokrycie review</span><strong>{Math.round(progress.observations.operator_reviewed_observation_ratio * 100)}%</strong><small>wykrytych obserwacji</small></div>
     </div>}
+
+    {progress && progress.next_cases.length > 0 && <details className='reviewed-next-cases'>
+      <summary>Co zostało do sprawdzenia?</summary>
+      <div className='reviewed-next-cases-list'>
+        {progress.next_cases.slice(0, 5).map((item) => <article key={item.candidate_subject_id}>
+          <strong>Nieznany zawodnik · {teamLabelForProgress(item.effective_team_label)}</strong>
+          <span>{item.detected_observation_count} wykrytych obserwacji · {item.tracklet_count} połączone fragmenty</span>
+          <span>Powód: {reasonForProgress(item.reason_codes)}</span>
+          <details><summary>Szczegóły techniczne</summary><p>candidate_subject_id: {item.candidate_subject_id}</p></details>
+        </article>)}
+      </div>
+    </details>}
 
     {showInitialCta && <div className='reviewed-next-step'>
       <div>
@@ -266,6 +304,10 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
       <p>Identity: {identity?.status ?? 'loading'} · render: {job?.status ?? 'loading'}</p>
       {identity?.semantic_digest && <p>Snapshot digest: {identity.semantic_digest}</p>}
       {job?.job_key && <p>Render job: {job.job_key}</p>}
+      {progress && <>
+        <p>Candidate subjects: {progress.technical_diagnostics.candidate_subjects} · tracklets: {progress.technical_diagnostics.tracklets} · unresolved tracklet assignments: {progress.technical_diagnostics.unresolved_tracklet_assignments}</p>
+        <p>To są jednostki techniczne, nie liczba decyzji wymaganych od operatora.</p>
+      </>}
     </details>
     {message && <p className='status'>{message}</p>}
   </section>;

@@ -44,6 +44,7 @@ import type {
   TeamConfigReviewState,
   TrackletReviewState,
   ReviewedIdentityDocument,
+  ReviewedIdentityReviewProgress,
   ReviewedIdentityAt,
   ReviewedOutputJob,
   ReviewedStatsResponse,
@@ -189,6 +190,12 @@ export async function getMatch(matchId: string): Promise<Match> {
 
 export async function getReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity`);
+}
+
+export async function getReviewedIdentityReviewProgress(matchId: string): Promise<ReviewedIdentityReviewProgress> {
+  return request<ReviewedIdentityReviewProgress>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress`,
+  );
 }
 
 export async function finalizeReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {

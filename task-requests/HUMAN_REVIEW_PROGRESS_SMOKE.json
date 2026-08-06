@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0.0",
+  "match_id": "668ae4c0",
+  "subject": "shadow-a-03e86dfeca66a48c",
+  "baseline": {
+    "candidate_subjects": 109,
+    "tracklets": 134,
+    "unresolved_tracklet_assignments": 126,
+    "review_units_total": 109,
+    "review_units_completed": 1,
+    "review_units_actionable_total": 94,
+    "completed_by_operator": 1,
+    "completed_automatically": 0,
+    "important_decisions_remaining": 67,
+    "optional_cases_remaining": 26,
+    "structural_blockers": 1,
+    "ignored_low_impact": 14,
+    "operator_decisions_saved": 1,
+    "operator_queue_completion_ratio": 0.0106,
+    "total_detected_observations": 37653,
+    "operator_reviewed_observations": 1991,
+    "operator_reviewed_observation_ratio": 0.0529,
+    "team_known_observations": 35548,
+    "team_known_observation_ratio": 0.9441,
+    "confirmed_player_observations": 0,
+    "confirmed_player_observation_ratio": 0.0
+  },
+  "decision_smoke": {
+    "impact": {
+      "affected_tracklets": 1,
+      "affected_detected_observations": 124,
+      "important_decisions_remaining_before": 67,
+      "important_decisions_remaining_after": 66,
+      "operator_reviewed_observations_delta": 124,
+      "operator_reviewed_ratio_before": 0.0529,
+      "operator_reviewed_ratio_after": 0.0562
+    },
+    "progress_after": {
+      "candidate_subjects": 109,
+      "tracklets": 134,
+      "unresolved_tracklet_assignments": 126,
+      "review_units_total": 109,
+      "review_units_completed": 2,
+      "review_units_actionable_total": 94,
+      "completed_by_operator": 2,
+      "completed_automatically": 0,
+      "important_decisions_remaining": 66,
+      "optional_cases_remaining": 26,
+      "structural_blockers": 1,
+      "ignored_low_impact": 14,
+      "operator_decisions_saved": 2,
+      "operator_queue_completion_ratio": 0.0213,
+      "total_detected_observations": 37653,
+      "operator_reviewed_observations": 2115,
+      "operator_reviewed_observation_ratio": 0.0562,
+      "team_known_observations": 35548,
+      "team_known_observation_ratio": 0.9441,
+      "confirmed_player_observations": 0,
+      "confirmed_player_observation_ratio": 0.0
+    },
+    "snapshot": {
+      "status": "stale",
+      "stale": true
+    },
+    "render_job_unchanged_by_save": true
+  },
+  "batch_render": {
+    "job_status": "completed",
+    "frames": 2692,
+    "render_duration_sec": 34.634,
+    "real_time_factor": 2.593,
+    "codec": "h264",
+    "pix_fmt": "yuv420p",
+    "minimap_frames": 2692,
+    "ball_frames": 1292,
+    "duplicate_stable_labels": 0,
+    "duplicate_canonical_players": 0,
+    "automatic_permanent_allocations": 0
+  },
+  "safety": {
+    "source_before": {
+      "tracklets.json": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "published_match.json": null
+    },
+    "source_after": {
+      "tracklets.json": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "published_match.json": null
+    },
+    "production_mutation_count": 0,
+    "published_mutation_count": 0,
+    "reran_yolo": false,
+    "reran_tracking": false,
+    "reran_reid": false,
+    "reran_ball_detection": false
+  }
+}

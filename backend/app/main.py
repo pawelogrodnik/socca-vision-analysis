@@ -79,6 +79,7 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
+from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
     get_reviewed_identity_status,
@@ -1770,6 +1771,15 @@ def review_identity_crops(match_id: str, payload: dict[str, Any] = Body(...)) ->
 @app.get("/api/matches/{match_id}/reviewed-identity")
 def get_reviewed_identity(match_id: str) -> dict[str, Any]:
     return get_reviewed_identity_status(match_dir(match_id))
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/review-progress")
+def get_match_reviewed_identity_progress(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_reviewed_identity_progress(path, read_match_meta(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/matches/{match_id}/reviewed-identity/slot-review")

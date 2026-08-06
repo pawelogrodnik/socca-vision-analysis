@@ -169,6 +169,19 @@ a { color: #93c5fd; }
 .reviewed-metric-card small { color: #a5b4c7; font-size: 13px; }
 .reviewed-metric-card strong { color: #f8fafc; font-size: 28px; line-height: 1.05; }
 
+.reviewed-next-cases {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.38);
+}
+.reviewed-next-cases summary { cursor: pointer; color: #dbeafe; font-weight: 800; }
+.reviewed-next-cases-list { display: grid; gap: 8px; margin-top: 12px; }
+.reviewed-next-cases-list article { display: grid; gap: 3px; padding: 10px; border-left: 3px solid #f0b429; background: rgba(30, 41, 59, 0.45); }
+.reviewed-next-cases-list span { color: #cbd5e1; font-size: 13px; }
+.reviewed-next-cases-list details { margin-top: 4px; color: #94a3b8; font-size: 12px; }
+
 .reviewed-next-step,
 .reviewed-rendering-card {
   margin: 18px 0;

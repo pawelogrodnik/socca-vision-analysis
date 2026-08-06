@@ -161,6 +161,10 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             )
             self.assertTrue(first["snapshot"]["stale"])
             self.assertEqual(first["semantic_decision_digest"], same["semantic_decision_digest"])
+            self.assertEqual(first["review_progress"]["summary"]["completed_by_operator"], 1)
+            self.assertEqual(first["decision_impact"]["affected_tracklets"], 1)
+            self.assertEqual(first["decision_impact"]["affected_detected_observations"], 2)
+            self.assertEqual(same["decision_impact"]["operator_reviewed_observations_delta"], 0)
             self.assertEqual(get_reviewed_identity_status(root)["status"], "stale")
             saved = first["saved_decision"]
             self.assertEqual(saved["action"], "assign_team")

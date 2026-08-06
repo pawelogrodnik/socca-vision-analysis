@@ -1836,6 +1836,69 @@ export type ReviewedCorrectionResponse = {
   allocated_stable_slot_id: string | null;
   snapshot: { status: string; stale: boolean };
   semantic_decision_digest: string;
+  review_progress: ReviewedIdentityReviewProgress;
+  decision_impact: ReviewedCorrectionDecisionImpact;
+};
+
+export type ReviewedIdentityReviewUnit = {
+  candidate_subject_id: string;
+  tracklet_ids: string[];
+  tracklet_count: number;
+  source_team_label: string;
+  effective_team_label: string;
+  frame_start: number | null;
+  frame_end: number | null;
+  detected_frame_count: number;
+  detected_observation_count: number;
+  detected_time_sec: number;
+  current_resolution_status: string;
+  priority: 'high' | 'optional' | null;
+  reason_codes: string[];
+};
+
+export type ReviewedIdentityReviewProgress = {
+  schema_version: string;
+  status: 'ready';
+  match_id: string;
+  summary: {
+    review_units_total: number;
+    review_units_completed: number;
+    review_units_actionable_total: number;
+    completed_by_operator: number;
+    completed_automatically: number;
+    important_decisions_remaining: number;
+    optional_cases_remaining: number;
+    structural_blockers: number;
+    ignored_low_impact: number;
+    operator_decisions_saved: number;
+    operator_queue_completion_ratio: number;
+  };
+  observations: {
+    total_detected_observations: number;
+    operator_reviewed_observations: number;
+    operator_reviewed_observation_ratio: number;
+    team_known_observations: number;
+    team_known_observation_ratio: number;
+    confirmed_player_observations: number;
+    confirmed_player_observation_ratio: number;
+  };
+  next_cases: ReviewedIdentityReviewUnit[];
+  technical_diagnostics: {
+    candidate_subjects: number;
+    tracklets: number;
+    unresolved_tracklet_assignments: number;
+  };
+  policy: Record<string, number>;
+};
+
+export type ReviewedCorrectionDecisionImpact = {
+  affected_tracklets: number;
+  affected_detected_observations: number;
+  important_decisions_remaining_before: number;
+  important_decisions_remaining_after: number;
+  operator_reviewed_observations_delta: number;
+  operator_reviewed_ratio_before: number;
+  operator_reviewed_ratio_after: number;
 };
 
 export type AnalysisPayload = {

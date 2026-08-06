@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import threading
@@ -23,6 +24,7 @@ LOCK_FILENAME = "reviewed_video_job.lock"
 RENDERER_VERSION = "reviewed_video:v5"
 _active_job_keys: set[str] = set()
 _submission_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 class ReviewedOutputBusyError(RuntimeError):
@@ -77,6 +79,7 @@ def _generate_reviewed_output(
         job = {
             "schema_version": "1.1.0",
             "job_key": key,
+            "match_id": snapshot.get("match_id") or match_path.name,
             "status": "queued",
             "created_at": _now(),
             "owner_pid": os.getpid(),
@@ -88,6 +91,7 @@ def _generate_reviewed_output(
             "error": None,
         }
         write_identity_json_atomic(match_path / JOB_FILENAME, job)
+        _log_render(job, match_path, {"stage": "queued"})
         _active_job_keys.add(_active_token(match_path, key))
         threading.Thread(
             target=_run,
@@ -145,9 +149,17 @@ def _run(
     job: dict[str, Any],
 ) -> None:
     job_key = str(job["job_key"])
+    last_progress: dict[str, Any] = {"stage": "queued"}
+
+    def progress(event: dict[str, Any]) -> None:
+        nonlocal last_progress
+        last_progress = dict(event)
+        _log_render(job, path, event)
+
     try:
         running = {**job, "status": "running", "started_at": _now()}
         write_identity_json_atomic(path / JOB_FILENAME, running)
+        progress({"stage": "build_reviewed_stats"})
         stats = build_reviewed_stats(path, snapshot, match_doc, _load(path / "pitch_config.json"))
         manifest = render_reviewed_video(
             path,
@@ -156,6 +168,7 @@ def _run(
             include_minimap=bool(options.get("include_minimap", True)),
             include_ball=bool(options.get("include_ball", True)),
             show_roster_number=bool(options.get("show_roster_number", False)),
+            progress_callback=progress,
         )
         output = {
             **running,
@@ -190,7 +203,27 @@ def _run(
                 "safety": manifest["safety"],
             },
         )
+        progress(
+            {
+                "stage": "completed",
+                "processed_frames": manifest.get("frames"),
+                "total_frames": manifest.get("frames"),
+                "elapsed_sec": manifest.get("render_duration_sec"),
+                "output": "reviewed_video.mp4",
+                "codec": "h264",
+                "pix_fmt": "yuv420p",
+            }
+        )
     except Exception as exc:
+        _log_render(
+            job,
+            path,
+            {
+                **last_progress,
+                "stage": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
         write_identity_json_atomic(
             path / JOB_FILENAME,
             {
@@ -206,6 +239,38 @@ def _run(
     finally:
         _active_job_keys.discard(_active_token(path, job_key))
         _release_lock(path / LOCK_FILENAME, job_key)
+
+
+def _log_render(job: dict[str, Any], match_path: Path, event: dict[str, Any]) -> None:
+    """Write compact terminal-only render diagnostics; never mutate the job API."""
+    job_key = str(job.get("job_key") or "")[:8]
+    fields = [
+        "[reviewed-render]",
+        f"match={job.get('match_id') or match_path.name}",
+        f"job={job_key}",
+        f"stage={event.get('stage') or 'unknown'}",
+    ]
+    processed = event.get("processed_frames")
+    total = event.get("total_frames")
+    if processed is not None and total is not None:
+        fields.append(f"frames={processed}/{total}")
+    if event.get("progress") is not None:
+        fields.append(f"progress={float(event['progress']) * 100:.1f}%")
+    if event.get("elapsed_sec") is not None:
+        fields.append(f"elapsed={float(event['elapsed_sec']):.1f}s")
+    if event.get("frames_per_sec") is not None:
+        fields.append(f"speed={float(event['frames_per_sec']):.2f}fps")
+    if event.get("eta_sec") is not None:
+        fields.append(f"eta={float(event['eta_sec']):.1f}s")
+    if event.get("output"):
+        fields.append(f"output={event['output']}")
+    if event.get("codec"):
+        fields.append(f"codec={event['codec']}")
+    if event.get("pix_fmt"):
+        fields.append(f"pix_fmt={event['pix_fmt']}")
+    if event.get("error"):
+        fields.append(f"error={event['error']}")
+    logger.info(" ".join(fields))
 
 
 def _acquire_lock(path: Path, owner: dict[str, Any]) -> bool:

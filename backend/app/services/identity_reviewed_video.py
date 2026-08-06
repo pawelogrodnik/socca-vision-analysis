@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
-from typing import Any
+from typing import Any, Callable
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
@@ -22,17 +22,33 @@ from app.services.identity_reviewed_effective_observation import (
 from app.services.video import resolve_match_video_path
 
 
-def render_reviewed_video(match_path: Path, snapshot: dict[str, Any], match_doc: dict[str, Any], *, include_minimap: bool = True, include_ball: bool = True, show_roster_number: bool = False) -> dict[str, Any]:
+RenderProgressCallback = Callable[[dict[str, Any]], None]
+
+
+def render_reviewed_video(
+    match_path: Path,
+    snapshot: dict[str, Any],
+    match_doc: dict[str, Any],
+    *,
+    include_minimap: bool = True,
+    include_ball: bool = True,
+    show_roster_number: bool = False,
+    progress_callback: RenderProgressCallback | None = None,
+) -> dict[str, Any]:
     import cv2
 
+    emitter = _ProgressEmitter(progress_callback)
+    emitter.emit("resolve_source_video")
     source = reviewed_source_video_path(match_path, match_doc)
     output = match_path / "reviewed_video.mp4"; raw = match_path / "reviewed_video.raw.avi"; partial = match_path / "reviewed_video.partial.mp4"
+    emitter.emit("load_render_inputs")
     positions = _positions_by_frame(match_path, snapshot); pitch = _load_optional(match_path / "pitch_config.json"); balls = _ball_by_frame(match_path) if include_ball else {}
     capture = cv2.VideoCapture(str(source))
     if not capture.isOpened(): raise RuntimeError("Source video could not be opened")
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0); width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)); height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)); total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)); writer = cv2.VideoWriter(str(raw), cv2.VideoWriter_fourcc(*"MJPG"), fps, (width, height))
     if not writer.isOpened(): capture.release(); raise RuntimeError("Could not create temporary reviewed video")
     started=time.monotonic(); count=0; labeled_frames=0; confirmed_labels=0; fallback_labels=0; minimap_frames=0; ball_frames=0; duplicate_stable_labels=0; duplicate_canonical_players=0; max_simultaneous_stable_labels=0
+    emitter.emit("render_frames", processed_frames=0, total_frames=total, force=True)
     try:
         while True:
             ok, frame = capture.read()
@@ -55,11 +71,17 @@ def render_reviewed_video(match_path: Path, snapshot: dict[str, Any], match_doc:
                 ball_frames += bool(minimap.get("ball_rendered"))
             _hud(frame, count, fps, rows, snapshot)
             writer.write(frame); count += 1
+            emitter.emit("render_frames", processed_frames=count, total_frames=total)
     finally: capture.release(); writer.release()
     if count == 0: raw.unlink(missing_ok=True); raise RuntimeError("Renderer produced zero frames")
-    _encode(raw, partial); partial.replace(output); raw.unlink(missing_ok=True)
+    emitter.emit("encode_mp4", processed_frames=count, total_frames=total, force=True)
+    _encode(raw, partial, total_frames=total, progress_callback=emitter.emit)
+    partial.replace(output); raw.unlink(missing_ok=True)
+    emitter.emit("validate_output", processed_frames=count, total_frames=total, force=True)
     config={"include_minimap":include_minimap,"include_ball":include_ball,"show_roster_number":show_roster_number}; manifest={"schema_version":"1.3.0","status":"completed","generated_at":datetime.now(timezone.utc).isoformat(),"source_snapshot_digest":snapshot["semantic_digest"],"source_video_digest":_sha(source),"render_config_digest":canonical_digest(config),"renderer_version":"reviewed_video:v5","path":"reviewed_video.mp4","frames":count,"fps":fps,"resolution":[width,height],"duration_sec":round(count/fps,3),"file_size_bytes":output.stat().st_size,"digest":_sha(output),"render_duration_sec":round(time.monotonic()-started,3),"real_time_factor":round((count/fps)/max(time.monotonic()-started,.001),3),"semantic_checks":{"frames_with_player_labels":labeled_frames,"confirmed_labels_rendered":confirmed_labels,"fallback_labels_rendered":fallback_labels,"minimap_frames_rendered":minimap_frames,"ball_frames_rendered":ball_frames,"duplicate_stable_labels_rendered":duplicate_stable_labels,"duplicate_canonical_players_rendered":duplicate_canonical_players,"max_simultaneous_stable_labels":max_simultaneous_stable_labels},"minimap":minimap,"safety":{"reran_yolo":False,"reran_tracking":False,"production_identity_mutated":False}}
-    write_identity_json_atomic(match_path / "reviewed_video_manifest.json",manifest); return manifest
+    emitter.emit("write_manifests", processed_frames=count, total_frames=total, force=True)
+    write_identity_json_atomic(match_path / "reviewed_video_manifest.json",manifest)
+    return manifest
 
 
 def reviewed_source_video_path(match_path: Path, match_doc: dict[str, Any]) -> Path:
@@ -133,11 +155,109 @@ def _rectangles_overlap(left: tuple[int, int, int, int], right: tuple[int, int, 
 def _hud(frame: Any, index:int,fps:float,rows:list[dict[str,Any]],snapshot:dict[str,Any])->None:
     import cv2
     summary=snapshot.get("summary") or {}; text=f"{index/fps:05.1f}s  Potwierdzone obserwacje: {summary.get('confirmed_detected_observation_ratio') or 0:.0%}  Nieprzypisani: {sum(row.get('identity_status')=='unresolved' for row in rows)}"; cv2.rectangle(frame,(8,8),(min(frame.shape[1]-8,610),38),(10,14,20),-1); cv2.putText(frame,text,(16,29),cv2.FONT_HERSHEY_SIMPLEX,.52,(240,240,240),1,cv2.LINE_AA)
-def _encode(raw:Path,output:Path)->None:
-    ffmpeg=shutil.which("ffmpeg")
-    if not ffmpeg: raise RuntimeError("ffmpeg is required for browser-playable reviewed video")
-    run=subprocess.run([ffmpeg,"-y","-loglevel","error","-i",str(raw),"-an","-vf","format=yuv420p","-c:v","libx264","-preset","veryfast","-pix_fmt","yuv420p","-color_range","tv","-movflags","+faststart",str(output)],capture_output=True,text=True)
-    if run.returncode: output.unlink(missing_ok=True); raise RuntimeError(f"ffmpeg encoding failed: {run.stderr.strip()}")
+class _ProgressEmitter:
+    """Throttles renderer callbacks so callers never receive per-frame spam."""
+
+    def __init__(self, callback: RenderProgressCallback | None) -> None:
+        self.callback = callback
+        self.started_at = time.monotonic()
+        self.last_at = 0.0
+        self.last_stage: str | None = None
+
+    def emit(
+        self,
+        stage: str,
+        *,
+        processed_frames: int | None = None,
+        total_frames: int | None = None,
+        force: bool = False,
+    ) -> None:
+        if self.callback is None:
+            return
+        now = time.monotonic()
+        stage_changed = stage != self.last_stage
+        if not force and not stage_changed and now - self.last_at < 5.0:
+            return
+        elapsed = max(now - self.started_at, 0.0)
+        processed = int(processed_frames or 0)
+        total = int(total_frames or 0)
+        speed = processed / elapsed if processed and elapsed else None
+        eta = (
+            (total - processed) / speed
+            if total > 0 and speed and processed >= 30 and elapsed >= 2.0
+            else None
+        )
+        self.callback(
+            {
+                "stage": stage,
+                "processed_frames": processed_frames,
+                "total_frames": total_frames,
+                "progress": processed / total if total > 0 and processed_frames is not None else None,
+                "elapsed_sec": elapsed,
+                "frames_per_sec": speed,
+                "eta_sec": eta,
+            }
+        )
+        self.last_at = now
+        self.last_stage = stage
+
+
+def _parse_ffmpeg_progress(lines: list[str]) -> dict[str, int | str | None]:
+    values: dict[str, int | str | None] = {"frame": None, "out_time_us": None, "progress": None}
+    for line in lines:
+        key, separator, value = line.strip().partition("=")
+        if not separator:
+            continue
+        if key == "frame":
+            try:
+                values["frame"] = int(value)
+            except ValueError:
+                pass
+        elif key in {"out_time_us", "out_time_ms"}:
+            try:
+                values["out_time_us"] = int(value)
+            except ValueError:
+                pass
+        elif key == "progress":
+            values["progress"] = value
+    return values
+
+
+def _encode(
+    raw: Path,
+    output: Path,
+    *,
+    total_frames: int,
+    progress_callback: Callable[..., None] | None = None,
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg is required for browser-playable reviewed video")
+    command = [
+        ffmpeg, "-y", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
+        "-i", str(raw), "-an", "-vf", "format=yuv420p", "-c:v", "libx264",
+        "-preset", "veryfast", "-pix_fmt", "yuv420p", "-color_range", "tv",
+        "-movflags", "+faststart", str(output),
+    ]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lines: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        lines.append(line)
+        if line.strip() != "progress=continue":
+            continue
+        progress = _parse_ffmpeg_progress(lines)
+        if progress_callback:
+            progress_callback(
+                "encode_mp4",
+                processed_frames=int(progress.get("frame") or 0),
+                total_frames=total_frames,
+            )
+        lines.clear()
+    stderr = process.stderr.read() if process.stderr is not None else ""
+    if process.wait() != 0:
+        output.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg encoding failed: {stderr.strip()}")
 def _ball_by_frame(path:Path)->dict[int,dict[str,Any]]: return {int(row.get("frame") or 0):row for row in _load_optional(path/"ball_tracks.json").get("positions") or []}
 def _load_optional(path:Path)->dict[str,Any]:
     import json
