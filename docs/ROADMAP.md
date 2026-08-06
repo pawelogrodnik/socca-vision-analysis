@@ -85,44 +85,44 @@ analysis
 
 ## MVP 1 — Canonical reviewed identity
 
-- [ ] create `reviewed_identity_snapshot.json`
-- [ ] combine Initial Audit and whole-subject decisions
-- [ ] preserve explicit unresolved/conflicted states
-- [ ] generate stable Axx/Bxx fallback labels
-- [ ] make reviewed snapshot the single input for exports/stats
-- [ ] keep production identity unchanged
+- [x] create `reviewed_identity_snapshot.json`
+- [x] combine Initial Audit and whole-subject decisions
+- [x] preserve explicit unresolved/conflicted states
+- [x] generate stable Axx/Bxx fallback labels
+- [x] make reviewed snapshot the single input for exports/stats
+- [x] keep production identity unchanged
 
 ## MVP 2 — Reviewed video
 
-- [ ] add `Generate reviewed video` action
-- [ ] render confirmed roster names only
-- [ ] render Axx/Bxx for probable/unresolved/conflicted tracklets
-- [ ] include team colors and optional conflict marker
-- [ ] persist snapshot/source digests in a video manifest
-- [ ] support downstream-only rerender after corrections
+- [x] add `Generate reviewed video` action
+- [x] render confirmed roster names only
+- [x] render Axx/Bxx for probable/unresolved/conflicted tracklets
+- [x] include team colors and optional conflict marker
+- [x] persist snapshot/source digests in a video manifest
+- [x] support downstream-only rerender after corrections
 
 ## MVP 3 — Minimap/radar
 
-- [ ] draw Team A and Team B positions on a small pitch
-- [ ] add ball marker when ball position is available
+- [x] draw Team A and Team B positions on a small pitch
+- [x] add ball marker when ball position is available
 - [ ] optionally show confirmed initials/number
 - [ ] smooth marker motion conservatively
 - [ ] use the same pitch orientation as heatmaps
 
 ## MVP 4 — Reviewed player stats
 
-- [ ] reviewed timeline
-- [ ] playing/detected time
-- [ ] player heatmaps
-- [ ] average position
-- [ ] observed distance with readiness status
+- [x] reviewed timeline
+- [x] playing/detected time with unknown playing-time denominator
+- [x] player heatmaps
+- [x] average position
+- [x] observed distance with experimental readiness status
 - [ ] team shape diagnostics
 - [ ] possession/pass attribution for confirmed identity windows
-- [ ] per-feature coverage and readiness
+- [x] per-feature coverage and readiness
 
 ## MVP 5 — Video-driven correction
 
-- [ ] jump from reviewed video timestamp to source tracklet/subject review
+- [x] timestamp lookup for active reviewed tracklets/subjects
 - [ ] correct assignment or mark unresolved
 - [ ] invalidate reviewed snapshot by digest
 - [ ] rebuild snapshot/video/stats without YOLO or tracking rerun

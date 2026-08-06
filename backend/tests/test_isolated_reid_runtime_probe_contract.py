@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import builtins
 from pathlib import Path
+import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -25,6 +28,26 @@ def _probe_module() -> object:
 
 
 class IsolatedReidRuntimeProbeContractTests(unittest.TestCase):
+    def test_helper_contract_import_does_not_require_openvino(self) -> None:
+        previous = sys.modules.pop("openvino", None)
+        real_import = builtins.__import__
+
+        def import_without_openvino(name: str, *args: object, **kwargs: object) -> object:
+            if name == "openvino" or name.startswith("openvino."):
+                raise ModuleNotFoundError("OpenVINO intentionally blocked by test")
+            return real_import(name, *args, **kwargs)
+
+        try:
+            with patch("builtins.__import__", side_effect=import_without_openvino):
+                module = _probe_module()
+                vector = np.ones(256, dtype=np.float32)
+                steps: list[dict[str, object]] = []
+                module._embedding_contract_step(steps, vector, vector.copy())
+                self.assertTrue(steps[0]["passed"])
+        finally:
+            if previous is not None:
+                sys.modules["openvino"] = previous
+
     def test_embedding_contract_accepts_repeatable_256_vector(self) -> None:
         module = _probe_module()
         vector = np.ones(256, dtype=np.float32)

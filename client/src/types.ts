@@ -1699,6 +1699,62 @@ export type Match = MatchMetadataPayload & {
   player_identity_assignments?: PlayerIdentityAssignmentsDocument;
 };
 
+export type ReviewedIdentitySummary = {
+  tracklets_total: number;
+  confirmed: number;
+  probable: number;
+  unresolved: number;
+  conflicted: number;
+  blocked: number;
+  confirmed_players: number;
+  confirmed_detected_observation_ratio: number | null;
+};
+
+export type ReviewedIdentityDocument = {
+  status: 'missing' | 'stale' | 'blocked' | 'partial_reviewed' | 'complete_reviewed';
+  semantic_digest?: string;
+  summary: ReviewedIdentitySummary | null;
+  readiness?: { identity?: string; reason?: string };
+};
+
+export type ReviewedOutputJob = {
+  status: 'missing' | 'queued' | 'running' | 'completed' | 'failed' | 'stale';
+  job_key?: string;
+  video_digest?: string;
+  error?: { message?: string } | null;
+};
+
+export type ReviewedPlayerStats = {
+  player_id: string;
+  player_name: string;
+  team_label: string;
+  detected_time_sec: number;
+  observed_distance_m: number;
+  heatmap_samples: number;
+};
+
+export type ReviewedStatsResponse = {
+  stats: {
+    source_snapshot_digest: string;
+    players: ReviewedPlayerStats[];
+    global_coverage: {
+      coverage_unit?: string;
+      confirmed_ratio?: number | null;
+    };
+  };
+  readiness: { status: string };
+};
+
+export type ReviewedIdentityAt = {
+  time_sec: number;
+  frame: number;
+  entities: Array<{
+    display_label: string;
+    fallback_label: string;
+    identity_status: string;
+  }>;
+};
+
 export type AnalysisPayload = {
   adapter: 'yolo' | 'motion';
   max_seconds: number;

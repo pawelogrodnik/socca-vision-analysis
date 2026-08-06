@@ -6,6 +6,39 @@ from typing import Any
 import cv2
 
 
+def resolve_match_video_path(
+    match_path: Path,
+    preferred_filename: str | None = None,
+) -> Path:
+    """Resolve the canonical uploaded video without assuming an MP4 container."""
+    match_root = match_path.resolve()
+    if preferred_filename:
+        preferred = (match_path / Path(preferred_filename).name).resolve()
+        if preferred.parent == match_root and preferred.is_file():
+            return preferred
+    candidates = sorted(
+        candidate.resolve()
+        for candidate in match_path.glob("video.*")
+        if candidate.is_file()
+    )
+    if not candidates:
+        raise FileNotFoundError("Video file not found")
+    return candidates[0]
+
+
+def read_match_video_metadata(
+    match_path: Path,
+    match_document: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    preferred = str((match_document or {}).get("video_filename") or "") or None
+    video_path = resolve_match_video_path(match_path, preferred)
+    return {
+        **read_video_metadata(video_path),
+        "source": "container_metadata",
+        "filename": video_path.name,
+    }
+
+
 def read_video_metadata(video_path: Path) -> dict[str, Any]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():

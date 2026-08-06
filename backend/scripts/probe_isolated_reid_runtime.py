@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from importlib import metadata
 import json
 from pathlib import Path
 import platform
@@ -18,7 +19,6 @@ import xml.etree.ElementTree as ElementTree
 
 import cv2
 import numpy as np
-import openvino as ov
 
 
 def main() -> int:
@@ -52,6 +52,7 @@ def _probe(
     crop_path: Path,
     manifest_path: Path,
 ) -> dict[str, Any]:
+    ov = _load_openvino()
     steps: list[dict[str, Any]] = []
     model: Any | None = None
     compiled: Any | None = None
@@ -115,7 +116,7 @@ def _probe(
         "exit_code": 0 if compile_passed and contract_passed else 3,
         "model": metadata,
         "environment_manifest_path": str(manifest_path),
-        "openvino_version": ov.__version__,
+        "openvino_version": str(getattr(ov, "__version__", "unknown")),
         "available_devices": devices or [],
         "model_io": model_io,
         "steps": steps,
@@ -173,10 +174,23 @@ def _environment_manifest() -> dict[str, Any]:
         "pip_freeze": sorted(
             line for line in freeze.stdout.splitlines() if line.strip()
         ),
-        "openvino_version": ov.__version__,
+        "openvino_version": _installed_version("openvino"),
         "numpy_version": np.__version__,
         "opencv_version": cv2.__version__,
     }
+
+
+def _load_openvino() -> Any:
+    import openvino
+
+    return openvino
+
+
+def _installed_version(distribution: str) -> str | None:
+    try:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        return None
 
 
 def _model_metadata(model_path: Path, weights_path: Path) -> dict[str, Any]:

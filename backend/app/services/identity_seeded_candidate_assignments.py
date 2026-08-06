@@ -33,6 +33,8 @@ ALGORITHM_VERSION = "0.2.0"
 OUTPUT_FILENAME = "identity_seeded_candidate_assignments.json"
 CANDIDATE_FILENAME = "identity_candidate_shadow.json"
 TIMELINE_FILENAME = "identity_offline_shadow_timeline.json"
+TRACKLETS_FILENAME = "tracklets.json"
+REVIEW_DECISIONS_FILENAME = "identity_roster_subject_review_decisions_shadow.json"
 
 HARD_STRUCTURAL_BLOCKERS = frozenset(
     {
@@ -61,6 +63,8 @@ def build_identity_seeded_candidate_assignments(
     candidate_document: dict[str, Any],
     timeline_document: dict[str, Any],
     *,
+    tracklets_document: dict[str, Any] | None = None,
+    review_decisions_document: dict[str, Any] | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Resolve operator seeds into safe shadow candidate assignments."""
@@ -187,6 +191,10 @@ def build_identity_seeded_candidate_assignments(
         "operator_seeds_document_digest": canonical_digest(seeds_document),
         "candidate_identity_digest": canonical_digest(candidate_document),
         "timeline_digest": canonical_digest(timeline_document),
+        "tracklets_digest": canonical_digest(tracklets_document or {}),
+        "whole_subject_review_decisions_digest": canonical_digest(
+            review_decisions_document or {}
+        ),
         "selection_digest": (seeds_document.get("source") or {}).get(
             "selection_digest"
         ),
@@ -272,6 +280,16 @@ def rebuild_identity_seeded_candidate_assignments(
         seeds_document,
         load_identity_json(candidate_path),
         load_identity_json(timeline_path),
+        tracklets_document=(
+            load_identity_json(match_path / TRACKLETS_FILENAME)
+            if (match_path / TRACKLETS_FILENAME).exists()
+            else {}
+        ),
+        review_decisions_document=(
+            load_identity_json(match_path / REVIEW_DECISIONS_FILENAME)
+            if (match_path / REVIEW_DECISIONS_FILENAME).exists()
+            else {}
+        ),
     )
     if (
         int(document["safety"]["cross_team_links"]) > 0

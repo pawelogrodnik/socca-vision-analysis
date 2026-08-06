@@ -42,7 +42,11 @@ import type {
   Team,
   TeamConfigReviewPayload,
   TeamConfigReviewState,
-  TrackletReviewState
+  TrackletReviewState,
+  ReviewedIdentityDocument,
+  ReviewedIdentityAt,
+  ReviewedOutputJob,
+  ReviewedStatsResponse,
 } from './types';
 import type {
   BoundedH2Session,
@@ -178,6 +182,34 @@ export async function getRuntimeInfo(): Promise<RuntimeInfo> {
 
 export async function getMatch(matchId: string): Promise<Match> {
   return request<Match>(`/api/matches/${matchId}`);
+}
+
+export async function getReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {
+  return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity`);
+}
+
+export async function finalizeReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {
+  return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/finalize`, { method: 'POST' });
+}
+
+export async function generateReviewedOutput(matchId: string, options: { include_minimap: boolean; include_ball: boolean; show_roster_number: boolean }): Promise<ReviewedOutputJob> {
+  return request<ReviewedOutputJob>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-output/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options) });
+}
+
+export async function getReviewedOutputStatus(matchId: string): Promise<ReviewedOutputJob> {
+  return request<ReviewedOutputJob>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-output/status`);
+}
+
+export async function getReviewedIdentityAt(matchId: string, timeSec: number): Promise<ReviewedIdentityAt> {
+  return request<ReviewedIdentityAt>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/at?time_sec=${encodeURIComponent(timeSec)}`);
+}
+
+export function reviewedVideoUrl(matchId: string, digest: string): string {
+  return `${API_BASE}/api/matches/${encodeURIComponent(matchId)}/reviewed-output/video?digest=${encodeURIComponent(digest)}`;
+}
+
+export async function getReviewedStats(matchId: string): Promise<ReviewedStatsResponse> {
+  return request<ReviewedStatsResponse>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-output/stats`);
 }
 
 export async function updateMatchMetadata(matchId: string, payload: MatchMetadataPayload): Promise<Match> {

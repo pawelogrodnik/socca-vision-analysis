@@ -8,6 +8,7 @@ import {
   sourceFromLocalMatch,
 } from './MatchReportContent';
 import { ReportActions } from './ReportActions';
+import { ReviewedMatchOutputPanel } from './ReviewedMatchOutputPanel';
 
 type ReportBusyAction = 'package' | 'publish' | 'replace' | null;
 
@@ -130,6 +131,7 @@ export function MatchReportPage() {
           artifactHref={(artifactName) => artifactUrl(reportSource.id, artifactName)}
         />
       )}
+      {match && <ReviewedMatchOutputPanel matchId={match.id} />}
     </main>
   );
 }

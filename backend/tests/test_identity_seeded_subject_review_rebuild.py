@@ -139,7 +139,11 @@ class IdentitySeededSubjectReviewRebuildTests(unittest.TestCase):
                 "source": {
                     "operator_seed_decisions_digest": (
                         identity_operator_seed_decisions_digest(seeds)
-                    )
+                    ),
+                    "candidate_identity_digest": canonical_digest(candidates),
+                    "timeline_digest": canonical_digest(timeline),
+                    "tracklets_digest": canonical_digest({}),
+                    "whole_subject_review_decisions_digest": canonical_digest({}),
                 },
                 "accepted_assignments": [
                     accepted_assignment("shadow-a-1", "p1")

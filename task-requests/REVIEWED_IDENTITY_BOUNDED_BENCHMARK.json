@@ -1,0 +1,1110 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-08-06T08:11:29.706368+00:00",
+  "mode": "reviewed_identity_bounded_slots_read_only_benchmark",
+  "roots": [
+    "backend/storage/matches",
+    "backend/storage/published/matches"
+  ],
+  "scenario_count": 12,
+  "duration_buckets": {
+    "long": 5,
+    "medium": 5,
+    "short": 2
+  },
+  "scenarios": [
+    {
+      "match_path": "backend/storage/matches/07d227bd",
+      "duration_sec": 211.078,
+      "duration_bucket": "medium",
+      "input": {
+        "tracklets": 447,
+        "candidate_subjects": 395
+      },
+      "identity": {
+        "candidate_subjects_total": 395,
+        "tracklets_total": 447,
+        "stable_anonymous_entities_total": 25,
+        "stable_anonymous_entities_by_team": {
+          "A": 13,
+          "B": 12
+        },
+        "unanchored_fragments": 164,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 6,
+        "conflicting_anchor_sources": 9,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 13
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A09",
+          "A11",
+          "A12",
+          "A13",
+          "A14",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B07",
+          "B08",
+          "B09",
+          "B11",
+          "B12",
+          "B13"
+        ],
+        "anchored_tracklets": 283,
+        "entity_reuse_rate": 0.9117,
+        "fragment_count_distribution": {
+          "2": 3,
+          "3": 2,
+          "4": 2,
+          "5": 1,
+          "6": 2,
+          "7": 1,
+          "8": 2,
+          "10": 2,
+          "12": 1,
+          "14": 1,
+          "15": 2,
+          "16": 1,
+          "18": 2,
+          "24": 1,
+          "25": 1,
+          "27": 1
+        },
+        "slots_reused_by_multiple_fragments": 25,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 9,
+          "stable_anchor_team_mismatch": 3,
+          "unknown_team_cannot_receive_stable_slot": 2
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 1628,
+        "demoted_observation_claims": 3233,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/343980c8",
+      "duration_sec": 351.987,
+      "duration_bucket": "medium",
+      "input": {
+        "tracklets": 2205,
+        "candidate_subjects": 1346
+      },
+      "identity": {
+        "candidate_subjects_total": 1346,
+        "tracklets_total": 2205,
+        "stable_anonymous_entities_total": 27,
+        "stable_anonymous_entities_by_team": {
+          "A": 13,
+          "B": 14
+        },
+        "unanchored_fragments": 1908,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 37,
+        "conflicting_anchor_sources": 20,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 13,
+          "B": 14
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A13",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B07",
+          "B08",
+          "B09",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14"
+        ],
+        "anchored_tracklets": 297,
+        "entity_reuse_rate": 0.9091,
+        "fragment_count_distribution": {
+          "1": 3,
+          "2": 4,
+          "3": 2,
+          "4": 2,
+          "6": 2,
+          "8": 1,
+          "9": 1,
+          "10": 1,
+          "11": 1,
+          "12": 1,
+          "13": 1,
+          "15": 1,
+          "16": 1,
+          "20": 1,
+          "22": 2,
+          "25": 1,
+          "36": 1,
+          "41": 1
+        },
+        "slots_reused_by_multiple_fragments": 24,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 20,
+          "unknown_team_cannot_receive_stable_slot": 63
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 3781,
+        "demoted_observation_claims": 7627,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 46,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/461e4dd9",
+      "duration_sec": 89.79,
+      "duration_bucket": "short",
+      "input": {
+        "tracklets": 134,
+        "candidate_subjects": 109
+      },
+      "identity": {
+        "candidate_subjects_total": 109,
+        "tracklets_total": 134,
+        "stable_anonymous_entities_total": 19,
+        "stable_anonymous_entities_by_team": {
+          "A": 9,
+          "B": 10
+        },
+        "unanchored_fragments": 46,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 5,
+        "conflicting_anchor_sources": 2,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 10,
+          "B": 12
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A10",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B07",
+          "B08",
+          "B11",
+          "B12"
+        ],
+        "anchored_tracklets": 88,
+        "entity_reuse_rate": 0.7841,
+        "fragment_count_distribution": {
+          "1": 3,
+          "2": 5,
+          "3": 1,
+          "4": 6,
+          "6": 1,
+          "9": 1,
+          "10": 2
+        },
+        "slots_reused_by_multiple_fragments": 16,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 2,
+          "mixed_team_candidate_subject": 3,
+          "unknown_team_cannot_receive_stable_slot": 3
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 143,
+        "demoted_observation_claims": 284,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 50,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/6b5301bd",
+      "duration_sec": 92.025,
+      "duration_bucket": "short",
+      "input": {
+        "tracklets": 143,
+        "candidate_subjects": 112
+      },
+      "identity": {
+        "candidate_subjects_total": 112,
+        "tracklets_total": 143,
+        "stable_anonymous_entities_total": 18,
+        "stable_anonymous_entities_by_team": {
+          "A": 9,
+          "B": 9
+        },
+        "unanchored_fragments": 67,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 5,
+        "conflicting_anchor_sources": 2,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 11,
+          "B": 10
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A11",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B07",
+          "B08",
+          "B10"
+        ],
+        "anchored_tracklets": 76,
+        "entity_reuse_rate": 0.7632,
+        "fragment_count_distribution": {
+          "1": 4,
+          "2": 1,
+          "3": 3,
+          "4": 5,
+          "6": 2,
+          "7": 2,
+          "8": 1
+        },
+        "slots_reused_by_multiple_fragments": 14,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 2,
+          "mixed_team_candidate_subject": 6,
+          "unknown_team_cannot_receive_stable_slot": 1
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 518,
+        "demoted_observation_claims": 1015,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/6b611e4b",
+      "duration_sec": 344.545,
+      "duration_bucket": "medium",
+      "input": {
+        "tracklets": 1403,
+        "candidate_subjects": 939
+      },
+      "identity": {
+        "candidate_subjects_total": 939,
+        "tracklets_total": 1403,
+        "stable_anonymous_entities_total": 26,
+        "stable_anonymous_entities_by_team": {
+          "A": 14,
+          "B": 12
+        },
+        "unanchored_fragments": 1142,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 34,
+        "conflicting_anchor_sources": 10,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 14
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A13",
+          "A14",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B08",
+          "B09",
+          "B10",
+          "B11",
+          "B12",
+          "B14"
+        ],
+        "anchored_tracklets": 261,
+        "entity_reuse_rate": 0.9004,
+        "fragment_count_distribution": {
+          "1": 2,
+          "2": 1,
+          "3": 2,
+          "4": 5,
+          "5": 2,
+          "8": 2,
+          "10": 2,
+          "12": 1,
+          "14": 2,
+          "15": 1,
+          "16": 1,
+          "19": 1,
+          "20": 2,
+          "22": 1,
+          "25": 1
+        },
+        "slots_reused_by_multiple_fragments": 24,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 10,
+          "mixed_team_candidate_subject": 10,
+          "stable_anchor_team_mismatch": 1,
+          "unknown_team_cannot_receive_stable_slot": 32
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 2881,
+        "demoted_observation_claims": 5763,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260729-v1-h1",
+      "duration_sec": 1156.256,
+      "duration_bucket": "long",
+      "input": {
+        "tracklets": 2043,
+        "candidate_subjects": 25
+      },
+      "identity": {
+        "candidate_subjects_total": 25,
+        "tracklets_total": 2043,
+        "stable_anonymous_entities_total": 14,
+        "stable_anonymous_entities_by_team": {
+          "A": 10,
+          "B": 4
+        },
+        "unanchored_fragments": 1404,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 49,
+        "conflicting_anchor_sources": 0,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 13
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A14",
+          "B01",
+          "B08",
+          "B10",
+          "B13"
+        ],
+        "anchored_tracklets": 639,
+        "entity_reuse_rate": 0.9781,
+        "fragment_count_distribution": {
+          "1": 14
+        },
+        "slots_reused_by_multiple_fragments": 0,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "ambiguous_candidate_subject_membership": 21,
+          "mixed_team_candidate_subject": 744
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 4500,
+        "demoted_observation_claims": 9190,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 56,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260729-v1-h2",
+      "duration_sec": 351.987,
+      "duration_bucket": "medium",
+      "input": {
+        "tracklets": 2205,
+        "candidate_subjects": 1346
+      },
+      "identity": {
+        "candidate_subjects_total": 1346,
+        "tracklets_total": 2205,
+        "stable_anonymous_entities_total": 27,
+        "stable_anonymous_entities_by_team": {
+          "A": 13,
+          "B": 14
+        },
+        "unanchored_fragments": 1908,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 37,
+        "conflicting_anchor_sources": 20,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 13,
+          "B": 14
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A13",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B07",
+          "B08",
+          "B09",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14"
+        ],
+        "anchored_tracklets": 297,
+        "entity_reuse_rate": 0.9091,
+        "fragment_count_distribution": {
+          "1": 3,
+          "2": 4,
+          "3": 2,
+          "4": 2,
+          "6": 2,
+          "8": 1,
+          "9": 1,
+          "10": 1,
+          "11": 1,
+          "12": 1,
+          "13": 1,
+          "15": 1,
+          "16": 1,
+          "20": 1,
+          "22": 2,
+          "25": 1,
+          "36": 1,
+          "41": 1
+        },
+        "slots_reused_by_multiple_fragments": 24,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 20,
+          "unknown_team_cannot_receive_stable_slot": 63
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 3781,
+        "demoted_observation_claims": 7627,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260730-v2-h1",
+      "duration_sec": 1156.256,
+      "duration_bucket": "long",
+      "input": {
+        "tracklets": 2043,
+        "candidate_subjects": 25
+      },
+      "identity": {
+        "candidate_subjects_total": 25,
+        "tracklets_total": 2043,
+        "stable_anonymous_entities_total": 14,
+        "stable_anonymous_entities_by_team": {
+          "A": 10,
+          "B": 4
+        },
+        "unanchored_fragments": 1404,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 49,
+        "conflicting_anchor_sources": 0,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 13
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A14",
+          "B01",
+          "B08",
+          "B10",
+          "B13"
+        ],
+        "anchored_tracklets": 639,
+        "entity_reuse_rate": 0.9781,
+        "fragment_count_distribution": {
+          "1": 14
+        },
+        "slots_reused_by_multiple_fragments": 0,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "ambiguous_candidate_subject_membership": 21,
+          "mixed_team_candidate_subject": 744
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 4500,
+        "demoted_observation_claims": 9190,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260730-v3-h1",
+      "duration_sec": 1156.256,
+      "duration_bucket": "long",
+      "input": {
+        "tracklets": 2043,
+        "candidate_subjects": 25
+      },
+      "identity": {
+        "candidate_subjects_total": 25,
+        "tracklets_total": 2043,
+        "stable_anonymous_entities_total": 14,
+        "stable_anonymous_entities_by_team": {
+          "A": 10,
+          "B": 4
+        },
+        "unanchored_fragments": 1404,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 49,
+        "conflicting_anchor_sources": 0,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 13
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A14",
+          "B01",
+          "B08",
+          "B10",
+          "B13"
+        ],
+        "anchored_tracklets": 639,
+        "entity_reuse_rate": 0.9781,
+        "fragment_count_distribution": {
+          "1": 14
+        },
+        "slots_reused_by_multiple_fragments": 0,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "ambiguous_candidate_subject_membership": 21,
+          "mixed_team_candidate_subject": 744
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 4500,
+        "demoted_observation_claims": 9190,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260730-v4-h1",
+      "duration_sec": 1156.256,
+      "duration_bucket": "long",
+      "input": {
+        "tracklets": 2043,
+        "candidate_subjects": 25
+      },
+      "identity": {
+        "candidate_subjects_total": 25,
+        "tracklets_total": 2043,
+        "stable_anonymous_entities_total": 14,
+        "stable_anonymous_entities_by_team": {
+          "A": 10,
+          "B": 4
+        },
+        "unanchored_fragments": 1404,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 49,
+        "conflicting_anchor_sources": 0,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 13
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A14",
+          "B01",
+          "B08",
+          "B10",
+          "B13"
+        ],
+        "anchored_tracklets": 639,
+        "entity_reuse_rate": 0.9781,
+        "fragment_count_distribution": {
+          "1": 14
+        },
+        "slots_reused_by_multiple_fragments": 0,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "ambiguous_candidate_subject_membership": 21,
+          "mixed_team_candidate_subject": 744
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 4500,
+        "demoted_observation_claims": 9190,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 12,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260730-v4-h2",
+      "duration_sec": 351.987,
+      "duration_bucket": "medium",
+      "input": {
+        "tracklets": 2205,
+        "candidate_subjects": 1346
+      },
+      "identity": {
+        "candidate_subjects_total": 1346,
+        "tracklets_total": 2205,
+        "stable_anonymous_entities_total": 27,
+        "stable_anonymous_entities_by_team": {
+          "A": 13,
+          "B": 14
+        },
+        "unanchored_fragments": 1908,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 37,
+        "conflicting_anchor_sources": 20,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 13,
+          "B": 14
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A06",
+          "A07",
+          "A08",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A13",
+          "B01",
+          "B02",
+          "B03",
+          "B04",
+          "B05",
+          "B06",
+          "B07",
+          "B08",
+          "B09",
+          "B10",
+          "B11",
+          "B12",
+          "B13",
+          "B14"
+        ],
+        "anchored_tracklets": 297,
+        "entity_reuse_rate": 0.9091,
+        "fragment_count_distribution": {
+          "1": 3,
+          "2": 4,
+          "3": 2,
+          "4": 2,
+          "6": 2,
+          "8": 1,
+          "9": 1,
+          "10": 1,
+          "11": 1,
+          "12": 1,
+          "13": 1,
+          "15": 1,
+          "16": 1,
+          "20": 1,
+          "22": 2,
+          "25": 1,
+          "36": 1,
+          "41": 1
+        },
+        "slots_reused_by_multiple_fragments": 24,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "conflicting_stable_anchor_sources": 20,
+          "unknown_team_cannot_receive_stable_slot": 63
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 3781,
+        "demoted_observation_claims": 7627,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    },
+    {
+      "match_path": "backend/storage/matches/benchmark-product-flow-20260730-v4-smoke-h1",
+      "duration_sec": 1156.256,
+      "duration_bucket": "long",
+      "input": {
+        "tracklets": 2043,
+        "candidate_subjects": 25
+      },
+      "identity": {
+        "candidate_subjects_total": 25,
+        "tracklets_total": 2043,
+        "stable_anonymous_entities_total": 14,
+        "stable_anonymous_entities_by_team": {
+          "A": 10,
+          "B": 4
+        },
+        "unanchored_fragments": 1404,
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": 0,
+        "manual_new_player_allocations": 0,
+        "ephemeral_fragments": 49,
+        "conflicting_anchor_sources": 0,
+        "max_subjects_per_team": 14,
+        "highest_fallback_number_by_team": {
+          "A": 14,
+          "B": 13
+        },
+        "bounded_slot_ids": [
+          "A01",
+          "A02",
+          "A03",
+          "A04",
+          "A05",
+          "A09",
+          "A10",
+          "A11",
+          "A12",
+          "A14",
+          "B01",
+          "B08",
+          "B10",
+          "B13"
+        ],
+        "anchored_tracklets": 639,
+        "entity_reuse_rate": 0.9781,
+        "fragment_count_distribution": {
+          "1": 14
+        },
+        "slots_reused_by_multiple_fragments": 0,
+        "artificial_new_slots": 0,
+        "false_splits": {
+          "availability": "not_measurable_without_ground_truth_player_identity",
+          "bounded_fragmentation_proxy": "fragment_count_distribution"
+        },
+        "hard_blockers": {
+          "ambiguous_candidate_subject_membership": 21,
+          "mixed_team_candidate_subject": 744
+        }
+      },
+      "frame_uniqueness": {
+        "duplicate_stable_slot_claim_groups_before_guard": 4500,
+        "demoted_observation_claims": 9190,
+        "duplicate_stable_labels_after_guard": 0
+      },
+      "reviewed_coverage": {
+        "exact_named_operator_seeds": 0,
+        "coverage_note": "Names require exact seeds or fresh structurally safe reviewed lineage; benchmark does not promote automatic names."
+      },
+      "flicker_and_reuse_safety": {
+        "availability": "bounded resolver diagnostics only",
+        "unsafe_new_player_allocations": 0
+      },
+      "acceptance": {
+        "passed": true
+      }
+    }
+  ],
+  "summary": {
+    "passed": 12,
+    "failed": 0,
+    "automatic_permanent_allocations": 0,
+    "duplicate_stable_labels_after_guard": 0
+  },
+  "safety": {
+    "read_only": true,
+    "reran_yolo": false,
+    "reran_tracking": false,
+    "reran_reid": false,
+    "mutated_match_packages": false
+  }
+}
