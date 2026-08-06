@@ -75,6 +75,10 @@ from app.services.identity_reviewed_output_jobs import (
     generate_reviewed_output,
     reviewed_output_status,
 )
+from app.services.identity_reviewed_corrections import (
+    reviewed_correction_context,
+    save_reviewed_identity_correction,
+)
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
     get_reviewed_identity_status,
@@ -82,6 +86,7 @@ from app.services.identity_reviewed_snapshot import (
 )
 from app.services.identity_reviewed_slot_review import (
     load_reviewed_slot_assignments,
+    reviewed_slot_assignment_read_model,
     save_reviewed_slot_assignments,
 )
 from app.services.json_publish_store import (
@@ -1769,7 +1774,7 @@ def get_reviewed_identity(match_id: str) -> dict[str, Any]:
 
 @app.get("/api/matches/{match_id}/reviewed-identity/slot-review")
 def get_match_reviewed_slot_assignments(match_id: str) -> dict[str, Any]:
-    return load_reviewed_slot_assignments(match_dir(match_id))
+    return reviewed_slot_assignment_read_model(match_dir(match_id))
 
 
 @app.put("/api/matches/{match_id}/reviewed-identity/slot-review")
@@ -1801,10 +1806,42 @@ def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/matches/{match_id}/reviewed-identity/corrections/context")
+def get_match_reviewed_correction_context(
+    match_id: str,
+    candidate_subject_id: str = Query(...),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return reviewed_correction_context(
+            path,
+            read_match_meta(path),
+            candidate_subject_id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/matches/{match_id}/reviewed-identity/corrections")
+def post_match_reviewed_identity_correction(
+    match_id: str,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return save_reviewed_identity_correction(path, read_match_meta(path), payload)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/matches/{match_id}/reviewed-identity/at")
 def get_reviewed_identity_at(match_id: str, time_sec: float = Query(..., ge=0)) -> dict[str, Any]:
     path = match_dir(match_id); snapshot = get_reviewed_identity_status(path)
-    if snapshot.get("status") in {"missing", "stale"}:
+    if snapshot.get("status") == "missing":
         raise HTTPException(status_code=409, detail="Sfinalizuj reviewed identity przed wyszukaniem klatki.")
     metadata = read_video_metadata(match_video_path(path))
     fps = float(metadata.get("fps") or 25)
@@ -1817,6 +1854,7 @@ def get_reviewed_identity_at(match_id: str, time_sec: float = Query(..., ge=0)) 
     return {
         "time_sec": time_sec,
         "frame": round(time_sec * fps),
+        "reference_snapshot_stale": snapshot.get("status") == "stale",
         "entities": reviewed_assignment_at(snapshot, tracklets, time_sec, fps),
     }
 

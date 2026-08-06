@@ -82,10 +82,15 @@ def effective_observations_by_frame(
     return dict(output)
 
 
-def visible_reviewed_player(row: dict[str, Any]) -> bool:
+def visible_reviewed_overlay(row: dict[str, Any]) -> bool:
     return str(row.get("identity_status") or "unresolved") not in {
         "false_detection",
         "ignored",
         "blocked",
-        "referee",
     }
+
+
+def visible_reviewed_player(row: dict[str, Any]) -> bool:
+    return visible_reviewed_overlay(row) and str(
+        row.get("identity_status") or "unresolved"
+    ) != "referee"

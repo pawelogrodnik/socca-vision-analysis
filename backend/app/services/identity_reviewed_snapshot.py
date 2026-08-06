@@ -16,7 +16,7 @@ from app.services.identity_reviewed_snapshot_observations import (
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
 from app.services.identity_reviewed_effective_observation import (
     effective_observations_by_frame,
-    visible_reviewed_player,
+    visible_reviewed_overlay,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
@@ -88,8 +88,16 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             player_id = None
             source = "manual_review"
         blockers.extend(stable_row["hard_blockers"])
-        team_label = str(tracklet.get("team_label") or "U")
-        team_id = str(tracklet.get("team_id") or "")
+        team_label = (
+            "U"
+            if manual_action == "team_unknown"
+            else str(tracklet.get("team_label") or "U")
+        )
+        team_id = (
+            ""
+            if manual_action == "team_unknown"
+            else str(tracklet.get("team_id") or "")
+        )
         player = roster.get(player_id or "")
         assignment_conflicts: list[dict[str, Any]] = []
         if len(accepted_seeds) > 1:
@@ -242,11 +250,47 @@ def reviewed_assignment_at(
     fps: float,
 ) -> list[dict[str, Any]]:
     frame = max(0, round(time_sec * fps))
-    return [
-        row
-        for row in effective_observations_by_frame(tracklets, snapshot).get(frame, [])
-        if visible_reviewed_player(row)
-    ]
+    output: list[dict[str, Any]] = []
+    for row in effective_observations_by_frame(tracklets, snapshot).get(frame, []):
+        if not visible_reviewed_overlay(row):
+            continue
+        entity = {
+            "frame": frame,
+            "time_sec": float(row.get("time_sec") or frame / fps),
+            "tracklet_id": row.get("tracklet_id"),
+            "candidate_subject_id": row.get("candidate_subject_id"),
+            "candidate_subject_ids": list(row.get("candidate_subject_ids") or []),
+            "team_label": row.get("team_label") or "U",
+            "stable_anonymous_slot_id": row.get("stable_anonymous_slot_id"),
+            "canonical_player_id": row.get("canonical_player_id"),
+            "player_name": row.get("player_name"),
+            "display_label": row.get("display_label"),
+            "identity_status": row.get("identity_status"),
+            "identity_source": row.get("identity_source"),
+            "fallback_label": row.get("fallback_label"),
+            "requires_review": bool(row.get("requires_review")),
+            "hard_blockers": list(row.get("hard_blockers") or []),
+            "conflicts": list(row.get("conflicts") or []),
+            "detected_evidence_count": int(row.get("detected_evidence_count") or 0),
+            "frame_start": (
+                int(row["frame_start"])
+                if row.get("frame_start") is not None
+                else frame
+            ),
+            "frame_end": (
+                int(row["frame_end"])
+                if row.get("frame_end") is not None
+                else frame
+            ),
+            "bbox_xyxy": row.get("bbox_xyxy"),
+        }
+        if row.get("observation_key"):
+            entity["observation_key"] = row["observation_key"]
+        output.append(entity)
+    return sorted(
+        output,
+        key=lambda row: (str(row.get("candidate_subject_id") or ""), str(row["tracklet_id"])),
+    )
 
 
 def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
@@ -427,6 +471,7 @@ def _semantic_input(value: Any) -> Any:
                 "operator_telemetry",
                 "telemetry_state",
                 "created_at",
+                "comment",
             }
         }
     return value

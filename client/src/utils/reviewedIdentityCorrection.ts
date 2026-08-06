@@ -1,0 +1,60 @@
+import type {
+  ReviewedCorrectionAction,
+  ReviewedCorrectionContext,
+  ReviewedCorrectionRequest,
+} from '../types';
+
+export type ReviewedCorrectionFormValues = {
+  action: ReviewedCorrectionAction;
+  playerId: string;
+  stableSlotId: string;
+  teamLabel: string;
+  comment: string;
+};
+
+export function correctionOptionsForSubject(context: ReviewedCorrectionContext) {
+  return {
+    roster: context.roster_options.filter(
+      (option) => option.team_label === context.team_label,
+    ),
+    slots: context.slot_options.filter(
+      (option) => option.team_label === context.team_label,
+    ),
+  };
+}
+
+export function buildReviewedCorrectionPayload(
+  candidateSubjectId: string,
+  values: ReviewedCorrectionFormValues,
+): ReviewedCorrectionRequest {
+  const payload: ReviewedCorrectionRequest = {
+    candidate_subject_id: candidateSubjectId,
+    action: values.action,
+  };
+  if (values.action === 'assign_roster_player') {
+    if (!values.playerId) throw new Error('Wybierz zawodnika z rosteru.');
+    payload.player_id = values.playerId;
+  }
+  if (values.action === 'assign_existing_slot') {
+    if (!values.stableSlotId) throw new Error('Wybierz istniejący stable slot.');
+    payload.stable_slot_id = values.stableSlotId;
+  }
+  if (values.action === 'create_new_stable_player') {
+    if (!['A', 'B'].includes(values.teamLabel)) {
+      throw new Error('Wybierz Team A albo Team B.');
+    }
+    payload.team_label = values.teamLabel;
+  }
+  if (values.comment.trim()) payload.comment = values.comment.trim();
+  return payload;
+}
+
+export const REVIEWED_CORRECTION_ACTION_LABELS: Record<ReviewedCorrectionAction, string> = {
+  assign_roster_player: 'Przypisz zawodnika z rosteru',
+  assign_existing_slot: 'Przypisz istniejący stable slot',
+  create_new_stable_player: 'Potwierdź nowego zawodnika drużyny',
+  referee: 'Oznacz sędziego',
+  false_detection: 'Oznacz false detection',
+  team_unknown: 'Team unknown',
+  unresolved: 'Pozostaw unresolved',
+};

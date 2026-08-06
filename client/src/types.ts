@@ -1721,6 +1721,7 @@ export type ReviewedOutputJob = {
   status: 'missing' | 'queued' | 'running' | 'completed' | 'failed' | 'stale';
   job_key?: string;
   video_digest?: string;
+  source_snapshot_digest?: string;
   error?: { message?: string } | null;
 };
 
@@ -1731,6 +1732,9 @@ export type ReviewedPlayerStats = {
   detected_time_sec: number;
   observed_distance_m: number;
   heatmap_samples: number;
+  confirmed_detected_observations: number;
+  confirmed_fragments: number;
+  readiness?: Record<string, string>;
 };
 
 export type ReviewedStatsResponse = {
@@ -1748,11 +1752,83 @@ export type ReviewedStatsResponse = {
 export type ReviewedIdentityAt = {
   time_sec: number;
   frame: number;
-  entities: Array<{
-    display_label: string;
-    fallback_label: string;
-    identity_status: string;
-  }>;
+  reference_snapshot_stale?: boolean;
+  entities: ReviewedIdentityAtEntity[];
+};
+
+export type ReviewedIdentityAtEntity = {
+  frame: number;
+  time_sec: number;
+  tracklet_id: string;
+  candidate_subject_id: string | null;
+  candidate_subject_ids: string[];
+  team_label: string;
+  stable_anonymous_slot_id: string | null;
+  canonical_player_id: string | null;
+  player_name: string | null;
+  display_label: string;
+  identity_status: string;
+  identity_source: string | null;
+  fallback_label: string;
+  requires_review: boolean;
+  hard_blockers: string[];
+  conflicts: Array<Record<string, unknown>>;
+  detected_evidence_count: number;
+  frame_start: number;
+  frame_end: number;
+  observation_key?: string;
+  bbox_xyxy?: number[] | null;
+};
+
+export type ReviewedCorrectionAction =
+  | 'assign_roster_player'
+  | 'assign_existing_slot'
+  | 'create_new_stable_player'
+  | 'referee'
+  | 'false_detection'
+  | 'team_unknown'
+  | 'unresolved';
+
+export type ReviewedCorrectionRosterOption = {
+  player_id: string;
+  player_name: string;
+  roster_number?: string | null;
+  team_label: string;
+};
+
+export type ReviewedCorrectionSlotOption = {
+  stable_slot_id: string;
+  team_label: string;
+  source: string;
+  status: string;
+};
+
+export type ReviewedCorrectionContext = {
+  candidate_subject_id: string;
+  team_label: string;
+  tracklet_ids: string[];
+  review_card_key: string | null;
+  roster_options: ReviewedCorrectionRosterOption[];
+  slot_options: ReviewedCorrectionSlotOption[];
+  current_decision: Record<string, unknown> | null;
+  semantic_decision_digest: string;
+};
+
+export type ReviewedCorrectionRequest = {
+  candidate_subject_id: string;
+  action: ReviewedCorrectionAction;
+  player_id?: string;
+  stable_slot_id?: string;
+  team_label?: string;
+  comment?: string;
+};
+
+export type ReviewedCorrectionResponse = {
+  saved_decision: Record<string, unknown> | null;
+  effective_action: ReviewedCorrectionAction;
+  allocated_stable_slot_id: string | null;
+  snapshot: { status: string; stale: boolean };
+  semantic_decision_digest: string;
 };
 
 export type AnalysisPayload = {

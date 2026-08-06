@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-08-06T10:13:22.469361+00:00",
+  "source_match": "461e4dd9",
+  "frozen_artifact_clone": true,
+  "corrections": [
+    {
+      "type": "assign_existing_slot",
+      "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
+      "stable_slot_id": "A03",
+      "trusted_basis": "existing exact roster seed for Paweł plus canonical A03 evidence for another Paweł fragment",
+      "result": {
+        "saved_decision": {
+          "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
+          "action": "assign_existing_slot",
+          "stable_slot_id": "A03",
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": "PR #9 frozen smoke: slot derived from existing exact operator evidence",
+          "reviewed_at": "2026-08-06T10:12:40.879428+00:00"
+        },
+        "effective_action": "assign_existing_slot",
+        "allocated_stable_slot_id": null,
+        "snapshot": {
+          "status": "stale",
+          "stale": true
+        },
+        "semantic_decision_digest": "6dfccec7d8d4929fd826c6b936c47b04544fbfd82bbc79456fe78b8320f73e28"
+      }
+    },
+    {
+      "type": "assign_roster_player",
+      "candidate_subject_id": "shadow-a-cbc8bdddc01c12ad",
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "trusted_basis": "existing exact operator observations name the subject Krzysiek",
+      "result": {
+        "saved_decision": {
+          "candidate_subject_id": "shadow-a-cbc8bdddc01c12ad",
+          "comment": "PR #9 frozen smoke: name derived from exact operator observations",
+          "decision": "assign_roster_player",
+          "player_id": "team-corgi-1fc405-player-2-krzysiek",
+          "review_card_key": "subject-review:v1:1e843a26d93fd6e15cb43750baea082f7e5032d3f9f6e9c5a51363e3492b477f",
+          "updated_at": "2026-08-06T10:12:42.395553+00:00",
+          "action": "assign_roster_player"
+        },
+        "effective_action": "assign_roster_player",
+        "allocated_stable_slot_id": null,
+        "snapshot": {
+          "status": "stale",
+          "stale": true
+        },
+        "semantic_decision_digest": "dacb71e1b0489bc84bdb04e3381e442574144fbb3f5f5e3d61f39f0cf3284dd0"
+      }
+    }
+  ],
+  "correction_workflow_seconds": 3.368,
+  "total_smoke_seconds": 42.169,
+  "baseline": {
+    "stable_slots": 19,
+    "highest_a": "A10",
+    "highest_b": "B12",
+    "unanchored_fragments": 46,
+    "conflicted_observations": 5693,
+    "confirmed_detected_observation_ratio": 0.0013,
+    "confirmed_detected_observations": 50,
+    "corrected_player": {
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "confirmed_detected_observations": 7,
+      "confirmed_fragments": 7,
+      "detected_time_sec": 0.234,
+      "observed_distance_m": 0,
+      "heatmap_samples": 7
+    }
+  },
+  "after": {
+    "stable_slots": 19,
+    "highest_a": "A10",
+    "highest_b": "B12",
+    "unanchored_fragments": 45,
+    "conflicted_observations": 4149,
+    "confirmed_detected_observation_ratio": 0.0325,
+    "confirmed_detected_observations": 1222,
+    "corrected_player": {
+      "player_id": "team-corgi-1fc405-player-2-krzysiek",
+      "confirmed_detected_observations": 1179,
+      "confirmed_fragments": 5,
+      "detected_time_sec": 39.339,
+      "observed_distance_m": 53.49,
+      "heatmap_samples": 1179
+    }
+  },
+  "render": {
+    "ball_frames": 1338,
+    "minimap_frames": 2692,
+    "duplicate_stable_labels": 0,
+    "duplicate_canonical_players": 0,
+    "codec": "h264",
+    "pixel_format": "yuv420p"
+  },
+  "safety": {
+    "source_immutable_before": {
+      "tracklets.json": "223899a4f40e49f08ddb4cd960e0931a8afa5a5d4601930e526a398b4f2430ae",
+      "global_identity.json": "3cdf0c94580b2673264a02f884f1eb952d147f6eab7db7d20acf32f034a356b9",
+      "stable_players.json": "d83aaae9b00e8986d3ab9e42acccd36d0c9d94c210fd92b07461384a2b4195b8",
+      "player_identity_assignments.json": null,
+      "published_tree": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "source_immutable_after": {
+      "tracklets.json": "223899a4f40e49f08ddb4cd960e0931a8afa5a5d4601930e526a398b4f2430ae",
+      "global_identity.json": "3cdf0c94580b2673264a02f884f1eb952d147f6eab7db7d20acf32f034a356b9",
+      "stable_players.json": "d83aaae9b00e8986d3ab9e42acccd36d0c9d94c210fd92b07461384a2b4195b8",
+      "player_identity_assignments.json": null,
+      "published_tree": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "production_mutation_count": 0,
+    "published_mutation_count": 0,
+    "reran_yolo": false,
+    "reran_tracking": false,
+    "reran_reid": false,
+    "automatic_permanent_allocations": 0
+  },
+  "skipped_manual_actions": [
+    {
+      "actions": [
+        "false_detection",
+        "referee"
+      ],
+      "reason": "No trustworthy whole-subject false/referee operator evidence was available; no synthetic decision was created."
+    }
+  ]
+}

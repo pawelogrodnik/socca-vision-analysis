@@ -129,7 +129,7 @@ def resolve_stable_anonymous_entities(
                 else:
                     anchor_source = "manual_new_player_confirmation"
                     anchor_status = "manual_new_slot"
-        elif manual_action in {"referee", "false_detection", "team_unknown", "unresolved"}:
+        elif manual_action in {"referee", "false_detection", "team_unknown"}:
             stable_slot_id = None
             anchor_source = "manual_review"
             anchor_status = manual_action
@@ -157,7 +157,13 @@ def resolve_stable_anonymous_entities(
         if blockers:
             stable_slot_id = None
             anchor_status = "blocked"
-        fallback_team = team if team in {"A", "B"} else "U"
+        fallback_team = (
+            "U"
+            if manual_action == "team_unknown"
+            else team
+            if team in {"A", "B"}
+            else "U"
+        )
         fallback_label = stable_slot_id or f"{fallback_team}?"
         conflicted = bool(blockers)
         resolved[tracklet_id] = {

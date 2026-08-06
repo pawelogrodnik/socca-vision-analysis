@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import test from 'node:test';
+
+import type { ReviewedCorrectionContext } from '../src/types.ts';
+import {
+  buildReviewedCorrectionPayload,
+  correctionOptionsForSubject,
+} from '../src/utils/reviewedIdentityCorrection.ts';
+
+const base = {
+  playerId: '',
+  stableSlotId: '',
+  teamLabel: 'A',
+  comment: '',
+};
+
+test('builds API payloads for every whole-subject correction action', () => {
+  assert.deepEqual(
+    buildReviewedCorrectionPayload('subject-1', {
+      ...base,
+      action: 'assign_roster_player',
+      playerId: 'player-a',
+    }),
+    { candidate_subject_id: 'subject-1', action: 'assign_roster_player', player_id: 'player-a' },
+  );
+  assert.deepEqual(
+    buildReviewedCorrectionPayload('subject-1', {
+      ...base,
+      action: 'assign_existing_slot',
+      stableSlotId: 'A03',
+    }),
+    { candidate_subject_id: 'subject-1', action: 'assign_existing_slot', stable_slot_id: 'A03' },
+  );
+  assert.deepEqual(
+    buildReviewedCorrectionPayload('subject-1', {
+      ...base,
+      action: 'create_new_stable_player',
+      comment: 'new player',
+    }),
+    { candidate_subject_id: 'subject-1', action: 'create_new_stable_player', team_label: 'A', comment: 'new player' },
+  );
+  for (const action of ['referee', 'false_detection', 'team_unknown', 'unresolved'] as const) {
+    assert.deepEqual(
+      buildReviewedCorrectionPayload('subject-1', { ...base, action }),
+      { candidate_subject_id: 'subject-1', action },
+    );
+  }
+});
+
+test('filters roster and canonical/manual slot options to the subject team', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'subject-1',
+    team_label: 'A',
+    tracklet_ids: ['tracklet-1'],
+    review_card_key: 'card-1',
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [
+      { player_id: 'a', player_name: 'A', team_label: 'A' },
+      { player_id: 'b', player_name: 'B', team_label: 'B' },
+    ],
+    slot_options: [
+      { stable_slot_id: 'A03', team_label: 'A', source: 'global_identity', status: 'canonical' },
+      { stable_slot_id: 'A11', team_label: 'A', source: 'manual_new_player_confirmation', status: 'active' },
+      { stable_slot_id: 'B02', team_label: 'B', source: 'global_identity', status: 'canonical' },
+    ],
+  };
+  const options = correctionOptionsForSubject(context);
+  assert.deepEqual(options.roster.map((row) => row.player_id), ['a']);
+  assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['A03', 'A11']);
+});
+
+test('reviewed output UI keeps the correction flow and stale safeguards visible', () => {
+  const root = new URL('../src/components/', import.meta.url);
+  const output = readFileSync(new URL('ReviewedMatchOutputPanel.tsx', root), 'utf8');
+  const atTime = readFileSync(new URL('ReviewedIdentityAtTimePanel.tsx', root), 'utf8');
+  const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', root), 'utf8');
+
+  assert.match(output, /Sprawdź przypisania w tym momencie/);
+  assert.match(output, /Finalize and regenerate/);
+  assert.match(output, /To wideo pokazuje stan sprzed zapisanych poprawek/);
+  assert.match(output, /videoRef\.current\.currentTime/);
+  assert.match(output, /setStats\(null\)/);
+  assert.match(atTime, /Popraw przypisanie/);
+  assert.match(atTime, /candidate_subject_id/);
+  assert.match(form, /allocated_stable_slot_id|onSaved/);
+  assert.match(form, /setError\(errorMessage\(reason\)\)/);
+  assert.match(form, /context\?\.team_label/);
+});

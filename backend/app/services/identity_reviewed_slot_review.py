@@ -40,7 +40,30 @@ def load_reviewed_slot_assignments(match_path: Path) -> dict[str, Any]:
     return value
 
 
+def reviewed_slot_assignment_read_model(match_path: Path) -> dict[str, Any]:
+    document = load_reviewed_slot_assignments(match_path)
+    registry = build_reviewed_slot_registry(match_path, document)
+    return {
+        **document,
+        "slots": [registry[key] for key in sorted(registry)],
+    }
+
+
 def save_reviewed_slot_assignments(
+    match_path: Path,
+    candidate_document: dict[str, Any],
+    updates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    document = prepare_reviewed_slot_assignments(
+        match_path,
+        candidate_document,
+        updates,
+    )
+    write_identity_json_atomic(match_path / FILENAME, document)
+    return document
+
+
+def prepare_reviewed_slot_assignments(
     match_path: Path,
     candidate_document: dict[str, Any],
     updates: list[dict[str, Any]],
@@ -180,6 +203,34 @@ def save_reviewed_slot_assignments(
     document = _document(
         sorted(decisions.values(), key=lambda row: str(row["candidate_subject_id"])),
         [reviewed_slots[key] for key in sorted(reviewed_slots)],
+    )
+    return document
+
+
+def clear_reviewed_slot_assignment(
+    match_path: Path,
+    candidate_subject_id: str,
+) -> dict[str, Any]:
+    existing = load_reviewed_slot_assignments(match_path)
+    decisions = [
+        dict(row)
+        for row in existing.get("decisions") or []
+        if str(row.get("candidate_subject_id") or "") != candidate_subject_id
+    ]
+    referenced_slots = {
+        str(row["stable_slot_id"])
+        for row in decisions
+        if row.get("action") in {"assign_existing_slot", "create_new_stable_player"}
+        and row.get("stable_slot_id")
+    }
+    reviewed_slots = manual_reviewed_slot_records(existing)
+    for row in reviewed_slots:
+        row["status"] = (
+            "active" if row["stable_slot_id"] in referenced_slots else "orphaned"
+        )
+    document = _document(
+        sorted(decisions, key=lambda row: str(row.get("candidate_subject_id") or "")),
+        reviewed_slots,
     )
     write_identity_json_atomic(match_path / FILENAME, document)
     return document
@@ -327,7 +378,6 @@ def _semantic_decision(row: dict[str, Any]) -> dict[str, Any]:
             "stable_slot_id",
             "team_label",
             "source",
-            "comment",
         )
     }
 

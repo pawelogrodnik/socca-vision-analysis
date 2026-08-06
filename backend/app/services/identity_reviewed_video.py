@@ -16,6 +16,7 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_minimap import TEAM_COLORS, draw_reviewed_minimap
 from app.services.identity_reviewed_effective_observation import (
     effective_observations_by_frame,
+    visible_reviewed_overlay,
     visible_reviewed_player,
 )
 from app.services.video import resolve_match_video_path
@@ -49,7 +50,7 @@ def render_reviewed_video(match_path: Path, snapshot: dict[str, Any], match_doc:
             _draw_rows(frame, rows, show_roster_number)
             minimap = {"status": "not_available", "reason": "pitch positions unavailable"}
             if include_minimap and pitch:
-                minimap = draw_reviewed_minimap(frame, rows, pitch_width=float(pitch.get("width_m") or 40), pitch_length=float(pitch.get("length_m") or 60), include_ball=include_ball, ball=balls.get(count))
+                minimap = draw_reviewed_minimap(frame, [row for row in rows if visible_reviewed_player(row)], pitch_width=float(pitch.get("width_m") or 40), pitch_length=float(pitch.get("length_m") or 60), include_ball=include_ball, ball=balls.get(count))
                 minimap_frames += minimap.get("status") == "available"
                 ball_frames += bool(minimap.get("ball_rendered"))
             _hud(frame, count, fps, rows, snapshot)
@@ -76,7 +77,7 @@ def _positions_by_frame(path: Path, snapshot: dict[str, Any]) -> dict[int, list[
         frame: [
             row
             for row in rows
-            if visible_reviewed_player(row)
+            if visible_reviewed_overlay(row)
             and isinstance(row.get("bbox_xyxy"), list)
             and len(row["bbox_xyxy"]) >= 4
         ]
