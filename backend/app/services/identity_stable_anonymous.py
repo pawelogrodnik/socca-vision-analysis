@@ -7,6 +7,10 @@ from pathlib import Path
 import re
 from typing import Any
 
+from app.services.identity_reviewed_slot_registry import (
+    build_reviewed_slot_registry,
+)
+
 
 DEFAULT_MAX_SUBJECTS_PER_TEAM = 14
 DEFAULT_ACTIVE_PLAYERS_PER_TEAM = 7
@@ -19,6 +23,10 @@ def resolve_stable_anonymous_entities(
     candidate_document: dict[str, Any],
     manual_document: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    if manual_document is None:
+        manual_document = _optional(
+            match_path / "reviewed_identity_slot_assignments.json"
+        )
     global_document = _optional(match_path / "global_identity.json")
     stable_document = _optional(match_path / "stable_players.json")
     gallery_document = _optional(match_path / "identity_review_gallery.json")
@@ -60,10 +68,14 @@ def resolve_stable_anonymous_entities(
     )
     manual_by_subject = {
         str(row.get("candidate_subject_id")): row
-        for row in (manual_document or {}).get("decisions") or []
+        for row in manual_document.get("decisions") or []
         if row.get("candidate_subject_id")
     }
     canonical_slots = _canonical_slots(global_document, stable_document)
+    reviewed_slot_registry = build_reviewed_slot_registry(
+        match_path,
+        manual_document,
+    )
     subject_teams = _subject_teams(subject_membership, tracklets)
     manual_new_slots, manual_new_rejections = _allocate_manual_new_slots(
         manual_by_subject,
@@ -71,7 +83,7 @@ def resolve_stable_anonymous_entities(
         subject_membership,
         tracklets,
         global_document,
-        canonical_slots,
+        set(reviewed_slot_registry),
         max_subjects=max_subjects,
         active_players_per_team=active_players_per_team,
     )
@@ -98,9 +110,9 @@ def resolve_stable_anonymous_entities(
 
         if manual_action == "assign_existing_slot" and not blockers:
             requested = str(manual.get("stable_slot_id") or "")
-            if requested not in canonical_slots:
+            if requested not in reviewed_slot_registry:
                 blockers.append("manual_stable_slot_not_found")
-            elif _label_team(requested) != team:
+            elif str(reviewed_slot_registry[requested].get("team_label")) != team:
                 blockers.append("manual_stable_slot_team_mismatch")
             else:
                 stable_slot_id = requested
@@ -173,7 +185,8 @@ def resolve_stable_anonymous_entities(
         candidates_total=len(candidates),
         max_subjects=max_subjects,
         active_players_per_team=active_players_per_team,
-        manual_document=manual_document or {},
+        manual_document=manual_document,
+        reviewed_slot_registry=reviewed_slot_registry,
     )
     return resolved, diagnostics
 
@@ -209,17 +222,20 @@ def _allocate_manual_new_slots(
     subject_membership: dict[str, set[str]],
     tracklets: dict[str, dict[str, Any]],
     global_document: dict[str, Any],
-    canonical_slots: set[str],
+    available_slots: set[str],
     *,
     max_subjects: int,
     active_players_per_team: int,
 ) -> tuple[dict[str, str], dict[str, str]]:
     allocated: dict[str, str] = {}
     rejected: dict[str, str] = {}
-    used = set(canonical_slots)
+    used = set(available_slots)
     manual_visible: dict[tuple[int, str], int] = Counter()
     canonical_visible = _canonical_visible_counts(global_document)
-    for subject_id, decision in sorted(manual_by_subject.items()):
+    for subject_id, decision in sorted(
+        manual_by_subject.items(),
+        key=lambda item: _manual_new_allocation_order(item[0], item[1]),
+    ):
         if decision.get("action") != "create_new_stable_player":
             continue
         team = str(decision.get("team_label") or "")
@@ -258,22 +274,46 @@ def _allocate_manual_new_slots(
         ):
             rejected[subject_id] = "manual_new_player_active_team_cap_exceeded"
             continue
-        slot = next(
-            (
-                f"{team}{number:02d}"
-                for number in range(1, max_subjects + 1)
-                if f"{team}{number:02d}" not in used
-            ),
-            None,
-        )
+        persisted_slot = _normalize_label(decision.get("stable_slot_id"))
+        if persisted_slot:
+            slot = persisted_slot if persisted_slot in available_slots else None
+        else:
+            slot = next(
+                (
+                    f"{team}{number:02d}"
+                    for number in range(1, max_subjects + 1)
+                    if f"{team}{number:02d}" not in used
+                ),
+                None,
+            )
         if slot is None:
-            rejected[subject_id] = "manual_new_player_bounded_pool_exhausted"
+            rejected[subject_id] = (
+                "manual_new_player_slot_not_found"
+                if persisted_slot
+                else "manual_new_player_bounded_pool_exhausted"
+            )
+            continue
+        if _label_team(slot) != team:
+            rejected[subject_id] = "manual_new_player_team_mismatch"
             continue
         used.add(slot)
         allocated[subject_id] = slot
         for frame in frames:
             manual_visible[(frame, team)] += 1
     return allocated, rejected
+
+
+def _manual_new_allocation_order(
+    subject_id: str,
+    decision: dict[str, Any],
+) -> tuple[int, str, str, str]:
+    slot_id = _normalize_label(decision.get("stable_slot_id"))
+    return (
+        0 if slot_id else 1,
+        slot_id or "",
+        str(decision.get("reviewed_at") or ""),
+        subject_id,
+    )
 
 
 def _canonical_visible_counts(document: dict[str, Any]) -> Counter[tuple[int, str]]:
@@ -410,6 +450,7 @@ def _diagnostics(
     max_subjects: int,
     active_players_per_team: int,
     manual_document: dict[str, Any],
+    reviewed_slot_registry: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     slots = {
         str(row["stable_anonymous_slot_id"])
@@ -432,6 +473,16 @@ def _diagnostics(
                 for row in resolved.values()
                 if row.get("stable_anchor_source") == "manual_new_player_confirmation"
             }
+        ),
+        "reviewed_slot_registry_entries": len(reviewed_slot_registry),
+        "manual_reviewed_slot_registry_entries": sum(
+            row.get("source") == "manual_new_player_confirmation"
+            for row in reviewed_slot_registry.values()
+        ),
+        "orphaned_manual_reviewed_slots": sum(
+            row.get("source") == "manual_new_player_confirmation"
+            and row.get("status") == "orphaned"
+            for row in reviewed_slot_registry.values()
         ),
         "ephemeral_fragments": sum(bool(row["ephemeral"]) for row in resolved.values()),
         "conflicting_anchor_sources": sum("conflicting_stable_anchor_sources" in row["hard_blockers"] for row in resolved.values()),

@@ -416,7 +416,19 @@ def _semantic_input(value: Any) -> Any:
     if isinstance(value, list):
         return [_semantic_input(item) for item in value]
     if isinstance(value, dict):
-        return {key: _semantic_input(item) for key, item in value.items() if key not in {"generated_at", "updated_at", "operator_telemetry", "telemetry_state", "created_at"}}
+        return {
+            key: _semantic_input(item)
+            for key, item in value.items()
+            if key
+            not in {
+                "generated_at",
+                "updated_at",
+                "reviewed_at",
+                "operator_telemetry",
+                "telemetry_state",
+                "created_at",
+            }
+        }
     return value
 
 

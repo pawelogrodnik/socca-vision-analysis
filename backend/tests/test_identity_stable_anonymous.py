@@ -134,8 +134,22 @@ class StableAnonymousIdentityTests(unittest.TestCase):
                 root,
                 candidate,
                 [
-                    {"candidate_subject_id": subject, "action": "create_new_stable_player", "team_label": "A"}
-                    for subject in ("new", "fallback")
+                    {
+                        "candidate_subject_id": "new",
+                        "action": "create_new_stable_player",
+                        "team_label": "A",
+                    }
+                ],
+            )
+            manual = save_reviewed_slot_assignments(
+                root,
+                candidate,
+                [
+                    {
+                        "candidate_subject_id": "fallback",
+                        "action": "create_new_stable_player",
+                        "team_label": "A",
+                    }
                 ],
             )
             resolved, _ = resolve_stable_anonymous_entities(
@@ -160,16 +174,19 @@ class StableAnonymousIdentityTests(unittest.TestCase):
                 {"slots": [_slot(f"A{i:02d}", f"old{i}", frame=i) for i in range(1, 15)]},
             )
             candidate = _candidates(("new", ["t1"], None))
-            manual = save_reviewed_slot_assignments(
-                root,
-                candidate,
-                [{"candidate_subject_id": "new", "action": "create_new_stable_player", "team_label": "A"}],
-            )
-            resolved, _ = resolve_stable_anonymous_entities(
-                root, {"t1": _tracklet("t1", "A", 100)}, candidate, manual
-            )
-            self.assertIsNone(resolved["t1"]["stable_anonymous_slot_id"])
-            self.assertIn("manual_new_player_bounded_pool_exhausted", resolved["t1"]["hard_blockers"])
+            with self.assertRaisesRegex(ValueError, "bounded pool exhausted"):
+                save_reviewed_slot_assignments(
+                    root,
+                    candidate,
+                    [
+                        {
+                            "candidate_subject_id": "new",
+                            "action": "create_new_stable_player",
+                            "team_label": "A",
+                        }
+                    ],
+                )
+            self.assertFalse((root / "reviewed_identity_slot_assignments.json").exists())
 
     def test_frame_uniqueness_demotes_lower_priority_claim(self) -> None:
         tracklets = {"manual": _tracklet("manual", "A", 1), "auto": _tracklet("auto", "A", 1)}

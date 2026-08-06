@@ -10,6 +10,7 @@ from app.services.identity_reviewed_snapshot import (
     get_reviewed_identity_status,
     reviewed_assignment_at,
 )
+from app.services.identity_reviewed_slot_review import save_reviewed_slot_assignments
 
 
 class ReviewedIdentitySnapshotTests(unittest.TestCase):
@@ -66,6 +67,72 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             (root / "reviewed_identity_snapshot.json").write_text(
                 json.dumps(result), encoding="utf-8"
             )
+            self.assertTrue(get_reviewed_identity_status(root)["stale"])
+
+    def test_identical_manual_slot_save_is_semantically_stable(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            for index, row in enumerate(tracklets["tracklets"]):
+                row["positions_m"] = [
+                    {"frame": index * 10, "status": "detected"}
+                ]
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
+            (root / "global_identity.json").write_text(
+                json.dumps(
+                    {
+                        "slots": [
+                            {
+                                "slot_id": f"A{number:02d}",
+                                "stable_player_id": f"A{number:02d}",
+                                "team_label": "A",
+                                "tracklet_ids": [f"canonical-{number}"],
+                            }
+                            for number in range(1, 11)
+                        ]
+                    }
+                )
+            )
+            candidates = json.loads(
+                (root / "identity_candidate_shadow.json").read_text()
+            )
+            update = [
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "create_new_stable_player",
+                    "team_label": "A",
+                }
+            ]
+            first_document = save_reviewed_slot_assignments(
+                root, candidates, update
+            )
+            first = finalize_reviewed_identity(root, _match())
+            second_document = save_reviewed_slot_assignments(
+                root, candidates, update
+            )
+            self.assertEqual(
+                first_document["decisions"], second_document["decisions"]
+            )
+            self.assertFalse(get_reviewed_identity_status(root)["stale"])
+            second = finalize_reviewed_identity(root, _match())
+            self.assertEqual(first["semantic_digest"], second["semantic_digest"])
+
+            changed = save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "s2",
+                        "action": "create_new_stable_player",
+                        "team_label": "A",
+                    }
+                ],
+            )
+            slots = {
+                row["candidate_subject_id"]: row["stable_slot_id"]
+                for row in changed["decisions"]
+            }
+            self.assertEqual(slots, {"s1": "A11", "s2": "A12"})
             self.assertTrue(get_reviewed_identity_status(root)["stale"])
 
     def test_candidate_fragments_reuse_base_stable_slot(self) -> None:
