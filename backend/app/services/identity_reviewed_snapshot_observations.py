@@ -3,6 +3,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from app.services.identity_reviewed_effective_observation import (
+    iter_effective_reviewed_observations,
+)
+
 
 def build_observation_overrides(
     seeds_document: dict[str, Any],
@@ -66,23 +70,21 @@ def observation_coverage(
     tracklets: dict[str, dict[str, Any]],
     assignments: list[dict[str, Any]],
     overrides: list[dict[str, Any]],
+    safety_demotions: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    assignment_by_tracklet = {str(row["tracklet_id"]): row for row in assignments}
-    override_by_key = {(str(row["tracklet_id"]), int(row["frame"])): row for row in overrides}
     counts: Counter[str] = Counter()
     unique: set[tuple[str, int]] = set()
-    for tracklet_id, tracklet in tracklets.items():
-        assignment = assignment_by_tracklet.get(tracklet_id, {})
-        for position in tracklet.get("positions_m") or []:
-            if str(position.get("status") or "detected") != "detected":
-                continue
-            key = (tracklet_id, int(position.get("frame") or 0))
-            if key in unique:
-                continue
-            unique.add(key)
-            override = override_by_key.get(key)
-            status = str((override or assignment).get("identity_status") or "unresolved")
-            counts[status] += 1
+    for row in iter_effective_reviewed_observations(
+        tracklets,
+        assignments,
+        overrides,
+        safety_demotions,
+    ):
+        key = (str(row["tracklet_id"]), int(row.get("frame") or 0))
+        if key in unique:
+            continue
+        unique.add(key)
+        counts[str(row.get("identity_status") or "unresolved")] += 1
     reliable = sum(counts[value] for value in ("confirmed", "unresolved", "conflicted", "blocked", "team_unknown"))
     return {
         "detected_observations_total": len(unique),

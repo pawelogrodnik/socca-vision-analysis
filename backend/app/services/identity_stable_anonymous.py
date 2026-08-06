@@ -34,6 +34,18 @@ def resolve_stable_anonymous_entities(
             ),
         ),
     )
+    active_players_per_team = min(
+        DEFAULT_ACTIVE_PLAYERS_PER_TEAM,
+        max(
+            1,
+            int(
+                (global_document.get("parameters") or {}).get(
+                    "players_per_team"
+                )
+                or DEFAULT_ACTIVE_PLAYERS_PER_TEAM
+            ),
+        ),
+    )
     subject_membership = _subject_membership(candidate_document)
     candidates = {
         str(row.get("candidate_subject_id")): row
@@ -61,6 +73,7 @@ def resolve_stable_anonymous_entities(
         global_document,
         canonical_slots,
         max_subjects=max_subjects,
+        active_players_per_team=active_players_per_team,
     )
     resolved: dict[str, dict[str, Any]] = {}
 
@@ -159,6 +172,7 @@ def resolve_stable_anonymous_entities(
         resolved,
         candidates_total=len(candidates),
         max_subjects=max_subjects,
+        active_players_per_team=active_players_per_team,
         manual_document=manual_document or {},
     )
     return resolved, diagnostics
@@ -198,6 +212,7 @@ def _allocate_manual_new_slots(
     canonical_slots: set[str],
     *,
     max_subjects: int,
+    active_players_per_team: int,
 ) -> tuple[dict[str, str], dict[str, str]]:
     allocated: dict[str, str] = {}
     rejected: dict[str, str] = {}
@@ -238,7 +253,7 @@ def _allocate_manual_new_slots(
         if any(
             canonical_visible.get((frame, team), 0)
             + manual_visible.get((frame, team), 0)
-            >= DEFAULT_ACTIVE_PLAYERS_PER_TEAM
+            >= active_players_per_team
             for frame in frames
         ):
             rejected[subject_id] = "manual_new_player_active_team_cap_exceeded"
@@ -263,17 +278,31 @@ def _allocate_manual_new_slots(
 
 def _canonical_visible_counts(document: dict[str, Any]) -> Counter[tuple[int, str]]:
     counts: Counter[tuple[int, str]] = Counter()
+    authoritative_keys: set[tuple[int, str]] = set()
+    for row in document.get("frames") or []:
+        frame = int(row.get("frame") or 0)
+        for team, key in (("A", "active_team_a"), ("B", "active_team_b")):
+            if row.get(key) is None:
+                continue
+            counts[(frame, team)] = int(row[key])
+            authoritative_keys.add((frame, team))
     for slot in document.get("slots") or []:
         team = str(slot.get("team_label") or "U")
+        counted_frames: set[int] = set()
         for row in (
-            slot.get("trajectory_m")
+            slot.get("overlay_positions")
             or slot.get("history")
             or slot.get("positions_m")
+            or slot.get("trajectory_m")
             or []
         ):
             if str(row.get("source") or row.get("status") or "detected") != "detected":
                 continue
-            counts[(int(row.get("frame") or 0), team)] += 1
+            frame = int(row.get("frame") or 0)
+            if frame in counted_frames or (frame, team) in authoritative_keys:
+                continue
+            counted_frames.add(frame)
+            counts[(frame, team)] += 1
     return counts
 
 
@@ -379,6 +408,7 @@ def _diagnostics(
     *,
     candidates_total: int,
     max_subjects: int,
+    active_players_per_team: int,
     manual_document: dict[str, Any],
 ) -> dict[str, Any]:
     slots = {
@@ -406,6 +436,7 @@ def _diagnostics(
         "ephemeral_fragments": sum(bool(row["ephemeral"]) for row in resolved.values()),
         "conflicting_anchor_sources": sum("conflicting_stable_anchor_sources" in row["hard_blockers"] for row in resolved.values()),
         "max_subjects_per_team": max_subjects,
+        "active_players_per_team": active_players_per_team,
         "highest_fallback_number_by_team": {
             team: max((_label_number(value) for value in slots if _label_team(value) == team), default=None)
             for team in ("A", "B")

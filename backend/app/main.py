@@ -1807,7 +1807,18 @@ def get_reviewed_identity_at(match_id: str, time_sec: float = Query(..., ge=0)) 
     if snapshot.get("status") in {"missing", "stale"}:
         raise HTTPException(status_code=409, detail="Sfinalizuj reviewed identity przed wyszukaniem klatki.")
     metadata = read_video_metadata(match_video_path(path))
-    return {"time_sec": time_sec, "frame": round(time_sec * float(metadata.get("fps") or 25)), "entities": reviewed_assignment_at(snapshot, time_sec, float(metadata.get("fps") or 25))}
+    fps = float(metadata.get("fps") or 25)
+    tracklets_document = json.loads((path / "tracklets.json").read_text(encoding="utf-8"))
+    tracklets = {
+        str(row.get("tracklet_id")): row
+        for row in tracklets_document.get("tracklets") or []
+        if row.get("tracklet_id")
+    }
+    return {
+        "time_sec": time_sec,
+        "frame": round(time_sec * fps),
+        "entities": reviewed_assignment_at(snapshot, tracklets, time_sec, fps),
+    }
 
 
 @app.post("/api/matches/{match_id}/reviewed-output/generate")

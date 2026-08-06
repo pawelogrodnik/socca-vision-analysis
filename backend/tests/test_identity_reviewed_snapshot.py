@@ -5,7 +5,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from app.services.identity_reviewed_snapshot import finalize_reviewed_identity, get_reviewed_identity_status
+from app.services.identity_reviewed_snapshot import (
+    finalize_reviewed_identity,
+    get_reviewed_identity_status,
+    reviewed_assignment_at,
+)
 
 
 class ReviewedIdentitySnapshotTests(unittest.TestCase):
@@ -53,6 +57,16 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             (root / "match.json").write_text(json.dumps(second_match))
             second = finalize_reviewed_identity(root, second_match)
             self.assertEqual(first["semantic_digest"], second["semantic_digest"])
+
+    def test_snapshot_from_previous_algorithm_is_stale(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            result = finalize_reviewed_identity(root, _match())
+            result["source"]["algorithm_version"] = "reviewed_identity_snapshot:v3"
+            (root / "reviewed_identity_snapshot.json").write_text(
+                json.dumps(result), encoding="utf-8"
+            )
+            self.assertTrue(get_reviewed_identity_status(root)["stale"])
 
     def test_candidate_fragments_reuse_base_stable_slot(self) -> None:
         with _workspace() as root:
@@ -115,6 +129,75 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             self.assertEqual(result["observation_overrides"][0]["display_label"], "Paweł")
             self.assertEqual(result["summary"]["exact_named_observations"], 1)
             self.assertEqual(result["summary"]["confirmed_detected_observations"], 1)
+
+    def test_lookup_returns_only_real_detected_observation_at_frame(self) -> None:
+        tracklets = {
+            "t1": {
+                "tracklet_id": "t1",
+                "positions_m": [
+                    {"frame": 1, "status": "detected"},
+                    {"frame": 5, "status": "predicted", "source": "predicted"},
+                    {"frame": 10, "status": "detected"},
+                ],
+            }
+        }
+        snapshot = {
+            "tracklet_assignments": [
+                {
+                    "tracklet_id": "t1",
+                    "identity_status": "unresolved",
+                    "fallback_label": "A01",
+                    "display_label": "A01",
+                }
+            ],
+            "observation_overrides": [],
+            "observation_demotions": [],
+        }
+        self.assertEqual(reviewed_assignment_at(snapshot, tracklets, 0.5, 10), [])
+        self.assertEqual(
+            reviewed_assignment_at(snapshot, tracklets, 1.0, 10)[0]["display_label"],
+            "A01",
+        )
+
+    def test_lookup_applies_final_safety_after_exact_override(self) -> None:
+        tracklets = {
+            "t1": {
+                "tracklet_id": "t1",
+                "positions_m": [{"frame": 10, "status": "detected"}],
+            }
+        }
+        snapshot = {
+            "tracklet_assignments": [
+                {
+                    "tracklet_id": "t1",
+                    "identity_status": "unresolved",
+                    "fallback_label": "A01",
+                    "display_label": "A01",
+                }
+            ],
+            "observation_overrides": [
+                {
+                    "tracklet_id": "t1",
+                    "frame": 10,
+                    "identity_status": "confirmed",
+                    "canonical_player_id": "p1",
+                    "display_label": "Player One",
+                }
+            ],
+            "observation_demotions": [
+                {
+                    "tracklet_id": "t1",
+                    "frame": 10,
+                    "identity_status": "conflicted",
+                    "canonical_player_id": None,
+                    "display_label": "A01 !",
+                }
+            ],
+        }
+        entity = reviewed_assignment_at(snapshot, tracklets, 1.0, 10)[0]
+        self.assertEqual(entity["identity_status"], "conflicted")
+        self.assertIsNone(entity["canonical_player_id"])
+        self.assertEqual(entity["display_label"], "A01 !")
 
 
 class _workspace:

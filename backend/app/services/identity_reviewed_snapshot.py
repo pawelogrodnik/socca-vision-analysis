@@ -14,6 +14,10 @@ from app.services.identity_reviewed_snapshot_observations import (
     observation_coverage,
 )
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
+from app.services.identity_reviewed_effective_observation import (
+    effective_observations_by_frame,
+    visible_reviewed_player,
+)
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
@@ -22,7 +26,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v3"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v4"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -32,7 +36,11 @@ def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
     snapshot = _load(snapshot_path)
     current = _source_documents(match_path)
     match_doc = _optional(match_path / "match.json")
-    stale = snapshot.get("source", {}).get("semantic_input_digest") != _source_digest(current, match_doc)
+    stale = (
+        snapshot.get("source", {}).get("semantic_input_digest")
+        != _source_digest(current, match_doc)
+        or snapshot.get("source", {}).get("algorithm_version") != ALGORITHM_VERSION
+    )
     return {
         **snapshot,
         "status": "stale" if stale else str(snapshot.get("status") or "partial_reviewed"),
@@ -148,12 +156,25 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         assignments.append(row)
         conflicts.extend({"tracklet_id": tracklet_id, **item} for item in assignment_conflicts)
 
-    _apply_parallel_conflicts(assignments, tracklets, conflicts)
-    observation_demotions, uniqueness = build_frame_slot_demotions(tracklets, assignments)
+    observation_demotions, uniqueness = build_frame_slot_demotions(
+        tracklets,
+        assignments,
+        observation_overrides,
+    )
+    conflicts.extend(
+        {
+            "tracklet_id": row["tracklet_id"],
+            "frame": row["frame"],
+            **conflict,
+        }
+        for row in observation_demotions
+        for conflict in row.get("conflicts") or []
+    )
     coverage = observation_coverage(
         tracklets,
         assignments,
-        [*observation_demotions, *observation_overrides],
+        observation_overrides,
+        observation_demotions,
     )
     summary = _summary(assignments, coverage, fragmentation, uniqueness)
     source = _source_descriptor(documents, match_doc, seeded_freshness)
@@ -214,24 +235,18 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
     return snapshot
 
 
-def reviewed_assignment_at(snapshot: dict[str, Any], time_sec: float, fps: float) -> list[dict[str, Any]]:
+def reviewed_assignment_at(
+    snapshot: dict[str, Any],
+    tracklets: dict[str, dict[str, Any]],
+    time_sec: float,
+    fps: float,
+) -> list[dict[str, Any]]:
     frame = max(0, round(time_sec * fps))
-    overrides = {
-        (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
-        for row in snapshot.get("observation_overrides") or []
-    }
-    demotions = {
-        (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
-        for row in snapshot.get("observation_demotions") or []
-    }
-    output = []
-    for row in snapshot.get("tracklet_assignments") or []:
-        if row.get("frame_start") is None or not int(row["frame_start"]) <= frame <= int(row.get("frame_end") or row["frame_start"]):
-            continue
-        override = overrides.get((str(row.get("tracklet_id")), frame))
-        demotion = demotions.get((str(row.get("tracklet_id")), frame))
-        output.append({**row, **(demotion or {}), **(override or {})})
-    return output
+    return [
+        row
+        for row in effective_observations_by_frame(tracklets, snapshot).get(frame, [])
+        if visible_reviewed_player(row)
+    ]
 
 
 def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
@@ -320,33 +335,6 @@ def _resolve_assignment(
     return "unresolved", None, None, [], []
 
 
-def _apply_parallel_conflicts(
-    assignments: list[dict[str, Any]],
-    tracklets: dict[str, dict[str, Any]],
-    conflicts: list[dict[str, Any]],
-) -> None:
-    by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in assignments:
-        if row.get("canonical_player_id"):
-            by_player[str(row["canonical_player_id"])].append(row)
-    conflicted: set[str] = set()
-    frames = {key: _detected_frames(value) for key, value in tracklets.items()}
-    for rows in by_player.values():
-        for index, left in enumerate(rows):
-            for right in rows[index + 1 :]:
-                if frames[str(left["tracklet_id"])] & frames[str(right["tracklet_id"])]:
-                    conflicted.update({str(left["tracklet_id"]), str(right["tracklet_id"])})
-    for row in assignments:
-        if str(row["tracklet_id"]) in conflicted:
-            conflicts.append({"code": "parallel_confirmed_same_player", "tracklet_id": row["tracklet_id"], "player_id": row["canonical_player_id"]})
-            row["identity_status"] = "conflicted"
-            row["canonical_player_id"] = None
-            row["player_name"] = None
-            row["eligible_for_player_stats"] = False
-            row["display_label"] = f"{row['fallback_label']} !"
-            row["conflicts"].append({"code": "parallel_confirmed_same_player"})
-
-
 def _summary(
     assignments: list[dict[str, Any]],
     coverage: dict[str, Any],
@@ -406,14 +394,6 @@ def _roster(match_doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _has_conflicting_review_decisions(decisions: list[dict[str, Any]]) -> bool:
     values = {(str(row.get("decision") or ""), str(row.get("player_id") or "")) for row in decisions}
     return len(values) > 1
-
-
-def _detected_frames(row: dict[str, Any]) -> set[int]:
-    return {
-        int(value.get("frame") or 0)
-        for value in row.get("positions_m") or []
-        if str(value.get("status") or "detected") == "detected"
-    }
 
 
 def _frame_start(row: dict[str, Any]) -> int:

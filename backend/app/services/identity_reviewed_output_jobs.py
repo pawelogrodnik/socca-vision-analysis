@@ -20,7 +20,7 @@ from app.services.identity_reviewed_video import render_reviewed_video, reviewed
 
 JOB_FILENAME = "reviewed_video_job.json"
 LOCK_FILENAME = "reviewed_video_job.lock"
-RENDERER_VERSION = "reviewed_video:v4"
+RENDERER_VERSION = "reviewed_video:v5"
 _active_job_keys: set[str] = set()
 _submission_lock = threading.Lock()
 

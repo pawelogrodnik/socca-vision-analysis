@@ -112,18 +112,45 @@ class StableAnonymousIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             slots = [_slot(f"A{i:02d}", f"old{i}", frame=5) for i in range(1, 8)]
-            _write(root / "global_identity.json", {"slots": slots})
-            candidate = _candidates(("new", ["t1"], None))
+            _write(
+                root / "global_identity.json",
+                {
+                    "parameters": {"players_per_team": 7},
+                    "slots": slots,
+                    "frames": [
+                        {
+                            "frame": 1500,
+                            "active_team_a": 7,
+                            "active_team_b": 4,
+                        }
+                    ],
+                },
+            )
+            candidate = _candidates(
+                ("new", ["t1"], None),
+                ("fallback", ["t2"], None),
+            )
             manual = save_reviewed_slot_assignments(
                 root,
                 candidate,
-                [{"candidate_subject_id": "new", "action": "create_new_stable_player", "team_label": "A"}],
+                [
+                    {"candidate_subject_id": subject, "action": "create_new_stable_player", "team_label": "A"}
+                    for subject in ("new", "fallback")
+                ],
             )
             resolved, _ = resolve_stable_anonymous_entities(
-                root, {"t1": _tracklet("t1", "A", 5)}, candidate, manual
+                root,
+                {
+                    "t1": _tracklet("t1", "A", 1500),
+                    "t2": _tracklet("t2", "A", 5),
+                },
+                candidate,
+                manual,
             )
             self.assertIsNone(resolved["t1"]["stable_anonymous_slot_id"])
             self.assertIn("manual_new_player_active_team_cap_exceeded", resolved["t1"]["hard_blockers"])
+            self.assertIsNone(resolved["t2"]["stable_anonymous_slot_id"])
+            self.assertIn("manual_new_player_active_team_cap_exceeded", resolved["t2"]["hard_blockers"])
 
     def test_manual_new_slot_cannot_exceed_fourteen_match_players(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -153,6 +180,84 @@ class StableAnonymousIdentityTests(unittest.TestCase):
         demotions, diagnostics = build_frame_slot_demotions(tracklets, assignments)
         self.assertEqual([(row["tracklet_id"], row["frame"]) for row in demotions], [("auto", 1)])
         self.assertEqual(diagnostics["duplicate_stable_labels_rendered"], 0)
+
+    def test_exact_false_detection_does_not_demote_valid_stable_claim(self) -> None:
+        tracklets = {
+            "false": _tracklet("false", "A", 10),
+            "valid": _tracklet("valid", "A", 10),
+        }
+        assignments = [
+            _assignment("false", "A03", "global_identity"),
+            _assignment("valid", "A03", "global_identity"),
+        ]
+        demotions, diagnostics = build_frame_slot_demotions(
+            tracklets,
+            assignments,
+            [
+                {
+                    "tracklet_id": "false",
+                    "frame": 10,
+                    "identity_status": "false_detection",
+                    "identity_source": "operator_seed_exact_observation",
+                }
+            ],
+        )
+        self.assertEqual(demotions, [])
+        self.assertEqual(diagnostics["duplicate_stable_slot_claim_groups"], 0)
+
+    def test_equal_exact_player_claims_are_both_demoted(self) -> None:
+        tracklets = {
+            "left": _tracklet("left", "A", 10),
+            "right": _tracklet("right", "A", 10),
+        }
+        assignments = [
+            _assignment("left", "A01", "global_identity"),
+            _assignment("right", "A02", "global_identity"),
+        ]
+        overrides = [
+            {
+                "tracklet_id": tracklet_id,
+                "frame": 10,
+                "identity_status": "confirmed",
+                "canonical_player_id": "p1",
+                "player_name": "One",
+                "identity_source": "operator_seed_exact_observation",
+            }
+            for tracklet_id in ("left", "right")
+        ]
+        demotions, diagnostics = build_frame_slot_demotions(
+            tracklets, assignments, overrides
+        )
+        self.assertEqual({row["tracklet_id"] for row in demotions}, {"left", "right"})
+        self.assertTrue(all(row["canonical_player_id"] is None for row in demotions))
+        self.assertEqual(diagnostics["duplicate_canonical_player_claim_groups"], 1)
+        self.assertEqual(diagnostics["demoted_canonical_player_observations"], 2)
+
+    def test_exact_player_claim_wins_over_whole_subject_claim(self) -> None:
+        tracklets = {
+            "exact": _tracklet("exact", "A", 10),
+            "whole": _tracklet("whole", "A", 10),
+        }
+        assignments = [
+            _assignment("exact", "A01", "global_identity"),
+            {
+                **_assignment("whole", "A02", "global_identity"),
+                "identity_status": "confirmed",
+                "canonical_player_id": "p1",
+                "identity_source": "operator_review",
+            },
+        ]
+        overrides = [
+            {
+                "tracklet_id": "exact",
+                "frame": 10,
+                "identity_status": "confirmed",
+                "canonical_player_id": "p1",
+                "identity_source": "operator_seed_exact_observation",
+            }
+        ]
+        demotions, _ = build_frame_slot_demotions(tracklets, assignments, overrides)
+        self.assertEqual([row["tracklet_id"] for row in demotions], ["whole"])
 
 
 def _tracklet(tracklet_id: str, team: str, frame: int) -> dict:
