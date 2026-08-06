@@ -210,7 +210,8 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             seeded["source"] = {
                 "operator_seed_decisions_digest": (
                     identity_operator_seed_decisions_digest(seeds)
-                )
+                ),
+                **_fresh_artifact_digests(),
             }
             (path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
             (path / OUTPUT_FILENAME).write_text(json.dumps(seeded), encoding="utf-8")
@@ -267,7 +268,8 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             seeded["source"] = {
                 "operator_seed_decisions_digest": (
                     identity_operator_seed_decisions_digest(combined)
-                )
+                ),
+                **_fresh_artifact_digests(),
             }
             (path / OUTPUT_FILENAME).write_text(
                 json.dumps(seeded), encoding="utf-8"
@@ -320,7 +322,8 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             seeded["source"] = {
                 "operator_seed_decisions_digest": (
                     identity_operator_seed_decisions_digest(combined)
-                )
+                ),
+                **_fresh_artifact_digests(),
             }
             (path / OUTPUT_FILENAME).write_text(
                 json.dumps(seeded),
@@ -343,6 +346,8 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
                 "operator_seed_decisions_digest": identity_operator_seed_decisions_digest(seeds),
                 "candidate_identity_digest": canonical_digest(candidate),
                 "timeline_digest": canonical_digest(timeline),
+                "tracklets_digest": canonical_digest({}),
+                "whole_subject_review_decisions_digest": canonical_digest({}),
             }
             (path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
             (path / OUTPUT_FILENAME).write_text(json.dumps(seeded), encoding="utf-8")
@@ -356,6 +361,48 @@ class IdentitySeededReviewReductionTests(unittest.TestCase):
             loaded, freshness = load_fresh_seeded_assignments(path)
             self.assertIsNone(loaded)
             self.assertIn("candidate_identity_digest_mismatch", freshness["reason_codes"])
+
+    def test_freshness_rejects_changed_tracklets_or_review_decisions(self) -> None:
+        for filename, source_key in (
+            ("tracklets.json", "tracklets_digest"),
+            (
+                "identity_roster_subject_review_decisions_shadow.json",
+                "whole_subject_review_decisions_digest",
+            ),
+        ):
+            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary)
+                seeds = {"schema_version": "0.1.0", "decisions": []}
+                source_artifact = {"rows": []}
+                seeded = seeded_document([accepted_assignment()])
+                seeded["source"] = {
+                    "operator_seed_decisions_digest": identity_operator_seed_decisions_digest(seeds),
+                    "candidate_identity_digest": canonical_digest({}),
+                    "timeline_digest": canonical_digest({}),
+                    "tracklets_digest": canonical_digest({}),
+                    "whole_subject_review_decisions_digest": canonical_digest({}),
+                    source_key: canonical_digest(source_artifact),
+                }
+                (path / SEEDS_FILENAME).write_text(json.dumps(seeds), encoding="utf-8")
+                (path / OUTPUT_FILENAME).write_text(json.dumps(seeded), encoding="utf-8")
+                (path / filename).write_text(json.dumps(source_artifact), encoding="utf-8")
+                loaded, freshness = load_fresh_seeded_assignments(path)
+                self.assertIsNotNone(loaded)
+                self.assertEqual(freshness["status"], "fresh")
+                source_artifact["rows"].append({"changed": True})
+                (path / filename).write_text(json.dumps(source_artifact), encoding="utf-8")
+                loaded, freshness = load_fresh_seeded_assignments(path)
+                self.assertIsNone(loaded)
+                self.assertIn(f"{source_key}_mismatch", freshness["reason_codes"])
+
+
+def _fresh_artifact_digests() -> dict[str, str]:
+    return {
+        "candidate_identity_digest": canonical_digest({}),
+        "timeline_digest": canonical_digest({}),
+        "tracklets_digest": canonical_digest({}),
+        "whole_subject_review_decisions_digest": canonical_digest({}),
+    }
 
 
 if __name__ == "__main__":

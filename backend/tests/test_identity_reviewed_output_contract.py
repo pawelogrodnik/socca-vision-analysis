@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.services.identity_minimap import reviewed_ball_pitch_point
 from app.services.identity_reviewed_output_jobs import (
     ReviewedOutputBusyError,
+    _reusable_job,
     generate_reviewed_output,
     reviewed_output_status,
 )
@@ -55,6 +56,33 @@ class ReviewedOutputContractTests(unittest.TestCase):
             status = reviewed_output_status(root)
             self.assertEqual(status["status"], "failed")
             self.assertFalse((root / "reviewed_video_job.lock").exists())
+
+    def test_completed_job_is_not_reused_when_video_digest_changed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "reviewed_video.mp4").write_bytes(b"different output")
+            job = {
+                "job_key": "same",
+                "status": "completed",
+                "video_digest": "not-the-file-digest",
+            }
+            self.assertFalse(_reusable_job(job, "same", root))
+
+    @patch("app.services.identity_reviewed_output_jobs.threading.Thread")
+    @patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video-digest")
+    @patch("app.services.identity_reviewed_output_jobs.canonical_digest", return_value="same")
+    def test_abandoned_same_key_request_starts_a_new_job(self, _key, _digest, thread_class) -> None:
+        thread_class.return_value.start.return_value = None
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot = {"semantic_digest": "snapshot-1"}
+            (root / "reviewed_video_job.json").write_text(
+                json.dumps({"job_key": "same", "status": "running"}),
+                encoding="utf-8",
+            )
+            second = generate_reviewed_output(root, snapshot, {}, {"include_minimap": True})
+            self.assertEqual(second["job_key"], "same")
+            self.assertEqual(thread_class.return_value.start.call_count, 1)
 
     def test_video_api_rejects_stale_digest_and_serves_current_digest(self) -> None:
         from app.main import get_match_reviewed_video

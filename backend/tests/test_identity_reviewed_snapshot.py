@@ -16,7 +16,7 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             rows = {row["tracklet_id"]: row for row in result["tracklet_assignments"]}
             self.assertEqual(rows["t1"]["display_label"], "Paweł")
             self.assertEqual(rows["t2"]["identity_status"], "unresolved")
-            self.assertEqual(rows["t2"]["display_label"], "A02")
+            self.assertEqual(rows["t2"]["display_label"], "A?")
 
     def test_cross_team_and_invalid_player_are_not_named(self) -> None:
         with _workspace() as root:
@@ -32,14 +32,14 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             result = finalize_reviewed_identity(root, _match())
             row = {item["tracklet_id"]: item for item in result["tracklet_assignments"]}["t1"]
             self.assertEqual(row["identity_status"], "conflicted")
-            self.assertEqual(row["display_label"], "A01 !")
+            self.assertEqual(row["display_label"], "A? !")
 
     def test_labels_are_deterministic_and_snapshot_becomes_stale(self) -> None:
         with _workspace() as root:
             _write_inputs(root, decisions=[])
             first = finalize_reviewed_identity(root, _match()); second = finalize_reviewed_identity(root, _match())
             self.assertEqual(first["semantic_digest"], second["semantic_digest"])
-            self.assertEqual([row["fallback_label"] for row in first["tracklet_assignments"]], ["A01", "A02"])
+            self.assertEqual([row["fallback_label"] for row in first["tracklet_assignments"]], ["A?", "A?"])
             tracklets = json.loads((root / "tracklets.json").read_text()); tracklets["tracklets"][0]["team_label"] = "B"; (root / "tracklets.json").write_text(json.dumps(tracklets))
             self.assertTrue(get_reviewed_identity_status(root)["stale"])
 
@@ -64,6 +64,9 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
                 ]
             }
             (root / "identity_candidate_shadow.json").write_text(json.dumps(candidates))
+            (root / "global_identity.json").write_text(json.dumps({
+                "slots": [{"stable_player_id": "A01", "tracklet_ids": ["t1", "t2"]}]
+            }))
             result = finalize_reviewed_identity(root, _match())
             self.assertEqual(
                 [row["fallback_label"] for row in result["tracklet_assignments"]],

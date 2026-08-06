@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { finalizeReviewedIdentity, generateReviewedOutput, getReviewedIdentity, getReviewedIdentityAt, getReviewedOutputStatus, getReviewedStats, reviewedVideoUrl } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { ReviewedIdentityAt, ReviewedIdentityDocument, ReviewedOutputJob, ReviewedStatsResponse } from '../types';
+import { clearReviewedDerivedOutput } from '../utils/reviewedOutputState';
 import { ReviewedPlayerStatsTable } from './ReviewedPlayerStatsTable';
 
 export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
@@ -32,7 +33,16 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   }, [job?.status]);
   async function finalize() {
     setBusy(true); setMessage('Finalizuję reviewed identity...');
-    try { setIdentity(await finalizeReviewedIdentity(matchId)); setMessage('Zapisano reviewed identity. Możesz wygenerować wideo.'); }
+    try {
+      const cleared = clearReviewedDerivedOutput();
+      setJob(cleared.job); setStats(cleared.stats); setAtTime(cleared.atTime);
+      setIdentity(await finalizeReviewedIdentity(matchId));
+      const nextJob = await getReviewedOutputStatus(matchId);
+      setJob(nextJob);
+      setMessage(nextJob.status === 'completed'
+        ? 'Reviewed identity nie zmieniło się; istniejący render jest aktualny.'
+        : 'Zapisano reviewed identity. Poprzedni render został ukryty — wygeneruj aktualne wideo.');
+    }
     catch (error) { setMessage(errorMessage(error)); } finally { setBusy(false); }
   }
   async function generate() {
@@ -49,7 +59,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   const canGenerate = identity?.status === 'partial_reviewed' || identity?.status === 'complete_reviewed';
   return <section className='panel reviewed-output-panel'>
     <h2>Reviewed match output</h2>
-    <p>Imiona są widoczne tylko dla potwierdzonych zawodników. Pozostali dostają stabilne oznaczenia A01/B01.</p>
+    <p>Imiona są widoczne tylko dla potwierdzonych zawodników. Zakotwiczone fragmenty używają bounded slotów A01–A14/B01–B14, a niezakotwiczone pozostają A?/B?/U?.</p>
     {summary && <div className='stats-grid'>
       <span>Potwierdzone tracklety: <strong>{summary.confirmed}</strong></span><span>Nieprzypisane tracklety: <strong>{summary.unresolved}</strong></span><span>Wymaga sprawdzenia: <strong>{summary.conflicted}</strong></span><span>Potwierdzone wykryte obserwacje: <strong>{summary.confirmed_detected_observation_ratio === null ? '—' : `${Math.round(summary.confirmed_detected_observation_ratio * 100)}%`}</strong></span>
     </div>}

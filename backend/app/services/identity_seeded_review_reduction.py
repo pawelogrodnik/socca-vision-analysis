@@ -16,8 +16,10 @@ from app.services.identity_operator_seed_digest import (
 from app.services.identity_seeded_candidate_assignments import (
     CANDIDATE_FILENAME,
     OUTPUT_FILENAME,
+    REVIEW_DECISIONS_FILENAME,
     SeededCandidateAssignmentsStaleError,
     TIMELINE_FILENAME,
+    TRACKLETS_FILENAME,
     load_combined_operator_seeds,
 )
 
@@ -94,15 +96,20 @@ def load_fresh_seeded_assignments(
     for source_key, filename in (
         ("candidate_identity_digest", CANDIDATE_FILENAME),
         ("timeline_digest", TIMELINE_FILENAME),
+        ("tracklets_digest", TRACKLETS_FILENAME),
+        (
+            "whole_subject_review_decisions_digest",
+            REVIEW_DECISIONS_FILENAME,
+        ),
     ):
         expected = str(source.get(source_key) or "")
         if not expected:
+            artifact_mismatches.append(f"{source_key}_contract_missing")
             continue
         artifact_path = match_path / filename
-        if not artifact_path.exists():
-            artifact_mismatches.append(f"{source_key}_source_missing")
-            continue
-        current = canonical_digest(load_identity_json(artifact_path))
+        current = canonical_digest(
+            load_identity_json(artifact_path) if artifact_path.exists() else {}
+        )
         if current != expected:
             artifact_mismatches.append(f"{source_key}_mismatch")
     if artifact_mismatches:

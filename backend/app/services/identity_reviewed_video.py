@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Streaming reviewed MP4 renderer using the canonical reviewed snapshot only."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
@@ -27,7 +27,7 @@ def render_reviewed_video(match_path: Path, snapshot: dict[str, Any], match_doc:
     if not capture.isOpened(): raise RuntimeError("Source video could not be opened")
     fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0); width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)); height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)); total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)); writer = cv2.VideoWriter(str(raw), cv2.VideoWriter_fourcc(*"MJPG"), fps, (width, height))
     if not writer.isOpened(): capture.release(); raise RuntimeError("Could not create temporary reviewed video")
-    started=time.monotonic(); count=0; labeled_frames=0; confirmed_labels=0; fallback_labels=0; minimap_frames=0; ball_frames=0
+    started=time.monotonic(); count=0; labeled_frames=0; confirmed_labels=0; fallback_labels=0; minimap_frames=0; ball_frames=0; duplicate_stable_labels=0; max_simultaneous_stable_labels=0
     try:
         while True:
             ok, frame = capture.read()
@@ -37,6 +37,9 @@ def render_reviewed_video(match_path: Path, snapshot: dict[str, Any], match_doc:
                 labeled_frames += 1
                 confirmed_labels += sum(row.get("identity_status") == "confirmed" for row in rows)
                 fallback_labels += sum(row.get("identity_status") != "confirmed" for row in rows)
+                stable_labels = _rendered_stable_labels(rows)
+                duplicate_stable_labels += sum(value - 1 for value in Counter(stable_labels).values() if value > 1)
+                max_simultaneous_stable_labels = max(max_simultaneous_stable_labels, len(stable_labels))
             _draw_rows(frame, rows, show_roster_number)
             minimap = {"status": "not_available", "reason": "pitch positions unavailable"}
             if include_minimap and pitch:
@@ -48,7 +51,7 @@ def render_reviewed_video(match_path: Path, snapshot: dict[str, Any], match_doc:
     finally: capture.release(); writer.release()
     if count == 0: raw.unlink(missing_ok=True); raise RuntimeError("Renderer produced zero frames")
     _encode(raw, partial); partial.replace(output); raw.unlink(missing_ok=True)
-    config={"include_minimap":include_minimap,"include_ball":include_ball,"show_roster_number":show_roster_number}; manifest={"schema_version":"1.1.0","status":"completed","generated_at":datetime.now(timezone.utc).isoformat(),"source_snapshot_digest":snapshot["semantic_digest"],"source_video_digest":_sha(source),"render_config_digest":canonical_digest(config),"renderer_version":"reviewed_video:v3","path":"reviewed_video.mp4","frames":count,"fps":fps,"resolution":[width,height],"duration_sec":round(count/fps,3),"file_size_bytes":output.stat().st_size,"digest":_sha(output),"render_duration_sec":round(time.monotonic()-started,3),"real_time_factor":round((count/fps)/max(time.monotonic()-started,.001),3),"semantic_checks":{"frames_with_player_labels":labeled_frames,"confirmed_labels_rendered":confirmed_labels,"fallback_labels_rendered":fallback_labels,"minimap_frames_rendered":minimap_frames,"ball_frames_rendered":ball_frames},"minimap":minimap,"safety":{"reran_yolo":False,"reran_tracking":False,"production_identity_mutated":False}}
+    config={"include_minimap":include_minimap,"include_ball":include_ball,"show_roster_number":show_roster_number}; manifest={"schema_version":"1.2.0","status":"completed","generated_at":datetime.now(timezone.utc).isoformat(),"source_snapshot_digest":snapshot["semantic_digest"],"source_video_digest":_sha(source),"render_config_digest":canonical_digest(config),"renderer_version":"reviewed_video:v4","path":"reviewed_video.mp4","frames":count,"fps":fps,"resolution":[width,height],"duration_sec":round(count/fps,3),"file_size_bytes":output.stat().st_size,"digest":_sha(output),"render_duration_sec":round(time.monotonic()-started,3),"real_time_factor":round((count/fps)/max(time.monotonic()-started,.001),3),"semantic_checks":{"frames_with_player_labels":labeled_frames,"confirmed_labels_rendered":confirmed_labels,"fallback_labels_rendered":fallback_labels,"minimap_frames_rendered":minimap_frames,"ball_frames_rendered":ball_frames,"duplicate_stable_labels_rendered":duplicate_stable_labels,"max_simultaneous_stable_labels":max_simultaneous_stable_labels},"minimap":minimap,"safety":{"reran_yolo":False,"reran_tracking":False,"production_identity_mutated":False}}
     write_identity_json_atomic(match_path / "reviewed_video_manifest.json",manifest); return manifest
 
 
@@ -64,14 +67,25 @@ def reviewed_source_video_digest(match_path: Path, match_doc: dict[str, Any]) ->
 def _positions_by_frame(path: Path, snapshot: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
     tracklets={str(row.get("tracklet_id")):row for row in _load_optional(path/"tracklets.json").get("tracklets") or []}; out=defaultdict(list)
     overrides={(str(row.get("tracklet_id")),int(row.get("frame") or 0)):row for row in snapshot.get("observation_overrides") or []}
+    demotions={(str(row.get("tracklet_id")),int(row.get("frame") or 0)):row for row in snapshot.get("observation_demotions") or []}
     for assignment in snapshot.get("tracklet_assignments") or []:
         if assignment.get("identity_status") in {"false_detection","ignored","referee","blocked"}: continue
         for position in tracklets.get(str(assignment["tracklet_id"]),{}).get("positions_m") or []:
             bbox=position.get("bbox_xyxy");
-            frame=int(position.get("frame") or 0); override=overrides.get((str(assignment["tracklet_id"]),frame)); effective={**position,**assignment,**(override or {})}
-            if effective.get("identity_status") in {"false_detection","ignored","blocked"}: continue
+            frame=int(position.get("frame") or 0); key=(str(assignment["tracklet_id"]),frame); override=overrides.get(key); demotion=demotions.get(key); effective={**position,**assignment,**(demotion or {}),**(override or {})}
+            if effective.get("identity_status") in {"false_detection","ignored","blocked","referee"}: continue
             if isinstance(bbox,list) and len(bbox)>=4: out[frame].append(effective)
     return out
+
+
+def _rendered_stable_labels(rows: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(row["stable_anonymous_slot_id"])
+        for row in rows
+        if row.get("stable_anonymous_slot_id")
+        and str(row.get("display_label") or "")
+        == str(row.get("stable_anonymous_slot_id"))
+    ]
 def _draw_rows(frame: Any, rows: list[dict[str,Any]], show_number: bool) -> None:
     import cv2
     occupied: list[tuple[int, int, int, int]] = []

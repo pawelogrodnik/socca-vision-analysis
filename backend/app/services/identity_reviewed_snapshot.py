@@ -13,6 +13,8 @@ from app.services.identity_reviewed_snapshot_observations import (
     build_observation_overrides,
     observation_coverage,
 )
+from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
+from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
@@ -20,7 +22,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v2"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v3"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -47,7 +49,10 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         if row.get("tracklet_id")
     }
     stable, fragmentation = resolve_stable_anonymous_entities(
-        match_path, tracklets, documents["subjects"]
+        match_path,
+        tracklets,
+        documents["subjects"],
+        documents["slot_review"],
     )
     reviews = _review_decisions(documents["review_decisions"])
     seeded_document, seeded_freshness = load_fresh_seeded_assignments(match_path)
@@ -69,6 +74,11 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         status, player_id, source, evidence, blockers = _resolve_assignment(
             decision, accepted_seed
         )
+        manual_action = stable_row.get("manual_action")
+        if manual_action in {"referee", "false_detection", "team_unknown", "unresolved"}:
+            status = str(manual_action)
+            player_id = None
+            source = "manual_review"
         blockers.extend(stable_row["hard_blockers"])
         team_label = str(tracklet.get("team_label") or "U")
         team_id = str(tracklet.get("team_id") or "")
@@ -90,23 +100,38 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
                 {"code": "cross_team_confirmed_assignment", "player_id": player_id}
             )
             status, player_id = "conflicted", None
-        label = str(stable_row["stable_anonymous_entity_id"])
-        display = player["name"] if player and status == "confirmed" else f"{label} !" if status == "conflicted" else label
+        slot_id = stable_row["stable_anonymous_slot_id"]
+        fallback = str(stable_row["fallback_label"])
+        display = (
+            player["name"]
+            if player and status == "confirmed"
+            else "Sędzia"
+            if status == "referee"
+            else fallback
+            if status not in {"conflicted", "blocked"}
+            else f"{fallback} !"
+        )
         row = {
             "tracklet_id": tracklet_id,
             "candidate_subject_id": subject_id,
             "candidate_subject_ids": subject_ids,
-            "stable_anonymous_entity_id": label,
+            "fragment_id": stable_row["fragment_id"],
+            "stable_anonymous_slot_id": slot_id,
+            "stable_anonymous_entity_id": slot_id,
             "stable_anchor_source": stable_row["stable_anchor_source"],
-            "stable_anchor_candidates": stable_row["stable_anchor_candidates"],
-            "rejected_stable_anchor": stable_row["rejected_stable_anchor"],
+            "stable_anchor_claims": stable_row["stable_anchor_claims"],
+            "stable_anchor_status": stable_row["stable_anchor_status"],
+            "unanchored": stable_row["unanchored"],
+            "requires_review": stable_row["requires_review"],
+            "detected_evidence_count": stable_row["detected_evidence_count"],
+            "insufficient_evidence": stable_row["insufficient_evidence"],
             "ephemeral_anonymous_entity": stable_row["ephemeral"],
             "team_id": team_id,
             "team_label": team_label,
             "canonical_player_id": player_id if status == "confirmed" else None,
             "player_name": player["name"] if player and status == "confirmed" else None,
             "roster_number": player.get("number") if player and status == "confirmed" else None,
-            "fallback_label": label,
+            "fallback_label": fallback,
             "display_label": display,
             "identity_status": status,
             "identity_source": source,
@@ -116,7 +141,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "source_review_keys": [str(item.get("review_card_key") or "") for item in decisions],
             "source_seed_keys": evidence,
             "accepted_evidence": [source] if source else [],
-            "rejected_evidence": ([{"source": "stable_anchor", "value": stable_row["rejected_stable_anchor"]}] if stable_row["rejected_stable_anchor"] else []),
+            "rejected_evidence": [],
             "hard_blockers": sorted(set(blockers)),
             "conflicts": assignment_conflicts,
         }
@@ -124,8 +149,13 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         conflicts.extend({"tracklet_id": tracklet_id, **item} for item in assignment_conflicts)
 
     _apply_parallel_conflicts(assignments, tracklets, conflicts)
-    coverage = observation_coverage(tracklets, assignments, observation_overrides)
-    summary = _summary(assignments, coverage, fragmentation)
+    observation_demotions, uniqueness = build_frame_slot_demotions(tracklets, assignments)
+    coverage = observation_coverage(
+        tracklets,
+        assignments,
+        [*observation_demotions, *observation_overrides],
+    )
+    summary = _summary(assignments, coverage, fragmentation, uniqueness)
     source = _source_descriptor(documents, match_doc, seeded_freshness)
     status = (
         "blocked"
@@ -135,7 +165,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         else "partial_reviewed"
     )
     snapshot = {
-        "schema_version": "2.0.0",
+        "schema_version": "3.0.0",
         "mode": "reviewed_identity_snapshot",
         "match_id": str(match_doc.get("id") or match_path.name),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -150,8 +180,10 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         "entities": _entities(assignments),
         "tracklet_assignments": assignments,
         "observation_overrides": observation_overrides,
+        "observation_demotions": observation_demotions,
         "summary": summary,
         "fragmentation_diagnostics": fragmentation,
+        "frame_uniqueness_diagnostics": uniqueness,
         "conflicts": conflicts,
         "readiness": {
             "identity": "ready_with_review" if summary["confirmed"] or summary["exact_named_observations"] else "partial_review_required",
@@ -167,11 +199,12 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
     }
     snapshot["semantic_digest"] = _semantic_digest(snapshot)
     report = {
-        "schema_version": "2.0.0",
+        "schema_version": "3.0.0",
         "status": snapshot["status"],
         "snapshot_digest": snapshot["semantic_digest"],
         "summary": summary,
         "fragmentation_diagnostics": fragmentation,
+        "frame_uniqueness_diagnostics": uniqueness,
         "conflicts": conflicts,
         "source": source,
         "safety": snapshot["safety"],
@@ -187,12 +220,17 @@ def reviewed_assignment_at(snapshot: dict[str, Any], time_sec: float, fps: float
         (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
         for row in snapshot.get("observation_overrides") or []
     }
+    demotions = {
+        (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
+        for row in snapshot.get("observation_demotions") or []
+    }
     output = []
     for row in snapshot.get("tracklet_assignments") or []:
         if row.get("frame_start") is None or not int(row["frame_start"]) <= frame <= int(row.get("frame_end") or row["frame_start"]):
             continue
         override = overrides.get((str(row.get("tracklet_id")), frame))
-        output.append({**row, **(override or {})})
+        demotion = demotions.get((str(row.get("tracklet_id")), frame))
+        output.append({**row, **(demotion or {}), **(override or {})})
     return output
 
 
@@ -208,6 +246,7 @@ def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
         "seeds": seeds,
         "seeded": _optional(path / "identity_seeded_candidate_assignments.json"),
         "review_decisions": _optional(path / "identity_roster_subject_review_decisions_shadow.json"),
+        "slot_review": load_reviewed_slot_assignments(path),
         "remediation": _optional(path / "identity_structural_remediation_shadow.json"),
         "gallery": _optional(path / "identity_review_gallery.json"),
         "stable_players": _optional(path / "stable_players.json"),
@@ -312,6 +351,7 @@ def _summary(
     assignments: list[dict[str, Any]],
     coverage: dict[str, Any],
     fragmentation: dict[str, Any],
+    uniqueness: dict[str, Any],
 ) -> dict[str, Any]:
     counts = Counter(str(row["identity_status"]) for row in assignments)
     return {
@@ -327,16 +367,23 @@ def _summary(
         "cross_team_violations": sum(any(value.get("code") == "cross_team_confirmed_assignment" for value in row["conflicts"]) for row in assignments),
         "invalid_roster_references": sum("invalid_roster_player" in row["hard_blockers"] for row in assignments),
         "stable_anonymous_entities": fragmentation["stable_anonymous_entities_total"],
+        "unanchored_fragments": fragmentation["unanchored_fragments"],
+        "automatic_permanent_allocations": fragmentation[
+            "automatic_permanent_allocations"
+        ],
+        **uniqueness,
     }
 
 
 def _entities(assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     values: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in assignments:
-        values[str(row["stable_anonymous_entity_id"])].append(row)
+        entity_key = row.get("stable_anonymous_slot_id") or row.get("fragment_id")
+        values[str(entity_key)].append(row)
     return [
         {
             "entity_key": key,
+            "stable_anonymous_slot_id": rows[0].get("stable_anonymous_slot_id"),
             "fallback_label": rows[0]["fallback_label"],
             "team_label": rows[0]["team_label"],
             "tracklet_ids": sorted(row["tracklet_id"] for row in rows),

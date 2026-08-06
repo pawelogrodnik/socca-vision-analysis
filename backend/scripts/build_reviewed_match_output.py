@@ -9,50 +9,26 @@ from pathlib import Path
 
 from app.services.identity_reviewed_output_jobs import generate_reviewed_output, reviewed_output_status
 from app.services.identity_reviewed_snapshot import finalize_reviewed_identity
-from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_initial_audit_store import production_identity_snapshot
+from app.services.identity_reviewed_output_qa import build_reviewed_output_qa
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--match-root", required=True, type=Path); parser.add_argument("--minimap", action="store_true"); options = parser.parse_args()
-    match = json.loads((options.match_root / "match.json").read_text(encoding="utf-8")); snapshot = finalize_reviewed_identity(options.match_root, match)
+    match = json.loads((options.match_root / "match.json").read_text(encoding="utf-8")); production_before = production_identity_snapshot(options.match_root, match); snapshot = finalize_reviewed_identity(options.match_root, match)
     job = generate_reviewed_output(options.match_root, snapshot, match, {"include_minimap": options.minimap, "include_ball": True, "show_roster_number": False})
     while job.get("status") in {"queued", "running"}:
         time.sleep(.25); job = reviewed_output_status(options.match_root, snapshot)
     if job.get("status") == "completed":
-        _write_visual_qa(options.match_root, snapshot, job)
+        qa = build_reviewed_output_qa(
+            options.match_root,
+            snapshot,
+            job,
+            production_before=production_before,
+            production_after=production_identity_snapshot(options.match_root, match),
+        )
     print(json.dumps({"snapshot_status": snapshot["status"], "snapshot_digest": snapshot["semantic_digest"], "job": job}, indent=2))
-    return 0 if job.get("status") == "completed" else 1
-
-
-def _write_visual_qa(root: Path, snapshot: dict, job: dict) -> None:
-    import cv2
-    video = root / "reviewed_video.mp4"; capture = cv2.VideoCapture(str(video)); total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    qa_dir = root / "reviewed_output_qa"; qa_dir.mkdir(exist_ok=True)
-    frames = sorted({min(total - 1, round(total * index / 5)) for index in range(6)}) if total else []
-    evidence = []
-    for index, frame_number in enumerate(frames):
-        capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number); ok, frame = capture.read(); path = qa_dir / f"frame-{frame_number:06d}.jpg"
-        if ok: cv2.imwrite(str(path), frame)
-        evidence.append({"frame": frame_number, "path": str(path.relative_to(root)), "captured": bool(ok)})
-    capture.release()
-    labels = snapshot.get("tracklet_assignments") or []
-    manifest = json.loads((root / "reviewed_video_manifest.json").read_text(encoding="utf-8"))
-    semantic = manifest.get("semantic_checks") or {}
-    expected_confirmed = any(row.get("identity_status") == "confirmed" for row in labels) or bool(snapshot.get("observation_overrides"))
-    expected_fallback = any(row.get("identity_status") != "confirmed" for row in labels)
-    minimap_requested = bool((job.get("options") or {}).get("include_minimap"))
-    ball_requested = bool((job.get("options") or {}).get("include_ball"))
-    checks = {
-        "mp4_opened_by_opencv": bool(total),
-        "six_representative_frames_captured": len(evidence) == 6 and all(row["captured"] for row in evidence),
-        "source_snapshot_digest_matches": manifest.get("source_snapshot_digest") == snapshot["semantic_digest"],
-        "confirmed_name_rendered_when_expected": not expected_confirmed or int(semantic.get("confirmed_labels_rendered") or 0) > 0,
-        "fallback_label_rendered_when_expected": not expected_fallback or int(semantic.get("fallback_labels_rendered") or 0) > 0,
-        "minimap_rendered_when_requested": not minimap_requested or int(semantic.get("minimap_frames_rendered") or 0) > 0,
-        "ball_policy_recorded": not ball_requested or (manifest.get("minimap") or {}).get("ball_policy") is not None,
-    }
-    report = {"status": "passed" if all(checks.values()) else "failed", "frames": evidence, "expected_policy": {"confirmed_names": sorted({row["display_label"] for row in labels if row.get("identity_status") == "confirmed"}), "fallback_labels": sorted({row["fallback_label"] for row in labels if row.get("identity_status") != "confirmed"})[:20], "automatic_reid_names": 0}, "checks": checks, "semantic_checks": semantic}
-    write_identity_json_atomic(root / "reviewed_output_visual_qa_report.json", report)
+    return 0 if job.get("status") == "completed" and qa.get("status") == "passed" else 1
 
 
 if __name__ == "__main__":

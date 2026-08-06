@@ -23,11 +23,20 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
         for row in snapshot.get("observation_overrides") or []
     }
+    demotions = {
+        (str(row.get("tracklet_id")), int(row.get("frame") or 0)): row
+        for row in snapshot.get("observation_demotions") or []
+    }
     for assignment in snapshot.get("tracklet_assignments") or []:
         for position in tracklets.get(str(assignment["tracklet_id"]), {}).get("positions_m") or []:
             if str(position.get("status") or "detected") != "detected": continue
             frame = int(position.get("frame") or 0)
-            effective = {**assignment, **(overrides.get((str(assignment["tracklet_id"]), frame)) or {})}
+            key = (str(assignment["tracklet_id"]), frame)
+            effective = {
+                **assignment,
+                **(demotions.get(key) or {}),
+                **(overrides.get(key) or {}),
+            }
             if effective.get("identity_status") != "confirmed" or not effective.get("canonical_player_id"):
                 continue
             observations_by_player[str(effective["canonical_player_id"])].append({**position, "tracklet_id": assignment["tracklet_id"], "candidate_subject_id": assignment.get("candidate_subject_id"), "observation_identity_source": effective.get("identity_source"), "observation_key": effective.get("observation_key"), "player_name": effective.get("player_name"), "team_label": effective.get("team_label"), "roster_number": effective.get("roster_number"), "eligible_for_distance": True, "eligible_for_heatmap": True})

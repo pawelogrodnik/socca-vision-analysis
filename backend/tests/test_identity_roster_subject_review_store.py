@@ -99,7 +99,13 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
         seeds = {"schema_version": "0.1.0", "decisions": []}
         seeded = {
             "schema_version": "0.1.0",
-            "source": {"operator_seeds_digest": canonical_digest(seeds)},
+            "source": {
+                "operator_seeds_digest": canonical_digest(seeds),
+                "candidate_identity_digest": canonical_digest({}),
+                "timeline_digest": canonical_digest({}),
+                "tracklets_digest": canonical_digest({}),
+                "whole_subject_review_decisions_digest": canonical_digest({}),
+            },
             "accepted_assignments": [
                 {
                     "candidate_subject_id": "subject-1",

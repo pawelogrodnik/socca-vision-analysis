@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-"""Resolve candidate fragments onto stable anonymous match-level entities."""
+"""Map technical identity fragments onto bounded, canonical match slots."""
 
 from collections import Counter, defaultdict
 from pathlib import Path
 import re
 from typing import Any
 
-from app.services.identity_review_gallery import MIN_TRACK_RUN_FRAMES
 
-
+DEFAULT_MAX_SUBJECTS_PER_TEAM = 14
+DEFAULT_ACTIVE_PLAYERS_PER_TEAM = 7
 _STABLE_LABEL = re.compile(r"^(?P<team>[AB])(?P<number>\d+)(?:~\d+)?$")
 
 
@@ -17,147 +17,275 @@ def resolve_stable_anonymous_entities(
     match_path: Path,
     tracklets: dict[str, dict[str, Any]],
     candidate_document: dict[str, Any],
+    manual_document: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    global_document = _optional(match_path / "global_identity.json")
+    stable_document = _optional(match_path / "stable_players.json")
+    gallery_document = _optional(match_path / "identity_review_gallery.json")
+    max_subjects = min(
+        DEFAULT_MAX_SUBJECTS_PER_TEAM,
+        max(
+            1,
+            int(
+                (global_document.get("parameters") or {}).get(
+                    "max_subjects_per_team"
+                )
+                or DEFAULT_MAX_SUBJECTS_PER_TEAM
+            ),
+        ),
+    )
     subject_membership = _subject_membership(candidate_document)
     candidates = {
         str(row.get("candidate_subject_id")): row
         for row in candidate_document.get("subjects") or []
         if row.get("candidate_subject_id")
     }
-    source_maps = [
-        ("identity_review_gallery", _gallery_map(_optional(match_path / "identity_review_gallery.json"))),
-        ("stable_players", _players_map(_optional(match_path / "stable_players.json"), "players")),
-        ("global_identity", _players_map(_optional(match_path / "global_identity.json"), "slots")),
-        ("candidate_shadow", _candidate_map(candidate_document)),
-    ]
-    used_by_team: dict[str, set[str]] = defaultdict(set)
+    claims_by_tracklet = _all_anchor_claims(
+        global_document,
+        stable_document,
+        gallery_document,
+        candidate_document,
+    )
+    manual_by_subject = {
+        str(row.get("candidate_subject_id")): row
+        for row in (manual_document or {}).get("decisions") or []
+        if row.get("candidate_subject_id")
+    }
+    canonical_slots = _canonical_slots(global_document, stable_document)
+    subject_teams = _subject_teams(subject_membership, tracklets)
+    manual_new_slots, manual_new_rejections = _allocate_manual_new_slots(
+        manual_by_subject,
+        candidates,
+        subject_membership,
+        tracklets,
+        global_document,
+        canonical_slots,
+        max_subjects=max_subjects,
+    )
     resolved: dict[str, dict[str, Any]] = {}
-    rejected_anchors = 0
-    ambiguous_memberships = 0
-    subject_teams: dict[str, set[str]] = defaultdict(set)
-    for tracklet_id, subjects in subject_membership.items():
-        team = str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
-        if team != "U":
-            for subject in subjects:
-                subject_teams[subject].add(team)
 
     for tracklet_id, tracklet in sorted(tracklets.items()):
         team = str(tracklet.get("team_label") or "U")
         subjects = sorted(subject_membership.get(tracklet_id) or [])
+        subject_id = subjects[0] if len(subjects) == 1 else None
+        manual = manual_by_subject.get(subject_id or "")
+        claims = claims_by_tracklet.get(tracklet_id, [])
+        claim_labels = sorted({str(row["stable_slot_id"]) for row in claims})
         blockers: list[str] = []
+        manual_action = str((manual or {}).get("action") or "") or None
+        stable_slot_id: str | None = None
+        anchor_source: str | None = None
+        anchor_status = "unanchored"
+
         if len(subjects) > 1:
             blockers.append("ambiguous_candidate_subject_membership")
-            ambiguous_memberships += 1
         if any(len(subject_teams[subject]) > 1 for subject in subjects):
             blockers.append("mixed_team_candidate_subject")
-        anchor_label: str | None = None
-        anchor_source: str | None = None
-        anchor_candidates: list[str] = []
-        for source_name, source_map in source_maps:
-            values = sorted(source_map.get(tracklet_id) or [])
-            if not values:
-                continue
-            anchor_candidates = values
-            if len(values) == 1:
-                anchor_label = values[0]
-                anchor_source = source_name
+        detected_evidence_count = _detected_observations(tracklet)
+
+        if manual_action == "assign_existing_slot" and not blockers:
+            requested = str(manual.get("stable_slot_id") or "")
+            if requested not in canonical_slots:
+                blockers.append("manual_stable_slot_not_found")
+            elif _label_team(requested) != team:
+                blockers.append("manual_stable_slot_team_mismatch")
             else:
-                blockers.append("ambiguous_stable_anchor_membership")
-            break
-        rejected_anchor = None
-        if anchor_label and _label_team(anchor_label) not in {team, "U"}:
-            rejected_anchor = anchor_label
-            anchor_label = None
-            blockers.append("stable_anchor_team_mismatch")
-            rejected_anchors += 1
-        if anchor_label:
-            used_by_team[team].add(anchor_label)
-        subject_id = subjects[0] if len(subjects) == 1 else None
+                stable_slot_id = requested
+                anchor_source = "manual_review"
+                anchor_status = "manual_existing_slot"
+        elif manual_action == "create_new_stable_player" and not blockers:
+            stable_slot_id = manual_new_slots.get(subject_id or "")
+            rejection = manual_new_rejections.get(subject_id or "")
+            if rejection:
+                blockers.append(rejection)
+            elif stable_slot_id:
+                if _label_team(stable_slot_id) != team:
+                    blockers.append("manual_new_player_team_mismatch")
+                else:
+                    anchor_source = "manual_new_player_confirmation"
+                    anchor_status = "manual_new_slot"
+        elif manual_action in {"referee", "false_detection", "team_unknown", "unresolved"}:
+            stable_slot_id = None
+            anchor_source = "manual_review"
+            anchor_status = manual_action
+            blockers = []
+        elif not blockers:
+            if len(claim_labels) > 1:
+                blockers.append("conflicting_stable_anchor_sources")
+                anchor_status = "conflicting_claims"
+            elif len(claim_labels) == 1:
+                candidate_slot = claim_labels[0]
+                if candidate_slot not in canonical_slots:
+                    blockers.append("stable_anchor_not_in_canonical_pool")
+                elif not 1 <= _label_number(candidate_slot) <= max_subjects:
+                    blockers.append("stable_anchor_exceeds_bounded_pool")
+                elif team not in {"A", "B"}:
+                    blockers.append("unknown_team_cannot_receive_stable_slot")
+                elif _label_team(candidate_slot) != team:
+                    blockers.append("stable_anchor_team_mismatch")
+                else:
+                    stable_slot_id = candidate_slot
+                    sources = sorted({str(row["source"]) for row in claims})
+                    anchor_source = sources[0] if len(sources) == 1 else "canonical_consensus"
+                    anchor_status = "anchored"
+
+        if blockers:
+            stable_slot_id = None
+            anchor_status = "blocked"
+        fallback_team = team if team in {"A", "B"} else "U"
+        fallback_label = stable_slot_id or f"{fallback_team}?"
+        conflicted = bool(blockers)
         resolved[tracklet_id] = {
             "candidate_subject_id": subject_id,
             "candidate_subject_ids": subjects,
-            "stable_anonymous_entity_id": anchor_label,
+            "fragment_id": subject_id or f"tracklet:{tracklet_id}",
+            "stable_anonymous_slot_id": stable_slot_id,
+            "stable_anonymous_entity_id": stable_slot_id,
             "stable_anchor_source": anchor_source,
-            "stable_anchor_candidates": anchor_candidates,
-            "rejected_stable_anchor": rejected_anchor,
-            "hard_blockers": blockers,
-            "ephemeral": False,
+            "stable_anchor_claims": claims,
+            "stable_anchor_status": anchor_status,
+            "fallback_label": fallback_label,
+            "unanchored": stable_slot_id is None,
+            "ephemeral": detected_evidence_count > 0 and detected_evidence_count < 5,
+            "requires_review": stable_slot_id is None
+            and manual_action not in {"referee", "false_detection"},
+            "detected_evidence_count": detected_evidence_count,
+            "insufficient_evidence": detected_evidence_count == 0,
+            "manual_action": manual_action,
+            "hard_blockers": sorted(set(blockers)),
         }
 
-    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for tracklet_id, row in resolved.items():
-        if row["stable_anonymous_entity_id"]:
-            continue
-        team = str(tracklets[tracklet_id].get("team_label") or "U")
-        subject = row["candidate_subject_id"] or f"tracklet:{tracklet_id}"
-        groups[(team, subject)].append(tracklet_id)
-
-    new_allocations = 0
-    ephemeral = 0
-    for (team, subject), tracklet_ids in sorted(
-        groups.items(),
-        key=lambda item: (item[0][0], _group_start(item[1], tracklets), item[0][1]),
-    ):
-        detected = sum(_detected_observations(tracklets[item]) for item in tracklet_ids)
-        if detected < MIN_TRACK_RUN_FRAMES:
-            label = f"{team}?"
-            source = "ephemeral_short_fragment"
-            is_ephemeral = True
-            ephemeral += 1
-        else:
-            label = _next_label(team, used_by_team[team])
-            used_by_team[team].add(label)
-            source = "deterministic_new_allocation"
-            is_ephemeral = False
-            new_allocations += 1
-        for tracklet_id in tracklet_ids:
-            resolved[tracklet_id].update(
-                stable_anonymous_entity_id=label,
-                stable_anchor_source=source,
-                ephemeral=is_ephemeral,
-            )
-
-    entity_subjects: dict[str, set[str]] = defaultdict(set)
-    entity_tracklets: dict[str, set[str]] = defaultdict(set)
-    for tracklet_id, row in resolved.items():
-        if row["ephemeral"]:
-            continue
-        entity = str(row["stable_anonymous_entity_id"])
-        entity_tracklets[entity].add(tracklet_id)
-        entity_subjects[entity].update(row["candidate_subject_ids"])
-    for entity, entity_tracklet_ids in entity_tracklets.items():
-        values = sorted(entity_tracklet_ids)
-        conflicted: set[str] = set()
-        for index, left in enumerate(values):
-            left_subjects = set(resolved[left]["candidate_subject_ids"])
-            left_frames = _detected_frames(tracklets[left])
-            for right in values[index + 1 :]:
-                if left_subjects == set(resolved[right]["candidate_subject_ids"]):
-                    continue
-                if left_frames & _detected_frames(tracklets[right]):
-                    conflicted.update({left, right})
-        for tracklet_id in conflicted:
-            resolved[tracklet_id]["hard_blockers"].append(
-                "overlapping_candidate_subjects_share_stable_entity"
-            )
-    distribution = Counter(len(values) for values in entity_subjects.values())
-    highest = {
-        team: max((_label_number(value) for value in labels), default=None)
-        for team, labels in sorted(used_by_team.items())
-    }
-    diagnostics = {
-        "candidate_subjects_total": len(candidates),
-        "stable_anonymous_entities_total": len(entity_tracklets),
-        "stable_anonymous_entities_by_team": dict(sorted(Counter(_label_team(key) for key in entity_tracklets).items())),
-        "candidate_subjects_per_stable_entity_distribution": {str(key): value for key, value in sorted(distribution.items())},
-        "unanchored_candidate_subjects": len(groups),
-        "new_stable_entity_allocations": new_allocations,
-        "ephemeral_fragments": ephemeral,
-        "ambiguous_tracklet_memberships": ambiguous_memberships,
-        "rejected_cross_team_anchors": rejected_anchors,
-        "highest_fallback_number_by_team": highest,
-    }
+    diagnostics = _diagnostics(
+        resolved,
+        candidates_total=len(candidates),
+        max_subjects=max_subjects,
+        manual_document=manual_document or {},
+    )
     return resolved, diagnostics
+
+
+def _all_anchor_claims(
+    global_document: dict[str, Any],
+    stable_document: dict[str, Any],
+    gallery_document: dict[str, Any],
+    candidate_document: dict[str, Any],
+) -> dict[str, list[dict[str, str]]]:
+    output: dict[str, list[dict[str, str]]] = defaultdict(list)
+    sources = (
+        ("global_identity", _players_map(global_document, "slots")),
+        ("stable_players", _players_map(stable_document, "players")),
+        ("identity_review_gallery", _gallery_map(gallery_document)),
+        ("candidate_shadow", _candidate_map(candidate_document)),
+    )
+    for source, values in sources:
+        for tracklet_id, labels in values.items():
+            for label in sorted(labels):
+                output[tracklet_id].append(
+                    {"source": source, "stable_slot_id": label}
+                )
+    return {
+        key: sorted(value, key=lambda row: (row["source"], row["stable_slot_id"]))
+        for key, value in output.items()
+    }
+
+
+def _allocate_manual_new_slots(
+    manual_by_subject: dict[str, dict[str, Any]],
+    candidates: dict[str, dict[str, Any]],
+    subject_membership: dict[str, set[str]],
+    tracklets: dict[str, dict[str, Any]],
+    global_document: dict[str, Any],
+    canonical_slots: set[str],
+    *,
+    max_subjects: int,
+) -> tuple[dict[str, str], dict[str, str]]:
+    allocated: dict[str, str] = {}
+    rejected: dict[str, str] = {}
+    used = set(canonical_slots)
+    manual_visible: dict[tuple[int, str], int] = Counter()
+    canonical_visible = _canonical_visible_counts(global_document)
+    for subject_id, decision in sorted(manual_by_subject.items()):
+        if decision.get("action") != "create_new_stable_player":
+            continue
+        team = str(decision.get("team_label") or "")
+        if team not in {"A", "B"}:
+            rejected[subject_id] = "manual_new_player_team_missing"
+            continue
+        subject = candidates.get(subject_id)
+        if subject is None:
+            rejected[subject_id] = "manual_new_player_subject_missing"
+            continue
+        tracklet_ids = [
+            tracklet_id
+            for tracklet_id, subjects in subject_membership.items()
+            if subject_id in subjects
+        ]
+        observed_teams = {
+            str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
+            for tracklet_id in tracklet_ids
+        }
+        if observed_teams != {team}:
+            rejected[subject_id] = "manual_new_player_team_mismatch"
+            continue
+        frames = {
+            frame
+            for tracklet_id in tracklet_ids
+            for frame in _detected_frames(tracklets.get(tracklet_id, {}))
+        }
+        if not frames:
+            rejected[subject_id] = "manual_new_player_requires_detected_evidence"
+            continue
+        if any(
+            canonical_visible.get((frame, team), 0)
+            + manual_visible.get((frame, team), 0)
+            >= DEFAULT_ACTIVE_PLAYERS_PER_TEAM
+            for frame in frames
+        ):
+            rejected[subject_id] = "manual_new_player_active_team_cap_exceeded"
+            continue
+        slot = next(
+            (
+                f"{team}{number:02d}"
+                for number in range(1, max_subjects + 1)
+                if f"{team}{number:02d}" not in used
+            ),
+            None,
+        )
+        if slot is None:
+            rejected[subject_id] = "manual_new_player_bounded_pool_exhausted"
+            continue
+        used.add(slot)
+        allocated[subject_id] = slot
+        for frame in frames:
+            manual_visible[(frame, team)] += 1
+    return allocated, rejected
+
+
+def _canonical_visible_counts(document: dict[str, Any]) -> Counter[tuple[int, str]]:
+    counts: Counter[tuple[int, str]] = Counter()
+    for slot in document.get("slots") or []:
+        team = str(slot.get("team_label") or "U")
+        for row in (
+            slot.get("trajectory_m")
+            or slot.get("history")
+            or slot.get("positions_m")
+            or []
+        ):
+            if str(row.get("source") or row.get("status") or "detected") != "detected":
+                continue
+            counts[(int(row.get("frame") or 0), team)] += 1
+    return counts
+
+
+def _canonical_slots(
+    global_document: dict[str, Any], stable_document: dict[str, Any]
+) -> set[str]:
+    return {
+        label
+        for document, key in ((global_document, "slots"), (stable_document, "players"))
+        for row in document.get(key) or []
+        if (label := _normalize_label(row.get("stable_player_id") or row.get("slot_id")))
+    }
 
 
 def _subject_membership(document: dict[str, Any]) -> dict[str, set[str]]:
@@ -170,11 +298,24 @@ def _subject_membership(document: dict[str, Any]) -> dict[str, set[str]]:
     return output
 
 
+def _subject_teams(
+    membership: dict[str, set[str]], tracklets: dict[str, dict[str, Any]]
+) -> dict[str, set[str]]:
+    output: dict[str, set[str]] = defaultdict(set)
+    for tracklet_id, subjects in membership.items():
+        team = str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
+        for subject in subjects:
+            output[subject].add(team)
+    return output
+
+
 def _players_map(document: dict[str, Any], key: str) -> dict[str, set[str]]:
     output: dict[str, set[str]] = defaultdict(set)
     for player in document.get(key) or []:
         label = _normalize_label(
-            player.get("stable_player_id") or player.get("slot_id") or player.get("stable_subject_id")
+            player.get("stable_player_id")
+            or player.get("slot_id")
+            or player.get("stable_subject_id")
         )
         if not label:
             continue
@@ -216,28 +357,13 @@ def _label_team(label: str) -> str:
     return label[:1] if label else "U"
 
 
-def _label_number(label: str) -> int | None:
+def _label_number(label: str) -> int:
     match = re.search(r"(\d+)$", label)
-    return int(match.group(1)) if match else None
-
-
-def _next_label(team: str, used: set[str]) -> str:
-    number = 1
-    while f"{team}{number:02d}" in used:
-        number += 1
-    return f"{team}{number:02d}"
+    return int(match.group(1)) if match else 0
 
 
 def _detected_observations(tracklet: dict[str, Any]) -> int:
-    positions = tracklet.get("positions_m") or []
-    if not positions:
-        start = int(tracklet.get("start_frame") or 0)
-        end = int(tracklet.get("end_frame") or start)
-        return max(MIN_TRACK_RUN_FRAMES, end - start + 1)
-    return sum(
-        str(row.get("status") or "detected") == "detected"
-        for row in positions
-    )
+    return len(_detected_frames(tracklet))
 
 
 def _detected_frames(tracklet: dict[str, Any]) -> set[int]:
@@ -248,8 +374,43 @@ def _detected_frames(tracklet: dict[str, Any]) -> set[int]:
     }
 
 
-def _group_start(tracklet_ids: list[str], tracklets: dict[str, dict[str, Any]]) -> int:
-    return min(int(tracklets[item].get("start_frame") or 0) for item in tracklet_ids)
+def _diagnostics(
+    resolved: dict[str, dict[str, Any]],
+    *,
+    candidates_total: int,
+    max_subjects: int,
+    manual_document: dict[str, Any],
+) -> dict[str, Any]:
+    slots = {
+        str(row["stable_anonymous_slot_id"])
+        for row in resolved.values()
+        if row.get("stable_anonymous_slot_id")
+    }
+    by_team = Counter(_label_team(value) for value in slots)
+    manual = Counter(str(row.get("action") or "") for row in manual_document.get("decisions") or [])
+    return {
+        "candidate_subjects_total": candidates_total,
+        "tracklets_total": len(resolved),
+        "stable_anonymous_entities_total": len(slots),
+        "stable_anonymous_entities_by_team": dict(sorted(by_team.items())),
+        "unanchored_fragments": sum(bool(row["unanchored"]) for row in resolved.values()),
+        "automatic_permanent_allocations": 0,
+        "manual_assignments": manual["assign_existing_slot"],
+        "manual_new_player_allocations": len(
+            {
+                row.get("candidate_subject_id")
+                for row in resolved.values()
+                if row.get("stable_anchor_source") == "manual_new_player_confirmation"
+            }
+        ),
+        "ephemeral_fragments": sum(bool(row["ephemeral"]) for row in resolved.values()),
+        "conflicting_anchor_sources": sum("conflicting_stable_anchor_sources" in row["hard_blockers"] for row in resolved.values()),
+        "max_subjects_per_team": max_subjects,
+        "highest_fallback_number_by_team": {
+            team: max((_label_number(value) for value in slots if _label_team(value) == team), default=None)
+            for team in ("A", "B")
+        },
+    }
 
 
 def _optional(path: Path) -> dict[str, Any]:

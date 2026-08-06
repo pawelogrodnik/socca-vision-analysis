@@ -80,6 +80,10 @@ from app.services.identity_reviewed_snapshot import (
     get_reviewed_identity_status,
     reviewed_assignment_at,
 )
+from app.services.identity_reviewed_slot_review import (
+    load_reviewed_slot_assignments,
+    save_reviewed_slot_assignments,
+)
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -1761,6 +1765,29 @@ def review_identity_crops(match_id: str, payload: dict[str, Any] = Body(...)) ->
 @app.get("/api/matches/{match_id}/reviewed-identity")
 def get_reviewed_identity(match_id: str) -> dict[str, Any]:
     return get_reviewed_identity_status(match_dir(match_id))
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/slot-review")
+def get_match_reviewed_slot_assignments(match_id: str) -> dict[str, Any]:
+    return load_reviewed_slot_assignments(match_dir(match_id))
+
+
+@app.put("/api/matches/{match_id}/reviewed-identity/slot-review")
+def put_match_reviewed_slot_assignments(
+    match_id: str, payload: dict[str, Any] = Body(...)
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    updates = payload.get("updates")
+    if not isinstance(updates, list):
+        raise HTTPException(status_code=400, detail="updates must be a list")
+    candidate_path = path / "identity_candidate_shadow.json"
+    if not candidate_path.exists():
+        raise HTTPException(status_code=404, detail="identity_candidate_shadow.json is missing")
+    try:
+        candidate_document = json.loads(candidate_path.read_text(encoding="utf-8"))
+        return save_reviewed_slot_assignments(path, candidate_document, updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/finalize")

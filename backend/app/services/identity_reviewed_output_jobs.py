@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,10 +13,14 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_video import render_reviewed_video, reviewed_source_video_digest
 
+# Reviewed rendering is a local-first, single-host job. Ownership is persisted in
+# an O_EXCL filesystem lock and validated against the owner PID (plus an in-process
+# active token for same-PID recovery). It is not a distributed-worker lease.
+
 
 JOB_FILENAME = "reviewed_video_job.json"
 LOCK_FILENAME = "reviewed_video_job.lock"
-RENDERER_VERSION = "reviewed_video:v3"
+RENDERER_VERSION = "reviewed_video:v4"
 _active_job_keys: set[str] = set()
 _submission_lock = threading.Lock()
 
@@ -53,7 +58,12 @@ def _generate_reviewed_output(
     if _reusable_job(existing, key, match_path):
         return existing
     lock_path = match_path / LOCK_FILENAME
-    owner = {"pid": os.getpid(), "job_key": key, "created_at": _now()}
+    owner = {
+        "pid": os.getpid(),
+        "job_key": key,
+        "created_at": _now(),
+        "ownership_mode": "single_host_filesystem_pid_lock",
+    }
     if not _acquire_lock(lock_path, owner):
         existing = _load(match_path / JOB_FILENAME)
         if _reusable_job(existing, key, match_path):
@@ -61,7 +71,7 @@ def _generate_reviewed_output(
         raise ReviewedOutputBusyError("Inny reviewed render dla tego meczu jest już uruchomiony.")
     try:
         existing = _load(match_path / JOB_FILENAME)
-        if existing.get("job_key") == key and existing.get("status") == "completed":
+        if _reusable_job(existing, key, match_path):
             _release_lock(lock_path, key)
             return existing
         job = {
@@ -70,6 +80,7 @@ def _generate_reviewed_output(
             "status": "queued",
             "created_at": _now(),
             "owner_pid": os.getpid(),
+            "ownership_mode": "single_host_filesystem_pid_lock",
             "options": options,
             "renderer_version": RENDERER_VERSION,
             "source_snapshot_digest": snapshot["semantic_digest"],
@@ -117,6 +128,12 @@ def reviewed_output_status(
         write_identity_json_atomic(match_path / JOB_FILENAME, interrupted)
         _release_lock(match_path / LOCK_FILENAME, job_key)
         return interrupted
+    if job.get("status") == "completed" and not _completed_output_matches(job, match_path):
+        return {
+            **job,
+            "status": "stale",
+            "stale_reason": "reviewed_video_digest_mismatch",
+        }
     return job
 
 
@@ -238,11 +255,11 @@ def _reusable_job(job: dict[str, Any], key: str, match_path: Path) -> bool:
     if job.get("job_key") != key:
         return False
     if job.get("status") in {"queued", "running"}:
-        return True
+        lock = _load(match_path / LOCK_FILENAME)
+        return lock.get("job_key") == key and _lock_owner_alive(match_path, lock)
     return (
         job.get("status") == "completed"
-        and bool(job.get("video_digest"))
-        and (match_path / "reviewed_video.mp4").exists()
+        and _completed_output_matches(job, match_path)
     )
 
 
@@ -261,3 +278,20 @@ def _now() -> str:
 
 def _active_token(path: Path, job_key: str) -> str:
     return f"{path.resolve()}::{job_key}"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _completed_output_matches(job: dict[str, Any], match_path: Path) -> bool:
+    video = match_path / "reviewed_video.mp4"
+    return (
+        bool(job.get("video_digest"))
+        and video.exists()
+        and _sha256(video) == job.get("video_digest")
+    )
