@@ -7,6 +7,7 @@ import {
   getReviewedIdentityReviewProgress,
   getReviewedIdentityAt,
   getReviewedOutputStatus,
+  getReviewWorkflow,
   getReviewedStats,
   reviewedVideoUrl,
 } from '../api';
@@ -19,6 +20,7 @@ import type {
   ReviewedIdentityReviewProgress,
   ReviewedOutputJob,
   ReviewedStatsResponse,
+  ReviewWorkflow,
 } from '../types';
 import {
   formatElapsedTime,
@@ -32,6 +34,10 @@ import {
   isReviewedRenderInProgress,
 } from '../utils/reviewedRenderPolling';
 import { clearReviewedDerivedOutput } from '../utils/reviewedOutputState';
+import {
+  canFinalizeReviewedVideo,
+  reviewedCorrectionWorkflowPresentation,
+} from '../utils/reviewedOutputWorkflow';
 import { ReviewedIdentityAtTimePanel } from './ReviewedIdentityAtTimePanel';
 import { ReviewedPlayerStatsTable } from './ReviewedPlayerStatsTable';
 
@@ -52,6 +58,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   const [identity, setIdentity] = useState<ReviewedIdentityDocument | null>(null);
   const [progress, setProgress] = useState<ReviewedIdentityReviewProgress | null>(null);
   const [job, setJob] = useState<ReviewedOutputJob | null>(null);
+  const [workflow, setWorkflow] = useState<ReviewWorkflow | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -66,14 +73,16 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
 
   async function refresh() {
     try {
-      const [nextIdentity, nextJob, nextProgress] = await Promise.all([
+      const [nextIdentity, nextJob, nextProgress, nextWorkflow] = await Promise.all([
         getReviewedIdentity(matchId),
         getReviewedOutputStatus(matchId),
         getReviewedIdentityReviewProgress(matchId),
+        getReviewWorkflow(matchId),
       ]);
       setIdentity(nextIdentity);
       setJob(nextJob);
       setProgress(nextProgress);
+      setWorkflow(nextWorkflow);
       const outputIsCurrent = nextJob.status === 'completed'
         && nextIdentity.status !== 'stale'
         && nextJob.source_snapshot_digest === nextIdentity.semantic_digest;
@@ -117,6 +126,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
       setAtTime(cleared.atTime);
       const nextIdentity = await finalizeReviewedIdentity(matchId);
       setIdentity(nextIdentity);
+      setWorkflow(nextIdentity.workflow ?? await getReviewWorkflow(matchId));
       setProgress(await getReviewedIdentityReviewProgress(matchId));
       const nextJob = await getReviewedOutputStatus(matchId);
       setJob(nextJob);
@@ -147,6 +157,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
     setMessage('Dodano przygotowanie wideo do kolejki...');
     try {
       const workflow = await finalizeReviewWorkflow(matchId, reviewedRenderOptions());
+      setWorkflow(workflow);
       setJob(workflow.processing ?? await getReviewedOutputStatus(matchId));
       setIdentity(await getReviewedIdentity(matchId));
       setProgress(await getReviewedIdentityReviewProgress(matchId));
@@ -175,24 +186,57 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   }
 
   function correctionSaved(_entity: ReviewedIdentityAtEntity, result: ReviewedCorrectionResponse) {
-    setDirty(true);
+    const presentation = reviewedCorrectionWorkflowPresentation(result);
     setStats(null);
-    if (identity) setIdentity({ ...identity, status: 'stale' });
+    setAtTime(null);
+    if (result.workflow) setWorkflow(result.workflow);
+    if (result.reviewed_identity) {
+      setIdentity(result.reviewed_identity);
+    } else {
+      void getReviewedIdentity(matchId)
+        .then(setIdentity)
+        .catch((error: unknown) => setMessage(errorMessage(error)));
+    }
     setProgress(result.review_progress);
     const allocation = result.allocated_stable_slot_id
       ? ` Utworzono nowego zawodnika jako ${result.allocated_stable_slot_id}.`
       : '';
     const impact = result.decision_impact;
+    if (presentation.mode === 'automatic_rerender') {
+      setDirty(false);
+      if (presentation.queuedRenderJob) {
+        setJob(presentation.queuedRenderJob);
+      } else {
+        void getReviewedOutputStatus(matchId)
+          .then(setJob)
+          .catch((error: unknown) => setMessage(errorMessage(error)));
+      }
+      setMessage(
+        `Zapisano poprawkę.${allocation} Przygotowuję zaktualizowane wideo do review automatycznie.`,
+      );
+      return;
+    }
+    if (presentation.mode === 'exceptions') {
+      setDirty(false);
+      setJob({ status: 'stale' });
+      setMessage(
+        `Zapisano poprawkę.${allocation} Review wymaga jeszcze dodatkowej decyzji przed ponownym wygenerowaniem wideo.`,
+      );
+      return;
+    }
+    setDirty(presentation.mode === 'manual_finalize_available');
     setMessage(
       `Zapisano decyzję.${allocation} Objęła ${impact.affected_tracklets} tracklety i ${impact.affected_detected_observations} wykrytych obserwacji. `
       + `Pozostało około ${impact.important_decisions_remaining_after} ważnych decyzji. `
-      + 'Obecne wideo pokazuje stan sprzed zmian; możesz kontynuować review albo odświeżyć wynik.',
+      + (presentation.mode === 'manual_finalize_available'
+        ? 'Możesz przygotować aktualne wideo, gdy workflow na to pozwala.'
+        : 'Stan review został zaktualizowany.'),
     );
   }
 
   const humanSummary = progress?.summary;
   const renderInProgress = job?.status === 'queued' || job?.status === 'running';
-  const canGenerate = identity?.status === 'partial_reviewed' || identity?.status === 'complete_reviewed';
+  const canFinalizeForVideo = canFinalizeReviewedVideo(workflow);
   const showInitialCta = shouldShowInitialReviewCta(identity?.status, job?.status);
   const elapsed = formatElapsedTime(job?.started_at ?? job?.created_at, now);
   const hasVideo = job?.status === 'completed' && Boolean(job.video_digest);
@@ -235,7 +279,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
         <h3>Przygotuj pierwsze wideo do sprawdzenia</h3>
         <p>Operacja wykorzysta istniejące wyniki analizy i nie uruchomi ponownie detekcji ani trackingu.</p>
       </div>
-      <button type='button' onClick={() => void finalizeAndRegenerate()} disabled={busy || renderInProgress}>
+      <button type='button' onClick={() => void finalizeAndRegenerate()} disabled={!canFinalizeForVideo || busy || renderInProgress}>
         Przygotuj wideo do review
       </button>
     </div>}
@@ -249,7 +293,7 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
       </div>
     </div>}
 
-    {dirty && <div className='reviewed-stale-banner'>
+    {dirty && canFinalizeForVideo && <div className='reviewed-stale-banner'>
       <strong>Zapisano poprawki</strong>
       <span>Obecne wideo pokazuje stan sprzed zmian. Możesz zapisać kolejne poprawki albo odświeżyć wynik.</span>
       <button type='button' onClick={() => void finalizeAndRegenerate()} disabled={busy || renderInProgress}>
@@ -270,12 +314,12 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
       <summary>Zaawansowane opcje</summary>
       <div className='row'>
         <button type='button' className='secondary' onClick={() => void finalizeOnly()} disabled={busy || renderInProgress}>Zapisz sam review</button>
-        <button type='button' className='secondary' onClick={() => void generate()} disabled={!canGenerate || busy || renderInProgress}>Wygeneruj wideo ponownie</button>
+        <button type='button' className='secondary' onClick={() => void generate()} disabled={!canFinalizeForVideo || busy || renderInProgress}>Wygeneruj wideo ponownie</button>
       </div>
     </details>
 
     {job?.status === 'failed' && <p className='status error'>Generowanie wideo nie powiodło się{job.error?.message ? `: ${job.error.message}` : '.'}</p>}
-    {job?.status === 'stale' && <p className='status'>Wideo jest nieaktualne po zmianie review. Zastosuj poprawki, aby utworzyć aktualną wersję.</p>}
+    {job?.status === 'stale' && !canFinalizeForVideo && <p className='status'>Wideo nie jest aktualne; workflow wymaga najpierw dodatkowej decyzji.</p>}
 
     {hasVideo && <section className='reviewed-video-section'>
       <h3>Wideo do review</h3>

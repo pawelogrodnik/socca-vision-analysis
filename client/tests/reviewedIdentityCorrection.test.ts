@@ -132,6 +132,15 @@ test('reviewed output UI keeps the simple correction flow and one expensive prep
   assert.match(output, /Przygotuj wideo do review/);
   assert.match(output, /finalizeReviewedIdentity\(matchId\)/);
   assert.match(output, /finalizeReviewWorkflow\(matchId, reviewedRenderOptions\(\)\)/);
+  assert.match(output, /getReviewWorkflow\(matchId\)/);
+  assert.match(output, /reviewedCorrectionWorkflowPresentation\(result\)/);
+  assert.match(output, /Przygotowuję zaktualizowane wideo do review automatycznie/);
+  assert.match(output, /Review wymaga jeszcze dodatkowej decyzji przed ponownym wygenerowaniem wideo/);
+  assert.match(output, /canFinalizeReviewedVideo\(workflow\)/);
+  assert.doesNotMatch(
+    output.slice(output.indexOf('function correctionSaved'), output.indexOf('const humanSummary')),
+    /finalizeReviewWorkflow/,
+  );
   assert.doesNotMatch(output, /generateReviewedOutput\(matchId/);
   assert.match(output, /include_minimap: includeMinimap/);
   assert.match(output, /include_ball: includeBall/);

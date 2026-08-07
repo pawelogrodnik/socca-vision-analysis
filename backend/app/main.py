@@ -2001,7 +2001,14 @@ def post_match_reviewed_identity_correction(
                 source="review_exception_decision",
             )
         )
-        return {**result, "workflow": refreshed["workflow"], "reviewed_identity": refreshed["snapshot"]}
+        response = {
+            **result,
+            "workflow": refreshed["workflow"],
+            "reviewed_identity": refreshed["snapshot"],
+        }
+        if refreshed.get("render_job") is not None:
+            response["render_job"] = refreshed["render_job"]
+        return response
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except ReviewWorkflowRecomputeError as exc:

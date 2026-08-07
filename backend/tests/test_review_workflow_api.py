@@ -59,7 +59,11 @@ class ReviewWorkflowApiTests(unittest.TestCase):
     def test_approved_complete_state_correction_uses_video_qa_orchestration(self) -> None:
         from app.main import post_match_reviewed_identity_correction
 
-        refreshed = {"workflow": {"phase": "rendering_review_video"}, "snapshot": {"semantic_digest": "new"}}
+        refreshed = {
+            "workflow": {"phase": "rendering_review_video"},
+            "snapshot": {"semantic_digest": "new"},
+            "render_job": {"status": "queued", "job_key": "new-render"},
+        }
         with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
             "app.main.read_match_meta", return_value={"id": "m1"}
         ), patch(
@@ -73,6 +77,7 @@ class ReviewWorkflowApiTests(unittest.TestCase):
             response = post_match_reviewed_identity_correction("m1", {"candidate_subject_id": "subject-1", "action": "unresolved"})
         self.assertTrue(response["saved"])
         self.assertEqual(response["workflow"]["phase"], "rendering_review_video")
+        self.assertEqual(response["render_job"]["job_key"], "new-render")
         after.assert_called_once()
         lightweight.assert_not_called()
 

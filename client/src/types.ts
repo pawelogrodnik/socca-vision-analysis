@@ -1715,6 +1715,7 @@ export type ReviewedIdentityDocument = {
   semantic_digest?: string;
   summary: ReviewedIdentitySummary | null;
   readiness?: { identity?: string; reason?: string };
+  workflow?: ReviewWorkflow;
 };
 
 export type ReviewedOutputJob = {
@@ -1887,6 +1888,9 @@ export type ReviewedCorrectionResponse = {
   semantic_decision_digest: string;
   review_progress: ReviewedIdentityReviewProgress;
   decision_impact: ReviewedCorrectionDecisionImpact;
+  workflow?: ReviewWorkflow;
+  reviewed_identity?: ReviewedIdentityDocument;
+  render_job?: ReviewedOutputJob;
 };
 
 export type ReviewedIdentityReviewUnit = {
