@@ -10,6 +10,7 @@ import unittest
 
 from app.services.identity_reviewed_regression_diagnostic import (
     build_reviewed_identity_regression_diagnostic,
+    compact_reviewed_identity_regression_report,
     classify_observation,
     render_markdown_report,
 )
@@ -19,11 +20,11 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
     def test_classifies_stable_and_reviewed_identity_outcomes(self) -> None:
         self.assertEqual(
             classify_observation(_row(global_slot="A07", reviewed_slot="A07")),
-            "same",
+            "same_tracklet_exact",
         )
         self.assertEqual(
             classify_observation(_row(global_slot="A07", reviewed_slot="A02")),
-            "reviewed_identity_regression",
+            "definite_reviewed_slot_regression",
         )
         self.assertEqual(
             classify_observation(
@@ -33,36 +34,21 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
                     reviewed_team="U",
                 )
             ),
-            "team_only_regression",
+            "definite_reviewed_team_regression",
         )
         self.assertEqual(
             classify_observation(
                 _row(global_slot=None, tracklet_team="U", reviewed_team="U")
             ),
-            "upstream_team_unknown",
+            "upstream_unknown",
         )
         self.assertEqual(
-            classify_observation(
-                _row(
-                    global_slot="A02",
-                    reviewed_slot="A02",
-                    upstream_global_switch=True,
-                )
-            ),
-            "core_stabilization_switch",
-        )
-        self.assertEqual(
-            classify_observation(
-                {
-                    **_row(global_slot="A07", reviewed_slot="A02"),
-                    "reviewed_identity_source": "operator_review",
-                }
-            ),
-            "operator_decision_interaction",
+            classify_observation(_row(global_slot="A07", reviewed_slot=None)),
+            "definite_reviewed_slot_loss",
         )
         self.assertEqual(
             classify_observation(_row(global_slot=None, tracklet_team="A")),
-            "missing_lineage",
+            "missing_global_lineage",
         )
 
     def test_builds_frame_level_report_without_mutating_source_artifacts(self) -> None:
@@ -73,20 +59,49 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
 
             report = build_reviewed_identity_regression_diagnostic(root)
 
-            self.assertEqual(report["summary"]["observations_analyzed"], 5)
-            self.assertEqual(report["summary"]["reviewed_identity_regressions"], 1)
-            self.assertEqual(report["summary"]["team_u_regressions"], 1)
-            self.assertEqual(report["summary"]["upstream_team_unknown"], 1)
-            self.assertEqual(report["summary"]["core_stabilization_switches"], 1)
+            self.assertEqual(report["summary"]["detected_observations_analyzed"], 5)
             self.assertEqual(
-                report["team_unknown_cases"][
-                    "stable_slot_with_tracklet_team_u_observations"
-                ],
+                report["summary"]["same_tracklet"]["definite_reviewed_slot_regression"]["observations"], 0,
+            )
+            self.assertEqual(
+                report["summary"]["same_tracklet"]["definite_reviewed_team_regression"]["observations"],
                 1,
             )
-            self.assertEqual(report["conclusion"]["verdict"], "mixed_or_inconclusive")
+            self.assertEqual(
+                report["summary"]["same_tracklet"]["upstream_unknown"]["observations"],
+                1,
+            )
+            self.assertEqual(
+                report["team_unknown_cases"][
+                "global_ab_anchor_with_local_team_u"]["observations"], 1,
+            )
+            self.assertTrue(report["safety"]["source_artifacts_unchanged"])
+            self.assertNotIn("frame_level_comparison", compact_reviewed_identity_regression_report(report))
+            self.assertEqual(report["case_studies"][0]["classification"], "roster_binding_fragmentation")
             self.assertEqual(before, _artifact_hashes(root))
-            self.assertIn("Reviewed identity regression diagnostic", render_markdown_report(report))
+            self.assertIn("Reviewed identity regression validation", render_markdown_report(report))
+
+    def test_candidate_membership_across_slots_is_only_suspected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_fixture(root)
+            candidate_path = root / "identity_candidate_shadow.json"
+            candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+            candidate["subjects"].pop()
+            candidate["subjects"][0]["tracklet_ids"].append("t4")
+            candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+
+            report = build_reviewed_identity_regression_diagnostic(root)
+
+            self.assertGreater(
+                report["summary"]["suspected_upstream_fragmentation"]["candidate_subjects"], 0
+            )
+            self.assertFalse(
+                any(
+                    row["comparison_status"] == "core_stabilization_switch"
+                    for row in report["frame_level_comparison"]
+                )
+            )
 
     def test_requires_the_frozen_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -209,8 +224,13 @@ def _write_fixture(root: Path) -> None:
                     {
                         "candidate_subject_id": "candidate-mati",
                         "candidate_player_id": "A07",
-                        "tracklet_ids": ["t1", "t2", "t3", "t4"],
-                    }
+                        "tracklet_ids": ["t1", "t2", "t3"],
+                    },
+                    {
+                        "candidate_subject_id": "candidate-other",
+                        "candidate_player_id": "A02",
+                        "tracklet_ids": ["t4"],
+                    },
                 ]
             }
         ),
@@ -222,13 +242,27 @@ def _write_fixture(root: Path) -> None:
                 "schema_version": "reviewed-v1",
                 "tracklet_assignments": [
                     _assignment("t1", "A07", "A", "Mati GK", "mati"),
-                    _assignment("t2", "A02", "A", "A02", None),
+                    _assignment("t2", "A07", "A", "A07", None),
                     _assignment("t3", None, "U", "U?", None),
                     _assignment("t4", "A02", "A", "A02", None),
                     _assignment("t5", None, "U", "U?", None),
                 ],
                 "observation_overrides": [],
                 "observation_demotions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "reviewed_identity_slot_assignments.json").write_text(
+        json.dumps(
+            {
+                "decisions": [
+                    {
+                        "candidate_subject_id": "candidate-mati",
+                        "action": "assign_roster_player",
+                        "player_id": "mati",
+                    }
+                ]
             }
         ),
         encoding="utf-8",
