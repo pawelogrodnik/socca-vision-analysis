@@ -29,6 +29,7 @@ interface StablePlayersPanelProps {
   match: Match;
   onStatus: (message: string) => void;
   onSaved: () => Promise<void> | void;
+  includeOperatorTools?: boolean;
 }
 
 const playerStatuses: Array<{ value: StablePlayerStatus; label: string }> = [
@@ -221,6 +222,7 @@ export function StablePlayersPanel({
   match,
   onStatus,
   onSaved,
+  includeOperatorTools = true,
 }: StablePlayersPanelProps) {
   const [review, setReview] = useState<StablePlayersReviewState | null>(null);
   const [identityReview, setIdentityReview] = useState<PlayerIdentityReviewState | null>(null);
@@ -495,26 +497,28 @@ export function StablePlayersPanel({
         </div>
       )}
 
-      <InitialIdentityAuditPanel
-        match={match}
-        onStatus={onStatus}
-      />
+      {includeOperatorTools && <>
+        <InitialIdentityAuditPanel
+          match={match}
+          onStatus={onStatus}
+        />
 
-      <SecondHalfIdentityReanchorPanel
-        match={match}
-        onStatus={onStatus}
-      />
+        <SecondHalfIdentityReanchorPanel
+          match={match}
+          onStatus={onStatus}
+        />
 
-      <IdentityRosterSubjectReviewPanel
-        match={match}
-        onStatus={onStatus}
-      />
+        <IdentityRosterSubjectReviewPanel
+          match={match}
+          onStatus={onStatus}
+        />
 
-      <IdentityCropReviewPanel
-        match={match}
-        onStatus={onStatus}
-        onSaved={onSaved}
-      />
+        <IdentityCropReviewPanel
+          match={match}
+          onStatus={onStatus}
+          onSaved={onSaved}
+        />
+      </>}
 
       <details className='identity-advanced-review'>
         <summary>Zaawansowane dzielenie stintow</summary>

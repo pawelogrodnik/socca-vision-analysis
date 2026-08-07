@@ -303,6 +303,92 @@ a { color: #93c5fd; }
   justify-self: start;
 }
 
+.identity-review-workspace,
+.identity-exception-review {
+  display: grid;
+  gap: 18px;
+  max-width: 1360px;
+  margin: 0 auto 24px;
+  padding: clamp(18px, 3vw, 30px);
+  border: 1px solid #23644d;
+  border-radius: 22px;
+  background: linear-gradient(135deg, rgba(14, 45, 42, 0.98), rgba(15, 23, 42, 0.98));
+}
+
+.identity-review-workspace-heading h1,
+.identity-review-workspace-heading p,
+.identity-review-stage-copy h2,
+.identity-review-stage-copy p,
+.identity-exception-review h2,
+.identity-exception-review p {
+  margin-top: 0;
+}
+
+.identity-review-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.identity-review-progress li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.identity-review-progress li.completed { border-color: #22c55e; color: #bbf7d0; }
+.identity-review-progress li.current,
+.identity-review-progress li.processing { border-color: #38bdf8; color: #dbeafe; background: rgba(30, 58, 138, 0.24); }
+.identity-review-progress li.error { border-color: #ef4444; color: #fecaca; }
+
+.identity-review-current-stage,
+.identity-exception-review {
+  padding: 18px;
+  border: 1px solid #31576a;
+  border-radius: 16px;
+  background: rgba(2, 6, 23, 0.38);
+}
+
+.identity-review-current-stage { display: grid; gap: 16px; }
+.identity-review-current-stage .initial-identity-audit-panel { margin: 0; }
+
+.identity-exception-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.identity-exception-evidence figure {
+  display: grid;
+  gap: 6px;
+  width: min(220px, 100%);
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.5);
+}
+
+.identity-exception-evidence img { width: 100%; border-radius: 6px; }
+.identity-exception-evidence figcaption { color: #cbd5e1; font-size: 13px; }
+.identity-review-complete { border-color: #22c55e; }
+
+@media (max-width: 900px) {
+  .identity-review-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .identity-review-progress { grid-template-columns: 1fr; }
+}
+
 .reviewed-at-time {
   display: grid;
   gap: 0.75rem;

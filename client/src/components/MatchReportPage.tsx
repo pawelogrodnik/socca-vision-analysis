@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, createMatchPackage, getMatch, getReviewWorkflow, publishLocalMatch } from '../api';
+import { artifactUrl, getMatch, getReviewWorkflow, publishLocalMatch } from '../api';
 import { errorMessage } from '../lib/helpers';
 import { reportWorkflowGate } from '../lib/reviewWorkflowGating';
 import type { Match, ReviewWorkflow } from '../types';
@@ -9,9 +9,8 @@ import {
   sourceFromLocalMatch,
 } from './MatchReportContent';
 import { ReportActions } from './ReportActions';
-import { ReviewedMatchOutputPanel } from './ReviewedMatchOutputPanel';
 
-type ReportBusyAction = 'package' | 'publish' | 'replace' | null;
+type ReportBusyAction = 'publish' | 'replace' | null;
 
 export function MatchReportPage() {
   const { matchId } = useParams();
@@ -66,25 +65,6 @@ export function MatchReportPage() {
     setWorkflow(nextWorkflow);
   }
 
-  async function buildPackage() {
-    if (!matchId || busyAction) return;
-    if (!workflowGate.allowed) {
-      setActionStatus('Publikacja jest zablokowana do czasu zatwierdzenia Video QA.');
-      return;
-    }
-    setBusyAction('package');
-    setActionStatus('Generuje match_package.json...');
-    try {
-      await createMatchPackage(matchId);
-      await refreshMatch();
-      setActionStatus('Wygenerowano match_package.json.');
-    } catch (error) {
-      setActionStatus(errorMessage(error));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   async function publish(replace = false) {
     if (!matchId || busyAction) return;
     if (!workflowGate.allowed) {
@@ -128,6 +108,12 @@ export function MatchReportPage() {
       )}
       {status && <p className='status'>{status}</p>}
 
+      {match && !workflow?.review_complete && <section className='status'>
+        <strong>Review meczu nie jest jeszcze zakończony.</strong>
+        <p>Wróć do kroku Review zawodników, aby dokończyć identyfikację i sprawdzenie wideo.</p>
+        <Link to='/admin-panel'>Wróć do Identity Review</Link>
+      </section>}
+
       {match && (
         <ReportActions
           mode='local'
@@ -144,15 +130,12 @@ export function MatchReportPage() {
           }}
           busyAction={busyAction}
           status={actionStatus}
-          onBuildPackage={buildPackage}
-          onPublish={() => publish(false)}
-          onReplacePublish={() => publish(true)}
+          onPublish={() => publish(Boolean(match.published_match_id))}
+          publishLabel={match.published_match_id ? 'Zaktualizuj opublikowany raport' : 'Opublikuj raport'}
           workflowAllowed={workflowGate.allowed}
-          workflowReason={workflowGate.allowed ? undefined : `Najpierw zakoncz Review i zatwierdz Video QA (${workflowGate.reasonCode}).`}
+          workflowReason={workflowGate.allowed ? undefined : 'Najpierw zakończ Review i zatwierdź Video QA.'}
         />
       )}
-
-      {match && <ReviewedMatchOutputPanel matchId={match.id} />}
 
       {reportSource && (
         <MatchReportContent
