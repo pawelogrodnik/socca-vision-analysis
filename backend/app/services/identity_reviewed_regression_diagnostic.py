@@ -383,6 +383,15 @@ def _team_unknown_cases(observations: list[dict[str, Any]]) -> dict[str, Any]:
         "definite_reviewed_team_u_regressions": _case_metric(degraded),
         "upstream_unknown": _case_metric(upstream_unknown),
         "potential_local_global_team_conflicts": _case_metric(conflicts),
+        "degradation_hard_blockers": _count_rows(
+            Counter(
+                str(blocker)
+                for row in degraded
+                for blocker in (row.get("reviewed_hard_blockers") or ["none"])
+            ),
+            len(degraded),
+        ) if degraded else [],
+        "degradation_reason": "A direct same-tracklet loss of a global A/B anchor after review; local/global A-B conflicts are reported separately and never classified as this regression.",
         "examples": [
             {
                 key: row[key]

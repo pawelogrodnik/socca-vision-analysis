@@ -2897,6 +2897,19 @@
       "observations": 168,
       "tracklets": 1
     },
+    "degradation_hard_blockers": [
+      {
+        "value": "unknown_team_cannot_receive_stable_slot",
+        "observations": 699,
+        "ratio": 0.7639
+      },
+      {
+        "value": "mixed_team_candidate_subject",
+        "observations": 216,
+        "ratio": 0.2361
+      }
+    ],
+    "degradation_reason": "A direct same-tracklet loss of a global A/B anchor after review; local/global A-B conflicts are reported separately and never classified as this regression.",
     "examples": [
       {
         "frame": 913,
