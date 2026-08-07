@@ -83,3 +83,4 @@ runs/
 .DS_Store
 Thumbs.db
 matches_video/*
+.vscode
