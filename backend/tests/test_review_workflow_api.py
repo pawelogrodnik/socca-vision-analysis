@@ -81,6 +81,100 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         after.assert_called_once()
         lightweight.assert_not_called()
 
+    def test_initial_audit_identity_update_is_gated_and_recomputed(self) -> None:
+        from app.main import update_initial_identity_audit_seeds
+
+        initial_state = {
+            "phase": "initial_audit",
+            "allowed_actions": ["identify_players"],
+            "blockers": [],
+        }
+        refreshed = {
+            "workflow": {"phase": "exceptions"},
+            "snapshot": {"semantic_digest": "new"},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.match_video_path", return_value=Path("/tmp/m1/video.mp4")), patch(
+            "app.main.get_review_workflow_state", return_value=initial_state
+        ), patch(
+            "app.main.prepare_initial_identity_audit"
+        ), patch(
+            "app.main.save_initial_identity_audit_seeds",
+            return_value={"decisions": [{"observation_key": "one"}]},
+        ) as save, patch(
+            "app.main.benchmark_context_for_workspace", return_value=None
+        ), patch(
+            "app.main.rebuild_seeded_identity_after_operator_audit",
+            return_value={"status": "fresh"},
+        ) as rebuild, patch(
+            "app.main.refresh_review_after_identity_mutation", return_value=refreshed
+        ) as refresh:
+            response = update_initial_identity_audit_seeds(
+                "m1",
+                {"updates": [{"observation_key": "one", "action": "skip"}]},
+            )
+        save.assert_called_once()
+        rebuild.assert_called_once()
+        refresh.assert_called_once()
+        self.assertEqual(response["workflow"]["phase"], "exceptions")
+
+    def test_initial_audit_telemetry_after_completion_skips_recompute(self) -> None:
+        from app.main import update_initial_identity_audit_seeds
+
+        completed_state = {
+            "phase": "exceptions",
+            "allowed_actions": ["review_identity_issue"],
+            "blockers": [],
+        }
+        for event_type in ("session_finished", "frame_shown"):
+            with self.subTest(event_type=event_type), patch(
+                "app.main.match_dir", return_value=Path("/tmp/m1")
+            ), patch(
+                "app.main.read_match_meta", return_value={"id": "m1"}
+            ), patch("app.main.match_video_path", return_value=Path("/tmp/m1/video.mp4")), patch(
+                "app.main.get_review_workflow_state", return_value=completed_state
+            ) as state, patch(
+                "app.main.prepare_initial_identity_audit"
+            ), patch(
+                "app.main.save_initial_identity_audit_seeds", return_value={"decisions": []}
+            ) as save, patch(
+                "app.main.rebuild_seeded_identity_after_operator_audit"
+            ) as rebuild, patch(
+                "app.main.refresh_review_after_identity_mutation"
+            ) as refresh:
+                response = update_initial_identity_audit_seeds(
+                    "m1",
+                    {"updates": [], "telemetry_events": [{"event_type": event_type}]},
+                )
+            save.assert_called_once()
+            self.assertEqual(state.call_count, 1)
+            self.assertEqual(response["workflow"]["phase"], "exceptions")
+            rebuild.assert_not_called()
+            refresh.assert_not_called()
+
+    def test_late_initial_audit_identity_update_remains_rejected(self) -> None:
+        from fastapi import HTTPException
+        from app.main import update_initial_identity_audit_seeds
+
+        completed_state = {
+            "phase": "exceptions",
+            "allowed_actions": [],
+            "blockers": [{"code": "initial_audit_incomplete"}],
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.get_review_workflow_state", return_value=completed_state), patch(
+            "app.main.save_initial_identity_audit_seeds"
+        ) as save:
+            with self.assertRaises(HTTPException) as raised:
+                update_initial_identity_audit_seeds(
+                    "m1",
+                    {"updates": [{"observation_key": "late", "action": "skip"}]},
+                )
+        self.assertEqual(raised.exception.status_code, 409)
+        save.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

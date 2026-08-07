@@ -1518,15 +1518,17 @@ def update_initial_identity_audit_seeds(
             status_code=400,
             detail="telemetry_events must be a list",
         )
+    has_identity_updates = bool(updates)
     try:
         match_document = read_match_meta(path)
-        try:
-            assert_workflow_action_allowed(
-                get_review_workflow_state(path, match_document),
-                "identify_players",
-            )
-        except WorkflowActionError as exc:
-            raise _workflow_http_error(exc) from exc
+        if has_identity_updates:
+            try:
+                assert_workflow_action_allowed(
+                    get_review_workflow_state(path, match_document),
+                    "identify_players",
+                )
+            except WorkflowActionError as exc:
+                raise _workflow_http_error(exc) from exc
         prepare_initial_identity_audit(
             path,
             match_video_path(path),
@@ -1538,6 +1540,11 @@ def update_initial_identity_audit_seeds(
             updates,
             telemetry_events=telemetry_events,
         )
+        if not has_identity_updates:
+            # Delayed autosave/session events carry no identity semantics.  They
+            # must remain valid after the last seed advances the workflow.
+            result["workflow"] = get_review_workflow_state(path, match_document)
+            return result
         benchmark_context = benchmark_context_for_workspace(path)
         rebuild_status = (
             {

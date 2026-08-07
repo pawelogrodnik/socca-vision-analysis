@@ -1619,6 +1619,7 @@ export type InitialIdentityAuditSeedStoreDocument = {
   };
   benchmark_state?: string;
   updated_at?: string | null;
+  workflow?: ReviewWorkflow;
 };
 
 export type InitialIdentityAuditSeedUpdate = {
