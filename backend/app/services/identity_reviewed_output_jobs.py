@@ -39,9 +39,17 @@ def generate_reviewed_output(
     snapshot: dict[str, Any],
     match_doc: dict[str, Any],
     options: dict[str, Any],
+    *,
+    stats_already_current: bool = False,
 ) -> dict[str, Any]:
     with _submission_lock:
-        return _generate_reviewed_output(match_path, snapshot, match_doc, options)
+        return _generate_reviewed_output(
+            match_path,
+            snapshot,
+            match_doc,
+            options,
+            stats_already_current=stats_already_current,
+        )
 
 
 def _generate_reviewed_output(
@@ -49,6 +57,8 @@ def _generate_reviewed_output(
     snapshot: dict[str, Any],
     match_doc: dict[str, Any],
     options: dict[str, Any],
+    *,
+    stats_already_current: bool,
 ) -> dict[str, Any]:
     source_video_digest = reviewed_source_video_digest(match_path, match_doc)
     key = canonical_digest(
@@ -98,7 +108,7 @@ def _generate_reviewed_output(
         _active_job_keys.add(_active_token(match_path, key))
         threading.Thread(
             target=_run,
-            args=(match_path, snapshot, match_doc, options, job),
+            args=(match_path, snapshot, match_doc, options, job, stats_already_current),
             daemon=True,
         ).start()
         return job
@@ -144,12 +154,39 @@ def reviewed_output_status(
     return job
 
 
+def reviewed_output_status_read_only(
+    match_path: Path,
+    snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return render state for polling without recovering or writing a job file."""
+    job = _load(match_path / JOB_FILENAME)
+    if not job:
+        return {"status": "missing"}
+    if snapshot and snapshot.get("status") == "stale":
+        return {**job, "status": "stale", "stale_reason": "reviewed_identity_changed"}
+    if snapshot and job.get("source_snapshot_digest") != snapshot.get("semantic_digest") and job.get("status") == "completed":
+        return {**job, "status": "stale", "stale_reason": "reviewed_identity_changed"}
+    if job.get("status") in {"queued", "running"}:
+        lock = _load(match_path / LOCK_FILENAME)
+        job_key = str(job.get("job_key") or "")
+        if lock.get("job_key") != job_key or not _lock_owner_alive(match_path, lock):
+            return {
+                **job,
+                "status": "failed",
+                "error": {"message": "Render został przerwany; uruchom go ponownie."},
+            }
+    if job.get("status") == "completed" and not _completed_output_matches(job, match_path):
+        return {**job, "status": "stale", "stale_reason": "reviewed_video_digest_mismatch"}
+    return job
+
+
 def _run(
     path: Path,
     snapshot: dict[str, Any],
     match_doc: dict[str, Any],
     options: dict[str, Any],
     job: dict[str, Any],
+    stats_already_current: bool,
 ) -> None:
     job_key = str(job["job_key"])
     last_progress: dict[str, Any] = {"stage": "queued"}
@@ -162,8 +199,11 @@ def _run(
     try:
         running = {**job, "status": "running", "started_at": _now()}
         write_identity_json_atomic(path / JOB_FILENAME, running)
-        progress({"stage": "build_reviewed_stats"})
-        stats = build_reviewed_stats(path, snapshot, match_doc, _load(path / "pitch_config.json"))
+        if stats_already_current:
+            stats = {"reviewed_player_stats.json": _load(path / "reviewed_player_stats.json")}
+        else:
+            progress({"stage": "build_reviewed_stats"})
+            stats = build_reviewed_stats(path, snapshot, match_doc, _load(path / "pitch_config.json"))
         manifest = render_reviewed_video(
             path,
             snapshot,

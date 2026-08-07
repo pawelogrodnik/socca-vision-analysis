@@ -51,6 +51,7 @@ import type {
   ReviewedCorrectionContext,
   ReviewedCorrectionRequest,
   ReviewedCorrectionResponse,
+  ReviewWorkflow,
 } from './types';
 import type {
   BoundedH2Session,
@@ -190,6 +191,42 @@ export async function getMatch(matchId: string): Promise<Match> {
 
 export async function getReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity`);
+}
+
+export async function getReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+  return request<ReviewWorkflow>(`/api/matches/${encodeURIComponent(matchId)}/review-workflow`);
+}
+
+export async function finalizeReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/finalize`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+  );
+  return response.workflow;
+}
+
+export async function approveReviewVideoQa(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/approve-video-qa`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
+export async function retryReviewRender(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/retry-render`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
+export async function retryReviewRecompute(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/retry-recompute`,
+    { method: 'POST' },
+  );
+  return response.workflow;
 }
 
 export async function getReviewedIdentityReviewProgress(matchId: string): Promise<ReviewedIdentityReviewProgress> {

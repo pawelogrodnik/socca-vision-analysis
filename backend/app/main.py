@@ -92,6 +92,20 @@ from app.services.identity_reviewed_slot_review import (
     reviewed_slot_assignment_read_model,
     save_reviewed_slot_assignments,
 )
+from app.services.review_workflow_orchestrator import (
+    ReviewWorkflowRecomputeError,
+    after_video_qa_correction,
+    approve_review_video_qa,
+    finalize_review_for_qa,
+    refresh_review_after_identity_mutation,
+    retry_review_recompute,
+    retry_review_render,
+)
+from app.services.review_workflow_state import (
+    WorkflowActionError,
+    assert_workflow_action_allowed,
+    get_review_workflow_state,
+)
 from app.services.json_publish_store import (
     delete_published_match,
     get_published_match,
@@ -124,6 +138,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _workflow_http_error(error: WorkflowActionError) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": error.code,
+            "attempted_action": error.action,
+            "workflow": error.state,
+        },
+    )
+
+
+def _assert_publish_workflow(match_path: Path) -> None:
+    workflow = get_review_workflow_state(match_path, read_match_meta(match_path))
+    if workflow.get("review_complete"):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "review_not_completed",
+            "workflow": workflow,
+        },
+    )
 
 
 @app.on_event("startup")
@@ -1482,6 +1520,13 @@ def update_initial_identity_audit_seeds(
         )
     try:
         match_document = read_match_meta(path)
+        try:
+            assert_workflow_action_allowed(
+                get_review_workflow_state(path, match_document),
+                "identify_players",
+            )
+        except WorkflowActionError as exc:
+            raise _workflow_http_error(exc) from exc
         prepare_initial_identity_audit(
             path,
             match_video_path(path),
@@ -1511,6 +1556,13 @@ def update_initial_identity_audit_seeds(
                 "downstream_rebuild_triggered": True,
             }
         result["seeded_candidate_rebuild"] = rebuild_status
+        refreshed = refresh_review_after_identity_mutation(
+            path,
+            match_document,
+            source="initial_audit_decision",
+        )
+        result["workflow"] = refreshed["workflow"]
+        result["reviewed_identity"] = refreshed["snapshot"]
         return result
     except InitialIdentityAuditConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1539,6 +1591,11 @@ def update_initial_identity_audit_seeds(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -1780,6 +1837,59 @@ def get_reviewed_identity(match_id: str) -> dict[str, Any]:
     return get_reviewed_identity_status(match_dir(match_id))
 
 
+@app.get("/api/matches/{match_id}/review-workflow")
+def get_match_review_workflow(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    return get_review_workflow_state(path, read_match_meta(path))
+
+
+@app.post("/api/matches/{match_id}/review-workflow/finalize")
+def finalize_match_review_workflow(
+    match_id: str,
+    payload: dict[str, Any] = Body(default={}),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return finalize_review_for_qa(path, read_match_meta(path), payload)
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ReviewedOutputBusyError as exc:
+        raise HTTPException(status_code=409, detail={"code": "workflow_busy", "message": str(exc)}) from exc
+
+
+@app.post("/api/matches/{match_id}/review-workflow/approve-video-qa")
+def approve_match_review_video_qa(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return approve_review_video_qa(path, read_match_meta(path))
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+
+
+@app.post("/api/matches/{match_id}/review-workflow/retry-render")
+def retry_match_review_render(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return retry_review_render(path, read_match_meta(path))
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewedOutputBusyError as exc:
+        raise HTTPException(status_code=409, detail={"code": "workflow_busy", "message": str(exc)}) from exc
+
+
+@app.post("/api/matches/{match_id}/review-workflow/retry-recompute")
+def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return retry_review_recompute(path, read_match_meta(path))
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
 @app.get("/api/matches/{match_id}/reviewed-identity/review-progress")
 def get_match_reviewed_identity_progress(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -1806,8 +1916,28 @@ def put_match_reviewed_slot_assignments(
     if not candidate_path.exists():
         raise HTTPException(status_code=404, detail="identity_candidate_shadow.json is missing")
     try:
+        match_document: dict[str, Any] | None = None
+        if (path / "match.json").exists():
+            match_document = read_match_meta(path)
+            assert_workflow_action_allowed(
+                get_review_workflow_state(path, match_document),
+                "review_identity_issue",
+            )
         candidate_document = json.loads(candidate_path.read_text(encoding="utf-8"))
-        return save_reviewed_slot_assignments(path, candidate_document, updates)
+        result = save_reviewed_slot_assignments(path, candidate_document, updates)
+        # Slot-review fixtures and legacy developer tooling may intentionally
+        # omit match.json. Real match mutations always use the workflow path.
+        if match_document is not None:
+            result["workflow"] = refresh_review_after_identity_mutation(
+                path,
+                match_document,
+                source="reviewed_slot_decision",
+            )["workflow"]
+        return result
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1816,7 +1946,14 @@ def put_match_reviewed_slot_assignments(
 def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return finalize_reviewed_identity(path, read_match_meta(path))
+        result = finalize_review_for_qa(path, read_match_meta(path))
+        return {**result["reviewed_identity"], "workflow": result["workflow"], "render_job": result["render_job"]}
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ReviewedOutputBusyError as exc:
+        raise HTTPException(status_code=409, detail={"code": "workflow_busy", "message": str(exc)}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1848,7 +1985,25 @@ def post_match_reviewed_identity_correction(
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return save_reviewed_identity_correction(path, read_match_meta(path), payload)
+        match_document = read_match_meta(path)
+        state_before = get_review_workflow_state(path, match_document)
+        if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
+            assert_workflow_action_allowed(state_before, "review_identity_issue")
+        result = save_reviewed_identity_correction(path, match_document, payload)
+        refreshed = (
+            after_video_qa_correction(path, match_document)
+            if state_before.get("phase") == "video_qa"
+            else refresh_review_after_identity_mutation(
+                path,
+                match_document,
+                source="review_exception_decision",
+            )
+        )
+        return {**result, "workflow": refreshed["workflow"], "reviewed_identity": refreshed["snapshot"]}
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1878,12 +2033,15 @@ def get_reviewed_identity_at(match_id: str, time_sec: float = Query(..., ge=0)) 
 
 @app.post("/api/matches/{match_id}/reviewed-output/generate")
 def generate_match_reviewed_output(match_id: str, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
-    path = match_dir(match_id); snapshot = get_reviewed_identity_status(path)
-    if snapshot.get("status") in {"missing", "stale"}:
-        raise HTTPException(status_code=409, detail="Najpierw sfinalizuj reviewed identity.")
+    path = match_dir(match_id)
     options = {"include_minimap": bool(payload.get("include_minimap", True)), "include_ball": bool(payload.get("include_ball", True)), "show_roster_number": bool(payload.get("show_roster_number", False))}
     try:
-        return generate_reviewed_output(path, snapshot, read_match_meta(path), options)
+        result = finalize_review_for_qa(path, read_match_meta(path), options)
+        return result["render_job"]
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
     except ReviewedOutputBusyError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -2376,12 +2534,14 @@ def build_match_package(path: Path) -> dict[str, Any]:
 @app.post("/api/matches/{match_id}/package")
 def create_match_package(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
+    _assert_publish_workflow(path)
     return build_match_package(path)
 
 
 @app.post("/api/matches/{match_id}/publish")
 def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
     path = match_dir(match_id)
+    _assert_publish_workflow(path)
     package = build_match_package(path)
     ensure_package_publishable(package)
     try:
@@ -2402,6 +2562,7 @@ def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]
 @app.post("/api/matches/{match_id}/publish-local")
 def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
     path = match_dir(match_id)
+    _assert_publish_workflow(path)
     package = build_match_package(path)
     ensure_package_publishable(package)
     try:

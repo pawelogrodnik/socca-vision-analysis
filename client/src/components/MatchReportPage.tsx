@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, createMatchPackage, getMatch, publishLocalMatch } from '../api';
+import { artifactUrl, createMatchPackage, getMatch, getReviewWorkflow, publishLocalMatch } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { Match } from '../types';
+import { reportWorkflowGate } from '../lib/reviewWorkflowGating';
+import type { Match, ReviewWorkflow } from '../types';
 import {
   MatchReportContent,
   sourceFromLocalMatch,
@@ -19,6 +20,7 @@ export function MatchReportPage() {
   const [actionStatus, setActionStatus] = useState('');
   const [busyAction, setBusyAction] = useState<ReportBusyAction>(null);
   const [loading, setLoading] = useState(false);
+  const [workflow, setWorkflow] = useState<ReviewWorkflow | null>(null);
 
   useEffect(() => {
     if (!matchId) {
@@ -38,18 +40,38 @@ export function MatchReportPage() {
       .finally(() => setLoading(false));
   }, [matchId]);
 
+  useEffect(() => {
+    if (!matchId) return;
+    let ignore = false;
+    getReviewWorkflow(matchId)
+      .then((value) => {
+        if (!ignore) setWorkflow(value);
+      })
+      .catch((error) => {
+        if (!ignore) setStatus(errorMessage(error));
+      });
+    return () => { ignore = true; };
+  }, [matchId]);
+
   const reportSource = useMemo(
     () => (match ? sourceFromLocalMatch(match) : null),
     [match],
   );
+  const workflowGate = reportWorkflowGate(workflow);
 
   async function refreshMatch() {
     if (!matchId) return;
-    setMatch(await getMatch(matchId));
+    const [nextMatch, nextWorkflow] = await Promise.all([getMatch(matchId), getReviewWorkflow(matchId)]);
+    setMatch(nextMatch);
+    setWorkflow(nextWorkflow);
   }
 
   async function buildPackage() {
     if (!matchId || busyAction) return;
+    if (!workflowGate.allowed) {
+      setActionStatus('Publikacja jest zablokowana do czasu zatwierdzenia Video QA.');
+      return;
+    }
     setBusyAction('package');
     setActionStatus('Generuje match_package.json...');
     try {
@@ -65,6 +87,10 @@ export function MatchReportPage() {
 
   async function publish(replace = false) {
     if (!matchId || busyAction) return;
+    if (!workflowGate.allowed) {
+      setActionStatus('Publikacja jest zablokowana do czasu zatwierdzenia Video QA.');
+      return;
+    }
     setBusyAction(replace ? 'replace' : 'publish');
     setActionStatus(replace ? 'Nadpisuje opublikowany raport...' : 'Publikuje raport...');
     try {
@@ -121,6 +147,8 @@ export function MatchReportPage() {
           onBuildPackage={buildPackage}
           onPublish={() => publish(false)}
           onReplacePublish={() => publish(true)}
+          workflowAllowed={workflowGate.allowed}
+          workflowReason={workflowGate.allowed ? undefined : `Najpierw zakoncz Review i zatwierdz Video QA (${workflowGate.reasonCode}).`}
         />
       )}
 

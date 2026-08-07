@@ -7,6 +7,7 @@ import {
   frameUrl,
   getAnalysisJob,
   getMatch,
+  getReviewWorkflow,
   getRuntimeInfo,
   listMatches,
   publishLocalMatch,
@@ -21,11 +22,12 @@ import type {
   Match,
   MatchMetadataPayload,
   RuntimeInfo,
+  ReviewWorkflow,
 } from '../types';
 import { applyAnalysisPreset, preferredAcceleratedDevice, type AnalysisPresetId } from '../lib/analysisPreflight';
 import { DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL } from '../lib/modelDefaults';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
-import { buildReviewReadiness, type ReviewReadiness } from '../lib/reviewReadiness';
+import { buildReviewReadiness } from '../lib/reviewReadiness';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
 import { AnalysisForm } from './AnalysisForm';
 import { AnalysisPreflightPanel } from './AnalysisPreflightPanel';
@@ -181,16 +183,16 @@ function stepStatus(
   stepId: WorkflowStepId,
   activeStep: WorkflowStepId,
   selected: Match | null,
-  readiness: ReviewReadiness,
+  workflow: ReviewWorkflow | null,
 ): WorkflowStep['status'] {
   if (stepId === activeStep) return 'current';
   if (stepId === 'video' && selected) return 'done';
   if (stepId === 'analysis' && isAnalysisCompleted(selected)) return 'done';
-  if (stepId === 'review' && readiness.readyForPackage && activeStep === 'publish') {
+  if (stepId === 'review' && workflow?.review_complete && activeStep === 'publish') {
     return 'done';
   }
   if (stepId === 'publish' && isPublished(selected)) return 'done';
-  if (stepId === 'publish' && !readiness.readyForPackage) return 'locked';
+  if (stepId === 'publish' && !workflow?.can_enter_report) return 'locked';
   if ((stepId === 'analysis' && !selected) || (stepId === 'review' && !isAnalysisCompleted(selected))) {
     return 'locked';
   }
@@ -200,16 +202,16 @@ function stepStatus(
 function workflowSteps(
   activeStep: WorkflowStepId,
   selected: Match | null,
+  workflow: ReviewWorkflow | null,
 ): WorkflowStep[] {
-  const readiness = buildReviewReadiness(selected);
   return (Object.keys(workflowCopy) as WorkflowStepId[]).map((stepId) => {
-    const status = stepStatus(stepId, activeStep, selected, readiness);
+    const status = stepStatus(stepId, activeStep, selected, workflow);
     const description = stepId === 'review'
-      ? readiness.statusLabel
+      ? workflow?.required_action?.type || 'loading review workflow'
       : stepId === 'publish'
-        ? readiness.readyForPublish
+        ? workflow?.can_publish
           ? 'ready'
-          : 'locked until review ready'
+          : workflow?.blockers[0]?.code || 'locked until review complete'
         : workflowCopy[stepId].description;
     return {
       id: stepId,
@@ -254,6 +256,7 @@ export function AdminPanel() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [activeAnalysisJob, setActiveAnalysisJob] = useState<AnalysisJob | null>(null);
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
+  const [reviewWorkflow, setReviewWorkflow] = useState<ReviewWorkflow | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isBusy = busyAction !== null;
 
@@ -264,11 +267,13 @@ export function AdminPanel() {
     setSelectedId(nextId);
     if (!nextId) {
       setSelected(null);
+      setReviewWorkflow(null);
       setActiveStep('video');
       return;
     }
-    const nextMatch = await getMatch(nextId);
+    const [nextMatch, nextWorkflow] = await Promise.all([getMatch(nextId), getReviewWorkflow(nextId)]);
     setSelected(nextMatch);
+    setReviewWorkflow(nextWorkflow);
     setPitchPoints(pointsFromPitchConfig(nextMatch.pitch_config));
     setActiveStep(nextStep || suggestedStep(nextMatch));
   }
@@ -303,9 +308,10 @@ export function AdminPanel() {
 
   useEffect(() => {
     if (!selectedId) return;
-    getMatch(selectedId)
-      .then((match) => {
+    Promise.all([getMatch(selectedId), getReviewWorkflow(selectedId)])
+      .then(([match, workflow]) => {
         setSelected(match);
+        setReviewWorkflow(workflow);
         setPitchPoints(pointsFromPitchConfig(match.pitch_config));
         setActiveStep(suggestedStep(match));
       })
@@ -343,8 +349,9 @@ export function AdminPanel() {
 
   async function refreshSelected(nextStep?: WorkflowStepId) {
     if (!selectedId) return;
-    const match = await getMatch(selectedId);
+    const [match, workflow] = await Promise.all([getMatch(selectedId), getReviewWorkflow(selectedId)]);
     setSelected(match);
+    setReviewWorkflow(workflow);
     setPitchPoints(pointsFromPitchConfig(match.pitch_config));
     if (nextStep) setActiveStep(nextStep);
   }
@@ -517,9 +524,8 @@ export function AdminPanel() {
 
   async function buildPackage() {
     if (!selectedId || isBusy) return;
-    const readiness = buildReviewReadiness(selected);
-    if (!readiness.readyForPackage) {
-      setStatus(`Nie mozna wygenerowac paczki: brakuje ${readiness.missingRequired.join(', ')}.`);
+    if (!reviewWorkflow?.can_publish) {
+      setStatus(`Nie mozna wygenerowac paczki: ${reviewWorkflow?.blockers[0]?.code || 'review_not_completed'}.`);
       return;
     }
     setBusyAction('package');
@@ -537,9 +543,8 @@ export function AdminPanel() {
 
   async function publishSelected(replace = false) {
     if (!selectedId || isBusy) return;
-    const readiness = buildReviewReadiness(selected);
-    if (!readiness.readyForPublish) {
-      setStatus(`Nie mozna opublikowac: brakuje ${readiness.missingRequired.join(', ')}.`);
+    if (!reviewWorkflow?.can_publish) {
+      setStatus(`Nie mozna opublikowac: ${reviewWorkflow?.blockers[0]?.code || 'review_not_completed'}.`);
       return;
     }
     setBusyAction('publish');
@@ -601,7 +606,7 @@ export function AdminPanel() {
     if ((nextStep === 'review' || nextStep === 'publish') && !isAnalysisCompleted(selected)) {
       return;
     }
-    if (nextStep === 'publish' && !buildReviewReadiness(selected).readyForPackage) {
+    if (nextStep === 'publish' && !reviewWorkflow?.can_enter_report) {
       return;
     }
     setActiveStep(nextStep);
@@ -612,7 +617,7 @@ export function AdminPanel() {
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
   const reviewStableOverlaySkipped = selected?.analysis_report?.parameters?.render_stable_overlay === false;
   const reviewReadiness = buildReviewReadiness(selected);
-  const steps = workflowSteps(activeStep, selected);
+  const steps = workflowSteps(activeStep, selected, reviewWorkflow);
   const activeJobStep = activeAnalysisJob ? activeProgressStep(activeAnalysisJob) : null;
   const activeJobCurrent = activeAnalysisJob ? progressCurrentText(activeAnalysisJob) : null;
   const activeJobElapsed = activeAnalysisJob
@@ -1209,13 +1214,13 @@ export function AdminPanel() {
               )}
             </div>
             <div className='row'>
-              <button type='button' onClick={buildPackage} disabled={isBusy || !reviewReadiness.readyForPackage}>
+              <button type='button' onClick={buildPackage} disabled={isBusy || !reviewWorkflow?.can_publish}>
                 {busyAction === 'package' ? 'Generuje...' : 'Generate match_package.json'}
               </button>
               <button
                 type='button'
                 onClick={() => publishSelected(false)}
-                disabled={isBusy || !reviewReadiness.readyForPublish}
+                disabled={isBusy || !reviewWorkflow?.can_publish}
               >
                 {busyAction === 'publish'
                   ? 'Publikuje...'
@@ -1227,7 +1232,7 @@ export function AdminPanel() {
                 type='button'
                 className='secondary'
                 onClick={() => publishSelected(true)}
-                disabled={isBusy || !reviewReadiness.readyForPublish}
+                disabled={isBusy || !reviewWorkflow?.can_publish}
               >
                 {reviewReadiness.warnings.length > 0 ? 'Replace anyway in DB' : 'Replace in DB'}
               </button>

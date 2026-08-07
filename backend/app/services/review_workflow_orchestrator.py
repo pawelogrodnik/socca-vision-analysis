@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+"""Mutation orchestration for the authoritative operator review workflow."""
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_reviewed_output_jobs import generate_reviewed_output
+from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_snapshot import finalize_reviewed_identity, get_reviewed_identity_status
+from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.review_workflow_state import (
+    WorkflowActionError,
+    assert_workflow_action_allowed,
+    get_review_workflow_state,
+)
+from app.services.review_workflow_store import (
+    current_approval_fingerprint,
+    load_json_object,
+    save_video_qa_approval,
+)
+
+
+logger = logging.getLogger(__name__)
+PROGRESS_FILENAME = "reviewed_identity_progress.json"
+RECOMPUTE_FAILURE_FILENAME = "review_workflow_recompute_failure.json"
+DEFAULT_RENDER_OPTIONS = {
+    "include_minimap": True,
+    "include_ball": True,
+    "show_roster_number": False,
+}
+
+
+def refresh_review_after_identity_mutation(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    source: str,
+) -> dict[str, Any]:
+    """Perform only the cheap reviewed-identity work needed for the next click."""
+    try:
+        snapshot = finalize_reviewed_identity(match_path, match_doc)
+        progress = build_reviewed_identity_progress(match_path, match_doc)
+        write_identity_json_atomic(
+            match_path / PROGRESS_FILENAME,
+            {
+                **progress,
+                "source_snapshot_digest": snapshot.get("semantic_digest"),
+                "workflow_refresh_source": source,
+            },
+        )
+    except Exception as exc:
+        write_identity_json_atomic(
+            match_path / RECOMPUTE_FAILURE_FILENAME,
+            {
+                "schema_version": "1.0.0",
+                "code": "review_recompute_failed",
+                "source": source,
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
+        logger.info(
+            "review_workflow action=refresh_failed match=%s source=%s error=%s",
+            match_doc.get("id") or match_path.name,
+            source,
+            type(exc).__name__,
+        )
+        raise ReviewWorkflowRecomputeError(str(exc)) from exc
+    (match_path / RECOMPUTE_FAILURE_FILENAME).unlink(missing_ok=True)
+    workflow = get_review_workflow_state(match_path, match_doc)
+    logger.info(
+        "review_workflow action=refresh match=%s source=%s phase=%s",
+        match_doc.get("id") or match_path.name,
+        source,
+        workflow.get("phase"),
+    )
+    return {"snapshot": snapshot, "review_progress": progress, "workflow": workflow}
+
+
+def finalize_review_for_qa(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = get_review_workflow_state(match_path, match_doc)
+    assert_workflow_action_allowed(state, "finalize_identity")
+    refreshed = refresh_review_after_identity_mutation(match_path, match_doc, source="finalize")
+    state = refreshed["workflow"]
+    if state["issues"]["blocking"]:
+        raise WorkflowActionError("identity_issues_remaining", state, "finalize_identity")
+    snapshot = get_reviewed_identity_status(match_path)
+    build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))
+    job = generate_reviewed_output(
+        match_path,
+        snapshot,
+        match_doc,
+        {**DEFAULT_RENDER_OPTIONS, **(options or {})},
+        stats_already_current=True,
+    )
+    workflow = get_review_workflow_state(match_path, match_doc)
+    logger.info(
+        "review_workflow action=finalize match=%s render_queued=%s fingerprint=%s",
+        match_doc.get("id") or match_path.name,
+        job.get("status") in {"queued", "running"},
+        str(snapshot.get("semantic_digest") or "")[:12],
+    )
+    return {"workflow": workflow, "reviewed_identity": snapshot, "render_job": job}
+
+
+def approve_review_video_qa(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    state = get_review_workflow_state(match_path, match_doc)
+    assert_workflow_action_allowed(state, "approve_video_qa")
+    snapshot = get_reviewed_identity_status(match_path)
+    stats = load_json_object(match_path / "reviewed_player_stats.json")
+    job = state.get("processing") or load_json_object(match_path / "reviewed_video_job.json") or {}
+    manifest = load_json_object(match_path / "reviewed_output_manifest.json")
+    approval = save_video_qa_approval(
+        match_path,
+        match_id=str(match_doc.get("id") or match_path.name),
+        fingerprints=current_approval_fingerprint(snapshot, stats, job, manifest),
+    )
+    workflow = get_review_workflow_state(match_path, match_doc)
+    logger.info("review_workflow action=qa_approved match=%s", match_doc.get("id") or match_path.name)
+    return {"approval": approval, "workflow": workflow}
+
+
+def retry_review_render(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    state = get_review_workflow_state(match_path, match_doc)
+    assert_workflow_action_allowed(state, "retry_render")
+    snapshot = get_reviewed_identity_status(match_path)
+    if snapshot.get("status") in {"missing", "stale"}:
+        raise WorkflowActionError("reviewed_identity_stale", state, "retry_render")
+    build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))
+    job = generate_reviewed_output(
+        match_path,
+        snapshot,
+        match_doc,
+        DEFAULT_RENDER_OPTIONS,
+        stats_already_current=True,
+    )
+    return {"workflow": get_review_workflow_state(match_path, match_doc), "render_job": job}
+
+
+def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    state = get_review_workflow_state(match_path, match_doc)
+    if "retry_review_recompute" not in set(state.get("allowed_actions") or []):
+        raise WorkflowActionError("workflow_action_not_allowed", state, "retry_review_recompute")
+    return refresh_review_after_identity_mutation(match_path, match_doc, source="retry")
+
+
+def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    refreshed = refresh_review_after_identity_mutation(match_path, match_doc, source="video_qa_correction")
+    workflow = refreshed["workflow"]
+    if workflow["issues"]["blocking"]:
+        return refreshed
+    snapshot = get_reviewed_identity_status(match_path)
+    build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))
+    job = generate_reviewed_output(
+        match_path,
+        snapshot,
+        match_doc,
+        DEFAULT_RENDER_OPTIONS,
+        stats_already_current=True,
+    )
+    return {**refreshed, "render_job": job, "workflow": get_review_workflow_state(match_path, match_doc)}
+
+
+class ReviewWorkflowRecomputeError(RuntimeError):
+    code = "review_recompute_failed"

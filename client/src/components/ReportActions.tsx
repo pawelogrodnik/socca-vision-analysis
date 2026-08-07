@@ -19,6 +19,8 @@ type ReportActionsProps = {
   onBuildPackage?: () => Promise<void> | void;
   onPublish?: () => Promise<void> | void;
   onReplacePublish?: () => Promise<void> | void;
+  workflowAllowed?: boolean;
+  workflowReason?: string;
 };
 
 function absoluteUrl(path: string): string {
@@ -64,6 +66,8 @@ export function ReportActions({
   onBuildPackage,
   onPublish,
   onReplacePublish,
+  workflowAllowed = true,
+  workflowReason,
 }: ReportActionsProps) {
   const location = useLocation();
   const [copyStatus, setCopyStatus] = useState('');
@@ -119,22 +123,24 @@ export function ReportActions({
       {(onBuildPackage || onPublish || onReplacePublish) && (
         <div className='report-actions-main'>
           {onBuildPackage && (
-            <button type='button' onClick={onBuildPackage} disabled={isBusy}>
+            <button type='button' onClick={onBuildPackage} disabled={isBusy || !workflowAllowed} title={workflowReason}>
               {busyAction === 'package' ? 'Generuje...' : 'Generuj package'}
             </button>
           )}
           {onPublish && (
-            <button type='button' onClick={onPublish} disabled={isBusy}>
+            <button type='button' onClick={onPublish} disabled={isBusy || !workflowAllowed} title={workflowReason}>
               {busyAction === 'publish' ? 'Publikuje...' : 'Publikuj raport'}
             </button>
           )}
           {onReplacePublish && (
-            <button type='button' className='secondary' onClick={onReplacePublish} disabled={isBusy}>
+            <button type='button' className='secondary' onClick={onReplacePublish} disabled={isBusy || !workflowAllowed} title={workflowReason}>
               {busyAction === 'replace' ? 'Nadpisuje...' : 'Nadpisz publikacje'}
             </button>
           )}
         </div>
       )}
+
+      {!workflowAllowed && workflowReason && <p className='report-action-status'>{workflowReason}</p>}
 
       {(copyStatus || status) && (
         <p className='report-action-status'>
