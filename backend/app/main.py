@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import time
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
+from app.logging_config import configure_application_logging
 from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
 from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, mark_interrupted_analysis_jobs, start_analysis_job
@@ -126,6 +128,11 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
+    application_logger = configure_application_logging()
+    application_logger.info(
+        "[app-logging] configured level=%s",
+        logging.getLevelName(application_logger.getEffectiveLevel()),
+    )
     mark_interrupted_analysis_jobs(MATCHES_DIR)
     init_publish_store()
 
