@@ -16,8 +16,11 @@ _SOURCE_PRIORITY = {
     "operator_seed_exact_observation": 60,
     "manual_new_player_confirmation": 50,
     "manual_review": 50,
+    "manual_stable_slot_binding": 50,
+    "legacy_subject_to_stable_slot_binding": 50,
     "operator_review": 50,
     "operator_seed_safe_lineage": 40,
+    "canonical_frame_global_identity": 30,
     "global_identity": 30,
     "stable_players": 30,
     "canonical_consensus": 30,
@@ -38,8 +41,10 @@ def build_frame_slot_demotions(
     tracklets: dict[str, dict[str, Any]],
     assignments: list[dict[str, Any]],
     exact_overrides: list[dict[str, Any]] | None = None,
+    canonical_ownership: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     exact_index = observation_index(exact_overrides or [])
+    canonical_index = observation_index(canonical_ownership or [])
     stable_claims: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
     player_claims: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
     assignment_by_tracklet = {
@@ -57,6 +62,7 @@ def build_frame_slot_demotions(
                 position,
                 exact_index,
                 {},
+                canonical_index,
             )
             status = str(effective.get("identity_status") or "unresolved")
             if status in _NON_PLAYER_STATUSES:

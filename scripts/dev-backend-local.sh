@@ -31,9 +31,12 @@ export PATH="$ROOT_DIR/backend/.venv-mps/bin:$PATH"
 export PYTHONPATH="$ROOT_DIR/backend${PYTHONPATH:+:$PYTHONPATH}"
 export YOLO_CONFIG_DIR="${YOLO_CONFIG_DIR:-$ROOT_DIR/.cache/ultralytics}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-$ROOT_DIR/.cache/matplotlib}"
+export APP_LOG_LEVEL="${APP_LOG_LEVEL:-INFO}"
+export UVICORN_LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"
 
 exec "$PYTHON_BIN" -m uvicorn app.main:app \
   --app-dir "$ROOT_DIR/backend" \
   --host "${BACKEND_HOST:-0.0.0.0}" \
   --port "${BACKEND_PORT:-8000}" \
+  --log-level "${UVICORN_LOG_LEVEL}" \
   --reload

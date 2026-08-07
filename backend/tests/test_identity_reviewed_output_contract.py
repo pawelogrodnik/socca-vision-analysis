@@ -11,14 +11,44 @@ from fastapi import HTTPException
 from app.services.identity_minimap import reviewed_ball_pitch_point
 from app.services.identity_reviewed_output_jobs import (
     ReviewedOutputBusyError,
+    _log_render,
     _reusable_job,
     generate_reviewed_output,
     reviewed_output_status,
 )
+from app.services.identity_reviewed_video import _ProgressEmitter, _parse_ffmpeg_progress
 from app.services.video import resolve_match_video_path
 
 
 class ReviewedOutputContractTests(unittest.TestCase):
+    def test_terminal_render_progress_has_safe_eta_and_throttles_frames(self) -> None:
+        emitted: list[dict] = []
+        emitter = _ProgressEmitter(emitted.append)
+        emitter.emit("render_frames", processed_frames=0, total_frames=100, force=True)
+        emitter.emit("render_frames", processed_frames=1, total_frames=100)
+        self.assertEqual(len(emitted), 1)
+        self.assertIsNone(emitted[0]["eta_sec"])
+        emitter.last_at -= 6
+        emitter.started_at -= 6
+        emitter.emit("render_frames", processed_frames=60, total_frames=100)
+        self.assertEqual(len(emitted), 2)
+        self.assertIsNotNone(emitted[-1]["eta_sec"])
+
+    def test_ffmpeg_progress_parser_and_terminal_log_are_compact(self) -> None:
+        parsed = _parse_ffmpeg_progress(["frame=2080\n", "out_time_us=70000000\n", "progress=continue\n"])
+        self.assertEqual(parsed["frame"], 2080)
+        self.assertEqual(parsed["progress"], "continue")
+        with tempfile.TemporaryDirectory() as temporary, patch("app.services.identity_reviewed_output_jobs.logger.info") as info:
+            _log_render(
+                {"job_key": "f81023a1long"},
+                Path(temporary) / "461e4dd9",
+                {"stage": "render_frames", "processed_frames": 1430, "total_frames": 2692, "progress": .531, "elapsed_sec": 252.4, "frames_per_sec": 5.67, "eta_sec": 222.5},
+            )
+            line = str(info.call_args.args[0])
+            self.assertIn("[reviewed-render]", line)
+            self.assertIn("match=461e4dd9", line)
+            self.assertIn("job=f81023a1", line)
+            self.assertIn("progress=53.1%", line)
     def test_match_video_resolver_supports_non_mp4_upload(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

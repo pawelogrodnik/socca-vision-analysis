@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "test": "node --test tests/*.test.ts",
     "test:preflight": "node --test tests/*.test.ts",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "build": "tsc && vite build",

@@ -167,6 +167,7 @@ def save_identity_roster_subject_review(
     match_doc: dict[str, Any] | None = None,
     updated_at: str | None = None,
     telemetry_events: list[dict[str, Any]] | None = None,
+    allow_seeded_override: bool = False,
 ) -> dict[str, Any]:
     artifact = _load_object(path / REVIEW_ARTIFACT_FILENAME)
     digest = identity_review_artifact_digest(artifact)
@@ -277,7 +278,10 @@ def save_identity_roster_subject_review(
         decision = str(decision)
         if decision not in PERSISTED_DECISIONS:
             raise ValueError(f"Unsupported persisted decision: {decision}")
-        if decision not in _effective_allowed_actions(card):
+        if decision not in _effective_allowed_actions(card) and not (
+            allow_seeded_override
+            and decision in {"assign_roster_player", "mark_unresolved"}
+        ):
             raise ValueError(f"Decision {decision} is blocked for {key}")
         player_id = _validated_player_id(card, decision, update.get("player_id"))
         next_decision = {
@@ -706,7 +710,7 @@ def _operator_roster_options(
         if not isinstance(team, dict):
             continue
         current_label = "A" if team_index == 0 else "B" if team_index == 1 else "U"
-        if current_label != team_label:
+        if team_label in {"A", "B"} and current_label != team_label:
             continue
         for player in team.get("players") or []:
             if not isinstance(player, dict) or not player.get("id"):

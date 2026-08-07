@@ -1720,7 +1720,11 @@ export type ReviewedIdentityDocument = {
 export type ReviewedOutputJob = {
   status: 'missing' | 'queued' | 'running' | 'completed' | 'failed' | 'stale';
   job_key?: string;
+  created_at?: string;
+  started_at?: string;
+  completed_at?: string;
   video_digest?: string;
+  source_snapshot_digest?: string;
   error?: { message?: string } | null;
 };
 
@@ -1731,6 +1735,9 @@ export type ReviewedPlayerStats = {
   detected_time_sec: number;
   observed_distance_m: number;
   heatmap_samples: number;
+  confirmed_detected_observations: number;
+  confirmed_fragments: number;
+  readiness?: Record<string, string>;
 };
 
 export type ReviewedStatsResponse = {
@@ -1748,11 +1755,150 @@ export type ReviewedStatsResponse = {
 export type ReviewedIdentityAt = {
   time_sec: number;
   frame: number;
-  entities: Array<{
-    display_label: string;
-    fallback_label: string;
-    identity_status: string;
-  }>;
+  reference_snapshot_stale?: boolean;
+  entities: ReviewedIdentityAtEntity[];
+};
+
+export type ReviewedIdentityAtEntity = {
+  frame: number;
+  time_sec: number;
+  tracklet_id: string;
+  candidate_subject_id: string | null;
+  candidate_subject_ids: string[];
+  team_label: string;
+  stable_anonymous_slot_id: string | null;
+  canonical_player_id: string | null;
+  player_name: string | null;
+  display_label: string;
+  identity_status: string;
+  identity_source: string | null;
+  fallback_label: string;
+  requires_review: boolean;
+  hard_blockers: string[];
+  conflicts: Array<Record<string, unknown>>;
+  detected_evidence_count: number;
+  frame_start: number;
+  frame_end: number;
+  observation_key?: string;
+  bbox_xyxy?: number[] | null;
+};
+
+export type ReviewedCorrectionAction =
+  | 'assign_roster_player'
+  | 'assign_existing_slot'
+  | 'assign_team'
+  | 'create_new_stable_player'
+  | 'referee'
+  | 'false_detection'
+  | 'team_unknown'
+  | 'unresolved';
+
+export type ReviewedCorrectionRosterOption = {
+  player_id: string;
+  player_name: string;
+  roster_number?: string | null;
+  team_label: string;
+};
+
+export type ReviewedCorrectionSlotOption = {
+  stable_slot_id: string;
+  team_label: string;
+  source: string;
+  status: string;
+};
+
+export type ReviewedCorrectionContext = {
+  candidate_subject_id: string;
+  team_label: string;
+  source_team_label: string;
+  effective_team_label: string;
+  available_team_labels: string[];
+  tracklet_ids: string[];
+  review_card_key: string | null;
+  roster_options: ReviewedCorrectionRosterOption[];
+  slot_options: ReviewedCorrectionSlotOption[];
+  current_decision: Record<string, unknown> | null;
+  semantic_decision_digest: string;
+};
+
+export type ReviewedCorrectionRequest = {
+  candidate_subject_id: string;
+  action: ReviewedCorrectionAction;
+  player_id?: string;
+  stable_slot_id?: string;
+  team_label?: string;
+  comment?: string;
+};
+
+export type ReviewedCorrectionResponse = {
+  saved_decision: Record<string, unknown> | null;
+  effective_action: ReviewedCorrectionAction;
+  allocated_stable_slot_id: string | null;
+  snapshot: { status: string; stale: boolean };
+  semantic_decision_digest: string;
+  review_progress: ReviewedIdentityReviewProgress;
+  decision_impact: ReviewedCorrectionDecisionImpact;
+};
+
+export type ReviewedIdentityReviewUnit = {
+  candidate_subject_id: string;
+  tracklet_ids: string[];
+  tracklet_count: number;
+  source_team_label: string;
+  effective_team_label: string;
+  frame_start: number | null;
+  frame_end: number | null;
+  detected_frame_count: number;
+  detected_observation_count: number;
+  detected_time_sec: number;
+  current_resolution_status: string;
+  priority: 'high' | 'optional' | null;
+  reason_codes: string[];
+};
+
+export type ReviewedIdentityReviewProgress = {
+  schema_version: string;
+  status: 'ready';
+  match_id: string;
+  summary: {
+    review_units_total: number;
+    review_units_completed: number;
+    review_units_actionable_total: number;
+    completed_by_operator: number;
+    completed_automatically: number;
+    important_decisions_remaining: number;
+    optional_cases_remaining: number;
+    structural_blockers: number;
+    ignored_low_impact: number;
+    operator_decisions_saved: number;
+    operator_queue_completion_ratio: number;
+  };
+  observations: {
+    total_detected_observations: number;
+    operator_reviewed_observations: number;
+    operator_reviewed_observation_ratio: number;
+    team_known_observations: number;
+    team_known_observation_ratio: number;
+    confirmed_player_observations: number;
+    confirmed_player_observation_ratio: number;
+  };
+  next_cases: ReviewedIdentityReviewUnit[];
+  technical_diagnostics: {
+    candidate_subjects: number;
+    tracklets: number;
+    unresolved_tracklet_assignments: number;
+  };
+  policy: Record<string, number>;
+};
+
+export type ReviewedCorrectionDecisionImpact = {
+  affected_tracklets: number;
+  affected_detected_observations: number;
+  important_decisions_remaining_before: number;
+  important_decisions_remaining_after: number;
+  operator_reviewed_observations_delta: number;
+  operator_reviewed_ratio_before: number;
+  operator_reviewed_ratio_after: number;
 };
 
 export type AnalysisPayload = {

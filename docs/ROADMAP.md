@@ -123,9 +123,9 @@ analysis
 ## MVP 5 — Video-driven correction
 
 - [x] timestamp lookup for active reviewed tracklets/subjects
-- [ ] correct assignment or mark unresolved
-- [ ] invalidate reviewed snapshot by digest
-- [ ] rebuild snapshot/video/stats without YOLO or tracking rerun
+- [x] correct assignment or mark unresolved
+- [x] invalidate reviewed snapshot by digest
+- [x] rebuild snapshot/video/stats without YOLO or tracking rerun
 
 ---
 

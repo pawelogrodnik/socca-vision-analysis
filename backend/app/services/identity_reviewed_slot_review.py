@@ -21,6 +21,8 @@ FILENAME = "reviewed_identity_slot_assignments.json"
 ALLOWED_ACTIONS = frozenset(
     {
         "assign_existing_slot",
+        "assign_roster_player",
+        "assign_team",
         "create_new_stable_player",
         "referee",
         "false_detection",
@@ -40,7 +42,30 @@ def load_reviewed_slot_assignments(match_path: Path) -> dict[str, Any]:
     return value
 
 
+def reviewed_slot_assignment_read_model(match_path: Path) -> dict[str, Any]:
+    document = load_reviewed_slot_assignments(match_path)
+    registry = build_reviewed_slot_registry(match_path, document)
+    return {
+        **document,
+        "slots": [registry[key] for key in sorted(registry)],
+    }
+
+
 def save_reviewed_slot_assignments(
+    match_path: Path,
+    candidate_document: dict[str, Any],
+    updates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    document = prepare_reviewed_slot_assignments(
+        match_path,
+        candidate_document,
+        updates,
+    )
+    write_identity_json_atomic(match_path / FILENAME, document)
+    return document
+
+
+def prepare_reviewed_slot_assignments(
     match_path: Path,
     candidate_document: dict[str, Any],
     updates: list[dict[str, Any]],
@@ -144,6 +169,33 @@ def save_reviewed_slot_assignments(
                 ambiguous_subjects,
                 subject_teams,
             )
+        elif action == "assign_roster_player":
+            team_label = str(raw.get("team_label") or "").upper()
+            _validate_subject_team(
+                subject_id,
+                team_label,
+                ambiguous_subjects,
+                subject_teams,
+            )
+            stable_slot_id = normalize_reviewed_slot_id(raw.get("stable_slot_id"))
+            if stable_slot_id:
+                if stable_slot_id not in registry:
+                    raise ValueError(
+                        f"canonical stable slot does not exist: {raw.get('stable_slot_id')}"
+                    )
+                if str(registry[stable_slot_id]["team_label"]) != team_label:
+                    raise ValueError(
+                        "canonical stable slot team does not match roster player"
+                    )
+        elif action == "assign_team":
+            team_label = str(raw.get("team_label") or "").upper()
+            _validate_subject_team(
+                subject_id,
+                team_label,
+                ambiguous_subjects,
+                subject_teams,
+            )
+            stable_slot_id = None
         elif action == "create_new_stable_player":
             stable_slot_id = str(raw["stable_slot_id"])
             team_label = str(raw["team_label"])
@@ -163,6 +215,8 @@ def save_reviewed_slot_assignments(
             ),
             "reviewed_at": _now(),
         }
+        if action == "assign_roster_player":
+            decision["player_id"] = str(raw.get("player_id") or "") or None
         if _semantic_decision(previous) == _semantic_decision(decision):
             decision["reviewed_at"] = (
                 previous.get("reviewed_at") or decision["reviewed_at"]
@@ -181,6 +235,34 @@ def save_reviewed_slot_assignments(
         sorted(decisions.values(), key=lambda row: str(row["candidate_subject_id"])),
         [reviewed_slots[key] for key in sorted(reviewed_slots)],
     )
+    return document
+
+
+def clear_reviewed_slot_assignment(
+    match_path: Path,
+    candidate_subject_id: str,
+) -> dict[str, Any]:
+    existing = load_reviewed_slot_assignments(match_path)
+    decisions = [
+        dict(row)
+        for row in existing.get("decisions") or []
+        if str(row.get("candidate_subject_id") or "") != candidate_subject_id
+    ]
+    referenced_slots = {
+        str(row["stable_slot_id"])
+        for row in decisions
+        if row.get("action") in {"assign_existing_slot", "create_new_stable_player"}
+        and row.get("stable_slot_id")
+    }
+    reviewed_slots = manual_reviewed_slot_records(existing)
+    for row in reviewed_slots:
+        row["status"] = (
+            "active" if row["stable_slot_id"] in referenced_slots else "orphaned"
+        )
+    document = _document(
+        sorted(decisions, key=lambda row: str(row.get("candidate_subject_id") or "")),
+        reviewed_slots,
+    )
     write_identity_json_atomic(match_path / FILENAME, document)
     return document
 
@@ -197,8 +279,8 @@ def _normalize_updates(
         if action not in ALLOWED_ACTIONS:
             raise ValueError(f"Unsupported reviewed slot action: {action}")
         team_label = str(raw.get("team_label") or "").upper() or None
-        if action == "create_new_stable_player" and team_label not in {"A", "B"}:
-            raise ValueError("create_new_stable_player requires team_label A or B")
+        if action in {"assign_team", "create_new_stable_player", "assign_roster_player"} and team_label not in {"A", "B"}:
+            raise ValueError(f"{action} requires team_label A or B")
         output.append(
             {
                 **raw,
@@ -236,6 +318,8 @@ def _candidate_context(
             str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
             for tracklet_id in tracklet_ids
             if tracklet_id in tracklets
+            and str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
+            in {"A", "B"}
         }
         for subject_id, tracklet_ids in subjects.items()
     }
@@ -253,7 +337,7 @@ def _validate_subject_team(
     teams = subject_teams.get(subject_id) or set()
     if len(teams) > 1:
         raise ValueError(f"mixed-team subject: {subject_id}")
-    if teams and teams != {expected_team}:
+    if teams and teams not in ({expected_team}, {"U"}):
         actual = next(iter(teams))
         raise ValueError(
             f"team mismatch: subject {subject_id} is team {actual}, slot is team {expected_team}"
@@ -325,9 +409,9 @@ def _semantic_decision(row: dict[str, Any]) -> dict[str, Any]:
             "candidate_subject_id",
             "action",
             "stable_slot_id",
+            "player_id",
             "team_label",
             "source",
-            "comment",
         )
     }
 
@@ -349,7 +433,7 @@ def _document(
     reviewed_slots: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "mode": "reviewed_identity_slot_assignments",
         "updated_at": _now(),
         "decisions": decisions,

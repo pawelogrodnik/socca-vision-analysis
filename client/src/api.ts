@@ -44,9 +44,13 @@ import type {
   TeamConfigReviewState,
   TrackletReviewState,
   ReviewedIdentityDocument,
+  ReviewedIdentityReviewProgress,
   ReviewedIdentityAt,
   ReviewedOutputJob,
   ReviewedStatsResponse,
+  ReviewedCorrectionContext,
+  ReviewedCorrectionRequest,
+  ReviewedCorrectionResponse,
 } from './types';
 import type {
   BoundedH2Session,
@@ -188,6 +192,12 @@ export async function getReviewedIdentity(matchId: string): Promise<ReviewedIden
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity`);
 }
 
+export async function getReviewedIdentityReviewProgress(matchId: string): Promise<ReviewedIdentityReviewProgress> {
+  return request<ReviewedIdentityReviewProgress>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress`,
+  );
+}
+
 export async function finalizeReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/finalize`, { method: 'POST' });
 }
@@ -202,6 +212,29 @@ export async function getReviewedOutputStatus(matchId: string): Promise<Reviewed
 
 export async function getReviewedIdentityAt(matchId: string, timeSec: number): Promise<ReviewedIdentityAt> {
   return request<ReviewedIdentityAt>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/at?time_sec=${encodeURIComponent(timeSec)}`);
+}
+
+export async function getReviewedCorrectionContext(
+  matchId: string,
+  candidateSubjectId: string,
+): Promise<ReviewedCorrectionContext> {
+  return request<ReviewedCorrectionContext>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/context?candidate_subject_id=${encodeURIComponent(candidateSubjectId)}`,
+  );
+}
+
+export async function saveReviewedIdentityCorrection(
+  matchId: string,
+  payload: ReviewedCorrectionRequest,
+): Promise<ReviewedCorrectionResponse> {
+  return request<ReviewedCorrectionResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export function reviewedVideoUrl(matchId: string, digest: string): string {

@@ -13,10 +13,11 @@ from app.services.identity_reviewed_snapshot_observations import (
     build_observation_overrides,
     observation_coverage,
 )
+from app.services.identity_canonical_ownership import global_observation_ownership
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
 from app.services.identity_reviewed_effective_observation import (
     effective_observations_by_frame,
-    visible_reviewed_player,
+    visible_reviewed_overlay,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
@@ -26,7 +27,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v4"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v7-frame-canonical-ownership"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -62,7 +63,13 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         documents["subjects"],
         documents["slot_review"],
     )
-    reviews = _review_decisions(documents["review_decisions"])
+    reviews = _review_decisions(documents["review_decisions"], documents["slot_review"])
+    slot_roster_bindings, conflicting_slot_roster_bindings = _slot_roster_bindings(
+        stable,
+        reviews,
+        documents["slot_review"],
+        roster,
+    )
     seeded_document, seeded_freshness = load_fresh_seeded_assignments(match_path)
     seeded = _safe_seeded_assignments(seeded_document or {}) if seeded_freshness.get("status") == "fresh" else {}
     observation_overrides = build_observation_overrides(
@@ -82,20 +89,53 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         status, player_id, source, evidence, blockers = _resolve_assignment(
             decision, accepted_seed
         )
+        slot_id = stable_row["stable_anonymous_slot_id"]
+        slot_binding = slot_roster_bindings.get(str(slot_id or ""))
+        if (
+            slot_binding
+            and not (decision and decision.get("decision") == "mark_unresolved")
+        ):
+            bound_player_id = str(slot_binding["player_id"])
+            if player_id and player_id != bound_player_id:
+                blockers.append("conflicting_subject_and_stable_slot_roster_binding")
+            else:
+                status = "confirmed"
+                player_id = bound_player_id
+                source = str(slot_binding["source"])
+                evidence = []
         manual_action = stable_row.get("manual_action")
         if manual_action in {"referee", "false_detection", "team_unknown", "unresolved"}:
             status = str(manual_action)
             player_id = None
             source = "manual_review"
+        elif manual_action == "assign_team" and player_id is None:
+            source = "operator_team_assignment"
+        if status == "assign_team":
+            status = "unresolved"
         blockers.extend(stable_row["hard_blockers"])
-        team_label = str(tracklet.get("team_label") or "U")
-        team_id = str(tracklet.get("team_id") or "")
+        team_label = (
+            "U"
+            if manual_action == "team_unknown"
+            else str(stable_row.get("effective_team_label") or tracklet.get("team_label") or "U")
+        )
+        team_id = (
+            ""
+            if manual_action == "team_unknown"
+            else str(tracklet.get("team_id") or "")
+        )
         player = roster.get(player_id or "")
+        if player and team_label == "U":
+            team_label = str(player["team_label"])
         assignment_conflicts: list[dict[str, Any]] = []
         if len(accepted_seeds) > 1:
             blockers.append("ambiguous_seeded_subject_membership")
         if _has_conflicting_review_decisions(decisions):
             assignment_conflicts.append({"code": "conflicting_explicit_operator_decisions"})
+        if slot_id in conflicting_slot_roster_bindings:
+            blockers.append("conflicting_stable_slot_roster_bindings")
+            assignment_conflicts.append(
+                {"code": "conflicting_stable_slot_roster_bindings"}
+            )
         for blocker in stable_row["hard_blockers"]:
             assignment_conflicts.append({"code": blocker})
         if assignment_conflicts or len(accepted_seeds) > 1:
@@ -108,7 +148,6 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
                 {"code": "cross_team_confirmed_assignment", "player_id": player_id}
             )
             status, player_id = "conflicted", None
-        slot_id = stable_row["stable_anonymous_slot_id"]
         fallback = str(stable_row["fallback_label"])
         display = (
             player["name"]
@@ -156,10 +195,18 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         assignments.append(row)
         conflicts.extend({"tracklet_id": tracklet_id, **item} for item in assignment_conflicts)
 
+    canonical_observation_assignments = _canonical_observation_assignments(
+        global_observation_ownership(documents["global_identity"]),
+        assignments,
+        slot_roster_bindings,
+        conflicting_slot_roster_bindings,
+        roster,
+    )
     observation_demotions, uniqueness = build_frame_slot_demotions(
         tracklets,
         assignments,
         observation_overrides,
+        canonical_observation_assignments,
     )
     conflicts.extend(
         {
@@ -175,8 +222,16 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         assignments,
         observation_overrides,
         observation_demotions,
+        canonical_observation_assignments,
     )
-    summary = _summary(assignments, coverage, fragmentation, uniqueness)
+    summary = _summary(
+        assignments,
+        coverage,
+        fragmentation,
+        uniqueness,
+        tracklets,
+        canonical_observation_assignments,
+    )
     source = _source_descriptor(documents, match_doc, seeded_freshness)
     status = (
         "blocked"
@@ -200,6 +255,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         },
         "entities": _entities(assignments),
         "tracklet_assignments": assignments,
+        "canonical_observation_assignments": canonical_observation_assignments,
         "observation_overrides": observation_overrides,
         "observation_demotions": observation_demotions,
         "summary": summary,
@@ -242,11 +298,47 @@ def reviewed_assignment_at(
     fps: float,
 ) -> list[dict[str, Any]]:
     frame = max(0, round(time_sec * fps))
-    return [
-        row
-        for row in effective_observations_by_frame(tracklets, snapshot).get(frame, [])
-        if visible_reviewed_player(row)
-    ]
+    output: list[dict[str, Any]] = []
+    for row in effective_observations_by_frame(tracklets, snapshot).get(frame, []):
+        if not visible_reviewed_overlay(row):
+            continue
+        entity = {
+            "frame": frame,
+            "time_sec": float(row.get("time_sec") or frame / fps),
+            "tracklet_id": row.get("tracklet_id"),
+            "candidate_subject_id": row.get("candidate_subject_id"),
+            "candidate_subject_ids": list(row.get("candidate_subject_ids") or []),
+            "team_label": row.get("team_label") or "U",
+            "stable_anonymous_slot_id": row.get("stable_anonymous_slot_id"),
+            "canonical_player_id": row.get("canonical_player_id"),
+            "player_name": row.get("player_name"),
+            "display_label": row.get("display_label"),
+            "identity_status": row.get("identity_status"),
+            "identity_source": row.get("identity_source"),
+            "fallback_label": row.get("fallback_label"),
+            "requires_review": bool(row.get("requires_review")),
+            "hard_blockers": list(row.get("hard_blockers") or []),
+            "conflicts": list(row.get("conflicts") or []),
+            "detected_evidence_count": int(row.get("detected_evidence_count") or 0),
+            "frame_start": (
+                int(row["frame_start"])
+                if row.get("frame_start") is not None
+                else frame
+            ),
+            "frame_end": (
+                int(row["frame_end"])
+                if row.get("frame_end") is not None
+                else frame
+            ),
+            "bbox_xyxy": row.get("bbox_xyxy"),
+        }
+        if row.get("observation_key"):
+            entity["observation_key"] = row["observation_key"]
+        output.append(entity)
+    return sorted(
+        output,
+        key=lambda row: (str(row.get("candidate_subject_id") or ""), str(row["tracklet_id"])),
+    )
 
 
 def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
@@ -297,12 +389,26 @@ def _source_digest(documents: dict[str, dict[str, Any]], match_doc: dict[str, An
     return canonical_digest(value)
 
 
-def _review_decisions(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def _review_decisions(
+    doc: dict[str, Any],
+    slot_review: dict[str, Any] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
     values: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in doc.get("decisions") or []:
         subject = str(row.get("candidate_subject_id") or "")
         if subject and str(row.get("decision")) in {"assign_roster_player", "confirm_recommended_player", "mark_unresolved"}:
             values[subject].append(dict(row))
+    for row in (slot_review or {}).get("decisions") or []:
+        subject = str(row.get("candidate_subject_id") or "")
+        if subject and str(row.get("action")) == "assign_roster_player":
+            values[subject].append(
+                {
+                    "candidate_subject_id": subject,
+                    "decision": "assign_roster_player",
+                    "player_id": row.get("player_id"),
+                    "source": "manual_reviewed_slot_assignment",
+                }
+            )
     return values
 
 
@@ -313,6 +419,216 @@ def _safe_seeded_assignments(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if provenance.get("team_consistency") and provenance.get("structural_gates_passed") and provenance.get("local_tracklet_continuity"):
             values[str(row.get("candidate_subject_id") or "")] = row
     return values
+
+
+def _slot_roster_bindings(
+    stable: dict[str, dict[str, Any]],
+    reviews: dict[str, list[dict[str, Any]]],
+    slot_review: dict[str, Any],
+    roster: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, str]], set[str]]:
+    claims: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in slot_review.get("decisions") or []:
+        if str(row.get("action") or "") != "assign_roster_player":
+            continue
+        slot_id = str(row.get("stable_slot_id") or "")
+        player_id = str(row.get("player_id") or "")
+        if _valid_slot_roster_pair(slot_id, player_id, roster):
+            claims[slot_id].append(
+                {
+                    "player_id": player_id,
+                    "source": "manual_stable_slot_binding",
+                }
+            )
+
+    subject_slots: dict[str, set[str]] = defaultdict(set)
+    blocked_subjects: set[str] = set()
+    for row in stable.values():
+        subject_id = str(row.get("candidate_subject_id") or "")
+        slot_id = str(row.get("stable_anonymous_slot_id") or "")
+        if not subject_id:
+            continue
+        if row.get("hard_blockers") or row.get("subject_propagation_blockers"):
+            blocked_subjects.add(subject_id)
+        elif slot_id:
+            subject_slots[subject_id].add(slot_id)
+
+    for subject_id, decisions in reviews.items():
+        slots = subject_slots.get(subject_id, set())
+        player_ids = {
+            str(row.get("player_id") or "")
+            for row in decisions
+            if row.get("decision") in {"assign_roster_player", "confirm_recommended_player"}
+            and row.get("player_id")
+        }
+        if subject_id in blocked_subjects or len(slots) != 1 or len(player_ids) != 1:
+            continue
+        slot_id = next(iter(slots))
+        player_id = next(iter(player_ids))
+        if _valid_slot_roster_pair(slot_id, player_id, roster):
+            claims[slot_id].append(
+                {
+                    "player_id": player_id,
+                    "source": "legacy_subject_to_stable_slot_binding",
+                }
+            )
+
+    bindings: dict[str, dict[str, str]] = {}
+    conflicts: set[str] = set()
+    for slot_id, rows in claims.items():
+        player_ids = {row["player_id"] for row in rows}
+        if len(player_ids) != 1:
+            conflicts.add(slot_id)
+            continue
+        manual_binding = next(
+            (
+                row
+                for row in rows
+                if row["source"] == "manual_stable_slot_binding"
+            ),
+            None,
+        )
+        bindings[slot_id] = manual_binding or rows[0]
+    return bindings, conflicts
+
+
+def _valid_slot_roster_pair(
+    slot_id: str,
+    player_id: str,
+    roster: dict[str, dict[str, Any]],
+) -> bool:
+    player = roster.get(player_id)
+    return bool(
+        len(slot_id) >= 2
+        and slot_id[0] in {"A", "B"}
+        and player
+        and str(player.get("team_label") or "") == slot_id[0]
+    )
+
+
+def _canonical_observation_assignments(
+    ownership_claims: list[dict[str, Any]],
+    assignments: list[dict[str, Any]],
+    slot_roster_bindings: dict[str, dict[str, str]],
+    conflicting_slot_roster_bindings: set[str],
+    roster: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply global per-frame ownership before exact seeds and uniqueness safety."""
+    assignment_by_tracklet = {
+        str(row.get("tracklet_id") or ""): row for row in assignments
+    }
+    output = []
+    for claim in ownership_claims:
+        tracklet_id = str(claim["tracklet_id"])
+        base = assignment_by_tracklet.get(tracklet_id)
+        if not base or str(base.get("identity_status") or "") in {
+            "false_detection",
+            "referee",
+            "team_unknown",
+        }:
+            continue
+        slot_id = str(claim["stable_slot_id"])
+        blockers = [
+            value
+            for value in base.get("hard_blockers") or []
+            if value != "upstream_multi_slot_tracklet_membership"
+        ]
+        conflicts = list(base.get("conflicts") or [])
+        explicit_unresolved = (
+            str(base.get("identity_status") or "") == "unresolved"
+            and str(base.get("identity_source") or "")
+            in {"operator_review", "manual_review"}
+        )
+        binding = slot_roster_bindings.get(slot_id)
+        player_id = None if explicit_unresolved else str((binding or {}).get("player_id") or "") or None
+        player = roster.get(player_id or "")
+        status = "unresolved" if explicit_unresolved else "confirmed" if player else "unresolved"
+        source = (
+            str(base.get("identity_source") or "manual_review")
+            if explicit_unresolved
+            else str((binding or {}).get("source") or "")
+            if player
+            else "canonical_frame_global_identity"
+        )
+        if slot_id in conflicting_slot_roster_bindings:
+            blockers.append("conflicting_stable_slot_roster_bindings")
+            conflicts.append({"code": "conflicting_stable_slot_roster_bindings"})
+            status, player_id, player, source = (
+                "conflicted",
+                None,
+                None,
+                "structural_safety",
+            )
+        local_team = str(base.get("team_label") or "U")
+        if local_team in {"A", "B"} and local_team != str(claim["team_label"]):
+            blockers.append("canonical_frame_local_team_conflict")
+            conflicts.append(
+                {
+                    "code": "canonical_frame_local_team_conflict",
+                    "global_team_label": str(claim["team_label"]),
+                    "local_team_label": local_team,
+                }
+            )
+            status, player_id, player, source = (
+                "conflicted",
+                None,
+                None,
+                "structural_safety",
+            )
+        output.append(
+            {
+                "tracklet_id": tracklet_id,
+                "frame": int(claim["frame"]),
+                "stable_anonymous_slot_id": (
+                    None if status == "conflicted" else slot_id
+                ),
+                "stable_anonymous_entity_id": (
+                    None if status == "conflicted" else slot_id
+                ),
+                "stable_anchor_source": "canonical_frame_global_identity",
+                "stable_anchor_status": "frame_level_canonical_ownership",
+                "stable_anchor_claims": [
+                    {
+                        "source": "global_identity",
+                        "stable_slot_id": slot_id,
+                    }
+                ],
+                "team_label": (
+                    local_team
+                    if status == "conflicted" and local_team in {"A", "B"}
+                    else str(claim["team_label"])
+                ),
+                "fallback_label": (
+                    f"{local_team}?"
+                    if status == "conflicted" and local_team in {"A", "B"}
+                    else slot_id
+                ),
+                "identity_status": status,
+                "canonical_player_id": player_id,
+                "player_name": player.get("name") if player else None,
+                "roster_number": player.get("number") if player else None,
+                "display_label": (
+                    str(player.get("name"))
+                    if player
+                    else f"{slot_id} !"
+                    if status == "conflicted"
+                    else slot_id
+                ),
+                "identity_source": source,
+                "eligible_for_player_stats": status == "confirmed",
+                "hard_blockers": sorted(set(blockers)),
+                "conflicts": conflicts,
+                "canonical_ownership_evidence": {
+                    "source": claim["ownership_evidence_source"],
+                    "field": claim["ownership_evidence_field"],
+                    "stable_subject_id": claim.get("stable_subject_id"),
+                },
+            }
+        )
+    return sorted(
+        output,
+        key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
+    )
 
 
 def _resolve_assignment(
@@ -340,8 +656,12 @@ def _summary(
     coverage: dict[str, Any],
     fragmentation: dict[str, Any],
     uniqueness: dict[str, Any],
+    tracklets: dict[str, dict[str, Any]],
+    canonical_observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    counts = Counter(str(row["identity_status"]) for row in assignments)
+    counts, technical = _effective_assignment_status_counts(
+        assignments, tracklets, canonical_observations
+    )
     return {
         "tracklets_total": len(assignments),
         "confirmed": counts["confirmed"],
@@ -351,7 +671,7 @@ def _summary(
         "blocked": counts["blocked"],
         "confirmed_players": len({row["canonical_player_id"] for row in assignments if row.get("canonical_player_id")}),
         **coverage,
-        "conflict_count": sum(bool(row["conflicts"]) for row in assignments),
+        "conflict_count": counts["conflicted"],
         "cross_team_violations": sum(any(value.get("code") == "cross_team_confirmed_assignment" for value in row["conflicts"]) for row in assignments),
         "invalid_roster_references": sum("invalid_roster_player" in row["hard_blockers"] for row in assignments),
         "stable_anonymous_entities": fragmentation["stable_anonymous_entities_total"],
@@ -359,7 +679,58 @@ def _summary(
         "automatic_permanent_allocations": fragmentation[
             "automatic_permanent_allocations"
         ],
+        **technical,
         **uniqueness,
+    }
+
+
+def _effective_assignment_status_counts(
+    assignments: list[dict[str, Any]],
+    tracklets: dict[str, dict[str, Any]],
+    canonical_observations: list[dict[str, Any]],
+) -> tuple[Counter[str], dict[str, int]]:
+    """Avoid treating a fully resolved frame-owned tracklet as a product conflict."""
+    ownership = {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)): row
+        for row in canonical_observations
+    }
+    counts: Counter[str] = Counter()
+    fully_resolved = 0
+    ownership_gaps = 0
+    for assignment in assignments:
+        tracklet_id = str(assignment.get("tracklet_id") or "")
+        technical_multi = "upstream_multi_slot_tracklet_membership" in (
+            assignment.get("hard_blockers") or []
+        )
+        detected = {
+            (tracklet_id, int(position.get("frame") or 0))
+            for position in tracklets.get(tracklet_id, {}).get("positions_m") or []
+            if str(position.get("status") or "detected") == "detected"
+            and str(position.get("source") or "detected") not in {"predicted", "interpolated", "unknown", "missing", "ambiguous"}
+        }
+        owned = [ownership.get(key) for key in detected]
+        if technical_multi and detected and all(owned):
+            statuses = {str(row.get("identity_status") or "unresolved") for row in owned if row}
+            if statuses == {"confirmed"}:
+                counts["confirmed"] += 1
+                fully_resolved += 1
+                continue
+            if statuses == {"unresolved"}:
+                counts["unresolved"] += 1
+                fully_resolved += 1
+                continue
+            counts["conflicted"] += 1
+            continue
+        if technical_multi and detected and not all(owned):
+            ownership_gaps += 1
+        counts[str(assignment.get("identity_status") or "unresolved")] += 1
+    return counts, {
+        "technical_multi_slot_tracklets": sum(
+            "upstream_multi_slot_tracklet_membership" in (row.get("hard_blockers") or [])
+            for row in assignments
+        ),
+        "fully_resolved_frame_owned_tracklets": fully_resolved,
+        "frame_ownership_gap_tracklets": ownership_gaps,
     }
 
 
@@ -427,6 +798,7 @@ def _semantic_input(value: Any) -> Any:
                 "operator_telemetry",
                 "telemetry_state",
                 "created_at",
+                "comment",
             }
         }
     return value

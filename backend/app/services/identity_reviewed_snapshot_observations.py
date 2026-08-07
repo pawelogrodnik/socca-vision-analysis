@@ -71,6 +71,7 @@ def observation_coverage(
     assignments: list[dict[str, Any]],
     overrides: list[dict[str, Any]],
     safety_demotions: list[dict[str, Any]],
+    canonical_ownership: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     counts: Counter[str] = Counter()
     unique: set[tuple[str, int]] = set()
@@ -79,6 +80,7 @@ def observation_coverage(
         assignments,
         overrides,
         safety_demotions,
+        canonical_ownership,
     ):
         key = (str(row["tracklet_id"]), int(row.get("frame") or 0))
         if key in unique:
