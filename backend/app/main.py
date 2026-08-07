@@ -1946,10 +1946,12 @@ def put_match_reviewed_slot_assignments(
 def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        result = finalize_review_for_qa(path, read_match_meta(path))
-        return {**result["reviewed_identity"], "workflow": result["workflow"], "render_job": result["render_job"]}
-    except WorkflowActionError as exc:
-        raise _workflow_http_error(exc) from exc
+        result = refresh_review_after_identity_mutation(
+            path,
+            read_match_meta(path),
+            source="legacy_reviewed_identity_finalize",
+        )
+        return {**result["snapshot"], "workflow": result["workflow"]}
     except ReviewWorkflowRecomputeError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
     except ReviewedOutputBusyError as exc:
@@ -1992,7 +1994,7 @@ def post_match_reviewed_identity_correction(
         result = save_reviewed_identity_correction(path, match_document, payload)
         refreshed = (
             after_video_qa_correction(path, match_document)
-            if state_before.get("phase") == "video_qa"
+            if state_before.get("phase") in {"video_qa", "complete"}
             else refresh_review_after_identity_mutation(
                 path,
                 match_document,

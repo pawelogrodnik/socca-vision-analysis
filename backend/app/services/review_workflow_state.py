@@ -8,6 +8,9 @@ from typing import Any
 
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
+from app.services.identity_seeded_review_reduction import (
+    load_initial_audit_completion_evidence,
+)
 from app.services.review_workflow_store import (
     approval_is_current,
     current_approval_fingerprint,
@@ -45,6 +48,10 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     render_current = bool(freshness.get("reviewed_output_current"))
     stats_current = bool(freshness.get("reviewed_stats_current"))
     identity_current = bool(freshness.get("reviewed_identity_current"))
+    progress_current = bool(freshness.get("review_progress_current", True))
+    progress_reason = str(
+        freshness.get("review_progress_reason") or "review_progress_missing"
+    )
     steps = {step_id: _step(step_id, "locked") for step_id in STEP_IDS}
     blockers: list[dict[str, Any]] = []
     allowed: list[str] = []
@@ -75,6 +82,26 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         return _state(match_id, True, "action_required", "initial_audit", steps, blockers, allowed, initial, issues, freshness, render, {"type": "identify_players", "step_id": "initial_audit", "remaining": initial.get("remaining")})
 
     steps["initial_audit"] = _step("initial_audit", "completed", completed=initial.get("completed"), total=initial.get("total"), remaining=0)
+    if not progress_current:
+        steps["exceptions"] = _step("exceptions", "error", progress_reason)
+        steps["finalize"] = _step("finalize", "locked", progress_reason)
+        steps["video_qa"] = _step("video_qa", "locked", progress_reason)
+        blockers.append(_blocker(progress_reason, "exceptions"))
+        return _state(
+            match_id,
+            True,
+            "error",
+            "exceptions",
+            steps,
+            blockers,
+            ["retry_review_recompute"],
+            initial,
+            issues,
+            freshness,
+            render,
+            {"type": "retry_review_recompute", "step_id": "exceptions"},
+        )
+
     if blocking:
         steps["exceptions"] = _step("exceptions", "current", completed=issues.get("completed"), total=issues.get("total"), remaining=blocking)
         steps["finalize"] = _step("finalize", "locked", "identity_issues_remaining", {"count": blocking})
@@ -103,7 +130,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     steps["finalize"] = _step("finalize", "completed")
     if qa_current:
         steps["video_qa"] = _step("video_qa", "completed")
-        return _state(match_id, True, "complete", "complete", steps, blockers, [], initial, issues, freshness, render, None)
+        return _state(match_id, True, "complete", "complete", steps, blockers, ["review_video", "correct_video_identity"], initial, issues, freshness, render, None)
     steps["video_qa"] = _step("video_qa", "current")
     return _state(match_id, True, "action_required", "video_qa", steps, blockers, ["review_video", "approve_video_qa", "correct_video_identity"], initial, issues, freshness, render, {"type": "approve_video_qa", "step_id": "video_qa"})
 
@@ -127,8 +154,8 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
         and output_manifest
         and output_manifest.get("stale") is not True
     )
-    progress = _cached_progress(match_path)
-    initial = _initial_audit_evidence(match_path)
+    progress, progress_reason = _current_cached_progress(match_path, snapshot)
+    initial = load_initial_audit_completion_evidence(match_path)
     issues = _issue_evidence(snapshot, progress)
     evidence = {
         "match_id": str(match_doc.get("id") or match_path.name),
@@ -140,6 +167,8 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
             "reviewed_stats_current": stats_current,
             "reviewed_output_current": output_current,
             "qa_approval_current": approval_is_current(approval, fingerprints) and output_current and stats_current,
+            "review_progress_current": progress is not None,
+            "review_progress_reason": progress_reason,
         },
         "render": _public_render(job),
         "recompute_failed": bool(load_json_object(match_path / "review_workflow_recompute_failure.json")),
@@ -148,6 +177,7 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
     state["technical_diagnostics"] = {
         "reviewed_snapshot_status": snapshot.get("status"),
         "cached_progress_available": progress is not None,
+        "review_progress_reason": progress_reason,
         "raw_structural_blockers": int(((progress or {}).get("summary") or {}).get("structural_blockers") or 0),
     }
     return state
@@ -166,35 +196,17 @@ def _analysis_completed(match_path: Path, match_doc: dict[str, Any]) -> bool:
     return report.get("status") == "completed" or str(match_doc.get("status") or "") in {"analyzed", "reviewed", "published"}
 
 
-def _initial_audit_evidence(match_path: Path) -> dict[str, Any]:
-    selection = load_json_object(match_path / "identity_initial_audit" / "identity_initial_audit_frame_selection.json")
-    seeds = load_json_object(match_path / "identity_operator_seeds.json")
-    if not selection:
-        return {"prepared": False, "complete": False, "completed": 0, "total": 0, "remaining": 0}
-    selected_frames = {
-        int(row.get("frame") or 0)
-        for row in selection.get("selected_frames") or []
-        if isinstance(row, dict)
-    }
-    # A reduced audit case is a deliberately curated frame, not every detection
-    # inside it. One explicit disposition on each selected frame proves the
-    # bounded evidence set was visited while retaining the 5–8 click budget.
-    decisions = list((seeds or {}).get("decisions") or [])
-    total = len(selected_frames)
-    completed = len(
-        {
-            int(row.get("frame_number") or -1)
-            for row in decisions
-            if int(row.get("frame_number") or -1) in selected_frames
-        }
-    )
-    safe_stop = bool(selection.get("safe_to_stop") or ((selection.get("completion") or {}).get("safe_to_stop")))
-    complete = safe_stop or (total > 0 and completed >= total)
-    return {"prepared": True, "complete": complete, "completed": completed, "total": total, "remaining": max(0, total - completed), "safe_to_stop": safe_stop}
-
-
-def _cached_progress(match_path: Path) -> dict[str, Any] | None:
-    return load_json_object(match_path / "reviewed_identity_progress.json")
+def _current_cached_progress(
+    match_path: Path,
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    progress = load_json_object(match_path / "reviewed_identity_progress.json")
+    if not progress:
+        return None, "review_progress_missing"
+    snapshot_digest = str(snapshot.get("semantic_digest") or "")
+    if not snapshot_digest or progress.get("source_snapshot_digest") != snapshot_digest:
+        return None, "review_progress_stale"
+    return progress, None
 
 
 def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, int]:

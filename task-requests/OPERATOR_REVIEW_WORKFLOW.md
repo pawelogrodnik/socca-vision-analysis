@@ -24,8 +24,8 @@ Authoritative inputs are:
 | Concern | Source |
 | --- | --- |
 | Analysis availability | `analysis_report.json` / match metadata |
-| Bounded initial audit | `identity_initial_audit/identity_initial_audit_frame_selection.json` and `identity_operator_seeds.json` |
-| Effective identity issues | `identity_reviewed_progress.py` and the fresh reviewed snapshot |
+| Bounded initial audit | selected audit observations plus fresh seeded-reduction completion evidence |
+| Effective identity issues | `reviewed_identity_progress.json` matching the fresh reviewed snapshot digest |
 | Identity freshness | `reviewed_identity_snapshot.json` source digest |
 | Stats/current output | reviewed stats files, `reviewed_video_job.json`, and `reviewed_output_manifest.json` |
 | Human QA | `reviewed_video_qa_approval.json` |
@@ -36,14 +36,21 @@ only unresolved/structurally unsafe effective identity is a blocker. A
 frame-owned multi-slot tracklet with safe effective observations is diagnostic
 only. A real ownership gap remains actionable when progress still reports it.
 
-Initial audit completion is evidence based: the bounded selection must be
-prepared and every currently required selected **frame case** must have at least
-one explicit stored disposition (including `skip`). A frame is the curated audit
-unit, so this preserves the 5–8 decision budget instead of turning every bbox
-inside those frames into a mandatory label. Future reducers may declare an
-earlier safe stop by adding `safe_to_stop: true` to the selection completion
-evidence; the state service recognises that additive flag. A missing selection
-is pending, not silently complete.
+Initial audit completion is evidence based at observation level, never at frame
+level. The seeded/reduced review infrastructure exposes a bounded set of
+representative, high-value observation cases (at most 12; one representative
+per relevant selected candidate subject). It is complete only when every such
+case has an explicit stored disposition, including `skip`, or when the current
+seeded reducer reports a deterministic safe stop because no further candidate
+review remains. One click in each selected frame is therefore not completion
+by itself, and every visible bbox is not mandatory. Missing or stale completion
+evidence fails closed and keeps the audit open.
+
+Cached reviewed progress is usable only when its
+`source_snapshot_digest` exactly equals the current reviewed identity semantic
+digest. Missing or stale progress blocks progression with
+`review_progress_missing` or `review_progress_stale` and exposes only the
+lightweight recompute action. The workflow GET never repairs this cache.
 
 ## Transition and orchestration table
 
@@ -52,14 +59,21 @@ is pending, not silently complete.
 | Initial-audit decision | Persist decision, rebuild seeded downstream review where available, finalize reviewed identity, rebuild effective progress, invalidate stale output | Initial audit or exceptions, based on fresh evidence |
 | Exception/slot decision | Persist decision, finalize reviewed identity, rebuild effective progress, invalidate stale output | Exceptions or ready to finalize |
 | Finalize for Video QA | Finalize identity, rebuild effective progress, build reviewed stats, queue/reuse reviewed render | `rendering_review_video` |
-| Video-QA correction | Persist correction, finalize identity and progress; if no blockers build stats and queue/reuse render | Exceptions if blocked, otherwise rendering |
+| Video-QA or already-approved correction | Persist correction, invalidate the approval by fingerprint lineage, finalize identity and progress; if no blockers build stats and queue/reuse one render | Exceptions if blocked, otherwise rendering and fresh QA required |
 | Approve Video QA | Persist exact current identity/stats/output fingerprints | Complete |
 | Retry render | Queue/reuse render only when identity and stats are current | Rendering |
 | Retry recompute | Repeat the lightweight identity/progress refresh | Derived state |
 
+`POST /reviewed-identity/finalize` remains a legacy lightweight review refresh:
+it finalizes identity and caches progress but never builds stats or queues a
+render. `POST /review-workflow/finalize` is the sole expensive boundary for
+identity → progress → stats → one reviewed-video render. The legacy reviewed
+video panel uses that workflow endpoint once for preparation while preserving
+its minimap, ball, and roster-number options.
+
 Lightweight review refresh never runs YOLO, tracking, global identity, or full
 analysis; it never renders video or rebuilds reviewed stats. Rendering is only
-queued by finalization, Video-QA correction, or explicit retry.
+queued by workflow finalization, Video-QA correction, or explicit retry.
 
 ## Gating and failures
 
@@ -80,7 +94,9 @@ QA approval is the only workflow fact persisted here. Its artifact is versioned
 and contains the exact reviewed identity digest, stats digest, output digest,
 and output manifest fingerprint. Workflow phases are always derived. Any later
 identity change makes an old approval stale by fingerprint mismatch without a
-revoke mutation.
+revoke mutation. A complete workflow still allows `review_video` and
+`correct_video_identity`; after a correction report/package/publish locks again
+until the replacement output is explicitly approved.
 
 If a lightweight refresh fails after a decision was saved, the API returns a
 structured `review_recompute_failed` workflow error. `retry-recompute` reruns

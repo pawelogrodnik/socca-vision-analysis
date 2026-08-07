@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 import {
+  finalizeReviewWorkflow,
   finalizeReviewedIdentity,
-  generateReviewedOutput,
   getReviewedIdentity,
   getReviewedIdentityReviewProgress,
   getReviewedIdentityAt,
@@ -131,14 +131,25 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   }
 
   async function generate() {
+    await prepareReviewedVideo();
+  }
+
+  function reviewedRenderOptions() {
+    return {
+      include_minimap: includeMinimap,
+      include_ball: includeBall,
+      show_roster_number: showNumber,
+    };
+  }
+
+  async function prepareReviewedVideo() {
     setBusy(true);
     setMessage('Dodano przygotowanie wideo do kolejki...');
     try {
-      setJob(await generateReviewedOutput(matchId, {
-        include_minimap: includeMinimap,
-        include_ball: includeBall,
-        show_roster_number: showNumber,
-      }));
+      const workflow = await finalizeReviewWorkflow(matchId, reviewedRenderOptions());
+      setJob(workflow.processing ?? await getReviewedOutputStatus(matchId));
+      setIdentity(await getReviewedIdentity(matchId));
+      setProgress(await getReviewedIdentityReviewProgress(matchId));
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -147,29 +158,9 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
   }
 
   async function finalizeAndRegenerate() {
-    setBusy(true);
-    setMessage('Przygotowuję aktualny wynik review...');
-    try {
-      const nextIdentity = await finalizeReviewedIdentity(matchId);
-      setIdentity(nextIdentity);
-      setProgress(await getReviewedIdentityReviewProgress(matchId));
-      if (nextIdentity.status === 'blocked') {
-        setMessage('Review wymaga decyzji. Wideo nie zostało uruchomione.');
-        return;
-      }
-      setAtTime(null);
-      setStats(null);
-      setMessage('Generuję wideo do review...');
-      setJob(await generateReviewedOutput(matchId, {
-        include_minimap: includeMinimap,
-        include_ball: includeBall,
-        show_roster_number: showNumber,
-      }));
-    } catch (error) {
-      setMessage(errorMessage(error));
-    } finally {
-      setBusy(false);
-    }
+    setAtTime(null);
+    setStats(null);
+    await prepareReviewedVideo();
   }
 
   async function inspectCurrentTime() {

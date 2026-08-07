@@ -1769,7 +1769,10 @@ export type ReviewWorkflow = {
     reviewed_stats_current: boolean;
     reviewed_output_current: boolean;
     qa_approval_current: boolean;
+    review_progress_current?: boolean;
+    review_progress_reason?: string | null;
   };
+  processing?: ReviewedOutputJob | null;
   blockers: Array<{ code: string; step_id: string; user_actionable: boolean; details: Record<string, unknown> }>;
   allowed_actions: ReviewWorkflowAction[];
 };

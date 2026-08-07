@@ -38,6 +38,44 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         ):
             _assert_publish_workflow(Path(tmp))
 
+    def test_legacy_finalize_only_refreshes_identity_and_progress(self) -> None:
+        from app.main import finalize_match_reviewed_identity
+
+        refreshed = {
+            "snapshot": {"status": "partial_reviewed", "semantic_digest": "identity"},
+            "workflow": {"phase": "ready_to_finalize"},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.refresh_review_after_identity_mutation", return_value=refreshed) as refresh, patch(
+            "app.main.finalize_review_for_qa"
+        ) as expensive:
+            response = finalize_match_reviewed_identity("m1")
+        self.assertEqual(response["semantic_digest"], "identity")
+        self.assertEqual(response["workflow"]["phase"], "ready_to_finalize")
+        self.assertEqual(refresh.call_args.kwargs["source"], "legacy_reviewed_identity_finalize")
+        expensive.assert_not_called()
+
+    def test_approved_complete_state_correction_uses_video_qa_orchestration(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        refreshed = {"workflow": {"phase": "rendering_review_video"}, "snapshot": {"semantic_digest": "new"}}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.get_review_workflow_state",
+            return_value={"phase": "complete", "allowed_actions": ["correct_video_identity"]},
+        ), patch(
+            "app.main.save_reviewed_identity_correction", return_value={"saved": True}
+        ), patch("app.main.after_video_qa_correction", return_value=refreshed) as after, patch(
+            "app.main.refresh_review_after_identity_mutation"
+        ) as lightweight:
+            response = post_match_reviewed_identity_correction("m1", {"candidate_subject_id": "subject-1", "action": "unresolved"})
+        self.assertTrue(response["saved"])
+        self.assertEqual(response["workflow"]["phase"], "rendering_review_video")
+        after.assert_called_once()
+        lightweight.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

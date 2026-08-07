@@ -63,6 +63,26 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["workflow"]["phase"], "exceptions")
             render.assert_not_called()
 
+    def test_video_qa_correction_without_blocker_rebuilds_once_and_returns_to_qa(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value={"workflow": {"issues": {"blocking": 0}, "phase": "ready_to_finalize"}, "snapshot": {"semantic_digest": "new"}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_reviewed_identity_status",
+            return_value={"semantic_digest": "new"},
+        ), patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
+            "app.services.review_workflow_orchestrator.generate_reviewed_output",
+            return_value={"status": "queued"},
+        ) as render, patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value={"phase": "rendering_review_video", "review_complete": False},
+        ):
+            result = after_video_qa_correction(Path(tmp), {"id": "m1"})
+            self.assertEqual(result["workflow"]["phase"], "rendering_review_video")
+            self.assertFalse(result["workflow"]["review_complete"])
+            stats.assert_called_once()
+            render.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

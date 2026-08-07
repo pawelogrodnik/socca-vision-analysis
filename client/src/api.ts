@@ -197,10 +197,19 @@ export async function getReviewWorkflow(matchId: string): Promise<ReviewWorkflow
   return request<ReviewWorkflow>(`/api/matches/${encodeURIComponent(matchId)}/review-workflow`);
 }
 
-export async function finalizeReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+export type ReviewedRenderOptions = {
+  include_minimap: boolean;
+  include_ball: boolean;
+  show_roster_number: boolean;
+};
+
+export async function finalizeReviewWorkflow(
+  matchId: string,
+  options: ReviewedRenderOptions,
+): Promise<ReviewWorkflow> {
   const response = await request<{ workflow: ReviewWorkflow }>(
     `/api/matches/${encodeURIComponent(matchId)}/review-workflow/finalize`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options) },
   );
   return response.workflow;
 }
@@ -239,7 +248,7 @@ export async function finalizeReviewedIdentity(matchId: string): Promise<Reviewe
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/finalize`, { method: 'POST' });
 }
 
-export async function generateReviewedOutput(matchId: string, options: { include_minimap: boolean; include_ball: boolean; show_roster_number: boolean }): Promise<ReviewedOutputJob> {
+export async function generateReviewedOutput(matchId: string, options: ReviewedRenderOptions): Promise<ReviewedOutputJob> {
   return request<ReviewedOutputJob>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-output/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options) });
 }
 
