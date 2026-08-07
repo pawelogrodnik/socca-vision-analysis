@@ -27,6 +27,10 @@ import {
   reviewedRenderStatusLabel,
   shouldShowInitialReviewCta,
 } from '../utils/reviewedOutputPresentation';
+import {
+  createReviewedRenderStatusPolling,
+  isReviewedRenderInProgress,
+} from '../utils/reviewedRenderPolling';
 import { clearReviewedDerivedOutput } from '../utils/reviewedOutputState';
 import { ReviewedIdentityAtTimePanel } from './ReviewedIdentityAtTimePanel';
 import { ReviewedPlayerStatsTable } from './ReviewedPlayerStatsTable';
@@ -87,10 +91,16 @@ export function ReviewedMatchOutputPanel({ matchId }: { matchId: string }) {
 
   useEffect(() => { void refresh(); }, [matchId]);
   useEffect(() => {
-    if (job?.status !== 'queued' && job?.status !== 'running') return undefined;
-    const timer = window.setInterval(() => { void refresh(); }, 1500);
-    return () => window.clearInterval(timer);
-  }, [job?.status]);
+    if (!isReviewedRenderInProgress(job?.status)) return undefined;
+    const polling = createReviewedRenderStatusPolling({
+      loadStatus: () => getReviewedOutputStatus(matchId),
+      onStatus: setJob,
+      onTerminalStatus: () => { void refresh(); },
+      onError: (error) => setMessage(errorMessage(error)),
+    });
+    polling.start();
+    return polling.stop;
+  }, [job?.status, matchId]);
   useEffect(() => {
     if (job?.status !== 'queued' && job?.status !== 'running') return undefined;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
