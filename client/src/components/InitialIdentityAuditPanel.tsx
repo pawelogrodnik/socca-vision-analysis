@@ -19,15 +19,18 @@ import type {
 import {
   createInitialIdentityAuditEventId,
   initialIdentityAuditActionLabel,
-  initialIdentityAuditClearUpdate,
   initialIdentityAuditDecisionMap,
   initialIdentityAuditPlayerAction,
-  initialIdentityAuditSeedUpdate,
   observationBoxStyle,
   type InitialIdentityAuditAction,
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
 import { RequiredFinalSaveQueue } from '../utils/requiredFinalSaveQueue';
+import {
+  InitialIdentityAuditFrameBatcher,
+  canStageInitialAuditDecision,
+  initialAuditBudgetReached,
+} from '../utils/initialIdentityAuditFrameBatch';
 import { initialAuditIdentityWorkIsComplete } from '../utils/initialIdentityAuditWorkflow';
 
 interface InitialIdentityAuditPanelProps {
@@ -37,11 +40,6 @@ interface InitialIdentityAuditPanelProps {
   benchmarkState?: string;
   onFinished?: () => Promise<void>;
 }
-
-type AuditSaveRequest = {
-  updates: InitialIdentityAuditSeedUpdate[];
-  telemetryEvents: InitialIdentityAuditTelemetryEvent[];
-};
 
 export function InitialIdentityAuditPanel({
   match,
@@ -59,14 +57,17 @@ export function InitialIdentityAuditPanel({
   const [decisions, setDecisions] = useState<Record<string, InitialIdentityAuditDecision>>({});
   const [seedStore, setSeedStore] = useState<InitialIdentityAuditSeedStoreDocument | null>(null);
   const [saving, setSaving] = useState(false);
+  const [transitionSaving, setTransitionSaving] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [auditIdentityWorkComplete, setAuditIdentityWorkComplete] = useState(false);
   const saveQueueRef = useRef(
     new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>(),
   );
-  const failedSaveRequestRef = useRef<AuditSaveRequest | null>(null);
+  const frameBatcherRef = useRef(new InitialIdentityAuditFrameBatcher());
+  const decisionsRef = useRef<Record<string, InitialIdentityAuditDecision>>({});
   const finishingRef = useRef(false);
+  const transitionSavingRef = useRef(false);
   const pendingSavesRef = useRef(0);
   const sessionIdRef = useRef('');
   const lastActivityAtRef = useRef(0);
@@ -90,14 +91,17 @@ export function InitialIdentityAuditPanel({
     setDecisions({});
     setSeedStore(null);
     setSaving(false);
+    setTransitionSaving(false);
     setFinishing(false);
     setSaveError(null);
     setAuditIdentityWorkComplete(false);
     saveQueueRef.current = (
       new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>()
     );
-    failedSaveRequestRef.current = null;
+    frameBatcherRef.current.reset();
+    decisionsRef.current = {};
     finishingRef.current = false;
+    transitionSavingRef.current = false;
     pendingSavesRef.current = 0;
     sessionIdRef.current = '';
     lastActivityAtRef.current = 0;
@@ -125,8 +129,24 @@ export function InitialIdentityAuditPanel({
     };
   }
 
+  function setCurrentDecisions(next: Record<string, InitialIdentityAuditDecision>) {
+    decisionsRef.current = next;
+    setDecisions(next);
+  }
+
+  function applyServerStore(nextStore: InitialIdentityAuditSeedStoreDocument) {
+    setSeedStore(nextStore);
+    setCurrentDecisions(frameBatcherRef.current.mergeServerDecisions(
+      initialIdentityAuditDecisionMap(nextStore.decisions),
+    ));
+    setAuditIdentityWorkComplete(
+      initialAuditIdentityWorkIsComplete(nextStore.workflow),
+    );
+  }
+
   async function performSave(
-    request: AuditSaveRequest,
+    updates: InitialIdentityAuditSeedUpdate[],
+    telemetryEvents: InitialIdentityAuditTelemetryEvent[],
   ): Promise<InitialIdentityAuditSeedStoreDocument> {
     const requestedMatchId = match.id;
     pendingSavesRef.current += 1;
@@ -134,39 +154,19 @@ export function InitialIdentityAuditPanel({
     try {
       const nextStore = await saveInitialIdentityAuditSeeds(
         requestedMatchId,
-        request.updates,
-        request.telemetryEvents,
+        updates,
+        telemetryEvents,
       );
       if (activeMatchIdRef.current === requestedMatchId) {
-        setSeedStore(nextStore);
-        setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
-        setAuditIdentityWorkComplete(
-          initialAuditIdentityWorkIsComplete(nextStore.workflow),
-        );
-        if (
-          failedSaveRequestRef.current === null
-          || failedSaveRequestRef.current === request
-        ) {
-          failedSaveRequestRef.current = null;
-          setSaveError(null);
-        }
+        applyServerStore(nextStore);
+        setSaveError(null);
       }
       return nextStore;
     } catch (error) {
       if (activeMatchIdRef.current === requestedMatchId) {
         const message = errorMessage(error);
-        failedSaveRequestRef.current ??= request;
         setSaveError(message);
         onStatus(message);
-        try {
-          const currentStore = await getInitialIdentityAuditSeeds(requestedMatchId);
-          if (activeMatchIdRef.current === requestedMatchId) {
-            setSeedStore(currentStore);
-            setDecisions(initialIdentityAuditDecisionMap(currentStore.decisions));
-          }
-        } catch {
-          // Keep the original save error visible. A later reopen retries loading.
-        }
       }
       throw error;
     } finally {
@@ -180,21 +180,30 @@ export function InitialIdentityAuditPanel({
     }
   }
 
-  function enqueueBackgroundSave(
-    updates: InitialIdentityAuditSeedUpdate[],
-    telemetryEvents: InitialIdentityAuditTelemetryEvent[],
-  ): void {
-    const request = { updates, telemetryEvents };
-    void saveQueueRef.current
-      .enqueue(() => performSave(request))
-      .catch(() => undefined);
+  async function flushPendingAuditChanges(
+    additionalTelemetry: InitialIdentityAuditTelemetryEvent[] = [],
+    finalize = false,
+  ): Promise<InitialIdentityAuditSeedStoreDocument | null> {
+    if (!frameBatcherRef.current.hasPendingChanges(additionalTelemetry)) return null;
+    const save = async () => {
+      const result = await frameBatcherRef.current.flush((batch) => (
+        performSave(batch.updates, batch.telemetryEvents)
+      ), additionalTelemetry);
+      if (!result) throw new Error('Brak oczekujących zmian audytu.');
+      return result;
+    };
+    return finalize
+      ? saveQueueRef.current.finalize(
+        async () => (await save()) as InitialIdentityAuditSeedStoreDocument,
+        async () => undefined,
+      )
+      : saveQueueRef.current.enqueue(save);
   }
 
   async function retryFailedSave() {
-    const request = failedSaveRequestRef.current;
-    if (!request || finishingRef.current) return;
+    if (!saveError || finishingRef.current || transitionSavingRef.current) return;
     try {
-      await saveQueueRef.current.enqueue(() => performSave(request));
+      await flushPendingAuditChanges();
       onStatus('Zapis został ponowiony poprawnie. Możesz zakończyć audyt.');
     } catch {
       // performSave keeps the actionable error visible in the modal.
@@ -210,9 +219,10 @@ export function InitialIdentityAuditPanel({
       ]);
       sessionIdRef.current = createInitialIdentityAuditEventId();
       lastActivityAtRef.current = Date.now();
+      frameBatcherRef.current.reset();
       setDocument(nextDocument);
       setSeedStore(nextStore);
-      setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+      setCurrentDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
       setAuditIdentityWorkComplete(
         initialAuditIdentityWorkIsComplete(nextStore.workflow),
       );
@@ -229,14 +239,14 @@ export function InitialIdentityAuditPanel({
         + `${nextStore.decisions.length} zapisanych decyzji.`,
       );
       const firstFrame = nextDocument.frames[0];
-      enqueueBackgroundSave([], [
+      void flushPendingAuditChanges([
         telemetryEvent('session_started'),
         ...(firstFrame
           ? [telemetryEvent('frame_shown', {
               audit_frame_key: firstFrame.audit_frame_key,
             })]
           : []),
-      ]);
+      ]).catch(() => undefined);
     } catch (error) {
       onStatus(errorMessage(error));
     } finally {
@@ -248,38 +258,37 @@ export function InitialIdentityAuditPanel({
     observation: InitialIdentityAuditObservation,
     action: InitialIdentityAuditAction,
   ) {
-    if (finishingRef.current || auditIdentityWorkComplete) return;
-    const existingDecision = decisions[observation.observation_key];
-    const budgetReached = seedStore?.operator_budget?.reached
-      ?? (
-        maximumActions !== undefined
-        && Object.values(decisions).filter((decision) => decision.kind !== 'skip').length
-          >= maximumActions
-      );
-    if (budgetReached && !existingDecision && action.kind !== 'skip') {
-      onStatus('Osiągnięto limit aktywnych decyzji w szybkim audycie. Możesz zmienić lub usunąć istniejącą decyzję.');
-      return;
-    }
+    if (finishingRef.current || transitionSavingRef.current || auditIdentityWorkComplete) return;
+    const currentDecisions = decisionsRef.current;
+    const localBudgetLimit = maximumActions ?? seedStore?.operator_budget?.limit;
     const decision: InitialIdentityAuditDecision = {
       ...action,
       observationKey: observation.observation_key,
     };
-    setDecisions((current) => ({
-      ...current,
+    if (!canStageInitialAuditDecision(
+      currentDecisions,
+      observation.observation_key,
+      decision,
+      Boolean(seedStore?.operator_budget?.reached),
+      localBudgetLimit,
+    )) {
+      onStatus('Osiągnięto limit aktywnych decyzji w szybkim audycie. Możesz zmienić lub usunąć istniejącą decyzję.');
+      return;
+    }
+    setCurrentDecisions({
+      ...currentDecisions,
       [observation.observation_key]: decision,
+    });
+    frameBatcherRef.current.stageDecision(decision);
+    frameBatcherRef.current.recordTelemetry(telemetryEvent('action', {
+      audit_frame_key: frame?.audit_frame_key,
+      observation_key: observation.observation_key,
     }));
     setSelectedObservationKey(observation.observation_key);
-    enqueueBackgroundSave(
-      [initialIdentityAuditSeedUpdate(decision)],
-      [telemetryEvent('action', {
-        audit_frame_key: frame?.audit_frame_key,
-        observation_key: observation.observation_key,
-      })],
-    );
   }
 
   function chooseAction(action: InitialIdentityAuditAction) {
-    if (auditIdentityWorkComplete) return;
+    if (auditIdentityWorkComplete || transitionSavingRef.current) return;
     if (selectedObservation) {
       applyAction(selectedObservation, action);
       setArmedAction(null);
@@ -291,40 +300,48 @@ export function InitialIdentityAuditPanel({
   function chooseObservation(observation: InitialIdentityAuditObservation) {
     if (finishingRef.current) return;
     setSelectedObservationKey(observation.observation_key);
-    enqueueBackgroundSave([], [
-      telemetryEvent('crop_clicked', {
-        audit_frame_key: frame?.audit_frame_key,
-        observation_key: observation.observation_key,
-      }),
-    ]);
+    frameBatcherRef.current.recordTelemetry(telemetryEvent('crop_clicked', {
+      audit_frame_key: frame?.audit_frame_key,
+      observation_key: observation.observation_key,
+    }));
     if (armedAction) {
       applyAction(observation, armedAction);
       setArmedAction(null);
     }
   }
 
-  function moveFrame(nextIndex: number) {
-    if (!document || finishingRef.current) return;
+  async function moveFrame(nextIndex: number) {
+    if (!document || finishingRef.current || transitionSavingRef.current) return;
     const boundedIndex = Math.min(
       document.frames.length - 1,
       Math.max(0, nextIndex),
     );
-    setFrameIndex(boundedIndex);
-    setSelectedObservationKey(null);
-    setArmedAction(null);
-    const nextFrame = document.frames[boundedIndex];
-    if (nextFrame) {
-      enqueueBackgroundSave([], [
-        telemetryEvent('frame_shown', {
+    if (boundedIndex === frameIndex) return;
+    transitionSavingRef.current = true;
+    setTransitionSaving(true);
+    try {
+      const saved = await flushPendingAuditChanges();
+      if (saved && initialAuditIdentityWorkIsComplete(saved.workflow)) return;
+      setFrameIndex(boundedIndex);
+      setSelectedObservationKey(null);
+      setArmedAction(null);
+      const nextFrame = document.frames[boundedIndex];
+      if (nextFrame) {
+        frameBatcherRef.current.recordTelemetry(telemetryEvent('frame_shown', {
           audit_frame_key: nextFrame.audit_frame_key,
-        }),
-      ]);
+        }));
+      }
+    } catch {
+      // performSave keeps local decisions and the actionable error visible.
+    } finally {
+      transitionSavingRef.current = false;
+      setTransitionSaving(false);
     }
   }
 
   async function finishAudit() {
-    if (finishingRef.current) return;
-    if (failedSaveRequestRef.current || saveError) {
+    if (finishingRef.current || transitionSavingRef.current) return;
+    if (saveError) {
       const message = 'Nie można zakończyć audytu — poprzedni zapis nie powiódł się. Ponów zapis i spróbuj ponownie.';
       setSaveError(message);
       onStatus(message);
@@ -332,36 +349,19 @@ export function InitialIdentityAuditPanel({
     }
     finishingRef.current = true;
     setFinishing(true);
-    const finalRequest: AuditSaveRequest = {
-      updates: [],
-      telemetryEvents: [telemetryEvent('session_finished')],
-    };
     try {
-      await saveQueueRef.current.finalize(
-        async () => {
-          if (failedSaveRequestRef.current) {
-            throw new Error(
-              'Nie można zakończyć audytu — oczekujący zapis nie powiódł się.',
-            );
-          }
-          return performSave(finalRequest);
-        },
-        async (finalStore) => {
-      setSeedStore(finalStore);
-      setDecisions(initialIdentityAuditDecisionMap(finalStore.decisions));
-      setAuditIdentityWorkComplete(
-        initialAuditIdentityWorkIsComplete(finalStore.workflow),
+      const finalStore = await flushPendingAuditChanges(
+        [telemetryEvent('session_finished')],
+        true,
       );
-          if (onFinished) {
-            onStatus('Audyt zakończony. Sprawdzam, czy pozostały przypadki wymagające decyzji…');
-            await onFinished();
-          } else {
-            onStatus(
-              `Zapisano audyt: ${finalStore.decisions.length} decyzji.`,
-            );
-          }
-        },
-      );
+      if (onFinished) {
+        onStatus('Audyt zakończony. Sprawdzam, czy pozostały przypadki wymagające decyzji…');
+        await onFinished();
+      } else {
+        onStatus(
+          `Zapisano audyt: ${finalStore?.decisions.length ?? 0} decyzji.`,
+        );
+      }
       setOpen(false);
     } catch (error) {
       const message = errorMessage(error);
@@ -376,22 +376,19 @@ export function InitialIdentityAuditPanel({
   function clearSelectedDecision() {
     if (
       finishingRef.current
+      || transitionSavingRef.current
       || auditIdentityWorkComplete
       || !selectedObservationKey
-      || !decisions[selectedObservationKey]
+      || !decisionsRef.current[selectedObservationKey]
     ) return;
-    setDecisions((current) => {
-      const next = { ...current };
-      delete next[selectedObservationKey];
-      return next;
-    });
-    enqueueBackgroundSave(
-      [initialIdentityAuditClearUpdate(selectedObservationKey)],
-      [telemetryEvent('action', {
-        audit_frame_key: frame?.audit_frame_key,
-        observation_key: selectedObservationKey,
-      })],
-    );
+    const next = { ...decisionsRef.current };
+    delete next[selectedObservationKey];
+    setCurrentDecisions(next);
+    frameBatcherRef.current.stageClear(selectedObservationKey);
+    frameBatcherRef.current.recordTelemetry(telemetryEvent('action', {
+      audit_frame_key: frame?.audit_frame_key,
+      observation_key: selectedObservationKey,
+    }));
   }
 
   const selectedDecision = selectedObservationKey
@@ -400,11 +397,12 @@ export function InitialIdentityAuditPanel({
   const activeDecisionCount = Object.values(decisions).filter(
     (decision) => decision.kind !== 'skip',
   ).length;
-  const actionBudgetReached = seedStore?.operator_budget?.reached
-    ?? (
-      maximumActions !== undefined
-      && activeDecisionCount >= maximumActions
-    );
+  const localBudgetLimit = maximumActions ?? seedStore?.operator_budget?.limit;
+  const actionBudgetReached = initialAuditBudgetReached(
+    decisions,
+    Boolean(seedStore?.operator_budget?.reached),
+    localBudgetLimit,
+  );
   const canCreateActiveDecision = !actionBudgetReached || Boolean(selectedDecision);
 
   return (
@@ -429,7 +427,9 @@ export function InitialIdentityAuditPanel({
                 <h2>Szybki audyt tożsamości</h2>
                 <span className='chip'>
                   {saving
-                    ? 'Zapisuję…'
+                    ? transitionSaving
+                      ? 'Zapisywanie klatki…'
+                      : 'Zapisuję…'
                     : saveError
                       ? 'Błąd zapisu'
                       : seedStore?.status === 'fresh'
@@ -466,7 +466,7 @@ export function InitialIdentityAuditPanel({
                 {' · '}
                 Decyzje {Object.keys(decisions).length}
                 {seedStore?.operator_budget
-                  ? ` · Aktywne ${seedStore.operator_budget.active_decisions}/${seedStore.operator_budget.limit}`
+                  ? ` · Aktywne ${activeDecisionCount}/${seedStore.operator_budget.limit}`
                   : maximumActions !== undefined
                     ? ` · Limit aktywnych ${maximumActions}`
                     : ''}
@@ -514,16 +514,16 @@ export function InitialIdentityAuditPanel({
                   <button
                     type='button'
                     onClick={() => moveFrame(frameIndex - 1)}
-                    disabled={frameIndex === 0}
+                    disabled={frameIndex === 0 || transitionSaving || finishing}
                   >
                     Poprzednia
                   </button>
                   <button
                     type='button'
                     onClick={() => moveFrame(frameIndex + 1)}
-                    disabled={frameIndex === document.frames.length - 1}
+                    disabled={frameIndex === document.frames.length - 1 || transitionSaving || finishing}
                   >
-                    Nastepna
+                    {transitionSaving ? 'Zapisywanie…' : 'Następna'}
                   </button>
                 </div>
               </div>
@@ -551,7 +551,7 @@ export function InitialIdentityAuditPanel({
                 {selectedDecision && (
                   <button
                     type='button'
-                    disabled={saving || finishing || auditIdentityWorkComplete}
+                    disabled={transitionSaving || finishing || auditIdentityWorkComplete}
                     onClick={clearSelectedDecision}
                   >
                     Usun decyzje dla tego bboxa
@@ -572,7 +572,7 @@ export function InitialIdentityAuditPanel({
                               type='button'
                               key={player.player_id}
                               className={active ? 'active' : ''}
-                              disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete}
+                              disabled={!canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete}
                               onClick={() => chooseAction(action)}
                               aria-pressed={active}
                             >
@@ -588,26 +588,26 @@ export function InitialIdentityAuditPanel({
                 <div className='initial-identity-audit-generic-actions'>
                   <button
                     type='button'
-                    disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete}
+                    disabled={!canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'A' })}
                   >
                     Team A - nieznany
                   </button>
                   <button
                     type='button'
-                    disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete}
+                    disabled={!canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B - nieznany
                   </button>
-                  <button type='button' disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'referee' })}>
-                    Sedzia
+                  <button type='button' disabled={!canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'referee' })}>
+                    Sędzia
                   </button>
-                  <button type='button' disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'false_detection' })}>
-                    Falszywa detekcja
+                  <button type='button' disabled={!canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'false_detection' })}>
+                    Fałszywa detekcja
                   </button>
-                  <button type='button' disabled={finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'skip' })}>
-                    Pomin / nie wiem
+                  <button type='button' disabled={transitionSaving || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'skip' })}>
+                    Pomiń / nie wiem
                   </button>
                 </div>
               </aside>
