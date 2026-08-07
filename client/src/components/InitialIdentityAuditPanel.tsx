@@ -195,7 +195,7 @@ export function InitialIdentityAuditPanel({
     if (!request || finishingRef.current) return;
     try {
       await saveQueueRef.current.enqueue(() => performSave(request));
-      onStatus('Zapis zostal ponowiony poprawnie. Mozesz zakonczyc audyt.');
+      onStatus('Zapis został ponowiony poprawnie. Możesz zakończyć audyt.');
     } catch {
       // performSave keeps the actionable error visible in the modal.
     }
@@ -218,7 +218,7 @@ export function InitialIdentityAuditPanel({
       );
       setSaveError(
         nextStore.status === 'stale'
-          ? 'Zapisane decyzje sa nieaktualne. Audyt zostal otwarty bez nich.'
+          ? 'Zapisane decyzje są nieaktualne. Audyt został otwarty bez nich.'
           : null,
       );
       setFrameIndex(0);
@@ -257,7 +257,7 @@ export function InitialIdentityAuditPanel({
           >= maximumActions
       );
     if (budgetReached && !existingDecision && action.kind !== 'skip') {
-      onStatus('Limit aktywnych decyzji H1 zostal osiagniety. Mozesz zmienic lub usunac istniejaca decyzje.');
+      onStatus('Osiągnięto limit aktywnych decyzji w szybkim audycie. Możesz zmienić lub usunąć istniejącą decyzję.');
       return;
     }
     const decision: InitialIdentityAuditDecision = {
@@ -325,7 +325,7 @@ export function InitialIdentityAuditPanel({
   async function finishAudit() {
     if (finishingRef.current) return;
     if (failedSaveRequestRef.current || saveError) {
-      const message = 'Nie mozna zakonczyc H1: poprzedni zapis nie powiodl sie. Ponow zapis i sprobuj ponownie.';
+      const message = 'Nie można zakończyć audytu — poprzedni zapis nie powiódł się. Ponów zapis i spróbuj ponownie.';
       setSaveError(message);
       onStatus(message);
       return;
@@ -341,7 +341,7 @@ export function InitialIdentityAuditPanel({
         async () => {
           if (failedSaveRequestRef.current) {
             throw new Error(
-              'Nie mozna zakonczyc H1: oczekujacy autosave nie powiodl sie.',
+              'Nie można zakończyć audytu — oczekujący zapis nie powiódł się.',
             );
           }
           return performSave(finalRequest);
@@ -353,11 +353,11 @@ export function InitialIdentityAuditPanel({
         initialAuditIdentityWorkIsComplete(finalStore.workflow),
       );
           if (onFinished) {
-            onStatus('H1 zakonczony. Przebudowuje artefakty i przygotowuje H2...');
+            onStatus('Audyt zakończony. Sprawdzam, czy pozostały przypadki wymagające decyzji…');
             await onFinished();
           } else {
             onStatus(
-              `IA2 zapisany: ${finalStore.decisions.length} decyzji operatora.`,
+              `Zapisano audyt: ${finalStore.decisions.length} decyzji.`,
             );
           }
         },
@@ -410,15 +410,15 @@ export function InitialIdentityAuditPanel({
   return (
     <section className='initial-identity-audit-panel'>
       <div>
-        <h3>Szybki audyt tozsamosci</h3>
+        <h3>Szybki audyt tożsamości</h3>
         <p className='muted'>
-          Kilka najlepszych klatek przed pelnym review. Wybierz tylko pewne osoby;
-          pozostale mozesz pominac.
+          Kilka najlepszych klatek przed pełnym Review. Wybierz tylko pewne osoby;
+          pozostałe możesz pominąć.
           {benchmarkState ? ` Stan benchmarku: ${benchmarkState}.` : ''}
         </p>
       </div>
       <button type='button' onClick={openAudit} disabled={loading}>
-        {loading ? 'Przygotowuje...' : 'Otworz szybki audyt'}
+        {loading ? 'Przygotowuję…' : 'Otwórz szybki audyt'}
       </button>
 
       {open && document && frame && (
@@ -426,12 +426,12 @@ export function InitialIdentityAuditPanel({
           <div className='initial-identity-audit-shell'>
             <header className='initial-identity-audit-header'>
               <div>
-                <h2>Szybki audyt tozsamosci</h2>
+                <h2>Szybki audyt tożsamości</h2>
                 <span className='chip'>
                   {saving
-                    ? 'Zapisuje...'
+                    ? 'Zapisuję…'
                     : saveError
-                      ? 'Blad zapisu'
+                      ? 'Błąd zapisu'
                       : seedStore?.status === 'fresh'
                         ? 'Zapis automatyczny'
                         : 'Nowy audyt'}
@@ -442,7 +442,7 @@ export function InitialIdentityAuditPanel({
                 onClick={() => void finishAudit()}
                 disabled={saving || finishing || Boolean(saveError)}
               >
-                {finishing ? 'Koncze...' : 'Zakoncz audyt'}
+                {finishing ? 'Kończę…' : 'Zakończ audyt'}
               </button>
             </header>
 
@@ -454,7 +454,7 @@ export function InitialIdentityAuditPanel({
                   disabled={saving || finishing}
                   onClick={() => void retryFailedSave()}
                 >
-                  Ponow zapis
+                  Ponów zapis
                 </button>
               </div>
             )}

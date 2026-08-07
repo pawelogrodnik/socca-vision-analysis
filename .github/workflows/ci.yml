@@ -35,6 +35,8 @@ jobs:
           cache-dependency-path: client/pnpm-lock.yaml
       - name: Install frontend dependencies
         run: pnpm --dir client install --frozen-lockfile
+      - name: Run frontend tests
+        run: pnpm --dir client run test:preflight
       - name: Typecheck frontend
         run: pnpm --dir client run typecheck
       - name: Build frontend

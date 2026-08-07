@@ -44,3 +44,15 @@ test('audit panel stops offering identity mutations once its response leaves ini
   assert.match(panel, /Wymagany audyt jest zakończony/);
   assert.match(panel, /initialAuditIdentityWorkIsComplete\(nextStore\.workflow\)/);
 });
+
+test('normal initial audit copy hides legacy H1, H2, and IA2 terminology', () => {
+  const panel = readFileSync(
+    new URL('../src/components/InitialIdentityAuditPanel.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(panel, /Osiągnięto limit aktywnych decyzji w szybkim audycie/);
+  assert.match(panel, /Nie można zakończyć audytu — poprzedni zapis nie powiódł się/);
+  assert.match(panel, /Audyt zakończony\. Sprawdzam, czy pozostały przypadki wymagające decyzji/);
+  assert.match(panel, /Zapisano audyt: \$\{finalStore\.decisions\.length\} decyzji/);
+  assert.doesNotMatch(panel, /\bH1\b|\bH2\b|\bIA2\b/);
+});
