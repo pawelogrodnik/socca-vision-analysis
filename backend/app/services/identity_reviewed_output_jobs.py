@@ -12,7 +12,11 @@ from typing import Any
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_stats import build_reviewed_stats
-from app.services.identity_reviewed_video import render_reviewed_video, reviewed_source_video_digest
+from app.services.identity_reviewed_video import (
+    RENDERER_VERSION,
+    render_reviewed_video,
+    reviewed_source_video_digest,
+)
 
 # Reviewed rendering is a local-first, single-host job. Ownership is persisted in
 # an O_EXCL filesystem lock and validated against the owner PID (plus an in-process
@@ -21,7 +25,6 @@ from app.services.identity_reviewed_video import render_reviewed_video, reviewed
 
 JOB_FILENAME = "reviewed_video_job.json"
 LOCK_FILENAME = "reviewed_video_job.lock"
-RENDERER_VERSION = "reviewed_video:v5"
 _active_job_keys: set[str] = set()
 _submission_lock = threading.Lock()
 logger = logging.getLogger(__name__)
@@ -243,6 +246,9 @@ def _run(
 
 def _log_render(job: dict[str, Any], match_path: Path, event: dict[str, Any]) -> None:
     """Write compact terminal-only render diagnostics; never mutate the job API."""
+    if event.get("stage") in {"performance_profile_stage", "performance_profile_summary"}:
+        _log_render_profile(job, match_path, event)
+        return
     job_key = str(job.get("job_key") or "")[:8]
     fields = [
         "[reviewed-render]",
@@ -262,6 +268,19 @@ def _log_render(job: dict[str, Any], match_path: Path, event: dict[str, Any]) ->
         fields.append(f"speed={float(event['frames_per_sec']):.2f}fps")
     if event.get("eta_sec") is not None:
         fields.append(f"eta={float(event['eta_sec']):.1f}s")
+    timing_profile = event.get("timing_profile")
+    if isinstance(timing_profile, dict):
+        for key in (
+            "decode_avg_ms",
+            "overlay_avg_ms",
+            "diagnostics_avg_ms",
+            "labels_avg_ms",
+            "minimap_avg_ms",
+            "hud_avg_ms",
+            "writer_avg_ms",
+        ):
+            if timing_profile.get(key) is not None:
+                fields.append(f"{key}={float(timing_profile[key]):.1f}")
     if event.get("output"):
         fields.append(f"output={event['output']}")
     if event.get("codec"):
@@ -271,6 +290,73 @@ def _log_render(job: dict[str, Any], match_path: Path, event: dict[str, Any]) ->
     if event.get("error"):
         fields.append(f"error={event['error']}")
     logger.info(" ".join(fields))
+
+
+def _log_render_profile(
+    job: dict[str, Any],
+    match_path: Path,
+    event: dict[str, Any],
+) -> None:
+    prefix = (
+        f"[reviewed-render-profile] match={job.get('match_id') or match_path.name} "
+        f"job={str(job.get('job_key') or '')[:8]}"
+    )
+    if event.get("stage") == "performance_profile_stage":
+        logger.info(
+            "%s stage=%s elapsed=%.3fs",
+            prefix,
+            event.get("profile_stage") or "unknown",
+            float(event.get("elapsed_sec") or 0),
+        )
+        return
+    profile = event.get("performance_profile")
+    if not isinstance(profile, dict):
+        return
+    resolution = event.get("resolution") or [0, 0]
+    logger.info(
+        "%s frames=%s resolution=%sx%s fps=%.2f",
+        prefix,
+        event.get("frames") or 0,
+        resolution[0],
+        resolution[1],
+        float(event.get("fps") or 0),
+    )
+    logger.info(
+        "%s decode=%.3fs diagnostics=%.3fs labels=%.3fs minimap=%.3fs "
+        "hud=%.3fs writer=%.3fs render_frames_wall=%.3fs render_other=%.3fs",
+        prefix,
+        float(profile.get("decode_sec") or 0),
+        float(profile.get("identity_diagnostics_sec") or 0),
+        float(profile.get("draw_labels_sec") or 0),
+        float(profile.get("draw_minimap_sec") or 0),
+        float(profile.get("draw_hud_sec") or 0),
+        float(profile.get("writer_write_sec") or 0),
+        float(profile.get("render_frames_wall_sec") or 0),
+        float(profile.get("render_other_sec") or 0),
+    )
+    throughput = profile.get("raw_avi_write_mb_per_sec")
+    logger.info(
+        "%s raw_avi=%.1fMB raw_avi_bytes=%s raw_write_throughput=%s",
+        prefix,
+        float(profile.get("raw_avi_mb") or 0),
+        profile.get("raw_avi_bytes") or 0,
+        f"{float(throughput):.2f}MB/s" if throughput is not None else "n/a",
+    )
+    encode_sec = float(profile.get("encode_mp4_sec") or 0)
+    frames = int(event.get("frames") or 0)
+    encode_fps = frames / encode_sec if frames and encode_sec > 0 else None
+    logger.info(
+        "%s encode_mp4=%.3fs encode_fps=%s hash_source=%.3fs hash_output=%.3fs "
+        "manifest_build=%.3fs manifest_write=%.3fs total_wall=%.3fs",
+        prefix,
+        encode_sec,
+        f"{encode_fps:.2f}" if encode_fps is not None else "n/a",
+        float(profile.get("hash_source_sec") or 0),
+        float(profile.get("hash_output_sec") or 0),
+        float(profile.get("manifest_build_sec") or 0),
+        float(profile.get("manifest_write_sec") or 0),
+        float(profile.get("total_wall_sec") or 0),
+    )
 
 
 def _acquire_lock(path: Path, owner: dict[str, Any]) -> bool:

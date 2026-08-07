@@ -3,6 +3,7 @@ from __future__ import annotations
 """Streaming reviewed MP4 renderer using the canonical reviewed snapshot only."""
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
@@ -23,6 +24,92 @@ from app.services.video import resolve_match_video_path
 
 
 RenderProgressCallback = Callable[[dict[str, Any]], None]
+RENDERER_VERSION = "reviewed_video:v6-profile"
+
+
+@dataclass
+class _RenderTimingProfile:
+    decode_sec: float = 0.0
+    identity_diagnostics_sec: float = 0.0
+    draw_labels_sec: float = 0.0
+    draw_minimap_sec: float = 0.0
+    draw_hud_sec: float = 0.0
+    writer_write_sec: float = 0.0
+    render_frames_wall_sec: float = 0.0
+    raw_avi_bytes: int = 0
+    encode_mp4_sec: float = 0.0
+    hash_source_sec: float = 0.0
+    hash_output_sec: float = 0.0
+    manifest_build_sec: float = 0.0
+    manifest_write_sec: float = 0.0
+    total_wall_sec: float = 0.0
+
+    @property
+    def render_other_sec(self) -> float:
+        measured = (
+            self.decode_sec
+            + self.identity_diagnostics_sec
+            + self.draw_labels_sec
+            + self.draw_minimap_sec
+            + self.draw_hud_sec
+            + self.writer_write_sec
+        )
+        return max(self.render_frames_wall_sec - measured, 0.0)
+
+    @property
+    def raw_avi_mb(self) -> float:
+        return self.raw_avi_bytes / (1024 * 1024)
+
+    @property
+    def raw_avi_write_mb_per_sec(self) -> float | None:
+        if self.writer_write_sec <= 0:
+            return None
+        return self.raw_avi_mb / self.writer_write_sec
+
+    def average_timings_ms(self, frame_count: int) -> dict[str, float]:
+        def average(seconds: float) -> float:
+            return seconds * 1000 / frame_count if frame_count > 0 else 0.0
+
+        overlay_sec = (
+            self.identity_diagnostics_sec
+            + self.draw_labels_sec
+            + self.draw_minimap_sec
+            + self.draw_hud_sec
+        )
+        return {
+            "decode_avg_ms": average(self.decode_sec),
+            "overlay_avg_ms": average(overlay_sec),
+            "diagnostics_avg_ms": average(self.identity_diagnostics_sec),
+            "labels_avg_ms": average(self.draw_labels_sec),
+            "minimap_avg_ms": average(self.draw_minimap_sec),
+            "hud_avg_ms": average(self.draw_hud_sec),
+            "writer_avg_ms": average(self.writer_write_sec),
+        }
+
+    def as_dict(self) -> dict[str, float | int | None]:
+        return {
+            "decode_sec": round(self.decode_sec, 6),
+            "identity_diagnostics_sec": round(self.identity_diagnostics_sec, 6),
+            "draw_labels_sec": round(self.draw_labels_sec, 6),
+            "draw_minimap_sec": round(self.draw_minimap_sec, 6),
+            "draw_hud_sec": round(self.draw_hud_sec, 6),
+            "writer_write_sec": round(self.writer_write_sec, 6),
+            "render_frames_wall_sec": round(self.render_frames_wall_sec, 6),
+            "render_other_sec": round(self.render_other_sec, 6),
+            "raw_avi_bytes": self.raw_avi_bytes,
+            "raw_avi_mb": round(self.raw_avi_mb, 3),
+            "raw_avi_write_mb_per_sec": (
+                round(self.raw_avi_write_mb_per_sec, 6)
+                if self.raw_avi_write_mb_per_sec is not None
+                else None
+            ),
+            "encode_mp4_sec": round(self.encode_mp4_sec, 6),
+            "hash_source_sec": round(self.hash_source_sec, 6),
+            "hash_output_sec": round(self.hash_output_sec, 6),
+            "manifest_build_sec": round(self.manifest_build_sec, 6),
+            "manifest_write_sec": round(self.manifest_write_sec, 6),
+            "total_wall_sec": round(self.total_wall_sec, 6),
+        }
 
 
 def render_reviewed_video(
@@ -35,24 +122,56 @@ def render_reviewed_video(
     show_roster_number: bool = False,
     progress_callback: RenderProgressCallback | None = None,
 ) -> dict[str, Any]:
+    total_wall_started = time.perf_counter()
     import cv2
 
+    profile = _RenderTimingProfile()
     emitter = _ProgressEmitter(progress_callback)
     emitter.emit("resolve_source_video")
     source = reviewed_source_video_path(match_path, match_doc)
-    output = match_path / "reviewed_video.mp4"; raw = match_path / "reviewed_video.raw.avi"; partial = match_path / "reviewed_video.partial.mp4"
+    output = match_path / "reviewed_video.mp4"
+    raw = match_path / "reviewed_video.raw.avi"
+    partial = match_path / "reviewed_video.partial.mp4"
     emitter.emit("load_render_inputs")
-    positions = _positions_by_frame(match_path, snapshot); pitch = _load_optional(match_path / "pitch_config.json"); balls = _ball_by_frame(match_path) if include_ball else {}
+    positions = _positions_by_frame(match_path, snapshot)
+    pitch = _load_optional(match_path / "pitch_config.json")
+    balls = _ball_by_frame(match_path) if include_ball else {}
     capture = cv2.VideoCapture(str(source))
-    if not capture.isOpened(): raise RuntimeError("Source video could not be opened")
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0); width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)); height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)); total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)); writer = cv2.VideoWriter(str(raw), cv2.VideoWriter_fourcc(*"MJPG"), fps, (width, height))
-    if not writer.isOpened(): capture.release(); raise RuntimeError("Could not create temporary reviewed video")
-    started=time.monotonic(); count=0; labeled_frames=0; confirmed_labels=0; fallback_labels=0; minimap_frames=0; ball_frames=0; duplicate_stable_labels=0; duplicate_canonical_players=0; max_simultaneous_stable_labels=0
+    if not capture.isOpened():
+        raise RuntimeError("Source video could not be opened")
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0)
+    width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    writer = cv2.VideoWriter(
+        str(raw),
+        cv2.VideoWriter_fourcc(*"MJPG"),
+        fps,
+        (width, height),
+    )
+    if not writer.isOpened():
+        capture.release()
+        raise RuntimeError("Could not create temporary reviewed video")
+    started = time.monotonic()
+    count = 0
+    labeled_frames = 0
+    confirmed_labels = 0
+    fallback_labels = 0
+    minimap_frames = 0
+    ball_frames = 0
+    duplicate_stable_labels = 0
+    duplicate_canonical_players = 0
+    max_simultaneous_stable_labels = 0
     emitter.emit("render_frames", processed_frames=0, total_frames=total, force=True)
+    render_frames_started = time.perf_counter()
     try:
         while True:
+            stage_started = time.perf_counter()
             ok, frame = capture.read()
-            if not ok: break
+            profile.decode_sec += time.perf_counter() - stage_started
+            if not ok:
+                break
+            stage_started = time.perf_counter()
             rows = positions.get(count, [])
             if rows:
                 labeled_frames += 1
@@ -63,24 +182,113 @@ def render_reviewed_video(
                 canonical_players = _rendered_canonical_players(rows)
                 duplicate_canonical_players += sum(value - 1 for value in Counter(canonical_players).values() if value > 1)
                 max_simultaneous_stable_labels = max(max_simultaneous_stable_labels, len(stable_labels))
+            profile.identity_diagnostics_sec += time.perf_counter() - stage_started
+            stage_started = time.perf_counter()
             _draw_rows(frame, rows, show_roster_number)
+            profile.draw_labels_sec += time.perf_counter() - stage_started
             minimap = {"status": "not_available", "reason": "pitch positions unavailable"}
+            stage_started = time.perf_counter()
             if include_minimap and pitch:
                 minimap = draw_reviewed_minimap(frame, [row for row in rows if visible_reviewed_player(row)], pitch_width=float(pitch.get("width_m") or 40), pitch_length=float(pitch.get("length_m") or 60), include_ball=include_ball, ball=balls.get(count))
                 minimap_frames += minimap.get("status") == "available"
                 ball_frames += bool(minimap.get("ball_rendered"))
+            profile.draw_minimap_sec += time.perf_counter() - stage_started
+            stage_started = time.perf_counter()
             _hud(frame, count, fps, rows, snapshot)
-            writer.write(frame); count += 1
-            emitter.emit("render_frames", processed_frames=count, total_frames=total)
-    finally: capture.release(); writer.release()
-    if count == 0: raw.unlink(missing_ok=True); raise RuntimeError("Renderer produced zero frames")
+            profile.draw_hud_sec += time.perf_counter() - stage_started
+            stage_started = time.perf_counter()
+            writer.write(frame)
+            profile.writer_write_sec += time.perf_counter() - stage_started
+            count += 1
+            emitter.emit(
+                "render_frames",
+                processed_frames=count,
+                total_frames=total,
+                timing_profile=profile,
+            )
+    finally:
+        capture.release()
+        writer.release()
+        profile.render_frames_wall_sec = time.perf_counter() - render_frames_started
+    if count == 0:
+        raw.unlink(missing_ok=True)
+        raise RuntimeError("Renderer produced zero frames")
+    profile.raw_avi_bytes = raw.stat().st_size
     emitter.emit("encode_mp4", processed_frames=count, total_frames=total, force=True)
+    stage_started = time.perf_counter()
     _encode(raw, partial, total_frames=total, progress_callback=emitter.emit)
-    partial.replace(output); raw.unlink(missing_ok=True)
+    profile.encode_mp4_sec = time.perf_counter() - stage_started
+    emitter.emit_profile_stage("encode_mp4", profile.encode_mp4_sec)
+    partial.replace(output)
+    raw.unlink(missing_ok=True)
     emitter.emit("validate_output", processed_frames=count, total_frames=total, force=True)
-    config={"include_minimap":include_minimap,"include_ball":include_ball,"show_roster_number":show_roster_number}; manifest={"schema_version":"1.3.0","status":"completed","generated_at":datetime.now(timezone.utc).isoformat(),"source_snapshot_digest":snapshot["semantic_digest"],"source_video_digest":_sha(source),"render_config_digest":canonical_digest(config),"renderer_version":"reviewed_video:v5","path":"reviewed_video.mp4","frames":count,"fps":fps,"resolution":[width,height],"duration_sec":round(count/fps,3),"file_size_bytes":output.stat().st_size,"digest":_sha(output),"render_duration_sec":round(time.monotonic()-started,3),"real_time_factor":round((count/fps)/max(time.monotonic()-started,.001),3),"semantic_checks":{"frames_with_player_labels":labeled_frames,"confirmed_labels_rendered":confirmed_labels,"fallback_labels_rendered":fallback_labels,"minimap_frames_rendered":minimap_frames,"ball_frames_rendered":ball_frames,"duplicate_stable_labels_rendered":duplicate_stable_labels,"duplicate_canonical_players_rendered":duplicate_canonical_players,"max_simultaneous_stable_labels":max_simultaneous_stable_labels},"minimap":minimap,"safety":{"reran_yolo":False,"reran_tracking":False,"production_identity_mutated":False}}
+    stage_started = time.perf_counter()
+    source_digest = _sha(source)
+    profile.hash_source_sec = time.perf_counter() - stage_started
+    stage_started = time.perf_counter()
+    output_digest = _sha(output)
+    profile.hash_output_sec = time.perf_counter() - stage_started
+    render_duration_sec = time.monotonic() - started
+    stage_started = time.perf_counter()
+    config = {
+        "include_minimap": include_minimap,
+        "include_ball": include_ball,
+        "show_roster_number": show_roster_number,
+    }
+    semantic_checks = {
+        "frames_with_player_labels": labeled_frames,
+        "confirmed_labels_rendered": confirmed_labels,
+        "fallback_labels_rendered": fallback_labels,
+        "minimap_frames_rendered": minimap_frames,
+        "ball_frames_rendered": ball_frames,
+        "duplicate_stable_labels_rendered": duplicate_stable_labels,
+        "duplicate_canonical_players_rendered": duplicate_canonical_players,
+        "max_simultaneous_stable_labels": max_simultaneous_stable_labels,
+    }
+    manifest = {
+        "schema_version": "1.4.0",
+        "status": "completed",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_snapshot_digest": snapshot["semantic_digest"],
+        "source_video_digest": source_digest,
+        "render_config_digest": canonical_digest(config),
+        "renderer_version": RENDERER_VERSION,
+        "path": "reviewed_video.mp4",
+        "frames": count,
+        "fps": fps,
+        "resolution": [width, height],
+        "duration_sec": round(count / fps, 3),
+        "file_size_bytes": output.stat().st_size,
+        "digest": output_digest,
+        "render_duration_sec": round(render_duration_sec, 3),
+        "real_time_factor": round((count / fps) / max(render_duration_sec, .001), 3),
+        "semantic_checks": semantic_checks,
+        "minimap": minimap,
+        "safety": {
+            "reran_yolo": False,
+            "reran_tracking": False,
+            "production_identity_mutated": False,
+        },
+        "performance_profile": {},
+    }
+    profile.manifest_build_sec = time.perf_counter() - stage_started
+    profile.total_wall_sec = time.perf_counter() - total_wall_started
+    manifest["performance_profile"] = profile.as_dict()
     emitter.emit("write_manifests", processed_frames=count, total_frames=total, force=True)
-    write_identity_json_atomic(match_path / "reviewed_video_manifest.json",manifest)
+    stage_started = time.perf_counter()
+    write_identity_json_atomic(match_path / "reviewed_video_manifest.json", manifest)
+    profile.manifest_write_sec = time.perf_counter() - stage_started
+    profile.total_wall_sec = time.perf_counter() - total_wall_started
+    manifest["performance_profile"] = profile.as_dict()
+    # A second atomic write persists the measured duration of the first full manifest write.
+    write_identity_json_atomic(match_path / "reviewed_video_manifest.json", manifest)
+    emitter.emit_profile_summary(
+        manifest["performance_profile"],
+        frames=count,
+        fps=fps,
+        width=width,
+        height=height,
+    )
     return manifest
 
 
@@ -170,6 +378,7 @@ class _ProgressEmitter:
         *,
         processed_frames: int | None = None,
         total_frames: int | None = None,
+        timing_profile: _RenderTimingProfile | None = None,
         force: bool = False,
     ) -> None:
         if self.callback is None:
@@ -187,19 +396,50 @@ class _ProgressEmitter:
             if total > 0 and speed and processed >= 30 and elapsed >= 2.0
             else None
         )
-        self.callback(
-            {
-                "stage": stage,
-                "processed_frames": processed_frames,
-                "total_frames": total_frames,
-                "progress": processed / total if total > 0 and processed_frames is not None else None,
-                "elapsed_sec": elapsed,
-                "frames_per_sec": speed,
-                "eta_sec": eta,
-            }
-        )
+        event: dict[str, Any] = {
+            "stage": stage,
+            "processed_frames": processed_frames,
+            "total_frames": total_frames,
+            "progress": processed / total if total > 0 and processed_frames is not None else None,
+            "elapsed_sec": elapsed,
+            "frames_per_sec": speed,
+            "eta_sec": eta,
+        }
+        if timing_profile is not None:
+            event["timing_profile"] = timing_profile.average_timings_ms(processed)
+        self.callback(event)
         self.last_at = now
         self.last_stage = stage
+
+    def emit_profile_stage(self, stage: str, elapsed_sec: float) -> None:
+        if self.callback is not None:
+            self.callback(
+                {
+                    "stage": "performance_profile_stage",
+                    "profile_stage": stage,
+                    "elapsed_sec": elapsed_sec,
+                }
+            )
+
+    def emit_profile_summary(
+        self,
+        performance_profile: dict[str, float | int | None],
+        *,
+        frames: int,
+        fps: float,
+        width: int,
+        height: int,
+    ) -> None:
+        if self.callback is not None:
+            self.callback(
+                {
+                    "stage": "performance_profile_summary",
+                    "frames": frames,
+                    "fps": fps,
+                    "resolution": [width, height],
+                    "performance_profile": performance_profile,
+                }
+            )
 
 
 def _parse_ffmpeg_progress(lines: list[str]) -> dict[str, int | str | None]:
