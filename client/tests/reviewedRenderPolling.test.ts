@@ -99,14 +99,14 @@ test('stopping reviewed render polling clears the pending timer', () => {
   assert.equal(clearedTimer, 42);
 });
 
-test('reviewed output panel polls only status and keeps correction progress event-driven', () => {
+test('reviewed video QA polls only render status and keeps corrections event-driven', () => {
   const panel = readFileSync(
-    resolve(import.meta.dirname, '../src/components/ReviewedMatchOutputPanel.tsx'),
+    resolve(import.meta.dirname, '../src/components/ReviewedVideoQaPanel.tsx'),
     'utf8',
   );
 
   assert.match(panel, /loadStatus: \(\) => getReviewedOutputStatus\(matchId\)/);
-  assert.match(panel, /onTerminalStatus: \(\) => \{ void refresh\(\); \}/);
+  assert.match(panel, /onWorkflowRefresh/);
   assert.doesNotMatch(panel, /setInterval\(\(\) => \{ void refresh\(\); \}, 1500\)/);
-  assert.match(panel, /setProgress\(result\.review_progress\)/);
+  assert.match(panel, /reviewedCorrectionWorkflowPresentation\(result\)/);
 });

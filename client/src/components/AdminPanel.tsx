@@ -27,12 +27,14 @@ import type {
 import { applyAnalysisPreset, preferredAcceleratedDevice, type AnalysisPresetId } from '../lib/analysisPreflight';
 import { DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL } from '../lib/modelDefaults';
 import { drawPitchOverlay, errorMessage } from '../lib/helpers';
-import { buildReviewReadiness } from '../lib/reviewReadiness';
 import { AnalysisArtifacts } from './AnalysisArtifacts';
 import { AnalysisForm } from './AnalysisForm';
 import { AnalysisPreflightPanel } from './AnalysisPreflightPanel';
 import { AnalysisQualityPanel } from './AnalysisQualityPanel';
 import { IdentityCandidatePanel } from '../IdentityCandidatePanel';
+import { IdentityReviewWorkspace } from './IdentityReviewWorkspace';
+import { IdentityCropReviewPanel } from './IdentityCropReviewPanel';
+import { IdentityRosterSubjectReviewPanel } from './IdentityRosterSubjectReviewPanel';
 import { MatchList } from './MatchList';
 import { MatchRosterPanel } from './MatchRosterPanel';
 import { MatchSummary } from './MatchSummary';
@@ -44,6 +46,7 @@ import { MetadataEditor } from './MetadataEditor';
 import { NewMatchForm } from './NewMatchForm';
 import { PublishedDatabasePanel } from './PublishedDatabasePanel';
 import { StablePlayersPanel } from './StablePlayersPanel';
+import { SecondHalfIdentityReanchorPanel } from './SecondHalfIdentityReanchorPanel';
 import { TeamConfigPanel } from './TeamConfigPanel';
 import { TrackletAssignmentPanel } from './TrackletAssignmentPanel';
 
@@ -616,7 +619,6 @@ export function AdminPanel() {
   const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || savedPitchConfig));
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
   const reviewStableOverlaySkipped = selected?.analysis_report?.parameters?.render_stable_overlay === false;
-  const reviewReadiness = buildReviewReadiness(selected);
   const steps = workflowSteps(activeStep, selected, reviewWorkflow);
   const activeJobStep = activeAnalysisJob ? activeProgressStep(activeAnalysisJob) : null;
   const activeJobCurrent = activeAnalysisJob ? progressCurrentText(activeAnalysisJob) : null;
@@ -865,25 +867,23 @@ export function AdminPanel() {
 
       {activeStep === 'review' && selected && (
         <>
-          <section className='card workflow-card'>
-            <div className='row between'>
-              <div>
-                <h2>3. Weryfikacja analizy i przypisanie zawodnikow</h2>
-                <p className='muted'>
-                  Przypisz tylko tych realnych zawodnikow, ktorych chcesz
-                  agregowac w profilach. Przeciwnik moze zostac anonimowy.
-                </p>
-              </div>
-              <div className='row'>
-                <Link to={`/matches/${encodeURIComponent(selected.id)}/report`}>
-                  Otworz raport roboczy
-                </Link>
-                <button type='button' onClick={() => setActiveStep('publish')}>
-                  Przejdz do publikacji
-                </button>
-              </div>
-            </div>
-          </section>
+          <IdentityReviewWorkspace
+            match={selected}
+            initialWorkflow={reviewWorkflow}
+            onWorkflowChanged={setReviewWorkflow}
+            onOpenReport={() => setActiveStep('publish')}
+          />
+          <details className='debug-details'>
+            <summary>Kadra meczu</summary>
+            <MatchRosterPanel
+              match={selected}
+              disabled={isBusy}
+              onSave={saveRosterTeams}
+              onStatus={setStatus}
+            />
+          </details>
+          <details className='debug-details'>
+            <summary>Developer / diagnostyka</summary>
           <section className='card workflow-card'>
             <div className='row between'>
               <div>
@@ -918,17 +918,22 @@ export function AdminPanel() {
             )}
           </section>
           <AnalysisQualityPanel match={selected} />
-          <MatchRosterPanel
-            match={selected}
-            disabled={isBusy}
-            onSave={saveRosterTeams}
-            onStatus={setStatus}
-          />
           <StablePlayersPanel
             match={selected}
             onStatus={setStatus}
             onSaved={() => refreshSelected('review')}
+            includeOperatorTools={false}
           />
+          <details className='debug-details'>
+            <summary>Legacy: cropy, re-anchor i whole-subject review</summary>
+            <SecondHalfIdentityReanchorPanel match={selected} onStatus={setStatus} />
+            <IdentityRosterSubjectReviewPanel match={selected} onStatus={setStatus} />
+            <IdentityCropReviewPanel
+              match={selected}
+              onStatus={setStatus}
+              onSaved={() => refreshSelected('review')}
+            />
+          </details>
           <details className='debug-details'>
             <summary>Opcjonalnie: team config i team stats</summary>
             <TeamConfigPanel
@@ -1154,6 +1159,7 @@ export function AdminPanel() {
               </>
             )}
           </details>
+          </details>
         </>
       )}
 
@@ -1182,40 +1188,13 @@ export function AdminPanel() {
             <div className='chips'>
               <span>Status: {selected.status || 'uploaded'}</span>
               <span>Analysis: {selected.analysis_report?.status || 'missing'}</span>
-              <span>Review: {reviewReadiness.statusLabel}</span>
+              <span>Review: {reviewWorkflow?.review_complete ? 'zakończony ✓' : 'wymaga ukończenia'}</span>
               <span>Package: {selected.match_package ? 'ready' : 'not generated'}</span>
               <span>Published: {selected.published_match_id || 'not yet'}</span>
             </div>
-            <div className='artifact-box'>
-              <h3>Review readiness</h3>
-              <div className='quality-list compact-list'>
-                {reviewReadiness.checks.map((check) => (
-                  <div key={check.key} className={`quality-row ${check.ready ? 'active' : ''}`}>
-                    <div>
-                      <strong>{check.label}</strong>
-                      <span>{check.ready ? 'ready' : 'missing'}</span>
-                    </div>
-                    <span>{check.required ? 'required' : 'optional'}</span>
-                  </div>
-                ))}
-              </div>
-              {reviewReadiness.warnings.length > 0 && (
-                <div className='quality-alert'>
-                  <strong>Review warnings</strong>
-                  {reviewReadiness.warnings.map((warning) => (
-                    <span key={warning}>{warning}</span>
-                  ))}
-                </div>
-              )}
-              {reviewReadiness.blocking && (
-                <p className='error'>
-                  Brakuje wymaganych danych: {reviewReadiness.missingRequired.join(', ')}.
-                </p>
-              )}
-            </div>
             <div className='row'>
               <button type='button' onClick={buildPackage} disabled={isBusy || !reviewWorkflow?.can_publish}>
-                {busyAction === 'package' ? 'Generuje...' : 'Generate match_package.json'}
+                {busyAction === 'package' ? 'Generuje...' : 'Przygotuj paczkę meczu'}
               </button>
               <button
                 type='button'
@@ -1224,9 +1203,7 @@ export function AdminPanel() {
               >
                 {busyAction === 'publish'
                   ? 'Publikuje...'
-                  : reviewReadiness.warnings.length > 0
-                    ? 'Publish anyway/import to DB'
-                    : 'Publish/import to DB'}
+                  : 'Opublikuj raport'}
               </button>
               <button
                 type='button'
@@ -1234,7 +1211,7 @@ export function AdminPanel() {
                 onClick={() => publishSelected(true)}
                 disabled={isBusy || !reviewWorkflow?.can_publish}
               >
-                {reviewReadiness.warnings.length > 0 ? 'Replace anyway in DB' : 'Replace in DB'}
+                Zastąp raport w bazie
               </button>
             </div>
           </section>

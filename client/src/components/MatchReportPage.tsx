@@ -9,7 +9,6 @@ import {
   sourceFromLocalMatch,
 } from './MatchReportContent';
 import { ReportActions } from './ReportActions';
-import { ReviewedMatchOutputPanel } from './ReviewedMatchOutputPanel';
 
 type ReportBusyAction = 'package' | 'publish' | 'replace' | null;
 
@@ -128,6 +127,12 @@ export function MatchReportPage() {
       )}
       {status && <p className='status'>{status}</p>}
 
+      {match && !workflow?.review_complete && <section className='status'>
+        <strong>Review meczu nie jest jeszcze zakończony.</strong>
+        <p>Wróć do kroku Review zawodników, aby dokończyć identyfikację i sprawdzenie wideo.</p>
+        <Link to='/admin-panel'>Wróć do Identity Review</Link>
+      </section>}
+
       {match && (
         <ReportActions
           mode='local'
@@ -151,8 +156,6 @@ export function MatchReportPage() {
           workflowReason={workflowGate.allowed ? undefined : `Najpierw zakoncz Review i zatwierdz Video QA (${workflowGate.reasonCode}).`}
         />
       )}
-
-      {match && <ReviewedMatchOutputPanel matchId={match.id} />}
 
       {reportSource && (
         <MatchReportContent
