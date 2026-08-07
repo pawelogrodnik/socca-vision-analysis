@@ -11,7 +11,11 @@ from app.services.identity_canonical_ownership import (
     slot_claims,
 )
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
-from app.services.identity_reviewed_snapshot import finalize_reviewed_identity
+from app.services.identity_reviewed_snapshot import (
+    _canonical_observation_assignments,
+    _summary,
+    finalize_reviewed_identity,
+)
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
 
 
@@ -148,6 +152,84 @@ class CanonicalOwnershipTests(unittest.TestCase):
         self.assertEqual(diagnostics["duplicate_stable_slot_claim_groups"], 1)
         self.assertEqual([row["tracklet_id"] for row in demotions], ["duplicate"])
 
+    def test_explicit_unresolved_suppresses_frame_slot_roster_binding(self) -> None:
+        claims = [_ownership("A05", 10), _ownership("A08", 20)]
+        base = {
+            **_assignment("t1", None),
+            "identity_status": "unresolved",
+            "identity_source": "manual_review",
+        }
+        rows = _canonical_observation_assignments(
+            claims,
+            [base],
+            {"A05": {"player_id": "p05", "source": "manual_stable_slot_binding"}},
+            set(),
+            {"p05": {"name": "Krzysiek", "number": "5"}},
+        )
+        by_frame = {row["frame"]: row for row in rows}
+        self.assertEqual(by_frame[10]["stable_anonymous_slot_id"], "A05")
+        self.assertEqual(by_frame[10]["identity_status"], "unresolved")
+        self.assertIsNone(by_frame[10]["canonical_player_id"])
+        self.assertEqual(by_frame[10]["display_label"], "A05")
+        self.assertEqual(by_frame[20]["stable_anonymous_slot_id"], "A08")
+        self.assertIsNone(by_frame[20]["canonical_player_id"])
+
+    def test_special_operator_actions_are_not_overridden_by_frame_ownership(self) -> None:
+        claim = [_ownership("A05", 10)]
+        for action in ("false_detection", "referee", "team_unknown"):
+            with self.subTest(action=action):
+                rows = _canonical_observation_assignments(
+                    claim,
+                    [{**_assignment("t1", None), "identity_status": action}],
+                    {"A05": {"player_id": "p05", "source": "manual_stable_slot_binding"}},
+                    set(),
+                    {"p05": {"name": "Krzysiek", "number": "5"}},
+                )
+                self.assertEqual(rows, [])
+
+    def test_fully_owned_multi_slot_tracklet_is_not_a_phantom_conflict(self) -> None:
+        assignments = [
+            {
+                **_assignment("t1", None),
+                "identity_status": "conflicted",
+                "hard_blockers": ["upstream_multi_slot_tracklet_membership"],
+            }
+        ]
+        ownership = [
+            {**_ownership("A05", 10), "identity_status": "confirmed"},
+            {**_ownership("A08", 20), "identity_status": "confirmed"},
+        ]
+        summary = _summary(
+            assignments,
+            {},
+            {"stable_anonymous_entities_total": 0, "unanchored_fragments": 0, "automatic_permanent_allocations": 0},
+            {},
+            {"t1": _tracklet("t1", "A", [10, 20])},
+            ownership,
+        )
+        self.assertEqual(summary["confirmed"], 1)
+        self.assertEqual(summary["conflicted"], 0)
+        self.assertEqual(summary["fully_resolved_frame_owned_tracklets"], 1)
+
+    def test_multi_slot_tracklet_with_ownership_gap_stays_reviewable(self) -> None:
+        assignments = [
+            {
+                **_assignment("t1", None),
+                "identity_status": "conflicted",
+                "hard_blockers": ["upstream_multi_slot_tracklet_membership"],
+            }
+        ]
+        summary = _summary(
+            assignments,
+            {},
+            {"stable_anonymous_entities_total": 0, "unanchored_fragments": 0, "automatic_permanent_allocations": 0},
+            {},
+            {"t1": _tracklet("t1", "A", [10, 20])},
+            [{**_ownership("A05", 10), "identity_status": "confirmed"}],
+        )
+        self.assertEqual(summary["conflicted"], 1)
+        self.assertEqual(summary["frame_ownership_gap_tracklets"], 1)
+
 
 def _slot(slot_id: str, tracklet_id: str, frames: list[int]) -> dict:
     return {
@@ -196,6 +278,19 @@ def _assignment(tracklet_id: str, slot_id: str | None) -> dict:
         "identity_status": "unresolved",
         "fallback_label": slot_id or "A?",
         "identity_source": "global_identity",
+        "hard_blockers": [],
+        "conflicts": [],
+    }
+
+
+def _ownership(slot_id: str, frame: int) -> dict:
+    return {
+        "tracklet_id": "t1",
+        "frame": frame,
+        "stable_slot_id": slot_id,
+        "team_label": "A",
+        "ownership_evidence_source": "global_identity",
+        "ownership_evidence_field": "overlay_positions",
     }
 
 

@@ -224,7 +224,14 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         observation_demotions,
         canonical_observation_assignments,
     )
-    summary = _summary(assignments, coverage, fragmentation, uniqueness)
+    summary = _summary(
+        assignments,
+        coverage,
+        fragmentation,
+        uniqueness,
+        tracklets,
+        canonical_observation_assignments,
+    )
     source = _source_descriptor(documents, match_doc, seeded_freshness)
     status = (
         "blocked"
@@ -527,12 +534,19 @@ def _canonical_observation_assignments(
             if value != "upstream_multi_slot_tracklet_membership"
         ]
         conflicts = list(base.get("conflicts") or [])
+        explicit_unresolved = (
+            str(base.get("identity_status") or "") == "unresolved"
+            and str(base.get("identity_source") or "")
+            in {"operator_review", "manual_review"}
+        )
         binding = slot_roster_bindings.get(slot_id)
-        player_id = str((binding or {}).get("player_id") or "") or None
+        player_id = None if explicit_unresolved else str((binding or {}).get("player_id") or "") or None
         player = roster.get(player_id or "")
-        status = "confirmed" if player else "unresolved"
+        status = "unresolved" if explicit_unresolved else "confirmed" if player else "unresolved"
         source = (
-            str((binding or {}).get("source") or "")
+            str(base.get("identity_source") or "manual_review")
+            if explicit_unresolved
+            else str((binding or {}).get("source") or "")
             if player
             else "canonical_frame_global_identity"
         )
@@ -642,8 +656,12 @@ def _summary(
     coverage: dict[str, Any],
     fragmentation: dict[str, Any],
     uniqueness: dict[str, Any],
+    tracklets: dict[str, dict[str, Any]],
+    canonical_observations: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    counts = Counter(str(row["identity_status"]) for row in assignments)
+    counts, technical = _effective_assignment_status_counts(
+        assignments, tracklets, canonical_observations
+    )
     return {
         "tracklets_total": len(assignments),
         "confirmed": counts["confirmed"],
@@ -653,7 +671,7 @@ def _summary(
         "blocked": counts["blocked"],
         "confirmed_players": len({row["canonical_player_id"] for row in assignments if row.get("canonical_player_id")}),
         **coverage,
-        "conflict_count": sum(bool(row["conflicts"]) for row in assignments),
+        "conflict_count": counts["conflicted"],
         "cross_team_violations": sum(any(value.get("code") == "cross_team_confirmed_assignment" for value in row["conflicts"]) for row in assignments),
         "invalid_roster_references": sum("invalid_roster_player" in row["hard_blockers"] for row in assignments),
         "stable_anonymous_entities": fragmentation["stable_anonymous_entities_total"],
@@ -661,7 +679,58 @@ def _summary(
         "automatic_permanent_allocations": fragmentation[
             "automatic_permanent_allocations"
         ],
+        **technical,
         **uniqueness,
+    }
+
+
+def _effective_assignment_status_counts(
+    assignments: list[dict[str, Any]],
+    tracklets: dict[str, dict[str, Any]],
+    canonical_observations: list[dict[str, Any]],
+) -> tuple[Counter[str], dict[str, int]]:
+    """Avoid treating a fully resolved frame-owned tracklet as a product conflict."""
+    ownership = {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)): row
+        for row in canonical_observations
+    }
+    counts: Counter[str] = Counter()
+    fully_resolved = 0
+    ownership_gaps = 0
+    for assignment in assignments:
+        tracklet_id = str(assignment.get("tracklet_id") or "")
+        technical_multi = "upstream_multi_slot_tracklet_membership" in (
+            assignment.get("hard_blockers") or []
+        )
+        detected = {
+            (tracklet_id, int(position.get("frame") or 0))
+            for position in tracklets.get(tracklet_id, {}).get("positions_m") or []
+            if str(position.get("status") or "detected") == "detected"
+            and str(position.get("source") or "detected") not in {"predicted", "interpolated", "unknown", "missing", "ambiguous"}
+        }
+        owned = [ownership.get(key) for key in detected]
+        if technical_multi and detected and all(owned):
+            statuses = {str(row.get("identity_status") or "unresolved") for row in owned if row}
+            if statuses == {"confirmed"}:
+                counts["confirmed"] += 1
+                fully_resolved += 1
+                continue
+            if statuses == {"unresolved"}:
+                counts["unresolved"] += 1
+                fully_resolved += 1
+                continue
+            counts["conflicted"] += 1
+            continue
+        if technical_multi and detected and not all(owned):
+            ownership_gaps += 1
+        counts[str(assignment.get("identity_status") or "unresolved")] += 1
+    return counts, {
+        "technical_multi_slot_tracklets": sum(
+            "upstream_multi_slot_tracklet_membership" in (row.get("hard_blockers") or [])
+            for row in assignments
+        ),
+        "fully_resolved_frame_owned_tracklets": fully_resolved,
+        "frame_ownership_gap_tracklets": ownership_gaps,
     }
 
 

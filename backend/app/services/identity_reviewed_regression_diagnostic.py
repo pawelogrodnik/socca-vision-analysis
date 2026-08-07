@@ -1038,31 +1038,22 @@ def _conclusion(observations: list[dict[str, Any]]) -> dict[str, Any]:
         in {"definite_reviewed_slot_regression", "definite_reviewed_team_regression"}
         or (
             row["comparison_status"] == "definite_reviewed_slot_loss"
-            and row.get("reviewed_slot_loss_scope")
-            in {"resolver_slot_loss", "operator_slot_removal"}
+            and row.get("reviewed_slot_loss_scope") == "resolver_slot_loss"
         )
     ]
     suspected = [row for row in observations if row["suspected_upstream_fragmentation"]]
-    roster_fragmented = any(
-        _slot(row.get("global_stable_player_id"))
-        and _is_named(row) is False
-        and row.get("reviewed_stable_slot_id")
-        for row in observations
-    )
     if direct and suspected:
         verdict = "mixed"
-    elif direct or roster_fragmented:
+    elif direct:
         verdict = "reviewed_primary"
-    elif suspected:
-        verdict = "upstream_primary"
     else:
-        verdict = "insufficient_evidence"
+        verdict = "reviewed_regression_resolved"
     return {
         "verdict": verdict,
         "method": "Evidence matrix; no numeric comparison across observation and event units.",
         "definite_reviewed_findings_present": bool(direct),
         "suspected_upstream_fragmentation_present": bool(suspected),
-        "roster_binding_fragmentation_requires_case_study": roster_fragmented,
+        "intentional_safety_demotions_excluded": True,
         "baseline_note": "Global/stable is compared for information retention, not assumed real-world ground truth.",
     }
 

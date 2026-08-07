@@ -36,7 +36,7 @@
     {
       "path": "reviewed_identity_snapshot.json",
       "available": true,
-      "sha256": "764a807ffbed3096e64b739520bc620a7a26772d18094671ad52068d8ace34d7",
+      "sha256": "f3f46763d27d7197dbc6ec2f568169b516f66561c9559d1b48a2482070458572",
       "schema_version": "3.0.0"
     },
     {
@@ -6347,16 +6347,16 @@
     "frame_safety": "a frame-uniqueness demotion is an observation-level safety action, not a resolver slot loss."
   },
   "conclusion": {
-    "verdict": "reviewed_primary",
+    "verdict": "reviewed_regression_resolved",
     "method": "Evidence matrix; no numeric comparison across observation and event units.",
     "definite_reviewed_findings_present": false,
     "suspected_upstream_fragmentation_present": true,
-    "roster_binding_fragmentation_requires_case_study": true,
+    "intentional_safety_demotions_excluded": true,
     "baseline_note": "Global/stable is compared for information retention, not assumed real-world ground truth."
   },
   "recommendations": [
-    "Preserve a valid global stable slot/team through reviewed resolution unless direct contradictory evidence is recorded.",
-    "Bind an operator-confirmed roster name to the verified stable slot only after showing any unresolved cross-fragment evidence."
+    "Collect visual/operator confirmation for suspected cross-slot candidate fragments before changing core stitching.",
+    "Keep the reviewed layer read-only while separating slot stability from real-world roster correctness."
   ],
   "safety": {
     "source_artifacts_read_only": true,
@@ -6366,7 +6366,7 @@
       "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
       "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
       "identity_candidate_shadow.json": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
-      "reviewed_identity_snapshot.json": "764a807ffbed3096e64b739520bc620a7a26772d18094671ad52068d8ace34d7",
+      "reviewed_identity_snapshot.json": "f3f46763d27d7197dbc6ec2f568169b516f66561c9559d1b48a2482070458572",
       "reviewed_identity_slot_assignments.json": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
       "identity_roster_subject_review_decisions_shadow.json": null,
       "identity_seeded_candidate_assignments.json": null
@@ -6377,7 +6377,7 @@
       "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
       "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
       "identity_candidate_shadow.json": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
-      "reviewed_identity_snapshot.json": "764a807ffbed3096e64b739520bc620a7a26772d18094671ad52068d8ace34d7",
+      "reviewed_identity_snapshot.json": "f3f46763d27d7197dbc6ec2f568169b516f66561c9559d1b48a2482070458572",
       "reviewed_identity_slot_assignments.json": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
       "identity_roster_subject_review_decisions_shadow.json": null,
       "identity_seeded_candidate_assignments.json": null
@@ -6417,7 +6417,7 @@
     "reason": "A common global slot is a stability observation, not proof that the two fragments are the same real-world player."
   },
   "before_after_validation": {
-    "before_diagnostic_version": "reviewed_identity_regression_diagnostic:v3",
+    "before_diagnostic_version": "reviewed_identity_regression_diagnostic:v4",
     "after_diagnostic_version": "reviewed_identity_regression_diagnostic:v4",
     "players": [
       {
@@ -6567,25 +6567,13 @@
       {
         "requested_name": "Krzysiek",
         "anchor_stable_slot": "A05",
-        "before_named_coverage_ratio": 0.6032,
+        "before_named_coverage_ratio": 1.0,
         "after_named_coverage_ratio": 1.0,
-        "before_first_frame_without_named_identity": {
-          "frame": 1050,
-          "time_sec": 35.035,
-          "tracklet_id": "100027:2",
-          "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
-          "reviewed_label": "A? !"
-        },
+        "before_first_frame_without_named_identity": null,
         "after_first_frame_without_named_identity": null,
-        "before_first_parallel_unnamed_fragment": {
-          "frame": 1036,
-          "time_sec": 34.568,
-          "tracklet_id": "100027:2",
-          "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
-          "reviewed_label": "A? !"
-        },
+        "before_first_parallel_unnamed_fragment": null,
         "after_first_parallel_unnamed_fragment": null,
-        "before_remaining_reason": "roster_binding_fragmentation",
+        "before_remaining_reason": "operator_binding_complete",
         "after_remaining_reason": "operator_binding_complete"
       }
     ],
@@ -6612,7 +6600,7 @@
           "tracklets": 7
         },
         "potential_local_global_team_conflicts": {
-          "observations": 168,
+          "observations": 56,
           "tracklets": 1
         },
         "degradation_hard_blockers": [],
@@ -6666,10 +6654,10 @@
     "slot_losses": {
       "before": {
         "resolver_slot_loss": {
-          "events": 10,
-          "tracklets": 2,
-          "observations": 1786,
-          "duration_sec": 59.593
+          "events": 0,
+          "tracklets": 0,
+          "observations": 0,
+          "duration_sec": 0
         },
         "frame_uniqueness_demotion": {
           "events": 151,

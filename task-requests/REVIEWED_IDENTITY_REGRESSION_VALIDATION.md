@@ -1,6 +1,6 @@
 # Reviewed identity regression validation: `668ae4c0`
 
-**Verdict:** reviewed_primary
+**Verdict:** reviewed_regression_resolved
 
 ## Evidence matrix
 
@@ -41,7 +41,7 @@
 - **Roman**: anchor A04; named coverage 100.0% -> 100.0%; first true unnamed frame none; parallel unnamed fragment none; remaining operator_binding_complete.
 - **Piotrek**: anchor A06; named coverage 99.2% -> 99.2%; first true unnamed frame {'frame': 444, 'time_sec': 14.815, 'tracklet_id': '100013:1', 'candidate_subject_id': 'shadow-a-23512ec6d60dae41', 'reviewed_label': 'A? !'}; parallel unnamed fragment none; remaining [{'value': 'conflicted:duplicate_canonical_player_in_frame,duplicate_stable_slot_in_frame', 'observations': 4, 'ratio': 1.0}].
 - **Paweł**: anchor A03; named coverage 100.0% -> 100.0%; first true unnamed frame none; parallel unnamed fragment none; remaining operator_binding_complete.
-- **Krzysiek**: anchor A05; named coverage 60.3% -> 100.0%; first true unnamed frame none; parallel unnamed fragment none; remaining operator_binding_complete.
+- **Krzysiek**: anchor A05; named coverage 100.0% -> 100.0%; first true unnamed frame none; parallel unnamed fragment none; remaining operator_binding_complete.
 - Team-U direct reviewed regressions: 0 -> 0 observations.
 - AFTER slot losses: resolver 0; frame uniqueness 249; operator removals 0.
 
@@ -51,5 +51,5 @@
 
 ## Recommendations
 
-- Preserve a valid global stable slot/team through reviewed resolution unless direct contradictory evidence is recorded.
-- Bind an operator-confirmed roster name to the verified stable slot only after showing any unresolved cross-fragment evidence.
+- Collect visual/operator confirmation for suspected cross-slot candidate fragments before changing core stitching.
+- Keep the reviewed layer read-only while separating slot stability from real-world roster correctness.
