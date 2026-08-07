@@ -18,7 +18,7 @@ from app.services.identity_reviewed_correction_context import (
 )
 from app.services.identity_reviewed_slot_review import (
     FILENAME as SLOT_REVIEW_FILENAME,
-    clear_reviewed_slot_assignment,
+    load_reviewed_slot_assignments,
     prepare_reviewed_slot_assignments,
 )
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
@@ -73,9 +73,32 @@ def save_reviewed_identity_correction(
             source_team_label = str(context["team_label"])
             if source_team_label not in {"U", player["team_label"]}:
                 raise ValueError(
-                f"Cross-team roster assignment is not allowed: subject {subject_id} is "
-                f"team {context['team_label']}, player is team {player['team_label']}"
+                    f"Cross-team roster assignment is not allowed: subject {subject_id} is "
+                    f"team {context['team_label']}, player is team {player['team_label']}"
                 )
+            candidate_document = load_required(
+                match_path / "identity_candidate_shadow.json"
+            )
+            stable_slot_id = _safe_subject_canonical_slot(
+                match_path,
+                candidate_document,
+                subject_id,
+            )
+            prepared = prepare_reviewed_slot_assignments(
+                match_path,
+                candidate_document,
+                [
+                    {
+                        "candidate_subject_id": subject_id,
+                        "action": action,
+                        "player_id": player_id,
+                        "team_label": player["team_label"],
+                        "stable_slot_id": stable_slot_id,
+                        "comment": comment,
+                    }
+                ],
+            )
+            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             if card_key:
                 save_identity_roster_subject_review(
                 match_path,
@@ -90,23 +113,6 @@ def save_reviewed_identity_correction(
                 match_doc=match_doc,
                 allow_seeded_override=True,
                 )
-                clear_reviewed_slot_assignment(match_path, subject_id)
-            else:
-                candidate_document = load_required(
-                match_path / "identity_candidate_shadow.json"
-                )
-                prepared = prepare_reviewed_slot_assignments(
-                match_path,
-                candidate_document,
-                [{
-                    "candidate_subject_id": subject_id,
-                    "action": action,
-                    "player_id": player_id,
-                    "team_label": player["team_label"],
-                    "comment": comment,
-                }],
-                )
-                write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             allocated_slot = None
         else:
             candidate_document = load_required(
@@ -230,3 +236,30 @@ def _validate_new_player_active_cap(
         raise ValueError(
             f"New stable player correction is structurally blocked: {', '.join(blockers)}"
         )
+
+
+def _safe_subject_canonical_slot(
+    match_path: Path,
+    candidate_document: dict[str, Any],
+    subject_id: str,
+) -> str | None:
+    tracklets_document = load_required(match_path / "tracklets.json")
+    tracklets = {
+        str(row.get("tracklet_id")): row
+        for row in tracklets_document.get("tracklets") or []
+        if row.get("tracklet_id")
+    }
+    resolved, _diagnostics = resolve_stable_anonymous_entities(
+        match_path,
+        tracklets,
+        candidate_document,
+        load_reviewed_slot_assignments(match_path),
+    )
+    slots = {
+        str(row["stable_anonymous_slot_id"])
+        for row in resolved.values()
+        if row.get("candidate_subject_id") == subject_id
+        and row.get("stable_anonymous_slot_id")
+        and not row.get("hard_blockers")
+    }
+    return next(iter(slots)) if len(slots) == 1 else None

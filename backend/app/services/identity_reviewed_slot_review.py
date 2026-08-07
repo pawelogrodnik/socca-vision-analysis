@@ -177,7 +177,16 @@ def prepare_reviewed_slot_assignments(
                 ambiguous_subjects,
                 subject_teams,
             )
-            stable_slot_id = None
+            stable_slot_id = normalize_reviewed_slot_id(raw.get("stable_slot_id"))
+            if stable_slot_id:
+                if stable_slot_id not in registry:
+                    raise ValueError(
+                        f"canonical stable slot does not exist: {raw.get('stable_slot_id')}"
+                    )
+                if str(registry[stable_slot_id]["team_label"]) != team_label:
+                    raise ValueError(
+                        "canonical stable slot team does not match roster player"
+                    )
         elif action == "assign_team":
             team_label = str(raw.get("team_label") or "").upper()
             _validate_subject_team(
@@ -422,7 +431,7 @@ def _document(
     reviewed_slots: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "mode": "reviewed_identity_slot_assignments",
         "updated_at": _now(),
         "decisions": decisions,

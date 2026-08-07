@@ -13,6 +13,7 @@ from app.services.identity_reviewed_regression_diagnostic import (
     compact_reviewed_identity_regression_report,
     classify_observation,
     render_markdown_report,
+    _normalized_name,
 )
 
 
@@ -72,6 +73,10 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
                 1,
             )
             self.assertEqual(
+                report["summary"]["reviewed_slot_loss_breakdown"]["resolver_slot_loss"]["observations"],
+                0,
+            )
+            self.assertEqual(
                 report["team_unknown_cases"][
                 "global_ab_anchor_with_local_team_u"]["observations"], 1,
             )
@@ -80,6 +85,11 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
             self.assertEqual(report["case_studies"][0]["classification"], "roster_binding_fragmentation")
             self.assertEqual(before, _artifact_hashes(root))
             self.assertIn("Reviewed identity regression validation", render_markdown_report(report))
+
+    def test_name_normalization_is_diacritic_and_separator_insensitive(self) -> None:
+        self.assertEqual(_normalized_name("Paweł"), _normalized_name("Pawel"))
+        self.assertEqual(_normalized_name("Mati GK"), _normalized_name("Mati-GK"))
+        self.assertEqual(_normalized_name("PRZEMEK"), _normalized_name("Przemek"))
 
     def test_candidate_membership_across_slots_is_only_suspected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

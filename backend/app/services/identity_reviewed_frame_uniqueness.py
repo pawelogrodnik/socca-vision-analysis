@@ -16,6 +16,8 @@ _SOURCE_PRIORITY = {
     "operator_seed_exact_observation": 60,
     "manual_new_player_confirmation": 50,
     "manual_review": 50,
+    "manual_stable_slot_binding": 50,
+    "legacy_subject_to_stable_slot_binding": 50,
     "operator_review": 50,
     "operator_seed_safe_lineage": 40,
     "global_identity": 30,

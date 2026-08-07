@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+import unicodedata
 
 from app.services.identity_reviewed_effective_observation import (
     effective_reviewed_observation,
@@ -35,7 +36,7 @@ OPTIONAL_ARTIFACTS = (
     "identity_roster_subject_review_decisions_shadow.json",
     "identity_seeded_candidate_assignments.json",
 )
-DIAGNOSTIC_VERSION = "reviewed_identity_regression_diagnostic:v2"
+DIAGNOSTIC_VERSION = "reviewed_identity_regression_diagnostic:v3"
 DEFAULT_CASE_NAMES = ("Mati GK", "Przemek", "Andrzej", "Roman", "Piotrek", "Paweł", "Krzysiek")
 _STABLE_SLOT = re.compile(r"^(?P<team>[AB])(?P<number>\d+)(?:~\d+)?$")
 
@@ -92,10 +93,11 @@ def build_reviewed_identity_regression_diagnostic(
     _mark_suspected_upstream_fragmentation(observations)
     for row in observations:
         row["comparison_status"] = classify_observation(row)
+        row["reviewed_slot_loss_scope"] = _reviewed_slot_loss_scope(row)
 
     roster = _roster(documents["match.json"])
     report = {
-        "schema_version": "2.0.0",
+        "schema_version": "3.0.0",
         "diagnostic_version": DIAGNOSTIC_VERSION,
         "match_id": str(documents["match.json"].get("id") or match_path.name),
         "source_artifacts": _artifact_descriptor(match_path, documents, optional_documents, tracks_document),
@@ -179,6 +181,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         "",
         f"- Direct same-tracklet slot regressions: {summary['same_tracklet']['definite_reviewed_slot_regression']['events']} events / {summary['same_tracklet']['definite_reviewed_slot_regression']['tracklets']} tracklets / {summary['same_tracklet']['definite_reviewed_slot_regression']['observations']} observations.",
         f"- Direct same-tracklet slot losses: {summary['same_tracklet']['definite_reviewed_slot_loss']['events']} events / {summary['same_tracklet']['definite_reviewed_slot_loss']['tracklets']} tracklets / {summary['same_tracklet']['definite_reviewed_slot_loss']['observations']} observations.",
+        f"- Resolver slot losses: {summary['reviewed_slot_loss_breakdown']['resolver_slot_loss']['observations']} observations; frame-uniqueness demotions: {summary['reviewed_slot_loss_breakdown']['frame_uniqueness_demotion']['observations']}; operator slot removals: {summary['reviewed_slot_loss_breakdown']['operator_slot_removal']['observations']}.",
         f"- Direct Team-U regressions: {summary['same_tracklet']['definite_reviewed_team_regression']['events']} events / {summary['same_tracklet']['definite_reviewed_team_regression']['tracklets']} tracklets / {summary['same_tracklet']['definite_reviewed_team_regression']['observations']} observations.",
         f"- Suspected upstream fragmentation indications: {summary['suspected_upstream_fragmentation']['candidate_subjects']} candidate subjects (not counted as definitive core switches).",
         "",
@@ -302,11 +305,27 @@ def _summary(observations: list[dict[str, Any]], fps: float) -> dict[str, Any]:
         for status in statuses
     }
     suspected = [row for row in observations if row["suspected_upstream_fragmentation"]]
+    slot_loss_scopes = (
+        "resolver_slot_loss",
+        "frame_uniqueness_demotion",
+        "operator_slot_removal",
+    )
     return {
         "frames_analyzed": len({int(row["frame"]) for row in observations}),
         "detected_observations_analyzed": len(observations),
         "tracklets_analyzed": len({str(row["tracklet_id"]) for row in observations}),
         "same_tracklet": by_status,
+        "reviewed_slot_loss_breakdown": {
+            scope: _metric(
+                [
+                    row
+                    for row in observations
+                    if row.get("reviewed_slot_loss_scope") == scope
+                ],
+                fps,
+            )
+            for scope in slot_loss_scopes
+        },
         "suspected_upstream_fragmentation": {
             "candidate_subjects": len({str(row["candidate_subject_id"]) for row in suspected}),
             "tracklets": len({str(row["tracklet_id"]) for row in suspected}),
@@ -498,6 +517,12 @@ def _case_studies(
         unresolved_rows = [row for row in scope if not _is_named(row) and not _is_fallback(row)]
         other_name_rows = [row for row in scope if _is_named(row) and row not in named_rows]
         first_loss = _first_loss_after_name(scope, player_ids)
+        first_unnamed = _first_unnamed_identity(scope, player_ids)
+        first_parallel_unnamed = _first_parallel_unnamed_fragment(
+            scope,
+            player_ids,
+            set(candidate_ids),
+        )
         fragmented = bool(anchor and named_rows and (fallback_rows or unresolved_rows or other_name_rows))
         classification = "roster_binding_fragmentation" if fragmented else "operator_binding_not_proven" if not anchor else "operator_binding_complete"
         output.append(
@@ -517,6 +542,8 @@ def _case_studies(
                 "other_name_observations": len(other_name_rows),
                 "named_coverage_ratio": round(len(named_rows) / len(scope), 4) if scope else 0.0,
                 "first_loss_of_name": first_loss,
+                "first_frame_without_named_identity": first_unnamed,
+                "first_parallel_unnamed_fragment": first_parallel_unnamed,
                 "classification": classification,
                 "evidence_severity": "DEFINITE" if fragmented else "INSUFFICIENT_EVIDENCE" if not anchor else "STRONG_INDICATION",
                 "timeline": _timeline(scope),
@@ -604,6 +631,40 @@ def _first_loss_after_name(rows: list[dict[str, Any]], player_ids: list[str]) ->
     return None
 
 
+def _first_unnamed_identity(
+    rows: list[dict[str, Any]], player_ids: list[str]
+) -> dict[str, Any] | None:
+    for row in sorted(rows, key=lambda item: (int(item["frame"]), str(item["tracklet_id"]))):
+        if str(row.get("reviewed_canonical_player_id") or "") not in player_ids:
+            return _identity_gap_endpoint(row)
+    return None
+
+
+def _first_parallel_unnamed_fragment(
+    rows: list[dict[str, Any]],
+    player_ids: list[str],
+    named_candidate_ids: set[str],
+) -> dict[str, Any] | None:
+    for row in sorted(rows, key=lambda item: (int(item["frame"]), str(item["tracklet_id"]))):
+        if (
+            str(row.get("reviewed_canonical_player_id") or "") not in player_ids
+            and str(row.get("candidate_subject_id") or "")
+            and str(row.get("candidate_subject_id") or "") not in named_candidate_ids
+        ):
+            return _identity_gap_endpoint(row)
+    return None
+
+
+def _identity_gap_endpoint(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "frame": row["frame"],
+        "time_sec": row["time_sec"],
+        "tracklet_id": row["tracklet_id"],
+        "candidate_subject_id": row.get("candidate_subject_id"),
+        "reviewed_label": row.get("reviewed_display_label"),
+    }
+
+
 def _is_named(row: dict[str, Any]) -> bool:
     return bool(row.get("reviewed_canonical_player_id"))
 
@@ -651,11 +712,15 @@ def _source_precedence() -> dict[str, Any]:
         "stable_anonymous_resolution": [
             "manual reviewed slot decision (when valid)",
             "manual team/referee/false/team-unknown action",
-            "consensus of global_identity, stable_players, gallery and candidate claims",
-            "tracklet team is a hard compatibility condition for a stable slot",
+            "global_identity and stable_players form the canonical stable-slot anchor",
+            "gallery and candidate claims are advisory and cannot erase a canonical anchor",
+            "a canonical A/B slot supplies team identity when the local tracklet team is U",
+            "an opposite local A/B team remains a hard compatibility conflict",
         ],
         "reviewed_snapshot": [
-            "manual roster decision or fresh seeded candidate decision supplies a confirmed name",
+            "a safe manual stable-slot roster binding applies to every canonical slot fragment",
+            "legacy subject roster decisions are promoted only when they map to exactly one canonical slot",
+            "fresh seeded candidate decisions remain subject-scoped",
             "manual team action overrides the resolved team/status",
             "invalid/cross-team/conflicting evidence clears the canonical player",
             "stable anonymous slot remains the fallback display label",
@@ -664,7 +729,7 @@ def _source_precedence() -> dict[str, Any]:
             "tracklet assignment", "exact observation override", "frame-uniqueness safety demotion"
         ],
         "rendering": "reviewed video renders the effective reviewed observation; it does not re-resolve identity.",
-        "risk_identified": "unknown_team_cannot_receive_stable_slot can drop a global A/B slot when the local tracklet team is U.",
+        "frame_safety": "a frame-uniqueness demotion is an observation-level safety action, not a resolver slot loss.",
     }
 
 
@@ -774,7 +839,26 @@ def _slot_team(slot: str | None) -> str:
 
 
 def _normalized_name(value: str) -> str:
-    return "".join(character for character in value.casefold() if character.isalnum())
+    translated = value.translate(str.maketrans({"ł": "l", "Ł": "L"}))
+    decomposed = unicodedata.normalize("NFKD", translated)
+    return "".join(
+        character
+        for character in decomposed.casefold()
+        if not unicodedata.combining(character) and character.isalnum()
+    )
+
+
+def _reviewed_slot_loss_scope(row: dict[str, Any]) -> str | None:
+    if row.get("comparison_status") != "definite_reviewed_slot_loss":
+        return None
+    if row.get("reviewed_observation_demoted"):
+        return "frame_uniqueness_demotion"
+    if str(row.get("reviewed_identity_source") or "") in {
+        "manual_review",
+        "operator_team_assignment",
+    }:
+        return "operator_slot_removal"
+    return "resolver_slot_loss"
 
 
 def _sha256(path: Path) -> str:

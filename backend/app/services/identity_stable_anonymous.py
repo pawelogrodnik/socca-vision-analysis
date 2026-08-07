@@ -96,18 +96,35 @@ def resolve_stable_anonymous_entities(
         manual = manual_by_subject.get(subject_id or "")
         manual_action = str((manual or {}).get("action") or "") or None
         manual_team = str((manual or {}).get("team_label") or "").upper()
-        team = (
+        requested_team = (
             manual_team
-            if manual_action in {"assign_team", "assign_existing_slot", "create_new_stable_player", "assign_roster_player"}
+            if manual_action in {
+                "assign_team",
+                "assign_existing_slot",
+                "create_new_stable_player",
+                "assign_roster_player",
+            }
             and manual_team in {"A", "B"}
             else source_team
         )
         claims = claims_by_tracklet.get(tracklet_id, [])
-        claim_labels = sorted({str(row["stable_slot_id"]) for row in claims})
+        canonical_claims = [
+            row for row in claims if row["source"] in {"global_identity", "stable_players"}
+        ]
+        canonical_labels = sorted(
+            {str(row["stable_slot_id"]) for row in canonical_claims}
+        )
+        advisory_claims = [
+            row for row in claims if row["source"] not in {"global_identity", "stable_players"}
+        ]
+        advisory_labels = sorted(
+            {str(row["stable_slot_id"]) for row in advisory_claims}
+        )
         blockers: list[str] = []
         stable_slot_id: str | None = None
         anchor_source: str | None = None
         anchor_status = "unanchored"
+        team = requested_team
 
         if len(subjects) > 1:
             blockers.append("ambiguous_candidate_subject_membership")
@@ -136,17 +153,40 @@ def resolve_stable_anonymous_entities(
                 else:
                     anchor_source = "manual_new_player_confirmation"
                     anchor_status = "manual_new_slot"
-        elif manual_action in {"assign_team", "referee", "false_detection", "team_unknown"}:
+        elif manual_action in {"referee", "false_detection", "team_unknown"}:
             stable_slot_id = None
             anchor_source = "manual_review"
             anchor_status = manual_action
             blockers = []
         elif not blockers:
-            if len(claim_labels) > 1:
-                blockers.append("conflicting_stable_anchor_sources")
+            if len(canonical_labels) > 1:
+                blockers.append("conflicting_canonical_stable_sources")
                 anchor_status = "conflicting_claims"
-            elif len(claim_labels) == 1:
-                candidate_slot = claim_labels[0]
+            elif len(canonical_labels) == 1:
+                candidate_slot = canonical_labels[0]
+                if candidate_slot not in canonical_slots:
+                    blockers.append("stable_anchor_not_in_canonical_pool")
+                elif not 1 <= _label_number(candidate_slot) <= max_subjects:
+                    blockers.append("stable_anchor_exceeds_bounded_pool")
+                elif team in {"A", "B"} and _label_team(candidate_slot) != team:
+                    blockers.append("stable_anchor_team_mismatch")
+                else:
+                    stable_slot_id = candidate_slot
+                    sources = sorted(
+                        {str(row["source"]) for row in canonical_claims}
+                    )
+                    anchor_source = sources[0] if len(sources) == 1 else "canonical_consensus"
+                    anchor_status = (
+                        "anchored_with_advisory_disagreement"
+                        if advisory_labels and advisory_labels != [candidate_slot]
+                        else "anchored"
+                    )
+                    team = _label_team(candidate_slot)
+            elif len(advisory_labels) > 1:
+                blockers.append("conflicting_advisory_stable_anchor_sources")
+                anchor_status = "conflicting_advisory_claims"
+            elif len(advisory_labels) == 1:
+                candidate_slot = advisory_labels[0]
                 if candidate_slot not in canonical_slots:
                     blockers.append("stable_anchor_not_in_canonical_pool")
                 elif not 1 <= _label_number(candidate_slot) <= max_subjects:
@@ -157,9 +197,8 @@ def resolve_stable_anonymous_entities(
                     blockers.append("stable_anchor_team_mismatch")
                 else:
                     stable_slot_id = candidate_slot
-                    sources = sorted({str(row["source"]) for row in claims})
-                    anchor_source = sources[0] if len(sources) == 1 else "canonical_consensus"
-                    anchor_status = "anchored"
+                    anchor_source = advisory_claims[0]["source"]
+                    anchor_status = "anchored_advisory"
 
         if blockers:
             stable_slot_id = None
@@ -500,7 +539,10 @@ def _diagnostics(
             for row in reviewed_slot_registry.values()
         ),
         "ephemeral_fragments": sum(bool(row["ephemeral"]) for row in resolved.values()),
-        "conflicting_anchor_sources": sum("conflicting_stable_anchor_sources" in row["hard_blockers"] for row in resolved.values()),
+        "conflicting_anchor_sources": sum(
+            "conflicting_canonical_stable_sources" in row["hard_blockers"]
+            for row in resolved.values()
+        ),
         "max_subjects_per_team": max_subjects,
         "active_players_per_team": active_players_per_team,
         "highest_fallback_number_by_team": {

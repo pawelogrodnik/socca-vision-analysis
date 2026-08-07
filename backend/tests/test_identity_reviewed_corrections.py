@@ -128,6 +128,34 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertGreater(player["observed_distance_m"], 0)
             self.assertEqual(player["heatmap_samples"], 4)
 
+    def test_roster_assignment_persists_safe_canonical_slot_binding(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            global_identity = _load(root / "global_identity.json")
+            next(
+                row
+                for row in global_identity["slots"]
+                if row["stable_player_id"] == "A03"
+            )["tracklet_ids"] = ["t1", "t1b"]
+            _write(root / "global_identity.json", global_identity)
+            save_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                },
+            )
+            decision = next(
+                row
+                for row in _load(
+                    root / "reviewed_identity_slot_assignments.json"
+                )["decisions"]
+                if row["candidate_subject_id"] == "s1"
+            )
+            self.assertEqual(decision["stable_slot_id"], "A03")
+
     def test_cross_team_roster_assignment_rejects_without_decision_write(self) -> None:
         with _workspace() as root:
             _fixture(root)

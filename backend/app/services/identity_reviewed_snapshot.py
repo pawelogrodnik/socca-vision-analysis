@@ -26,7 +26,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v4"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v5-canonical-slot-binding"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -63,6 +63,12 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         documents["slot_review"],
     )
     reviews = _review_decisions(documents["review_decisions"], documents["slot_review"])
+    slot_roster_bindings, conflicting_slot_roster_bindings = _slot_roster_bindings(
+        stable,
+        reviews,
+        documents["slot_review"],
+        roster,
+    )
     seeded_document, seeded_freshness = load_fresh_seeded_assignments(match_path)
     seeded = _safe_seeded_assignments(seeded_document or {}) if seeded_freshness.get("status") == "fresh" else {}
     observation_overrides = build_observation_overrides(
@@ -82,6 +88,20 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         status, player_id, source, evidence, blockers = _resolve_assignment(
             decision, accepted_seed
         )
+        slot_id = stable_row["stable_anonymous_slot_id"]
+        slot_binding = slot_roster_bindings.get(str(slot_id or ""))
+        if (
+            slot_binding
+            and not (decision and decision.get("decision") == "mark_unresolved")
+        ):
+            bound_player_id = str(slot_binding["player_id"])
+            if player_id and player_id != bound_player_id:
+                blockers.append("conflicting_subject_and_stable_slot_roster_binding")
+            else:
+                status = "confirmed"
+                player_id = bound_player_id
+                source = str(slot_binding["source"])
+                evidence = []
         manual_action = stable_row.get("manual_action")
         if manual_action in {"assign_team", "referee", "false_detection", "team_unknown", "unresolved"}:
             status = str(manual_action)
@@ -108,6 +128,11 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             blockers.append("ambiguous_seeded_subject_membership")
         if _has_conflicting_review_decisions(decisions):
             assignment_conflicts.append({"code": "conflicting_explicit_operator_decisions"})
+        if slot_id in conflicting_slot_roster_bindings:
+            blockers.append("conflicting_stable_slot_roster_bindings")
+            assignment_conflicts.append(
+                {"code": "conflicting_stable_slot_roster_bindings"}
+            )
         for blocker in stable_row["hard_blockers"]:
             assignment_conflicts.append({"code": blocker})
         if assignment_conflicts or len(accepted_seeds) > 1:
@@ -120,7 +145,6 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
                 {"code": "cross_team_confirmed_assignment", "player_id": player_id}
             )
             status, player_id = "conflicted", None
-        slot_id = stable_row["stable_anonymous_slot_id"]
         fallback = str(stable_row["fallback_label"])
         display = (
             player["name"]
@@ -375,6 +399,91 @@ def _safe_seeded_assignments(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if provenance.get("team_consistency") and provenance.get("structural_gates_passed") and provenance.get("local_tracklet_continuity"):
             values[str(row.get("candidate_subject_id") or "")] = row
     return values
+
+
+def _slot_roster_bindings(
+    stable: dict[str, dict[str, Any]],
+    reviews: dict[str, list[dict[str, Any]]],
+    slot_review: dict[str, Any],
+    roster: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, str]], set[str]]:
+    claims: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in slot_review.get("decisions") or []:
+        if str(row.get("action") or "") != "assign_roster_player":
+            continue
+        slot_id = str(row.get("stable_slot_id") or "")
+        player_id = str(row.get("player_id") or "")
+        if _valid_slot_roster_pair(slot_id, player_id, roster):
+            claims[slot_id].append(
+                {
+                    "player_id": player_id,
+                    "source": "manual_stable_slot_binding",
+                }
+            )
+
+    subject_slots: dict[str, set[str]] = defaultdict(set)
+    blocked_subjects: set[str] = set()
+    for row in stable.values():
+        subject_id = str(row.get("candidate_subject_id") or "")
+        slot_id = str(row.get("stable_anonymous_slot_id") or "")
+        if not subject_id:
+            continue
+        if row.get("hard_blockers"):
+            blocked_subjects.add(subject_id)
+        elif slot_id:
+            subject_slots[subject_id].add(slot_id)
+
+    for subject_id, decisions in reviews.items():
+        slots = subject_slots.get(subject_id, set())
+        player_ids = {
+            str(row.get("player_id") or "")
+            for row in decisions
+            if row.get("decision") in {"assign_roster_player", "confirm_recommended_player"}
+            and row.get("player_id")
+        }
+        if subject_id in blocked_subjects or len(slots) != 1 or len(player_ids) != 1:
+            continue
+        slot_id = next(iter(slots))
+        player_id = next(iter(player_ids))
+        if _valid_slot_roster_pair(slot_id, player_id, roster):
+            claims[slot_id].append(
+                {
+                    "player_id": player_id,
+                    "source": "legacy_subject_to_stable_slot_binding",
+                }
+            )
+
+    bindings: dict[str, dict[str, str]] = {}
+    conflicts: set[str] = set()
+    for slot_id, rows in claims.items():
+        player_ids = {row["player_id"] for row in rows}
+        if len(player_ids) != 1:
+            conflicts.add(slot_id)
+            continue
+        manual_binding = next(
+            (
+                row
+                for row in rows
+                if row["source"] == "manual_stable_slot_binding"
+            ),
+            None,
+        )
+        bindings[slot_id] = manual_binding or rows[0]
+    return bindings, conflicts
+
+
+def _valid_slot_roster_pair(
+    slot_id: str,
+    player_id: str,
+    roster: dict[str, dict[str, Any]],
+) -> bool:
+    player = roster.get(player_id)
+    return bool(
+        len(slot_id) >= 2
+        and slot_id[0] in {"A", "B"}
+        and player
+        and str(player.get("team_label") or "") == slot_id[0]
+    )
 
 
 def _resolve_assignment(

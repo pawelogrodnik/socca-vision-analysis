@@ -71,7 +71,7 @@ class StableAnonymousIdentityTests(unittest.TestCase):
             self.assertEqual(resolved["empty"]["detected_evidence_count"], 0)
             self.assertEqual(resolved["empty"]["fallback_label"], "A?")
 
-    def test_conflicting_sources_create_hard_conflict(self) -> None:
+    def test_conflicting_canonical_sources_create_hard_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             _write(root / "global_identity.json", {"slots": [_slot("A01", "t1")]})
@@ -82,8 +82,70 @@ class StableAnonymousIdentityTests(unittest.TestCase):
                 _candidates(("s1", ["t1"], None)),
             )
             self.assertIsNone(resolved["t1"]["stable_anonymous_slot_id"])
-            self.assertIn("conflicting_stable_anchor_sources", resolved["t1"]["hard_blockers"])
+            self.assertIn(
+                "conflicting_canonical_stable_sources",
+                resolved["t1"]["hard_blockers"],
+            )
             self.assertEqual(diagnostics["conflicting_anchor_sources"], 1)
+
+    def test_canonical_anchor_wins_over_candidate_shadow_disagreement(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A01", "t1")]})
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {"t1": _tracklet("t1", "A", 1)},
+                _candidates(("s1", ["t1"], "A02")),
+            )
+            self.assertEqual(resolved["t1"]["stable_anonymous_slot_id"], "A01")
+            self.assertEqual(
+                resolved["t1"]["stable_anchor_status"],
+                "anchored_with_advisory_disagreement",
+            )
+
+    def test_canonical_anchor_preserves_team_for_local_unknown_tracklet(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A01", "t1")]})
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {"t1": _tracklet("t1", "U", 1)},
+                _candidates(("s1", ["t1"], None)),
+            )
+            self.assertEqual(resolved["t1"]["stable_anonymous_slot_id"], "A01")
+            self.assertEqual(resolved["t1"]["effective_team_label"], "A")
+
+    def test_canonical_anchor_rejects_opposite_local_team(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A01", "t1")]})
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {"t1": _tracklet("t1", "B", 1)},
+                _candidates(("s1", ["t1"], None)),
+            )
+            self.assertIsNone(resolved["t1"]["stable_anonymous_slot_id"])
+            self.assertIn(
+                "stable_anchor_team_mismatch", resolved["t1"]["hard_blockers"]
+            )
+
+    def test_compatible_manual_team_keeps_canonical_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A01", "t1")]})
+            candidates = _candidates(("s1", ["t1"], None))
+            manual = save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [{"candidate_subject_id": "s1", "action": "assign_team", "team_label": "A"}],
+            )
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {"t1": _tracklet("t1", "A", 1)},
+                candidates,
+                manual,
+            )
+            self.assertEqual(resolved["t1"]["stable_anonymous_slot_id"], "A01")
 
     def test_manual_existing_and_new_slot_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -197,6 +259,21 @@ class StableAnonymousIdentityTests(unittest.TestCase):
         demotions, diagnostics = build_frame_slot_demotions(tracklets, assignments)
         self.assertEqual([(row["tracklet_id"], row["frame"]) for row in demotions], [("auto", 1)])
         self.assertEqual(diagnostics["duplicate_stable_labels_rendered"], 0)
+
+    def test_frame_uniqueness_preserves_manual_slot_roster_binding(self) -> None:
+        tracklets = {
+            "manual": _tracklet("manual", "A", 1),
+            "global": _tracklet("global", "A", 1),
+        }
+        assignments = [
+            _assignment("manual", "A01", "manual_stable_slot_binding"),
+            _assignment("global", "A01", "global_identity"),
+        ]
+        demotions, _ = build_frame_slot_demotions(tracklets, assignments)
+        self.assertEqual(
+            [(row["tracklet_id"], row["frame"]) for row in demotions],
+            [("global", 1)],
+        )
 
     def test_exact_false_detection_does_not_demote_valid_stable_claim(self) -> None:
         tracklets = {

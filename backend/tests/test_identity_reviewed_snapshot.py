@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from app.services.identity_reviewed_snapshot import (
+    _slot_roster_bindings,
     finalize_reviewed_identity,
     get_reviewed_identity_status,
     reviewed_assignment_at,
@@ -154,6 +155,53 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
                 ["A01", "A01"],
             )
             self.assertEqual(result["fragmentation_diagnostics"]["stable_anonymous_entities_total"], 1)
+
+    def test_legacy_subject_assignment_binds_every_fragment_of_one_slot(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[_decision("s1", "assign_roster_player", "p1")])
+            (root / "global_identity.json").write_text(
+                json.dumps(
+                    {
+                        "slots": [
+                            {
+                                "stable_player_id": "A01",
+                                "team_label": "A",
+                                "tracklet_ids": ["t1", "t2"],
+                            }
+                        ]
+                    }
+                )
+            )
+            result = finalize_reviewed_identity(root, _match())
+            rows = {row["tracklet_id"]: row for row in result["tracklet_assignments"]}
+            self.assertEqual(rows["t1"]["canonical_player_id"], "p1")
+            self.assertEqual(rows["t2"]["canonical_player_id"], "p1")
+            self.assertEqual(
+                rows["t2"]["identity_source"],
+                "legacy_subject_to_stable_slot_binding",
+            )
+
+    def test_multi_slot_subject_is_not_inferred_as_a_slot_binding(self) -> None:
+        stable = {
+            "t1": {
+                "candidate_subject_id": "s1",
+                "stable_anonymous_slot_id": "A01",
+                "hard_blockers": [],
+            },
+            "t2": {
+                "candidate_subject_id": "s1",
+                "stable_anonymous_slot_id": "A02",
+                "hard_blockers": [],
+            },
+        }
+        bindings, conflicts = _slot_roster_bindings(
+            stable,
+            {"s1": [_decision("s1", "assign_roster_player", "p1")]},
+            {"decisions": []},
+            {"p1": {"team_label": "A"}},
+        )
+        self.assertEqual(bindings, {})
+        self.assertEqual(conflicts, set())
 
     def test_ambiguous_subject_membership_is_a_hard_conflict(self) -> None:
         with _workspace() as root:
