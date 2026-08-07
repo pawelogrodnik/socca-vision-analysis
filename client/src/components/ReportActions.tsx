@@ -18,6 +18,7 @@ type ReportActionsProps = {
   status?: string;
   onBuildPackage?: () => Promise<void> | void;
   onPublish?: () => Promise<void> | void;
+  publishLabel?: string;
   onReplacePublish?: () => Promise<void> | void;
   workflowAllowed?: boolean;
   workflowReason?: string;
@@ -65,6 +66,7 @@ export function ReportActions({
   status,
   onBuildPackage,
   onPublish,
+  publishLabel = 'Publikuj raport',
   onReplacePublish,
   workflowAllowed = true,
   workflowReason,
@@ -129,7 +131,7 @@ export function ReportActions({
           )}
           {onPublish && (
             <button type='button' onClick={onPublish} disabled={isBusy || !workflowAllowed} title={workflowReason}>
-              {busyAction === 'publish' ? 'Publikuje...' : 'Publikuj raport'}
+              {busyAction === 'publish' || busyAction === 'replace' ? 'Publikuje...' : publishLabel}
             </button>
           )}
           {onReplacePublish && (

@@ -51,6 +51,7 @@ export function IdentityReviewWorkspace({
   const [workflow, setWorkflow] = useState<ReviewWorkflow | null>(initialWorkflow);
   const [processingJob, setProcessingJob] = useState<ReviewedOutputJob | null>(initialWorkflow?.processing || null);
   const [videoSettings, setVideoSettings] = useState<VideoSettings>(defaultVideoSettings);
+  const [showApprovedVideo, setShowApprovedVideo] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -76,6 +77,10 @@ export function IdentityReviewWorkspace({
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.id]);
+
+  useEffect(() => {
+    if (workflow?.phase !== 'complete') setShowApprovedVideo(false);
+  }, [workflow?.phase]);
 
   const stage = identityReviewStage(workflow);
   useEffect(() => {
@@ -161,6 +166,9 @@ export function IdentityReviewWorkspace({
         if (next) applyWorkflow(next);
         else void refreshWorkflow();
       }}
+      onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
+        ? () => retry('retry_review_recompute')
+        : undefined}
     />}
 
     {stage === 'prepare_result' && workflow && <section className='reviewed-next-step'>
@@ -185,7 +193,7 @@ export function IdentityReviewWorkspace({
       <div><h2>Przygotowuję wideo do sprawdzenia…</h2><p>Render wykorzystuje obecny wynik review; analiza wideo nie jest uruchamiana ponownie.</p></div>
     </div>}
 
-    {stage === 'video_qa' && workflow && <ReviewedVideoQaPanel
+    {(stage === 'video_qa' || (stage === 'complete' && showApprovedVideo)) && workflow && <ReviewedVideoQaPanel
       matchId={match.id}
       workflow={workflow}
       onWorkflowChanged={applyWorkflow}
@@ -193,8 +201,11 @@ export function IdentityReviewWorkspace({
     />}
 
     {stage === 'complete' && workflow && <div className='reviewed-next-step identity-review-complete'>
-      <div><h2>Tożsamości gotowe ✓</h2><p>Review zawodników i wideo został zakończony.</p></div>
-      <button type='button' onClick={onOpenReport}>Przejdź do raportu</button>
+      <div><h2>Review zakończony ✓</h2><p>Wideo jest zatwierdzone. Możesz je nadal otworzyć i poprawić przypisanie, jeśli zauważysz błąd.</p></div>
+      <div className='row'>
+        <button type='button' onClick={onOpenReport}>Przejdź do raportu</button>
+        <button type='button' className='secondary' onClick={() => setShowApprovedVideo(true)}>Sprawdź wideo ponownie</button>
+      </div>
     </div>}
 
     {message && <p className='status'>{message}</p>}

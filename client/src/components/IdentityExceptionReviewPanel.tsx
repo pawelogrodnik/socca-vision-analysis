@@ -13,13 +13,14 @@ import type {
   ReviewedIdentityAtEntity,
   ReviewWorkflow,
 } from '../types';
-import { isActionableSubjectReviewCard } from '../utils/identityRosterSubjectReview';
+import { requiredCasesLabel } from '../utils/reviewWorkflowPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
 
 type Props = {
   match: Match;
   workflow: ReviewWorkflow;
   onWorkflowChanged: (workflow: ReviewedCorrectionResponse['workflow']) => void;
+  onRetryReview?: () => Promise<void>;
 };
 
 function toCorrectionEntity(card: IdentityRosterSubjectReviewCard): ReviewedIdentityAtEntity {
@@ -49,7 +50,12 @@ function toCorrectionEntity(card: IdentityRosterSubjectReviewCard): ReviewedIden
   };
 }
 
-export function IdentityExceptionReviewPanel({ match, workflow, onWorkflowChanged }: Props) {
+export function IdentityExceptionReviewPanel({
+  match,
+  workflow,
+  onWorkflowChanged,
+  onRetryReview,
+}: Props) {
   const [cards, setCards] = useState<IdentityRosterSubjectReviewCard[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -71,7 +77,6 @@ export function IdentityExceptionReviewPanel({ match, workflow, onWorkflowChange
       );
       const actionable = document.cards.filter((nextCard) => (
         requiredSubjectIds.has(nextCard.candidate_subject_id)
-        || (requiredSubjectIds.size === 0 && isActionableSubjectReviewCard(nextCard))
       ));
       setCards(actionable);
       setIndex(0);
@@ -107,7 +112,7 @@ export function IdentityExceptionReviewPanel({ match, workflow, onWorkflowChange
         <p className='eyebrow'>Krok 2</p>
         <h2>Pozostałe przypadki</h2>
         <p>System rozpoznał większość zawodników. Sprawdź tylko przypadki, których nie udało się rozstrzygnąć automatycznie.</p>
-        <strong>{workflow.issues.blocking + workflow.issues.important} przypadków wymaga sprawdzenia</strong>
+        <strong>{requiredCasesLabel(workflow.issues.blocking)}</strong>
       </div>
       {cards.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cards.length}</span>}
     </div>
@@ -131,7 +136,11 @@ export function IdentityExceptionReviewPanel({ match, workflow, onWorkflowChange
         <button type='button' className='secondary' onClick={() => setIndex((current) => Math.min(cards.length - 1, current + 1))} disabled={index >= cards.length - 1}>Następny</button>
       </div>}
     </> : <div className='status'>
-      Nie znaleziono czytelnego materiału dla aktualnego przypadku. Otwórz diagnostykę, aby sprawdzić szczegóły techniczne.
+      <strong>Nie udało się przygotować podglądu przypadku wymagającego decyzji.</strong>
+      <p>Workflow nadal wskazuje: {requiredCasesLabel(workflow.issues.blocking)}. Odśwież Review albo otwórz diagnostykę.</p>
+      {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
+        Odśwież Review
+      </button>}
     </div>}
     {message && <p className='status'>{message}</p>}
   </section>;

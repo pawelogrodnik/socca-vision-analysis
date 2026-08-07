@@ -128,13 +128,16 @@ export function ReviewedVideoQaPanel({
   const hasVideo = job?.status === 'completed' && Boolean(job.video_digest);
   const renderInProgress = isReviewedRenderInProgress(job?.status);
   const approvalAvailable = workflowAllows(workflow, 'approve_video_qa');
+  const alreadyApproved = workflow.phase === 'complete';
 
   return <section className='reviewed-output-panel reviewed-video-qa-panel'>
     <div className='reviewed-output-heading'>
       <div>
         <p className='eyebrow'>Krok 4</p>
         <h2>Sprawdź wideo</h2>
-        <p>Zatrzymaj nagranie na błędnej etykiecie i popraw osobę, jeśli to potrzebne. Po poprawce wideo odświeży się automatycznie.</p>
+        <p>{alreadyApproved
+          ? 'To wideo jest już zatwierdzone. Jeżeli zauważysz błąd, możesz nadal poprawić przypisanie.'
+          : 'Zatrzymaj nagranie na błędnej etykiecie i popraw osobę, jeśli to potrzebne. Po poprawce wideo odświeży się automatycznie.'}</p>
       </div>
       {identity && <span className='reviewed-status-badge'>{identity.status === 'complete_reviewed' ? 'Tożsamości gotowe' : 'Wideo do sprawdzenia'}</span>}
     </div>

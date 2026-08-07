@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, createMatchPackage, getMatch, getReviewWorkflow, publishLocalMatch } from '../api';
+import { artifactUrl, getMatch, getReviewWorkflow, publishLocalMatch } from '../api';
 import { errorMessage } from '../lib/helpers';
 import { reportWorkflowGate } from '../lib/reviewWorkflowGating';
 import type { Match, ReviewWorkflow } from '../types';
@@ -10,7 +10,7 @@ import {
 } from './MatchReportContent';
 import { ReportActions } from './ReportActions';
 
-type ReportBusyAction = 'package' | 'publish' | 'replace' | null;
+type ReportBusyAction = 'publish' | 'replace' | null;
 
 export function MatchReportPage() {
   const { matchId } = useParams();
@@ -63,25 +63,6 @@ export function MatchReportPage() {
     const [nextMatch, nextWorkflow] = await Promise.all([getMatch(matchId), getReviewWorkflow(matchId)]);
     setMatch(nextMatch);
     setWorkflow(nextWorkflow);
-  }
-
-  async function buildPackage() {
-    if (!matchId || busyAction) return;
-    if (!workflowGate.allowed) {
-      setActionStatus('Publikacja jest zablokowana do czasu zatwierdzenia Video QA.');
-      return;
-    }
-    setBusyAction('package');
-    setActionStatus('Generuje match_package.json...');
-    try {
-      await createMatchPackage(matchId);
-      await refreshMatch();
-      setActionStatus('Wygenerowano match_package.json.');
-    } catch (error) {
-      setActionStatus(errorMessage(error));
-    } finally {
-      setBusyAction(null);
-    }
   }
 
   async function publish(replace = false) {
@@ -149,11 +130,10 @@ export function MatchReportPage() {
           }}
           busyAction={busyAction}
           status={actionStatus}
-          onBuildPackage={buildPackage}
-          onPublish={() => publish(false)}
-          onReplacePublish={() => publish(true)}
+          onPublish={() => publish(Boolean(match.published_match_id))}
+          publishLabel={match.published_match_id ? 'Zaktualizuj opublikowany raport' : 'Opublikuj raport'}
           workflowAllowed={workflowGate.allowed}
-          workflowReason={workflowGate.allowed ? undefined : `Najpierw zakoncz Review i zatwierdz Video QA (${workflowGate.reasonCode}).`}
+          workflowReason={workflowGate.allowed ? undefined : 'Najpierw zakończ Review i zatwierdź Video QA.'}
         />
       )}
 
