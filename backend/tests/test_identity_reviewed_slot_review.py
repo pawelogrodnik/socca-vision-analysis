@@ -336,6 +336,64 @@ class ReviewedSlotReviewTests(unittest.TestCase):
                     root, candidates, [_create("mixed", "A")]
                 )
 
+    def test_unknown_team_does_not_make_subject_mixed(self) -> None:
+        with _workspace() as root:
+            _, _ = _prepare(
+                root,
+                ("a", "a", "A", 1),
+                ("a-u", "u-a", "U", 2),
+                ("b", "b", "B", 3),
+                ("b-u", "u-b", "U", 4),
+                ("mixed-a", "mixed-a", "A", 5),
+                ("mixed-b", "mixed-b", "B", 6),
+                canonical_a=10,
+            )
+            candidates = {
+                "subjects": [
+                    {"candidate_subject_id": "subject-a-u", "tracklet_ids": ["a", "u-a"]},
+                    {"candidate_subject_id": "subject-b-u", "tracklet_ids": ["b", "u-b"]},
+                    {
+                        "candidate_subject_id": "subject-a-b",
+                        "tracklet_ids": ["mixed-a", "mixed-b"],
+                    },
+                ]
+            }
+            saved = save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "subject-a-u",
+                        "action": "assign_team",
+                        "team_label": "A",
+                    },
+                    {
+                        "candidate_subject_id": "subject-b-u",
+                        "action": "assign_team",
+                        "team_label": "B",
+                    },
+                ],
+            )
+            self.assertEqual(
+                {
+                    row["candidate_subject_id"]
+                    for row in saved["decisions"]
+                },
+                {"subject-a-u", "subject-b-u"},
+            )
+            with self.assertRaisesRegex(ValueError, "mixed-team subject"):
+                save_reviewed_slot_assignments(
+                    root,
+                    candidates,
+                    [
+                        {
+                            "candidate_subject_id": "subject-a-b",
+                            "action": "assign_team",
+                            "team_label": "A",
+                        }
+                    ],
+                )
+
 
 def _prepare(
     root: Path,

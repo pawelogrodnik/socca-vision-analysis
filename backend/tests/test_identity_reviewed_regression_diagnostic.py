@@ -9,10 +9,13 @@ import tempfile
 import unittest
 
 from app.services.identity_reviewed_regression_diagnostic import (
+    add_before_after_validation,
     build_reviewed_identity_regression_diagnostic,
     compact_reviewed_identity_regression_report,
     classify_observation,
     render_markdown_report,
+    _first_parallel_unnamed_fragment,
+    _first_unnamed_identity,
     _normalized_name,
 )
 
@@ -91,6 +94,70 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
         self.assertEqual(_normalized_name("Mati GK"), _normalized_name("Mati-GK"))
         self.assertEqual(_normalized_name("PRZEMEK"), _normalized_name("Przemek"))
 
+    def test_first_frame_without_named_identity_is_frame_based(self) -> None:
+        rows = [
+            _diagnostic_row(1, "named", "mati"),
+            _diagnostic_row(2, "named", "mati"),
+            _diagnostic_row(2, "unnamed", None),
+            _diagnostic_row(3, "unnamed", None),
+        ]
+        result = _first_unnamed_identity(rows, ["mati"])
+        self.assertEqual(result["frame"], 3)
+        self.assertEqual(result["tracklet_id"], "unnamed")
+
+    def test_parallel_unnamed_fragment_requires_same_frame_named_observation(self) -> None:
+        rows = [
+            _diagnostic_row(1, "named", "mati"),
+            _diagnostic_row(2, "unnamed-alone", None),
+            _diagnostic_row(3, "named", "mati"),
+            _diagnostic_row(3, "unnamed-parallel", None),
+        ]
+        result = _first_parallel_unnamed_fragment(rows, ["mati"])
+        self.assertEqual(result["frame"], 3)
+        self.assertEqual(result["tracklet_id"], "unnamed-parallel")
+
+    def test_before_after_comparison_keeps_compact_player_metrics(self) -> None:
+        report = {
+            "diagnostic_version": "after-v3",
+            "case_studies": [
+                {
+                    "requested_name": "Mati GK",
+                    "anchor_global_stable_slot": "A07",
+                    "named_coverage_ratio": 1.0,
+                    "first_frame_without_named_identity": None,
+                    "first_parallel_unnamed_fragment": None,
+                    "classification": "operator_binding_complete",
+                }
+            ],
+            "team_unknown_cases": {
+                "definite_reviewed_team_u_regressions": {"observations": 0}
+            },
+            "summary": {
+                "reviewed_slot_loss_breakdown": {
+                    "resolver_slot_loss": {"observations": 0}
+                },
+                "reviewed_slot_loss_reasons": {"resolver_slot_loss": []},
+            },
+        }
+        result = add_before_after_validation(
+            report,
+            {
+                "diagnostic_version": "before-v2",
+                "case_studies": [
+                    {
+                        "requested_name": "Mati GK",
+                        "anchor_global_stable_slot": "A07",
+                        "named_coverage_ratio": 0.5,
+                        "classification": "roster_binding_fragmentation",
+                    }
+                ],
+            },
+        )
+        player = result["before_after_validation"]["players"][0]
+        self.assertEqual(player["before_named_coverage_ratio"], 0.5)
+        self.assertEqual(player["after_named_coverage_ratio"], 1.0)
+        self.assertEqual(player["anchor_stable_slot"], "A07")
+
     def test_candidate_membership_across_slots_is_only_suspected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -157,6 +224,19 @@ def _row(
         "tracklet_team_label": tracklet_team,
         "reviewed_team_label": reviewed_team,
         "upstream_global_switch": upstream_global_switch,
+    }
+
+
+def _diagnostic_row(
+    frame: int, tracklet_id: str, canonical_player_id: str | None
+) -> dict[str, object]:
+    return {
+        "frame": frame,
+        "time_sec": frame / 10,
+        "tracklet_id": tracklet_id,
+        "candidate_subject_id": tracklet_id,
+        "reviewed_display_label": canonical_player_id or "A07",
+        "reviewed_canonical_player_id": canonical_player_id,
     }
 
 

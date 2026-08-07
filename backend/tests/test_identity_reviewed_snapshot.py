@@ -203,6 +203,147 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
         self.assertEqual(bindings, {})
         self.assertEqual(conflicts, set())
 
+    def test_subject_propagation_blocker_prevents_legacy_slot_binding(self) -> None:
+        bindings, conflicts = _slot_roster_bindings(
+            {
+                "t1": {
+                    "candidate_subject_id": "s1",
+                    "stable_anonymous_slot_id": "A02",
+                    "hard_blockers": [],
+                    "subject_propagation_blockers": [
+                        "ambiguous_candidate_subject_membership"
+                    ],
+                }
+            },
+            {"s1": [_decision("s1", "assign_roster_player", "p1")]},
+            {"decisions": []},
+            {"p1": {"team_label": "A"}},
+        )
+        self.assertEqual(bindings, {})
+        self.assertEqual(conflicts, set())
+
+    def test_assign_team_preserves_slot_roster_binding(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            (root / "global_identity.json").write_text(
+                json.dumps(
+                    {
+                        "slots": [
+                            {
+                                "stable_player_id": "A02",
+                                "team_label": "A",
+                                "tracklet_ids": ["t1", "t2"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            candidates = json.loads(
+                (root / "identity_candidate_shadow.json").read_text(encoding="utf-8")
+            )
+            save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "s1",
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                        "team_label": "A",
+                        "stable_slot_id": "A02",
+                    }
+                ],
+            )
+            save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "s2",
+                        "action": "assign_team",
+                        "team_label": "A",
+                    }
+                ],
+            )
+            rows = {
+                row["tracklet_id"]: row
+                for row in finalize_reviewed_identity(root, _match())[
+                    "tracklet_assignments"
+                ]
+            }
+            self.assertEqual(rows["t2"]["stable_anonymous_slot_id"], "A02")
+            self.assertEqual(rows["t2"]["team_label"], "A")
+            self.assertEqual(rows["t2"]["canonical_player_id"], "p1")
+            self.assertEqual(rows["t2"]["display_label"], "Paweł")
+
+    def test_explicit_unresolved_suppresses_slot_roster_binding(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            (root / "global_identity.json").write_text(
+                json.dumps(
+                    {
+                        "slots": [
+                            {
+                                "stable_player_id": "A02",
+                                "team_label": "A",
+                                "tracklet_ids": ["t1", "t2"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            candidates = json.loads(
+                (root / "identity_candidate_shadow.json").read_text(encoding="utf-8")
+            )
+            save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "s1",
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                        "team_label": "A",
+                        "stable_slot_id": "A02",
+                    }
+                ],
+            )
+            save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [{"candidate_subject_id": "s2", "action": "unresolved"}],
+            )
+            rows = {
+                row["tracklet_id"]: row
+                for row in finalize_reviewed_identity(root, _match())[
+                    "tracklet_assignments"
+                ]
+            }
+            self.assertEqual(rows["t1"]["canonical_player_id"], "p1")
+            self.assertIsNone(rows["t2"]["canonical_player_id"])
+            self.assertEqual(rows["t2"]["identity_status"], "unresolved")
+
+    def test_assign_team_with_opposite_team_is_rejected(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            candidates = json.loads(
+                (root / "identity_candidate_shadow.json").read_text(encoding="utf-8")
+            )
+            with self.assertRaisesRegex(ValueError, "team mismatch"):
+                save_reviewed_slot_assignments(
+                    root,
+                    candidates,
+                    [
+                        {
+                            "candidate_subject_id": "s1",
+                            "action": "assign_team",
+                            "team_label": "B",
+                        }
+                    ],
+                )
+
     def test_ambiguous_subject_membership_is_a_hard_conflict(self) -> None:
         with _workspace() as root:
             _write_inputs(root, decisions=[])

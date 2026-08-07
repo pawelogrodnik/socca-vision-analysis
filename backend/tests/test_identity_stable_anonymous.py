@@ -7,7 +7,10 @@ import unittest
 
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
 from app.services.identity_reviewed_slot_review import save_reviewed_slot_assignments
-from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
+from app.services.identity_stable_anonymous import (
+    _subject_teams,
+    resolve_stable_anonymous_entities,
+)
 
 
 class StableAnonymousIdentityTests(unittest.TestCase):
@@ -114,6 +117,67 @@ class StableAnonymousIdentityTests(unittest.TestCase):
             )
             self.assertEqual(resolved["t1"]["stable_anonymous_slot_id"], "A01")
             self.assertEqual(resolved["t1"]["effective_team_label"], "A")
+
+    def test_subject_team_collection_ignores_unknown_team(self) -> None:
+        teams = _subject_teams(
+            {
+                "u": {"unknown", "a-u", "b-u", "a-b-u"},
+                "a": {"a", "a-u", "a-b", "a-b-u"},
+                "b": {"b", "b-u", "a-b", "a-b-u"},
+            },
+            {
+                "u": _tracklet("u", "U", 1),
+                "a": _tracklet("a", "A", 2),
+                "b": _tracklet("b", "B", 3),
+            },
+        )
+        self.assertEqual(teams["unknown"], set())
+        self.assertEqual(teams["a"], {"A"})
+        self.assertEqual(teams["a-u"], {"A"})
+        self.assertEqual(teams["b"], {"B"})
+        self.assertEqual(teams["b-u"], {"B"})
+        self.assertEqual(teams["a-b"], {"A", "B"})
+        self.assertEqual(teams["a-b-u"], {"A", "B"})
+
+    def test_canonical_anchor_survives_candidate_membership_ambiguity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A05", "t1")]})
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {"t1": _tracklet("t1", "A", 1)},
+                _candidates(("s1", ["t1"], None), ("s2", ["t1"], None)),
+            )
+            row = resolved["t1"]
+            self.assertEqual(row["stable_anonymous_slot_id"], "A05")
+            self.assertEqual(row["effective_team_label"], "A")
+            self.assertEqual(row["hard_blockers"], [])
+            self.assertEqual(
+                row["subject_propagation_blockers"],
+                ["ambiguous_candidate_subject_membership"],
+            )
+            self.assertTrue(row["requires_review"])
+
+    def test_canonical_anchor_survives_mixed_candidate_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A05", "t1")]})
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {
+                    "t1": _tracklet("t1", "A", 1),
+                    "opponent": _tracklet("opponent", "B", 2),
+                },
+                _candidates(("s1", ["t1", "opponent"], None)),
+            )
+            row = resolved["t1"]
+            self.assertEqual(row["stable_anonymous_slot_id"], "A05")
+            self.assertEqual(row["effective_team_label"], "A")
+            self.assertEqual(row["hard_blockers"], [])
+            self.assertEqual(
+                row["subject_propagation_blockers"],
+                ["mixed_team_candidate_subject"],
+            )
 
     def test_canonical_anchor_rejects_opposite_local_team(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

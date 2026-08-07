@@ -169,6 +169,54 @@ def compact_reviewed_identity_regression_report(report: dict[str, Any]) -> dict[
     return {key: value for key, value in report.items() if key != "frame_level_comparison"}
 
 
+def add_before_after_validation(
+    report: dict[str, Any], baseline_report: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach compact baseline comparisons without retaining frame-level rows."""
+    baseline_cases = {
+        str(row.get("requested_name") or ""): row
+        for row in baseline_report.get("case_studies") or []
+    }
+    after_cases = {
+        str(row.get("requested_name") or ""): row
+        for row in report.get("case_studies") or []
+    }
+    names = list(dict.fromkeys([*baseline_cases, *after_cases]))
+    report["before_after_validation"] = {
+        "before_diagnostic_version": baseline_report.get("diagnostic_version"),
+        "after_diagnostic_version": report.get("diagnostic_version"),
+        "players": [
+            _player_before_after(
+                name,
+                baseline_cases.get(name, {}),
+                after_cases.get(name, {}),
+            )
+            for name in names
+        ],
+        "team_unknown": {
+            "before": baseline_report.get("team_unknown_cases") or {},
+            "after": report.get("team_unknown_cases") or {},
+        },
+        "slot_losses": {
+            "before": (baseline_report.get("summary") or {}).get(
+                "reviewed_slot_loss_breakdown"
+            )
+            or {
+                "note": "The v2 baseline did not separate resolver losses, frame-uniqueness demotions, and operator removals."
+            },
+            "after": (report.get("summary") or {}).get(
+                "reviewed_slot_loss_breakdown"
+            )
+            or {},
+            "after_reasons": (report.get("summary") or {}).get(
+                "reviewed_slot_loss_reasons"
+            )
+            or {},
+        },
+    }
+    return report
+
+
 def render_markdown_report(report: dict[str, Any]) -> str:
     summary = report["summary"]
     conclusion = report["conclusion"]
@@ -205,11 +253,76 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             f"- Needs visual/operator confirmation: `{roman_gap.get('needs_visual_operator_confirmation', True)}`.",
             f"- {roman_gap.get('reason')}",
         ])
+    comparison = report.get("before_after_validation")
+    if comparison:
+        lines.extend(["", "## BEFORE -> AFTER validation", ""])
+        for player in comparison["players"]:
+            before_coverage = player["before_named_coverage_ratio"]
+            after_coverage = player["after_named_coverage_ratio"]
+            lines.append(
+                f"- **{player['requested_name']}**: anchor {player['anchor_stable_slot'] or 'unproven'}; "
+                f"named coverage {_ratio(before_coverage)} -> {_ratio(after_coverage)}; "
+                f"first true unnamed frame {player['after_first_frame_without_named_identity'] or 'none'}; "
+                f"parallel unnamed fragment {player['after_first_parallel_unnamed_fragment'] or 'none'}; "
+                f"remaining {player['after_remaining_reason']}."
+            )
+        team_unknown = comparison["team_unknown"]
+        before_u = (
+            team_unknown["before"]
+            .get("definite_reviewed_team_u_regressions", {})
+            .get("observations", 0)
+        )
+        after_u = (
+            team_unknown["after"]
+            .get("definite_reviewed_team_u_regressions", {})
+            .get("observations", 0)
+        )
+        lines.append(
+            f"- Team-U direct reviewed regressions: {before_u} -> {after_u} observations."
+        )
+        losses = comparison["slot_losses"]["after"]
+        lines.append(
+            "- AFTER slot losses: "
+            f"resolver {losses.get('resolver_slot_loss', {}).get('observations', 0)}; "
+            f"frame uniqueness {losses.get('frame_uniqueness_demotion', {}).get('observations', 0)}; "
+            f"operator removals {losses.get('operator_slot_removal', {}).get('observations', 0)}."
+        )
     lines.extend(["", "## Source safety", ""])
     lines.append(f"- Source artifacts unchanged: `{report['safety']['source_artifacts_unchanged']}`.")
     lines.extend(["", "## Recommendations", ""])
     lines.extend(f"- {item}" for item in report["recommendations"])
     return "\n".join(lines) + "\n"
+
+
+def _player_before_after(
+    name: str, before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "requested_name": name,
+        "anchor_stable_slot": after.get("anchor_global_stable_slot")
+        or before.get("anchor_global_stable_slot"),
+        "before_named_coverage_ratio": before.get("named_coverage_ratio"),
+        "after_named_coverage_ratio": after.get("named_coverage_ratio"),
+        "before_first_frame_without_named_identity": before.get(
+            "first_frame_without_named_identity"
+        ),
+        "after_first_frame_without_named_identity": after.get(
+            "first_frame_without_named_identity"
+        ),
+        "before_first_parallel_unnamed_fragment": before.get(
+            "first_parallel_unnamed_fragment"
+        ),
+        "after_first_parallel_unnamed_fragment": after.get(
+            "first_parallel_unnamed_fragment"
+        ),
+        "before_remaining_reason": before.get("classification"),
+        "after_remaining_reason": after.get("remaining_review_reasons")
+        or after.get("classification"),
+    }
+
+
+def _ratio(value: Any) -> str:
+    return f"{float(value):.1%}" if isinstance(value, (int, float)) else "n/a"
 
 
 def _observations(
@@ -255,6 +368,13 @@ def _observations(
                     "reviewed_display_label": effective.get("display_label") or effective.get("fallback_label"),
                     "reviewed_team_label": effective.get("team_label") or "U",
                     "reviewed_hard_blockers": list(effective.get("hard_blockers") or []),
+                    "reviewed_conflict_codes": sorted(
+                        {
+                            str(conflict.get("code") or "")
+                            for conflict in effective.get("conflicts") or []
+                            if conflict.get("code")
+                        }
+                    ),
                     "reviewed_observation_demoted": (tracklet_id, frame) in demotions,
                     "suspected_upstream_fragmentation": False,
                 }
@@ -326,6 +446,16 @@ def _summary(observations: list[dict[str, Any]], fps: float) -> dict[str, Any]:
             )
             for scope in slot_loss_scopes
         },
+        "reviewed_slot_loss_reasons": {
+            scope: _loss_reasons(
+                [
+                    row
+                    for row in observations
+                    if row.get("reviewed_slot_loss_scope") == scope
+                ]
+            )
+            for scope in slot_loss_scopes
+        },
         "suspected_upstream_fragmentation": {
             "candidate_subjects": len({str(row["candidate_subject_id"]) for row in suspected}),
             "tracklets": len({str(row["tracklet_id"]) for row in suspected}),
@@ -334,6 +464,25 @@ def _summary(observations: list[dict[str, Any]], fps: float) -> dict[str, Any]:
             "note": "Candidate-subject membership across global slots is not proof of a core switch.",
         },
     }
+
+
+def _loss_reasons(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return _count_rows(
+        Counter(
+            str(blocker)
+            for row in rows
+            for blocker in _reviewed_reasons(row)
+        ),
+        len(rows),
+    ) if rows else []
+
+
+def _reviewed_reasons(row: dict[str, Any]) -> list[str]:
+    return list(
+        row.get("reviewed_hard_blockers")
+        or row.get("reviewed_conflict_codes")
+        or ["no_recorded_blocker"]
+    )
 
 
 def _same_tracklet_findings(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -410,6 +559,16 @@ def _team_unknown_cases(observations: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             len(degraded),
         ) if degraded else [],
+        "remaining_reviewed_u_classes": _count_rows(
+            Counter(
+                        f"{row['comparison_status']}:{','.join(_reviewed_reasons(row))}"
+                for row in anchored
+                if row not in preserved
+            ),
+            len([row for row in anchored if row not in preserved]),
+        )
+        if any(row not in preserved for row in anchored)
+        else [],
         "degradation_reason": "A direct same-tracklet loss of a global A/B anchor after review; local/global A-B conflicts are reported separately and never classified as this regression.",
         "examples": [
             {
@@ -516,12 +675,12 @@ def _case_studies(
         fallback_rows = [row for row in scope if _is_fallback(row)]
         unresolved_rows = [row for row in scope if not _is_named(row) and not _is_fallback(row)]
         other_name_rows = [row for row in scope if _is_named(row) and row not in named_rows]
+        remaining_rows = [row for row in scope if row not in named_rows]
         first_loss = _first_loss_after_name(scope, player_ids)
         first_unnamed = _first_unnamed_identity(scope, player_ids)
         first_parallel_unnamed = _first_parallel_unnamed_fragment(
             scope,
             player_ids,
-            set(candidate_ids),
         )
         fragmented = bool(anchor and named_rows and (fallback_rows or unresolved_rows or other_name_rows))
         classification = "roster_binding_fragmentation" if fragmented else "operator_binding_not_proven" if not anchor else "operator_binding_complete"
@@ -540,6 +699,15 @@ def _case_studies(
                 "fallback_observations": len(fallback_rows),
                 "unresolved_observations": len(unresolved_rows),
                 "other_name_observations": len(other_name_rows),
+                "remaining_review_reasons": _count_rows(
+                    Counter(
+                        f"{row['reviewed_identity_status']}:{','.join(_reviewed_reasons(row))}"
+                        for row in remaining_rows
+                    ),
+                    len(remaining_rows),
+                )
+                if remaining_rows
+                else [],
                 "named_coverage_ratio": round(len(named_rows) / len(scope), 4) if scope else 0.0,
                 "first_loss_of_name": first_loss,
                 "first_frame_without_named_identity": first_unnamed,
@@ -634,25 +802,49 @@ def _first_loss_after_name(rows: list[dict[str, Any]], player_ids: list[str]) ->
 def _first_unnamed_identity(
     rows: list[dict[str, Any]], player_ids: list[str]
 ) -> dict[str, Any] | None:
-    for row in sorted(rows, key=lambda item: (int(item["frame"]), str(item["tracklet_id"]))):
-        if str(row.get("reviewed_canonical_player_id") or "") not in player_ids:
-            return _identity_gap_endpoint(row)
+    named_seen = False
+    for frame_rows in _rows_by_frame(rows):
+        named_rows = [
+            row
+            for row in frame_rows
+            if str(row.get("reviewed_canonical_player_id") or "") in player_ids
+        ]
+        if named_seen and not named_rows:
+            return _identity_gap_endpoint(frame_rows[0])
+        if named_rows:
+            named_seen = True
     return None
 
 
 def _first_parallel_unnamed_fragment(
     rows: list[dict[str, Any]],
     player_ids: list[str],
-    named_candidate_ids: set[str],
 ) -> dict[str, Any] | None:
-    for row in sorted(rows, key=lambda item: (int(item["frame"]), str(item["tracklet_id"]))):
-        if (
-            str(row.get("reviewed_canonical_player_id") or "") not in player_ids
-            and str(row.get("candidate_subject_id") or "")
-            and str(row.get("candidate_subject_id") or "") not in named_candidate_ids
-        ):
-            return _identity_gap_endpoint(row)
+    for frame_rows in _rows_by_frame(rows):
+        named_tracklets = {
+            str(row["tracklet_id"])
+            for row in frame_rows
+            if str(row.get("reviewed_canonical_player_id") or "") in player_ids
+        }
+        unnamed_rows = [
+            row
+            for row in frame_rows
+            if str(row.get("reviewed_canonical_player_id") or "") not in player_ids
+            and str(row["tracklet_id"]) not in named_tracklets
+        ]
+        if named_tracklets and unnamed_rows:
+            return _identity_gap_endpoint(unnamed_rows[0])
     return None
+
+
+def _rows_by_frame(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[int(row["frame"])].append(row)
+    return [
+        sorted(grouped[frame], key=lambda row: str(row["tracklet_id"]))
+        for frame in sorted(grouped)
+    ]
 
 
 def _identity_gap_endpoint(row: dict[str, Any]) -> dict[str, Any]:

@@ -318,6 +318,8 @@ def _candidate_context(
             str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
             for tracklet_id in tracklet_ids
             if tracklet_id in tracklets
+            and str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
+            in {"A", "B"}
         }
         for subject_id, tracklet_ids in subjects.items()
     }

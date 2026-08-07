@@ -121,84 +121,94 @@ def resolve_stable_anonymous_entities(
             {str(row["stable_slot_id"]) for row in advisory_claims}
         )
         blockers: list[str] = []
+        subject_propagation_blockers: list[str] = []
         stable_slot_id: str | None = None
         anchor_source: str | None = None
         anchor_status = "unanchored"
         team = requested_team
 
         if len(subjects) > 1:
-            blockers.append("ambiguous_candidate_subject_membership")
+            subject_propagation_blockers.append(
+                "ambiguous_candidate_subject_membership"
+            )
         if any(len(subject_teams[subject]) > 1 for subject in subjects):
-            blockers.append("mixed_team_candidate_subject")
+            subject_propagation_blockers.append("mixed_team_candidate_subject")
         detected_evidence_count = _detected_observations(tracklet)
 
-        if manual_action == "assign_existing_slot" and not blockers:
-            requested = str(manual.get("stable_slot_id") or "")
-            if requested not in reviewed_slot_registry:
-                blockers.append("manual_stable_slot_not_found")
-            elif str(reviewed_slot_registry[requested].get("team_label")) != team:
-                blockers.append("manual_stable_slot_team_mismatch")
+        if manual_action == "assign_existing_slot":
+            if subject_propagation_blockers:
+                blockers.extend(subject_propagation_blockers)
             else:
-                stable_slot_id = requested
-                anchor_source = "manual_review"
-                anchor_status = "manual_existing_slot"
-        elif manual_action == "create_new_stable_player" and not blockers:
-            stable_slot_id = manual_new_slots.get(subject_id or "")
-            rejection = manual_new_rejections.get(subject_id or "")
-            if rejection:
-                blockers.append(rejection)
-            elif stable_slot_id:
-                if _label_team(stable_slot_id) != team:
-                    blockers.append("manual_new_player_team_mismatch")
+                requested = str(manual.get("stable_slot_id") or "")
+                if requested not in reviewed_slot_registry:
+                    blockers.append("manual_stable_slot_not_found")
+                elif str(reviewed_slot_registry[requested].get("team_label")) != team:
+                    blockers.append("manual_stable_slot_team_mismatch")
                 else:
-                    anchor_source = "manual_new_player_confirmation"
-                    anchor_status = "manual_new_slot"
+                    stable_slot_id = requested
+                    anchor_source = "manual_review"
+                    anchor_status = "manual_existing_slot"
+        elif manual_action == "create_new_stable_player":
+            if subject_propagation_blockers:
+                blockers.extend(subject_propagation_blockers)
+            else:
+                stable_slot_id = manual_new_slots.get(subject_id or "")
+                rejection = manual_new_rejections.get(subject_id or "")
+                if rejection:
+                    blockers.append(rejection)
+                elif stable_slot_id:
+                    if _label_team(stable_slot_id) != team:
+                        blockers.append("manual_new_player_team_mismatch")
+                    else:
+                        anchor_source = "manual_new_player_confirmation"
+                        anchor_status = "manual_new_slot"
         elif manual_action in {"referee", "false_detection", "team_unknown"}:
             stable_slot_id = None
             anchor_source = "manual_review"
             anchor_status = manual_action
             blockers = []
-        elif not blockers:
-            if len(canonical_labels) > 1:
-                blockers.append("conflicting_canonical_stable_sources")
-                anchor_status = "conflicting_claims"
-            elif len(canonical_labels) == 1:
-                candidate_slot = canonical_labels[0]
-                if candidate_slot not in canonical_slots:
-                    blockers.append("stable_anchor_not_in_canonical_pool")
-                elif not 1 <= _label_number(candidate_slot) <= max_subjects:
-                    blockers.append("stable_anchor_exceeds_bounded_pool")
-                elif team in {"A", "B"} and _label_team(candidate_slot) != team:
-                    blockers.append("stable_anchor_team_mismatch")
-                else:
-                    stable_slot_id = candidate_slot
-                    sources = sorted(
-                        {str(row["source"]) for row in canonical_claims}
-                    )
-                    anchor_source = sources[0] if len(sources) == 1 else "canonical_consensus"
-                    anchor_status = (
-                        "anchored_with_advisory_disagreement"
-                        if advisory_labels and advisory_labels != [candidate_slot]
-                        else "anchored"
-                    )
-                    team = _label_team(candidate_slot)
-            elif len(advisory_labels) > 1:
-                blockers.append("conflicting_advisory_stable_anchor_sources")
-                anchor_status = "conflicting_advisory_claims"
-            elif len(advisory_labels) == 1:
-                candidate_slot = advisory_labels[0]
-                if candidate_slot not in canonical_slots:
-                    blockers.append("stable_anchor_not_in_canonical_pool")
-                elif not 1 <= _label_number(candidate_slot) <= max_subjects:
-                    blockers.append("stable_anchor_exceeds_bounded_pool")
-                elif team not in {"A", "B"}:
-                    blockers.append("unknown_team_cannot_receive_stable_slot")
-                elif _label_team(candidate_slot) != team:
-                    blockers.append("stable_anchor_team_mismatch")
-                else:
-                    stable_slot_id = candidate_slot
-                    anchor_source = advisory_claims[0]["source"]
-                    anchor_status = "anchored_advisory"
+        elif len(canonical_labels) > 1:
+            blockers.append("conflicting_canonical_stable_sources")
+            anchor_status = "conflicting_claims"
+        elif len(canonical_labels) == 1:
+            candidate_slot = canonical_labels[0]
+            if candidate_slot not in canonical_slots:
+                blockers.append("stable_anchor_not_in_canonical_pool")
+            elif not 1 <= _label_number(candidate_slot) <= max_subjects:
+                blockers.append("stable_anchor_exceeds_bounded_pool")
+            elif team in {"A", "B"} and _label_team(candidate_slot) != team:
+                blockers.append("stable_anchor_team_mismatch")
+            else:
+                stable_slot_id = candidate_slot
+                sources = sorted(
+                    {str(row["source"]) for row in canonical_claims}
+                )
+                anchor_source = sources[0] if len(sources) == 1 else "canonical_consensus"
+                anchor_status = (
+                    "anchored_with_advisory_disagreement"
+                    if advisory_labels and advisory_labels != [candidate_slot]
+                    else "anchored"
+                )
+                team = _label_team(candidate_slot)
+        elif subject_propagation_blockers:
+            blockers.extend(subject_propagation_blockers)
+        elif len(advisory_labels) > 1:
+            blockers.append("conflicting_advisory_stable_anchor_sources")
+            anchor_status = "conflicting_advisory_claims"
+        elif len(advisory_labels) == 1:
+            candidate_slot = advisory_labels[0]
+            if candidate_slot not in canonical_slots:
+                blockers.append("stable_anchor_not_in_canonical_pool")
+            elif not 1 <= _label_number(candidate_slot) <= max_subjects:
+                blockers.append("stable_anchor_exceeds_bounded_pool")
+            elif team not in {"A", "B"}:
+                blockers.append("unknown_team_cannot_receive_stable_slot")
+            elif _label_team(candidate_slot) != team:
+                blockers.append("stable_anchor_team_mismatch")
+            else:
+                stable_slot_id = candidate_slot
+                anchor_source = advisory_claims[0]["source"]
+                anchor_status = "anchored_advisory"
 
         if blockers:
             stable_slot_id = None
@@ -226,12 +236,17 @@ def resolve_stable_anonymous_entities(
             "fallback_label": fallback_label,
             "unanchored": stable_slot_id is None,
             "ephemeral": detected_evidence_count > 0 and detected_evidence_count < 5,
-            "requires_review": stable_slot_id is None
+            "requires_review": (
+                stable_slot_id is None or bool(subject_propagation_blockers)
+            )
             and manual_action not in {"referee", "false_detection"},
             "detected_evidence_count": detected_evidence_count,
             "insufficient_evidence": detected_evidence_count == 0,
             "manual_action": manual_action,
             "hard_blockers": sorted(set(blockers)),
+            "subject_propagation_blockers": sorted(
+                set(subject_propagation_blockers)
+            ),
         }
 
     diagnostics = _diagnostics(
@@ -428,7 +443,8 @@ def _subject_teams(
     for tracklet_id, subjects in membership.items():
         team = str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
         for subject in subjects:
-            output[subject].add(team)
+            if team in {"A", "B"}:
+                output[subject].add(team)
     return output
 
 

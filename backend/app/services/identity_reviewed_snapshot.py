@@ -26,7 +26,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v5-canonical-slot-binding"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v6-canonical-slot-preservation"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -103,10 +103,12 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
                 source = str(slot_binding["source"])
                 evidence = []
         manual_action = stable_row.get("manual_action")
-        if manual_action in {"assign_team", "referee", "false_detection", "team_unknown", "unresolved"}:
+        if manual_action in {"referee", "false_detection", "team_unknown", "unresolved"}:
             status = str(manual_action)
             player_id = None
-            source = "operator_team_assignment" if manual_action == "assign_team" else "manual_review"
+            source = "manual_review"
+        elif manual_action == "assign_team" and player_id is None:
+            source = "operator_team_assignment"
         if status == "assign_team":
             status = "unresolved"
         blockers.extend(stable_row["hard_blockers"])
@@ -428,7 +430,7 @@ def _slot_roster_bindings(
         slot_id = str(row.get("stable_anonymous_slot_id") or "")
         if not subject_id:
             continue
-        if row.get("hard_blockers"):
+        if row.get("hard_blockers") or row.get("subject_propagation_blockers"):
             blocked_subjects.add(subject_id)
         elif slot_id:
             subject_slots[subject_id].add(slot_id)

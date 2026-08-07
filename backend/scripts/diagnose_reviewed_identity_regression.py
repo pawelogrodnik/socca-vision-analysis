@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from app.services.identity_reviewed_regression_diagnostic import (
+    add_before_after_validation,
     build_reviewed_identity_regression_diagnostic,
     compact_reviewed_identity_regression_report,
     render_markdown_report,
@@ -24,6 +25,11 @@ def main() -> int:
     )
     parser.add_argument(
         "--markdown-output", type=Path, help="Optional human-readable report path."
+    )
+    parser.add_argument(
+        "--baseline-report",
+        type=Path,
+        help="Optional compact pre-fix diagnostic report for BEFORE -> AFTER metrics.",
     )
     parser.add_argument(
         "--case-name",
@@ -46,6 +52,16 @@ def main() -> int:
         )
     except (FileNotFoundError, ValueError) as error:
         parser.error(str(error))
+    if options.baseline_report:
+        try:
+            baseline = json.loads(
+                options.baseline_report.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as error:
+            parser.error(f"Unable to read baseline report: {error}")
+        if not isinstance(baseline, dict):
+            parser.error("Baseline report must be a JSON object.")
+        report = add_before_after_validation(report, baseline)
     rendered = json.dumps(report, indent=2, ensure_ascii=False)
     protected_paths = {
         (options.match_root / name).resolve()
