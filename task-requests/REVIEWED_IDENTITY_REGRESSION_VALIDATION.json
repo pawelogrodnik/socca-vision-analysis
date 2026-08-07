@@ -1,0 +1,5744 @@
+{
+  "schema_version": "2.0.0",
+  "diagnostic_version": "reviewed_identity_regression_diagnostic:v2",
+  "match_id": "668ae4c0",
+  "source_artifacts": [
+    {
+      "path": "match.json",
+      "available": true,
+      "sha256": "91f6b7ae4aecf5354150406428ded59d3d27f3133cbdc2a219dd99dab8c14542",
+      "schema_version": null
+    },
+    {
+      "path": "tracklets.json",
+      "available": true,
+      "sha256": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "schema_version": "0.1.0"
+    },
+    {
+      "path": "global_identity.json",
+      "available": true,
+      "sha256": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "schema_version": "0.1.0"
+    },
+    {
+      "path": "stable_players.json",
+      "available": true,
+      "sha256": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "schema_version": "0.2.0"
+    },
+    {
+      "path": "identity_candidate_shadow.json",
+      "available": true,
+      "sha256": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
+      "schema_version": "0.1.0"
+    },
+    {
+      "path": "reviewed_identity_snapshot.json",
+      "available": true,
+      "sha256": "9cfbdb1459f31903ebf203ef702f4ea1376e7ea5071ec6dbf103bfb4f14df120",
+      "schema_version": "3.0.0"
+    },
+    {
+      "path": "reviewed_identity_slot_assignments.json",
+      "available": true,
+      "sha256": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
+      "schema_version": "1.1.0"
+    },
+    {
+      "path": "identity_roster_subject_review_decisions_shadow.json",
+      "available": false,
+      "sha256": null,
+      "schema_version": null
+    },
+    {
+      "path": "identity_seeded_candidate_assignments.json",
+      "available": false,
+      "sha256": null,
+      "schema_version": null
+    }
+  ],
+  "pipeline_versions": {
+    "global_identity": "conservative_identity_v2",
+    "stable_players": "0.2.0",
+    "reviewed_identity_snapshot": "reviewed_identity_snapshot:v4"
+  },
+  "fps": 29.97,
+  "summary": {
+    "frames_analyzed": 2692,
+    "detected_observations_analyzed": 37653,
+    "tracklets_analyzed": 134,
+    "same_tracklet": {
+      "same_tracklet_exact": {
+        "events": 216,
+        "tracklets": 84,
+        "observations": 29456,
+        "duration_sec": 982.85
+      },
+      "definite_reviewed_slot_regression": {
+        "events": 0,
+        "tracklets": 0,
+        "observations": 0,
+        "duration_sec": 0
+      },
+      "definite_reviewed_slot_loss": {
+        "events": 154,
+        "tracklets": 62,
+        "observations": 4732,
+        "duration_sec": 157.891
+      },
+      "definite_reviewed_team_regression": {
+        "events": 6,
+        "tracklets": 3,
+        "observations": 915,
+        "duration_sec": 30.531
+      },
+      "upstream_unknown": {
+        "events": 19,
+        "tracklets": 7,
+        "observations": 368,
+        "duration_sec": 12.279
+      },
+      "missing_global_lineage": {
+        "events": 98,
+        "tracklets": 35,
+        "observations": 2182,
+        "duration_sec": 72.806
+      }
+    },
+    "suspected_upstream_fragmentation": {
+      "candidate_subjects": 1,
+      "tracklets": 3,
+      "observations": 937,
+      "severity": "SUSPECTED",
+      "note": "Candidate-subject membership across global slots is not proof of a core switch."
+    }
+  },
+  "same_tracklet_findings": [
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 93,
+      "frame_end": 93,
+      "time_start_sec": 3.103,
+      "time_end_sec": 3.103,
+      "tracklet_id": "100003:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 88,
+      "frame_end": 88,
+      "time_start_sec": 2.936,
+      "time_end_sec": 2.936,
+      "tracklet_id": "100009:1",
+      "global_slot": "B04",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 178,
+      "frame_end": 178,
+      "time_start_sec": 5.939,
+      "time_end_sec": 5.939,
+      "tracklet_id": "100010:1",
+      "global_slot": "B05",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 172,
+      "frame_end": 172,
+      "time_start_sec": 5.739,
+      "time_end_sec": 5.739,
+      "tracklet_id": "100011:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 175,
+      "frame_end": 175,
+      "time_start_sec": 5.839,
+      "time_end_sec": 5.839,
+      "tracklet_id": "100011:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 0,
+      "frame_end": 1990,
+      "time_start_sec": 0.0,
+      "time_end_sec": 66.4,
+      "tracklet_id": "100012:1",
+      "global_slot": "B10",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B?",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 11,
+      "frame_end": 11,
+      "time_start_sec": 0.367,
+      "time_end_sec": 0.367,
+      "tracklet_id": "100014:1",
+      "global_slot": "A07",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 17,
+      "frame_end": 17,
+      "time_start_sec": 0.567,
+      "time_end_sec": 0.567,
+      "tracklet_id": "100014:1",
+      "global_slot": "A07",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 19,
+      "frame_end": 21,
+      "time_start_sec": 0.634,
+      "time_end_sec": 0.701,
+      "tracklet_id": "100014:1",
+      "global_slot": "A07",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 26,
+      "frame_end": 26,
+      "time_start_sec": 0.868,
+      "time_end_sec": 0.868,
+      "tracklet_id": "100014:1",
+      "global_slot": "A07",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 88,
+      "frame_end": 88,
+      "time_start_sec": 2.936,
+      "time_end_sec": 2.936,
+      "tracklet_id": "100018:1",
+      "global_slot": "B04",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 470,
+      "frame_end": 470,
+      "time_start_sec": 15.682,
+      "time_end_sec": 15.682,
+      "tracklet_id": "100018:3",
+      "global_slot": "B04",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 93,
+      "frame_end": 93,
+      "time_start_sec": 3.103,
+      "time_end_sec": 3.103,
+      "tracklet_id": "100020:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 144,
+      "frame_end": 146,
+      "time_start_sec": 4.805,
+      "time_end_sec": 4.872,
+      "tracklet_id": "100024:1",
+      "global_slot": "A07",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 145,
+      "frame_end": 145,
+      "time_start_sec": 4.838,
+      "time_end_sec": 4.838,
+      "tracklet_id": "100025:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 158,
+      "frame_end": 158,
+      "time_start_sec": 5.272,
+      "time_end_sec": 5.272,
+      "tracklet_id": "100025:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 280,
+      "frame_end": 280,
+      "time_start_sec": 9.343,
+      "time_end_sec": 9.343,
+      "tracklet_id": "100025:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 172,
+      "frame_end": 172,
+      "time_start_sec": 5.739,
+      "time_end_sec": 5.739,
+      "tracklet_id": "100026:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 175,
+      "frame_end": 175,
+      "time_start_sec": 5.839,
+      "time_end_sec": 5.839,
+      "tracklet_id": "100026:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 178,
+      "frame_end": 178,
+      "time_start_sec": 5.939,
+      "time_end_sec": 5.939,
+      "tracklet_id": "100027:1",
+      "global_slot": "B05",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1036,
+      "frame_end": 1081,
+      "time_start_sec": 34.568,
+      "time_end_sec": 36.069,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1097,
+      "frame_end": 1097,
+      "time_start_sec": 36.603,
+      "time_end_sec": 36.603,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1101,
+      "frame_end": 1105,
+      "time_start_sec": 36.737,
+      "time_end_sec": 36.87,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1109,
+      "frame_end": 1111,
+      "time_start_sec": 37.004,
+      "time_end_sec": 37.07,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1116,
+      "frame_end": 1457,
+      "time_start_sec": 37.237,
+      "time_end_sec": 48.615,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1464,
+      "frame_end": 1464,
+      "time_start_sec": 48.849,
+      "time_end_sec": 48.849,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1470,
+      "frame_end": 1471,
+      "time_start_sec": 49.049,
+      "time_end_sec": 49.082,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1473,
+      "frame_end": 1474,
+      "time_start_sec": 49.149,
+      "time_end_sec": 49.183,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1476,
+      "frame_end": 2691,
+      "time_start_sec": 49.249,
+      "time_end_sec": 89.79,
+      "tracklet_id": "100027:2",
+      "global_slot": "A05",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 284,
+      "frame_end": 284,
+      "time_start_sec": 9.476,
+      "time_end_sec": 9.476,
+      "tracklet_id": "100032:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 286,
+      "frame_end": 286,
+      "time_start_sec": 9.543,
+      "time_end_sec": 9.543,
+      "tracklet_id": "100032:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 290,
+      "frame_end": 290,
+      "time_start_sec": 9.676,
+      "time_end_sec": 9.676,
+      "tracklet_id": "100032:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 306,
+      "frame_end": 306,
+      "time_start_sec": 10.21,
+      "time_end_sec": 10.21,
+      "tracklet_id": "100032:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 308,
+      "frame_end": 311,
+      "time_start_sec": 10.277,
+      "time_end_sec": 10.377,
+      "tracklet_id": "100032:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 319,
+      "frame_end": 319,
+      "time_start_sec": 10.644,
+      "time_end_sec": 10.644,
+      "tracklet_id": "100032:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 402,
+      "frame_end": 402,
+      "time_start_sec": 13.413,
+      "time_end_sec": 13.413,
+      "tracklet_id": "100034:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1550,
+      "frame_end": 1550,
+      "time_start_sec": 51.718,
+      "time_end_sec": 51.718,
+      "tracklet_id": "100036:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 280,
+      "frame_end": 280,
+      "time_start_sec": 9.343,
+      "time_end_sec": 9.343,
+      "tracklet_id": "100037:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 382,
+      "frame_end": 382,
+      "time_start_sec": 12.746,
+      "time_end_sec": 12.746,
+      "tracklet_id": "100037:2",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 284,
+      "frame_end": 284,
+      "time_start_sec": 9.476,
+      "time_end_sec": 9.476,
+      "tracklet_id": "100038:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 286,
+      "frame_end": 286,
+      "time_start_sec": 9.543,
+      "time_end_sec": 9.543,
+      "tracklet_id": "100038:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 290,
+      "frame_end": 290,
+      "time_start_sec": 9.676,
+      "time_end_sec": 9.676,
+      "tracklet_id": "100038:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 306,
+      "frame_end": 306,
+      "time_start_sec": 10.21,
+      "time_end_sec": 10.21,
+      "tracklet_id": "100038:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 308,
+      "frame_end": 311,
+      "time_start_sec": 10.277,
+      "time_end_sec": 10.377,
+      "tracklet_id": "100038:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 319,
+      "frame_end": 319,
+      "time_start_sec": 10.644,
+      "time_end_sec": 10.644,
+      "tracklet_id": "100038:1",
+      "global_slot": "B07",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 308,
+      "frame_end": 308,
+      "time_start_sec": 10.277,
+      "time_end_sec": 10.277,
+      "tracklet_id": "100039:1",
+      "global_slot": "A01",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 983,
+      "frame_end": 983,
+      "time_start_sec": 32.799,
+      "time_end_sec": 32.799,
+      "tracklet_id": "100039:2",
+      "global_slot": "A01",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 990,
+      "frame_end": 990,
+      "time_start_sec": 33.033,
+      "time_end_sec": 33.033,
+      "tracklet_id": "100039:2",
+      "global_slot": "A01",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 372,
+      "frame_end": 912,
+      "time_start_sec": 12.412,
+      "time_end_sec": 30.43,
+      "tracklet_id": "100044:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [
+        "mixed_team_candidate_subject"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_team_regression",
+      "frame_start": 913,
+      "frame_end": 1128,
+      "time_start_sec": 30.464,
+      "time_end_sec": 37.638,
+      "tracklet_id": "100044:2",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "U",
+      "reviewed_label": "U? !",
+      "hard_blockers": [
+        "mixed_team_candidate_subject"
+      ],
+      "reason": "Global A/B anchor exists, local tracklet team is U, and reviewed output remains U without a stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1129,
+      "frame_end": 1308,
+      "time_start_sec": 37.671,
+      "time_end_sec": 43.644,
+      "tracklet_id": "100044:3",
+      "global_slot": "B09",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [
+        "mixed_team_candidate_subject"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 382,
+      "frame_end": 382,
+      "time_start_sec": 12.746,
+      "time_end_sec": 12.746,
+      "tracklet_id": "100046:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 475,
+      "frame_end": 475,
+      "time_start_sec": 15.849,
+      "time_end_sec": 15.849,
+      "tracklet_id": "100046:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 402,
+      "frame_end": 402,
+      "time_start_sec": 13.413,
+      "time_end_sec": 13.413,
+      "tracklet_id": "100047:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 447,
+      "frame_end": 447,
+      "time_start_sec": 14.915,
+      "time_end_sec": 14.915,
+      "tracklet_id": "100047:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 444,
+      "frame_end": 445,
+      "time_start_sec": 14.815,
+      "time_end_sec": 14.848,
+      "tracklet_id": "100050:1",
+      "global_slot": "A06",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 447,
+      "frame_end": 447,
+      "time_start_sec": 14.915,
+      "time_end_sec": 14.915,
+      "tracklet_id": "100051:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 467,
+      "frame_end": 467,
+      "time_start_sec": 15.582,
+      "time_end_sec": 15.582,
+      "tracklet_id": "100051:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 467,
+      "frame_end": 467,
+      "time_start_sec": 15.582,
+      "time_end_sec": 15.582,
+      "tracklet_id": "100052:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 491,
+      "frame_end": 491,
+      "time_start_sec": 16.383,
+      "time_end_sec": 16.383,
+      "tracklet_id": "100052:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 497,
+      "frame_end": 498,
+      "time_start_sec": 16.583,
+      "time_end_sec": 16.617,
+      "tracklet_id": "100052:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 515,
+      "frame_end": 515,
+      "time_start_sec": 17.184,
+      "time_end_sec": 17.184,
+      "tracklet_id": "100052:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 524,
+      "frame_end": 524,
+      "time_start_sec": 17.484,
+      "time_end_sec": 17.484,
+      "tracklet_id": "100052:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 527,
+      "frame_end": 527,
+      "time_start_sec": 17.584,
+      "time_end_sec": 17.584,
+      "tracklet_id": "100052:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 470,
+      "frame_end": 470,
+      "time_start_sec": 15.682,
+      "time_end_sec": 15.682,
+      "tracklet_id": "100053:1",
+      "global_slot": "B04",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2409,
+      "frame_end": 2409,
+      "time_start_sec": 80.38,
+      "time_end_sec": 80.38,
+      "tracklet_id": "100053:1",
+      "global_slot": "B04",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 475,
+      "frame_end": 475,
+      "time_start_sec": 15.849,
+      "time_end_sec": 15.849,
+      "tracklet_id": "100054:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 554,
+      "frame_end": 558,
+      "time_start_sec": 18.485,
+      "time_end_sec": 18.619,
+      "tracklet_id": "100054:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 491,
+      "frame_end": 491,
+      "time_start_sec": 16.383,
+      "time_end_sec": 16.383,
+      "tracklet_id": "100055:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 497,
+      "frame_end": 498,
+      "time_start_sec": 16.583,
+      "time_end_sec": 16.617,
+      "tracklet_id": "100055:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 515,
+      "frame_end": 515,
+      "time_start_sec": 17.184,
+      "time_end_sec": 17.184,
+      "tracklet_id": "100055:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 524,
+      "frame_end": 524,
+      "time_start_sec": 17.484,
+      "time_end_sec": 17.484,
+      "tracklet_id": "100055:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 527,
+      "frame_end": 527,
+      "time_start_sec": 17.584,
+      "time_end_sec": 17.584,
+      "tracklet_id": "100055:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 554,
+      "frame_end": 558,
+      "time_start_sec": 18.485,
+      "time_end_sec": 18.619,
+      "tracklet_id": "100060:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1335,
+      "frame_end": 1335,
+      "time_start_sec": 44.545,
+      "time_end_sec": 44.545,
+      "tracklet_id": "100060:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1343,
+      "frame_end": 1347,
+      "time_start_sec": 44.811,
+      "time_end_sec": 44.945,
+      "tracklet_id": "100060:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 556,
+      "frame_end": 723,
+      "time_start_sec": 18.552,
+      "time_end_sec": 24.124,
+      "tracklet_id": "100061:1",
+      "global_slot": "A09",
+      "global_team": "A",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [
+        "conflicting_stable_anchor_sources"
+      ],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1358,
+      "frame_end": 1358,
+      "time_start_sec": 45.312,
+      "time_end_sec": 45.312,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1363,
+      "frame_end": 1363,
+      "time_start_sec": 45.479,
+      "time_end_sec": 45.479,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1367,
+      "frame_end": 1367,
+      "time_start_sec": 45.612,
+      "time_end_sec": 45.612,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1370,
+      "frame_end": 1370,
+      "time_start_sec": 45.712,
+      "time_end_sec": 45.712,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1373,
+      "frame_end": 1374,
+      "time_start_sec": 45.812,
+      "time_end_sec": 45.846,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1380,
+      "frame_end": 1381,
+      "time_start_sec": 46.046,
+      "time_end_sec": 46.079,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1383,
+      "frame_end": 1386,
+      "time_start_sec": 46.146,
+      "time_end_sec": 46.246,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1391,
+      "frame_end": 1405,
+      "time_start_sec": 46.413,
+      "time_end_sec": 46.88,
+      "tracklet_id": "100070:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1998,
+      "frame_end": 2000,
+      "time_start_sec": 66.667,
+      "time_end_sec": 66.733,
+      "tracklet_id": "100075:1",
+      "global_slot": "A10",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2017,
+      "frame_end": 2017,
+      "time_start_sec": 67.301,
+      "time_end_sec": 67.301,
+      "tracklet_id": "100075:1",
+      "global_slot": "A10",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 983,
+      "frame_end": 983,
+      "time_start_sec": 32.799,
+      "time_end_sec": 32.799,
+      "tracklet_id": "100083:1",
+      "global_slot": "A01",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 990,
+      "frame_end": 990,
+      "time_start_sec": 33.033,
+      "time_end_sec": 33.033,
+      "tracklet_id": "100083:1",
+      "global_slot": "A01",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1373,
+      "frame_end": 1373,
+      "time_start_sec": 45.812,
+      "time_end_sec": 45.812,
+      "tracklet_id": "100090:2",
+      "global_slot": "B05",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1394,
+      "frame_end": 1394,
+      "time_start_sec": 46.513,
+      "time_end_sec": 46.513,
+      "tracklet_id": "100090:2",
+      "global_slot": "B05",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1626,
+      "frame_end": 1626,
+      "time_start_sec": 54.254,
+      "time_end_sec": 54.254,
+      "tracklet_id": "100098:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1335,
+      "frame_end": 1335,
+      "time_start_sec": 44.545,
+      "time_end_sec": 44.545,
+      "tracklet_id": "100102:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1343,
+      "frame_end": 1347,
+      "time_start_sec": 44.811,
+      "time_end_sec": 44.945,
+      "tracklet_id": "100102:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1358,
+      "frame_end": 1358,
+      "time_start_sec": 45.312,
+      "time_end_sec": 45.312,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1363,
+      "frame_end": 1363,
+      "time_start_sec": 45.479,
+      "time_end_sec": 45.479,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1367,
+      "frame_end": 1367,
+      "time_start_sec": 45.612,
+      "time_end_sec": 45.612,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1370,
+      "frame_end": 1370,
+      "time_start_sec": 45.712,
+      "time_end_sec": 45.712,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1373,
+      "frame_end": 1374,
+      "time_start_sec": 45.812,
+      "time_end_sec": 45.846,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1380,
+      "frame_end": 1381,
+      "time_start_sec": 46.046,
+      "time_end_sec": 46.079,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1383,
+      "frame_end": 1386,
+      "time_start_sec": 46.146,
+      "time_end_sec": 46.246,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1391,
+      "frame_end": 1405,
+      "time_start_sec": 46.413,
+      "time_end_sec": 46.88,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2519,
+      "frame_end": 2522,
+      "time_start_sec": 84.051,
+      "time_end_sec": 84.151,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2524,
+      "frame_end": 2524,
+      "time_start_sec": 84.218,
+      "time_end_sec": 84.218,
+      "tracklet_id": "100102:2",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1373,
+      "frame_end": 1373,
+      "time_start_sec": 45.812,
+      "time_end_sec": 45.812,
+      "tracklet_id": "100107:1",
+      "global_slot": "B05",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1394,
+      "frame_end": 1394,
+      "time_start_sec": 46.513,
+      "time_end_sec": 46.513,
+      "tracklet_id": "100107:1",
+      "global_slot": "B05",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2465,
+      "frame_end": 2466,
+      "time_start_sec": 82.249,
+      "time_end_sec": 82.282,
+      "tracklet_id": "100111:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2473,
+      "frame_end": 2473,
+      "time_start_sec": 82.516,
+      "time_end_sec": 82.516,
+      "tracklet_id": "100111:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2476,
+      "frame_end": 2476,
+      "time_start_sec": 82.616,
+      "time_end_sec": 82.616,
+      "tracklet_id": "100111:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2481,
+      "frame_end": 2481,
+      "time_start_sec": 82.783,
+      "time_end_sec": 82.783,
+      "tracklet_id": "100111:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1550,
+      "frame_end": 1550,
+      "time_start_sec": 51.718,
+      "time_end_sec": 51.718,
+      "tracklet_id": "100116:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1671,
+      "frame_end": 1672,
+      "time_start_sec": 55.756,
+      "time_end_sec": 55.789,
+      "tracklet_id": "100116:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1679,
+      "frame_end": 1679,
+      "time_start_sec": 56.023,
+      "time_end_sec": 56.023,
+      "tracklet_id": "100116:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1626,
+      "frame_end": 1626,
+      "time_start_sec": 54.254,
+      "time_end_sec": 54.254,
+      "tracklet_id": "100120:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1671,
+      "frame_end": 1672,
+      "time_start_sec": 55.756,
+      "time_end_sec": 55.789,
+      "tracklet_id": "100122:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1679,
+      "frame_end": 1679,
+      "time_start_sec": 56.023,
+      "time_end_sec": 56.023,
+      "tracklet_id": "100122:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1720,
+      "frame_end": 1720,
+      "time_start_sec": 57.391,
+      "time_end_sec": 57.391,
+      "tracklet_id": "100122:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1737,
+      "frame_end": 1738,
+      "time_start_sec": 57.958,
+      "time_end_sec": 57.991,
+      "tracklet_id": "100122:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1720,
+      "frame_end": 1720,
+      "time_start_sec": 57.391,
+      "time_end_sec": 57.391,
+      "tracklet_id": "100123:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1737,
+      "frame_end": 1738,
+      "time_start_sec": 57.958,
+      "time_end_sec": 57.991,
+      "tracklet_id": "100123:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2291,
+      "frame_end": 2291,
+      "time_start_sec": 76.443,
+      "time_end_sec": 76.443,
+      "tracklet_id": "100123:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_team_regression",
+      "frame_start": 1988,
+      "frame_end": 2126,
+      "time_start_sec": 66.333,
+      "time_end_sec": 70.938,
+      "tracklet_id": "100132:1",
+      "global_slot": "B10",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "U",
+      "reviewed_label": "U? !",
+      "hard_blockers": [
+        "unknown_team_cannot_receive_stable_slot"
+      ],
+      "reason": "Global A/B anchor exists, local tracklet team is U, and reviewed output remains U without a stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 1998,
+      "frame_end": 2000,
+      "time_start_sec": 66.667,
+      "time_end_sec": 66.733,
+      "tracklet_id": "100133:1",
+      "global_slot": "A10",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2017,
+      "frame_end": 2017,
+      "time_start_sec": 67.301,
+      "time_end_sec": 67.301,
+      "tracklet_id": "100133:1",
+      "global_slot": "A10",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_team_regression",
+      "frame_start": 2117,
+      "frame_end": 2117,
+      "time_start_sec": 70.637,
+      "time_end_sec": 70.637,
+      "tracklet_id": "100138:1",
+      "global_slot": "B10",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "U",
+      "reviewed_label": "U? !",
+      "hard_blockers": [
+        "unknown_team_cannot_receive_stable_slot"
+      ],
+      "reason": "Global A/B anchor exists, local tracklet team is U, and reviewed output remains U without a stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_team_regression",
+      "frame_start": 2127,
+      "frame_end": 2632,
+      "time_start_sec": 70.971,
+      "time_end_sec": 87.821,
+      "tracklet_id": "100138:1",
+      "global_slot": "B10",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "U",
+      "reviewed_label": "U? !",
+      "hard_blockers": [
+        "unknown_team_cannot_receive_stable_slot"
+      ],
+      "reason": "Global A/B anchor exists, local tracklet team is U, and reviewed output remains U without a stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_team_regression",
+      "frame_start": 2635,
+      "frame_end": 2635,
+      "time_start_sec": 87.921,
+      "time_end_sec": 87.921,
+      "tracklet_id": "100138:1",
+      "global_slot": "B10",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "U",
+      "reviewed_label": "U? !",
+      "hard_blockers": [
+        "unknown_team_cannot_receive_stable_slot"
+      ],
+      "reason": "Global A/B anchor exists, local tracklet team is U, and reviewed output remains U without a stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_team_regression",
+      "frame_start": 2640,
+      "frame_end": 2691,
+      "time_start_sec": 88.088,
+      "time_end_sec": 89.79,
+      "tracklet_id": "100138:1",
+      "global_slot": "B10",
+      "global_team": "B",
+      "tracklet_team": "U",
+      "reviewed_slot": null,
+      "reviewed_team": "U",
+      "reviewed_label": "U? !",
+      "hard_blockers": [
+        "unknown_team_cannot_receive_stable_slot"
+      ],
+      "reason": "Global A/B anchor exists, local tracklet team is U, and reviewed output remains U without a stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2299,
+      "frame_end": 2299,
+      "time_start_sec": 76.71,
+      "time_end_sec": 76.71,
+      "tracklet_id": "100142:1",
+      "global_slot": "B11",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2297,
+      "frame_end": 2298,
+      "time_start_sec": 76.643,
+      "time_end_sec": 76.677,
+      "tracklet_id": "100143:3",
+      "global_slot": "B12",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2301,
+      "frame_end": 2301,
+      "time_start_sec": 76.777,
+      "time_end_sec": 76.777,
+      "tracklet_id": "100143:3",
+      "global_slot": "B12",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2318,
+      "frame_end": 2318,
+      "time_start_sec": 77.344,
+      "time_end_sec": 77.344,
+      "tracklet_id": "100143:3",
+      "global_slot": "B12",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2319,
+      "frame_end": 2319,
+      "time_start_sec": 77.377,
+      "time_end_sec": 77.377,
+      "tracklet_id": "100145:2",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2321,
+      "frame_end": 2325,
+      "time_start_sec": 77.444,
+      "time_end_sec": 77.578,
+      "tracklet_id": "100145:2",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2335,
+      "frame_end": 2335,
+      "time_start_sec": 77.911,
+      "time_end_sec": 77.911,
+      "tracklet_id": "100145:2",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2344,
+      "frame_end": 2344,
+      "time_start_sec": 78.212,
+      "time_end_sec": 78.212,
+      "tracklet_id": "100145:2",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2425,
+      "frame_end": 2425,
+      "time_start_sec": 80.914,
+      "time_end_sec": 80.914,
+      "tracklet_id": "100145:2",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2291,
+      "frame_end": 2291,
+      "time_start_sec": 76.443,
+      "time_end_sec": 76.443,
+      "tracklet_id": "100147:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2339,
+      "frame_end": 2339,
+      "time_start_sec": 78.045,
+      "time_end_sec": 78.045,
+      "tracklet_id": "100147:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2297,
+      "frame_end": 2298,
+      "time_start_sec": 76.643,
+      "time_end_sec": 76.677,
+      "tracklet_id": "100148:1",
+      "global_slot": "B12",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2301,
+      "frame_end": 2301,
+      "time_start_sec": 76.777,
+      "time_end_sec": 76.777,
+      "tracklet_id": "100148:1",
+      "global_slot": "B12",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2318,
+      "frame_end": 2318,
+      "time_start_sec": 77.344,
+      "time_end_sec": 77.344,
+      "tracklet_id": "100148:1",
+      "global_slot": "B12",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2299,
+      "frame_end": 2299,
+      "time_start_sec": 76.71,
+      "time_end_sec": 76.71,
+      "tracklet_id": "100149:1",
+      "global_slot": "B11",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2319,
+      "frame_end": 2319,
+      "time_start_sec": 77.377,
+      "time_end_sec": 77.377,
+      "tracklet_id": "100151:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2321,
+      "frame_end": 2325,
+      "time_start_sec": 77.444,
+      "time_end_sec": 77.578,
+      "tracklet_id": "100151:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2335,
+      "frame_end": 2335,
+      "time_start_sec": 77.911,
+      "time_end_sec": 77.911,
+      "tracklet_id": "100151:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2344,
+      "frame_end": 2344,
+      "time_start_sec": 78.212,
+      "time_end_sec": 78.212,
+      "tracklet_id": "100151:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2339,
+      "frame_end": 2339,
+      "time_start_sec": 78.045,
+      "time_end_sec": 78.045,
+      "tracklet_id": "100152:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2504,
+      "frame_end": 2504,
+      "time_start_sec": 83.55,
+      "time_end_sec": 83.55,
+      "tracklet_id": "100152:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2409,
+      "frame_end": 2409,
+      "time_start_sec": 80.38,
+      "time_end_sec": 80.38,
+      "tracklet_id": "100159:1",
+      "global_slot": "B04",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2425,
+      "frame_end": 2425,
+      "time_start_sec": 80.914,
+      "time_end_sec": 80.914,
+      "tracklet_id": "100160:1",
+      "global_slot": "B03",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2465,
+      "frame_end": 2466,
+      "time_start_sec": 82.249,
+      "time_end_sec": 82.282,
+      "tracklet_id": "100163:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2473,
+      "frame_end": 2473,
+      "time_start_sec": 82.516,
+      "time_end_sec": 82.516,
+      "tracklet_id": "100163:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2476,
+      "frame_end": 2476,
+      "time_start_sec": 82.616,
+      "time_end_sec": 82.616,
+      "tracklet_id": "100163:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2481,
+      "frame_end": 2481,
+      "time_start_sec": 82.783,
+      "time_end_sec": 82.783,
+      "tracklet_id": "100163:1",
+      "global_slot": "A02",
+      "global_team": "A",
+      "tracklet_team": "A",
+      "reviewed_slot": null,
+      "reviewed_team": "A",
+      "reviewed_label": "A? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2504,
+      "frame_end": 2504,
+      "time_start_sec": 83.55,
+      "time_end_sec": 83.55,
+      "tracklet_id": "100165:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2528,
+      "frame_end": 2528,
+      "time_start_sec": 84.351,
+      "time_end_sec": 84.351,
+      "tracklet_id": "100165:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2519,
+      "frame_end": 2522,
+      "time_start_sec": 84.051,
+      "time_end_sec": 84.151,
+      "tracklet_id": "100166:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2524,
+      "frame_end": 2524,
+      "time_start_sec": 84.218,
+      "time_end_sec": 84.218,
+      "tracklet_id": "100166:1",
+      "global_slot": "B02",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    },
+    {
+      "severity": "DEFINITE",
+      "classification": "definite_reviewed_slot_loss",
+      "frame_start": 2528,
+      "frame_end": 2528,
+      "time_start_sec": 84.351,
+      "time_end_sec": 84.351,
+      "tracklet_id": "100167:1",
+      "global_slot": "B06",
+      "global_team": "B",
+      "tracklet_team": "B",
+      "reviewed_slot": null,
+      "reviewed_team": "B",
+      "reviewed_label": "B? !",
+      "hard_blockers": [],
+      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
+    }
+  ],
+  "team_unknown_cases": {
+    "local_team_u": {
+      "observations": 3274,
+      "tracklets": 11
+    },
+    "global_ab_anchor_with_local_team_u": {
+      "observations": 2906,
+      "tracklets": 4
+    },
+    "review_preserved_global_ab_anchor": {
+      "observations": 0,
+      "tracklets": 0
+    },
+    "definite_reviewed_team_u_regressions": {
+      "observations": 915,
+      "tracklets": 3
+    },
+    "upstream_unknown": {
+      "observations": 368,
+      "tracklets": 7
+    },
+    "potential_local_global_team_conflicts": {
+      "observations": 168,
+      "tracklets": 1
+    },
+    "examples": [
+      {
+        "frame": 913,
+        "time_sec": 30.464,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 914,
+        "time_sec": 30.497,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 915,
+        "time_sec": 30.531,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 916,
+        "time_sec": 30.564,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 917,
+        "time_sec": 30.597,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 918,
+        "time_sec": 30.631,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 919,
+        "time_sec": 30.664,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 920,
+        "time_sec": 30.697,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 921,
+        "time_sec": 30.731,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 922,
+        "time_sec": 30.764,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 923,
+        "time_sec": 30.797,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 924,
+        "time_sec": 30.831,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 925,
+        "time_sec": 30.864,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 926,
+        "time_sec": 30.898,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 927,
+        "time_sec": 30.931,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 928,
+        "time_sec": 30.964,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 929,
+        "time_sec": 30.998,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 930,
+        "time_sec": 31.031,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 931,
+        "time_sec": 31.064,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      },
+      {
+        "frame": 932,
+        "time_sec": 31.098,
+        "tracklet_id": "100044:2",
+        "global_stable_player_id": "B03",
+        "global_team_label": "B",
+        "tracklet_team_label": "U",
+        "reviewed_stable_slot_id": null,
+        "reviewed_team_label": "U",
+        "reviewed_display_label": "U? !",
+        "reviewed_hard_blockers": [
+          "mixed_team_candidate_subject"
+        ]
+      }
+    ]
+  },
+  "per_stable_slot_fragmentation": [
+    {
+      "global_stable_slot_id": "A05",
+      "tracklets": 3,
+      "candidate_subjects": [
+        "shadow-a-67f03ba45cc96a56",
+        "shadow-a-cbc8bdddc01c12ad",
+        "shadow-a-d3f04f1340b13b2f"
+      ],
+      "reviewed_entities": [
+        "A05",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A? !",
+          "observations": 1618,
+          "ratio": 0.3968
+        },
+        {
+          "value": "A05",
+          "observations": 1285,
+          "ratio": 0.3151
+        },
+        {
+          "value": "Krzysiek",
+          "observations": 1175,
+          "ratio": 0.2881
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2903,
+          "ratio": 0.7119
+        },
+        {
+          "value": "team-corgi-1fc405-player-2-krzysiek",
+          "observations": 1175,
+          "ratio": 0.2881
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 4078,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "A? !",
+      "dominant_label_ratio": 0.3968,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A07",
+      "tracklets": 2,
+      "candidate_subjects": [
+        "shadow-a-67ac75918529686b",
+        "shadow-a-96cc41d1ae1012f6"
+      ],
+      "reviewed_entities": [
+        "A07",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "Mati GK",
+          "observations": 16,
+          "ratio": 0.4324
+        },
+        {
+          "value": "A07",
+          "observations": 12,
+          "ratio": 0.3243
+        },
+        {
+          "value": "A? !",
+          "observations": 9,
+          "ratio": 0.2432
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 21,
+          "ratio": 0.5676
+        },
+        {
+          "value": "team-corgi-1fc405-player-6-mati-gk",
+          "observations": 16,
+          "ratio": 0.4324
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 37,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "Mati GK",
+      "dominant_label_ratio": 0.4324,
+      "reviewed_label_transitions": 6,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A04",
+      "tracklets": 4,
+      "candidate_subjects": [
+        "shadow-a-5f7412fa5f586a3b",
+        "shadow-a-8e6944b0a91f1bcc",
+        "shadow-a-a43f3061b2a507ba"
+      ],
+      "reviewed_entities": [
+        "A04"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A04",
+          "observations": 1670,
+          "ratio": 0.645
+        },
+        {
+          "value": "Roman",
+          "observations": 919,
+          "ratio": 0.355
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 1670,
+          "ratio": 0.645
+        },
+        {
+          "value": "team-corgi-1fc405-player-10-roman",
+          "observations": 919,
+          "ratio": 0.355
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 2589,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "A04",
+      "dominant_label_ratio": 0.645,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B03",
+      "tracklets": 8,
+      "candidate_subjects": [
+        "shadow-b-2202bf9d8b02a580",
+        "shadow-b-5a71ced6c6c0b8b8",
+        "shadow-b-66ebbb08e41fcce8",
+        "shadow-b-86beee600df0e9e0",
+        "shadow-b-a96fb42579220d3a",
+        "shadow-b-f984f3e515c64cfb",
+        "shadow-b-fce3ee667aba0f6b"
+      ],
+      "reviewed_entities": [
+        "B03",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B03",
+          "observations": 1772,
+          "ratio": 0.6952
+        },
+        {
+          "value": "B? !",
+          "observations": 561,
+          "ratio": 0.2201
+        },
+        {
+          "value": "U? !",
+          "observations": 216,
+          "ratio": 0.0847
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2549,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 2333,
+          "ratio": 0.9153
+        },
+        {
+          "value": "U",
+          "observations": 216,
+          "ratio": 0.0847
+        }
+      ],
+      "dominant_reviewed_label": "B03",
+      "dominant_label_ratio": 0.6952,
+      "reviewed_label_transitions": 13,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B10",
+      "tracklets": 3,
+      "candidate_subjects": [
+        "shadow-u-01df2341afb17bc4",
+        "shadow-u-36d861f6bcc1c4da",
+        "shadow-u-4a0504fa8498cc1d"
+      ],
+      "reviewed_entities": [
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B?",
+          "observations": 1991,
+          "ratio": 0.7401
+        },
+        {
+          "value": "U? !",
+          "observations": 699,
+          "ratio": 0.2599
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2690,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 1991,
+          "ratio": 0.7401
+        },
+        {
+          "value": "U",
+          "observations": 699,
+          "ratio": 0.2599
+        }
+      ],
+      "dominant_reviewed_label": "B?",
+      "dominant_label_ratio": 0.7401,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A01",
+      "tracklets": 6,
+      "candidate_subjects": [
+        "shadow-a-10667a7322e106a2",
+        "shadow-a-1cfeccfbf0b8a52f",
+        "shadow-a-6745fb8955e20e81",
+        "shadow-a-98aa7849b532375e"
+      ],
+      "reviewed_entities": [
+        "A01",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A01",
+          "observations": 2283,
+          "ratio": 0.8791
+        },
+        {
+          "value": "Andrzej",
+          "observations": 309,
+          "ratio": 0.119
+        },
+        {
+          "value": "A? !",
+          "observations": 5,
+          "ratio": 0.0019
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2288,
+          "ratio": 0.881
+        },
+        {
+          "value": "team-corgi-1fc405-player-7-andrzej",
+          "observations": 309,
+          "ratio": 0.119
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 2597,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "A01",
+      "dominant_label_ratio": 0.8791,
+      "reviewed_label_transitions": 6,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A06",
+      "tracklets": 2,
+      "candidate_subjects": [
+        "shadow-a-23512ec6d60dae41",
+        "shadow-a-8ba7e3a3bb1f4c29"
+      ],
+      "reviewed_entities": [
+        "A06",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "Piotrek",
+          "observations": 444,
+          "ratio": 0.9098
+        },
+        {
+          "value": "A06",
+          "observations": 42,
+          "ratio": 0.0861
+        },
+        {
+          "value": "A? !",
+          "observations": 2,
+          "ratio": 0.0041
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "team-corgi-1fc405-player-9-piotrek",
+          "observations": 444,
+          "ratio": 0.9098
+        },
+        {
+          "value": "none",
+          "observations": 44,
+          "ratio": 0.0902
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 488,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "Piotrek",
+      "dominant_label_ratio": 0.9098,
+      "reviewed_label_transitions": 1,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A02",
+      "tracklets": 11,
+      "candidate_subjects": [
+        "shadow-a-03e86dfeca66a48c",
+        "shadow-a-22ef201cac94266d",
+        "shadow-a-2cbe8fced620b84e",
+        "shadow-a-3569205a1801396d",
+        "shadow-a-5f37fa5b8708d172",
+        "shadow-a-68f6d4a8cca22f9e",
+        "shadow-a-82730138bd3bae57",
+        "shadow-a-85ccb5803fbbef2f",
+        "shadow-a-9ce02c061cda65ba",
+        "shadow-a-b5c5ae9b180f3785"
+      ],
+      "reviewed_entities": [
+        "A02",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A02",
+          "observations": 2491,
+          "ratio": 0.9257
+        },
+        {
+          "value": "Przemek",
+          "observations": 158,
+          "ratio": 0.0587
+        },
+        {
+          "value": "A? !",
+          "observations": 42,
+          "ratio": 0.0156
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2533,
+          "ratio": 0.9413
+        },
+        {
+          "value": "team-corgi-1fc405-player-3-przemek",
+          "observations": 158,
+          "ratio": 0.0587
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 2691,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "A02",
+      "dominant_label_ratio": 0.9257,
+      "reviewed_label_transitions": 26,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B02",
+      "tracklets": 11,
+      "candidate_subjects": [
+        "shadow-b-02626d50e98c261f",
+        "shadow-b-038763edc49a510e",
+        "shadow-b-24758c2b8c00a6ef",
+        "shadow-b-394ea098b2ca74d6",
+        "shadow-b-48af210010d27f7d",
+        "shadow-b-714d8b17deeb60e7",
+        "shadow-b-99e8fba7e4ed49e9",
+        "shadow-b-9f0cf48c5c840578",
+        "shadow-b-d5dade9bdcf7d0f0"
+      ],
+      "reviewed_entities": [
+        "B02",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B02",
+          "observations": 2371,
+          "ratio": 0.9666
+        },
+        {
+          "value": "B? !",
+          "observations": 82,
+          "ratio": 0.0334
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2453,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 2453,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B02",
+      "dominant_label_ratio": 0.9666,
+      "reviewed_label_transitions": 36,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B07",
+      "tracklets": 4,
+      "candidate_subjects": [
+        "shadow-b-4ab22e3e8c7e4037",
+        "shadow-b-5a615f12e503facb",
+        "shadow-b-73f7767a5a6cf742",
+        "shadow-b-79c1aa5131df5bf3"
+      ],
+      "reviewed_entities": [
+        "B07",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B07",
+          "observations": 654,
+          "ratio": 0.9732
+        },
+        {
+          "value": "B? !",
+          "observations": 18,
+          "ratio": 0.0268
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 672,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 672,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B07",
+      "dominant_label_ratio": 0.9732,
+      "reviewed_label_transitions": 12,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B12",
+      "tracklets": 5,
+      "candidate_subjects": [
+        "shadow-b-0ebfd2c8b3248172",
+        "shadow-b-5c8041bd0c249ff7",
+        "shadow-b-64f682e2fd07b8f0"
+      ],
+      "reviewed_entities": [
+        "B12",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B12",
+          "observations": 410,
+          "ratio": 0.9809
+        },
+        {
+          "value": "B? !",
+          "observations": 8,
+          "ratio": 0.0191
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 418,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 418,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B12",
+      "dominant_label_ratio": 0.9809,
+      "reviewed_label_transitions": 6,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B06",
+      "tracklets": 10,
+      "candidate_subjects": [
+        "shadow-b-254b43ee8ff84652",
+        "shadow-b-3cd691f9018198ab",
+        "shadow-b-4d28ac02b92675c7",
+        "shadow-b-58a6cf79994e5793",
+        "shadow-b-8782a42690d892d6",
+        "shadow-b-8de022dfbdce4ee4",
+        "shadow-b-93f8a2eaedfd32fb",
+        "shadow-b-9e70889887b54cef",
+        "shadow-b-a20439e29f5f1dab",
+        "shadow-b-e96e94d6e6d6b255"
+      ],
+      "reviewed_entities": [
+        "B06",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B06",
+          "observations": 2650,
+          "ratio": 0.9903
+        },
+        {
+          "value": "B? !",
+          "observations": 26,
+          "ratio": 0.0097
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2676,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 2676,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B06",
+      "dominant_label_ratio": 0.9903,
+      "reviewed_label_transitions": 22,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A10",
+      "tracklets": 2,
+      "candidate_subjects": [
+        "shadow-a-29c8d97aebc6ced1",
+        "shadow-a-8cdd6eb7a46d03c5"
+      ],
+      "reviewed_entities": [
+        "A10",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A10",
+          "observations": 1849,
+          "ratio": 0.9957
+        },
+        {
+          "value": "A? !",
+          "observations": 8,
+          "ratio": 0.0043
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 1857,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 1857,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "A10",
+      "dominant_label_ratio": 0.9957,
+      "reviewed_label_transitions": 4,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B05",
+      "tracklets": 5,
+      "candidate_subjects": [
+        "shadow-b-18f7a0ff8871523e",
+        "shadow-b-1bb58677f0c28c7e",
+        "shadow-b-1e4ed2d9c83005c1",
+        "shadow-b-32c9bd110b3fb41b"
+      ],
+      "reviewed_entities": [
+        "B05",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B05",
+          "observations": 1592,
+          "ratio": 0.9962
+        },
+        {
+          "value": "B? !",
+          "observations": 6,
+          "ratio": 0.0038
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 1598,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 1598,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B05",
+      "dominant_label_ratio": 0.9962,
+      "reviewed_label_transitions": 8,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B04",
+      "tracklets": 6,
+      "candidate_subjects": [
+        "shadow-b-39f7128d7ee105da",
+        "shadow-b-aa58cebecde9b15b",
+        "shadow-b-d3ac89ae018c8738",
+        "shadow-b-f44a4c370c018620"
+      ],
+      "reviewed_entities": [
+        "B04",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B04",
+          "observations": 2673,
+          "ratio": 0.9978
+        },
+        {
+          "value": "B? !",
+          "observations": 6,
+          "ratio": 0.0022
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2679,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 2679,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B04",
+      "dominant_label_ratio": 0.9978,
+      "reviewed_label_transitions": 7,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B11",
+      "tracklets": 4,
+      "candidate_subjects": [
+        "shadow-b-a200cdc300cd7bca",
+        "shadow-b-a80aa8a6569caad2",
+        "shadow-b-c04ca884fa3f2b24",
+        "shadow-b-fef5fbce22f1298a"
+      ],
+      "reviewed_entities": [
+        "B11",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B11",
+          "observations": 978,
+          "ratio": 0.998
+        },
+        {
+          "value": "B? !",
+          "observations": 2,
+          "ratio": 0.002
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 980,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 980,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B11",
+      "dominant_label_ratio": 0.998,
+      "reviewed_label_transitions": 2,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A03",
+      "tracklets": 1,
+      "candidate_subjects": [
+        "shadow-a-f2675429d1137f23"
+      ],
+      "reviewed_entities": [
+        "A03"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "Pawel",
+          "observations": 1126,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "team-corgi-1fc405-player-1-pawel",
+          "observations": 1126,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 1126,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "Pawel",
+      "dominant_label_ratio": 1.0,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A08",
+      "tracklets": 1,
+      "candidate_subjects": [
+        "shadow-a-74cf0d34276e08ff"
+      ],
+      "reviewed_entities": [
+        "A08"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A08",
+          "observations": 2468,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2468,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 2468,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "A08",
+      "dominant_label_ratio": 1.0,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "A09",
+      "tracklets": 1,
+      "candidate_subjects": [
+        "shadow-b-ddbce78b61f92936"
+      ],
+      "reviewed_entities": [
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B? !",
+          "observations": 168,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 168,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 168,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B? !",
+      "dominant_label_ratio": 1.0,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B01",
+      "tracklets": 1,
+      "candidate_subjects": [
+        "shadow-b-72b05e92564474fd"
+      ],
+      "reviewed_entities": [
+        "B01"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B01",
+          "observations": 97,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 97,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 97,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B01",
+      "dominant_label_ratio": 1.0,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B08",
+      "tracklets": 1,
+      "candidate_subjects": [
+        "shadow-b-268cfa96c3171f83"
+      ],
+      "reviewed_entities": [
+        "B08"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B08",
+          "observations": 12,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 12,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 12,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B08",
+      "dominant_label_ratio": 1.0,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
+      "global_stable_slot_id": "B09",
+      "tracklets": 1,
+      "candidate_subjects": [
+        "shadow-b-f984f3e515c64cfb"
+      ],
+      "reviewed_entities": [
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "B? !",
+          "observations": 180,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 180,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "B",
+          "observations": 180,
+          "ratio": 1.0
+        }
+      ],
+      "dominant_reviewed_label": "B? !",
+      "dominant_label_ratio": 1.0,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    }
+  ],
+  "case_studies": [
+    {
+      "requested_name": "Mati GK",
+      "available": true,
+      "matched_roster_player_ids": [
+        "team-corgi-1fc405-player-6-mati-gk"
+      ],
+      "operator_decisions": [
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-96cc41d1ae1012f6",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-07T08:00:47.944001+00:00",
+          "player_id": "team-corgi-1fc405-player-6-mati-gk"
+        }
+      ],
+      "operator_candidate_subject_ids": [
+        "shadow-a-96cc41d1ae1012f6"
+      ],
+      "anchor_global_stable_slot": "A07",
+      "global_slots_seen": [
+        "A07"
+      ],
+      "reviewed_labels_seen": [
+        "A07",
+        "A? !",
+        "Mati GK"
+      ],
+      "observations": 37,
+      "named_observations": 16,
+      "fallback_observations": 12,
+      "unresolved_observations": 9,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.4324,
+      "first_loss_of_name": {
+        "frame": 11,
+        "time_sec": 0.367,
+        "tracklet_id": "100014:1",
+        "reviewed_label": "A? !"
+      },
+      "classification": "roster_binding_fragmentation",
+      "evidence_severity": "DEFINITE",
+      "timeline": [
+        {
+          "frame_start": 0,
+          "frame_end": 10,
+          "time_start_sec": 0.0,
+          "time_end_sec": 0.334,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": "A07",
+          "reviewed_display_label": "Mati GK",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 11,
+          "frame_end": 11,
+          "time_start_sec": 0.367,
+          "time_end_sec": 0.367,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 17,
+          "frame_end": 17,
+          "time_start_sec": 0.567,
+          "time_end_sec": 0.567,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 18,
+          "frame_end": 18,
+          "time_start_sec": 0.601,
+          "time_end_sec": 0.601,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": "A07",
+          "reviewed_display_label": "Mati GK",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 19,
+          "frame_end": 21,
+          "time_start_sec": 0.634,
+          "time_end_sec": 0.701,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 22,
+          "frame_end": 25,
+          "time_start_sec": 0.734,
+          "time_end_sec": 0.834,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": "A07",
+          "reviewed_display_label": "Mati GK",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 26,
+          "frame_end": 26,
+          "time_start_sec": 0.868,
+          "time_end_sec": 0.868,
+          "tracklet_id": "100014:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 144,
+          "frame_end": 146,
+          "time_start_sec": 4.805,
+          "time_end_sec": 4.872,
+          "tracklet_id": "100024:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 147,
+          "frame_end": 158,
+          "time_start_sec": 4.905,
+          "time_end_sec": 5.272,
+          "tracklet_id": "100024:1",
+          "global_stable_player_id": "A07",
+          "reviewed_stable_slot_id": "A07",
+          "reviewed_display_label": "A07",
+          "comparison_status": "same_tracklet_exact"
+        }
+      ]
+    },
+    {
+      "requested_name": "Przemek",
+      "available": true,
+      "matched_roster_player_ids": [
+        "team-corgi-1fc405-player-3-przemek"
+      ],
+      "operator_decisions": [
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-5f37fa5b8708d172",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-07T08:00:34.680207+00:00",
+          "player_id": "team-corgi-1fc405-player-3-przemek"
+        },
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-b5c5ae9b180f3785",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-06T18:55:42.314836+00:00",
+          "player_id": "team-corgi-1fc405-player-3-przemek"
+        }
+      ],
+      "operator_candidate_subject_ids": [
+        "shadow-a-5f37fa5b8708d172",
+        "shadow-a-b5c5ae9b180f3785"
+      ],
+      "anchor_global_stable_slot": "A02",
+      "global_slots_seen": [
+        "A02"
+      ],
+      "reviewed_labels_seen": [
+        "A02",
+        "A? !",
+        "Przemek"
+      ],
+      "observations": 2691,
+      "named_observations": 158,
+      "fallback_observations": 2491,
+      "unresolved_observations": 42,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.0587,
+      "first_loss_of_name": {
+        "frame": 93,
+        "time_sec": 3.103,
+        "tracklet_id": "100003:1",
+        "reviewed_label": "A? !"
+      },
+      "classification": "roster_binding_fragmentation",
+      "evidence_severity": "DEFINITE",
+      "timeline": [
+        {
+          "frame_start": 0,
+          "frame_end": 92,
+          "time_start_sec": 0.0,
+          "time_end_sec": 3.07,
+          "tracklet_id": "100003:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "Przemek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 93,
+          "frame_end": 93,
+          "time_start_sec": 3.103,
+          "time_end_sec": 3.103,
+          "tracklet_id": "100003:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 93,
+          "frame_end": 93,
+          "time_start_sec": 3.103,
+          "time_end_sec": 3.103,
+          "tracklet_id": "100020:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 94,
+          "frame_end": 158,
+          "time_start_sec": 3.136,
+          "time_end_sec": 5.272,
+          "tracklet_id": "100020:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "Przemek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 145,
+          "frame_end": 145,
+          "time_start_sec": 4.838,
+          "time_end_sec": 4.838,
+          "tracklet_id": "100025:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 158,
+          "frame_end": 158,
+          "time_start_sec": 5.272,
+          "time_end_sec": 5.272,
+          "tracklet_id": "100025:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 159,
+          "frame_end": 279,
+          "time_start_sec": 5.305,
+          "time_end_sec": 9.309,
+          "tracklet_id": "100025:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 280,
+          "frame_end": 280,
+          "time_start_sec": 9.343,
+          "time_end_sec": 9.343,
+          "tracklet_id": "100025:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 280,
+          "frame_end": 280,
+          "time_start_sec": 9.343,
+          "time_end_sec": 9.343,
+          "tracklet_id": "100037:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 281,
+          "frame_end": 370,
+          "time_start_sec": 9.376,
+          "time_end_sec": 12.346,
+          "tracklet_id": "100037:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 371,
+          "frame_end": 381,
+          "time_start_sec": 12.379,
+          "time_end_sec": 12.713,
+          "tracklet_id": "100037:2",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 382,
+          "frame_end": 382,
+          "time_start_sec": 12.746,
+          "time_end_sec": 12.746,
+          "tracklet_id": "100037:2",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 382,
+          "frame_end": 382,
+          "time_start_sec": 12.746,
+          "time_end_sec": 12.746,
+          "tracklet_id": "100046:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 383,
+          "frame_end": 474,
+          "time_start_sec": 12.779,
+          "time_end_sec": 15.816,
+          "tracklet_id": "100046:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 475,
+          "frame_end": 475,
+          "time_start_sec": 15.849,
+          "time_end_sec": 15.849,
+          "tracklet_id": "100046:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 475,
+          "frame_end": 475,
+          "time_start_sec": 15.849,
+          "time_end_sec": 15.849,
+          "tracklet_id": "100054:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 476,
+          "frame_end": 553,
+          "time_start_sec": 15.883,
+          "time_end_sec": 18.452,
+          "tracklet_id": "100054:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 554,
+          "frame_end": 558,
+          "time_start_sec": 18.485,
+          "time_end_sec": 18.619,
+          "tracklet_id": "100054:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 560,
+          "frame_end": 561,
+          "time_start_sec": 18.685,
+          "time_end_sec": 18.719,
+          "tracklet_id": "100054:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 554,
+          "frame_end": 558,
+          "time_start_sec": 18.485,
+          "time_end_sec": 18.619,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 559,
+          "frame_end": 559,
+          "time_start_sec": 18.652,
+          "time_end_sec": 18.652,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 562,
+          "frame_end": 1334,
+          "time_start_sec": 18.752,
+          "time_end_sec": 44.511,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1335,
+          "frame_end": 1335,
+          "time_start_sec": 44.545,
+          "time_end_sec": 44.545,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1336,
+          "frame_end": 1337,
+          "time_start_sec": 44.578,
+          "time_end_sec": 44.611,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1343,
+          "frame_end": 1347,
+          "time_start_sec": 44.811,
+          "time_end_sec": 44.945,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1348,
+          "frame_end": 1454,
+          "time_start_sec": 44.978,
+          "time_end_sec": 48.515,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1456,
+          "frame_end": 1456,
+          "time_start_sec": 48.582,
+          "time_end_sec": 48.582,
+          "tracklet_id": "100060:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1335,
+          "frame_end": 1335,
+          "time_start_sec": 44.545,
+          "time_end_sec": 44.545,
+          "tracklet_id": "100102:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1339,
+          "frame_end": 1342,
+          "time_start_sec": 44.678,
+          "time_end_sec": 44.778,
+          "tracklet_id": "100102:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1343,
+          "frame_end": 1347,
+          "time_start_sec": 44.811,
+          "time_end_sec": 44.945,
+          "tracklet_id": "100102:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1478,
+          "frame_end": 2464,
+          "time_start_sec": 49.316,
+          "time_end_sec": 82.216,
+          "tracklet_id": "100111:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2465,
+          "frame_end": 2466,
+          "time_start_sec": 82.249,
+          "time_end_sec": 82.282,
+          "tracklet_id": "100111:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2473,
+          "frame_end": 2473,
+          "time_start_sec": 82.516,
+          "time_end_sec": 82.516,
+          "tracklet_id": "100111:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2474,
+          "frame_end": 2475,
+          "time_start_sec": 82.549,
+          "time_end_sec": 82.583,
+          "tracklet_id": "100111:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2476,
+          "frame_end": 2476,
+          "time_start_sec": 82.616,
+          "time_end_sec": 82.616,
+          "tracklet_id": "100111:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2481,
+          "frame_end": 2481,
+          "time_start_sec": 82.783,
+          "time_end_sec": 82.783,
+          "tracklet_id": "100111:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2465,
+          "frame_end": 2466,
+          "time_start_sec": 82.249,
+          "time_end_sec": 82.282,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2467,
+          "frame_end": 2472,
+          "time_start_sec": 82.316,
+          "time_end_sec": 82.482,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2473,
+          "frame_end": 2473,
+          "time_start_sec": 82.516,
+          "time_end_sec": 82.516,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2476,
+          "frame_end": 2476,
+          "time_start_sec": 82.616,
+          "time_end_sec": 82.616,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2477,
+          "frame_end": 2480,
+          "time_start_sec": 82.649,
+          "time_end_sec": 82.749,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2481,
+          "frame_end": 2481,
+          "time_start_sec": 82.783,
+          "time_end_sec": 82.783,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 2482,
+          "frame_end": 2691,
+          "time_start_sec": 82.816,
+          "time_end_sec": 89.79,
+          "tracklet_id": "100163:1",
+          "global_stable_player_id": "A02",
+          "reviewed_stable_slot_id": "A02",
+          "reviewed_display_label": "A02",
+          "comparison_status": "same_tracklet_exact"
+        }
+      ]
+    },
+    {
+      "requested_name": "Andrzej",
+      "available": true,
+      "matched_roster_player_ids": [
+        "team-corgi-1fc405-player-7-andrzej"
+      ],
+      "operator_decisions": [
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-10667a7322e106a2",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-06T18:54:20.632004+00:00",
+          "player_id": "team-corgi-1fc405-player-7-andrzej"
+        }
+      ],
+      "operator_candidate_subject_ids": [
+        "shadow-a-10667a7322e106a2"
+      ],
+      "anchor_global_stable_slot": "A01",
+      "global_slots_seen": [
+        "A01"
+      ],
+      "reviewed_labels_seen": [
+        "A01",
+        "A? !",
+        "Andrzej"
+      ],
+      "observations": 2597,
+      "named_observations": 309,
+      "fallback_observations": 2283,
+      "unresolved_observations": 5,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.119,
+      "first_loss_of_name": {
+        "frame": 308,
+        "time_sec": 10.277,
+        "tracklet_id": "100039:1",
+        "reviewed_label": "A? !"
+      },
+      "classification": "roster_binding_fragmentation",
+      "evidence_severity": "DEFINITE",
+      "timeline": [
+        {
+          "frame_start": 0,
+          "frame_end": 308,
+          "time_start_sec": 0.0,
+          "time_end_sec": 10.277,
+          "tracklet_id": "100001:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "Andrzej",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 308,
+          "frame_end": 308,
+          "time_start_sec": 10.277,
+          "time_end_sec": 10.277,
+          "tracklet_id": "100039:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 309,
+          "frame_end": 754,
+          "time_start_sec": 10.31,
+          "time_end_sec": 25.158,
+          "tracklet_id": "100039:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 755,
+          "frame_end": 982,
+          "time_start_sec": 25.192,
+          "time_end_sec": 32.766,
+          "tracklet_id": "100039:2",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 983,
+          "frame_end": 983,
+          "time_start_sec": 32.799,
+          "time_end_sec": 32.799,
+          "tracklet_id": "100039:2",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 984,
+          "frame_end": 989,
+          "time_start_sec": 32.833,
+          "time_end_sec": 33.0,
+          "tracklet_id": "100039:2",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 990,
+          "frame_end": 990,
+          "time_start_sec": 33.033,
+          "time_end_sec": 33.033,
+          "tracklet_id": "100039:2",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 991,
+          "frame_end": 991,
+          "time_start_sec": 33.066,
+          "time_end_sec": 33.066,
+          "tracklet_id": "100039:2",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 983,
+          "frame_end": 983,
+          "time_start_sec": 32.799,
+          "time_end_sec": 32.799,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 990,
+          "frame_end": 990,
+          "time_start_sec": 33.033,
+          "time_end_sec": 33.033,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 992,
+          "frame_end": 1043,
+          "time_start_sec": 33.1,
+          "time_end_sec": 34.801,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1051,
+          "frame_end": 1472,
+          "time_start_sec": 35.068,
+          "time_end_sec": 49.116,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1476,
+          "frame_end": 1919,
+          "time_start_sec": 49.249,
+          "time_end_sec": 64.031,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1921,
+          "frame_end": 1921,
+          "time_start_sec": 64.097,
+          "time_end_sec": 64.097,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1923,
+          "frame_end": 2401,
+          "time_start_sec": 64.164,
+          "time_end_sec": 80.113,
+          "tracklet_id": "100083:1",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2488,
+          "frame_end": 2555,
+          "time_start_sec": 83.016,
+          "time_end_sec": 85.252,
+          "tracklet_id": "100155:2",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2556,
+          "frame_end": 2691,
+          "time_start_sec": 85.285,
+          "time_end_sec": 89.79,
+          "tracklet_id": "100155:3",
+          "global_stable_player_id": "A01",
+          "reviewed_stable_slot_id": "A01",
+          "reviewed_display_label": "A01",
+          "comparison_status": "same_tracklet_exact"
+        }
+      ]
+    },
+    {
+      "requested_name": "Roman",
+      "available": true,
+      "matched_roster_player_ids": [
+        "team-corgi-1fc405-player-10-roman"
+      ],
+      "operator_decisions": [
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-a43f3061b2a507ba",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-06T18:55:24.775144+00:00",
+          "player_id": "team-corgi-1fc405-player-10-roman"
+        }
+      ],
+      "operator_candidate_subject_ids": [
+        "shadow-a-a43f3061b2a507ba"
+      ],
+      "anchor_global_stable_slot": "A04",
+      "global_slots_seen": [
+        "A04"
+      ],
+      "reviewed_labels_seen": [
+        "A04",
+        "Roman"
+      ],
+      "observations": 2589,
+      "named_observations": 919,
+      "fallback_observations": 1670,
+      "unresolved_observations": 0,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.355,
+      "first_loss_of_name": {
+        "frame": 945,
+        "time_sec": 31.532,
+        "tracklet_id": "100058:2",
+        "reviewed_label": "A04"
+      },
+      "classification": "roster_binding_fragmentation",
+      "evidence_severity": "DEFINITE",
+      "timeline": [
+        {
+          "frame_start": 0,
+          "frame_end": 324,
+          "time_start_sec": 0.0,
+          "time_end_sec": 10.811,
+          "tracklet_id": "100005:1",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "Roman",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 326,
+          "frame_end": 919,
+          "time_start_sec": 10.878,
+          "time_end_sec": 30.664,
+          "tracklet_id": "100005:1",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "Roman",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 945,
+          "frame_end": 997,
+          "time_start_sec": 31.532,
+          "time_end_sec": 33.267,
+          "tracklet_id": "100058:2",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1005,
+          "frame_end": 1005,
+          "time_start_sec": 33.534,
+          "time_end_sec": 33.534,
+          "tracklet_id": "100058:3",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1019,
+          "frame_end": 1019,
+          "time_start_sec": 34.001,
+          "time_end_sec": 34.001,
+          "tracklet_id": "100058:3",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1022,
+          "frame_end": 1024,
+          "time_start_sec": 34.101,
+          "time_end_sec": 34.168,
+          "tracklet_id": "100058:3",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1042,
+          "frame_end": 1042,
+          "time_start_sec": 34.768,
+          "time_end_sec": 34.768,
+          "tracklet_id": "100058:3",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1045,
+          "frame_end": 1045,
+          "time_start_sec": 34.868,
+          "time_end_sec": 34.868,
+          "tracklet_id": "100058:3",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1082,
+          "frame_end": 2691,
+          "time_start_sec": 36.103,
+          "time_end_sec": 89.79,
+          "tracklet_id": "100088:1",
+          "global_stable_player_id": "A04",
+          "reviewed_stable_slot_id": "A04",
+          "reviewed_display_label": "A04",
+          "comparison_status": "same_tracklet_exact"
+        }
+      ]
+    },
+    {
+      "requested_name": "Piotrek",
+      "available": true,
+      "matched_roster_player_ids": [
+        "team-corgi-1fc405-player-9-piotrek"
+      ],
+      "operator_decisions": [
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-23512ec6d60dae41",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-06T18:54:31.228225+00:00",
+          "player_id": "team-corgi-1fc405-player-9-piotrek"
+        }
+      ],
+      "operator_candidate_subject_ids": [
+        "shadow-a-23512ec6d60dae41"
+      ],
+      "anchor_global_stable_slot": "A06",
+      "global_slots_seen": [
+        "A06"
+      ],
+      "reviewed_labels_seen": [
+        "A06",
+        "A? !",
+        "Piotrek"
+      ],
+      "observations": 488,
+      "named_observations": 444,
+      "fallback_observations": 42,
+      "unresolved_observations": 2,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.9098,
+      "first_loss_of_name": {
+        "frame": 444,
+        "time_sec": 14.815,
+        "tracklet_id": "100050:1",
+        "reviewed_label": "A? !"
+      },
+      "classification": "roster_binding_fragmentation",
+      "evidence_severity": "DEFINITE",
+      "timeline": [
+        {
+          "frame_start": 0,
+          "frame_end": 113,
+          "time_start_sec": 0.0,
+          "time_end_sec": 3.77,
+          "tracklet_id": "100013:1",
+          "global_stable_player_id": "A06",
+          "reviewed_stable_slot_id": "A06",
+          "reviewed_display_label": "Piotrek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 116,
+          "frame_end": 445,
+          "time_start_sec": 3.871,
+          "time_end_sec": 14.848,
+          "tracklet_id": "100013:1",
+          "global_stable_player_id": "A06",
+          "reviewed_stable_slot_id": "A06",
+          "reviewed_display_label": "Piotrek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 444,
+          "frame_end": 445,
+          "time_start_sec": 14.815,
+          "time_end_sec": 14.848,
+          "tracklet_id": "100050:1",
+          "global_stable_player_id": "A06",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 446,
+          "frame_end": 474,
+          "time_start_sec": 14.882,
+          "time_end_sec": 15.816,
+          "tracklet_id": "100050:1",
+          "global_stable_player_id": "A06",
+          "reviewed_stable_slot_id": "A06",
+          "reviewed_display_label": "A06",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 489,
+          "frame_end": 490,
+          "time_start_sec": 16.316,
+          "time_end_sec": 16.35,
+          "tracklet_id": "100050:1",
+          "global_stable_player_id": "A06",
+          "reviewed_stable_slot_id": "A06",
+          "reviewed_display_label": "A06",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 492,
+          "frame_end": 502,
+          "time_start_sec": 16.416,
+          "time_end_sec": 16.75,
+          "tracklet_id": "100050:1",
+          "global_stable_player_id": "A06",
+          "reviewed_stable_slot_id": "A06",
+          "reviewed_display_label": "A06",
+          "comparison_status": "same_tracklet_exact"
+        }
+      ]
+    },
+    {
+      "requested_name": "Paweł",
+      "available": false,
+      "matched_roster_player_ids": [],
+      "operator_decisions": [],
+      "operator_candidate_subject_ids": [],
+      "anchor_global_stable_slot": null,
+      "global_slots_seen": [],
+      "reviewed_labels_seen": [],
+      "observations": 0,
+      "named_observations": 0,
+      "fallback_observations": 0,
+      "unresolved_observations": 0,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.0,
+      "first_loss_of_name": null,
+      "classification": "operator_binding_not_proven",
+      "evidence_severity": "INSUFFICIENT_EVIDENCE",
+      "timeline": []
+    },
+    {
+      "requested_name": "Krzysiek",
+      "available": true,
+      "matched_roster_player_ids": [
+        "team-corgi-1fc405-player-2-krzysiek"
+      ],
+      "operator_decisions": [
+        {
+          "source_artifact": "reviewed_identity_slot_assignments.json",
+          "candidate_subject_id": "shadow-a-cbc8bdddc01c12ad",
+          "action": "assign_roster_player",
+          "stable_slot_id": null,
+          "team_label": "A",
+          "source": "manual_review",
+          "comment": null,
+          "reviewed_at": "2026-08-06T18:54:58.327098+00:00",
+          "player_id": "team-corgi-1fc405-player-2-krzysiek"
+        }
+      ],
+      "operator_candidate_subject_ids": [
+        "shadow-a-cbc8bdddc01c12ad"
+      ],
+      "anchor_global_stable_slot": "A05",
+      "global_slots_seen": [
+        "A05"
+      ],
+      "reviewed_labels_seen": [
+        "A05",
+        "A? !",
+        "Krzysiek"
+      ],
+      "observations": 4078,
+      "named_observations": 1175,
+      "fallback_observations": 1285,
+      "unresolved_observations": 1618,
+      "other_name_observations": 0,
+      "named_coverage_ratio": 0.2881,
+      "first_loss_of_name": {
+        "frame": 1036,
+        "time_sec": 34.568,
+        "tracklet_id": "100027:2",
+        "reviewed_label": "A? !"
+      },
+      "classification": "roster_binding_fragmentation",
+      "evidence_severity": "DEFINITE",
+      "timeline": [
+        {
+          "frame_start": 0,
+          "frame_end": 1032,
+          "time_start_sec": 0.0,
+          "time_end_sec": 34.434,
+          "tracklet_id": "100008:1",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1034,
+          "frame_end": 1049,
+          "time_start_sec": 34.501,
+          "time_end_sec": 35.002,
+          "tracklet_id": "100008:1",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1058,
+          "frame_end": 1174,
+          "time_start_sec": 35.302,
+          "time_end_sec": 39.173,
+          "tracklet_id": "100008:1",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1179,
+          "frame_end": 1181,
+          "time_start_sec": 39.339,
+          "time_end_sec": 39.406,
+          "tracklet_id": "100008:1",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1183,
+          "frame_end": 1184,
+          "time_start_sec": 39.473,
+          "time_end_sec": 39.506,
+          "tracklet_id": "100008:1",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1194,
+          "frame_end": 1197,
+          "time_start_sec": 39.84,
+          "time_end_sec": 39.94,
+          "tracklet_id": "100008:1",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1036,
+          "frame_end": 1081,
+          "time_start_sec": 34.568,
+          "time_end_sec": 36.069,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1097,
+          "frame_end": 1097,
+          "time_start_sec": 36.603,
+          "time_end_sec": 36.603,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1101,
+          "frame_end": 1105,
+          "time_start_sec": 36.737,
+          "time_end_sec": 36.87,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1109,
+          "frame_end": 1111,
+          "time_start_sec": 37.004,
+          "time_end_sec": 37.07,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1116,
+          "frame_end": 1457,
+          "time_start_sec": 37.237,
+          "time_end_sec": 48.615,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1464,
+          "frame_end": 1464,
+          "time_start_sec": 48.849,
+          "time_end_sec": 48.849,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1470,
+          "frame_end": 1471,
+          "time_start_sec": 49.049,
+          "time_end_sec": 49.082,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1473,
+          "frame_end": 1474,
+          "time_start_sec": 49.149,
+          "time_end_sec": 49.183,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1476,
+          "frame_end": 2691,
+          "time_start_sec": 49.249,
+          "time_end_sec": 89.79,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": null,
+          "reviewed_display_label": "A? !",
+          "comparison_status": "definite_reviewed_slot_loss"
+        },
+        {
+          "frame_start": 1406,
+          "frame_end": 2279,
+          "time_start_sec": 46.914,
+          "time_end_sec": 76.043,
+          "tracklet_id": "100070:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "A05",
+          "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 2281,
+          "frame_end": 2691,
+          "time_start_sec": 76.109,
+          "time_end_sec": 89.79,
+          "tracklet_id": "100070:2",
+          "global_stable_player_id": "A05",
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "A05",
+          "comparison_status": "same_tracklet_exact"
+        }
+      ]
+    }
+  ],
+  "source_precedence": {
+    "stable_anonymous_resolution": [
+      "manual reviewed slot decision (when valid)",
+      "manual team/referee/false/team-unknown action",
+      "consensus of global_identity, stable_players, gallery and candidate claims",
+      "tracklet team is a hard compatibility condition for a stable slot"
+    ],
+    "reviewed_snapshot": [
+      "manual roster decision or fresh seeded candidate decision supplies a confirmed name",
+      "manual team action overrides the resolved team/status",
+      "invalid/cross-team/conflicting evidence clears the canonical player",
+      "stable anonymous slot remains the fallback display label"
+    ],
+    "per_observation": [
+      "tracklet assignment",
+      "exact observation override",
+      "frame-uniqueness safety demotion"
+    ],
+    "rendering": "reviewed video renders the effective reviewed observation; it does not re-resolve identity.",
+    "risk_identified": "unknown_team_cannot_receive_stable_slot can drop a global A/B slot when the local tracklet team is U."
+  },
+  "conclusion": {
+    "verdict": "mixed",
+    "method": "Evidence matrix; no numeric comparison across observation and event units.",
+    "definite_reviewed_findings_present": true,
+    "suspected_upstream_fragmentation_present": true,
+    "roster_binding_fragmentation_requires_case_study": true,
+    "baseline_note": "Global/stable is compared for information retention, not assumed real-world ground truth."
+  },
+  "recommendations": [
+    "Preserve a valid global stable slot/team through reviewed resolution unless direct contradictory evidence is recorded.",
+    "Bind an operator-confirmed roster name to the verified stable slot only after showing any unresolved cross-fragment evidence."
+  ],
+  "safety": {
+    "source_artifacts_read_only": true,
+    "source_artifacts_hashes_before": {
+      "match.json": "91f6b7ae4aecf5354150406428ded59d3d27f3133cbdc2a219dd99dab8c14542",
+      "tracklets.json": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "identity_candidate_shadow.json": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
+      "reviewed_identity_snapshot.json": "9cfbdb1459f31903ebf203ef702f4ea1376e7ea5071ec6dbf103bfb4f14df120",
+      "reviewed_identity_slot_assignments.json": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
+      "identity_roster_subject_review_decisions_shadow.json": null,
+      "identity_seeded_candidate_assignments.json": null
+    },
+    "source_artifacts_hashes_after": {
+      "match.json": "91f6b7ae4aecf5354150406428ded59d3d27f3133cbdc2a219dd99dab8c14542",
+      "tracklets.json": "1418a59cf4f2f674d902f2f11ed4563fed65ec746e025c61e1ae591b1452e435",
+      "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
+      "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
+      "identity_candidate_shadow.json": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
+      "reviewed_identity_snapshot.json": "9cfbdb1459f31903ebf203ef702f4ea1376e7ea5071ec6dbf103bfb4f14df120",
+      "reviewed_identity_slot_assignments.json": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
+      "identity_roster_subject_review_decisions_shadow.json": null,
+      "identity_seeded_candidate_assignments.json": null
+    },
+    "source_artifacts_unchanged": true,
+    "reran_yolo": false,
+    "reran_tracking": false,
+    "production_identity_mutated": false
+  },
+  "roman_gap_study": {
+    "available": true,
+    "previous": {
+      "frame": 919,
+      "time_sec": 30.664,
+      "tracklet_id": "100005:1",
+      "candidate_subject_id": "shadow-a-a43f3061b2a507ba",
+      "global_slot": "A04",
+      "global_team": "A",
+      "tracklet_team": "A"
+    },
+    "next_fragment": {
+      "frame": 945,
+      "time_sec": 31.532,
+      "tracklet_id": "100058:2",
+      "candidate_subject_id": "shadow-a-5f7412fa5f586a3b",
+      "global_slot": "A04",
+      "global_team": "A",
+      "tracklet_team": "A"
+    },
+    "gap_sec": 0.868,
+    "same_global_slot": true,
+    "appearance_evidence": "not rerun; inspect existing optional artifacts separately",
+    "stitching_candidate_evidence": "not asserted by this diagnostic",
+    "reid_advisory_evidence": "not rerun; not treated as proof",
+    "needs_visual_operator_confirmation": true,
+    "severity": "INSUFFICIENT_EVIDENCE",
+    "reason": "A common global slot is a stability observation, not proof that the two fragments are the same real-world player."
+  }
+}
