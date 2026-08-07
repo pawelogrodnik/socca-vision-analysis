@@ -28,6 +28,7 @@ import {
   type InitialIdentityAuditDecision,
 } from '../utils/initialIdentityAudit';
 import { RequiredFinalSaveQueue } from '../utils/requiredFinalSaveQueue';
+import { initialAuditIdentityWorkIsComplete } from '../utils/initialIdentityAuditWorkflow';
 
 interface InitialIdentityAuditPanelProps {
   match: Match;
@@ -60,6 +61,7 @@ export function InitialIdentityAuditPanel({
   const [saving, setSaving] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [auditIdentityWorkComplete, setAuditIdentityWorkComplete] = useState(false);
   const saveQueueRef = useRef(
     new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>(),
   );
@@ -90,6 +92,7 @@ export function InitialIdentityAuditPanel({
     setSaving(false);
     setFinishing(false);
     setSaveError(null);
+    setAuditIdentityWorkComplete(false);
     saveQueueRef.current = (
       new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>()
     );
@@ -137,6 +140,9 @@ export function InitialIdentityAuditPanel({
       if (activeMatchIdRef.current === requestedMatchId) {
         setSeedStore(nextStore);
         setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+        setAuditIdentityWorkComplete(
+          initialAuditIdentityWorkIsComplete(nextStore.workflow),
+        );
         if (
           failedSaveRequestRef.current === null
           || failedSaveRequestRef.current === request
@@ -207,6 +213,9 @@ export function InitialIdentityAuditPanel({
       setDocument(nextDocument);
       setSeedStore(nextStore);
       setDecisions(initialIdentityAuditDecisionMap(nextStore.decisions));
+      setAuditIdentityWorkComplete(
+        initialAuditIdentityWorkIsComplete(nextStore.workflow),
+      );
       setSaveError(
         nextStore.status === 'stale'
           ? 'Zapisane decyzje sa nieaktualne. Audyt zostal otwarty bez nich.'
@@ -239,7 +248,7 @@ export function InitialIdentityAuditPanel({
     observation: InitialIdentityAuditObservation,
     action: InitialIdentityAuditAction,
   ) {
-    if (finishingRef.current) return;
+    if (finishingRef.current || auditIdentityWorkComplete) return;
     const existingDecision = decisions[observation.observation_key];
     const budgetReached = seedStore?.operator_budget?.reached
       ?? (
@@ -270,6 +279,7 @@ export function InitialIdentityAuditPanel({
   }
 
   function chooseAction(action: InitialIdentityAuditAction) {
+    if (auditIdentityWorkComplete) return;
     if (selectedObservation) {
       applyAction(selectedObservation, action);
       setArmedAction(null);
@@ -337,8 +347,11 @@ export function InitialIdentityAuditPanel({
           return performSave(finalRequest);
         },
         async (finalStore) => {
-          setSeedStore(finalStore);
-          setDecisions(initialIdentityAuditDecisionMap(finalStore.decisions));
+      setSeedStore(finalStore);
+      setDecisions(initialIdentityAuditDecisionMap(finalStore.decisions));
+      setAuditIdentityWorkComplete(
+        initialAuditIdentityWorkIsComplete(finalStore.workflow),
+      );
           if (onFinished) {
             onStatus('H1 zakonczony. Przebudowuje artefakty i przygotowuje H2...');
             await onFinished();
@@ -363,6 +376,7 @@ export function InitialIdentityAuditPanel({
   function clearSelectedDecision() {
     if (
       finishingRef.current
+      || auditIdentityWorkComplete
       || !selectedObservationKey
       || !decisions[selectedObservationKey]
     ) return;
@@ -459,6 +473,10 @@ export function InitialIdentityAuditPanel({
               </span>
             </div>
 
+            {auditIdentityWorkComplete && (
+              <p className='status'>Wymagany audyt jest zakończony. Możesz zamknąć sesję.</p>
+            )}
+
             <main className='initial-identity-audit-main'>
               <div className='initial-identity-audit-context'>
                 <div
@@ -533,7 +551,7 @@ export function InitialIdentityAuditPanel({
                 {selectedDecision && (
                   <button
                     type='button'
-                    disabled={saving || finishing}
+                    disabled={saving || finishing || auditIdentityWorkComplete}
                     onClick={clearSelectedDecision}
                   >
                     Usun decyzje dla tego bboxa
@@ -554,7 +572,7 @@ export function InitialIdentityAuditPanel({
                               type='button'
                               key={player.player_id}
                               className={active ? 'active' : ''}
-                              disabled={!canCreateActiveDecision || finishing}
+                              disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete}
                               onClick={() => chooseAction(action)}
                               aria-pressed={active}
                             >
@@ -570,25 +588,25 @@ export function InitialIdentityAuditPanel({
                 <div className='initial-identity-audit-generic-actions'>
                   <button
                     type='button'
-                    disabled={!canCreateActiveDecision || finishing}
+                    disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'A' })}
                   >
                     Team A - nieznany
                   </button>
                   <button
                     type='button'
-                    disabled={!canCreateActiveDecision || finishing}
+                    disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete}
                     onClick={() => chooseAction({ kind: 'team_unknown', teamLabel: 'B' })}
                   >
                     Team B - nieznany
                   </button>
-                  <button type='button' disabled={!canCreateActiveDecision || finishing} onClick={() => chooseAction({ kind: 'referee' })}>
+                  <button type='button' disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'referee' })}>
                     Sedzia
                   </button>
-                  <button type='button' disabled={!canCreateActiveDecision || finishing} onClick={() => chooseAction({ kind: 'false_detection' })}>
+                  <button type='button' disabled={!canCreateActiveDecision || finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'false_detection' })}>
                     Falszywa detekcja
                   </button>
-                  <button type='button' disabled={finishing} onClick={() => chooseAction({ kind: 'skip' })}>
+                  <button type='button' disabled={finishing || auditIdentityWorkComplete} onClick={() => chooseAction({ kind: 'skip' })}>
                     Pomin / nie wiem
                   </button>
                 </div>

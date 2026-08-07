@@ -1619,6 +1619,7 @@ export type InitialIdentityAuditSeedStoreDocument = {
   };
   benchmark_state?: string;
   updated_at?: string | null;
+  workflow?: ReviewWorkflow;
 };
 
 export type InitialIdentityAuditSeedUpdate = {
@@ -1715,6 +1716,7 @@ export type ReviewedIdentityDocument = {
   semantic_digest?: string;
   summary: ReviewedIdentitySummary | null;
   readiness?: { identity?: string; reason?: string };
+  workflow?: ReviewWorkflow;
 };
 
 export type ReviewedOutputJob = {
@@ -1726,6 +1728,55 @@ export type ReviewedOutputJob = {
   video_digest?: string;
   source_snapshot_digest?: string;
   error?: { message?: string } | null;
+};
+
+export type ReviewWorkflowStepId = 'initial_audit' | 'exceptions' | 'finalize' | 'video_qa';
+export type ReviewWorkflowStepStatus = 'locked' | 'current' | 'processing' | 'completed' | 'error';
+export type ReviewWorkflowAction =
+  | 'identify_players'
+  | 'review_identity_issue'
+  | 'finalize_identity'
+  | 'wait_for_render'
+  | 'review_video'
+  | 'approve_video_qa'
+  | 'correct_video_identity'
+  | 'retry_render'
+  | 'retry_review_recompute';
+
+export type ReviewWorkflowStep = {
+  id: ReviewWorkflowStepId;
+  status: ReviewWorkflowStepStatus;
+  completed: number | null;
+  total: number | null;
+  remaining: number | null;
+  locked_reason_code: string | null;
+  locked_reason_details?: Record<string, unknown>;
+};
+
+export type ReviewWorkflow = {
+  schema_version: '1.0.0' | string;
+  match_id: string;
+  available: boolean;
+  phase: string;
+  status: 'unavailable' | 'action_required' | 'processing' | 'ready' | 'complete' | 'error';
+  current_step_id: ReviewWorkflowStepId;
+  review_complete: boolean;
+  can_enter_report: boolean;
+  can_publish: boolean;
+  steps: ReviewWorkflowStep[];
+  required_action: { type: ReviewWorkflowAction | string; step_id: string; remaining?: number | null } | null;
+  issues: { blocking: number; important: number; optional: number };
+  freshness: {
+    reviewed_identity_current: boolean;
+    reviewed_stats_current: boolean;
+    reviewed_output_current: boolean;
+    qa_approval_current: boolean;
+    review_progress_current?: boolean;
+    review_progress_reason?: string | null;
+  };
+  processing?: ReviewedOutputJob | null;
+  blockers: Array<{ code: string; step_id: string; user_actionable: boolean; details: Record<string, unknown> }>;
+  allowed_actions: ReviewWorkflowAction[];
 };
 
 export type ReviewedPlayerStats = {
@@ -1838,6 +1889,9 @@ export type ReviewedCorrectionResponse = {
   semantic_decision_digest: string;
   review_progress: ReviewedIdentityReviewProgress;
   decision_impact: ReviewedCorrectionDecisionImpact;
+  workflow?: ReviewWorkflow;
+  reviewed_identity?: ReviewedIdentityDocument;
+  render_job?: ReviewedOutputJob;
 };
 
 export type ReviewedIdentityReviewUnit = {

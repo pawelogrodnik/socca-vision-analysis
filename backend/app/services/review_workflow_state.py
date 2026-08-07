@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+"""Pure authoritative state derivation for the operator review workflow."""
+
+import json
+from pathlib import Path
+from typing import Any
+
+from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
+from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
+from app.services.identity_seeded_review_reduction import (
+    load_initial_audit_completion_evidence,
+)
+from app.services.review_workflow_store import (
+    approval_is_current,
+    current_approval_fingerprint,
+    load_json_object,
+    load_video_qa_approval,
+)
+
+
+WORKFLOW_SCHEMA_VERSION = "1.0.0"
+STEP_IDS = ("initial_audit", "exceptions", "finalize", "video_qa")
+PROCESSING_RENDER_STATUSES = {"queued", "running"}
+
+
+class WorkflowActionError(ValueError):
+    def __init__(self, code: str, state: dict[str, Any], action: str) -> None:
+        self.code = code
+        self.state = state
+        self.action = action
+        super().__init__(code)
+
+
+def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Derive all product workflow state from compact, persisted evidence."""
+    match_id = str(evidence.get("match_id") or "")
+    analysis_completed = bool(evidence.get("analysis_completed"))
+    initial = dict(evidence.get("initial_audit") or {})
+    issues = dict(evidence.get("issues") or {})
+    freshness = dict(evidence.get("freshness") or {})
+    render = dict(evidence.get("render") or {})
+    recompute_failed = bool(evidence.get("recompute_failed"))
+    qa_current = bool(freshness.get("qa_approval_current"))
+    initial_complete = bool(initial.get("complete"))
+    blocking = max(0, int(issues.get("blocking") or 0))
+    render_status = str(render.get("status") or "missing")
+    render_current = bool(freshness.get("reviewed_output_current"))
+    stats_current = bool(freshness.get("reviewed_stats_current"))
+    identity_current = bool(freshness.get("reviewed_identity_current"))
+    progress_current = bool(freshness.get("review_progress_current", True))
+    progress_reason = str(
+        freshness.get("review_progress_reason") or "review_progress_missing"
+    )
+    steps = {step_id: _step(step_id, "locked") for step_id in STEP_IDS}
+    blockers: list[dict[str, Any]] = []
+    allowed: list[str] = []
+
+    if not analysis_completed:
+        steps["initial_audit"] = _step("initial_audit", "locked", "analysis_not_completed")
+        steps["exceptions"] = _step("exceptions", "locked", "analysis_not_completed")
+        steps["finalize"] = _step("finalize", "locked", "analysis_not_completed")
+        steps["video_qa"] = _step("video_qa", "locked", "analysis_not_completed")
+        blockers.append(_blocker("analysis_not_completed", "initial_audit"))
+        return _state(match_id, False, "unavailable", "initial_audit", steps, blockers, allowed, initial, issues, freshness, render, {"type": "complete_analysis", "step_id": "analysis"})
+
+    if recompute_failed:
+        steps["initial_audit"] = _step("initial_audit", "error", "review_recompute_failed")
+        steps["exceptions"] = _step("exceptions", "locked", "review_recompute_failed")
+        steps["finalize"] = _step("finalize", "locked", "review_recompute_failed")
+        steps["video_qa"] = _step("video_qa", "locked", "review_recompute_failed")
+        blockers.append(_blocker("review_recompute_failed", "initial_audit"))
+        return _state(match_id, True, "error", "initial_audit", steps, blockers, ["retry_review_recompute"], initial, issues, freshness, render, {"type": "retry_review_recompute", "step_id": "initial_audit"})
+
+    if not initial_complete:
+        steps["initial_audit"] = _step("initial_audit", "current", completed=initial.get("completed"), total=initial.get("total"), remaining=initial.get("remaining"))
+        steps["exceptions"] = _step("exceptions", "locked", "initial_audit_incomplete")
+        steps["finalize"] = _step("finalize", "locked", "initial_audit_incomplete")
+        steps["video_qa"] = _step("video_qa", "locked", "initial_audit_incomplete")
+        blockers.append(_blocker("initial_audit_incomplete", "initial_audit", {"remaining": initial.get("remaining")}))
+        allowed = ["identify_players"]
+        return _state(match_id, True, "action_required", "initial_audit", steps, blockers, allowed, initial, issues, freshness, render, {"type": "identify_players", "step_id": "initial_audit", "remaining": initial.get("remaining")})
+
+    steps["initial_audit"] = _step("initial_audit", "completed", completed=initial.get("completed"), total=initial.get("total"), remaining=0)
+    if not progress_current:
+        steps["exceptions"] = _step("exceptions", "error", progress_reason)
+        steps["finalize"] = _step("finalize", "locked", progress_reason)
+        steps["video_qa"] = _step("video_qa", "locked", progress_reason)
+        blockers.append(_blocker(progress_reason, "exceptions"))
+        return _state(
+            match_id,
+            True,
+            "error",
+            "exceptions",
+            steps,
+            blockers,
+            ["retry_review_recompute"],
+            initial,
+            issues,
+            freshness,
+            render,
+            {"type": "retry_review_recompute", "step_id": "exceptions"},
+        )
+
+    if blocking:
+        steps["exceptions"] = _step("exceptions", "current", completed=issues.get("completed"), total=issues.get("total"), remaining=blocking)
+        steps["finalize"] = _step("finalize", "locked", "identity_issues_remaining", {"count": blocking})
+        steps["video_qa"] = _step("video_qa", "locked", "identity_issues_remaining", {"count": blocking})
+        blockers.append(_blocker("identity_issues_remaining", "exceptions", {"count": blocking}))
+        allowed = ["review_identity_issue"]
+        return _state(match_id, True, "action_required", "exceptions", steps, blockers, allowed, initial, issues, freshness, render, {"type": "review_identity_issue", "step_id": "exceptions", "remaining": blocking})
+
+    steps["exceptions"] = _step("exceptions", "completed", completed=issues.get("completed"), total=issues.get("total"), remaining=0)
+    if render_status in PROCESSING_RENDER_STATUSES:
+        steps["finalize"] = _step("finalize", "processing")
+        steps["video_qa"] = _step("video_qa", "locked", "render_running")
+        blockers.append(_blocker("workflow_busy", "finalize", {"render_status": render_status}))
+        return _state(match_id, True, "processing", "rendering_review_video", steps, blockers, [], initial, issues, freshness, render, {"type": "wait_for_render", "step_id": "finalize"})
+    if render_status == "failed":
+        steps["finalize"] = _step("finalize", "error", "render_failed")
+        steps["video_qa"] = _step("video_qa", "locked", "render_failed")
+        blockers.append(_blocker("render_failed", "finalize"))
+        return _state(match_id, True, "error", "rendering_review_video", steps, blockers, ["retry_render"], initial, issues, freshness, render, {"type": "retry_render", "step_id": "finalize"})
+    if not (identity_current and stats_current and render_current):
+        steps["finalize"] = _step("finalize", "current")
+        steps["video_qa"] = _step("video_qa", "locked", "reviewed_output_stale")
+        allowed = ["finalize_identity"]
+        return _state(match_id, True, "ready", "ready_to_finalize", steps, blockers, allowed, initial, issues, freshness, render, {"type": "finalize_identity", "step_id": "finalize"})
+
+    steps["finalize"] = _step("finalize", "completed")
+    if qa_current:
+        steps["video_qa"] = _step("video_qa", "completed")
+        return _state(match_id, True, "complete", "complete", steps, blockers, ["review_video", "correct_video_identity"], initial, issues, freshness, render, None)
+    steps["video_qa"] = _step("video_qa", "current")
+    return _state(match_id, True, "action_required", "video_qa", steps, blockers, ["review_video", "approve_video_qa", "correct_video_identity"], initial, issues, freshness, render, {"type": "approve_video_qa", "step_id": "video_qa"})
+
+
+def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    """Read compact artifacts only; this function must remain mutation-free."""
+    snapshot = get_reviewed_identity_status(match_path)
+    stats = load_json_object(match_path / "reviewed_player_stats.json")
+    output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
+    job = reviewed_output_status_read_only(match_path, snapshot)
+    approval = load_video_qa_approval(match_path)
+    fingerprints = current_approval_fingerprint(snapshot, stats, job, output_manifest)
+    stats_current = bool(
+        stats
+        and snapshot.get("semantic_digest")
+        and stats.get("source_snapshot_digest") == snapshot.get("semantic_digest")
+    )
+    output_current = bool(
+        job.get("status") == "completed"
+        and job.get("source_snapshot_digest") == snapshot.get("semantic_digest")
+        and output_manifest
+        and output_manifest.get("stale") is not True
+    )
+    progress, progress_reason = _current_cached_progress(match_path, snapshot)
+    initial = load_initial_audit_completion_evidence(match_path)
+    issues = _issue_evidence(snapshot, progress)
+    evidence = {
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "analysis_completed": _analysis_completed(match_path, match_doc),
+        "initial_audit": initial,
+        "issues": issues,
+        "freshness": {
+            "reviewed_identity_current": snapshot.get("status") not in {"missing", "stale"},
+            "reviewed_stats_current": stats_current,
+            "reviewed_output_current": output_current,
+            "qa_approval_current": approval_is_current(approval, fingerprints) and output_current and stats_current,
+            "review_progress_current": progress is not None,
+            "review_progress_reason": progress_reason,
+        },
+        "render": _public_render(job),
+        "recompute_failed": bool(load_json_object(match_path / "review_workflow_recompute_failure.json")),
+    }
+    state = derive_review_workflow_state(evidence)
+    state["technical_diagnostics"] = {
+        "reviewed_snapshot_status": snapshot.get("status"),
+        "cached_progress_available": progress is not None,
+        "review_progress_reason": progress_reason,
+        "raw_structural_blockers": int(((progress or {}).get("summary") or {}).get("structural_blockers") or 0),
+    }
+    return state
+
+
+def assert_workflow_action_allowed(state: dict[str, Any], action: str) -> None:
+    if action in set(state.get("allowed_actions") or []):
+        return
+    blocker = next(iter(state.get("blockers") or []), {})
+    code = str(blocker.get("code") or "workflow_action_not_allowed")
+    raise WorkflowActionError(code, state, action)
+
+
+def _analysis_completed(match_path: Path, match_doc: dict[str, Any]) -> bool:
+    report = load_json_object(match_path / "analysis_report.json") or {}
+    return report.get("status") == "completed" or str(match_doc.get("status") or "") in {"analyzed", "reviewed", "published"}
+
+
+def _current_cached_progress(
+    match_path: Path,
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    progress = load_json_object(match_path / "reviewed_identity_progress.json")
+    if not progress:
+        return None, "review_progress_missing"
+    snapshot_digest = str(snapshot.get("semantic_digest") or "")
+    if not snapshot_digest or progress.get("source_snapshot_digest") != snapshot_digest:
+        return None, "review_progress_stale"
+    return progress, None
+
+
+def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, int]:
+    summary = snapshot.get("summary") or {}
+    effective_conflicts = int(summary.get("conflicted") or 0) + int(summary.get("blocked") or 0)
+    progress_summary = (progress or {}).get("summary") or {}
+    pending = int(progress_summary.get("important_decisions_remaining") or 0)
+    # `structural_blockers` remains diagnostics: it may describe a safely
+    # frame-owned multi-slot tracklet and must not create a phantom operator task.
+    return {
+        "blocking": max(effective_conflicts, pending),
+        "important": pending,
+        "optional": int(progress_summary.get("optional_cases_remaining") or 0),
+        "completed": int(progress_summary.get("review_units_completed") or 0),
+        "total": int(progress_summary.get("review_units_actionable_total") or 0),
+    }
+
+
+def _public_render(job: dict[str, Any]) -> dict[str, Any]:
+    return {key: job.get(key) for key in ("status", "job_key", "error", "source_snapshot_digest", "video_digest")}
+
+
+def _step(step_id: str, status: str, locked_reason_code: str | None = None, locked_reason_details: dict[str, Any] | None = None, *, completed: Any = None, total: Any = None, remaining: Any = None) -> dict[str, Any]:
+    result: dict[str, Any] = {"id": step_id, "status": status, "completed": completed, "total": total, "remaining": remaining, "locked_reason_code": locked_reason_code}
+    if locked_reason_details is not None:
+        result["locked_reason_details"] = locked_reason_details
+    return result
+
+
+def _blocker(code: str, step_id: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"code": code, "step_id": step_id, "user_actionable": True, "details": details or {}}
+
+
+def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None) -> dict[str, Any]:
+    complete = status == "complete"
+    return {
+        "schema_version": WORKFLOW_SCHEMA_VERSION,
+        "match_id": match_id,
+        "available": available,
+        "phase": phase,
+        "status": status,
+        "current_step_id": phase if phase in STEP_IDS else "video_qa" if phase == "complete" else "finalize",
+        "review_complete": complete,
+        "can_enter_report": complete,
+        "can_publish": complete,
+        "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
+        "required_action": required_action,
+        "issues": {"blocking": int(issues.get("blocking") or 0), "important": int(issues.get("important") or 0), "optional": int(issues.get("optional") or 0)},
+        "initial_audit": initial,
+        "freshness": freshness,
+        "processing": render if status in {"processing", "error"} else None,
+        "blockers": blockers,
+        "allowed_actions": allowed_actions,
+    }

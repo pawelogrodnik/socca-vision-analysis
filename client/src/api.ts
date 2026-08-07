@@ -51,6 +51,7 @@ import type {
   ReviewedCorrectionContext,
   ReviewedCorrectionRequest,
   ReviewedCorrectionResponse,
+  ReviewWorkflow,
 } from './types';
 import type {
   BoundedH2Session,
@@ -192,6 +193,51 @@ export async function getReviewedIdentity(matchId: string): Promise<ReviewedIden
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity`);
 }
 
+export async function getReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+  return request<ReviewWorkflow>(`/api/matches/${encodeURIComponent(matchId)}/review-workflow`);
+}
+
+export type ReviewedRenderOptions = {
+  include_minimap: boolean;
+  include_ball: boolean;
+  show_roster_number: boolean;
+};
+
+export async function finalizeReviewWorkflow(
+  matchId: string,
+  options: ReviewedRenderOptions,
+): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/finalize`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options) },
+  );
+  return response.workflow;
+}
+
+export async function approveReviewVideoQa(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/approve-video-qa`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
+export async function retryReviewRender(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/retry-render`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
+export async function retryReviewRecompute(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/retry-recompute`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
 export async function getReviewedIdentityReviewProgress(matchId: string): Promise<ReviewedIdentityReviewProgress> {
   return request<ReviewedIdentityReviewProgress>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress`,
@@ -202,7 +248,7 @@ export async function finalizeReviewedIdentity(matchId: string): Promise<Reviewe
   return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/finalize`, { method: 'POST' });
 }
 
-export async function generateReviewedOutput(matchId: string, options: { include_minimap: boolean; include_ball: boolean; show_roster_number: boolean }): Promise<ReviewedOutputJob> {
+export async function generateReviewedOutput(matchId: string, options: ReviewedRenderOptions): Promise<ReviewedOutputJob> {
   return request<ReviewedOutputJob>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-output/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(options) });
 }
 

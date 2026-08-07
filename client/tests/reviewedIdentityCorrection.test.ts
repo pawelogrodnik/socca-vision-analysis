@@ -122,7 +122,7 @@ test('reviewed output presentation uses operator-facing labels and one initial C
   assert.equal(formatElapsedTime('2026-08-06T10:00:00.000Z', Date.parse('2026-08-06T10:02:03.000Z')), '2 min 3 s');
 });
 
-test('reviewed output UI keeps the simple correction flow and stale safeguards visible', () => {
+test('reviewed output UI keeps the simple correction flow and one expensive prepare action', () => {
   const root = new URL('../src/components/', import.meta.url);
   const output = readFileSync(new URL('ReviewedMatchOutputPanel.tsx', root), 'utf8');
   const atTime = readFileSync(new URL('ReviewedIdentityAtTimePanel.tsx', root), 'utf8');
@@ -131,8 +131,20 @@ test('reviewed output UI keeps the simple correction flow and stale safeguards v
 
   assert.match(output, /Przygotuj wideo do review/);
   assert.match(output, /finalizeReviewedIdentity\(matchId\)/);
-  assert.match(output, /generateReviewedOutput\(matchId/);
-  assert.match(output, /Review wymaga decyzji\. Wideo nie zostało uruchomione/);
+  assert.match(output, /finalizeReviewWorkflow\(matchId, reviewedRenderOptions\(\)\)/);
+  assert.match(output, /getReviewWorkflow\(matchId\)/);
+  assert.match(output, /reviewedCorrectionWorkflowPresentation\(result\)/);
+  assert.match(output, /Przygotowuję zaktualizowane wideo do review automatycznie/);
+  assert.match(output, /Review wymaga jeszcze dodatkowej decyzji przed ponownym wygenerowaniem wideo/);
+  assert.match(output, /canFinalizeReviewedVideo\(workflow\)/);
+  assert.doesNotMatch(
+    output.slice(output.indexOf('function correctionSaved'), output.indexOf('const humanSummary')),
+    /finalizeReviewWorkflow/,
+  );
+  assert.doesNotMatch(output, /generateReviewedOutput\(matchId/);
+  assert.match(output, /include_minimap: includeMinimap/);
+  assert.match(output, /include_ball: includeBall/);
+  assert.match(output, /show_roster_number: showNumber/);
   assert.match(output, /Przygotowuję wideo do review/);
   assert.match(output, /Sprawdź osoby w klatce/);
   assert.match(output, /Zastosuj poprawki i odśwież wideo/);

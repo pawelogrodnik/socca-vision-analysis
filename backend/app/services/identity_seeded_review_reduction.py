@@ -8,6 +8,7 @@ from app.services.identity_initial_audit_store import (
     load_identity_json,
     write_identity_json_atomic,
 )
+from app.services.identity_initial_audit import build_initial_identity_audit_document
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_operator_seed_digest import (
     DIGEST_CONTRACT,
@@ -31,6 +32,15 @@ REPORT_FILENAME = "identity_seeded_review_reduction_report.json"
 
 COMPLETED_STATUS = "completed_by_initial_audit"
 CONFLICT_STATUS = "blocked_seed_conflict"
+INITIAL_AUDIT_CASE_LIMIT = 12
+EXPLICIT_INITIAL_AUDIT_ACTIONS = {
+    "assign_roster_player",
+    "team_a_unknown",
+    "team_b_unknown",
+    "referee",
+    "false_detection",
+    "skip",
+}
 
 
 def load_fresh_seeded_assignments(
@@ -129,6 +139,208 @@ def load_fresh_seeded_assignments(
         "operator_seed_decisions_digest_contract": DIGEST_CONTRACT,
         "operator_seeds_document_digest": current_document_digest,
         "seeded_assignments_digest": canonical_digest(seeded),
+    }
+
+
+def build_initial_audit_completion_evidence(
+    selection: dict[str, Any] | None,
+    decisions: list[dict[str, Any]] | None,
+    *,
+    reducer_evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return bounded audit completion from reducer-selected observations.
+
+    This is deliberately an adapter, not another identity scorer.  The seeded
+    reducer chooses which candidate subjects still matter; this helper only
+    checks whether its bounded representative observations have an explicit
+    operator disposition.
+    """
+    selected_frames = len((selection or {}).get("selected_frames") or [])
+    visible_observations = sum(
+        len(row.get("visible_detections") or [])
+        for row in (selection or {}).get("selected_frames") or []
+        if isinstance(row, dict)
+    )
+    base = {
+        "prepared": bool(selection),
+        "selected_frames": selected_frames,
+        "visible_observations": visible_observations,
+        "completed": 0,
+        "total": 0,
+        "remaining": 0,
+        "safe_to_stop": False,
+        "complete": False,
+        "completion_evidence_current": False,
+    }
+    if not selection or not isinstance(reducer_evidence, dict):
+        return base
+    if reducer_evidence.get("status") != "fresh":
+        return {
+            **base,
+            "completion_evidence_reason": (
+                reducer_evidence.get("reason")
+                or "initial_audit_completion_evidence_missing"
+            ),
+        }
+
+    required_keys = [
+        str(value)
+        for value in reducer_evidence.get("required_observation_keys") or []
+        if value
+    ]
+    # A prepared audit without current reducer cases must remain open.  Zero
+    # cases are only safe when the reducer itself explicitly says so.
+    safe_to_stop = bool(reducer_evidence.get("safe_to_stop"))
+    if not required_keys and not safe_to_stop:
+        return {
+            **base,
+            "completion_evidence_current": True,
+            "completion_evidence_reason": "initial_audit_cases_unavailable",
+        }
+
+    explicit_by_key = {
+        str(row.get("observation_key"))
+        for row in decisions or []
+        if isinstance(row, dict)
+        and str(row.get("action") or "") in EXPLICIT_INITIAL_AUDIT_ACTIONS
+        and row.get("observation_key")
+    }
+    completed = sum(key in explicit_by_key for key in required_keys)
+    total = len(required_keys)
+    return {
+        **base,
+        "completed": completed,
+        "total": total,
+        "remaining": max(0, total - completed),
+        "safe_to_stop": safe_to_stop,
+        "complete": safe_to_stop or (total > 0 and completed == total),
+        "completion_evidence_current": True,
+        "required_case_observation_keys": required_keys,
+        "reducer_source": reducer_evidence.get("source"),
+    }
+
+
+def load_initial_audit_completion_evidence(match_path: Path) -> dict[str, Any]:
+    """Load the current seeded-reduction evidence without mutating artifacts."""
+    selection_path = (
+        match_path
+        / "identity_initial_audit"
+        / "identity_initial_audit_frame_selection.json"
+    )
+    if not selection_path.exists():
+        return build_initial_audit_completion_evidence(None, None, reducer_evidence=None)
+    try:
+        selection = load_identity_json(selection_path)
+        seed_path = match_path / SEEDS_FILENAME
+        seeds = load_identity_json(seed_path) if seed_path.exists() else {}
+    except (OSError, ValueError):
+        return build_initial_audit_completion_evidence({}, [], reducer_evidence=None)
+
+    seeded, freshness = load_fresh_seeded_assignments(match_path)
+    reducer_evidence = _initial_audit_reducer_evidence(
+        match_path,
+        selection,
+        seeded,
+        freshness,
+    )
+    return build_initial_audit_completion_evidence(
+        selection,
+        list(seeds.get("decisions") or []),
+        reducer_evidence=reducer_evidence,
+    )
+
+
+def _initial_audit_reducer_evidence(
+    match_path: Path,
+    selection: dict[str, Any],
+    seeded: dict[str, Any] | None,
+    freshness: dict[str, Any],
+) -> dict[str, Any]:
+    if seeded is None or freshness.get("status") != "fresh":
+        return {"status": "stale", "reason": "seeded_reduction_evidence_not_current"}
+    try:
+        timeline = load_identity_json(match_path / TIMELINE_FILENAME)
+    except (OSError, ValueError):
+        return {"status": "stale", "reason": "candidate_timeline_missing_or_invalid"}
+
+    source = seeded.get("source") or {}
+    if canonical_digest(timeline) != str(source.get("timeline_digest") or ""):
+        return {"status": "stale", "reason": "candidate_timeline_digest_mismatch"}
+
+    candidate_subject_ids = {
+        str(row.get("candidate_subject_id") or "")
+        for section in ("accepted_assignments", "unresolved_subjects")
+        for row in seeded.get(section) or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    for conflict in seeded.get("conflicts") or []:
+        if isinstance(conflict, dict):
+            candidate_subject_ids.update(
+                str(value) for value in conflict.get("candidate_subject_ids") or [] if value
+            )
+    if not candidate_subject_ids:
+        return {
+            "status": "fresh",
+            "required_observation_keys": [],
+            "safe_to_stop": True,
+            "source": "seeded_reduction_no_candidate_subjects",
+        }
+
+    subject_by_observation = {
+        (
+            str(observation.get("tracklet_id") or ""),
+            int(observation.get("frame") or 0),
+        ): str(subject.get("shadow_subject_id") or "")
+        for subject in timeline.get("subjects") or []
+        if isinstance(subject, dict)
+        for observation in subject.get("observations") or []
+        if isinstance(observation, dict)
+        and str(subject.get("shadow_subject_id") or "") in candidate_subject_ids
+    }
+    audit_document = build_initial_identity_audit_document(selection, {})
+    required_keys: list[str] = []
+    seen_subjects: set[str] = set()
+    for frame in audit_document.get("frames") or []:
+        for observation in frame.get("observations") or []:
+            provenance = observation.get("provenance") or {}
+            subject_id = subject_by_observation.get(
+                (
+                    str(provenance.get("tracklet_id") or ""),
+                    int(frame.get("frame_number") or 0),
+                )
+            )
+            if not subject_id or subject_id in seen_subjects:
+                continue
+            required_keys.append(str(observation.get("observation_key") or ""))
+            seen_subjects.add(subject_id)
+            if len(required_keys) >= INITIAL_AUDIT_CASE_LIMIT:
+                break
+        if len(required_keys) >= INITIAL_AUDIT_CASE_LIMIT:
+            break
+
+    report_path = match_path / REPORT_FILENAME
+    safe_to_stop = False
+    if report_path.exists():
+        try:
+            report = load_identity_json(report_path)
+            report_source = report.get("source") or {}
+            safe_to_stop = (
+                report.get("status") == "fresh"
+                and report_source.get("seeded_assignments_digest")
+                == freshness.get("seeded_assignments_digest")
+                and int(
+                    ((report.get("metrics") or {}).get("review_cards_after_seeding")
+                    or 0)
+                )
+                == 0
+            )
+        except (OSError, ValueError):
+            safe_to_stop = False
+    return {
+        "status": "fresh",
+        "required_observation_keys": [key for key in required_keys if key],
+        "safe_to_stop": safe_to_stop,
+        "source": "seeded_candidate_reduction",
     }
 
 
