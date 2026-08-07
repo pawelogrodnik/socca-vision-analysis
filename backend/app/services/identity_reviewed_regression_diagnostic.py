@@ -21,6 +21,11 @@ from app.services.identity_reviewed_effective_observation import (
     is_real_detected_position,
     observation_index,
 )
+from app.services.identity_canonical_ownership import (
+    artifact_membership_integrity,
+    global_observation_ownership,
+    slot_claims,
+)
 
 
 REQUIRED_ARTIFACTS = (
@@ -36,7 +41,7 @@ OPTIONAL_ARTIFACTS = (
     "identity_roster_subject_review_decisions_shadow.json",
     "identity_seeded_candidate_assignments.json",
 )
-DIAGNOSTIC_VERSION = "reviewed_identity_regression_diagnostic:v3"
+DIAGNOSTIC_VERSION = "reviewed_identity_regression_diagnostic:v4"
 DEFAULT_CASE_NAMES = ("Mati GK", "Przemek", "Andrzej", "Roman", "Piotrek", "Paweł", "Krzysiek")
 _STABLE_SLOT = re.compile(r"^(?P<team>[AB])(?P<number>\d+)(?:~\d+)?$")
 
@@ -63,8 +68,19 @@ def build_reviewed_identity_regression_diagnostic(
         for row in documents["tracklets.json"].get("tracklets") or []
         if row.get("tracklet_id")
     }
-    global_slots = _slot_claims(documents["global_identity.json"], "slots")
-    stable_slots = _slot_claims(documents["stable_players.json"], "players")
+    global_slots = _slot_claims(
+        documents["global_identity.json"], "slots", source="global_identity"
+    )
+    stable_slots = _slot_claims(
+        documents["stable_players.json"], "players", source="stable_players"
+    )
+    canonical_ownership = {
+        (str(row["tracklet_id"]), int(row["frame"])): row
+        for row in global_observation_ownership(documents["global_identity.json"])
+    }
+    canonical_integrity = artifact_membership_integrity(
+        documents["global_identity.json"], documents["stable_players.json"]
+    )
     candidate_by_tracklet, candidate_player_by_id = _candidate_membership(
         documents["identity_candidate_shadow.json"]
     )
@@ -79,6 +95,14 @@ def build_reviewed_identity_regression_diagnostic(
     demotions = observation_index(
         list(documents["reviewed_identity_snapshot.json"].get("observation_demotions") or [])
     )
+    canonical_observations = observation_index(
+        list(
+            documents["reviewed_identity_snapshot.json"].get(
+                "canonical_observation_assignments"
+            )
+            or []
+        )
+    )
     observations = _observations(
         tracklets,
         global_slots,
@@ -88,6 +112,8 @@ def build_reviewed_identity_regression_diagnostic(
         reviewed_assignments,
         overrides,
         demotions,
+        canonical_observations,
+        canonical_ownership,
         fps,
     )
     _mark_suspected_upstream_fragmentation(observations)
@@ -111,6 +137,13 @@ def build_reviewed_identity_regression_diagnostic(
         },
         "fps": fps,
         "summary": _summary(observations, fps),
+        "canonical_artifact_integrity": canonical_integrity,
+        "canonical_multi_slot_claims": _canonical_multi_slot_claims(
+            documents["global_identity.json"],
+            documents["stable_players.json"],
+            canonical_integrity,
+            observations,
+        ),
         "same_tracklet_findings": _same_tracklet_findings(observations),
         "team_unknown_cases": _team_unknown_cases(observations),
         "per_stable_slot_fragmentation": _fragmentation(observations),
@@ -148,6 +181,19 @@ def classify_observation(row: dict[str, Any]) -> str:
     reviewed_team = str(row.get("reviewed_team_label") or "U")
     global_team = str(row.get("global_team_label") or _slot_team(global_slot))
 
+    if row.get("upstream_multi_slot_tracklet_membership"):
+        if (
+            global_slot
+            and tracklet_team in {"A", "B"}
+            and global_team in {"A", "B"}
+            and tracklet_team != global_team
+        ):
+            return "real_canonical_ab_team_conflict"
+        return (
+            "upstream_multi_slot_tracklet"
+            if global_slot
+            else "upstream_multi_slot_ownership_gap"
+        )
     if not global_slot:
         return "upstream_unknown" if tracklet_team == reviewed_team == "U" else "missing_global_lineage"
     if (
@@ -253,6 +299,26 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             f"- Needs visual/operator confirmation: `{roman_gap.get('needs_visual_operator_confirmation', True)}`.",
             f"- {roman_gap.get('reason')}",
         ])
+    canonical_claims = [
+        row
+        for row in report.get("canonical_multi_slot_claims") or []
+        if row.get("source") == "global_identity"
+    ]
+    if canonical_claims:
+        lines.extend(["", "## Frame-level canonical ownership", ""])
+        integrity = report.get("canonical_artifact_integrity") or {}
+        lines.append(
+            f"- Global/stable derived artifact integrity: `{integrity.get('classification')}`."
+        )
+        for claim in canonical_claims:
+            rendered = ", ".join(
+                f"{item['label']} @ {item['frame_ranges']}"
+                for item in claim.get("reviewed_labels_by_detected_range") or []
+            ) or "no reviewed detected observation"
+            lines.append(
+                f"- `{claim['tracklet_id']}` → `{claim['slot_id']}` at "
+                f"{claim.get('detected_frame_ranges') or 'no detected range'}; rendered {rendered}."
+            )
     comparison = report.get("before_after_validation")
     if comparison:
         lines.extend(["", "## BEFORE -> AFTER validation", ""])
@@ -327,26 +393,56 @@ def _ratio(value: Any) -> str:
 
 def _observations(
     tracklets: dict[str, dict[str, Any]],
-    global_slots: dict[str, dict[str, Any]],
-    stable_slots: dict[str, dict[str, Any]],
+    global_slots: dict[str, list[dict[str, Any]]],
+    stable_slots: dict[str, list[dict[str, Any]]],
     candidate_by_tracklet: dict[str, list[str]],
     candidate_player_by_id: dict[str, str | None],
     reviewed_assignments: dict[str, dict[str, Any]],
     overrides: dict[tuple[str, int], dict[str, Any]],
     demotions: dict[tuple[str, int], dict[str, Any]],
+    canonical_observations: dict[tuple[str, int], dict[str, Any]],
+    canonical_ownership: dict[tuple[str, int], dict[str, Any]],
     fps: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for tracklet_id, tracklet in sorted(tracklets.items()):
         assignment = reviewed_assignments.get(tracklet_id, {})
-        global_claim = global_slots.get(tracklet_id, {})
-        stable_claim = stable_slots.get(tracklet_id, {})
+        global_claims = global_slots.get(tracklet_id, [])
+        stable_claims = stable_slots.get(tracklet_id, [])
+        global_labels = {
+            str(claim["stable_slot_id"]) for claim in global_claims
+        }
+        stable_labels = {
+            str(claim["stable_slot_id"]) for claim in stable_claims
+        }
         candidate_ids = candidate_by_tracklet.get(tracklet_id, [])
         for position in tracklet.get("positions_m") or []:
             if not is_real_detected_position(position):
                 continue
             frame = int(position.get("frame") or 0)
-            effective = effective_reviewed_observation(assignment, position, overrides, demotions) if assignment else position
+            global_claim = (
+                canonical_ownership.get((tracklet_id, frame))
+                if len(global_labels) > 1
+                else global_claims[0]
+                if global_claims
+                else {}
+            ) or {}
+            stable_claim = (
+                stable_claims[0]
+                if len(stable_labels) == 1 and stable_claims
+                else {}
+            )
+            effective = (
+                effective_reviewed_observation(
+                    assignment,
+                    position,
+                    overrides,
+                    demotions,
+                    canonical_observations,
+                )
+                if assignment
+                else position
+            )
             rows.append(
                 {
                     "frame": frame,
@@ -376,6 +472,9 @@ def _observations(
                         }
                     ),
                     "reviewed_observation_demoted": (tracklet_id, frame) in demotions,
+                    "upstream_multi_slot_tracklet_membership": len(global_labels) > 1,
+                    "global_slot_claims": global_claims,
+                    "stable_slot_claims": stable_claims,
                     "suspected_upstream_fragmentation": False,
                 }
             )
@@ -419,6 +518,9 @@ def _summary(observations: list[dict[str, Any]], fps: float) -> dict[str, Any]:
         "definite_reviewed_team_regression",
         "upstream_unknown",
         "missing_global_lineage",
+        "upstream_multi_slot_tracklet",
+        "upstream_multi_slot_ownership_gap",
+        "real_canonical_ab_team_conflict",
     )
     by_status = {
         status: _metric([row for row in observations if row["comparison_status"] == status], fps)
@@ -904,7 +1006,7 @@ def _source_precedence() -> dict[str, Any]:
         "stable_anonymous_resolution": [
             "manual reviewed slot decision (when valid)",
             "manual team/referee/false/team-unknown action",
-            "global_identity and stable_players form the canonical stable-slot anchor",
+            "global_identity is the canonical stable-slot source; stable_players is a derived integrity-checked view",
             "gallery and candidate claims are advisory and cannot erase a canonical anchor",
             "a canonical A/B slot supplies team identity when the local tracklet team is U",
             "an opposite local A/B team remains a hard compatibility conflict",
@@ -918,7 +1020,10 @@ def _source_precedence() -> dict[str, Any]:
             "stable anonymous slot remains the fallback display label",
         ],
         "per_observation": [
-            "tracklet assignment", "exact observation override", "frame-uniqueness safety demotion"
+            "tracklet assignment",
+            "global frame-level canonical ownership for multi-slot tracklets",
+            "exact observation override",
+            "frame-uniqueness safety demotion",
         ],
         "rendering": "reviewed video renders the effective reviewed observation; it does not re-resolve identity.",
         "frame_safety": "a frame-uniqueness demotion is an observation-level safety action, not a resolver slot loss.",
@@ -926,7 +1031,17 @@ def _source_precedence() -> dict[str, Any]:
 
 
 def _conclusion(observations: list[dict[str, Any]]) -> dict[str, Any]:
-    direct = [row for row in observations if row["comparison_status"].startswith("definite_reviewed_")]
+    direct = [
+        row
+        for row in observations
+        if row["comparison_status"]
+        in {"definite_reviewed_slot_regression", "definite_reviewed_team_regression"}
+        or (
+            row["comparison_status"] == "definite_reviewed_slot_loss"
+            and row.get("reviewed_slot_loss_scope")
+            in {"resolver_slot_loss", "operator_slot_removal"}
+        )
+    ]
     suspected = [row for row in observations if row["suspected_upstream_fragmentation"]]
     roster_fragmented = any(
         _slot(row.get("global_stable_player_id"))
@@ -965,15 +1080,146 @@ def _recommendations(observations: list[dict[str, Any]]) -> list[str]:
     ]
 
 
-def _slot_claims(document: dict[str, Any], key: str) -> dict[str, dict[str, Any]]:
-    claims: dict[str, dict[str, Any]] = {}
-    for row in document.get(key) or []:
-        slot = _slot(row.get("stable_player_id") or row.get("slot_id") or row.get("stable_subject_id"))
-        if not slot:
+def _slot_claims(
+    document: dict[str, Any],
+    key: str,
+    *,
+    source: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Keep every slot claim; a multi-slot tracklet must never be overwritten."""
+    return slot_claims(document, key, source=source)
+
+
+def _canonical_multi_slot_claims(
+    global_document: dict[str, Any],
+    stable_document: dict[str, Any],
+    integrity: dict[str, Any],
+    observations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    multi_tracklets = {
+        str(row["tracklet_id"])
+        for source in ("global_identity", "stable_players")
+        for row in (
+            integrity.get("internal_multi_slot_tracklet_membership", {})
+            .get(source, [])
+        )
+    }
+    claims = []
+    for source, document, key in (
+        ("global_identity", global_document, "slots"),
+        ("stable_players", stable_document, "players"),
+    ):
+        for slot in document.get(key) or []:
+            slot_id = _slot(
+                slot.get("stable_player_id")
+                or slot.get("slot_id")
+                or slot.get("stable_subject_id")
+            )
+            if not slot_id:
+                continue
+            for tracklet_id in sorted(
+                multi_tracklets & {str(value) for value in slot.get("tracklet_ids") or []}
+            ):
+                frame_details = _claim_frame_ranges(slot, tracklet_id)
+                claims.append(
+                    {
+                        "source": source,
+                        "slot_id": slot_id,
+                        "team": str(slot.get("team_label") or _slot_team(slot_id)),
+                        "stable_subject_id": slot.get("stable_subject_id"),
+                        "tracklet_id": tracklet_id,
+                        "slot_stints": [
+                            stint
+                            for stint in slot.get("stints") or []
+                            if tracklet_id
+                            in {str(value) for value in stint.get("tracklet_ids") or []}
+                        ],
+                        **frame_details,
+                        "reviewed_labels_by_detected_range": _reviewed_labels_by_range(
+                            observations,
+                            tracklet_id,
+                            slot_id,
+                            frame_details["detected_frame_ranges"],
+                        )
+                        if source == "global_identity"
+                        else [],
+                    }
+                )
+    return sorted(
+        claims,
+        key=lambda row: (
+            str(row["tracklet_id"]),
+            str(row["source"]),
+            str(row["slot_id"]),
+        ),
+    )
+
+
+def _reviewed_labels_by_range(
+    observations: list[dict[str, Any]],
+    tracklet_id: str,
+    slot_id: str,
+    frame_ranges: list[list[int]],
+) -> list[dict[str, Any]]:
+    frames = {
+        frame
+        for start, end in frame_ranges
+        for frame in range(int(start), int(end) + 1)
+    }
+    by_label: dict[str, list[int]] = defaultdict(list)
+    for row in observations:
+        if (
+            str(row.get("tracklet_id")) == tracklet_id
+            and int(row.get("frame") or 0) in frames
+            and _slot(row.get("global_stable_player_id")) == slot_id
+        ):
+            by_label[str(row.get("reviewed_display_label") or "missing")].append(
+                int(row["frame"])
+            )
+    return [
+        {"label": label, "frame_ranges": _frame_ranges(values)}
+        for label, values in sorted(by_label.items())
+    ]
+
+
+def _claim_frame_ranges(slot: dict[str, Any], tracklet_id: str) -> dict[str, Any]:
+    detected_frames: list[int] = []
+    overlay_history_frames: list[int] = []
+    ranges: dict[str, list[list[int]]] = {}
+    for field in ("overlay_positions", "history", "positions_m", "trajectory_m"):
+        frames = [
+            int(row.get("frame") or 0)
+            for row in slot.get(field) or []
+            if str(row.get("tracklet_id") or "") == tracklet_id
+            and is_real_detected_position(row)
+        ]
+        ranges[field] = _frame_ranges(frames)
+        detected_frames.extend(frames)
+        if field in {"overlay_positions", "history"}:
+            overlay_history_frames.extend(frames)
+    return {
+        "detected_frame_ranges": _frame_ranges(detected_frames),
+        "overlay_history_frame_ranges": _frame_ranges(overlay_history_frames),
+        "first_detected_frame": min(detected_frames) if detected_frames else None,
+        "last_detected_frame": max(detected_frames) if detected_frames else None,
+        "frame_ranges_by_field": ranges,
+    }
+
+
+def _frame_ranges(frames: list[int]) -> list[list[int]]:
+    values = sorted(set(frames))
+    if not values:
+        return []
+    output: list[list[int]] = []
+    start = previous = values[0]
+    for frame in values[1:]:
+        if frame == previous + 1:
+            previous = frame
             continue
-        for tracklet_id in row.get("tracklet_ids") or []:
-            claims[str(tracklet_id)] = {"stable_slot_id": slot, "stable_subject_id": row.get("stable_subject_id"), "team_label": str(row.get("team_label") or _slot_team(slot))}
-    return claims
+        output.append([start, previous])
+        start = previous = frame
+    output.append([start, previous])
+    return output
 
 
 def _candidate_membership(document: dict[str, Any]) -> tuple[dict[str, list[str]], dict[str, str | None]]:

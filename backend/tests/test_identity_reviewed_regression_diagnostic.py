@@ -17,6 +17,7 @@ from app.services.identity_reviewed_regression_diagnostic import (
     _first_parallel_unnamed_fragment,
     _first_unnamed_identity,
     _normalized_name,
+    _slot_claims,
 )
 
 
@@ -179,6 +180,46 @@ class ReviewedIdentityRegressionDiagnosticTests(unittest.TestCase):
                     for row in report["frame_level_comparison"]
                 )
             )
+
+    def test_slot_claims_preserve_multiple_global_slots(self) -> None:
+        claims = _slot_claims(
+            {
+                "slots": [
+                    {
+                        "stable_player_id": "A05",
+                        "team_label": "A",
+                        "tracklet_ids": ["t1"],
+                    },
+                    {
+                        "stable_player_id": "A08",
+                        "team_label": "A",
+                        "tracklet_ids": ["t1"],
+                    },
+                ]
+            },
+            "slots",
+            source="global_identity",
+        )
+        self.assertEqual(
+            [row["stable_slot_id"] for row in claims["t1"]],
+            ["A05", "A08"],
+        )
+
+    def test_reports_stale_stable_view_as_derived_artifact_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_fixture(root)
+            stable_path = root / "stable_players.json"
+            stable = json.loads(stable_path.read_text(encoding="utf-8"))
+            stable["players"][0]["tracklet_ids"] = ["stale"]
+            stable_path.write_text(json.dumps(stable), encoding="utf-8")
+
+            report = build_reviewed_identity_regression_diagnostic(root)
+
+        self.assertEqual(
+            report["canonical_artifact_integrity"]["classification"],
+            "stale_derived_artifact",
+        )
 
     def test_requires_the_frozen_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

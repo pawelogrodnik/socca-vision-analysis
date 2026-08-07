@@ -1,6 +1,6 @@
 {
   "schema_version": "3.0.0",
-  "diagnostic_version": "reviewed_identity_regression_diagnostic:v3",
+  "diagnostic_version": "reviewed_identity_regression_diagnostic:v4",
   "match_id": "668ae4c0",
   "source_artifacts": [
     {
@@ -36,7 +36,7 @@
     {
       "path": "reviewed_identity_snapshot.json",
       "available": true,
-      "sha256": "332f8ee52c4309c3058437f609228ef7fde40f2e3f384d16e97d1f7932fc0d0f",
+      "sha256": "764a807ffbed3096e64b739520bc620a7a26772d18094671ad52068d8ace34d7",
       "schema_version": "3.0.0"
     },
     {
@@ -61,7 +61,7 @@
   "pipeline_versions": {
     "global_identity": "conservative_identity_v2",
     "stable_players": "0.2.0",
-    "reviewed_identity_snapshot": "reviewed_identity_snapshot:v6-canonical-slot-preservation"
+    "reviewed_identity_snapshot": "reviewed_identity_snapshot:v7-frame-canonical-ownership"
   },
   "fps": 29.97,
   "summary": {
@@ -82,10 +82,10 @@
         "duration_sec": 0
       },
       "definite_reviewed_slot_loss": {
-        "events": 161,
-        "tracklets": 66,
-        "observations": 2035,
-        "duration_sec": 67.901
+        "events": 151,
+        "tracklets": 64,
+        "observations": 249,
+        "duration_sec": 8.308
       },
       "definite_reviewed_team_regression": {
         "events": 0,
@@ -104,14 +104,32 @@
         "tracklets": 35,
         "observations": 2182,
         "duration_sec": 72.806
+      },
+      "upstream_multi_slot_tracklet": {
+        "events": 6,
+        "tracklets": 1,
+        "observations": 1469,
+        "duration_sec": 49.016
+      },
+      "upstream_multi_slot_ownership_gap": {
+        "events": 14,
+        "tracklets": 2,
+        "observations": 261,
+        "duration_sec": 8.709
+      },
+      "real_canonical_ab_team_conflict": {
+        "events": 8,
+        "tracklets": 1,
+        "observations": 56,
+        "duration_sec": 1.869
       }
     },
     "reviewed_slot_loss_breakdown": {
       "resolver_slot_loss": {
-        "events": 10,
-        "tracklets": 2,
-        "observations": 1786,
-        "duration_sec": 59.593
+        "events": 0,
+        "tracklets": 0,
+        "observations": 0,
+        "duration_sec": 0
       },
       "frame_uniqueness_demotion": {
         "events": 151,
@@ -127,13 +145,7 @@
       }
     },
     "reviewed_slot_loss_reasons": {
-      "resolver_slot_loss": [
-        {
-          "value": "conflicting_canonical_stable_sources",
-          "observations": 1786,
-          "ratio": 1.0
-        }
-      ],
+      "resolver_slot_loss": [],
       "frame_uniqueness_demotion": [
         {
           "value": "duplicate_stable_slot_in_frame",
@@ -149,13 +161,943 @@
       "operator_slot_removal": []
     },
     "suspected_upstream_fragmentation": {
-      "candidate_subjects": 1,
-      "tracklets": 3,
-      "observations": 937,
+      "candidate_subjects": 3,
+      "tracklets": 5,
+      "observations": 2723,
       "severity": "SUSPECTED",
       "note": "Candidate-subject membership across global slots is not proof of a core switch."
     }
   },
+  "canonical_artifact_integrity": {
+    "classification": "exact_mirror",
+    "exact_mirror": true,
+    "global_slot_tracklet_membership": {
+      "A01": [
+        "100001:1",
+        "100039:1",
+        "100039:2",
+        "100083:1",
+        "100155:2",
+        "100155:3"
+      ],
+      "A02": [
+        "100003:1",
+        "100020:1",
+        "100025:1",
+        "100037:1",
+        "100037:2",
+        "100046:1",
+        "100054:1",
+        "100060:1",
+        "100102:1",
+        "100111:1",
+        "100163:1"
+      ],
+      "A03": [
+        "100004:1",
+        "100027:2"
+      ],
+      "A04": [
+        "100005:1",
+        "100058:2",
+        "100058:3",
+        "100088:1"
+      ],
+      "A05": [
+        "100008:1",
+        "100027:2",
+        "100070:2"
+      ],
+      "A06": [
+        "100013:1",
+        "100050:1"
+      ],
+      "A07": [
+        "100014:1",
+        "100024:1"
+      ],
+      "A08": [
+        "100023:1",
+        "100061:1"
+      ],
+      "A09": [
+        "100061:1"
+      ],
+      "A10": [
+        "100075:1",
+        "100133:1"
+      ],
+      "B01": [
+        "100002:1"
+      ],
+      "B02": [
+        "100006:1",
+        "100024:2",
+        "100024:3",
+        "100034:2",
+        "100047:1",
+        "100051:1",
+        "100052:1",
+        "100055:1",
+        "100070:1",
+        "100102:2",
+        "100166:1"
+      ],
+      "B03": [
+        "100007:1",
+        "100044:1",
+        "100044:2",
+        "100098:1",
+        "100120:1",
+        "100145:2",
+        "100151:1",
+        "100160:1"
+      ],
+      "B04": [
+        "100009:1",
+        "100018:1",
+        "100018:2",
+        "100018:3",
+        "100053:1",
+        "100159:1"
+      ],
+      "B05": [
+        "100010:1",
+        "100027:1",
+        "100090:2",
+        "100107:1",
+        "100107:2"
+      ],
+      "B06": [
+        "100011:1",
+        "100026:1",
+        "100036:1",
+        "100116:1",
+        "100122:1",
+        "100123:1",
+        "100147:1",
+        "100152:1",
+        "100165:1",
+        "100167:1"
+      ],
+      "B07": [
+        "100029:1",
+        "100032:1",
+        "100038:1",
+        "100058:1"
+      ],
+      "B08": [
+        "100066:1"
+      ],
+      "B09": [
+        "100044:3"
+      ],
+      "B10": [
+        "100012:1",
+        "100132:1",
+        "100138:1"
+      ],
+      "B11": [
+        "100100:2",
+        "100127:1",
+        "100142:1",
+        "100149:1"
+      ],
+      "B12": [
+        "100143:1",
+        "100143:2",
+        "100143:3",
+        "100148:1",
+        "100153:2"
+      ]
+    },
+    "stable_slot_tracklet_membership": {
+      "A01": [
+        "100001:1",
+        "100039:1",
+        "100039:2",
+        "100083:1",
+        "100155:2",
+        "100155:3"
+      ],
+      "A02": [
+        "100003:1",
+        "100020:1",
+        "100025:1",
+        "100037:1",
+        "100037:2",
+        "100046:1",
+        "100054:1",
+        "100060:1",
+        "100102:1",
+        "100111:1",
+        "100163:1"
+      ],
+      "A03": [
+        "100004:1",
+        "100027:2"
+      ],
+      "A04": [
+        "100005:1",
+        "100058:2",
+        "100058:3",
+        "100088:1"
+      ],
+      "A05": [
+        "100008:1",
+        "100027:2",
+        "100070:2"
+      ],
+      "A06": [
+        "100013:1",
+        "100050:1"
+      ],
+      "A07": [
+        "100014:1",
+        "100024:1"
+      ],
+      "A08": [
+        "100023:1",
+        "100061:1"
+      ],
+      "A09": [
+        "100061:1"
+      ],
+      "A10": [
+        "100075:1",
+        "100133:1"
+      ],
+      "B01": [
+        "100002:1"
+      ],
+      "B02": [
+        "100006:1",
+        "100024:2",
+        "100024:3",
+        "100034:2",
+        "100047:1",
+        "100051:1",
+        "100052:1",
+        "100055:1",
+        "100070:1",
+        "100102:2",
+        "100166:1"
+      ],
+      "B03": [
+        "100007:1",
+        "100044:1",
+        "100044:2",
+        "100098:1",
+        "100120:1",
+        "100145:2",
+        "100151:1",
+        "100160:1"
+      ],
+      "B04": [
+        "100009:1",
+        "100018:1",
+        "100018:2",
+        "100018:3",
+        "100053:1",
+        "100159:1"
+      ],
+      "B05": [
+        "100010:1",
+        "100027:1",
+        "100090:2",
+        "100107:1",
+        "100107:2"
+      ],
+      "B06": [
+        "100011:1",
+        "100026:1",
+        "100036:1",
+        "100116:1",
+        "100122:1",
+        "100123:1",
+        "100147:1",
+        "100152:1",
+        "100165:1",
+        "100167:1"
+      ],
+      "B07": [
+        "100029:1",
+        "100032:1",
+        "100038:1",
+        "100058:1"
+      ],
+      "B08": [
+        "100066:1"
+      ],
+      "B09": [
+        "100044:3"
+      ],
+      "B10": [
+        "100012:1",
+        "100132:1",
+        "100138:1"
+      ],
+      "B11": [
+        "100100:2",
+        "100127:1",
+        "100142:1",
+        "100149:1"
+      ],
+      "B12": [
+        "100143:1",
+        "100143:2",
+        "100143:3",
+        "100148:1",
+        "100153:2"
+      ]
+    },
+    "global_only_membership": {},
+    "stable_only_membership": {},
+    "internal_multi_slot_tracklet_membership": {
+      "global_identity": [
+        {
+          "tracklet_id": "100027:2",
+          "stable_slot_ids": [
+            "A03",
+            "A05"
+          ]
+        },
+        {
+          "tracklet_id": "100061:1",
+          "stable_slot_ids": [
+            "A08",
+            "A09"
+          ]
+        }
+      ],
+      "stable_players": [
+        {
+          "tracklet_id": "100027:2",
+          "stable_slot_ids": [
+            "A03",
+            "A05"
+          ]
+        },
+        {
+          "tracklet_id": "100061:1",
+          "stable_slot_ids": [
+            "A08",
+            "A09"
+          ]
+        }
+      ]
+    }
+  },
+  "canonical_multi_slot_claims": [
+    {
+      "source": "global_identity",
+      "slot_id": "A03",
+      "team": "A",
+      "stable_subject_id": "slot-A03",
+      "tracklet_id": "100027:2",
+      "slot_stints": [
+        {
+          "stint_id": "A03-S01",
+          "slot_id": "A03",
+          "team_label": "A",
+          "start_frame": 0,
+          "end_frame": 2691,
+          "start_time_sec": 0.0,
+          "end_time_sec": 89.79,
+          "status": "closed",
+          "detected_frames": 2587,
+          "predicted_frames": 0,
+          "missing_frames": 14,
+          "ambiguous_frames": 91,
+          "tracklet_ids": [
+            "100004:1",
+            "100027:2"
+          ],
+          "raw_track_ids": [
+            100004,
+            100027
+          ],
+          "end_reason": "end_of_analysis",
+          "duration_sec": 89.79
+        }
+      ],
+      "detected_frame_ranges": [
+        [
+          1218,
+          1457
+        ],
+        [
+          1464,
+          1464
+        ],
+        [
+          1470,
+          1471
+        ],
+        [
+          1473,
+          1474
+        ],
+        [
+          1476,
+          2691
+        ]
+      ],
+      "overlay_history_frame_ranges": [
+        [
+          1218,
+          1457
+        ],
+        [
+          1464,
+          1464
+        ],
+        [
+          1470,
+          1471
+        ],
+        [
+          1473,
+          1474
+        ],
+        [
+          1476,
+          2691
+        ]
+      ],
+      "first_detected_frame": 1218,
+      "last_detected_frame": 2691,
+      "frame_ranges_by_field": {
+        "overlay_positions": [
+          [
+            1218,
+            1457
+          ],
+          [
+            1464,
+            1464
+          ],
+          [
+            1470,
+            1471
+          ],
+          [
+            1473,
+            1474
+          ],
+          [
+            1476,
+            2691
+          ]
+        ],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": [
+        {
+          "label": "Pawel",
+          "frame_ranges": [
+            [
+              1218,
+              1457
+            ],
+            [
+              1464,
+              1464
+            ],
+            [
+              1470,
+              1471
+            ],
+            [
+              1473,
+              1474
+            ],
+            [
+              1476,
+              2691
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "global_identity",
+      "slot_id": "A05",
+      "team": "A",
+      "stable_subject_id": "slot-A05",
+      "tracklet_id": "100027:2",
+      "slot_stints": [
+        {
+          "stint_id": "A05-S01",
+          "slot_id": "A05",
+          "team_label": "A",
+          "start_frame": 0,
+          "end_frame": 1424,
+          "start_time_sec": 0.0,
+          "end_time_sec": 47.514,
+          "status": "closed",
+          "detected_frames": 1179,
+          "predicted_frames": 0,
+          "missing_frames": 39,
+          "ambiguous_frames": 206,
+          "tracklet_ids": [
+            "100008:1",
+            "100027:2"
+          ],
+          "raw_track_ids": [
+            100008,
+            100027
+          ],
+          "end_reason": "missing_too_long",
+          "duration_sec": 47.514
+        }
+      ],
+      "detected_frame_ranges": [
+        [
+          1050,
+          1057
+        ]
+      ],
+      "overlay_history_frame_ranges": [
+        [
+          1050,
+          1057
+        ]
+      ],
+      "first_detected_frame": 1050,
+      "last_detected_frame": 1057,
+      "frame_ranges_by_field": {
+        "overlay_positions": [
+          [
+            1050,
+            1057
+          ]
+        ],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": [
+        {
+          "label": "Krzysiek",
+          "frame_ranges": [
+            [
+              1050,
+              1057
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "stable_players",
+      "slot_id": "A03",
+      "team": "A",
+      "stable_subject_id": "slot-A03",
+      "tracklet_id": "100027:2",
+      "slot_stints": [
+        {
+          "stint_id": "A03-S01",
+          "slot_id": "A03",
+          "team_label": "A",
+          "start_frame": 0,
+          "end_frame": 2691,
+          "start_time_sec": 0.0,
+          "end_time_sec": 89.79,
+          "status": "closed",
+          "detected_frames": 2587,
+          "predicted_frames": 0,
+          "missing_frames": 14,
+          "ambiguous_frames": 91,
+          "tracklet_ids": [
+            "100004:1",
+            "100027:2"
+          ],
+          "raw_track_ids": [
+            100004,
+            100027
+          ],
+          "end_reason": "end_of_analysis",
+          "duration_sec": 89.79
+        }
+      ],
+      "detected_frame_ranges": [],
+      "overlay_history_frame_ranges": [],
+      "first_detected_frame": null,
+      "last_detected_frame": null,
+      "frame_ranges_by_field": {
+        "overlay_positions": [],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": []
+    },
+    {
+      "source": "stable_players",
+      "slot_id": "A05",
+      "team": "A",
+      "stable_subject_id": "slot-A05",
+      "tracklet_id": "100027:2",
+      "slot_stints": [
+        {
+          "stint_id": "A05-S01",
+          "slot_id": "A05",
+          "team_label": "A",
+          "start_frame": 0,
+          "end_frame": 1424,
+          "start_time_sec": 0.0,
+          "end_time_sec": 47.514,
+          "status": "closed",
+          "detected_frames": 1179,
+          "predicted_frames": 0,
+          "missing_frames": 39,
+          "ambiguous_frames": 206,
+          "tracklet_ids": [
+            "100008:1",
+            "100027:2"
+          ],
+          "raw_track_ids": [
+            100008,
+            100027
+          ],
+          "end_reason": "missing_too_long",
+          "duration_sec": 47.514
+        }
+      ],
+      "detected_frame_ranges": [],
+      "overlay_history_frame_ranges": [],
+      "first_detected_frame": null,
+      "last_detected_frame": null,
+      "frame_ranges_by_field": {
+        "overlay_positions": [],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": []
+    },
+    {
+      "source": "global_identity",
+      "slot_id": "A08",
+      "team": "A",
+      "stable_subject_id": "slot-A08",
+      "tracklet_id": "100061:1",
+      "slot_stints": [
+        {
+          "stint_id": "A08-S01",
+          "slot_id": "A08",
+          "team_label": "A",
+          "start_frame": 266,
+          "end_frame": 2691,
+          "start_time_sec": 8.876,
+          "end_time_sec": 89.79,
+          "status": "closed",
+          "detected_frames": 2253,
+          "predicted_frames": 0,
+          "missing_frames": 173,
+          "ambiguous_frames": 0,
+          "tracklet_ids": [
+            "100023:1",
+            "100061:1"
+          ],
+          "raw_track_ids": [
+            100023,
+            100061
+          ],
+          "end_reason": "end_of_analysis",
+          "duration_sec": 80.914
+        }
+      ],
+      "detected_frame_ranges": [
+        [
+          557,
+          557
+        ],
+        [
+          562,
+          563
+        ],
+        [
+          565,
+          565
+        ],
+        [
+          567,
+          567
+        ],
+        [
+          569,
+          569
+        ],
+        [
+          571,
+          576
+        ],
+        [
+          578,
+          578
+        ]
+      ],
+      "overlay_history_frame_ranges": [
+        [
+          557,
+          557
+        ],
+        [
+          562,
+          563
+        ],
+        [
+          565,
+          565
+        ],
+        [
+          567,
+          567
+        ],
+        [
+          569,
+          569
+        ],
+        [
+          571,
+          576
+        ],
+        [
+          578,
+          578
+        ]
+      ],
+      "first_detected_frame": 557,
+      "last_detected_frame": 578,
+      "frame_ranges_by_field": {
+        "overlay_positions": [
+          [
+            557,
+            557
+          ],
+          [
+            562,
+            563
+          ],
+          [
+            565,
+            565
+          ],
+          [
+            567,
+            567
+          ],
+          [
+            569,
+            569
+          ],
+          [
+            571,
+            576
+          ],
+          [
+            578,
+            578
+          ]
+        ],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": [
+        {
+          "label": "A08 !",
+          "frame_ranges": [
+            [
+              557,
+              557
+            ],
+            [
+              562,
+              563
+            ],
+            [
+              565,
+              565
+            ],
+            [
+              567,
+              567
+            ],
+            [
+              569,
+              569
+            ],
+            [
+              571,
+              576
+            ],
+            [
+              578,
+              578
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "global_identity",
+      "slot_id": "A09",
+      "team": "A",
+      "stable_subject_id": "slot-A09",
+      "tracklet_id": "100061:1",
+      "slot_stints": [
+        {
+          "stint_id": "A09-S01",
+          "slot_id": "A09",
+          "team_label": "A",
+          "start_frame": 681,
+          "end_frame": 963,
+          "start_time_sec": 22.723,
+          "end_time_sec": 32.132,
+          "status": "closed",
+          "detected_frames": 43,
+          "predicted_frames": 0,
+          "missing_frames": 239,
+          "ambiguous_frames": 0,
+          "tracklet_ids": [
+            "100061:1"
+          ],
+          "raw_track_ids": [
+            100061
+          ],
+          "end_reason": "missing_too_long",
+          "duration_sec": 9.409
+        }
+      ],
+      "detected_frame_ranges": [
+        [
+          681,
+          723
+        ]
+      ],
+      "overlay_history_frame_ranges": [
+        [
+          681,
+          723
+        ]
+      ],
+      "first_detected_frame": 681,
+      "last_detected_frame": 723,
+      "frame_ranges_by_field": {
+        "overlay_positions": [
+          [
+            681,
+            723
+          ]
+        ],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": [
+        {
+          "label": "A09 !",
+          "frame_ranges": [
+            [
+              681,
+              723
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "source": "stable_players",
+      "slot_id": "A08",
+      "team": "A",
+      "stable_subject_id": "slot-A08",
+      "tracklet_id": "100061:1",
+      "slot_stints": [
+        {
+          "stint_id": "A08-S01",
+          "slot_id": "A08",
+          "team_label": "A",
+          "start_frame": 266,
+          "end_frame": 2691,
+          "start_time_sec": 8.876,
+          "end_time_sec": 89.79,
+          "status": "closed",
+          "detected_frames": 2253,
+          "predicted_frames": 0,
+          "missing_frames": 173,
+          "ambiguous_frames": 0,
+          "tracklet_ids": [
+            "100023:1",
+            "100061:1"
+          ],
+          "raw_track_ids": [
+            100023,
+            100061
+          ],
+          "end_reason": "end_of_analysis",
+          "duration_sec": 80.914
+        }
+      ],
+      "detected_frame_ranges": [],
+      "overlay_history_frame_ranges": [],
+      "first_detected_frame": null,
+      "last_detected_frame": null,
+      "frame_ranges_by_field": {
+        "overlay_positions": [],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": []
+    },
+    {
+      "source": "stable_players",
+      "slot_id": "A09",
+      "team": "A",
+      "stable_subject_id": "slot-A09",
+      "tracklet_id": "100061:1",
+      "slot_stints": [
+        {
+          "stint_id": "A09-S01",
+          "slot_id": "A09",
+          "team_label": "A",
+          "start_frame": 681,
+          "end_frame": 963,
+          "start_time_sec": 22.723,
+          "end_time_sec": 32.132,
+          "status": "closed",
+          "detected_frames": 43,
+          "predicted_frames": 0,
+          "missing_frames": 239,
+          "ambiguous_frames": 0,
+          "tracklet_ids": [
+            "100061:1"
+          ],
+          "raw_track_ids": [
+            100061
+          ],
+          "end_reason": "missing_too_long",
+          "duration_sec": 9.409
+        }
+      ],
+      "detected_frame_ranges": [],
+      "overlay_history_frame_ranges": [],
+      "first_detected_frame": null,
+      "last_detected_frame": null,
+      "frame_ranges_by_field": {
+        "overlay_positions": [],
+        "history": [],
+        "positions_m": [],
+        "trajectory_m": []
+      },
+      "reviewed_labels_by_detected_range": []
+    }
+  ],
   "same_tracklet_findings": [
     {
       "severity": "DEFINITE",
@@ -580,177 +1522,6 @@
       "reviewed_team": "B",
       "reviewed_label": "B? !",
       "hard_blockers": [],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1036,
-      "frame_end": 1081,
-      "time_start_sec": 34.568,
-      "time_end_sec": 36.069,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1097,
-      "frame_end": 1097,
-      "time_start_sec": 36.603,
-      "time_end_sec": 36.603,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1101,
-      "frame_end": 1105,
-      "time_start_sec": 36.737,
-      "time_end_sec": 36.87,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1109,
-      "frame_end": 1111,
-      "time_start_sec": 37.004,
-      "time_end_sec": 37.07,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1116,
-      "frame_end": 1457,
-      "time_start_sec": 37.237,
-      "time_end_sec": 48.615,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1464,
-      "frame_end": 1464,
-      "time_start_sec": 48.849,
-      "time_end_sec": 48.849,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1470,
-      "frame_end": 1471,
-      "time_start_sec": 49.049,
-      "time_end_sec": 49.082,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1473,
-      "frame_end": 1474,
-      "time_start_sec": 49.149,
-      "time_end_sec": 49.183,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 1476,
-      "frame_end": 2691,
-      "time_start_sec": 49.249,
-      "time_end_sec": 89.79,
-      "tracklet_id": "100027:2",
-      "global_slot": "A05",
-      "global_team": "A",
-      "tracklet_team": "A",
-      "reviewed_slot": null,
-      "reviewed_team": "A",
-      "reviewed_label": "A? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
       "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
     },
     {
@@ -1516,25 +2287,6 @@
       "reviewed_team": "A",
       "reviewed_label": "A? !",
       "hard_blockers": [],
-      "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
-    },
-    {
-      "severity": "DEFINITE",
-      "classification": "definite_reviewed_slot_loss",
-      "frame_start": 556,
-      "frame_end": 723,
-      "time_start_sec": 18.552,
-      "time_end_sec": 24.124,
-      "tracklet_id": "100061:1",
-      "global_slot": "A09",
-      "global_team": "A",
-      "tracklet_team": "B",
-      "reviewed_slot": null,
-      "reviewed_team": "B",
-      "reviewed_label": "B? !",
-      "hard_blockers": [
-        "conflicting_canonical_stable_sources"
-      ],
       "reason": "The same tracklet has a global stable slot but reviewed output has no stable slot."
     },
     {
@@ -2937,7 +3689,7 @@
       "tracklets": 7
     },
     "potential_local_global_team_conflicts": {
-      "observations": 168,
+      "observations": 56,
       "tracklets": 1
     },
     "degradation_hard_blockers": [],
@@ -2952,56 +3704,6 @@
     "examples": []
   },
   "per_stable_slot_fragmentation": [
-    {
-      "global_stable_slot_id": "A05",
-      "tracklets": 3,
-      "candidate_subjects": [
-        "shadow-a-67f03ba45cc96a56",
-        "shadow-a-cbc8bdddc01c12ad",
-        "shadow-a-d3f04f1340b13b2f"
-      ],
-      "reviewed_entities": [
-        "A05",
-        "none"
-      ],
-      "reviewed_labels": [
-        {
-          "value": "Krzysiek",
-          "observations": 2460,
-          "ratio": 0.6032
-        },
-        {
-          "value": "A? !",
-          "observations": 1618,
-          "ratio": 0.3968
-        }
-      ],
-      "reviewed_canonical_players": [
-        {
-          "value": "team-corgi-1fc405-player-2-krzysiek",
-          "observations": 2460,
-          "ratio": 0.6032
-        },
-        {
-          "value": "none",
-          "observations": 1618,
-          "ratio": 0.3968
-        }
-      ],
-      "reviewed_teams": [
-        {
-          "value": "A",
-          "observations": 4078,
-          "ratio": 1.0
-        }
-      ],
-      "dominant_reviewed_label": "Krzysiek",
-      "dominant_label_ratio": 0.6032,
-      "reviewed_label_transitions": 0,
-      "named_to_fallback_transitions": 0,
-      "fallback_to_named_transitions": 0,
-      "ab_to_u_transitions": 0
-    },
     {
       "global_stable_slot_id": "A07",
       "tracklets": 2,
@@ -3401,6 +4103,55 @@
       "ab_to_u_transitions": 0
     },
     {
+      "global_stable_slot_id": "A08",
+      "tracklets": 2,
+      "candidate_subjects": [
+        "shadow-a-74cf0d34276e08ff",
+        "shadow-b-ddbce78b61f92936"
+      ],
+      "reviewed_entities": [
+        "A08",
+        "none"
+      ],
+      "reviewed_labels": [
+        {
+          "value": "A08",
+          "observations": 2468,
+          "ratio": 0.9948
+        },
+        {
+          "value": "A08 !",
+          "observations": 13,
+          "ratio": 0.0052
+        }
+      ],
+      "reviewed_canonical_players": [
+        {
+          "value": "none",
+          "observations": 2481,
+          "ratio": 1.0
+        }
+      ],
+      "reviewed_teams": [
+        {
+          "value": "A",
+          "observations": 2468,
+          "ratio": 0.9948
+        },
+        {
+          "value": "B",
+          "observations": 13,
+          "ratio": 0.0052
+        }
+      ],
+      "dominant_reviewed_label": "A08",
+      "dominant_label_ratio": 0.9948,
+      "reviewed_label_transitions": 0,
+      "named_to_fallback_transitions": 0,
+      "fallback_to_named_transitions": 0,
+      "ab_to_u_transitions": 0
+    },
+    {
       "global_stable_slot_id": "A10",
       "tracklets": 2,
       "candidate_subjects": [
@@ -3680,8 +4431,9 @@
     },
     {
       "global_stable_slot_id": "A03",
-      "tracklets": 1,
+      "tracklets": 2,
       "candidate_subjects": [
+        "shadow-a-67f03ba45cc96a56",
         "shadow-a-f2675429d1137f23"
       ],
       "reviewed_entities": [
@@ -3690,21 +4442,21 @@
       "reviewed_labels": [
         {
           "value": "Pawel",
-          "observations": 1126,
+          "observations": 2587,
           "ratio": 1.0
         }
       ],
       "reviewed_canonical_players": [
         {
           "value": "team-corgi-1fc405-player-1-pawel",
-          "observations": 1126,
+          "observations": 2587,
           "ratio": 1.0
         }
       ],
       "reviewed_teams": [
         {
           "value": "A",
-          "observations": 1126,
+          "observations": 2587,
           "ratio": 1.0
         }
       ],
@@ -3755,24 +4507,26 @@
       "ab_to_u_transitions": 0
     },
     {
-      "global_stable_slot_id": "A08",
-      "tracklets": 1,
+      "global_stable_slot_id": "A05",
+      "tracklets": 3,
       "candidate_subjects": [
-        "shadow-a-74cf0d34276e08ff"
+        "shadow-a-67f03ba45cc96a56",
+        "shadow-a-cbc8bdddc01c12ad",
+        "shadow-a-d3f04f1340b13b2f"
       ],
       "reviewed_entities": [
-        "A08"
+        "A05"
       ],
       "reviewed_labels": [
         {
-          "value": "A08",
+          "value": "Krzysiek",
           "observations": 2468,
           "ratio": 1.0
         }
       ],
       "reviewed_canonical_players": [
         {
-          "value": "none",
+          "value": "team-corgi-1fc405-player-2-krzysiek",
           "observations": 2468,
           "ratio": 1.0
         }
@@ -3784,7 +4538,7 @@
           "ratio": 1.0
         }
       ],
-      "dominant_reviewed_label": "A08",
+      "dominant_reviewed_label": "Krzysiek",
       "dominant_label_ratio": 1.0,
       "reviewed_label_transitions": 0,
       "named_to_fallback_transitions": 0,
@@ -3802,26 +4556,26 @@
       ],
       "reviewed_labels": [
         {
-          "value": "B? !",
-          "observations": 168,
+          "value": "A09 !",
+          "observations": 43,
           "ratio": 1.0
         }
       ],
       "reviewed_canonical_players": [
         {
           "value": "none",
-          "observations": 168,
+          "observations": 43,
           "ratio": 1.0
         }
       ],
       "reviewed_teams": [
         {
           "value": "B",
-          "observations": 168,
+          "observations": 43,
           "ratio": 1.0
         }
       ],
-      "dominant_reviewed_label": "B? !",
+      "dominant_reviewed_label": "A09 !",
       "dominant_label_ratio": 1.0,
       "reviewed_label_transitions": 0,
       "named_to_fallback_transitions": 0,
@@ -5253,8 +6007,8 @@
       "reviewed_labels_seen": [
         "Pawel"
       ],
-      "observations": 1126,
-      "named_observations": 1126,
+      "observations": 2587,
+      "named_observations": 2587,
       "fallback_observations": 0,
       "unresolved_observations": 0,
       "other_name_observations": 0,
@@ -5364,6 +6118,61 @@
           "reviewed_stable_slot_id": "A03",
           "reviewed_display_label": "Pawel",
           "comparison_status": "same_tracklet_exact"
+        },
+        {
+          "frame_start": 1218,
+          "frame_end": 1457,
+          "time_start_sec": 40.641,
+          "time_end_sec": 48.615,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A03",
+          "reviewed_stable_slot_id": "A03",
+          "reviewed_display_label": "Pawel",
+          "comparison_status": "upstream_multi_slot_tracklet"
+        },
+        {
+          "frame_start": 1464,
+          "frame_end": 1464,
+          "time_start_sec": 48.849,
+          "time_end_sec": 48.849,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A03",
+          "reviewed_stable_slot_id": "A03",
+          "reviewed_display_label": "Pawel",
+          "comparison_status": "upstream_multi_slot_tracklet"
+        },
+        {
+          "frame_start": 1470,
+          "frame_end": 1471,
+          "time_start_sec": 49.049,
+          "time_end_sec": 49.082,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A03",
+          "reviewed_stable_slot_id": "A03",
+          "reviewed_display_label": "Pawel",
+          "comparison_status": "upstream_multi_slot_tracklet"
+        },
+        {
+          "frame_start": 1473,
+          "frame_end": 1474,
+          "time_start_sec": 49.149,
+          "time_end_sec": 49.183,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A03",
+          "reviewed_stable_slot_id": "A03",
+          "reviewed_display_label": "Pawel",
+          "comparison_status": "upstream_multi_slot_tracklet"
+        },
+        {
+          "frame_start": 1476,
+          "frame_end": 2691,
+          "time_start_sec": 49.249,
+          "time_end_sec": 89.79,
+          "tracklet_id": "100027:2",
+          "global_stable_player_id": "A03",
+          "reviewed_stable_slot_id": "A03",
+          "reviewed_display_label": "Pawel",
+          "comparison_status": "upstream_multi_slot_tracklet"
         }
       ]
     },
@@ -5394,44 +6203,20 @@
         "A05"
       ],
       "reviewed_labels_seen": [
-        "A? !",
         "Krzysiek"
       ],
-      "observations": 4078,
-      "named_observations": 2460,
+      "observations": 2468,
+      "named_observations": 2468,
       "fallback_observations": 0,
-      "unresolved_observations": 1618,
+      "unresolved_observations": 0,
       "other_name_observations": 0,
-      "remaining_review_reasons": [
-        {
-          "value": "conflicted:conflicting_canonical_stable_sources",
-          "observations": 1618,
-          "ratio": 1.0
-        }
-      ],
-      "named_coverage_ratio": 0.6032,
-      "first_loss_of_name": {
-        "frame": 1036,
-        "time_sec": 34.568,
-        "tracklet_id": "100027:2",
-        "reviewed_label": "A? !"
-      },
-      "first_frame_without_named_identity": {
-        "frame": 1050,
-        "time_sec": 35.035,
-        "tracklet_id": "100027:2",
-        "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
-        "reviewed_label": "A? !"
-      },
-      "first_parallel_unnamed_fragment": {
-        "frame": 1036,
-        "time_sec": 34.568,
-        "tracklet_id": "100027:2",
-        "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
-        "reviewed_label": "A? !"
-      },
-      "classification": "roster_binding_fragmentation",
-      "evidence_severity": "DEFINITE",
+      "remaining_review_reasons": [],
+      "named_coverage_ratio": 1.0,
+      "first_loss_of_name": null,
+      "first_frame_without_named_identity": null,
+      "first_parallel_unnamed_fragment": null,
+      "classification": "operator_binding_complete",
+      "evidence_severity": "STRONG_INDICATION",
       "timeline": [
         {
           "frame_start": 0,
@@ -5500,103 +6285,15 @@
           "comparison_status": "same_tracklet_exact"
         },
         {
-          "frame_start": 1036,
-          "frame_end": 1081,
-          "time_start_sec": 34.568,
-          "time_end_sec": 36.069,
+          "frame_start": 1050,
+          "frame_end": 1057,
+          "time_start_sec": 35.035,
+          "time_end_sec": 35.269,
           "tracklet_id": "100027:2",
           "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1097,
-          "frame_end": 1097,
-          "time_start_sec": 36.603,
-          "time_end_sec": 36.603,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1101,
-          "frame_end": 1105,
-          "time_start_sec": 36.737,
-          "time_end_sec": 36.87,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1109,
-          "frame_end": 1111,
-          "time_start_sec": 37.004,
-          "time_end_sec": 37.07,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1116,
-          "frame_end": 1457,
-          "time_start_sec": 37.237,
-          "time_end_sec": 48.615,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1464,
-          "frame_end": 1464,
-          "time_start_sec": 48.849,
-          "time_end_sec": 48.849,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1470,
-          "frame_end": 1471,
-          "time_start_sec": 49.049,
-          "time_end_sec": 49.082,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1473,
-          "frame_end": 1474,
-          "time_start_sec": 49.149,
-          "time_end_sec": 49.183,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
-        },
-        {
-          "frame_start": 1476,
-          "frame_end": 2691,
-          "time_start_sec": 49.249,
-          "time_end_sec": 89.79,
-          "tracklet_id": "100027:2",
-          "global_stable_player_id": "A05",
-          "reviewed_stable_slot_id": null,
-          "reviewed_display_label": "A? !",
-          "comparison_status": "definite_reviewed_slot_loss"
+          "reviewed_stable_slot_id": "A05",
+          "reviewed_display_label": "Krzysiek",
+          "comparison_status": "upstream_multi_slot_tracklet"
         },
         {
           "frame_start": 1406,
@@ -5627,7 +6324,7 @@
     "stable_anonymous_resolution": [
       "manual reviewed slot decision (when valid)",
       "manual team/referee/false/team-unknown action",
-      "global_identity and stable_players form the canonical stable-slot anchor",
+      "global_identity is the canonical stable-slot source; stable_players is a derived integrity-checked view",
       "gallery and candidate claims are advisory and cannot erase a canonical anchor",
       "a canonical A/B slot supplies team identity when the local tracklet team is U",
       "an opposite local A/B team remains a hard compatibility conflict"
@@ -5642,6 +6339,7 @@
     ],
     "per_observation": [
       "tracklet assignment",
+      "global frame-level canonical ownership for multi-slot tracklets",
       "exact observation override",
       "frame-uniqueness safety demotion"
     ],
@@ -5649,9 +6347,9 @@
     "frame_safety": "a frame-uniqueness demotion is an observation-level safety action, not a resolver slot loss."
   },
   "conclusion": {
-    "verdict": "mixed",
+    "verdict": "reviewed_primary",
     "method": "Evidence matrix; no numeric comparison across observation and event units.",
-    "definite_reviewed_findings_present": true,
+    "definite_reviewed_findings_present": false,
     "suspected_upstream_fragmentation_present": true,
     "roster_binding_fragmentation_requires_case_study": true,
     "baseline_note": "Global/stable is compared for information retention, not assumed real-world ground truth."
@@ -5668,7 +6366,7 @@
       "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
       "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
       "identity_candidate_shadow.json": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
-      "reviewed_identity_snapshot.json": "332f8ee52c4309c3058437f609228ef7fde40f2e3f384d16e97d1f7932fc0d0f",
+      "reviewed_identity_snapshot.json": "764a807ffbed3096e64b739520bc620a7a26772d18094671ad52068d8ace34d7",
       "reviewed_identity_slot_assignments.json": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
       "identity_roster_subject_review_decisions_shadow.json": null,
       "identity_seeded_candidate_assignments.json": null
@@ -5679,7 +6377,7 @@
       "global_identity.json": "107dc14ce0c07aa9efbfb6575b6d81aabb717bc0744db864b373ae0b1e5820c8",
       "stable_players.json": "5a26681076f3681d16acd2281cc29c47b7381b18a034defa7fa2249362a310c5",
       "identity_candidate_shadow.json": "be30e9e1c5ddbd1edfd629b368f4b427c583a9a749577f3455fcad526145fd27",
-      "reviewed_identity_snapshot.json": "332f8ee52c4309c3058437f609228ef7fde40f2e3f384d16e97d1f7932fc0d0f",
+      "reviewed_identity_snapshot.json": "764a807ffbed3096e64b739520bc620a7a26772d18094671ad52068d8ace34d7",
       "reviewed_identity_slot_assignments.json": "8d3ba77ea7b577876079139a76b30ee84596448f0cb45744528c8b72698314a0",
       "identity_roster_subject_review_decisions_shadow.json": null,
       "identity_seeded_candidate_assignments.json": null
@@ -5719,15 +6417,21 @@
     "reason": "A common global slot is a stability observation, not proof that the two fragments are the same real-world player."
   },
   "before_after_validation": {
-    "before_diagnostic_version": "reviewed_identity_regression_diagnostic:v2",
-    "after_diagnostic_version": "reviewed_identity_regression_diagnostic:v3",
+    "before_diagnostic_version": "reviewed_identity_regression_diagnostic:v3",
+    "after_diagnostic_version": "reviewed_identity_regression_diagnostic:v4",
     "players": [
       {
         "requested_name": "Mati GK",
         "anchor_stable_slot": "A07",
-        "before_named_coverage_ratio": 0.4324,
+        "before_named_coverage_ratio": 0.7568,
         "after_named_coverage_ratio": 0.7568,
-        "before_first_frame_without_named_identity": null,
+        "before_first_frame_without_named_identity": {
+          "frame": 11,
+          "time_sec": 0.367,
+          "tracklet_id": "100014:1",
+          "candidate_subject_id": "shadow-a-96cc41d1ae1012f6",
+          "reviewed_label": "A? !"
+        },
         "after_first_frame_without_named_identity": {
           "frame": 11,
           "time_sec": 0.367,
@@ -5749,9 +6453,15 @@
       {
         "requested_name": "Przemek",
         "anchor_stable_slot": "A02",
-        "before_named_coverage_ratio": 0.0587,
+        "before_named_coverage_ratio": 0.9836,
         "after_named_coverage_ratio": 0.9836,
-        "before_first_frame_without_named_identity": null,
+        "before_first_frame_without_named_identity": {
+          "frame": 93,
+          "time_sec": 3.103,
+          "tracklet_id": "100003:1",
+          "candidate_subject_id": "shadow-a-5f37fa5b8708d172",
+          "reviewed_label": "A? !"
+        },
         "after_first_frame_without_named_identity": {
           "frame": 93,
           "time_sec": 3.103,
@@ -5773,9 +6483,15 @@
       {
         "requested_name": "Andrzej",
         "anchor_stable_slot": "A01",
-        "before_named_coverage_ratio": 0.119,
+        "before_named_coverage_ratio": 0.9977,
         "after_named_coverage_ratio": 0.9977,
-        "before_first_frame_without_named_identity": null,
+        "before_first_frame_without_named_identity": {
+          "frame": 308,
+          "time_sec": 10.277,
+          "tracklet_id": "100001:1",
+          "candidate_subject_id": "shadow-a-10667a7322e106a2",
+          "reviewed_label": "A? !"
+        },
         "after_first_frame_without_named_identity": {
           "frame": 308,
           "time_sec": 10.277,
@@ -5797,21 +6513,27 @@
       {
         "requested_name": "Roman",
         "anchor_stable_slot": "A04",
-        "before_named_coverage_ratio": 0.355,
+        "before_named_coverage_ratio": 1.0,
         "after_named_coverage_ratio": 1.0,
         "before_first_frame_without_named_identity": null,
         "after_first_frame_without_named_identity": null,
         "before_first_parallel_unnamed_fragment": null,
         "after_first_parallel_unnamed_fragment": null,
-        "before_remaining_reason": "roster_binding_fragmentation",
+        "before_remaining_reason": "operator_binding_complete",
         "after_remaining_reason": "operator_binding_complete"
       },
       {
         "requested_name": "Piotrek",
         "anchor_stable_slot": "A06",
-        "before_named_coverage_ratio": 0.9098,
+        "before_named_coverage_ratio": 0.9918,
         "after_named_coverage_ratio": 0.9918,
-        "before_first_frame_without_named_identity": null,
+        "before_first_frame_without_named_identity": {
+          "frame": 444,
+          "time_sec": 14.815,
+          "tracklet_id": "100013:1",
+          "candidate_subject_id": "shadow-a-23512ec6d60dae41",
+          "reviewed_label": "A? !"
+        },
         "after_first_frame_without_named_identity": {
           "frame": 444,
           "time_sec": 14.815,
@@ -5833,369 +6555,42 @@
       {
         "requested_name": "Paweł",
         "anchor_stable_slot": "A03",
-        "before_named_coverage_ratio": 0.0,
+        "before_named_coverage_ratio": 1.0,
         "after_named_coverage_ratio": 1.0,
         "before_first_frame_without_named_identity": null,
         "after_first_frame_without_named_identity": null,
         "before_first_parallel_unnamed_fragment": null,
         "after_first_parallel_unnamed_fragment": null,
-        "before_remaining_reason": "operator_binding_not_proven",
+        "before_remaining_reason": "operator_binding_complete",
         "after_remaining_reason": "operator_binding_complete"
       },
       {
         "requested_name": "Krzysiek",
         "anchor_stable_slot": "A05",
-        "before_named_coverage_ratio": 0.2881,
-        "after_named_coverage_ratio": 0.6032,
-        "before_first_frame_without_named_identity": null,
-        "after_first_frame_without_named_identity": {
+        "before_named_coverage_ratio": 0.6032,
+        "after_named_coverage_ratio": 1.0,
+        "before_first_frame_without_named_identity": {
           "frame": 1050,
           "time_sec": 35.035,
           "tracklet_id": "100027:2",
           "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
           "reviewed_label": "A? !"
         },
-        "before_first_parallel_unnamed_fragment": null,
-        "after_first_parallel_unnamed_fragment": {
+        "after_first_frame_without_named_identity": null,
+        "before_first_parallel_unnamed_fragment": {
           "frame": 1036,
           "time_sec": 34.568,
           "tracklet_id": "100027:2",
           "candidate_subject_id": "shadow-a-67f03ba45cc96a56",
           "reviewed_label": "A? !"
         },
+        "after_first_parallel_unnamed_fragment": null,
         "before_remaining_reason": "roster_binding_fragmentation",
-        "after_remaining_reason": [
-          {
-            "value": "conflicted:conflicting_canonical_stable_sources",
-            "observations": 1618,
-            "ratio": 1.0
-          }
-        ]
+        "after_remaining_reason": "operator_binding_complete"
       }
     ],
     "team_unknown": {
       "before": {
-        "local_team_u": {
-          "observations": 3274,
-          "tracklets": 11
-        },
-        "global_ab_anchor_with_local_team_u": {
-          "observations": 2906,
-          "tracklets": 4
-        },
-        "review_preserved_global_ab_anchor": {
-          "observations": 0,
-          "tracklets": 0
-        },
-        "definite_reviewed_team_u_regressions": {
-          "observations": 915,
-          "tracklets": 3
-        },
-        "upstream_unknown": {
-          "observations": 368,
-          "tracklets": 7
-        },
-        "potential_local_global_team_conflicts": {
-          "observations": 168,
-          "tracklets": 1
-        },
-        "degradation_hard_blockers": [
-          {
-            "value": "unknown_team_cannot_receive_stable_slot",
-            "observations": 699,
-            "ratio": 0.7639
-          },
-          {
-            "value": "mixed_team_candidate_subject",
-            "observations": 216,
-            "ratio": 0.2361
-          }
-        ],
-        "degradation_reason": "A direct same-tracklet loss of a global A/B anchor after review; local/global A-B conflicts are reported separately and never classified as this regression.",
-        "examples": [
-          {
-            "frame": 913,
-            "time_sec": 30.464,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 914,
-            "time_sec": 30.497,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 915,
-            "time_sec": 30.531,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 916,
-            "time_sec": 30.564,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 917,
-            "time_sec": 30.597,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 918,
-            "time_sec": 30.631,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 919,
-            "time_sec": 30.664,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 920,
-            "time_sec": 30.697,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 921,
-            "time_sec": 30.731,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 922,
-            "time_sec": 30.764,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 923,
-            "time_sec": 30.797,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 924,
-            "time_sec": 30.831,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 925,
-            "time_sec": 30.864,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 926,
-            "time_sec": 30.898,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 927,
-            "time_sec": 30.931,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 928,
-            "time_sec": 30.964,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 929,
-            "time_sec": 30.998,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 930,
-            "time_sec": 31.031,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 931,
-            "time_sec": 31.064,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          },
-          {
-            "frame": 932,
-            "time_sec": 31.098,
-            "tracklet_id": "100044:2",
-            "global_stable_player_id": "B03",
-            "global_team_label": "B",
-            "tracklet_team_label": "U",
-            "reviewed_stable_slot_id": null,
-            "reviewed_team_label": "U",
-            "reviewed_display_label": "U? !",
-            "reviewed_hard_blockers": [
-              "mixed_team_candidate_subject"
-            ]
-          }
-        ]
-      },
-      "after": {
         "local_team_u": {
           "observations": 3274,
           "tracklets": 11
@@ -6230,13 +6625,46 @@
         ],
         "degradation_reason": "A direct same-tracklet loss of a global A/B anchor after review; local/global A-B conflicts are reported separately and never classified as this regression.",
         "examples": []
+      },
+      "after": {
+        "local_team_u": {
+          "observations": 3274,
+          "tracklets": 11
+        },
+        "global_ab_anchor_with_local_team_u": {
+          "observations": 2906,
+          "tracklets": 4
+        },
+        "review_preserved_global_ab_anchor": {
+          "observations": 2898,
+          "tracklets": 4
+        },
+        "definite_reviewed_team_u_regressions": {
+          "observations": 0,
+          "tracklets": 0
+        },
+        "upstream_unknown": {
+          "observations": 368,
+          "tracklets": 7
+        },
+        "potential_local_global_team_conflicts": {
+          "observations": 56,
+          "tracklets": 1
+        },
+        "degradation_hard_blockers": [],
+        "remaining_reviewed_u_classes": [
+          {
+            "value": "definite_reviewed_slot_loss:duplicate_stable_slot_in_frame",
+            "observations": 8,
+            "ratio": 1.0
+          }
+        ],
+        "degradation_reason": "A direct same-tracklet loss of a global A/B anchor after review; local/global A-B conflicts are reported separately and never classified as this regression.",
+        "examples": []
       }
     },
     "slot_losses": {
       "before": {
-        "note": "The v2 baseline did not separate resolver losses, frame-uniqueness demotions, and operator removals."
-      },
-      "after": {
         "resolver_slot_loss": {
           "events": 10,
           "tracklets": 2,
@@ -6256,14 +6684,28 @@
           "duration_sec": 0
         }
       },
+      "after": {
+        "resolver_slot_loss": {
+          "events": 0,
+          "tracklets": 0,
+          "observations": 0,
+          "duration_sec": 0
+        },
+        "frame_uniqueness_demotion": {
+          "events": 151,
+          "tracklets": 64,
+          "observations": 249,
+          "duration_sec": 8.308
+        },
+        "operator_slot_removal": {
+          "events": 0,
+          "tracklets": 0,
+          "observations": 0,
+          "duration_sec": 0
+        }
+      },
       "after_reasons": {
-        "resolver_slot_loss": [
-          {
-            "value": "conflicting_canonical_stable_sources",
-            "observations": 1786,
-            "ratio": 1.0
-          }
-        ],
+        "resolver_slot_loss": [],
         "frame_uniqueness_demotion": [
           {
             "value": "duplicate_stable_slot_in_frame",

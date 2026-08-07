@@ -32,6 +32,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         list(snapshot.get("tracklet_assignments") or []),
         list(snapshot.get("observation_overrides") or []),
         list(snapshot.get("observation_demotions") or []),
+        list(snapshot.get("canonical_observation_assignments") or []),
     ):
         if (
             effective.get("identity_status") != "confirmed"

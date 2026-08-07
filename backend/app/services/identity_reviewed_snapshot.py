@@ -13,6 +13,7 @@ from app.services.identity_reviewed_snapshot_observations import (
     build_observation_overrides,
     observation_coverage,
 )
+from app.services.identity_canonical_ownership import global_observation_ownership
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
 from app.services.identity_reviewed_effective_observation import (
     effective_observations_by_frame,
@@ -26,7 +27,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v6-canonical-slot-preservation"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v7-frame-canonical-ownership"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -194,10 +195,18 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         assignments.append(row)
         conflicts.extend({"tracklet_id": tracklet_id, **item} for item in assignment_conflicts)
 
+    canonical_observation_assignments = _canonical_observation_assignments(
+        global_observation_ownership(documents["global_identity"]),
+        assignments,
+        slot_roster_bindings,
+        conflicting_slot_roster_bindings,
+        roster,
+    )
     observation_demotions, uniqueness = build_frame_slot_demotions(
         tracklets,
         assignments,
         observation_overrides,
+        canonical_observation_assignments,
     )
     conflicts.extend(
         {
@@ -213,6 +222,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         assignments,
         observation_overrides,
         observation_demotions,
+        canonical_observation_assignments,
     )
     summary = _summary(assignments, coverage, fragmentation, uniqueness)
     source = _source_descriptor(documents, match_doc, seeded_freshness)
@@ -238,6 +248,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         },
         "entities": _entities(assignments),
         "tracklet_assignments": assignments,
+        "canonical_observation_assignments": canonical_observation_assignments,
         "observation_overrides": observation_overrides,
         "observation_demotions": observation_demotions,
         "summary": summary,
@@ -485,6 +496,124 @@ def _valid_slot_roster_pair(
         and slot_id[0] in {"A", "B"}
         and player
         and str(player.get("team_label") or "") == slot_id[0]
+    )
+
+
+def _canonical_observation_assignments(
+    ownership_claims: list[dict[str, Any]],
+    assignments: list[dict[str, Any]],
+    slot_roster_bindings: dict[str, dict[str, str]],
+    conflicting_slot_roster_bindings: set[str],
+    roster: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Apply global per-frame ownership before exact seeds and uniqueness safety."""
+    assignment_by_tracklet = {
+        str(row.get("tracklet_id") or ""): row for row in assignments
+    }
+    output = []
+    for claim in ownership_claims:
+        tracklet_id = str(claim["tracklet_id"])
+        base = assignment_by_tracklet.get(tracklet_id)
+        if not base or str(base.get("identity_status") or "") in {
+            "false_detection",
+            "referee",
+            "team_unknown",
+        }:
+            continue
+        slot_id = str(claim["stable_slot_id"])
+        blockers = [
+            value
+            for value in base.get("hard_blockers") or []
+            if value != "upstream_multi_slot_tracklet_membership"
+        ]
+        conflicts = list(base.get("conflicts") or [])
+        binding = slot_roster_bindings.get(slot_id)
+        player_id = str((binding or {}).get("player_id") or "") or None
+        player = roster.get(player_id or "")
+        status = "confirmed" if player else "unresolved"
+        source = (
+            str((binding or {}).get("source") or "")
+            if player
+            else "canonical_frame_global_identity"
+        )
+        if slot_id in conflicting_slot_roster_bindings:
+            blockers.append("conflicting_stable_slot_roster_bindings")
+            conflicts.append({"code": "conflicting_stable_slot_roster_bindings"})
+            status, player_id, player, source = (
+                "conflicted",
+                None,
+                None,
+                "structural_safety",
+            )
+        local_team = str(base.get("team_label") or "U")
+        if local_team in {"A", "B"} and local_team != str(claim["team_label"]):
+            blockers.append("canonical_frame_local_team_conflict")
+            conflicts.append(
+                {
+                    "code": "canonical_frame_local_team_conflict",
+                    "global_team_label": str(claim["team_label"]),
+                    "local_team_label": local_team,
+                }
+            )
+            status, player_id, player, source = (
+                "conflicted",
+                None,
+                None,
+                "structural_safety",
+            )
+        output.append(
+            {
+                "tracklet_id": tracklet_id,
+                "frame": int(claim["frame"]),
+                "stable_anonymous_slot_id": (
+                    None if status == "conflicted" else slot_id
+                ),
+                "stable_anonymous_entity_id": (
+                    None if status == "conflicted" else slot_id
+                ),
+                "stable_anchor_source": "canonical_frame_global_identity",
+                "stable_anchor_status": "frame_level_canonical_ownership",
+                "stable_anchor_claims": [
+                    {
+                        "source": "global_identity",
+                        "stable_slot_id": slot_id,
+                    }
+                ],
+                "team_label": (
+                    local_team
+                    if status == "conflicted" and local_team in {"A", "B"}
+                    else str(claim["team_label"])
+                ),
+                "fallback_label": (
+                    f"{local_team}?"
+                    if status == "conflicted" and local_team in {"A", "B"}
+                    else slot_id
+                ),
+                "identity_status": status,
+                "canonical_player_id": player_id,
+                "player_name": player.get("name") if player else None,
+                "roster_number": player.get("number") if player else None,
+                "display_label": (
+                    str(player.get("name"))
+                    if player
+                    else f"{slot_id} !"
+                    if status == "conflicted"
+                    else slot_id
+                ),
+                "identity_source": source,
+                "eligible_for_player_stats": status == "confirmed",
+                "hard_blockers": sorted(set(blockers)),
+                "conflicts": conflicts,
+                "canonical_ownership_evidence": {
+                    "source": claim["ownership_evidence_source"],
+                    "field": claim["ownership_evidence_field"],
+                    "stable_subject_id": claim.get("stable_subject_id"),
+                },
+            }
+        )
+    return sorted(
+        output,
+        key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
     )
 
 

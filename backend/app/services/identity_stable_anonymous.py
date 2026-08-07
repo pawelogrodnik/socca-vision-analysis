@@ -10,6 +10,7 @@ from typing import Any
 from app.services.identity_reviewed_slot_registry import (
     build_reviewed_slot_registry,
 )
+from app.services.identity_canonical_ownership import artifact_membership_integrity
 
 
 DEFAULT_MAX_SUBJECTS_PER_TEAM = 14
@@ -66,6 +67,11 @@ def resolve_stable_anonymous_entities(
         gallery_document,
         candidate_document,
     )
+    global_labels_by_tracklet = _players_map(global_document, "slots")
+    stable_labels_by_tracklet = _players_map(stable_document, "players")
+    canonical_artifact_integrity = artifact_membership_integrity(
+        global_document, stable_document
+    )
     manual_by_subject = {
         str(row.get("candidate_subject_id")): row
         for row in manual_document.get("decisions") or []
@@ -108,12 +114,21 @@ def resolve_stable_anonymous_entities(
             else source_team
         )
         claims = claims_by_tracklet.get(tracklet_id, [])
-        canonical_claims = [
-            row for row in claims if row["source"] in {"global_identity", "stable_players"}
-        ]
         canonical_labels = sorted(
-            {str(row["stable_slot_id"]) for row in canonical_claims}
+            global_labels_by_tracklet.get(tracklet_id)
+            or stable_labels_by_tracklet.get(tracklet_id)
+            or set()
         )
+        canonical_claims = [
+            row
+            for row in claims
+            if row["source"]
+            in (
+                {"global_identity"}
+                if global_labels_by_tracklet.get(tracklet_id)
+                else {"stable_players"}
+            )
+        ]
         advisory_claims = [
             row for row in claims if row["source"] not in {"global_identity", "stable_players"}
         ]
@@ -168,8 +183,8 @@ def resolve_stable_anonymous_entities(
             anchor_status = manual_action
             blockers = []
         elif len(canonical_labels) > 1:
-            blockers.append("conflicting_canonical_stable_sources")
-            anchor_status = "conflicting_claims"
+            blockers.append("upstream_multi_slot_tracklet_membership")
+            anchor_status = "frame_level_canonical_ownership_required"
         elif len(canonical_labels) == 1:
             candidate_slot = canonical_labels[0]
             if candidate_slot not in canonical_slots:
@@ -256,6 +271,7 @@ def resolve_stable_anonymous_entities(
         active_players_per_team=active_players_per_team,
         manual_document=manual_document,
         reviewed_slot_registry=reviewed_slot_registry,
+        canonical_artifact_integrity=canonical_artifact_integrity,
     )
     return resolved, diagnostics
 
@@ -324,7 +340,8 @@ def _allocate_manual_new_slots(
             str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
             for tracklet_id in tracklet_ids
         }
-        if observed_teams not in ({team}, {"U"}):
+        known_teams = observed_teams & {"A", "B"}
+        if known_teams not in (set(), {team}):
             rejected[subject_id] = "manual_new_player_team_mismatch"
             continue
         frames = {
@@ -521,6 +538,7 @@ def _diagnostics(
     active_players_per_team: int,
     manual_document: dict[str, Any],
     reviewed_slot_registry: dict[str, dict[str, Any]],
+    canonical_artifact_integrity: dict[str, Any],
 ) -> dict[str, Any]:
     slots = {
         str(row["stable_anonymous_slot_id"])
@@ -555,10 +573,11 @@ def _diagnostics(
             for row in reviewed_slot_registry.values()
         ),
         "ephemeral_fragments": sum(bool(row["ephemeral"]) for row in resolved.values()),
-        "conflicting_anchor_sources": sum(
-            "conflicting_canonical_stable_sources" in row["hard_blockers"]
+        "upstream_multi_slot_tracklets": sum(
+            "upstream_multi_slot_tracklet_membership" in row["hard_blockers"]
             for row in resolved.values()
         ),
+        "canonical_artifact_integrity": canonical_artifact_integrity,
         "max_subjects_per_team": max_subjects,
         "active_players_per_team": active_players_per_team,
         "highest_fallback_number_by_team": {

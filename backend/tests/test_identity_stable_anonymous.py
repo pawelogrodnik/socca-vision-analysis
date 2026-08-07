@@ -74,7 +74,7 @@ class StableAnonymousIdentityTests(unittest.TestCase):
             self.assertEqual(resolved["empty"]["detected_evidence_count"], 0)
             self.assertEqual(resolved["empty"]["fallback_label"], "A?")
 
-    def test_conflicting_canonical_sources_create_hard_conflict(self) -> None:
+    def test_stale_derived_stable_view_does_not_override_global_canonical_slot(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             _write(root / "global_identity.json", {"slots": [_slot("A01", "t1")]})
@@ -84,12 +84,11 @@ class StableAnonymousIdentityTests(unittest.TestCase):
                 {"t1": _tracklet("t1", "A", 1)},
                 _candidates(("s1", ["t1"], None)),
             )
-            self.assertIsNone(resolved["t1"]["stable_anonymous_slot_id"])
-            self.assertIn(
-                "conflicting_canonical_stable_sources",
-                resolved["t1"]["hard_blockers"],
+            self.assertEqual(resolved["t1"]["stable_anonymous_slot_id"], "A01")
+            self.assertEqual(
+                diagnostics["canonical_artifact_integrity"]["classification"],
+                "stale_derived_artifact",
             )
-            self.assertEqual(diagnostics["conflicting_anchor_sources"], 1)
 
     def test_canonical_anchor_wins_over_candidate_shadow_disagreement(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -234,6 +233,35 @@ class StableAnonymousIdentityTests(unittest.TestCase):
             self.assertEqual(resolved["t2"]["stable_anonymous_slot_id"], "A02")
             self.assertEqual(diagnostics["manual_new_player_allocations"], 1)
 
+    def test_manual_new_slot_accepts_a_and_unknown_tracklets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidates = _candidates(("new", ["known", "unknown"], None))
+            manual = save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "new",
+                        "action": "create_new_stable_player",
+                        "team_label": "A",
+                    }
+                ],
+            )
+            resolved, diagnostics = resolve_stable_anonymous_entities(
+                root,
+                {
+                    "known": _tracklet("known", "A", 1),
+                    "unknown": _tracklet("unknown", "U", 2),
+                },
+                candidates,
+                manual,
+            )
+
+            self.assertEqual(resolved["known"]["stable_anonymous_slot_id"], "A01")
+            self.assertEqual(resolved["unknown"]["stable_anonymous_slot_id"], "A01")
+            self.assertEqual(diagnostics["manual_new_player_allocations"], 1)
+
     def test_manual_new_slot_respects_seven_visible_players(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -291,6 +319,39 @@ class StableAnonymousIdentityTests(unittest.TestCase):
             self.assertIn("manual_new_player_active_team_cap_exceeded", resolved["t1"]["hard_blockers"])
             self.assertIsNone(resolved["t2"]["stable_anonymous_slot_id"])
             self.assertIn("manual_new_player_active_team_cap_exceeded", resolved["t2"]["hard_blockers"])
+
+    def test_manual_new_slot_treats_unknown_team_as_compatible_with_known_team(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "global_identity.json", {"slots": [_slot("A01", "old")]})
+            candidates = _candidates(("new", ["known", "unknown"], None))
+            manual = save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [
+                    {
+                        "candidate_subject_id": "new",
+                        "action": "create_new_stable_player",
+                        "team_label": "A",
+                    }
+                ],
+            )
+            resolved, _ = resolve_stable_anonymous_entities(
+                root,
+                {
+                    "known": _tracklet("known", "A", 10),
+                    "unknown": _tracklet("unknown", "U", 20),
+                },
+                candidates,
+                manual,
+            )
+            self.assertEqual(
+                {
+                    row["stable_anonymous_slot_id"]
+                    for row in resolved.values()
+                },
+                {"A02"},
+            )
 
     def test_manual_new_slot_cannot_exceed_fourteen_match_players(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
