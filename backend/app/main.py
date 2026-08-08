@@ -2006,6 +2006,7 @@ def post_match_reviewed_identity_correction(
                 path,
                 match_document,
                 source="review_exception_decision",
+                rebuild_seeded_candidates=True,
             )
         )
         response = {

@@ -35,6 +35,33 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             stats.assert_not_called()
             render.assert_not_called()
 
+    def test_exception_refresh_rebuilds_only_seeded_candidate_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.rebuild_identity_seeded_candidate_assignments",
+            return_value={"summary": {}},
+        ) as rebuild_seeded, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            return_value={"summary": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=ready_state(),
+        ), patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
+            "app.services.review_workflow_orchestrator.generate_reviewed_output"
+        ) as render:
+            refresh_review_after_identity_mutation(
+                Path(tmp),
+                {"id": "m1"},
+                source="review_exception_decision",
+                rebuild_seeded_candidates=True,
+            )
+
+            rebuild_seeded.assert_called_once_with(Path(tmp), {"id": "m1"})
+            stats.assert_not_called()
+            render.assert_not_called()
+
     def test_finalize_builds_stats_then_queues_one_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
             "app.services.review_workflow_orchestrator.get_review_workflow_state",

@@ -81,6 +81,30 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         after.assert_called_once()
         lightweight.assert_not_called()
 
+    def test_exception_correction_refreshes_seeded_candidate_evidence(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        refreshed = {
+            "snapshot": {"status": "partial_reviewed", "semantic_digest": "identity"},
+            "workflow": {"phase": "exceptions"},
+        }
+        state = {"phase": "exceptions", "allowed_actions": ["review_identity_issue"]}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.get_review_workflow_state", return_value=state), patch(
+            "app.main.save_reviewed_identity_correction", return_value={"saved": True}
+        ), patch(
+            "app.main.refresh_review_after_identity_mutation", return_value=refreshed
+        ) as refresh:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "team_unknown"},
+            )
+
+        self.assertTrue(response["saved"])
+        self.assertEqual(response["workflow"]["phase"], "exceptions")
+        self.assertTrue(refresh.call_args.kwargs["rebuild_seeded_candidates"])
+
     def test_initial_audit_identity_update_is_gated_and_recomputed(self) -> None:
         from app.main import update_initial_identity_audit_seeds
 
