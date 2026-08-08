@@ -111,7 +111,7 @@ export function IdentityExceptionReviewPanel({
       <div>
         <p className='eyebrow'>Krok 2</p>
         <h2>Pozostałe przypadki</h2>
-        <p>System rozpoznał większość zawodników. Sprawdź tylko przypadki, których nie udało się rozstrzygnąć automatycznie.</p>
+        <p>System zakończył automatyczne przypisania. Sprawdź tylko przypadki, w których wykryto konflikt wymagający decyzji.</p>
         <strong>{requiredCasesLabel(workflow.issues.blocking)}</strong>
       </div>
       {cards.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cards.length}</span>}

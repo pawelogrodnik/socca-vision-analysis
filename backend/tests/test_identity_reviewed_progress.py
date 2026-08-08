@@ -16,14 +16,14 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             progress = build_reviewed_identity_progress(root, _match())
             self.assertEqual(progress["summary"]["review_units_total"], 6)
             self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
-            self.assertEqual(progress["summary"]["optional_cases_remaining"], 1)
-            self.assertEqual(progress["summary"]["ignored_low_impact"], 1)
-            self.assertEqual(progress["summary"]["structural_blockers"], 3)
+            self.assertEqual(progress["summary"]["optional_cases_remaining"], 2)
+            self.assertEqual(progress["summary"]["safe_anonymous_units"], 1)
+            self.assertEqual(progress["summary"]["structural_blockers"], 2)
             long = _unit(progress, "long")
             self.assertEqual(long["tracklet_count"], 2)
             self.assertEqual(long["detected_observation_count"], 120)
             self.assertEqual(long["detected_frame_count"], 60)
-            self.assertEqual(long["current_resolution_status"], "pending_high_priority")
+            self.assertEqual(long["current_resolution_status"], "pending_optional")
             self.assertEqual(before, {path.name: path.read_bytes() for path in root.iterdir() if path.is_file()})
 
     def test_operator_decision_marks_one_whole_subject_complete(self) -> None:
@@ -38,7 +38,115 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             self.assertEqual(long["current_resolution_status"], "reviewed_by_operator")
             self.assertEqual(progress["summary"]["completed_by_operator"], 1)
             self.assertEqual(progress["observations"]["operator_reviewed_observations"], 120)
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+
+    def test_many_long_unnamed_subjects_are_optional_not_blocking(self) -> None:
+        with _workspace() as root:
+            subjects = []
+            tracklets = []
+            for index in range(100):
+                tracklet_id = f"long-{index}"
+                tracklets.append(_tracklet(
+                    tracklet_id,
+                    "A" if index % 2 == 0 else "B",
+                    range(1, 101),
+                ))
+                subjects.append({"candidate_subject_id": f"subject-{index}", "tracklet_ids": [tracklet_id]})
+            _write(root / "tracklets.json", {"tracklets": tracklets})
+            _write(root / "identity_candidate_shadow.json", {"subjects": subjects})
+
+            progress = build_reviewed_identity_progress(root, _match())
+
             self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(progress["summary"]["optional_cases_remaining"], 100)
+            self.assertEqual(progress["next_cases"], [])
+
+    def test_legacy_requires_operator_review_without_conflict_is_not_blocking(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="A", frames=range(1, 101), card={
+                "review_status": "ready_for_operator_review",
+                "requires_operator_review": True,
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_optional")
+
+    def test_legacy_blocked_conflict_for_missing_roster_name_is_not_blocking(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="B", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": ["no_roster_identity_evidence"],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_optional")
+
+    def test_semantic_review_card_conflict_is_blocking_until_operator_resolves_it(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="A", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": ["parallel_roster_candidate_conflict"],
+            })
+
+            before = build_reviewed_identity_progress(root, _match())
+            self.assertEqual(before["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(_unit(before, "subject")["current_resolution_status"], "pending_high_priority")
+
+            _write(root / "reviewed_identity_slot_assignments.json", {
+                "decisions": [{"candidate_subject_id": "subject", "action": "assign_team", "team_label": "A"}],
+                "reviewed_slots": [],
+            })
+            after = build_reviewed_identity_progress(root, _match())
+            self.assertEqual(after["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(_unit(after, "subject")["current_resolution_status"], "reviewed_by_operator")
+
+    def test_short_unnamed_team_a_and_team_b_subjects_are_safe_anonymous(self) -> None:
+        with _workspace() as root:
+            _write(root / "tracklets.json", {"tracklets": [
+                _tracklet("team-a", "A", [1]),
+                _tracklet("team-b", "B", [2]),
+            ]})
+            _write(root / "identity_candidate_shadow.json", {"subjects": [
+                {"candidate_subject_id": "team-a", "tracklet_ids": ["team-a"]},
+                {"candidate_subject_id": "team-b", "tracklet_ids": ["team-b"]},
+            ]})
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(progress["summary"]["safe_anonymous_units"], 2)
+            self.assertEqual(_unit(progress, "team-a")["current_resolution_status"], "safe_anonymous")
+            self.assertEqual(_unit(progress, "team-b")["current_resolution_status"], "safe_anonymous")
+
+    def test_all_real_conflicts_remain_visible_without_an_arbitrary_cap(self) -> None:
+        with _workspace() as root:
+            tracklets = []
+            subjects = []
+            cards = []
+            for index in range(7):
+                tracklet_id = f"conflict-{index}"
+                subject_id = f"subject-{index}"
+                tracklets.append(_tracklet(tracklet_id, "A", range(1, 101)))
+                subjects.append({"candidate_subject_id": subject_id, "tracklet_ids": [tracklet_id]})
+                cards.append({
+                    "candidate_subject_id": subject_id,
+                    "review_status": "blocked_conflict",
+                    "requires_operator_review": True,
+                })
+            _write(root / "tracklets.json", {"tracklets": tracklets})
+            _write(root / "identity_candidate_shadow.json", {"subjects": subjects})
+            _write(root / "identity_roster_subject_review_shadow.json", {"cards": cards})
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 7)
+            self.assertEqual(len(progress["next_cases"]), 7)
 
 
 def _fixture(root: Path) -> None:
@@ -61,6 +169,23 @@ def _fixture(root: Path) -> None:
         {"candidate_subject_id": "ambiguous", "tracklet_ids": ["ambiguous"]},
         {"candidate_subject_id": "ambiguous-other", "tracklet_ids": ["ambiguous"]},
     ]})
+
+
+def _single_subject(
+    root: Path,
+    *,
+    team: str,
+    frames: range | list[int],
+    card: dict | None = None,
+) -> None:
+    _write(root / "tracklets.json", {"tracklets": [_tracklet("tracklet", team, frames)]})
+    _write(root / "identity_candidate_shadow.json", {"subjects": [
+        {"candidate_subject_id": "subject", "tracklet_ids": ["tracklet"]},
+    ]})
+    if card is not None:
+        _write(root / "identity_roster_subject_review_shadow.json", {
+            "cards": [{"candidate_subject_id": "subject", **card}],
+        })
 
 
 def _tracklet(tracklet_id: str, team: str, frames: range | list[int]) -> dict:

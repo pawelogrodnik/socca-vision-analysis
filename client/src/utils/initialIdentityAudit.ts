@@ -9,6 +9,8 @@ import type {
   VideoMetadata,
 } from '../types';
 
+export type InitialIdentityAuditDetectedTeam = 'A' | 'B' | 'U';
+
 export type InitialIdentityAuditAction =
   | {
       kind: 'player';
@@ -156,6 +158,41 @@ export function observationBoxStyle(
     width: `${(clamp(x2 - x1, 1, video.width) / video.width) * 100}%`,
     height: `${(clamp(y2 - y1, 1, video.height) / video.height) * 100}%`,
   };
+}
+
+/**
+ * Presentation must use the detector's persisted team label. In particular,
+ * do not derive this from a later roster decision: the border is a quick way
+ * for the operator to audit the detector itself.
+ */
+export function initialIdentityAuditObservationTeam(
+  observation: Pick<InitialIdentityAuditObservation, 'team_label'>,
+): InitialIdentityAuditDetectedTeam {
+  const team = String(observation.team_label || '').toUpperCase();
+  return team === 'A' || team === 'B' ? team : 'U';
+}
+
+export function initialIdentityAuditTeamClass(
+  observation: Pick<InitialIdentityAuditObservation, 'team_label'>,
+): string {
+  const team = initialIdentityAuditObservationTeam(observation);
+  return team === 'A'
+    ? 'team-a'
+    : team === 'B'
+      ? 'team-b'
+      : 'team-unknown';
+}
+
+export function initialIdentityAuditObservationBoxClassName(
+  observation: Pick<InitialIdentityAuditObservation, 'team_label'>,
+  options: { selected: boolean; decided: boolean },
+): string {
+  return [
+    'initial-identity-observation-box',
+    initialIdentityAuditTeamClass(observation),
+    options.selected ? 'selected' : '',
+    options.decided ? 'decided' : '',
+  ].filter(Boolean).join(' ');
 }
 
 export function observationCropLayout(

@@ -82,6 +82,29 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(resolved["blocking"], 0)
         self.assertEqual(unresolved["blocking"], 1)
 
+    def test_optional_and_safe_anonymous_subjects_do_not_block_finalize(self) -> None:
+        progress = {"summary": {
+            "important_decisions_remaining": 0,
+            "optional_cases_remaining": 100,
+            "safe_anonymous_units": 24,
+        }}
+        issues = _issue_evidence({"summary": {"conflicted": 0, "blocked": 0}}, progress)
+        state = derive_review_workflow_state(evidence(issues=issues))
+        self.assertEqual(issues["blocking"], 0)
+        self.assertEqual(state["phase"], "ready_to_finalize")
+
+    def test_true_conflict_blocks_and_resolved_progress_unblocks_workflow(self) -> None:
+        conflict = _issue_evidence(
+            {"summary": {"conflicted": 0, "blocked": 0}},
+            {"summary": {"important_decisions_remaining": 1}},
+        )
+        resolved = _issue_evidence(
+            {"summary": {"conflicted": 0, "blocked": 0}},
+            {"summary": {"important_decisions_remaining": 0}},
+        )
+        self.assertEqual(derive_review_workflow_state(evidence(issues=conflict))["phase"], "exceptions")
+        self.assertEqual(derive_review_workflow_state(evidence(issues=resolved))["phase"], "ready_to_finalize")
+
     def test_approval_requires_exact_current_fingerprints(self) -> None:
         snapshot = {"semantic_digest": "identity"}
         stats = {"source_snapshot_digest": "identity", "players": []}
