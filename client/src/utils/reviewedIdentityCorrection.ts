@@ -12,6 +12,23 @@ export type ReviewedCorrectionFormValues = {
   comment: string;
 };
 
+export function defaultCorrectionTeam(context: ReviewedCorrectionContext): string {
+  const availableTeams = new Set(context.available_team_labels);
+  if (
+    ['A', 'B'].includes(context.effective_team_label)
+    && availableTeams.has(context.effective_team_label)
+  ) {
+    return context.effective_team_label;
+  }
+  if (
+    ['A', 'B'].includes(context.source_team_label)
+    && availableTeams.has(context.source_team_label)
+  ) {
+    return context.source_team_label;
+  }
+  return '';
+}
+
 export function correctionOptionsForSubject(
   context: ReviewedCorrectionContext,
   selectedTeamLabel = context.effective_team_label,

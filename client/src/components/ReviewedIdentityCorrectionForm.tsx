@@ -13,6 +13,7 @@ import type {
 import {
   buildReviewedCorrectionPayload,
   correctionOptionsForSubject,
+  defaultCorrectionTeam,
 } from '../utils/reviewedIdentityCorrection';
 import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
 
@@ -67,25 +68,48 @@ export function ReviewedIdentityCorrectionForm({ matchId, entity, onCancel, onSa
   const subjectId = entity.candidate_subject_id;
   const [context, setContext] = useState<Awaited<ReturnType<typeof getReviewedCorrectionContext>> | null>(null);
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
-  const [selectedTeamLabel, setSelectedTeamLabel] = useState(entity.team_label === 'U' ? '' : entity.team_label);
-  const [playerId, setPlayerId] = useState(entity.canonical_player_id ?? '');
-  const [stableSlotId, setStableSlotId] = useState(entity.stable_anonymous_slot_id ?? '');
+  const [selectedTeamLabel, setSelectedTeamLabel] = useState('');
+  const [playerId, setPlayerId] = useState('');
+  const [stableSlotId, setStableSlotId] = useState('');
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!subjectId) return;
+    let cancelled = false;
+
+    setContext(null);
+    setAction(null);
+    setSelectedTeamLabel('');
+    setPlayerId('');
+    setStableSlotId('');
+    setComment('');
+    setError('');
+
+    if (!subjectId) {
+      setBusy(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setBusy(true);
     getReviewedCorrectionContext(matchId, subjectId)
       .then((value) => {
+        if (cancelled) return;
         setContext(value);
-        setSelectedTeamLabel((current) => current || (
-          value.source_team_label === 'U' ? '' : value.effective_team_label
-        ));
+        setSelectedTeamLabel(defaultCorrectionTeam(value));
       })
-      .catch((reason) => setError(errorMessage(reason)))
-      .finally(() => setBusy(false));
+      .catch((reason) => {
+        if (!cancelled) setError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [matchId, subjectId]);
 
   const sourceTeamLabel = context?.source_team_label ?? entity.team_label;
@@ -236,7 +260,12 @@ export function ReviewedIdentityCorrectionForm({ matchId, entity, onCancel, onSa
       <summary>Szczegóły techniczne</summary>
       <p>candidate_subject_id: {subjectId}</p>
       <p>tracklet_ids: {(context?.tracklet_ids ?? entity.candidate_subject_ids).join(', ') || entity.tracklet_id}</p>
-      <p>source team: {sourceTeamLabel} · effective team: {selectedTeamLabel || 'brak'} · status: {entity.identity_status}</p>
+      <p>
+        source team: {sourceTeamLabel}
+        {' · '}current effective team: {context?.effective_team_label ?? 'brak'}
+        {' · '}selected correction team: {selectedTeamLabel || 'brak'}
+        {' · '}status: {entity.identity_status}
+      </p>
     </details>
     {error && <p className='status error'>{error}</p>}
     <div className='row'>

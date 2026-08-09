@@ -6,6 +6,7 @@ import type { ReviewedCorrectionContext } from '../src/types.ts';
 import {
   buildReviewedCorrectionPayload,
   correctionOptionsForSubject,
+  defaultCorrectionTeam,
 } from '../src/utils/reviewedIdentityCorrection.ts';
 import {
   formatElapsedTime,
@@ -110,6 +111,86 @@ test('unknown-team context exposes both teams but filters options after the oper
   );
 });
 
+test('defaults a stale effective team to the valid source-team correction domain', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'subject-b',
+    team_label: 'A',
+    source_team_label: 'B',
+    effective_team_label: 'A',
+    available_team_labels: ['B'],
+    tracklet_ids: ['tracklet-b'],
+    review_card_key: 'card-b',
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [
+      { player_id: 'b1', player_name: 'B1', team_label: 'B' },
+      { player_id: 'b2', player_name: 'B2', team_label: 'B' },
+    ],
+    slot_options: [],
+  };
+
+  const selectedTeam = defaultCorrectionTeam(context);
+  const options = correctionOptionsForSubject(context, selectedTeam);
+
+  assert.equal(selectedTeam, 'B');
+  assert.notEqual(selectedTeam, 'A');
+  assert.deepEqual(options.roster.map((row) => row.player_id), ['b1', 'b2']);
+});
+
+test('defaults a normal same-team correction to its effective team', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'subject-a',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
+    tracklet_ids: ['tracklet-a'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [],
+    slot_options: [],
+  };
+
+  assert.equal(defaultCorrectionTeam(context), 'A');
+});
+
+test('defaults an unknown-source correction to a valid effective team', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'subject-u',
+    team_label: 'B',
+    source_team_label: 'U',
+    effective_team_label: 'B',
+    available_team_labels: ['A', 'B'],
+    tracklet_ids: ['tracklet-u'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [],
+    slot_options: [],
+  };
+
+  assert.equal(defaultCorrectionTeam(context), 'B');
+});
+
+test('requires a team choice when an unknown source has no valid effective team', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'subject-u',
+    team_label: 'U',
+    source_team_label: 'U',
+    effective_team_label: 'U',
+    available_team_labels: ['A', 'B'],
+    tracklet_ids: ['tracklet-u'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [],
+    slot_options: [],
+  };
+
+  assert.equal(defaultCorrectionTeam(context), '');
+});
+
 test('reviewed output presentation uses operator-facing labels and one initial CTA', () => {
   assert.equal(reviewedIdentityStatusLabel('missing'), 'Review nieprzygotowane');
   assert.equal(reviewedIdentityStatusLabel('partial_reviewed'), 'Review rozpoczęte');
@@ -161,6 +242,10 @@ test('video QA stays in the unified workspace and report has no interactive revi
   assert.match(form, /Co wiesz o tym zawodniku/);
   assert.match(form, /sourceTeamUnknown/);
   assert.match(form, /!action/);
+  assert.match(form, /defaultCorrectionTeam\(value\)/);
+  assert.doesNotMatch(form, /setSelectedTeamLabel\(\(current\)/);
+  assert.match(form, /current effective team: \{context\?\.effective_team_label/);
+  assert.match(form, /selected correction team: \{selectedTeamLabel/);
   assert.doesNotMatch(reportPage, /ReviewedMatchOutputPanel|ReviewedVideoQaPanel|ReviewedIdentityCorrectionForm/);
   assert.match(reportPage, /Review meczu nie jest jeszcze zakończony/);
 });
