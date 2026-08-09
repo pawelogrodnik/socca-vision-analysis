@@ -56,7 +56,7 @@ def _team_display_map(package: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "team_id": team_id,
             "team_label": team_label,
             "team_name": team.get("team_name") or f"Team {team_label}",
-            "display_color": team.get("display_color") or team.get("detected_color_hex"),
+            "display_color": team.get("detected_color_hex") or team.get("display_color"),
         }
         if team_label:
             rows[team_label] = rows[key]
@@ -443,29 +443,32 @@ def _write_public_player_heatmap(
     stable_players: dict[str, dict[str, Any]],
     *,
     timeline_player: dict[str, Any] | None = None,
-    heatmap_dir: Path,
+    heatmap_dir: Path | None,
     public_heatmap_base: str,
     pitch_width_m: float,
     pitch_length_m: float,
 ) -> dict[str, Any]:
-    rows = (
-        _exact_player_heatmap_rows(timeline_player)
-        if timeline_player is not None
-        else _real_player_heatmap_rows(player, stable_players)
-    )
+    reviewed_rows = player.get("reviewed_heatmap_rows")
+    if isinstance(reviewed_rows, list):
+        rows = reviewed_rows
+    elif timeline_player is not None:
+        rows = _exact_player_heatmap_rows(timeline_player)
+    else:
+        rows = _real_player_heatmap_rows(player, stable_players)
     player_id = str(player.get("player_id") or player.get("player_name") or "player")
     filename = f"player_{_safe_artifact_id(player_id)}.png"
     width_px = 360
     length_px = 720
-    heatmap_dir.mkdir(parents=True, exist_ok=True)
-    _write_player_heatmap_png(
-        heatmap_dir / filename,
-        rows,
-        pitch_width_m=pitch_width_m,
-        pitch_length_m=pitch_length_m,
-        width_px=width_px,
-        length_px=length_px,
-    )
+    if heatmap_dir is not None:
+        heatmap_dir.mkdir(parents=True, exist_ok=True)
+        _write_player_heatmap_png(
+            heatmap_dir / filename,
+            rows,
+            pitch_width_m=pitch_width_m,
+            pitch_length_m=pitch_length_m,
+            width_px=width_px,
+            length_px=length_px,
+        )
     detected_samples = sum(1 for row in rows if row.get("source") == "detected")
     frames = _nested(player, "frames")
     quality = _heatmap_quality(
@@ -475,7 +478,7 @@ def _write_public_player_heatmap(
         ambiguous_frames=int(frames.get("ambiguous_frames") or 0),
     )
     return {
-        "path": f"{public_heatmap_base}/{filename}",
+        "path": f"{public_heatmap_base}/{filename}" if heatmap_dir is not None else "",
         "samples": len(rows),
         "detected_samples": detected_samples,
         "quality": quality,
@@ -493,7 +496,7 @@ def _public_players(
     package: dict[str, Any],
     *,
     source_match_dir: Path | None,
-    heatmap_dir: Path,
+    heatmap_dir: Path | None,
     public_heatmap_base: str,
 ) -> list[dict[str, Any]]:
     resolved = package.get("resolved_player_stats") if isinstance(package.get("resolved_player_stats"), dict) else {}
@@ -502,6 +505,16 @@ def _public_players(
     pitch_width_m = float(pitch.get("width_m") or 30.0)
     pitch_length_m = float(pitch.get("length_m") or 47.4)
     stable_players = _load_stable_players(source_match_dir)
+    reviewed_heatmaps_doc = (
+        package.get("reviewed_player_heatmaps")
+        if isinstance(package.get("reviewed_player_heatmaps"), dict)
+        else {}
+    )
+    reviewed_heatmaps = {
+        str(row.get("player_id") or ""): row
+        for row in reviewed_heatmaps_doc.get("heatmaps") or []
+        if isinstance(row, dict) and row.get("player_id")
+    }
     timeline_players: dict[str, dict[str, Any]] = {}
     if source_match_dir is not None and (source_match_dir / "global_identity.json").exists():
         try:
@@ -513,8 +526,19 @@ def _public_players(
     for player in resolved.get("players") or []:
         if not isinstance(player, dict):
             continue
+        heatmap_player = player
+        reviewed_heatmap = reviewed_heatmaps.get(str(player.get("player_id") or ""))
+        if isinstance(reviewed_heatmap, dict):
+            heatmap_player = {
+                **player,
+                "reviewed_heatmap_rows": [
+                    {"pitch_m": list(point), "source": "detected"}
+                    for point in reviewed_heatmap.get("positions_m") or []
+                    if isinstance(point, (list, tuple)) and len(point) >= 2
+                ],
+            }
         heatmap = _write_public_player_heatmap(
-            player,
+            heatmap_player,
             stable_players,
             timeline_player=timeline_players.get(str(player.get("player_id") or "")),
             heatmap_dir=heatmap_dir,
@@ -561,7 +585,7 @@ def build_public_match_report(
     *,
     published_id: str,
     source_match_dir: Path | None,
-    heatmap_dir: Path,
+    heatmap_dir: Path | None,
     public_heatmap_base: str,
 ) -> dict[str, Any]:
     possession = package.get("possession_report") if isinstance(package.get("possession_report"), dict) else {}
@@ -573,17 +597,29 @@ def build_public_match_report(
     legacy_momentum_available = isinstance(momentum.get("points"), list) and bool(momentum.get("points"))
     momentum_status = str(momentum.get("status") or ("completed" if legacy_momentum_available else "not_available"))
     momentum_available = momentum_status not in {"not_available", "stale", "missing_inputs"}
-    return {
+    uses_reviewed_identity = package.get("identity_report_source") == "reviewed_identity"
+    report = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
         "id": published_id,
         "source_match_id": _public_match(package)["id"],
         "report_type": "public_match_report",
-        "stats_semantics": {
-            "tracking": "confirmed_real_players_only",
-            "ball": "experimental_candidates",
-            "technical_debug": "excluded",
-        },
+        "stats_semantics": (
+            {
+                "identity": "human_reviewed_named_players_only",
+                "player_time": "confirmed_detected_observations",
+                "team_time": "source_video_duration",
+                "team_tracking": "named_and_anonymous_team_observations",
+                "ball": "experimental_candidates",
+                "technical_debug": "excluded",
+            }
+            if uses_reviewed_identity
+            else {
+                "tracking": "confirmed_real_players_only",
+                "ball": "experimental_candidates",
+                "technical_debug": "excluded",
+            }
+        ),
         "match": _public_match(package),
         "teams": _public_teams(package),
         "players": _public_players(
@@ -623,6 +659,9 @@ def build_public_match_report(
             },
         },
     }
+    if uses_reviewed_identity:
+        report["reviewed_identity_digest"] = package.get("reviewed_identity_digest")
+    return report
 
 
 def _public_warning(value: Any) -> dict[str, str]:

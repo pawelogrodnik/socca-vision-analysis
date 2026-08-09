@@ -2226,6 +2226,7 @@ export type MatchPackageValidation = {
   warnings: string[];
   optional_available: string[];
   debug_available?: string[];
+  identity_source?: 'legacy_identity' | 'reviewed_identity' | null;
 };
 
 export type MatchPackage = {
@@ -2260,6 +2261,16 @@ export type MatchPackage = {
   movement_stats?: MovementStatsDocument | null;
   player_stats?: PlayerStatsDocument | null;
   resolved_player_stats?: ResolvedPlayerStatsDocument | null;
+  reviewed_player_stats?: {
+    source_snapshot_digest: string;
+    players: ReviewedPlayerStats[];
+    [key: string]: unknown;
+  } | null;
+  reviewed_player_heatmaps?: Record<string, unknown> | null;
+  reviewed_stats_readiness?: Record<string, unknown> | null;
+  reviewed_output_manifest?: Record<string, unknown> | null;
+  identity_report_source?: 'reviewed_identity' | null;
+  reviewed_identity_digest?: string | null;
   player_heatmaps?: PlayerHeatmapsDocument | null;
   tracklets?: Record<string, unknown> | null;
   tracking_quality_report?: TrackingQualityReport | null;
@@ -2353,6 +2364,7 @@ export type PublicMatchReport = {
   source_match_id: string;
   report_type: 'public_match_report' | string;
   stats_semantics?: Record<string, string>;
+  reviewed_identity_digest?: string | null;
   match: {
     id: string;
     title: string;

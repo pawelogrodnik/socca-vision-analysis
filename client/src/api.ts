@@ -645,6 +645,12 @@ export async function getStaticPublicMatchReport(matchId: string): Promise<Publi
   return res.json() as Promise<PublicMatchReport>;
 }
 
+export async function getReviewedMatchReport(matchId: string): Promise<PublicMatchReport> {
+  return request<PublicMatchReport>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-report`,
+  );
+}
+
 export async function deletePublishedMatch(matchId: string): Promise<{ status: string; match: PublishedMatch }> {
   return request<{ status: string; match: PublishedMatch }>(`/api/published/matches/${matchId}`, { method: 'DELETE' });
 }

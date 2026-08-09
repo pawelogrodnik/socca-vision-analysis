@@ -742,6 +742,15 @@ a { color: #93c5fd; }
   font-size: 13px;
   line-height: 1.45;
 }
+.report-reading-note {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-left: 4px solid #38bdf8;
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.08);
+  color: #cbd5e1;
+  line-height: 1.5;
+}
 .team-row { display: flex; align-items: center; gap: 10px; }
 .color-dot { width: 14px; height: 14px; border-radius: 999px; border: 1px solid #e5e7eb; }
 .video, .heatmap { width: 100%; border-radius: 14px; border: 1px solid #334155; margin: 8px 0; background: #020617; }

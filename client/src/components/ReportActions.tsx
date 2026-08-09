@@ -82,7 +82,7 @@ export function ReportActions({
       await copyText(url);
       setCopyStatus(`Skopiowano ${label}.`);
     } catch (error) {
-      setCopyStatus(`Nie udalo sie skopiowac: ${error instanceof Error ? error.message : String(error)}`);
+      setCopyStatus(`Nie udało się skopiować: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -90,12 +90,14 @@ export function ReportActions({
     <section className='card report-actions'>
       <div className='row between'>
         <div>
-          <h2>Udostepnianie i eksport</h2>
+          <h2>Udostępnianie i eksport</h2>
           <p className='muted'>
-            Raport jest tracking-only. Eksport zachowuje snapshot danych bez video.
+            Eksport zapisuje aktualny raport bez pliku wideo.
           </p>
         </div>
-        <span className='confidence-pill'>{mode === 'published' ? 'Published snapshot' : 'Local draft'}</span>
+        <span className='confidence-pill'>
+          {mode === 'published' ? 'Opublikowany raport' : 'Raport lokalny'}
+        </span>
       </div>
 
       <div className='report-actions-main'>
@@ -117,7 +119,7 @@ export function ReportActions({
         )}
         {packageHref && (
           <a className='button-like secondary' href={packageHref} download>
-            Pobierz match_package.json
+            Pobierz pełne dane analizy
           </a>
         )}
       </div>
@@ -126,17 +128,17 @@ export function ReportActions({
         <div className='report-actions-main'>
           {onBuildPackage && (
             <button type='button' onClick={onBuildPackage} disabled={isBusy || !workflowAllowed} title={workflowReason}>
-              {busyAction === 'package' ? 'Generuje...' : 'Generuj package'}
+              {busyAction === 'package' ? 'Generuję...' : 'Przygotuj dane raportu'}
             </button>
           )}
           {onPublish && (
             <button type='button' onClick={onPublish} disabled={isBusy || !workflowAllowed} title={workflowReason}>
-              {busyAction === 'publish' || busyAction === 'replace' ? 'Publikuje...' : publishLabel}
+              {busyAction === 'publish' || busyAction === 'replace' ? 'Publikuję...' : publishLabel}
             </button>
           )}
           {onReplacePublish && (
             <button type='button' className='secondary' onClick={onReplacePublish} disabled={isBusy || !workflowAllowed} title={workflowReason}>
-              {busyAction === 'replace' ? 'Nadpisuje...' : 'Nadpisz publikacje'}
+              {busyAction === 'replace' ? 'Nadpisuję...' : 'Nadpisz publikację'}
             </button>
           )}
         </div>

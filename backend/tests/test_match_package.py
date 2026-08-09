@@ -5,6 +5,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
@@ -45,6 +46,104 @@ class MatchPackageTests(unittest.TestCase):
             self.assertIn("resolved_player_stats", package["package_validation"]["missing_required"])
             with self.assertRaises(ValueError):
                 ensure_package_publishable(package)
+
+    def test_build_match_package_accepts_current_reviewed_identity_without_legacy_files(self) -> None:
+        from app.main import build_match_package, ensure_package_publishable
+        from app.services.public_match_report import build_public_match_report
+
+        with tempfile.TemporaryDirectory() as tmp:
+            match_dir = Path(tmp)
+            write_ready_match_fixture(match_dir)
+            (match_dir / "player_identity_assignments.json").unlink()
+            (match_dir / "resolved_player_stats.json").unlink()
+            write_reviewed_identity_fixture(match_dir)
+
+            package = build_match_package(match_dir)
+
+            self.assertEqual(package["package_validation"]["status"], "ready")
+            self.assertEqual(package["package_validation"]["identity_source"], "reviewed_identity")
+            self.assertTrue(package["required"]["identity_output"])
+            self.assertFalse(package["required"]["player_identity_assignments"])
+            self.assertEqual(package["identity_report_source"], "reviewed_identity")
+            self.assertEqual(package["resolved_player_stats"]["players"][0]["player_name"], "Player 1")
+            ensure_package_publishable(package)
+            report = build_public_match_report(
+                package,
+                published_id="published-match-1",
+                source_match_dir=None,
+                heatmap_dir=match_dir / "published-heatmaps",
+                public_heatmap_base="published/heatmaps",
+            )
+            self.assertEqual(report["reviewed_identity_digest"], "reviewed-digest")
+            self.assertEqual([player["player_name"] for player in report["players"]], ["Player 1"])
+            self.assertEqual(report["players"][0]["heatmap"]["samples"], 2)
+
+    def test_build_match_package_blocks_stale_reviewed_identity(self) -> None:
+        from app.main import build_match_package, ensure_package_publishable
+
+        with tempfile.TemporaryDirectory() as tmp:
+            match_dir = Path(tmp)
+            write_ready_match_fixture(match_dir)
+            (match_dir / "player_identity_assignments.json").unlink()
+            (match_dir / "resolved_player_stats.json").unlink()
+            write_reviewed_identity_fixture(match_dir)
+            manifest = json.loads((match_dir / "reviewed_output_manifest.json").read_text(encoding="utf-8"))
+            manifest["stale"] = True
+            write_json(match_dir / "reviewed_output_manifest.json", manifest)
+
+            package = build_match_package(match_dir)
+
+            self.assertEqual(package["package_validation"]["status"], "blocked")
+            self.assertIn("reviewed_identity_current", package["package_validation"]["missing_required"])
+            with self.assertRaises(ValueError):
+                ensure_package_publishable(package)
+
+    def test_publish_local_returns_conflict_for_blocked_package_instead_of_500(self) -> None:
+        from fastapi import HTTPException
+        from app.main import publish_local_match
+
+        blocked = {
+            "package_validation": {
+                "status": "blocked",
+                "missing_required": ["reviewed_identity_current"],
+            }
+        }
+        with (
+            patch("app.main._assert_publish_workflow"),
+            patch("app.main.match_dir", return_value=Path("/unused")),
+            patch("app.main.build_match_package", return_value=blocked),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                publish_local_match("match-1")
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("reviewed_identity_current", str(raised.exception.detail))
+
+    def test_reviewed_package_import_generates_named_public_report(self) -> None:
+        from app.main import build_match_package
+        from app.services.json_publish_store import import_match_package
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            match_dir = root / "match"
+            match_dir.mkdir()
+            write_ready_match_fixture(match_dir)
+            (match_dir / "player_identity_assignments.json").unlink()
+            (match_dir / "resolved_player_stats.json").unlink()
+            write_reviewed_identity_fixture(match_dir)
+            package = build_match_package(match_dir)
+
+            with (
+                patch("app.services.json_publish_store.PUBLISHED_MATCHES_DIR", root / "published-store"),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", root / "public-mirror"),
+            ):
+                published = import_match_package(package)
+
+            report = published["public_report"]
+            self.assertEqual(report["reviewed_identity_digest"], "reviewed-digest")
+            self.assertEqual([player["player_name"] for player in report["players"]], ["Player 1"])
+            self.assertEqual(report["players"][0]["heatmap"]["samples"], 2)
+            self.assertTrue((root / "published-store" / "published-match-1" / "public_report.json").exists())
 
     def test_attacking_momentum_is_optional_and_embedded_when_present(self) -> None:
         from app.main import build_match_package
@@ -159,6 +258,45 @@ def write_ready_match_fixture(match_dir: Path) -> None:
 
 def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2), encoding="utf-8")
+
+
+def write_reviewed_identity_fixture(match_dir: Path) -> None:
+    digest = "reviewed-digest"
+    write_json(
+        match_dir / "reviewed_player_stats.json",
+        {
+            "source_snapshot_digest": digest,
+            "players": [
+                {
+                    "player_id": "p1",
+                    "player_name": "Player 1",
+                    "team_label": "A",
+                    "detected_time_sec": 8.0,
+                    "total_distance_m": 25.0,
+                    "detected_frames": 200,
+                }
+            ],
+        },
+    )
+    write_json(
+        match_dir / "reviewed_player_heatmaps.json",
+        {
+            "source_snapshot_digest": digest,
+            "heatmaps": [{"player_id": "p1", "positions_m": [[10.0, 15.0], [10.5, 15.5]]}],
+        },
+    )
+    write_json(
+        match_dir / "reviewed_stats_readiness.json",
+        {"source_snapshot_digest": digest, "status": "completed"},
+    )
+    write_json(
+        match_dir / "reviewed_output_manifest.json",
+        {
+            "reviewed_identity": {"status": "fresh", "digest": digest},
+            "stats": {"status": "completed", "source_snapshot_digest": digest},
+            "stale": False,
+        },
+    )
 
 
 if __name__ == "__main__":

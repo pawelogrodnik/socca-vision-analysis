@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, getMatch, getReviewWorkflow, publishLocalMatch } from '../api';
+import {
+  artifactUrl,
+  getMatch,
+  getReviewedMatchReport,
+  getReviewWorkflow,
+  publishLocalMatch,
+} from '../api';
 import { errorMessage } from '../lib/helpers';
 import { reportWorkflowGate } from '../lib/reviewWorkflowGating';
-import type { Match, ReviewWorkflow } from '../types';
+import type { Match, PublicMatchReport, ReviewWorkflow } from '../types';
 import {
   MatchReportContent,
   sourceFromLocalMatch,
 } from './MatchReportContent';
 import { ReportActions } from './ReportActions';
+import { PublicMatchReportContent } from './PublicMatchReportContent';
 
 type ReportBusyAction = 'publish' | 'replace' | null;
 
@@ -20,6 +27,8 @@ export function MatchReportPage() {
   const [busyAction, setBusyAction] = useState<ReportBusyAction>(null);
   const [loading, setLoading] = useState(false);
   const [workflow, setWorkflow] = useState<ReviewWorkflow | null>(null);
+  const [reviewedReport, setReviewedReport] = useState<PublicMatchReport | null>(null);
+  const [reportStatus, setReportStatus] = useState('');
 
   useEffect(() => {
     if (!matchId) {
@@ -37,6 +46,25 @@ export function MatchReportPage() {
         setStatus(errorMessage(error));
       })
       .finally(() => setLoading(false));
+  }, [matchId]);
+
+  useEffect(() => {
+    if (!matchId) return;
+    let ignore = false;
+    getReviewedMatchReport(matchId)
+      .then((value) => {
+        if (!ignore) {
+          setReviewedReport(value);
+          setReportStatus('');
+        }
+      })
+      .catch((error) => {
+        if (!ignore) {
+          setReviewedReport(null);
+          setReportStatus(errorMessage(error));
+        }
+      });
+    return () => { ignore = true; };
   }, [matchId]);
 
   useEffect(() => {
@@ -60,9 +88,15 @@ export function MatchReportPage() {
 
   async function refreshMatch() {
     if (!matchId) return;
-    const [nextMatch, nextWorkflow] = await Promise.all([getMatch(matchId), getReviewWorkflow(matchId)]);
+    const [nextMatch, nextWorkflow, nextReport] = await Promise.all([
+      getMatch(matchId),
+      getReviewWorkflow(matchId),
+      getReviewedMatchReport(matchId),
+    ]);
     setMatch(nextMatch);
     setWorkflow(nextWorkflow);
+    setReviewedReport(nextReport);
+    setReportStatus('');
   }
 
   async function publish(replace = false) {
@@ -87,26 +121,28 @@ export function MatchReportPage() {
   return (
     <main className='app'>
       <section className='hero compact-hero'>
-        <p className='eyebrow'>Match report</p>
+        <p className='eyebrow'>Raport meczu</p>
         <h1>{match?.title || 'Raport meczu'}</h1>
         <p>
-          Raport tracking-only dla pojedynczego meczu. Anonimowe sloty sa
-          czescia raportu meczowego, ale nie sa agregowane do profili
-          zawodnikow.
+          Czytelne podsumowanie drużyn i rozpoznanych zawodników po zakończonym review.
+          Dane techniczne trackera nie są częścią głównego raportu.
         </p>
         <div className='row'>
           <Link to='/admin-panel'>Panel admin</Link>
-          <Link to='/teams'>Druzyny</Link>
+          <Link to='/teams'>Drużyny</Link>
         </div>
       </section>
 
       {loading && (
         <p className='loading-line'>
           <span className='spinner' />
-          Laduje raport meczu...
+          Ładuję raport meczu...
         </p>
       )}
       {status && <p className='status'>{status}</p>}
+      {reportStatus && workflow?.review_complete && (
+        <p className='status'>Nie udało się przygotować raportu po review: {reportStatus}</p>
+      )}
 
       {match && !workflow?.review_complete && <section className='status'>
         <strong>Review meczu nie jest jeszcze zakończony.</strong>
@@ -124,9 +160,9 @@ export function MatchReportPage() {
               : undefined
           }
           jsonDownload={{
-            label: 'Pobierz local match JSON',
-            filename: `match-${match.id}.json`,
-            data: match,
+            label: reviewedReport ? 'Pobierz raport JSON' : 'Pobierz dane techniczne JSON',
+            filename: reviewedReport ? `raport-${match.id}.json` : `match-${match.id}.json`,
+            data: reviewedReport || match,
           }}
           busyAction={busyAction}
           status={actionStatus}
@@ -137,13 +173,15 @@ export function MatchReportPage() {
         />
       )}
 
-      {reportSource && (
+      {reviewedReport ? (
+        <PublicMatchReportContent report={reviewedReport} />
+      ) : reportSource ? (
         <MatchReportContent
           source={reportSource}
           mode='local'
           artifactHref={(artifactName) => artifactUrl(reportSource.id, artifactName)}
         />
-      )}
+      ) : null}
     </main>
   );
 }

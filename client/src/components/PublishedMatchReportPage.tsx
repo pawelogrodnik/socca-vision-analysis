@@ -53,14 +53,14 @@ export function PublishedMatchReportPage() {
   return (
     <main className='app'>
       <section className='hero compact-hero'>
-        <p className='eyebrow'>Published match report</p>
+        <p className='eyebrow'>Opublikowany raport meczu</p>
         <h1>{publicReport?.match.title || match?.title || 'Raport meczu'}</h1>
         <p>
-          Publiczny raport meczowy dla zawodnikow: statystyki druzyn,
-          potwierdzeni gracze i heatmapy bez technicznego review.
+          Raport dla zawodników: statystyki drużyn, rozpoznani gracze i ich heatmapy,
+          bez technicznych danych trackera.
         </p>
         <div className='row'>
-          <Link to='/'>Lista meczow</Link>
+          <Link to='/'>Lista meczów</Link>
           <Link to='/admin-panel'>Panel admin</Link>
         </div>
       </section>
@@ -68,7 +68,7 @@ export function PublishedMatchReportPage() {
       {loading && (
         <p className='loading-line'>
           <span className='spinner' />
-          Laduje publiczny raport...
+          Ładuję publiczny raport...
         </p>
       )}
       {status && <p className='status'>{status}</p>}

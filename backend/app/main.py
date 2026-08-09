@@ -121,6 +121,12 @@ from app.services.player_identity import build_player_identity_review, save_play
 from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
+from app.services.reviewed_match_report import (
+    REVIEWED_PACKAGE_INPUTS,
+    apply_reviewed_identity_to_report_package,
+    build_reviewed_match_report,
+    reviewed_identity_package_status,
+)
 from app.services.runtime import build_performance_report, collect_runtime_info, normalize_yolo_device
 from app.services.stabilization import load_stable_review, load_team_config_review, save_stable_review, save_team_config_review
 from app.services.team_profiles import build_team_profile_stats
@@ -491,6 +497,7 @@ PACKAGE_OPTIONAL_KEYS = [
     "attacking_momentum",
     "analytics_readiness",
     "possession_report",
+    *REVIEWED_PACKAGE_INPUTS.keys(),
 ]
 
 PACKAGE_DEBUG_KEYS = [
@@ -533,6 +540,7 @@ PACKAGE_EMBEDDED_JSON_FILES = [
     ("attacking_momentum", "attacking_momentum.json"),
     ("analytics_readiness", "analytics_readiness.json"),
     ("possession_report", "possession_report.json"),
+    *REVIEWED_PACKAGE_INPUTS.items(),
 ]
 
 STABLE_PLAYER_PACKAGE_FIELDS = {
@@ -699,8 +707,29 @@ def _has_assigned_real_player(identity_doc: dict[str, Any] | None) -> bool:
 
 
 def build_package_validation(package: dict[str, Any]) -> dict[str, Any]:
-    missing_required = [key for key in PACKAGE_REQUIRED_KEYS if not _package_key_available(package, key)]
+    identity_keys = {"player_identity_assignments", "resolved_player_stats"}
+    missing_required = [
+        key
+        for key in PACKAGE_REQUIRED_KEYS
+        if key not in identity_keys and not _package_key_available(package, key)
+    ]
     warnings: list[str] = []
+    reviewed_status = reviewed_identity_package_status(package)
+    legacy_identity_ready = all(_package_key_available(package, key) for key in identity_keys)
+    identity_source: str | None = None
+    if reviewed_status["present"]:
+        if reviewed_status["ready"]:
+            identity_source = "reviewed_identity"
+        else:
+            missing_required.append("reviewed_identity_current")
+            if reviewed_status.get("detail"):
+                warnings.append(str(reviewed_status["detail"]))
+    elif legacy_identity_ready:
+        identity_source = "legacy_identity"
+    else:
+        missing_required.extend(
+            key for key in identity_keys if not _package_key_available(package, key)
+        )
     analysis_report = package.get("analysis_report") if isinstance(package.get("analysis_report"), dict) else None
     if analysis_report and analysis_report.get("status") != "completed":
         missing_required.append("analysis_report.status_completed")
@@ -718,6 +747,7 @@ def build_package_validation(package: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
         "optional_available": [key for key in PACKAGE_OPTIONAL_KEYS if _package_key_available(package, key)],
         "debug_available": [key for key in PACKAGE_DEBUG_KEYS if _package_key_available(package, key)],
+        "identity_source": identity_source,
     }
 
 
@@ -2113,6 +2143,24 @@ def get_match_reviewed_stats(match_id: str) -> dict[str, Any]:
     return {"stats": stats, "readiness": readiness}
 
 
+@app.get("/api/matches/{match_id}/reviewed-report")
+def get_match_reviewed_report(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    snapshot = get_reviewed_identity_status(path)
+    job = reviewed_output_status(path, snapshot)
+    if job.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Reviewed stats are not current and completed")
+    try:
+        report = build_reviewed_match_report(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Reviewed report input is missing: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if report.get("reviewed_identity_digest") != snapshot.get("semantic_digest"):
+        raise HTTPException(status_code=409, detail="Reviewed report was generated from an older identity snapshot")
+    return report
+
+
 @app.get("/api/matches/{match_id}/resolved-player-stats")
 def get_resolved_player_stats(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -2398,6 +2446,13 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "movement_stats": None,
         "player_stats": None,
         "resolved_player_stats": None,
+        "legacy_resolved_player_stats": None,
+        "reviewed_player_stats": None,
+        "reviewed_player_heatmaps": None,
+        "reviewed_stats_readiness": None,
+        "reviewed_output_manifest": None,
+        "identity_report_source": None,
+        "reviewed_identity_digest": None,
         "player_heatmaps": None,
         "team_config": None,
         "team_stats": None,
@@ -2432,6 +2487,10 @@ def build_match_package(path: Path) -> dict[str, Any]:
             if key == "attacking_momentum" and document.get("status") == "not_available":
                 continue
             package[key] = document
+    try:
+        apply_reviewed_identity_to_report_package(package)
+    except ValueError as exc:
+        package["reviewed_identity_error"] = str(exc)
     if (path / "heatmap_all_tracks.png").exists():
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
@@ -2530,9 +2589,17 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["analytics_readiness_json"] = "analytics_readiness.json"
     if (path / "possession_report.json").exists():
         package["assets"]["possession_report_json"] = "possession_report.json"
+    for key, filename in REVIEWED_PACKAGE_INPUTS.items():
+        if (path / filename).exists():
+            package["assets"][f"{key}_json"] = filename
     if (path / "possession_overlay_preview.mp4").exists():
         package["assets"]["possession_overlay_preview"] = "possession_overlay_preview.mp4"
-    package["required"] = _package_presence_map(package, PACKAGE_REQUIRED_KEYS)
+    package["package_validation"] = build_package_validation(package)
+    package["required"] = {
+        **_package_presence_map(package, PACKAGE_REQUIRED_KEYS),
+        **_package_presence_map(package, list(REVIEWED_PACKAGE_INPUTS)),
+        "identity_output": package["package_validation"].get("identity_source") is not None,
+    }
     package["optional"] = _package_presence_map(package, PACKAGE_OPTIONAL_KEYS)
     package["debug"] = {
         "available": _package_presence_map(package, PACKAGE_DEBUG_KEYS),
@@ -2551,7 +2618,6 @@ def build_match_package(path: Path) -> dict[str, Any]:
             }
         },
     }
-    package["package_validation"] = build_package_validation(package)
     (path / "match_package.json").write_text(json.dumps(package, indent=2), encoding="utf-8")
     return package
 
@@ -2567,13 +2633,15 @@ def create_match_package(match_id: str) -> dict[str, Any]:
 def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
     path = match_dir(match_id)
     _assert_publish_workflow(path)
-    package = build_match_package(path)
-    ensure_package_publishable(package)
     try:
+        package = build_match_package(path)
+        ensure_package_publishable(package)
         published = publish_match_package(package, replace=replace)
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (PublishError, ValueError) as exc:
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PublishError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     meta = read_match_meta(path)
@@ -2588,14 +2656,14 @@ def publish_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]
 def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str, Any]:
     path = match_dir(match_id)
     _assert_publish_workflow(path)
-    package = build_match_package(path)
-    ensure_package_publishable(package)
     try:
+        package = build_match_package(path)
+        ensure_package_publishable(package)
         published = import_match_package(package, replace=replace)
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     meta = read_match_meta(path)
     meta["status"] = "published"

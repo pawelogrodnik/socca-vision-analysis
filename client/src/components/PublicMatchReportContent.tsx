@@ -14,6 +14,10 @@ import { useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
 import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
+import {
+  displayJerseyNumber,
+  hasPlayerReadyMomentum,
+} from '../lib/publicReportPresentation';
 
 type PublicMatchReportContentProps = {
   report: PublicMatchReport;
@@ -55,15 +59,15 @@ type PublicChartTooltipProps = {
 const PLAYER_CHART_METRICS: PlayerChartMetricConfig[] = [
   {
     key: 'minutes',
-    label: 'Rozegrane minuty',
-    buttonLabel: 'Minuty',
+    label: 'Czas wykryty',
+    buttonLabel: 'Czas wykryty',
     color: '#f8fafc',
     axisFormatter: (value) => `${Math.round(value)}m`,
     tooltipFormatter: (value) => `${value.toFixed(1)} min`,
   },
   {
     key: 'distanceKm',
-    label: 'Przebiegniety dystans',
+    label: 'Przebiegnięty dystans',
     buttonLabel: 'Dystans',
     color: '#38bdf8',
     axisFormatter: (value) => `${value.toFixed(1)} km`,
@@ -95,10 +99,6 @@ function formatSeconds(value: number | undefined): string {
   return `${minutes}m ${seconds}s`;
 }
 
-function formatAdditionalSeconds(value: number | undefined): string {
-  return `+${formatSeconds(value)}`;
-}
-
 function formatPercent(value: number | null | undefined): string {
   return value == null ? '--' : `${value.toFixed(1)}%`;
 }
@@ -113,7 +113,8 @@ function teamColor(team: PublicReportTeam, fallback: string): string {
 }
 
 function playerLabel(player: PublicReportPlayer): string {
-  const number = player.player_number && player.player_number !== 'player' ? `#${player.player_number} ` : '';
+  const jerseyNumber = displayJerseyNumber(player.player_number);
+  const number = jerseyNumber ? `#${jerseyNumber} ` : '';
   return `${number}${player.player_name || player.player_id}`;
 }
 
@@ -125,7 +126,7 @@ function metricRows(left: PublicReportTeam, right: PublicReportTeam) {
       right: formatMeters(right.total_distance_m),
     },
     {
-      label: 'Dlugosc wideo',
+      label: 'Długość nagrania',
       left: '--',
       right: '--',
     },
@@ -135,7 +136,7 @@ function metricRows(left: PublicReportTeam, right: PublicReportTeam) {
       right: formatPercent(right.possession_share_percent),
     },
     {
-      label: 'Proby podan',
+      label: 'Próby podań',
       left: String(left.pass_attempts || 0),
       right: String(right.pass_attempts || 0),
     },
@@ -150,22 +151,22 @@ function metricRows(left: PublicReportTeam, right: PublicReportTeam) {
       right: String(right.failed_passes || 0),
     },
     {
-      label: 'Skutecznosc podan',
+      label: 'Skuteczność podań',
       left: formatPercent(left.completion_rate),
       right: formatPercent(right.completion_rate),
     },
     {
-      label: 'Progresywne kand.',
+      label: 'Podania progresywne',
       left: String(left.progressive_pass_candidates || 0),
       right: String(right.progressive_pass_candidates || 0),
     },
     {
-      label: 'HI distance',
+      label: 'Dystans wysokiej intensywności',
       left: formatMeters(left.high_intensity_distance_m),
       right: formatMeters(right.high_intensity_distance_m),
     },
     {
-      label: 'Top speed',
+      label: 'Prędkość maksymalna',
       left: formatSpeed(left.peak_speed_kmh),
       right: formatSpeed(right.peak_speed_kmh),
     },
@@ -207,7 +208,7 @@ function PublicChartTooltip({
 function playerChartRows(players: PublicReportPlayer[]) {
   return players.map((player) => ({
     name: player.player_name || player.player_id,
-    minutes: Number(((player.playing_time_sec || 0) / 60).toFixed(1)),
+    minutes: Number(((player.detected_time_sec || player.playing_time_sec || 0) / 60).toFixed(1)),
     distanceKm: Number(((player.total_distance_m || 0) / 1000).toFixed(2)),
     peakSpeed: Number((player.peak_speed_kmh || 0).toFixed(1)),
   }));
@@ -218,6 +219,7 @@ export function PublicMatchReportContent({
   assetHref = (path) => `/${path}`,
 }: PublicMatchReportContentProps) {
   const [playerChartMetric, setPlayerChartMetric] = useState<PlayerChartMetric>('minutes');
+  const isReviewedReport = report.report_type === 'reviewed_match_report';
   const leftTeam = report.teams[0];
   const rightTeam = report.teams[1];
   const possessionTimeline = report.ball?.possession_timeline || [];
@@ -231,6 +233,19 @@ export function PublicMatchReportContent({
     [playerChartMetric, report.players],
   );
   const matchDuration = formatSeconds(report.match.duration_sec);
+  const hasAdvancedPlayerMetrics = report.players.some(
+    (player) =>
+      Number(player.avg_speed_kmh || 0) > 0 ||
+      Number(player.peak_speed_kmh || 0) > 0 ||
+      Number(player.high_intensity_distance_m || 0) > 0 ||
+      Number(player.sprint_count || 0) > 0,
+  );
+  const playerChartMetrics = hasAdvancedPlayerMetrics
+    ? PLAYER_CHART_METRICS
+    : PLAYER_CHART_METRICS.filter((metric) => metric.key !== 'peakSpeed');
+  const playerReadyMomentum = hasPlayerReadyMomentum(report)
+    ? report.ball?.attacking_momentum
+    : undefined;
 
   return (
     <>
@@ -240,22 +255,24 @@ export function PublicMatchReportContent({
             <h2>{report.match.title}</h2>
             <p className='muted'>{reportDateLine(report)}</p>
           </div>
-          <span className='confidence-pill'>Public report</span>
+          <span className='confidence-pill'>
+            {isReviewedReport ? 'Raport po review' : 'Raport meczu'}
+          </span>
         </div>
           <div className='chips'>
           <span>Format: {report.match.format || '7v7'}</span>
-          <span>Czas wideo: {formatSeconds(report.match.duration_sec)}</span>
-          <span>Zawodnicy: {report.players.length}</span>
-          <span>Known ball: {formatPercent((report.ball?.known_possession_coverage || 0) * 100)}</span>
-          <span>Pass attempts: {report.ball?.pass_attempts || 0}</span>
-          <span>Completed: {report.ball?.completed_passes || 0}</span>
-          <span>Failed: {report.ball?.failed_passes || 0}</span>
+          <span>Długość nagrania: {formatSeconds(report.match.duration_sec)}</span>
+          <span>Rozpoznani zawodnicy: {report.players.length}</span>
         </div>
+        <p className='report-reading-note'>
+          Czas drużyny oznacza długość nagrania, a nie sumę czasów wszystkich zawodników.
+          Czas zawodnika pokazuje wyłącznie fragmenty, na których został rozpoznany.
+        </p>
       </section>
 
       {leftTeam && rightTeam && (
         <section className='card team-comparison-card'>
-          <h2>Statystyki druzyn</h2>
+          <h2>Statystyki drużyn</h2>
           <div className='team-comparison-header'>
             <div className='team-comparison-side left'>
               <span
@@ -281,8 +298,8 @@ export function PublicMatchReportContent({
           </div>
           <div className='team-comparison-list'>
             {metricRows(leftTeam, rightTeam).map((row) => {
-              const leftText = row.label === 'Dlugosc wideo' ? matchDuration : row.left;
-              const rightText = row.label === 'Dlugosc wideo' ? matchDuration : row.right;
+              const leftText = row.label === 'Długość nagrania' ? matchDuration : row.left;
+              const rightText = row.label === 'Długość nagrania' ? matchDuration : row.right;
               return (
               <div className='team-comparison-row' key={row.label}>
                 <div className='team-comparison-value left'>
@@ -297,7 +314,8 @@ export function PublicMatchReportContent({
             })}
           </div>
           <p className='team-comparison-note'>
-            Podania i posiadanie sa jeszcze statystykami eksperymentalnymi.
+            Dystans drużyny obejmuje wszystkich wykrytych graczy tej drużyny, także
+            nierozpoznanych z imienia. Podania i posiadanie są nadal eksperymentalne.
           </p>
         </section>
       )}
@@ -349,29 +367,29 @@ export function PublicMatchReportContent({
           <p className='muted'>Brak osi czasu possession dla tego raportu.</p>
         )}
         <p className='team-comparison-note'>
-          Wykres pokazuje narastajacy procentowy podzial znanego possession od poczatku meczu
-          do danego momentu. Minuty z mala liczba probek possession sa orientacyjne.
+          Wykres pokazuje narastający podział rozpoznanego posiadania od początku meczu.
+          Fragmenty z małą liczbą obserwacji są orientacyjne.
         </p>
       </section>
 
-      {report.ball?.attacking_momentum?.timeline.length ? (
+      {playerReadyMomentum ? (
         <section className='card public-charts-card'>
           <AttackingMomentumChart
-            points={report.ball.attacking_momentum.timeline}
+            points={playerReadyMomentum.timeline}
             teamAName={leftTeam?.team_name || 'Team A'}
             teamBName={rightTeam?.team_name || 'Team B'}
             teamAColor={leftTeam ? teamColor(leftTeam, '#f8fafc') : '#f8fafc'}
             teamBColor={rightTeam ? teamColor(rightTeam, '#38bdf8') : '#38bdf8'}
-            quality={report.ball.attacking_momentum.signal_quality || report.ball.attacking_momentum.quality}
-            warnings={report.ball.attacking_momentum.warnings}
+            quality={playerReadyMomentum.signal_quality || playerReadyMomentum.quality}
+            warnings={playerReadyMomentum.warnings}
           />
         </section>
       ) : null}
 
       <section className='card public-charts-card'>
-        <h2>Porownanie graczy</h2>
+        <h2>Porównanie rozpoznanych zawodników</h2>
         <div className='chart-filter-bar' aria-label='Metryka wykresu graczy'>
-          {PLAYER_CHART_METRICS.map((metric) => (
+          {playerChartMetrics.map((metric) => (
             <button
               className={`chart-filter-button${metric.key === playerChartMetric ? ' active' : ''}`}
               key={metric.key}
@@ -426,21 +444,19 @@ export function PublicMatchReportContent({
       </section>
 
       <section className='card'>
-        <h2>Statystyki graczy</h2>
+        <h2>Statystyki rozpoznanych zawodników</h2>
         <div className='stats-table-wrap'>
           <table className='stats-table'>
             <thead>
               <tr>
                 <th>Zawodnik</th>
-                <th>Druzyna</th>
-                <th title='Unikalne, przypisane detekcje zawodnika'>Czas pewny</th>
-                <th title='Klatki niepewne i bezpiecznie domkniete luki ciaglosci'>Mozliwy +</th>
-                <th title='Czas pewny powiekszony o mozliwy dodatkowy czas'>Szacowany</th>
+                <th>Drużyna</th>
+                <th title='Czas fragmentów nagrania, na których rozpoznano zawodnika'>Czas wykryty</th>
                 <th>Dystans</th>
-                <th>HI dist</th>
-                <th>Sprinty</th>
-                <th>Avg</th>
-                <th>Peak</th>
+                {hasAdvancedPlayerMetrics && <th>Dystans wys. intensywności</th>}
+                {hasAdvancedPlayerMetrics && <th>Sprinty</th>}
+                {hasAdvancedPlayerMetrics && <th>Śr. prędkość</th>}
+                {hasAdvancedPlayerMetrics && <th>Prędkość maks.</th>}
               </tr>
             </thead>
             <tbody>
@@ -448,23 +464,14 @@ export function PublicMatchReportContent({
                 <tr key={player.player_id}>
                   <td>
                     <strong>{playerLabel(player)}</strong>
-                    <span>{player.player_role || 'player'}</span>
                   </td>
                   <td>{player.team_name || player.team_label || 'Team'}</td>
-                  <td>{formatSeconds(player.certain_playing_time_sec ?? player.detected_time_sec)}</td>
-                  <td>
-                    <strong>{formatAdditionalSeconds(player.possible_playing_time_sec)}</strong>
-                    <span>
-                      ?: {formatSeconds(player.ambiguous_playing_time_sec)} | luki:{' '}
-                      {formatSeconds(player.continuity_gap_time_sec)}
-                    </span>
-                  </td>
-                  <td>{formatSeconds(player.playing_time_sec)}</td>
+                  <td>{formatSeconds(player.detected_time_sec || player.playing_time_sec)}</td>
                   <td>{formatMeters(player.total_distance_m)}</td>
-                  <td>{formatMeters(player.high_intensity_distance_m)}</td>
-                  <td>{player.sprint_count}</td>
-                  <td>{formatSpeed(player.avg_speed_kmh)}</td>
-                  <td>{formatSpeed(player.peak_speed_kmh)}</td>
+                  {hasAdvancedPlayerMetrics && <td>{formatMeters(player.high_intensity_distance_m)}</td>}
+                  {hasAdvancedPlayerMetrics && <td>{player.sprint_count}</td>}
+                  {hasAdvancedPlayerMetrics && <td>{formatSpeed(player.avg_speed_kmh)}</td>}
+                  {hasAdvancedPlayerMetrics && <td>{formatSpeed(player.peak_speed_kmh)}</td>}
                 </tr>
               ))}
             </tbody>
@@ -473,7 +480,7 @@ export function PublicMatchReportContent({
       </section>
 
       <section className='card'>
-        <h2>Heatmapy</h2>
+        <h2>Heatmapy rozpoznanych zawodników</h2>
         <div className='player-heatmap-grid'>
           {report.players.map((player) => (
             <figure className='player-heatmap' key={`${player.player_id}-heatmap`}>
@@ -485,7 +492,7 @@ export function PublicMatchReportContent({
               <figcaption>
                 {playerLabel(player)}
                 <br />
-                {player.heatmap?.samples || 0} probek - {player.heatmap?.quality || 'unknown'}
+                {player.team_name || player.team_label || 'Drużyna'}
               </figcaption>
             </figure>
           ))}
