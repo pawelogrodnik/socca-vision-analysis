@@ -279,13 +279,18 @@ def _card_has_semantic_conflict(card: dict[str, Any] | None) -> bool:
     """Keep legacy card status useful without treating missing names as conflict."""
     if not card or "conflict" not in str(card.get("review_status") or "").lower():
         return False
-    reason_codes = [str(value).lower() for value in card.get("reason_codes") or []]
+    signals = {
+        str(value).strip().lower()
+        for field in ("reason_codes", "blockers", "quality_flags")
+        for value in card.get(field) or []
+        if str(value).strip()
+    }
     # Older review cards sometimes call a missing roster name `blocked_conflict`.
-    # No reasons is conservatively retained as a hard conflict, but an explicit
-    # no-roster-evidence reason is safe anonymous output rather than a blocker.
-    return not reason_codes or any(
-        marker in reason
-        for reason in reason_codes
+    # No evidence is conservatively retained as a hard conflict, but explicit
+    # non-semantic evidence remains safe anonymous output rather than a blocker.
+    return not signals or any(
+        marker in signal
+        for signal in signals
         for marker in SEMANTIC_CONFLICT_REASON_MARKERS
     )
 

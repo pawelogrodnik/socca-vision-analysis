@@ -86,6 +86,48 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
             self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_optional")
 
+    def test_jersey_conflict_in_blockers_is_blocking(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="A", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": ["no_roster_identity_evidence"],
+                "blockers": ["jersey_number_roster_conflict"],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_high_priority")
+
+    def test_non_semantic_blocker_remains_optional(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="B", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": ["no_roster_identity_evidence"],
+                "blockers": ["insufficient_visual_evidence"],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_optional")
+
+    def test_semantic_quality_flag_is_blocking(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="A", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": ["no_roster_identity_evidence"],
+                "quality_flags": ["production_anchor_team_mismatch"],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_high_priority")
+
     def test_semantic_review_card_conflict_is_blocking_until_operator_resolves_it(self) -> None:
         with _workspace() as root:
             _single_subject(root, team="A", frames=range(1, 101), card={
@@ -105,6 +147,20 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             after = build_reviewed_identity_progress(root, _match())
             self.assertEqual(after["summary"]["important_decisions_remaining"], 0)
             self.assertEqual(_unit(after, "subject")["current_resolution_status"], "reviewed_by_operator")
+
+    def test_legacy_conflict_without_evidence_remains_blocking(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="A", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": [],
+                "blockers": [],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_high_priority")
 
     def test_short_unnamed_team_a_and_team_b_subjects_are_safe_anonymous(self) -> None:
         with _workspace() as root:
