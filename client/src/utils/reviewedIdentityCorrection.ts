@@ -46,11 +46,19 @@ export function correctionOptionsForSubject(
 export function buildReviewedCorrectionPayload(
   candidateSubjectId: string,
   values: ReviewedCorrectionFormValues,
+  context?: ReviewedCorrectionContext | null,
 ): ReviewedCorrectionRequest {
   const payload: ReviewedCorrectionRequest = {
     candidate_subject_id: candidateSubjectId,
     action: values.action,
   };
+  if (context?.review_target_id) {
+    payload.review_target_id = context.review_target_id;
+    if (!context.source_ownership_digest) {
+      throw new Error('Segment wymaga odświeżenia przed zapisem.');
+    }
+    payload.source_ownership_digest = context.source_ownership_digest;
+  }
   if (values.action === 'assign_roster_player') {
     if (!values.playerId) throw new Error('Wybierz zawodnika z rosteru.');
     payload.player_id = values.playerId;

@@ -13,6 +13,7 @@ from app.services.identity_reviewed_effective_observation import (
 
 
 _SOURCE_PRIORITY = {
+    "manual_segment_review": 70,
     "operator_seed_exact_observation": 60,
     "manual_new_player_confirmation": 50,
     "manual_review": 50,
@@ -42,8 +43,10 @@ def build_frame_slot_demotions(
     assignments: list[dict[str, Any]],
     exact_overrides: list[dict[str, Any]] | None = None,
     canonical_ownership: list[dict[str, Any]] | None = None,
+    segment_overrides: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     exact_index = observation_index(exact_overrides or [])
+    segment_index = observation_index(segment_overrides or [])
     canonical_index = observation_index(canonical_ownership or [])
     stable_claims: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
     player_claims: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
@@ -63,6 +66,7 @@ def build_frame_slot_demotions(
                 exact_index,
                 {},
                 canonical_index,
+                segment_index,
             )
             status = str(effective.get("identity_status") or "unresolved")
             if status in _NON_PLAYER_STATUSES:

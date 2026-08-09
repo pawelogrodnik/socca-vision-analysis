@@ -10,6 +10,11 @@ from typing import Any
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_segments import (
+    build_segment_review_document,
+    load_segment_decisions,
+    target_for_id,
+)
 from app.services.identity_roster_subject_review_store import (
     REVIEW_ARTIFACT_FILENAME,
     REVIEW_DECISIONS_FILENAME,
@@ -20,7 +25,15 @@ def reviewed_correction_context(
     match_path: Path,
     match_doc: dict[str, Any],
     candidate_subject_id: str,
+    review_target_id: str | None = None,
 ) -> dict[str, Any]:
+    if review_target_id:
+        return _segment_correction_context(
+            match_path,
+            match_doc,
+            candidate_subject_id,
+            review_target_id,
+        )
     context = build_subject_context(match_path, candidate_subject_id)
     source_team_label = context["team_label"]
     current = current_reviewed_decision(match_path, candidate_subject_id)
@@ -35,6 +48,8 @@ def reviewed_correction_context(
     registry = build_reviewed_slot_registry(match_path, slot_document)
     return {
         "candidate_subject_id": candidate_subject_id,
+        "review_target_id": None,
+        "scope_kind": "whole_subject",
         "team_label": source_team_label,
         "source_team_label": source_team_label,
         "effective_team_label": effective_team_label,
@@ -49,12 +64,58 @@ def reviewed_correction_context(
         ],
         "current_decision": current,
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
+        "source_ownership_digest": None,
+        "frame_ranges": [],
+        "visual_evidence": None,
+        "legacy_suggestion": None,
+    }
+
+
+def _segment_correction_context(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    candidate_subject_id: str,
+    review_target_id: str,
+) -> dict[str, Any]:
+    review = build_segment_review_document(match_path, match_doc)
+    target = target_for_id(review, review_target_id)
+    if target is None or str(target.get("candidate_subject_id")) != candidate_subject_id:
+        raise ValueError(f"Unknown review_target_id: {review_target_id}")
+    team_label = str(target.get("source_team_label") or "U")
+    available_team_labels = ["A", "B"] if team_label == "U" else [team_label]
+    roster_options = [
+        player
+        for player in match_roster(match_doc)
+        if player["team_label"] in available_team_labels
+    ]
+    return {
+        "candidate_subject_id": candidate_subject_id,
+        "review_target_id": review_target_id,
+        "scope_kind": "canonical_segment",
+        "team_label": team_label,
+        "source_team_label": team_label,
+        "effective_team_label": str(target.get("effective_team_label") or team_label),
+        "available_team_labels": available_team_labels,
+        "tracklet_ids": list(target.get("tracklet_ids") or []),
+        "review_card_key": None,
+        "roster_options": roster_options,
+        "slot_options": [],
+        "current_decision": target.get("current_decision"),
+        "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
+        "source_ownership_digest": target.get("source_ownership_digest"),
+        "frame_ranges": list(target.get("frame_ranges") or []),
+        "frame_start": target.get("frame_start"),
+        "frame_end": target.get("frame_end"),
+        "detected_observation_count": target.get("detected_observation_count"),
+        "visual_evidence": target.get("visual_evidence") or {},
+        "legacy_suggestion": target.get("legacy_suggestion"),
     }
 
 
 def reviewed_decisions_semantic_digest(match_path: Path) -> str:
     roster = load_optional(match_path / REVIEW_DECISIONS_FILENAME)
     slots = load_reviewed_slot_assignments(match_path)
+    segments = load_segment_decisions(match_path)
     return canonical_digest(
         {
             "roster": sorted(
@@ -80,6 +141,19 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                     for row in slots.get("decisions") or []
                 ),
                 key=lambda row: str(row.get("candidate_subject_id") or ""),
+            ),
+            "segments": sorted(
+                (
+                    {
+                        "review_target_id": row.get("review_target_id"),
+                        "source_ownership_digest": row.get("source_ownership_digest"),
+                        "action": row.get("action"),
+                        "player_id": row.get("player_id"),
+                        "team_label": row.get("team_label"),
+                    }
+                    for row in segments.get("decisions") or []
+                ),
+                key=lambda row: str(row.get("review_target_id") or ""),
             ),
         }
     )

@@ -92,6 +92,7 @@ from app.services.identity_reviewed_slot_review import (
     reviewed_slot_assignment_read_model,
     save_reviewed_slot_assignments,
 )
+from app.services.identity_reviewed_segments import SegmentTargetError
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
     after_video_qa_correction,
@@ -1973,6 +1974,7 @@ def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
 def get_match_reviewed_correction_context(
     match_id: str,
     candidate_subject_id: str = Query(...),
+    review_target_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
@@ -1980,6 +1982,7 @@ def get_match_reviewed_correction_context(
             path,
             read_match_meta(path),
             candidate_subject_id,
+            review_target_id,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2021,6 +2024,11 @@ def post_match_reviewed_identity_correction(
         raise _workflow_http_error(exc) from exc
     except ReviewWorkflowRecomputeError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+    except SegmentTargetError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": str(exc), "message": str(exc)},
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

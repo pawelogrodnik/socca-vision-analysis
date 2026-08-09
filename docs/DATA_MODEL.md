@@ -72,6 +72,25 @@ tracker_id != player_id
 
 A real player may be composed of many tracklets.
 
+## Reviewed identity segments
+
+When one raw tracklet has more than one unambiguous frame-level canonical
+owner, operator corrections are scoped to a reviewed segment rather than to
+the whole raw tracklet. `reviewed_identity_segment_review.json` contains the
+derived targets and exact detected-frame ranges. Operator choices are stored
+separately in `reviewed_identity_segment_decisions.json`.
+
+Each persisted decision contains a stable `review_target_id` and the
+`source_ownership_digest` returned by the correction context. A correction is
+rejected as stale when ownership changes. Segment decisions never fill gaps
+between detected frames and do not mutate `tracklets.json`, detections, or the
+global identity artifacts.
+
+The reviewed snapshot exposes the resulting exact-frame overlays as
+`segment_observation_assignments`. Render, timeline, heatmap, and reviewed
+statistics must all consume these rows through the shared effective
+observation resolver.
+
 ## Attacking momentum
 
 `attacking_momentum.json` is an optional, derived match artifact built after

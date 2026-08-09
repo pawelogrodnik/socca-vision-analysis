@@ -34,6 +34,7 @@ def effective_reviewed_observation(
     exact_overrides: ObservationIndex,
     safety_demotions: ObservationIndex,
     canonical_ownership: ObservationIndex | None = None,
+    segment_overrides: ObservationIndex | None = None,
 ) -> dict[str, Any]:
     key = (
         str(assignment.get("tracklet_id") or position.get("tracklet_id") or ""),
@@ -44,6 +45,7 @@ def effective_reviewed_observation(
         **assignment,
         **((canonical_ownership or {}).get(key) or {}),
         **(exact_overrides.get(key) or {}),
+        **((segment_overrides or {}).get(key) or {}),
         **(safety_demotions.get(key) or {}),
     }
 
@@ -54,8 +56,10 @@ def iter_effective_reviewed_observations(
     exact_overrides: list[dict[str, Any]],
     safety_demotions: list[dict[str, Any]],
     canonical_ownership: list[dict[str, Any]] | None = None,
+    segment_overrides: list[dict[str, Any]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     exact_index = observation_index(exact_overrides)
+    segment_index = observation_index(segment_overrides or [])
     safety_index = observation_index(safety_demotions)
     canonical_index = observation_index(canonical_ownership or [])
     for assignment in assignments:
@@ -69,6 +73,7 @@ def iter_effective_reviewed_observations(
                 exact_index,
                 safety_index,
                 canonical_index,
+                segment_index,
             )
 
 
@@ -83,6 +88,7 @@ def effective_observations_by_frame(
         list(snapshot.get("observation_overrides") or []),
         list(snapshot.get("observation_demotions") or []),
         list(snapshot.get("canonical_observation_assignments") or []),
+        list(snapshot.get("segment_observation_assignments") or []),
     ):
         output[int(row.get("frame") or 0)].append(row)
     return dict(output)

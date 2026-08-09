@@ -261,6 +261,13 @@ a { color: #93c5fd; }
   background: rgba(30, 58, 138, 0.22);
   color: #dbeafe;
 }
+.reviewed-correction-suggestion {
+  padding: 10px 12px;
+  border: 1px solid #4ade80;
+  border-radius: 6px;
+  background: rgba(22, 101, 52, 0.28);
+  color: #dcfce7;
+}
 .reviewed-action-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -375,6 +382,13 @@ a { color: #93c5fd; }
   border: 1px solid #334155;
   border-radius: 10px;
   background: rgba(2, 6, 23, 0.5);
+}
+.identity-exception-evidence figure.team-a { border-color: #ef4444; }
+.identity-exception-evidence figure.team-b { border-color: #3b82f6; }
+.identity-exception-evidence figure.outside-target {
+  border-style: dashed;
+  border-color: #94a3b8;
+  opacity: 0.78;
 }
 
 .identity-exception-evidence img { width: 100%; border-radius: 6px; }

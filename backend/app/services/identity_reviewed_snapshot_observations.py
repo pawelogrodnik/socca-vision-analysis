@@ -72,6 +72,7 @@ def observation_coverage(
     overrides: list[dict[str, Any]],
     safety_demotions: list[dict[str, Any]],
     canonical_ownership: list[dict[str, Any]] | None = None,
+    segment_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     counts: Counter[str] = Counter()
     unique: set[tuple[str, int]] = set()
@@ -81,6 +82,7 @@ def observation_coverage(
         overrides,
         safety_demotions,
         canonical_ownership,
+        segment_overrides,
     ):
         key = (str(row["tracklet_id"]), int(row.get("frame") or 0))
         if key in unique:
@@ -96,6 +98,10 @@ def observation_coverage(
         "conflicted_detected_observations": counts["conflicted"] + counts["blocked"],
         "ignored_detected_observations": counts["ignored"] + counts["referee"] + counts["false_detection"],
         "exact_named_observations": sum(row["identity_status"] == "confirmed" for row in overrides),
+        "segment_named_observations": sum(
+            row.get("identity_status") == "confirmed"
+            for row in (segment_overrides or [])
+        ),
         "confirmed_detected_observation_ratio": round(counts["confirmed"] / reliable, 4) if reliable else None,
         "unresolved_detected_observation_ratio": round((counts["unresolved"] + counts["team_unknown"]) / reliable, 4) if reliable else None,
         "coverage_unit": "unique_detected_tracklet_frame_observation",

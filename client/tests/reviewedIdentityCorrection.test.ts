@@ -56,6 +56,39 @@ test('builds API payloads for every whole-subject correction action', () => {
   }
 });
 
+test('segment payload carries the exact target and ownership digest', () => {
+  const context = {
+    candidate_subject_id: 'subject-mixed',
+    review_target_id: 'review-segment:v1:abc',
+    scope_kind: 'canonical_segment' as const,
+    source_ownership_digest: 'ownership-digest',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
+    tracklet_ids: ['tracklet-mixed'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'semantic-digest',
+    roster_options: [],
+    slot_options: [],
+  };
+  assert.deepEqual(
+    buildReviewedCorrectionPayload(
+      'subject-mixed',
+      { ...base, action: 'assign_roster_player', playerId: 'pawel' },
+      context,
+    ),
+    {
+      candidate_subject_id: 'subject-mixed',
+      review_target_id: 'review-segment:v1:abc',
+      source_ownership_digest: 'ownership-digest',
+      action: 'assign_roster_player',
+      player_id: 'pawel',
+    },
+  );
+});
+
 test('filters roster and canonical/manual slot options to the subject team', () => {
   const context: ReviewedCorrectionContext = {
     candidate_subject_id: 'subject-1',

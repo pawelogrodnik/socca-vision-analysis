@@ -11,6 +11,7 @@ import type {
   Match,
   ReviewedCorrectionResponse,
   ReviewedIdentityAtEntity,
+  ReviewedIdentityReviewUnit,
   ReviewWorkflow,
 } from '../types';
 import { hasOperatorReviewableVisualEvidence } from '../utils/identityReviewWorkspace';
@@ -24,17 +25,24 @@ type Props = {
   onRetryReview?: () => Promise<void>;
 };
 
-function toCorrectionEntity(card: IdentityRosterSubjectReviewCard): ReviewedIdentityAtEntity {
-  const crop = card.visual_evidence.anchor_crops[0];
-  const frameStart = card.start_frame ?? crop?.frame ?? 0;
-  const frameEnd = card.end_frame ?? crop?.frame ?? frameStart;
+type ReviewCase = {
+  unit: ReviewedIdentityReviewUnit;
+  card: IdentityRosterSubjectReviewCard | null;
+};
+
+function toCorrectionEntity(reviewCase: ReviewCase): ReviewedIdentityAtEntity {
+  const { card, unit } = reviewCase;
+  const evidence = unit.visual_evidence || card?.visual_evidence;
+  const crop = evidence?.anchor_crops[0];
+  const frameStart = unit.frame_start ?? card?.start_frame ?? crop?.frame ?? 0;
+  const frameEnd = unit.frame_end ?? card?.end_frame ?? crop?.frame ?? frameStart;
   return {
     frame: crop?.frame ?? frameStart,
     time_sec: crop?.time_sec ?? 0,
-    tracklet_id: crop?.tracklet_id || card.candidate_subject_id,
-    candidate_subject_id: card.candidate_subject_id,
-    candidate_subject_ids: [card.candidate_subject_id],
-    team_label: card.team_label || 'U',
+    tracklet_id: crop?.tracklet_id || unit.tracklet_ids[0] || unit.candidate_subject_id,
+    candidate_subject_id: unit.candidate_subject_id,
+    candidate_subject_ids: [unit.candidate_subject_id],
+    team_label: unit.source_team_label || card?.team_label || 'U',
     stable_anonymous_slot_id: null,
     canonical_player_id: null,
     player_name: null,
@@ -45,9 +53,12 @@ function toCorrectionEntity(card: IdentityRosterSubjectReviewCard): ReviewedIden
     requires_review: true,
     hard_blockers: [],
     conflicts: [],
-    detected_evidence_count: card.detected_frames || 0,
+    detected_evidence_count: unit.detected_observation_count || card?.detected_frames || 0,
     frame_start: frameStart,
     frame_end: frameEnd,
+    review_target_id: unit.review_target_id,
+    scope_kind: unit.scope_kind,
+    source_ownership_digest: unit.source_ownership_digest,
   };
 }
 
@@ -57,7 +68,7 @@ export function IdentityExceptionReviewPanel({
   onWorkflowChanged,
   onRetryReview,
 }: Props) {
-  const [cards, setCards] = useState<IdentityRosterSubjectReviewCard[]>([]);
+  const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -71,15 +82,16 @@ export function IdentityExceptionReviewPanel({
         getReviewedIdentityReviewProgress(match.id),
       ]);
       if (ignore?.()) return;
-      const requiredSubjectIds = new Set(
-        progress.next_cases
-          .filter((item) => item.priority === 'high')
-          .map((item) => item.candidate_subject_id),
+      const cardsBySubject = new Map(
+        document.cards.map((nextCard) => [nextCard.candidate_subject_id, nextCard]),
       );
-      const actionable = document.cards.filter((nextCard) => (
-        requiredSubjectIds.has(nextCard.candidate_subject_id)
-      ));
-      setCards(actionable);
+      const actionable = progress.next_cases
+        .filter((item) => item.priority === 'high')
+        .map((unit) => ({
+          unit,
+          card: cardsBySubject.get(unit.candidate_subject_id) || null,
+        }));
+      setCases(actionable);
       setIndex(0);
     } catch (error) {
       if (!ignore?.()) setMessage(errorMessage(error));
@@ -96,9 +108,18 @@ export function IdentityExceptionReviewPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [match.id]);
 
-  const card = cards[index] || null;
-  const entity = useMemo(() => (card ? toCorrectionEntity(card) : null), [card]);
-  const hasVisualEvidence = card ? hasOperatorReviewableVisualEvidence(card) : false;
+  const reviewCase = cases[index] || null;
+  const card = reviewCase?.card || null;
+  const unitEvidence = reviewCase?.unit.visual_evidence;
+  const evidence = unitEvidence || card?.visual_evidence || null;
+  const entity = useMemo(
+    () => (reviewCase ? toCorrectionEntity(reviewCase) : null),
+    [reviewCase],
+  );
+  const hasVisualEvidence = Boolean(
+    unitEvidence?.anchor_crops.length
+    || (card && hasOperatorReviewableVisualEvidence(card)),
+  );
 
   function saved(result: ReviewedCorrectionResponse) {
     setMessage('Zapisano decyzję. Sprawdzam, czy pozostały jeszcze ważne przypadki.');
@@ -116,14 +137,28 @@ export function IdentityExceptionReviewPanel({
         <p>System zakończył automatyczne przypisania. Sprawdź tylko przypadki, w których wykryto konflikt wymagający decyzji.</p>
         <strong>{requiredCasesLabel(workflow.issues.blocking)}</strong>
       </div>
-      {cards.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cards.length}</span>}
+      {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cases.length}</span>}
     </div>
 
-    {card && entity && hasVisualEvidence ? <>
+    {reviewCase && entity && hasVisualEvidence && evidence ? <>
+      {reviewCase.unit.scope_kind === 'canonical_segment' && <div className='status'>
+        <strong>System połączył w jednym tracklecie różne osoby.</strong>
+        <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
+      </div>}
       <div className='identity-exception-evidence'>
-        {card.visual_evidence.anchor_crops.map((crop) => <figure key={crop.anchor_crop_id}>
+        {evidence.anchor_crops.map((crop) => <figure
+          key={crop.anchor_crop_id}
+          className={`team-${reviewCase.unit.source_team_label.toLowerCase()}`}
+        >
           <img src={artifactUrl(match.id, crop.artifact)} alt='Widok zawodnika do identyfikacji' />
           <figcaption>Wybrany widok zawodnika</figcaption>
+        </figure>)}
+        {(unitEvidence?.boundary_crops || []).map((crop) => <figure
+          key={`boundary-${crop.anchor_crop_id}`}
+          className='outside-target'
+        >
+          <img src={artifactUrl(match.id, crop.artifact)} alt='Sąsiedni fragment poza zakresem decyzji' />
+          <figcaption>Sąsiedni fragment — poza zakresem decyzji</figcaption>
         </figure>)}
       </div>
       <ReviewedIdentityCorrectionForm
@@ -132,11 +167,11 @@ export function IdentityExceptionReviewPanel({
         onCancel={() => setMessage('Decyzja nie została zapisana.')}
         onSaved={saved}
       />
-      {cards.length > 1 && <div className='row'>
+      {cases.length > 1 && <div className='row'>
         <button type='button' className='secondary' onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0}>Poprzedni</button>
-        <button type='button' className='secondary' onClick={() => setIndex((current) => Math.min(cards.length - 1, current + 1))} disabled={index >= cards.length - 1}>Następny</button>
+        <button type='button' className='secondary' onClick={() => setIndex((current) => Math.min(cases.length - 1, current + 1))} disabled={index >= cases.length - 1}>Następny</button>
       </div>}
-    </> : card && entity ? <div className='status'>
+    </> : reviewCase && entity ? <div className='status'>
       <strong>Brak materiału pozwalającego wiarygodnie rozstrzygnąć ten przypadek.</strong>
       <p>Odśwież Review — ten przypadek nie powinien wymagać ręcznej decyzji.</p>
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>

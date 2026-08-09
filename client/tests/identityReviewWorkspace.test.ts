@@ -144,7 +144,8 @@ test('normal Step 3 entry renders only the unified workspace before diagnostics'
   assert.match(workspace, /showApprovedVideo/);
   assert.match(videoQa, /workflow\.phase === 'complete'/);
   assert.doesNotMatch(exceptions, /isActionableSubjectReviewCard/);
-  assert.match(exceptions, /card && entity && hasVisualEvidence/);
+  assert.match(exceptions, /reviewCase && entity && hasVisualEvidence/);
+  assert.match(exceptions, /Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek/);
   assert.match(exceptions, /Brak materiału pozwalającego wiarygodnie rozstrzygnąć ten przypadek/);
   assert.match(exceptions, /ten przypadek nie powinien wymagać ręcznej decyzji/);
   assert.match(exceptions, /Nie udało się przygotować podglądu przypadku wymagającego decyzji/);
