@@ -2727,6 +2727,14 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         allowed[artifact_basename] = "image/jpeg"
     if (
         len(artifact_rel.parts) == 3
+        and artifact_rel.parts[0] == "reviewed_identity_segments"
+        and len(artifact_rel.parts[1]) == 64
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1])
+        and artifact_basename.lower().endswith((".jpg", ".jpeg"))
+    ):
+        allowed[artifact_basename] = "image/jpeg"
+    if (
+        len(artifact_rel.parts) == 3
         and artifact_rel.parts[0] == "identity_initial_audit"
         and artifact_rel.parts[1] == "frames"
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))

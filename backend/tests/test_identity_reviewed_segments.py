@@ -4,6 +4,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+
+from app.main import get_artifact
 
 from app.services.identity_reviewed_segments import (
     SegmentTargetError,
@@ -19,6 +25,35 @@ from app.services.identity_reviewed_effective_observation import (
 
 
 class ReviewedIdentitySegmentTests(unittest.TestCase):
+    def test_generated_segment_crop_is_available_through_match_artifact_route(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            match_path = Path(directory)
+            digest = "a" * 64
+            relative = Path("reviewed_identity_segments") / digest / "01_f001218.jpg"
+            artifact = match_path / relative
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"jpeg")
+
+            with patch("app.main.match_dir", return_value=match_path):
+                response = get_artifact("match", str(relative))
+
+            self.assertIsInstance(response, FileResponse)
+            self.assertEqual(response.media_type, "image/jpeg")
+
+    def test_segment_crop_route_rejects_non_digest_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            match_path = Path(directory)
+            relative = Path("reviewed_identity_segments") / "not-a-digest" / "crop.jpg"
+            artifact = match_path / relative
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"jpeg")
+
+            with patch("app.main.match_dir", return_value=match_path):
+                with self.assertRaises(HTTPException) as raised:
+                    get_artifact("match", str(relative))
+
+            self.assertEqual(raised.exception.status_code, 404)
+
     def test_segment_overrides_exact_anchor_but_not_safety_demotion(self) -> None:
         effective = effective_reviewed_observation(
             {"tracklet_id": "t1", "identity_status": "unresolved"},
