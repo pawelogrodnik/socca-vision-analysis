@@ -1832,6 +1832,9 @@ export type ReviewedIdentityAtEntity = {
   frame_end: number;
   observation_key?: string;
   bbox_xyxy?: number[] | null;
+  review_target_id?: string | null;
+  scope_kind?: 'whole_subject' | 'canonical_segment';
+  source_ownership_digest?: string | null;
 };
 
 export type ReviewedCorrectionAction =
@@ -1860,6 +1863,8 @@ export type ReviewedCorrectionSlotOption = {
 
 export type ReviewedCorrectionContext = {
   candidate_subject_id: string;
+  review_target_id?: string | null;
+  scope_kind?: 'whole_subject' | 'canonical_segment';
   team_label: string;
   source_team_label: string;
   effective_team_label: string;
@@ -1870,10 +1875,31 @@ export type ReviewedCorrectionContext = {
   slot_options: ReviewedCorrectionSlotOption[];
   current_decision: Record<string, unknown> | null;
   semantic_decision_digest: string;
+  source_ownership_digest?: string | null;
+  frame_ranges?: number[][];
+  frame_start?: number | null;
+  frame_end?: number | null;
+  detected_observation_count?: number | null;
+  visual_evidence?: {
+    status?: string;
+    selected_crop_count?: number;
+    anchor_crops: IdentityRosterSubjectAnchorCrop[];
+    boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
+  } | null;
+  legacy_suggestion?: {
+    action: 'assign_roster_player';
+    player_id: string;
+    player_name: string;
+    roster_number?: string | null;
+    team_label: string;
+    requires_confirmation: boolean;
+  } | null;
 };
 
 export type ReviewedCorrectionRequest = {
   candidate_subject_id: string;
+  review_target_id?: string;
+  source_ownership_digest?: string;
   action: ReviewedCorrectionAction;
   player_id?: string;
   stable_slot_id?: string;
@@ -1908,6 +1934,18 @@ export type ReviewedIdentityReviewUnit = {
   current_resolution_status: string;
   priority: 'high' | 'optional' | null;
   reason_codes: string[];
+  review_target_id?: string | null;
+  scope_kind?: 'whole_subject' | 'canonical_segment';
+  source_ownership_digest?: string | null;
+  stable_slot_id?: string | null;
+  frame_ranges?: number[][];
+  visual_evidence?: {
+    status?: string;
+    selected_crop_count?: number;
+    anchor_crops: IdentityRosterSubjectAnchorCrop[];
+    boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
+  } | null;
+  legacy_suggestion?: ReviewedCorrectionContext['legacy_suggestion'];
 };
 
 export type ReviewedIdentityReviewProgress = {

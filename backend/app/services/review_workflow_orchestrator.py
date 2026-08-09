@@ -10,7 +10,14 @@ from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_output_jobs import generate_reviewed_output
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_snapshot import finalize_reviewed_identity, get_reviewed_identity_status
+from app.services.identity_reviewed_segments import (
+    load_segment_review,
+    render_segment_review_evidence,
+)
 from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_seeded_candidate_assignments import (
+    rebuild_identity_seeded_candidate_assignments,
+)
 from app.services.review_workflow_state import (
     WorkflowActionError,
     assert_workflow_action_allowed,
@@ -38,10 +45,29 @@ def refresh_review_after_identity_mutation(
     match_doc: dict[str, Any],
     *,
     source: str,
+    rebuild_seeded_candidates: bool = False,
 ) -> dict[str, Any]:
     """Perform only the cheap reviewed-identity work needed for the next click."""
     try:
+        if rebuild_seeded_candidates:
+            # Corrections change the review-decision digest consumed by the
+            # seeded candidate artifact. Refresh that JSON-only evidence so a
+            # completed Initial Audit cannot become locked retroactively.
+            # This deliberately excludes the crop/video rebuild path.
+            rebuild_identity_seeded_candidate_assignments(match_path, match_doc)
         snapshot = finalize_reviewed_identity(match_path, match_doc)
+        try:
+            render_segment_review_evidence(
+                match_path,
+                match_doc,
+                load_segment_review(match_path),
+            )
+        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+            logger.warning(
+                "review_workflow segment_evidence_render_failed match=%s error=%s",
+                match_doc.get("id") or match_path.name,
+                type(exc).__name__,
+            )
         progress = build_reviewed_identity_progress(match_path, match_doc)
         write_identity_json_atomic(
             match_path / PROGRESS_FILENAME,
@@ -151,7 +177,12 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
 
 
 def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
-    refreshed = refresh_review_after_identity_mutation(match_path, match_doc, source="video_qa_correction")
+    refreshed = refresh_review_after_identity_mutation(
+        match_path,
+        match_doc,
+        source="video_qa_correction",
+        rebuild_seeded_candidates=True,
+    )
     workflow = refreshed["workflow"]
     if workflow["issues"]["blocking"]:
         return refreshed

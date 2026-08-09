@@ -9,6 +9,7 @@ import {
   topLevelStepStatus,
 } from '../src/utils/adminWorkflowNavigation.ts';
 import {
+  hasOperatorReviewableVisualEvidence,
   identityReviewProgress,
   identityReviewStage,
   workflowAllows,
@@ -49,6 +50,21 @@ function workflow(overrides: Partial<ReviewWorkflow>): ReviewWorkflow {
     ...overrides,
   };
 }
+
+test('only an existing anchor crop makes an identity conflict operator-reviewable', () => {
+  assert.equal(hasOperatorReviewableVisualEvidence({
+    visual_evidence: { anchor_crops: [] },
+  }), false);
+  assert.equal(hasOperatorReviewableVisualEvidence({
+    visual_evidence: {
+      anchor_crops: [{
+        anchor_crop_id: 'crop-1',
+        artifact: 'crops/crop-1.jpg',
+        frame: 42,
+      }],
+    },
+  }), true);
+});
 
 test('maps persisted workflow phases to the four operator stages', () => {
   assert.equal(identityReviewStage(workflow({ phase: 'initial_audit' })), 'identify_players');
@@ -128,6 +144,10 @@ test('normal Step 3 entry renders only the unified workspace before diagnostics'
   assert.match(workspace, /showApprovedVideo/);
   assert.match(videoQa, /workflow\.phase === 'complete'/);
   assert.doesNotMatch(exceptions, /isActionableSubjectReviewCard/);
+  assert.match(exceptions, /reviewCase && entity && hasVisualEvidence/);
+  assert.match(exceptions, /Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek/);
+  assert.match(exceptions, /Brak materiału pozwalającego wiarygodnie rozstrzygnąć ten przypadek/);
+  assert.match(exceptions, /ten przypadek nie powinien wymagać ręcznej decyzji/);
   assert.match(exceptions, /Nie udało się przygotować podglądu przypadku wymagającego decyzji/);
   assert.match(exceptions, /requiredCasesLabel\(workflow\.issues\.blocking\)/);
   assert.doesNotMatch(exceptions, /workflow\.issues\.blocking \+ workflow\.issues\.important/);

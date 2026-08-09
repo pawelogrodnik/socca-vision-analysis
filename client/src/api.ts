@@ -263,9 +263,13 @@ export async function getReviewedIdentityAt(matchId: string, timeSec: number): P
 export async function getReviewedCorrectionContext(
   matchId: string,
   candidateSubjectId: string,
+  reviewTargetId?: string | null,
 ): Promise<ReviewedCorrectionContext> {
+  const targetQuery = reviewTargetId
+    ? `&review_target_id=${encodeURIComponent(reviewTargetId)}`
+    : '';
   return request<ReviewedCorrectionContext>(
-    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/context?candidate_subject_id=${encodeURIComponent(candidateSubjectId)}`,
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/context?candidate_subject_id=${encodeURIComponent(candidateSubjectId)}${targetQuery}`,
   );
 }
 

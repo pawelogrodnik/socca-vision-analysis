@@ -18,6 +18,7 @@ from app.services.identity_seeded_candidate_assignments import (
     build_identity_seeded_candidate_assignments,
     rebuild_identity_seeded_candidate_assignments,
 )
+from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 
 
 class IdentitySeededCandidateAssignmentsTests(unittest.TestCase):
@@ -323,12 +324,26 @@ class IdentitySeededCandidateAssignmentsTests(unittest.TestCase):
                 match_path,
                 {},
             )
+            review_decisions_path = (
+                match_path
+                / "identity_roster_subject_review_decisions_shadow.json"
+            )
+            self._write_json(review_decisions_path, {"decisions": [{"id": "one"}]})
+            stale, freshness = load_fresh_seeded_assignments(match_path)
+            self.assertIsNone(stale)
+            self.assertIn(
+                "whole_subject_review_decisions_digest_mismatch",
+                freshness["reason_codes"],
+            )
             second = rebuild_identity_seeded_candidate_assignments(
                 match_path,
                 {},
             )
+            refreshed, freshness = load_fresh_seeded_assignments(match_path)
 
-            self.assertEqual(first, second)
+            self.assertNotEqual(first["source"], second["source"])
+            self.assertIsNotNone(refreshed)
+            self.assertEqual(freshness["status"], "fresh")
             self.assertEqual(production_path.read_bytes(), production_before)
             self.assertTrue((match_path / OUTPUT_FILENAME).exists())
             self.assertEqual(

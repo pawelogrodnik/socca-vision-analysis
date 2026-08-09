@@ -20,6 +20,7 @@ import {
   createInitialIdentityAuditEventId,
   initialIdentityAuditActionLabel,
   initialIdentityAuditDecisionMap,
+  initialIdentityAuditObservationBoxClassName,
   initialIdentityAuditPlayerAction,
   observationBoxStyle,
   type InitialIdentityAuditAction,
@@ -480,6 +481,14 @@ export function InitialIdentityAuditPanel({
             <main className='initial-identity-audit-main'>
               <div className='initial-identity-audit-context'>
                 <div
+                  className='initial-identity-audit-team-legend'
+                  aria-label='Legenda automatycznego przypisania do drużyny'
+                >
+                  <span className='team-a'>Team A</span>
+                  <span className='team-b'>Team B</span>
+                  <span className='team-unknown'>Nieznana drużyna</span>
+                </div>
+                <div
                   className='initial-identity-audit-frame'
                   style={{ aspectRatio: `${document.video.width} / ${document.video.height}` }}
                 >
@@ -494,14 +503,19 @@ export function InitialIdentityAuditPanel({
                       <button
                         type='button'
                         key={observation.observation_key}
-                        className={[
-                          'initial-identity-observation-box',
-                          selected ? 'selected' : '',
-                          decision ? 'decided' : '',
-                        ].filter(Boolean).join(' ')}
+                        className={initialIdentityAuditObservationBoxClassName(
+                          observation,
+                          { selected, decided: Boolean(decision) },
+                        )}
                         style={observationBoxStyle(observation, document.video)}
                         onClick={() => chooseObservation(observation)}
-                        aria-label={`Zawodnik ${index + 1}${decision ? `: ${initialIdentityAuditActionLabel(decision)}` : ''}`}
+                        aria-label={[
+                          `Zawodnik ${index + 1}`,
+                          observation.team_label === 'U'
+                            ? 'nieznana drużyna'
+                            : `wykryto Team ${observation.team_label}`,
+                          decision ? initialIdentityAuditActionLabel(decision) : '',
+                        ].filter(Boolean).join(': ')}
                         aria-pressed={selected}
                       >
                         <span>{decision ? 'OK' : index + 1}</span>

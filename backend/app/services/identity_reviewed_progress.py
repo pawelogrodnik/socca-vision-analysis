@@ -9,12 +9,11 @@ from typing import Any
 
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.video import read_match_video_metadata
 
 
-HIGH_PRIORITY_MIN_DETECTED_SEC = 2.0
-HIGH_PRIORITY_MIN_OBSERVATIONS = 60
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
 REVIEWED_ACTIONS = frozenset(
@@ -28,6 +27,16 @@ REVIEWED_ACTIONS = frozenset(
         "team_unknown",
         "unresolved",
     }
+)
+SEMANTIC_CONFLICT_REASON_MARKERS = (
+    "conflict",
+    "contradict",
+    "incompatible",
+    "parallel_",
+    "multiple_manual_players",
+    "duplicate_canonical",
+    "cross_team",
+    "team_mismatch",
 )
 
 
@@ -49,6 +58,11 @@ def build_reviewed_identity_progress(
     } if freshness.get("status") == "fresh" else {}
     memberships = _memberships(subjects)
     fps = _fps(match_path, match_doc)
+    segment_review = load_segment_review(match_path)
+    segmented_subjects = {
+        str(row.get("candidate_subject_id") or "")
+        for row in segment_review.get("targets") or []
+    }
     units = [
         _unit(
             subject_id,
@@ -62,7 +76,9 @@ def build_reviewed_identity_progress(
             fps,
         )
         for subject_id, tracklet_ids in sorted(subjects.items())
+        if subject_id not in segmented_subjects
     ]
+    units.extend(_segment_units(segment_review, roster_teams, fps))
     counts = Counter(str(unit["current_resolution_status"]) for unit in units)
     observed_pairs = _all_detected_pairs(tracklets)
     operator_pairs = {
@@ -83,6 +99,8 @@ def build_reviewed_identity_progress(
         if unit["canonical_player_id"]
         for pair in unit["detected_pairs"]
     }
+    # Do not cap this list. A normal match should have very few semantic
+    # conflicts, but hiding a real larger set would make the workflow lie.
     next_cases = sorted(
         (unit for unit in units if unit["current_resolution_status"] == "pending_high_priority"),
         key=lambda unit: (
@@ -91,9 +109,13 @@ def build_reviewed_identity_progress(
             -float(unit["detected_time_sec"]),
             str(unit["candidate_subject_id"]),
         ),
-    )[:10]
-    completed = counts["reviewed_by_operator"] + counts["resolved_automatically"]
-    queue_total = completed + counts["pending_high_priority"] + counts["pending_optional"]
+    )
+    completed = (
+        counts["reviewed_by_operator"]
+        + counts["resolved_automatically"]
+        + counts["safe_anonymous"]
+    )
+    queue_total = completed + counts["pending_high_priority"]
     return {
         "schema_version": "1.0.0",
         "status": "ready",
@@ -103,12 +125,15 @@ def build_reviewed_identity_progress(
             "review_units_completed": completed,
             "review_units_actionable_total": queue_total,
             "completed_by_operator": counts["reviewed_by_operator"],
-            "completed_automatically": counts["resolved_automatically"],
+            "completed_automatically": (
+                counts["resolved_automatically"] + counts["safe_anonymous"]
+            ),
             "important_decisions_remaining": counts["pending_high_priority"],
             "optional_cases_remaining": counts["pending_optional"],
+            "safe_anonymous_units": counts["safe_anonymous"],
             "structural_blockers": counts["structurally_blocked"],
             "ignored_low_impact": counts["ignored_low_impact"],
-            "operator_decisions_saved": len(manual),
+            "operator_decisions_saved": counts["reviewed_by_operator"],
             "operator_queue_completion_ratio": _ratio(completed, queue_total),
         },
         "observations": {
@@ -127,20 +152,23 @@ def build_reviewed_identity_progress(
             "unresolved_tracklet_assignments": _technical_unresolved(match_path, len(tracklets)),
         },
         "policy": {
-            "high_priority_min_detected_sec": HIGH_PRIORITY_MIN_DETECTED_SEC,
-            "high_priority_min_observations": HIGH_PRIORITY_MIN_OBSERVATIONS,
             "optional_min_detected_sec": OPTIONAL_MIN_DETECTED_SEC,
             "optional_min_observations": OPTIONAL_MIN_OBSERVATIONS,
+            "long_unresolved_requires_operator": False,
+            "generic_requires_operator_review_requires_operator": False,
         },
         "review_units": [_public_unit(unit, include_pairs=False) for unit in units],
     }
 
 
 def decision_impact(
-    before: dict[str, Any], after: dict[str, Any], subject_id: str
+    before: dict[str, Any],
+    after: dict[str, Any],
+    subject_id: str,
+    review_target_id: str | None = None,
 ) -> dict[str, Any]:
-    before_unit = _find_unit(before, subject_id)
-    after_unit = _find_unit(after, subject_id)
+    before_unit = _find_unit(before, subject_id, review_target_id)
+    after_unit = _find_unit(after, subject_id, review_target_id)
     before_observations = int((before_unit or {}).get("detected_observation_count") or 0)
     after_observations = int((after_unit or {}).get("detected_observation_count") or 0)
     before_operator = int(before["observations"]["operator_reviewed_observations"])
@@ -184,9 +212,9 @@ def _unit(
     if any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
         structural = True
         reason_codes.append("ambiguous_candidate_subject_membership")
-    if len(teams) > 1:
-        structural = True
-        reason_codes.append("mixed_team_candidate_subject")
+    team_conflict = len(teams) > 1
+    if team_conflict:
+        reason_codes.append("conflicting_detected_team_labels")
     action = str((decision or {}).get("action") or "")
     player_id = str((decision or {}).get("player_id") or "") or None
     source_team = next(iter(teams), "U") if len(teams) == 1 else "U"
@@ -196,29 +224,34 @@ def _unit(
     if effective_team not in {"A", "B"}:
         effective_team = source_team
     card_requires_review = bool(card) and card.get("requires_operator_review") is not False
-    card_status = str((card or {}).get("review_status") or "")
-    card_conflict = "conflict" in card_status
+    card_conflict = _card_has_semantic_conflict(card)
+    has_operator_visual_evidence = _card_has_operator_visual_evidence(card)
     if card_conflict:
         reason_codes.append("review_card_conflict")
-    if structural:
-        status = "structurally_blocked"
-    elif action in REVIEWED_ACTIONS:
+    if action in REVIEWED_ACTIONS:
         status = "reviewed_by_operator"
     elif seeded is not None or (card is not None and not card_requires_review):
         status = "resolved_automatically"
         reason_codes.append("safe_seeded_or_completed_review_card")
-    elif card_conflict or card_requires_review:
+    elif (card_conflict or team_conflict) and has_operator_visual_evidence:
         status = "pending_high_priority"
-        reason_codes.append("review_card_requires_operator")
-    elif len(pairs) >= HIGH_PRIORITY_MIN_OBSERVATIONS or len(frames) / fps >= HIGH_PRIORITY_MIN_DETECTED_SEC:
-        status = "pending_high_priority"
-        reason_codes.append("long_unresolved_subject")
+        reason_codes.append("semantic_identity_conflict")
+    elif card_conflict or team_conflict:
+        status = "pending_optional"
+        reason_codes.append("semantic_conflict_without_visual_evidence")
+    elif structural:
+        # This describes a data-quality condition. Some frame ownership paths
+        # safely resolve it downstream, so it is never a mandatory human task
+        # solely because the diagnostic exists.
+        status = "structurally_blocked"
     elif len(pairs) >= OPTIONAL_MIN_OBSERVATIONS or len(frames) / fps >= OPTIONAL_MIN_DETECTED_SEC:
         status = "pending_optional"
-        reason_codes.append("optional_detected_subject")
+        reason_codes.append("long_unresolved_safe_anonymous")
     else:
-        status = "ignored_low_impact"
-        reason_codes.append("low_impact_noise")
+        # An unnamed stable Team A, Team B, or unknown slot is still valid
+        # reviewed output. Naming is enrichment, not a prerequisite for stats.
+        status = "safe_anonymous"
+        reason_codes.append("safe_anonymous_stable_slot")
     canonical_player_id = player_id if action == "assign_roster_player" else None
     if seeded is not None:
         canonical_player_id = str((seeded.get("assigned_player") or {}).get("player_id") or "") or canonical_player_id
@@ -249,7 +282,9 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "candidate_subject_id", "tracklet_ids", "tracklet_count", "source_team_label",
         "effective_team_label", "frame_start", "frame_end", "detected_frame_count",
         "detected_observation_count", "detected_time_sec", "current_decision",
-        "current_resolution_status", "priority", "reason_codes",
+        "current_resolution_status", "priority", "reason_codes", "review_target_id",
+        "scope_kind", "source_ownership_digest", "stable_slot_id", "frame_ranges",
+        "visual_evidence", "legacy_suggestion",
     )
     result = {key: unit.get(key) for key in keys}
     if include_pairs:
@@ -257,8 +292,122 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
     return result
 
 
-def _find_unit(progress: dict[str, Any], subject_id: str) -> dict[str, Any] | None:
-    return next((row for row in progress.get("review_units") or [] if row.get("candidate_subject_id") == subject_id), None)
+def _segment_units(
+    review: dict[str, Any],
+    roster_teams: dict[str, str],
+    fps: float,
+) -> list[dict[str, Any]]:
+    output = []
+    for target in review.get("targets") or []:
+        decision = target.get("current_decision") or None
+        action = str((decision or {}).get("action") or "")
+        player_id = str((decision or {}).get("player_id") or "") or None
+        frames = {int(frame) for frame in target.get("owned_frames") or []}
+        tracklet_ids = [str(value) for value in target.get("tracklet_ids") or []]
+        pairs = {(tracklet_id, frame) for tracklet_id in tracklet_ids for frame in frames}
+        reviewed = action in REVIEWED_ACTIONS
+        has_operator_visual_evidence = bool(
+            ((target.get("visual_evidence") or {}).get("anchor_crops") or [])
+        )
+        status = (
+            "reviewed_by_operator"
+            if reviewed
+            else "pending_high_priority"
+            if has_operator_visual_evidence
+            else "pending_optional"
+        )
+        reason_codes = list(target.get("reason_codes") or [])
+        if not reviewed and not has_operator_visual_evidence:
+            reason_codes.append("mixed_tracklet_segment_without_visual_evidence")
+        effective_team = str(
+            (decision or {}).get("team_label")
+            or target.get("effective_team_label")
+            or target.get("source_team_label")
+            or "U"
+        )
+        if player_id:
+            effective_team = roster_teams.get(player_id, effective_team)
+        output.append(
+            {
+                "candidate_subject_id": target.get("candidate_subject_id"),
+                "review_target_id": target.get("review_target_id"),
+                "scope_kind": "canonical_segment",
+                "tracklet_ids": tracklet_ids,
+                "tracklet_count": len(tracklet_ids),
+                "source_team_label": target.get("source_team_label") or "U",
+                "effective_team_label": effective_team,
+                "frame_start": target.get("frame_start"),
+                "frame_end": target.get("frame_end"),
+                "frame_ranges": list(target.get("frame_ranges") or []),
+                "detected_frame_count": len(frames),
+                "detected_observation_count": len(pairs),
+                "detected_time_sec": round(len(frames) / fps, 3),
+                "current_decision": decision,
+                "current_resolution_status": status,
+                "canonical_player_id": player_id if action == "assign_roster_player" else None,
+                "priority": (
+                    None
+                    if reviewed
+                    else "high"
+                    if has_operator_visual_evidence
+                    else "optional"
+                ),
+                "reason_codes": reason_codes,
+                "source_ownership_digest": target.get("source_ownership_digest"),
+                "stable_slot_id": target.get("stable_slot_id"),
+                "visual_evidence": target.get("visual_evidence") or {},
+                "legacy_suggestion": target.get("legacy_suggestion"),
+                "detected_pairs": sorted(pairs),
+            }
+        )
+    return output
+
+
+def _card_has_semantic_conflict(card: dict[str, Any] | None) -> bool:
+    """Keep legacy card status useful without treating missing names as conflict."""
+    if not card or "conflict" not in str(card.get("review_status") or "").lower():
+        return False
+    signals = {
+        str(value).strip().lower()
+        for field in ("reason_codes", "blockers", "quality_flags")
+        for value in card.get(field) or []
+        if str(value).strip()
+    }
+    # Older review cards sometimes call a missing roster name `blocked_conflict`.
+    # No evidence is conservatively retained as a hard conflict, but explicit
+    # non-semantic evidence remains safe anonymous output rather than a blocker.
+    return not signals or any(
+        marker in signal
+        for signal in signals
+        for marker in SEMANTIC_CONFLICT_REASON_MARKERS
+    )
+
+
+def _card_has_operator_visual_evidence(card: dict[str, Any] | None) -> bool:
+    visual_evidence = (card or {}).get("visual_evidence")
+    if not isinstance(visual_evidence, dict):
+        return False
+    anchor_crops = visual_evidence.get("anchor_crops")
+    return isinstance(anchor_crops, list) and bool(anchor_crops)
+
+
+def _find_unit(
+    progress: dict[str, Any],
+    subject_id: str,
+    review_target_id: str | None = None,
+) -> dict[str, Any] | None:
+    return next(
+        (
+            row
+            for row in progress.get("review_units") or []
+            if row.get("candidate_subject_id") == subject_id
+            and (
+                review_target_id is None
+                or row.get("review_target_id") == review_target_id
+            )
+        ),
+        None,
+    )
 
 
 def _tracklets(path: Path) -> dict[str, dict[str, Any]]:

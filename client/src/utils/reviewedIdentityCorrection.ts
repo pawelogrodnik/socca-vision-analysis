@@ -12,6 +12,23 @@ export type ReviewedCorrectionFormValues = {
   comment: string;
 };
 
+export function defaultCorrectionTeam(context: ReviewedCorrectionContext): string {
+  const availableTeams = new Set(context.available_team_labels);
+  if (
+    ['A', 'B'].includes(context.effective_team_label)
+    && availableTeams.has(context.effective_team_label)
+  ) {
+    return context.effective_team_label;
+  }
+  if (
+    ['A', 'B'].includes(context.source_team_label)
+    && availableTeams.has(context.source_team_label)
+  ) {
+    return context.source_team_label;
+  }
+  return '';
+}
+
 export function correctionOptionsForSubject(
   context: ReviewedCorrectionContext,
   selectedTeamLabel = context.effective_team_label,
@@ -29,11 +46,19 @@ export function correctionOptionsForSubject(
 export function buildReviewedCorrectionPayload(
   candidateSubjectId: string,
   values: ReviewedCorrectionFormValues,
+  context?: ReviewedCorrectionContext | null,
 ): ReviewedCorrectionRequest {
   const payload: ReviewedCorrectionRequest = {
     candidate_subject_id: candidateSubjectId,
     action: values.action,
   };
+  if (context?.review_target_id) {
+    payload.review_target_id = context.review_target_id;
+    if (!context.source_ownership_digest) {
+      throw new Error('Segment wymaga odświeżenia przed zapisem.');
+    }
+    payload.source_ownership_digest = context.source_ownership_digest;
+  }
   if (values.action === 'assign_roster_player') {
     if (!values.playerId) throw new Error('Wybierz zawodnika z rosteru.');
     payload.player_id = values.playerId;

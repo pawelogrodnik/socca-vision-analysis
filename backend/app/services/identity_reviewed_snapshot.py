@@ -20,6 +20,11 @@ from app.services.identity_reviewed_effective_observation import (
     visible_reviewed_overlay,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_segments import (
+    build_segment_review_document,
+    load_segment_decisions,
+    segment_observation_assignments,
+)
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
@@ -27,7 +32,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v7-frame-canonical-ownership"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v8-segment-corrections"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -52,6 +57,7 @@ def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
 def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
     documents = _source_documents(match_path)
     roster = _roster(match_doc)
+    segment_review = build_segment_review_document(match_path, match_doc)
     tracklets = {
         str(row.get("tracklet_id")): row
         for row in documents["tracklets"].get("tracklets") or []
@@ -202,11 +208,17 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         conflicting_slot_roster_bindings,
         roster,
     )
+    segment_assignments = segment_observation_assignments(
+        segment_review,
+        documents["segment_decisions"],
+        roster,
+    )
     observation_demotions, uniqueness = build_frame_slot_demotions(
         tracklets,
         assignments,
         observation_overrides,
         canonical_observation_assignments,
+        segment_assignments,
     )
     conflicts.extend(
         {
@@ -223,6 +235,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         observation_overrides,
         observation_demotions,
         canonical_observation_assignments,
+        segment_assignments,
     )
     summary = _summary(
         assignments,
@@ -231,6 +244,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         uniqueness,
         tracklets,
         canonical_observation_assignments,
+        segment_assignments,
     )
     source = _source_descriptor(documents, match_doc, seeded_freshness)
     status = (
@@ -241,7 +255,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         else "partial_reviewed"
     )
     snapshot = {
-        "schema_version": "3.0.0",
+        "schema_version": "3.1.0",
         "mode": "reviewed_identity_snapshot",
         "match_id": str(match_doc.get("id") or match_path.name),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -252,18 +266,20 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "unresolved": "stable_anonymous_entity",
             "conflicted": "stable_anonymous_entity_with_marker",
             "exact_observation_seed": "override_only_that_observation",
+            "segment_correction": "override_only_canonical_target_observations",
         },
         "entities": _entities(assignments),
         "tracklet_assignments": assignments,
         "canonical_observation_assignments": canonical_observation_assignments,
         "observation_overrides": observation_overrides,
+        "segment_observation_assignments": segment_assignments,
         "observation_demotions": observation_demotions,
         "summary": summary,
         "fragmentation_diagnostics": fragmentation,
         "frame_uniqueness_diagnostics": uniqueness,
         "conflicts": conflicts,
         "readiness": {
-            "identity": "ready_with_review" if summary["confirmed"] or summary["exact_named_observations"] else "partial_review_required",
+            "identity": "ready_with_review" if summary["confirmed_detected_observations"] else "partial_review_required",
             "reason": "Names are shown only for explicit review decisions or fresh, safe seeded lineage; exact seeds affect only their observation.",
         },
         "safety": {
@@ -271,12 +287,13 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "production_applies": 0,
             "reran_yolo": False,
             "reran_tracking": False,
+            "segment_observation_assignments": len(segment_assignments),
             "automatic_reid_names_rendered": 0,
         },
     }
     snapshot["semantic_digest"] = _semantic_digest(snapshot)
     report = {
-        "schema_version": "3.0.0",
+        "schema_version": "3.1.0",
         "status": snapshot["status"],
         "snapshot_digest": snapshot["semantic_digest"],
         "summary": summary,
@@ -358,6 +375,7 @@ def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
         "gallery": _optional(path / "identity_review_gallery.json"),
         "stable_players": _optional(path / "stable_players.json"),
         "global_identity": _optional(path / "global_identity.json"),
+        "segment_decisions": load_segment_decisions(path),
     }
 
 
@@ -374,6 +392,7 @@ def _source_descriptor(
         "subjects_digest": values["subjects"],
         "operator_seed_decisions_digest": _decisions_digest(documents["seeds"]),
         "whole_subject_review_decisions_digest": _decisions_digest(documents["review_decisions"]),
+        "segment_review_decisions_digest": _decisions_digest(documents["segment_decisions"]),
         "stable_identity_digests": {key: values[key] for key in ("gallery", "stable_players", "global_identity")},
         "seeded_assignment_freshness": seeded_freshness,
         "algorithm_version": ALGORITHM_VERSION,
@@ -658,9 +677,11 @@ def _summary(
     uniqueness: dict[str, Any],
     tracklets: dict[str, dict[str, Any]],
     canonical_observations: list[dict[str, Any]],
+    segment_observations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    effective_segment_observations = segment_observations or []
     counts, technical = _effective_assignment_status_counts(
-        assignments, tracklets, canonical_observations
+        assignments, tracklets, canonical_observations, effective_segment_observations
     )
     return {
         "tracklets_total": len(assignments),
@@ -669,7 +690,13 @@ def _summary(
         "unresolved": counts["unresolved"],
         "conflicted": counts["conflicted"],
         "blocked": counts["blocked"],
-        "confirmed_players": len({row["canonical_player_id"] for row in assignments if row.get("canonical_player_id")}),
+        "confirmed_players": len(
+            {
+                str(row["canonical_player_id"])
+                for row in [*assignments, *effective_segment_observations]
+                if row.get("canonical_player_id")
+            }
+        ),
         **coverage,
         "conflict_count": counts["conflicted"],
         "cross_team_violations": sum(any(value.get("code") == "cross_team_confirmed_assignment" for value in row["conflicts"]) for row in assignments),
@@ -688,12 +715,19 @@ def _effective_assignment_status_counts(
     assignments: list[dict[str, Any]],
     tracklets: dict[str, dict[str, Any]],
     canonical_observations: list[dict[str, Any]],
+    segment_observations: list[dict[str, Any]],
 ) -> tuple[Counter[str], dict[str, int]]:
     """Avoid treating a fully resolved frame-owned tracklet as a product conflict."""
     ownership = {
         (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)): row
         for row in canonical_observations
     }
+    ownership.update(
+        {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)): row
+            for row in segment_observations
+        }
+    )
     counts: Counter[str] = Counter()
     fully_resolved = 0
     ownership_gaps = 0

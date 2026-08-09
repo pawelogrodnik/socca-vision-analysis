@@ -103,6 +103,14 @@ def build_reviewed_identity_regression_diagnostic(
             or []
         )
     )
+    segment_observations = observation_index(
+        list(
+            documents["reviewed_identity_snapshot.json"].get(
+                "segment_observation_assignments"
+            )
+            or []
+        )
+    )
     observations = _observations(
         tracklets,
         global_slots,
@@ -113,6 +121,7 @@ def build_reviewed_identity_regression_diagnostic(
         overrides,
         demotions,
         canonical_observations,
+        segment_observations,
         canonical_ownership,
         fps,
     )
@@ -401,6 +410,7 @@ def _observations(
     overrides: dict[tuple[str, int], dict[str, Any]],
     demotions: dict[tuple[str, int], dict[str, Any]],
     canonical_observations: dict[tuple[str, int], dict[str, Any]],
+    segment_observations: dict[tuple[str, int], dict[str, Any]],
     canonical_ownership: dict[tuple[str, int], dict[str, Any]],
     fps: float,
 ) -> list[dict[str, Any]]:
@@ -439,6 +449,7 @@ def _observations(
                     overrides,
                     demotions,
                     canonical_observations,
+                    segment_observations,
                 )
                 if assignment
                 else position

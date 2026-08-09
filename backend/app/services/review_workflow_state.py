@@ -210,14 +210,16 @@ def _current_cached_progress(
 
 
 def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, int]:
-    summary = snapshot.get("summary") or {}
-    effective_conflicts = int(summary.get("conflicted") or 0) + int(summary.get("blocked") or 0)
     progress_summary = (progress or {}).get("summary") or {}
     pending = int(progress_summary.get("important_decisions_remaining") or 0)
-    # `structural_blockers` remains diagnostics: it may describe a safely
-    # frame-owned multi-slot tracklet and must not create a phantom operator task.
+    # The progress artifact is the authoritative operator queue.  The reviewed
+    # snapshot can still report technical conflicts after an operator has made
+    # every available decision (for example a multi-slot tracker fragment).
+    # Counting those raw conflicts here creates an empty, impossible-to-finish
+    # exceptions screen.  Keep them in snapshot diagnostics, but only block on
+    # an actually actionable high-priority case.
     return {
-        "blocking": max(effective_conflicts, pending),
+        "blocking": pending,
         "important": pending,
         "optional": int(progress_summary.get("optional_cases_remaining") or 0),
         "completed": int(progress_summary.get("review_units_completed") or 0),

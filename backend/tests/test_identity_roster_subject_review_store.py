@@ -246,6 +246,47 @@ class IdentityRosterSubjectReviewStoreTests(unittest.TestCase):
 
         self.assertEqual(state["cards"][0]["operator_decision"]["player_id"], "p9")
 
+    def test_seeded_override_accepts_same_team_player_hidden_from_normal_options(
+        self,
+    ) -> None:
+        source = artifact()
+        source["cards"][1]["start_frame"] = 50
+        source["cards"][1]["end_frame"] = 80
+        source["cards"][1]["roster_candidates"] = [{"player_id": "p1"}]
+        (self.path / REVIEW_ARTIFACT_FILENAME).write_text(
+            json.dumps(source),
+            encoding="utf-8",
+        )
+        self.write_seeded_assignment()
+
+        reduced = load_identity_roster_subject_review(self.path, match_doc=match_doc())
+        card = next(
+            row for row in reduced["cards"] if row["review_card_key"] == "card-2"
+        )
+        self.assertNotIn(
+            "p1",
+            [row["player_id"] for row in card["operator_roster_options"]],
+        )
+
+        state = save_identity_roster_subject_review(
+            self.path,
+            [
+                {
+                    "review_card_key": "card-2",
+                    "decision": "assign_roster_player",
+                    "player_id": "p1",
+                }
+            ],
+            match_doc=match_doc(),
+            allow_seeded_override=True,
+            updated_at="fixed",
+        )
+
+        saved = next(
+            row for row in state["cards"] if row["review_card_key"] == "card-2"
+        )
+        self.assertEqual(saved["operator_decision"]["player_id"], "p1")
+
     def test_explicit_assignment_rejects_other_team_player(self) -> None:
         with self.assertRaisesRegex(ValueError, "operator roster options"):
             save_identity_roster_subject_review(

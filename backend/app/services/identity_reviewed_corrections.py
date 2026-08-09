@@ -21,6 +21,11 @@ from app.services.identity_reviewed_slot_review import (
     load_reviewed_slot_assignments,
     prepare_reviewed_slot_assignments,
 )
+from app.services.identity_reviewed_segments import (
+    SegmentTargetError,
+    build_segment_review_document,
+    save_segment_decision,
+)
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
@@ -58,6 +63,40 @@ def save_reviewed_identity_correction(
         if action not in CORRECTION_ACTIONS:
             raise ValueError(f"Unsupported reviewed identity correction action: {action}")
         progress_before = build_reviewed_identity_progress(match_path, match_doc)
+        review_target_id = str(payload.get("review_target_id") or "").strip() or None
+        if review_target_id:
+            saved = save_segment_decision(match_path, match_doc, payload)
+            build_segment_review_document(match_path, match_doc)
+            snapshot = get_reviewed_identity_status(match_path)
+            progress_after = build_reviewed_identity_progress(match_path, match_doc)
+            impact = decision_impact(
+                progress_before,
+                progress_after,
+                subject_id,
+                review_target_id,
+            )
+            return {
+                "saved_decision": saved,
+                "effective_action": action,
+                "allocated_stable_slot_id": None,
+                "snapshot": {
+                    "status": snapshot.get("status"),
+                    "stale": bool(
+                        snapshot.get("stale") or snapshot.get("status") == "stale"
+                    ),
+                },
+                "semantic_decision_digest": reviewed_decisions_semantic_digest(
+                    match_path
+                ),
+                "review_progress": progress_after,
+                "decision_impact": impact,
+            }
+        segment_review = build_segment_review_document(match_path, match_doc)
+        if any(
+            str(row.get("candidate_subject_id") or "") == subject_id
+            for row in segment_review.get("targets") or []
+        ):
+            raise SegmentTargetError("review_target_required")
         context = build_subject_context(match_path, subject_id)
         card_key = review_card_key(match_path, subject_id)
         comment = str(payload.get("comment") or "").strip() or None
@@ -98,21 +137,24 @@ def save_reviewed_identity_correction(
                     }
                 ],
             )
-            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             if card_key:
                 save_identity_roster_subject_review(
-                match_path,
-                [
-                    {
-                        "review_card_key": card_key,
-                        "decision": "assign_roster_player",
-                        "player_id": player_id,
-                        "comment": comment,
-                    }
-                ],
-                match_doc=match_doc,
-                allow_seeded_override=True,
+                    match_path,
+                    [
+                        {
+                            "review_card_key": card_key,
+                            "decision": "assign_roster_player",
+                            "player_id": player_id,
+                            "comment": comment,
+                        }
+                    ],
+                    match_doc=match_doc,
+                    allow_seeded_override=True,
                 )
+            # Persist the slot overlay only after the same operator choice has
+            # passed the review-card validation.  This prevents a rejected UI
+            # correction from leaving a partial slot decision behind.
+            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             allocated_slot = None
         else:
             candidate_document = load_required(

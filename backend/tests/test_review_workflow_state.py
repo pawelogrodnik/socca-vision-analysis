@@ -75,12 +75,50 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         state = derive_review_workflow_state(evidence(issues={"blocking": 0, "important": 0, "optional": 0}))
         self.assertEqual(state["phase"], "ready_to_finalize")
 
-    def test_frame_resolved_technical_conflict_is_not_an_exception_but_a_real_gap_is(self) -> None:
+    def test_snapshot_only_conflicts_do_not_create_an_empty_exception_queue(self) -> None:
         progress = {"summary": {"structural_blockers": 1, "important_decisions_remaining": 0}}
         resolved = _issue_evidence({"summary": {"conflicted": 0, "blocked": 0}}, progress)
-        unresolved = _issue_evidence({"summary": {"conflicted": 1, "blocked": 0}}, progress)
+        snapshot_only_conflict = _issue_evidence(
+            {"summary": {"conflicted": 1, "blocked": 0}},
+            progress,
+        )
         self.assertEqual(resolved["blocking"], 0)
-        self.assertEqual(unresolved["blocking"], 1)
+        self.assertEqual(snapshot_only_conflict["blocking"], 0)
+
+    def test_optional_and_safe_anonymous_subjects_do_not_block_finalize(self) -> None:
+        progress = {"summary": {
+            "important_decisions_remaining": 0,
+            "optional_cases_remaining": 100,
+            "safe_anonymous_units": 24,
+        }}
+        issues = _issue_evidence({"summary": {"conflicted": 0, "blocked": 0}}, progress)
+        state = derive_review_workflow_state(evidence(issues=issues))
+        self.assertEqual(issues["blocking"], 0)
+        self.assertEqual(state["phase"], "ready_to_finalize")
+
+    def test_zero_evidence_conflict_diagnostic_does_not_block_finalize(self) -> None:
+        progress = {"summary": {
+            "important_decisions_remaining": 0,
+            "optional_cases_remaining": 1,
+        }}
+        issues = _issue_evidence({"summary": {"conflicted": 1, "blocked": 1}}, progress)
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(issues["blocking"], 0)
+        self.assertEqual(issues["optional"], 1)
+        self.assertEqual(state["phase"], "ready_to_finalize")
+
+    def test_true_conflict_blocks_and_resolved_progress_unblocks_workflow(self) -> None:
+        conflict = _issue_evidence(
+            {"summary": {"conflicted": 0, "blocked": 0}},
+            {"summary": {"important_decisions_remaining": 1}},
+        )
+        resolved = _issue_evidence(
+            {"summary": {"conflicted": 0, "blocked": 0}},
+            {"summary": {"important_decisions_remaining": 0}},
+        )
+        self.assertEqual(derive_review_workflow_state(evidence(issues=conflict))["phase"], "exceptions")
+        self.assertEqual(derive_review_workflow_state(evidence(issues=resolved))["phase"], "ready_to_finalize")
 
     def test_approval_requires_exact_current_fingerprints(self) -> None:
         snapshot = {"semantic_digest": "identity"}

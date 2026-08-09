@@ -72,6 +72,37 @@ tracker_id != player_id
 
 A real player may be composed of many tracklets.
 
+## Reviewed identity segments
+
+When one raw tracklet has more than one unambiguous frame-level canonical
+owner, operator corrections are scoped to a reviewed segment rather than to
+the whole raw tracklet. One target represents exactly one contiguous run of
+owned detected observations for `(subject, tracklet, canonical slot, team)`.
+A later return to the same canonical slot creates a different target and
+requires its own decision. `reviewed_identity_segment_review.json` contains
+the derived targets, their authoritative `owned_frames`, and a single display
+range per target. Operator choices are stored separately in
+`reviewed_identity_segment_decisions.json`.
+
+Each persisted decision contains a stable `review_target_id` and the
+`source_ownership_digest` returned by the correction context. A correction is
+rejected as stale when ownership changes. Segment decisions never fill gaps
+between detected frames and do not mutate `tracklets.json`, detections, or the
+global identity artifacts.
+
+A pending segment is mandatory only when at least one operator crop is
+available. A zero-crop conflict remains an explicit optional diagnostic so it
+cannot deadlock the workflow. Existing saved decisions remain reviewed even
+if their JPEG evidence later disappears. Conservative whole-subject actions
+`unresolved` and `team_unknown` may terminate mixed-tracklet review; actions
+that classify the whole raw tracklet (`assign_team`, `referee`, and
+`false_detection`) may not.
+
+The reviewed snapshot exposes the resulting exact-frame overlays as
+`segment_observation_assignments`. Render, timeline, heatmap, and reviewed
+statistics must all consume these rows through the shared effective
+observation resolver.
+
 ## Attacking momentum
 
 `attacking_momentum.json` is an optional, derived match artifact built after

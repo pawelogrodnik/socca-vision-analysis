@@ -178,6 +178,7 @@ def save_identity_roster_subject_review(
         card = dict(source_card)
         card["operator_roster_options"] = _operator_roster_options(card, match_doc)
         cards_by_key[str(card["review_card_key"])] = card
+    unfiltered_cards_by_key = dict(cards_by_key)
     existing = _load_optional_decisions(path / REVIEW_DECISIONS_FILENAME)
     decisions_by_key = {
         str(row.get("review_card_key")): dict(row)
@@ -283,7 +284,21 @@ def save_identity_roster_subject_review(
             and decision in {"assign_roster_player", "mark_unresolved"}
         ):
             raise ValueError(f"Decision {decision} is blocked for {key}")
-        player_id = _validated_player_id(card, decision, update.get("player_id"))
+        # Seed reduction hides overlapping roster choices from the normal
+        # workflow to prevent accidental duplicate assignments.  A correction
+        # endpoint, however, is an explicit operator override of that exact
+        # conflict.  Validate it against the original same-team roster rather
+        # than the reduced suggestion list.
+        validation_card = (
+            unfiltered_cards_by_key.get(key, card)
+            if allow_seeded_override
+            else card
+        )
+        player_id = _validated_player_id(
+            validation_card,
+            decision,
+            update.get("player_id"),
+        )
         next_decision = {
             "review_card_key": key,
             "candidate_subject_id": card.get("candidate_subject_id"),
@@ -709,7 +724,10 @@ def _operator_roster_options(
     for team_index, team in enumerate((match_doc or {}).get("teams") or []):
         if not isinstance(team, dict):
             continue
-        current_label = "A" if team_index == 0 else "B" if team_index == 1 else "U"
+        current_label = str(
+            team.get("team_label")
+            or ("A" if team_index == 0 else "B" if team_index == 1 else "U")
+        ).upper()
         if team_label in {"A", "B"} and current_label != team_label:
             continue
         for player in team.get("players") or []:
