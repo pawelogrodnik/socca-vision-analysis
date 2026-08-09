@@ -93,12 +93,36 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                 "requires_operator_review": True,
                 "reason_codes": ["no_roster_identity_evidence"],
                 "blockers": ["jersey_number_roster_conflict"],
+                "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "crop-1"}]},
             })
 
             progress = build_reviewed_identity_progress(root, _match())
 
             self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
             self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_high_priority")
+
+    def test_jersey_conflict_without_visual_evidence_is_optional(self) -> None:
+        with _workspace() as root:
+            _single_subject(root, team="A", frames=range(1, 101), card={
+                "review_status": "blocked_conflict",
+                "requires_operator_review": True,
+                "reason_codes": ["no_roster_identity_evidence"],
+                "blockers": ["jersey_number_roster_conflict"],
+                "visual_evidence": {"anchor_crops": []},
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+            subject = _unit(progress, "subject")
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(progress["summary"]["optional_cases_remaining"], 1)
+            self.assertEqual(subject["current_resolution_status"], "pending_optional")
+            self.assertIn("review_card_conflict", subject["reason_codes"])
+            self.assertIn(
+                "semantic_conflict_without_visual_evidence",
+                subject["reason_codes"],
+            )
+            self.assertEqual(progress["next_cases"], [])
 
     def test_non_semantic_blocker_remains_optional(self) -> None:
         with _workspace() as root:
@@ -121,6 +145,7 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                 "requires_operator_review": True,
                 "reason_codes": ["no_roster_identity_evidence"],
                 "quality_flags": ["production_anchor_team_mismatch"],
+                "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "crop-1"}]},
             })
 
             progress = build_reviewed_identity_progress(root, _match())
@@ -134,6 +159,7 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                 "review_status": "blocked_conflict",
                 "requires_operator_review": True,
                 "reason_codes": ["parallel_roster_candidate_conflict"],
+                "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "crop-1"}]},
             })
 
             before = build_reviewed_identity_progress(root, _match())
@@ -148,19 +174,50 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             self.assertEqual(after["summary"]["important_decisions_remaining"], 0)
             self.assertEqual(_unit(after, "subject")["current_resolution_status"], "reviewed_by_operator")
 
-    def test_legacy_conflict_without_evidence_remains_blocking(self) -> None:
+    def test_legacy_conflict_metadata_without_reasons_remains_blocking_with_crop(self) -> None:
         with _workspace() as root:
             _single_subject(root, team="A", frames=range(1, 101), card={
                 "review_status": "blocked_conflict",
                 "requires_operator_review": True,
                 "reason_codes": [],
                 "blockers": [],
+                "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "crop-1"}]},
             })
 
             progress = build_reviewed_identity_progress(root, _match())
 
             self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
             self.assertEqual(_unit(progress, "subject")["current_resolution_status"], "pending_high_priority")
+
+    def test_team_conflict_without_visual_evidence_is_optional(self) -> None:
+        with _workspace() as root:
+            _team_conflict_subject(root, anchor_crops=[])
+
+            progress = build_reviewed_identity_progress(root, _match())
+            subject = _unit(progress, "subject")
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(subject["current_resolution_status"], "pending_optional")
+            self.assertIn("conflicting_detected_team_labels", subject["reason_codes"])
+            self.assertIn(
+                "semantic_conflict_without_visual_evidence",
+                subject["reason_codes"],
+            )
+
+    def test_team_conflict_with_visual_evidence_is_blocking(self) -> None:
+        with _workspace() as root:
+            _team_conflict_subject(
+                root,
+                anchor_crops=[{"anchor_crop_id": "crop-1"}],
+            )
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(
+                _unit(progress, "subject")["current_resolution_status"],
+                "pending_high_priority",
+            )
 
     def test_short_unnamed_team_a_and_team_b_subjects_are_safe_anonymous(self) -> None:
         with _workspace() as root:
@@ -194,6 +251,9 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                     "candidate_subject_id": subject_id,
                     "review_status": "blocked_conflict",
                     "requires_operator_review": True,
+                    "visual_evidence": {
+                        "anchor_crops": [{"anchor_crop_id": f"crop-{index}"}],
+                    },
                 })
             _write(root / "tracklets.json", {"tracklets": tracklets})
             _write(root / "identity_candidate_shadow.json", {"subjects": subjects})
@@ -225,6 +285,10 @@ def _fixture(root: Path) -> None:
         {"candidate_subject_id": "ambiguous", "tracklet_ids": ["ambiguous"]},
         {"candidate_subject_id": "ambiguous-other", "tracklet_ids": ["ambiguous"]},
     ]})
+    _write(root / "identity_roster_subject_review_shadow.json", {"cards": [{
+        "candidate_subject_id": "mixed",
+        "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "mixed-crop"}]},
+    }]})
 
 
 def _single_subject(
@@ -242,6 +306,21 @@ def _single_subject(
         _write(root / "identity_roster_subject_review_shadow.json", {
             "cards": [{"candidate_subject_id": "subject", **card}],
         })
+
+
+def _team_conflict_subject(root: Path, *, anchor_crops: list[dict]) -> None:
+    _write(root / "tracklets.json", {"tracklets": [
+        _tracklet("team-a", "A", range(1, 51)),
+        _tracklet("team-b", "B", range(51, 101)),
+    ]})
+    _write(root / "identity_candidate_shadow.json", {"subjects": [{
+        "candidate_subject_id": "subject",
+        "tracklet_ids": ["team-a", "team-b"],
+    }]})
+    _write(root / "identity_roster_subject_review_shadow.json", {"cards": [{
+        "candidate_subject_id": "subject",
+        "visual_evidence": {"anchor_crops": anchor_crops},
+    }]})
 
 
 def _tracklet(tracklet_id: str, team: str, frames: range | list[int]) -> dict:

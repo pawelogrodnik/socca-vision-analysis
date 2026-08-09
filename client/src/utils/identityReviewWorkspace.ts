@@ -1,4 +1,9 @@
-import type { ReviewWorkflow, ReviewWorkflowAction, ReviewWorkflowStepId } from '../types';
+import type {
+  IdentityRosterSubjectReviewCard,
+  ReviewWorkflow,
+  ReviewWorkflowAction,
+  ReviewWorkflowStepId,
+} from '../types';
 
 export type IdentityReviewStage =
   | 'identify_players'
@@ -53,6 +58,12 @@ export function workflowAllows(
   action: ReviewWorkflowAction,
 ): boolean {
   return Boolean(workflow?.allowed_actions.includes(action));
+}
+
+export function hasOperatorReviewableVisualEvidence(
+  card: Pick<IdentityRosterSubjectReviewCard, 'visual_evidence'>,
+): boolean {
+  return card.visual_evidence.anchor_crops.length > 0;
 }
 
 export function reviewWorkflowErrorMessage(workflow: ReviewWorkflow): string {

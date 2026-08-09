@@ -13,6 +13,7 @@ import type {
   ReviewedIdentityAtEntity,
   ReviewWorkflow,
 } from '../types';
+import { hasOperatorReviewableVisualEvidence } from '../utils/identityReviewWorkspace';
 import { requiredCasesLabel } from '../utils/reviewWorkflowPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
 
@@ -97,6 +98,7 @@ export function IdentityExceptionReviewPanel({
 
   const card = cards[index] || null;
   const entity = useMemo(() => (card ? toCorrectionEntity(card) : null), [card]);
+  const hasVisualEvidence = card ? hasOperatorReviewableVisualEvidence(card) : false;
 
   function saved(result: ReviewedCorrectionResponse) {
     setMessage('Zapisano decyzję. Sprawdzam, czy pozostały jeszcze ważne przypadki.');
@@ -117,13 +119,12 @@ export function IdentityExceptionReviewPanel({
       {cards.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cards.length}</span>}
     </div>
 
-    {card && entity ? <>
+    {card && entity && hasVisualEvidence ? <>
       <div className='identity-exception-evidence'>
         {card.visual_evidence.anchor_crops.map((crop) => <figure key={crop.anchor_crop_id}>
           <img src={artifactUrl(match.id, crop.artifact)} alt='Widok zawodnika do identyfikacji' />
           <figcaption>Wybrany widok zawodnika</figcaption>
         </figure>)}
-        {card.visual_evidence.anchor_crops.length === 0 && <p className='muted'>Brak czytelnego zbliżenia; możesz pozostawić ten przypadek nierozstrzygnięty.</p>}
       </div>
       <ReviewedIdentityCorrectionForm
         matchId={match.id}
@@ -135,7 +136,13 @@ export function IdentityExceptionReviewPanel({
         <button type='button' className='secondary' onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0}>Poprzedni</button>
         <button type='button' className='secondary' onClick={() => setIndex((current) => Math.min(cards.length - 1, current + 1))} disabled={index >= cards.length - 1}>Następny</button>
       </div>}
-    </> : <div className='status'>
+    </> : card && entity ? <div className='status'>
+      <strong>Brak materiału pozwalającego wiarygodnie rozstrzygnąć ten przypadek.</strong>
+      <p>Odśwież Review — ten przypadek nie powinien wymagać ręcznej decyzji.</p>
+      {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
+        Odśwież Review
+      </button>}
+    </div> : <div className='status'>
       <strong>Nie udało się przygotować podglądu przypadku wymagającego decyzji.</strong>
       <p>Workflow nadal wskazuje: {requiredCasesLabel(workflow.issues.blocking)}. Odśwież Review albo otwórz diagnostykę.</p>
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>

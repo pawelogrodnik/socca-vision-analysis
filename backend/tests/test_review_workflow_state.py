@@ -96,6 +96,18 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(issues["blocking"], 0)
         self.assertEqual(state["phase"], "ready_to_finalize")
 
+    def test_zero_evidence_conflict_diagnostic_does_not_block_finalize(self) -> None:
+        progress = {"summary": {
+            "important_decisions_remaining": 0,
+            "optional_cases_remaining": 1,
+        }}
+        issues = _issue_evidence({"summary": {"conflicted": 1, "blocked": 1}}, progress)
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(issues["blocking"], 0)
+        self.assertEqual(issues["optional"], 1)
+        self.assertEqual(state["phase"], "ready_to_finalize")
+
     def test_true_conflict_blocks_and_resolved_progress_unblocks_workflow(self) -> None:
         conflict = _issue_evidence(
             {"summary": {"conflicted": 0, "blocked": 0}},

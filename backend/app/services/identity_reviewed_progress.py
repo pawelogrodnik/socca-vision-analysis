@@ -214,6 +214,7 @@ def _unit(
         effective_team = source_team
     card_requires_review = bool(card) and card.get("requires_operator_review") is not False
     card_conflict = _card_has_semantic_conflict(card)
+    has_operator_visual_evidence = _card_has_operator_visual_evidence(card)
     if card_conflict:
         reason_codes.append("review_card_conflict")
     if action in REVIEWED_ACTIONS:
@@ -221,9 +222,12 @@ def _unit(
     elif seeded is not None or (card is not None and not card_requires_review):
         status = "resolved_automatically"
         reason_codes.append("safe_seeded_or_completed_review_card")
-    elif card_conflict or team_conflict:
+    elif (card_conflict or team_conflict) and has_operator_visual_evidence:
         status = "pending_high_priority"
         reason_codes.append("semantic_identity_conflict")
+    elif card_conflict or team_conflict:
+        status = "pending_optional"
+        reason_codes.append("semantic_conflict_without_visual_evidence")
     elif structural:
         # This describes a data-quality condition. Some frame ownership paths
         # safely resolve it downstream, so it is never a mandatory human task
@@ -293,6 +297,14 @@ def _card_has_semantic_conflict(card: dict[str, Any] | None) -> bool:
         for signal in signals
         for marker in SEMANTIC_CONFLICT_REASON_MARKERS
     )
+
+
+def _card_has_operator_visual_evidence(card: dict[str, Any] | None) -> bool:
+    visual_evidence = (card or {}).get("visual_evidence")
+    if not isinstance(visual_evidence, dict):
+        return False
+    anchor_crops = visual_evidence.get("anchor_crops")
+    return isinstance(anchor_crops, list) and bool(anchor_crops)
 
 
 def _find_unit(progress: dict[str, Any], subject_id: str) -> dict[str, Any] | None:
