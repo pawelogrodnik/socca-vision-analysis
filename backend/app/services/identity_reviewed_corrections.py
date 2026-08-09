@@ -98,21 +98,24 @@ def save_reviewed_identity_correction(
                     }
                 ],
             )
-            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             if card_key:
                 save_identity_roster_subject_review(
-                match_path,
-                [
-                    {
-                        "review_card_key": card_key,
-                        "decision": "assign_roster_player",
-                        "player_id": player_id,
-                        "comment": comment,
-                    }
-                ],
-                match_doc=match_doc,
-                allow_seeded_override=True,
+                    match_path,
+                    [
+                        {
+                            "review_card_key": card_key,
+                            "decision": "assign_roster_player",
+                            "player_id": player_id,
+                            "comment": comment,
+                        }
+                    ],
+                    match_doc=match_doc,
+                    allow_seeded_override=True,
                 )
+            # Persist the slot overlay only after the same operator choice has
+            # passed the review-card validation.  This prevents a rejected UI
+            # correction from leaving a partial slot decision behind.
+            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             allocated_slot = None
         else:
             candidate_document = load_required(
