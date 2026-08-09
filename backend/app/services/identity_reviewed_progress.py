@@ -302,14 +302,23 @@ def _segment_units(
         decision = target.get("current_decision") or None
         action = str((decision or {}).get("action") or "")
         player_id = str((decision or {}).get("player_id") or "") or None
-        frames = {
-            frame
-            for frame_range in target.get("frame_ranges") or []
-            for frame in range(int(frame_range[0]), int(frame_range[1]) + 1)
-        }
+        frames = {int(frame) for frame in target.get("owned_frames") or []}
         tracklet_ids = [str(value) for value in target.get("tracklet_ids") or []]
         pairs = {(tracklet_id, frame) for tracklet_id in tracklet_ids for frame in frames}
         reviewed = action in REVIEWED_ACTIONS
+        has_operator_visual_evidence = bool(
+            ((target.get("visual_evidence") or {}).get("anchor_crops") or [])
+        )
+        status = (
+            "reviewed_by_operator"
+            if reviewed
+            else "pending_high_priority"
+            if has_operator_visual_evidence
+            else "pending_optional"
+        )
+        reason_codes = list(target.get("reason_codes") or [])
+        if not reviewed and not has_operator_visual_evidence:
+            reason_codes.append("mixed_tracklet_segment_without_visual_evidence")
         effective_team = str(
             (decision or {}).get("team_label")
             or target.get("effective_team_label")
@@ -334,12 +343,16 @@ def _segment_units(
                 "detected_observation_count": len(pairs),
                 "detected_time_sec": round(len(frames) / fps, 3),
                 "current_decision": decision,
-                "current_resolution_status": (
-                    "reviewed_by_operator" if reviewed else "pending_high_priority"
-                ),
+                "current_resolution_status": status,
                 "canonical_player_id": player_id if action == "assign_roster_player" else None,
-                "priority": None if reviewed else "high",
-                "reason_codes": list(target.get("reason_codes") or []),
+                "priority": (
+                    None
+                    if reviewed
+                    else "high"
+                    if has_operator_visual_evidence
+                    else "optional"
+                ),
+                "reason_codes": reason_codes,
                 "source_ownership_digest": target.get("source_ownership_digest"),
                 "stable_slot_id": target.get("stable_slot_id"),
                 "visual_evidence": target.get("visual_evidence") or {},

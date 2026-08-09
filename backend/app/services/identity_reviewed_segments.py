@@ -96,56 +96,66 @@ def build_segment_review_document(
     }
     roster = _roster(match_doc)
     targets: list[dict[str, Any]] = []
+    matched_decision_ids: set[str] = set()
     for (subject_id, tracklet_id, slot_id, team_label), claims in sorted(groups.items()):
-        frames = sorted({int(row.get("frame") or 0) for row in claims})
-        if not frames:
-            continue
-        ownership_payload = [
-            {
-                "tracklet_id": tracklet_id,
-                "frame": frame,
-                "stable_slot_id": slot_id,
-                "team_label": team_label,
-            }
-            for frame in frames
-        ]
-        ownership_digest = canonical_digest(ownership_payload)
-        target_id = _target_id(subject_id, tracklet_id, slot_id)
-        evidence = _target_evidence(
-            cards.get(subject_id),
-            tracklets.get(tracklet_id) or {},
-            frames,
-            target_id,
-        )
-        decision = stored_decisions.get(target_id)
-        decision_current = bool(
-            decision
-            and decision.get("source_ownership_digest") == ownership_digest
-        )
-        targets.append(
-            {
-                "review_target_id": target_id,
-                "scope_kind": "canonical_segment",
-                "candidate_subject_id": subject_id,
-                "tracklet_ids": [tracklet_id],
-                "stable_slot_id": slot_id,
-                "source_team_label": team_label,
-                "effective_team_label": str(
-                    (decision or {}).get("team_label") or team_label
-                ),
-                "frame_start": frames[0],
-                "frame_end": frames[-1],
-                "frame_ranges": _frame_ranges(frames),
-                "detected_observation_count": len(frames),
-                "source_ownership_digest": ownership_digest,
-                "reason_codes": ["mixed_tracklet_canonical_owners"],
-                "visual_evidence": evidence,
-                "current_decision": decision if decision_current else None,
-                "decision_status": "reviewed" if decision_current else "pending",
-                "stale_decision": bool(decision and not decision_current),
-                "legacy_suggestion": None,
-            }
-        )
+        for frames in _contiguous_frame_runs(claims):
+            ownership_payload = [
+                {
+                    "tracklet_id": tracklet_id,
+                    "frame": frame,
+                    "stable_slot_id": slot_id,
+                    "team_label": team_label,
+                }
+                for frame in frames
+            ]
+            ownership_digest = canonical_digest(ownership_payload)
+            target_id = _target_id(
+                subject_id,
+                tracklet_id,
+                slot_id,
+                team_label,
+                frames,
+            )
+            evidence = _target_evidence(
+                cards.get(subject_id),
+                tracklets.get(tracklet_id) or {},
+                frames,
+                target_id,
+            )
+            decision = stored_decisions.get(target_id)
+            decision_current = bool(
+                decision
+                and decision.get("source_ownership_digest") == ownership_digest
+            )
+            if decision is not None:
+                matched_decision_ids.add(target_id)
+            targets.append(
+                {
+                    "review_target_id": target_id,
+                    "scope_kind": "canonical_segment",
+                    "candidate_subject_id": subject_id,
+                    "tracklet_ids": [tracklet_id],
+                    "stable_slot_id": slot_id,
+                    "source_team_label": team_label,
+                    "effective_team_label": str(
+                        (decision or {}).get("team_label") or team_label
+                    ),
+                    "frame_start": frames[0],
+                    "frame_end": frames[-1],
+                    "frame_ranges": [[frames[0], frames[-1]]],
+                    # This exact list is authoritative. Presentation ranges must
+                    # never be used to synthesize an unowned observation.
+                    "owned_frames": frames,
+                    "detected_observation_count": len(frames),
+                    "source_ownership_digest": ownership_digest,
+                    "reason_codes": ["mixed_tracklet_canonical_owners"],
+                    "visual_evidence": evidence,
+                    "current_decision": decision if decision_current else None,
+                    "decision_status": "reviewed" if decision_current else "pending",
+                    "stale_decision": bool(decision and not decision_current),
+                    "legacy_suggestion": None,
+                }
+            )
 
     dominant_by_subject: dict[str, dict[str, Any]] = {}
     for target in targets:
@@ -189,7 +199,13 @@ def build_segment_review_document(
             "targets_pending": sum(
                 target["decision_status"] == "pending" for target in targets
             ),
-            "stale_decisions": sum(bool(target["stale_decision"]) for target in targets),
+            "stale_decisions": (
+                sum(bool(target["stale_decision"]) for target in targets)
+                + len(set(stored_decisions) - matched_decision_ids)
+            ),
+            "orphaned_decisions_requiring_review": len(
+                set(stored_decisions) - matched_decision_ids
+            ),
         },
         "targets": sorted(
             targets,
@@ -336,11 +352,10 @@ def segment_observation_assignments(
             continue
         action = str(decision.get("action") or "")
         player = roster.get(str(decision.get("player_id") or ""))
-        for frame_range in target.get("frame_ranges") or []:
-            for frame in range(int(frame_range[0]), int(frame_range[1]) + 1):
-                row = _segment_assignment_row(target, decision, action, player, frame)
-                if row is not None:
-                    output.append(row)
+        for frame in target.get("owned_frames") or []:
+            row = _segment_assignment_row(target, decision, action, player, int(frame))
+            if row is not None:
+                output.append(row)
     return sorted(output, key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
 
 
@@ -526,22 +541,32 @@ def _attach_boundary_evidence(targets: list[dict[str, Any]]) -> None:
         (target.get("visual_evidence") or {})["boundary_crops"] = ranked[:2]
 
 
-def _frame_ranges(frames: list[int]) -> list[list[int]]:
-    ranges: list[list[int]] = []
-    for frame in frames:
-        if not ranges or frame > ranges[-1][1] + 1:
-            ranges.append([frame, frame])
+def _contiguous_frame_runs(claims: list[dict[str, Any]]) -> list[list[int]]:
+    runs: list[list[int]] = []
+    for frame in sorted({int(row.get("frame") or 0) for row in claims}):
+        if not runs or frame != runs[-1][-1] + 1:
+            runs.append([frame])
         else:
-            ranges[-1][1] = frame
-    return ranges
+            runs[-1].append(frame)
+    return runs
 
 
-def _target_id(subject_id: str, tracklet_id: str, slot_id: str) -> str:
+def _target_id(
+    subject_id: str,
+    tracklet_id: str,
+    slot_id: str,
+    team_label: str,
+    frames: list[int],
+) -> str:
     digest = canonical_digest(
         {
             "candidate_subject_id": subject_id,
             "tracklet_id": tracklet_id,
             "stable_slot_id": slot_id,
+            "team_label": team_label,
+            "frame_start": frames[0],
+            "frame_end": frames[-1],
+            "frames_digest": canonical_digest(frames),
         }
     )
     return f"review-segment:v1:{digest}"
@@ -596,19 +621,16 @@ def _requires_segment_review(
 
 
 def _terminal_whole_subject_decisions(match_path: Path) -> set[str]:
+    # Only conservative identity removal can safely terminate review for a
+    # mixed raw tracklet. assign_team, referee and false_detection affect the
+    # whole raw fragment and may therefore misclassify another physical person.
     slot_doc = _load(match_path / "reviewed_identity_slot_assignments.json")
     return {
         str(row.get("candidate_subject_id"))
         for row in slot_doc.get("decisions") or []
         if row.get("candidate_subject_id")
         and row.get("action")
-        in {
-            "assign_team",
-            "referee",
-            "false_detection",
-            "team_unknown",
-            "unresolved",
-        }
+        in {"team_unknown", "unresolved"}
     }
 
 

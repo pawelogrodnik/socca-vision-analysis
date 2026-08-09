@@ -73,40 +73,63 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
             review = build_segment_review_document(root, match)
 
             self.assertEqual(review["summary"]["mixed_tracklets"], 1)
-            self.assertEqual(review["summary"]["targets_total"], 2)
-            targets = {row["stable_slot_id"]: row for row in review["targets"]}
-            self.assertEqual(targets["A03"]["frame_ranges"], [[1, 2], [5, 5]])
-            self.assertEqual(targets["A05"]["frame_ranges"], [[3, 4]])
+            self.assertEqual(review["summary"]["targets_total"], 3)
+            targets = review["targets"]
+            a03_targets = [row for row in targets if row["stable_slot_id"] == "A03"]
+            a05_target = next(row for row in targets if row["stable_slot_id"] == "A05")
             self.assertEqual(
-                targets["A03"]["legacy_suggestion"]["player_id"],
+                [row["frame_ranges"] for row in a03_targets],
+                [[[1, 2]], [[5, 6]]],
+            )
+            self.assertEqual(a05_target["frame_ranges"], [[3, 4]])
+            self.assertTrue(all(len(row["frame_ranges"]) == 1 for row in targets))
+            self.assertEqual(len({row["review_target_id"] for row in a03_targets}), 2)
+            self.assertNotEqual(
+                a03_targets[0]["source_ownership_digest"],
+                a03_targets[1]["source_ownership_digest"],
+            )
+            self.assertEqual(
+                a03_targets[0]["legacy_suggestion"]["player_id"],
                 "p1",
             )
-            self.assertIsNone(targets["A05"]["legacy_suggestion"])
+            self.assertIsNone(a03_targets[1]["legacy_suggestion"])
+            self.assertIsNone(a05_target["legacy_suggestion"])
 
     def test_segment_decisions_do_not_bleed_and_stale_target_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             match = _fixture(root)
             review = build_segment_review_document(root, match)
-            targets = {row["stable_slot_id"]: row for row in review["targets"]}
+            a03_first = next(
+                row
+                for row in review["targets"]
+                if row["stable_slot_id"] == "A03" and row["frame_start"] == 1
+            )
+            a03_second = next(
+                row
+                for row in review["targets"]
+                if row["stable_slot_id"] == "A03" and row["frame_start"] == 5
+            )
+            a05 = next(
+                row for row in review["targets"] if row["stable_slot_id"] == "A05"
+            )
 
             with self.assertRaisesRegex(SegmentTargetError, "review_target_stale"):
                 save_segment_decision(
                     root,
                     match,
                     {
-                        "review_target_id": targets["A03"]["review_target_id"],
+                        "review_target_id": a03_first["review_target_id"],
                         "source_ownership_digest": "stale",
                         "action": "assign_roster_player",
                         "player_id": "p1",
                     },
                 )
 
-            for slot_id, action, extra in (
-                ("A03", "assign_roster_player", {"player_id": "p1"}),
-                ("A05", "assign_team", {"team_label": "B"}),
+            for target, action, extra in (
+                (a03_first, "assign_roster_player", {"player_id": "p1"}),
+                (a05, "assign_team", {"team_label": "B"}),
             ):
-                target = targets[slot_id]
                 save_segment_decision(
                     root,
                     match,
@@ -119,6 +142,15 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
                 )
 
             refreshed = build_segment_review_document(root, match)
+            refreshed_a03_second = next(
+                row
+                for row in refreshed["targets"]
+                if row["stable_slot_id"] == "A03" and row["frame_start"] == 5
+            )
+            self.assertEqual(
+                refreshed_a03_second["source_ownership_digest"],
+                a03_second["source_ownership_digest"],
+            )
             rows = segment_observation_assignments(
                 refreshed,
                 load_segment_decisions(root),
@@ -131,12 +163,64 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
                 },
             )
             by_frame = {int(row["frame"]): row for row in rows}
-            self.assertEqual(set(by_frame), {1, 2, 3, 4, 5})
+            self.assertEqual(set(by_frame), {1, 2, 3, 4})
             self.assertEqual(by_frame[1]["canonical_player_id"], "p1")
-            self.assertEqual(by_frame[5]["player_name"], "Pawel")
+            self.assertNotIn(5, by_frame)
+            self.assertNotIn(6, by_frame)
             self.assertIsNone(by_frame[3]["canonical_player_id"])
             self.assertEqual(by_frame[3]["team_label"], "B")
             self.assertEqual(by_frame[3]["display_label"], "B?")
+            self.assertNotEqual(
+                a03_first["review_target_id"], a03_second["review_target_id"]
+            )
+
+    def test_pre_split_decision_is_preserved_as_orphan_and_never_applied(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            build_segment_review_document(root, match)
+            old_target_id = "review-segment:v1:pre-split-aggregate"
+            _write(
+                root / "reviewed_identity_segment_decisions.json",
+                {
+                    "schema_version": "1.0.0",
+                    "mode": "reviewed_identity_segment_decisions",
+                    "decisions": [
+                        {
+                            "review_target_id": old_target_id,
+                            "candidate_subject_id": "s1",
+                            "tracklet_ids": ["t1"],
+                            "stable_slot_id": "A03",
+                            "source_ownership_digest": "old-aggregate-digest",
+                            "action": "assign_roster_player",
+                            "player_id": "p1",
+                            "team_label": "A",
+                        }
+                    ],
+                },
+            )
+
+            refreshed = build_segment_review_document(root, match)
+            stored = load_segment_decisions(root)
+            assignments = segment_observation_assignments(
+                refreshed,
+                stored,
+                {
+                    "p1": {
+                        "name": "Pawel",
+                        "number": 92,
+                        "team_label": "A",
+                    }
+                },
+            )
+
+            self.assertEqual(assignments, [])
+            self.assertEqual(refreshed["summary"]["targets_reviewed"], 0)
+            self.assertEqual(refreshed["summary"]["stale_decisions"], 1)
+            self.assertEqual(
+                refreshed["summary"]["orphaned_decisions_requiring_review"], 1
+            )
+            self.assertEqual(stored["decisions"][0]["review_target_id"], old_target_id)
 
     def test_progress_counts_targets_instead_of_unsafe_whole_subject_decision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -144,14 +228,16 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
             match = _fixture(root)
             review = build_segment_review_document(root, match)
             progress = build_reviewed_identity_progress(root, match)
-            self.assertEqual(progress["summary"]["important_decisions_remaining"], 2)
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 3)
             self.assertEqual(
                 {row["review_target_id"] for row in progress["next_cases"]},
                 {row["review_target_id"] for row in review["targets"]},
             )
 
             target = next(
-                row for row in review["targets"] if row["stable_slot_id"] == "A03"
+                row
+                for row in review["targets"]
+                if row["stable_slot_id"] == "A03" and row["frame_start"] == 1
             )
             save_segment_decision(
                 root,
@@ -165,10 +251,99 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
             )
             build_segment_review_document(root, match)
             after = build_reviewed_identity_progress(root, match)
-            self.assertEqual(after["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(after["summary"]["important_decisions_remaining"], 2)
+
+    def test_pending_segment_without_crop_is_optional_but_saved_decision_stays_reviewed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root, include_bbox=False)
+            review = build_segment_review_document(root, match)
+            progress = build_reviewed_identity_progress(root, match)
+
+            self.assertTrue(review["targets"])
+            self.assertTrue(
+                all(
+                    not (target["visual_evidence"]["anchor_crops"])
+                    for target in review["targets"]
+                )
+            )
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(progress["summary"]["optional_cases_remaining"], 3)
+            self.assertEqual(progress["next_cases"], [])
+            self.assertTrue(
+                all(
+                    unit["current_resolution_status"] == "pending_optional"
+                    and "mixed_tracklet_segment_without_visual_evidence"
+                    in unit["reason_codes"]
+                    for unit in progress["review_units"]
+                )
+            )
+
+            target = review["targets"][0]
+            save_segment_decision(
+                root,
+                match,
+                {
+                    "review_target_id": target["review_target_id"],
+                    "source_ownership_digest": target["source_ownership_digest"],
+                    "action": "unresolved",
+                },
+            )
+            build_segment_review_document(root, match)
+            reviewed = build_reviewed_identity_progress(root, match)
+            saved_unit = next(
+                unit
+                for unit in reviewed["review_units"]
+                if unit["review_target_id"] == target["review_target_id"]
+            )
+            self.assertEqual(saved_unit["current_resolution_status"], "reviewed_by_operator")
+
+    def test_pending_segment_with_one_crop_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            build_segment_review_document(root, match)
+            progress = build_reviewed_identity_progress(root, match)
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 3)
+            self.assertEqual(len(progress["next_cases"]), 3)
+            self.assertTrue(
+                all(
+                    unit["current_resolution_status"] == "pending_high_priority"
+                    for unit in progress["review_units"]
+                )
+            )
+
+    def test_only_conservative_whole_subject_actions_suppress_mixed_review(self) -> None:
+        for action, expected_targets in (
+            ("unresolved", 0),
+            ("team_unknown", 0),
+            ("assign_team", 3),
+            ("referee", 3),
+            ("false_detection", 3),
+        ):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                match = _fixture(root)
+                _write(
+                    root / "reviewed_identity_slot_assignments.json",
+                    {
+                        "decisions": [
+                            {
+                                "candidate_subject_id": "s1",
+                                "action": action,
+                                "team_label": "B" if action == "assign_team" else None,
+                            }
+                        ]
+                    },
+                )
+
+                review = build_segment_review_document(root, match)
+
+                self.assertEqual(review["summary"]["targets_total"], expected_targets)
 
 
-def _fixture(root: Path) -> dict:
+def _fixture(root: Path, *, include_bbox: bool = True) -> dict:
     match = {
         "id": "m1",
         "teams": [
@@ -184,7 +359,7 @@ def _fixture(root: Path) -> dict:
             "frame": frame,
             "time_sec": frame / 10,
             "status": "detected",
-            "bbox_xyxy": [10, 10, 20, 30],
+            **({"bbox_xyxy": [10, 10, 20, 30]} if include_bbox else {}),
         }
         for frame in range(1, 7)
     ]
@@ -206,7 +381,7 @@ def _fixture(root: Path) -> dict:
                     "tracklet_ids": ["t1"],
                     "positions_m": [
                         {"tracklet_id": "t1", "frame": frame, "status": "detected"}
-                        for frame in (1, 2, 5)
+                        for frame in (1, 2, 5, 6)
                     ],
                 },
                 {
