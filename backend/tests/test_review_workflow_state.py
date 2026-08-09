@@ -75,12 +75,15 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         state = derive_review_workflow_state(evidence(issues={"blocking": 0, "important": 0, "optional": 0}))
         self.assertEqual(state["phase"], "ready_to_finalize")
 
-    def test_frame_resolved_technical_conflict_is_not_an_exception_but_a_real_gap_is(self) -> None:
+    def test_snapshot_only_conflicts_do_not_create_an_empty_exception_queue(self) -> None:
         progress = {"summary": {"structural_blockers": 1, "important_decisions_remaining": 0}}
         resolved = _issue_evidence({"summary": {"conflicted": 0, "blocked": 0}}, progress)
-        unresolved = _issue_evidence({"summary": {"conflicted": 1, "blocked": 0}}, progress)
+        snapshot_only_conflict = _issue_evidence(
+            {"summary": {"conflicted": 1, "blocked": 0}},
+            progress,
+        )
         self.assertEqual(resolved["blocking"], 0)
-        self.assertEqual(unresolved["blocking"], 1)
+        self.assertEqual(snapshot_only_conflict["blocking"], 0)
 
     def test_optional_and_safe_anonymous_subjects_do_not_block_finalize(self) -> None:
         progress = {"summary": {
