@@ -480,6 +480,7 @@ PACKAGE_OPTIONAL_KEYS = [
     "movement_stats",
     "player_stats",
     "player_heatmaps",
+    "team_shape",
     "change_candidates",
     "change_review_report",
     "ball_tracks",
@@ -529,6 +530,7 @@ PACKAGE_EMBEDDED_JSON_FILES = [
     ("player_heatmaps", "player_heatmaps.json"),
     ("team_config", "team_config.json"),
     ("team_stats", "team_stats.json"),
+    ("team_shape", "team_shape.json"),
     ("change_candidates", "change_candidates.json"),
     ("change_review_report", "change_review_report.json"),
     ("ball_analysis_report", "ball_analysis_report.json"),
@@ -1091,6 +1093,7 @@ def get_match(match_id: str) -> dict[str, Any]:
         "player_heatmaps.json",
         "team_config.json",
         "team_stats.json",
+        "team_shape.json",
         "change_candidates.json",
         "change_review_report.json",
         "tracklets.json",
@@ -2418,8 +2421,10 @@ def _refresh_resolved_player_stats_if_stale(path: Path) -> None:
 def build_match_package(path: Path) -> dict[str, Any]:
     _refresh_resolved_player_stats_if_stale(path)
     from app.services.ball_event_rebuild import ensure_ball_event_artifacts_fresh
+    from app.services.team_shape import ensure_team_shape_artifact_fresh
 
     analytics_readiness = ensure_ball_event_artifacts_fresh(path)
+    team_shape_document = ensure_team_shape_artifact_fresh(path)
     meta = read_match_meta(path)
     package = {
         "schema_version": "0.2.0",
@@ -2456,6 +2461,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "player_heatmaps": None,
         "team_config": None,
         "team_stats": None,
+        "team_shape": None,
         "change_candidates": None,
         "change_review_report": None,
         "tracklets": None,
@@ -2483,6 +2489,11 @@ def build_match_package(path: Path) -> dict[str, Any]:
     for key, filename in PACKAGE_EMBEDDED_JSON_FILES:
         file_path = path / filename
         if file_path.exists():
+            if key == "team_shape":
+                if team_shape_document is None:
+                    continue
+                package[key] = team_shape_document
+                continue
             document = _load_package_json_doc(key, file_path)
             if key == "attacking_momentum" and document.get("status") == "not_available":
                 continue
@@ -2547,6 +2558,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         package["assets"]["team_config_json"] = "team_config.json"
     if (path / "team_stats.json").exists():
         package["assets"]["team_stats_json"] = "team_stats.json"
+    if isinstance(package.get("team_shape"), dict):
+        package["assets"]["team_shape_json"] = "team_shape.json"
     if (path / "change_candidates.json").exists():
         package["assets"]["change_candidates_json"] = "change_candidates.json"
     if (path / "change_review_report.json").exists():

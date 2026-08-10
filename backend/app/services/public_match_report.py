@@ -280,6 +280,90 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _public_team_shape(package: dict[str, Any], public_teams: list[dict[str, Any]]) -> dict[str, Any] | None:
+    document = package.get("team_shape") if isinstance(package.get("team_shape"), dict) else None
+    if not document or document.get("available") is not True or document.get("readiness") != "ready":
+        return None
+    source_teams = {
+        str(row.get("team_label") or ""): row
+        for row in document.get("teams") or []
+        if isinstance(row, dict)
+    }
+    teams = []
+    for public_team in public_teams:
+        team_label = str(public_team.get("team_label") or "")
+        source = source_teams.get(team_label)
+        if not source or source.get("readiness") != "ready" or not isinstance(source.get("summary"), dict):
+            return None
+        summary = source["summary"]
+        average_shape = source.get("average_shape") if isinstance(source.get("average_shape"), dict) else {}
+        grid = average_shape.get("grid") if isinstance(average_shape.get("grid"), dict) else {}
+        required_summary = (
+            "average_width_m",
+            "average_depth_m",
+            "average_compactness_m",
+            "average_block_height_percent",
+        )
+        if any(not isinstance(summary.get(key), (int, float)) for key in required_summary):
+            return None
+        if int(grid.get("columns") or 0) <= 0 or int(grid.get("rows") or 0) <= 0:
+            return None
+        teams.append(
+            {
+                "team_label": team_label,
+                "team_id": public_team.get("team_id") or source.get("team_id"),
+                "team_name": public_team.get("team_name") or source.get("team_name") or f"Team {team_label}",
+                "summary": {
+                    "average_width_m": _round(summary.get("average_width_m")),
+                    "average_depth_m": _round(summary.get("average_depth_m")),
+                    "average_compactness_m": _round(summary.get("average_compactness_m")),
+                    "average_block_height_percent": _round(summary.get("average_block_height_percent")),
+                },
+                "average_shape": {
+                    "grid": {"columns": int(grid.get("columns") or 0), "rows": int(grid.get("rows") or 0)},
+                    "cells": [
+                        {
+                            "column": int(cell.get("column") or 0),
+                            "row": int(cell.get("row") or 0),
+                            "value": _round(cell.get("value"), 6),
+                        }
+                        for cell in average_shape.get("cells") or []
+                        if isinstance(cell, dict)
+                    ],
+                },
+                "timeline": [
+                    {
+                        "minute": int(point.get("minute") or 0),
+                        "label": str(point.get("label") or ""),
+                        "width_m": None if point.get("width_m") is None else _round(point.get("width_m")),
+                        "depth_m": None if point.get("depth_m") is None else _round(point.get("depth_m")),
+                        "compactness_m": None
+                        if point.get("compactness_m") is None
+                        else _round(point.get("compactness_m")),
+                        "block_height_percent": None
+                        if point.get("block_height_percent") is None
+                        else _round(point.get("block_height_percent")),
+                    }
+                    for point in source.get("timeline") or []
+                    if isinstance(point, dict)
+                ],
+            }
+        )
+    pitch = document.get("pitch_dimensions_m") if isinstance(document.get("pitch_dimensions_m"), dict) else {}
+    if not isinstance(pitch.get("width_m"), (int, float)) or not isinstance(pitch.get("length_m"), (int, float)):
+        return None
+    return {
+        "available": True,
+        "scope": "all_in_play",
+        "pitch_dimensions_m": {
+            "width_m": _round(pitch.get("width_m")),
+            "length_m": _round(pitch.get("length_m")),
+        },
+        "teams": teams,
+        "takeaways": [str(value) for value in document.get("takeaways") or []][:3],
+    }
+
+
 def _public_match(package: dict[str, Any]) -> dict[str, Any]:
     match = package.get("match") if isinstance(package.get("match"), dict) else {}
     video = match.get("video") if isinstance(match.get("video"), dict) else {}
@@ -598,6 +682,7 @@ def build_public_match_report(
     momentum_status = str(momentum.get("status") or ("completed" if legacy_momentum_available else "not_available"))
     momentum_available = momentum_status not in {"not_available", "stale", "missing_inputs"}
     uses_reviewed_identity = package.get("identity_report_source") == "reviewed_identity"
+    public_teams = _public_teams(package)
     report = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
@@ -621,7 +706,7 @@ def build_public_match_report(
             }
         ),
         "match": _public_match(package),
-        "teams": _public_teams(package),
+        "teams": public_teams,
         "players": _public_players(
             package,
             source_match_dir=source_match_dir,
@@ -659,6 +744,9 @@ def build_public_match_report(
             },
         },
     }
+    team_shape = _public_team_shape(package, public_teams)
+    if team_shape is not None:
+        report["team_shape"] = team_shape
     if uses_reviewed_identity:
         report["reviewed_identity_digest"] = package.get("reviewed_identity_digest")
     return report

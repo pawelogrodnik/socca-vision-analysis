@@ -33,6 +33,12 @@ from app.services.identity_unresolved_overlay import (
     build_visible_player_observations,
     is_unresolved_overlay_row,
 )
+from app.services.artifact_lineage import generated_from_entry
+from app.services.team_assignment import (
+    TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE,
+    TEAM_COLOR_UNKNOWN_CONFIDENCE,
+)
+from app.services.team_shape import build_team_shape_document, observations_from_tracklets
 
 
 MAX_INTERPOLATION_GAP_FRAMES = 15
@@ -42,8 +48,6 @@ DEFAULT_ACTIVE_PLAYERS_CAP = 14
 DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP = 7
 TEAM_COLOR_MIN_REFERENCE_SAMPLES = 2
 TEAM_COLOR_MIN_REFERENCE_QUALITY = 0.22
-TEAM_COLOR_UNKNOWN_CONFIDENCE = 0.42
-TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE = 95.0
 LIVE_STATS_MAX_SPEED_MPS = 8.5
 LIVE_STATS_SUSTAINED_SPEED_MPS = 8.0
 LIVE_STATS_ESTIMATED_GAP_SEC = 2.0
@@ -4415,6 +4419,27 @@ def stabilize_match(
     team_config = build_team_config_document(meta, team_clusters, stable_doc, existing_team_config)
     team_stats = build_team_stats_document(player_stats, team_config)
     stable_doc["team_stats_summary"] = team_stats["summary"]
+    team_shape = build_team_shape_document(
+        player_observations=observations_from_tracklets(tracklets),
+        pitch_width_m=float(pitch.width_m),
+        pitch_length_m=float(pitch.length_m),
+        match_phase_config=match_phase_config,
+        team_config=team_config,
+        video_duration_sec=float(video_metadata.get("duration_sec") or 0.0),
+    )
+    pitch_config_path = match_dir / "pitch_config.json"
+    pitch_config_doc = json.loads(pitch_config_path.read_text(encoding="utf-8")) if pitch_config_path.exists() else {}
+    team_shape["generated_from"] = [
+        generated_from_entry("tracklets.json", tracklets_doc),
+        generated_from_entry("pitch_config.json", pitch_config_doc),
+        generated_from_entry("team_config.json", team_config),
+        generated_from_entry("match.json", meta),
+        *(
+            [generated_from_entry("match_phase_config.json", match_phase_config)]
+            if isinstance(match_phase_config, dict)
+            else []
+        ),
+    ]
     player_heatmaps = build_player_heatmaps_document(stable_doc, match_dir)
     stable_doc["player_heatmaps_summary"] = player_heatmaps["summary"]
     change_artifacts = write_change_candidate_artifacts(match_dir, stable_doc)
@@ -4537,6 +4562,7 @@ def stabilize_match(
     (match_dir / "player_heatmaps.json").write_text(json.dumps(player_heatmaps, indent=2), encoding="utf-8")
     (match_dir / "team_config.json").write_text(json.dumps(team_config, indent=2), encoding="utf-8")
     (match_dir / "team_stats.json").write_text(json.dumps(team_stats, indent=2), encoding="utf-8")
+    (match_dir / "team_shape.json").write_text(json.dumps(team_shape, indent=2, ensure_ascii=False), encoding="utf-8")
     (match_dir / "tracklets.json").write_text(json.dumps(tracklets_doc, indent=2), encoding="utf-8")
     (match_dir / "tracking_quality_report.json").write_text(json.dumps(tracking_quality_report, indent=2), encoding="utf-8")
     (match_dir / "stabilization_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -4558,6 +4584,7 @@ def stabilize_match(
         "player_heatmaps": player_heatmaps,
         "team_config": team_config,
         "team_stats": team_stats,
+        "team_shape": team_shape,
         "change_candidates": change_artifacts["change_candidates"],
         "change_review_report": change_artifacts["change_review_report"],
         "tracklets": tracklets_doc,
@@ -4581,6 +4608,7 @@ def stabilize_match(
             "player_heatmaps": "player_heatmaps.json",
             "team_config": "team_config.json",
             "team_stats": "team_stats.json",
+            "team_shape": "team_shape.json",
             **change_artifacts["artifacts"],
             "tracklets": "tracklets.json",
             "tracking_quality_report": "tracking_quality_report.json",

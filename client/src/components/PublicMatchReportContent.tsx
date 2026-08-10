@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
 import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
+import { TeamShapeSection } from './TeamShapeSection';
 import {
   displayJerseyNumber,
   hasAdvancedPlayerMetrics,
@@ -366,6 +367,8 @@ export function PublicMatchReportContent({
           Fragmenty z małą liczbą obserwacji są orientacyjne.
         </p>
       </section>
+
+      <TeamShapeSection reportTeams={report.teams} teamShape={report.team_shape} />
 
       {playerReadyMomentum ? (
         <section className='card public-charts-card'>

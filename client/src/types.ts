@@ -762,6 +762,46 @@ export type AttackingMomentumDocument = {
   notes?: string[];
 };
 
+export type TeamShapeDocument = {
+  available?: boolean;
+  scope?: 'all_in_play' | string;
+  pitch_dimensions_m?: {
+    width_m: number;
+    length_m: number;
+  };
+  takeaways?: string[];
+  teams?: Array<{
+    team_label?: string;
+    team_id?: string | null;
+    team_name?: string | null;
+    summary?: {
+      average_width_m?: number;
+      average_depth_m?: number;
+      average_compactness_m?: number;
+      average_block_height_percent?: number;
+    };
+    average_shape?: {
+      grid: {
+        columns: number;
+        rows: number;
+      };
+      cells: Array<{
+        column: number;
+        row: number;
+        value: number;
+      }>;
+    };
+    timeline?: Array<{
+      minute?: number;
+      label?: string;
+      width_m?: number | null;
+      depth_m?: number | null;
+      compactness_m?: number | null;
+      block_height_percent?: number | null;
+    }>;
+  }>;
+};
+
 export type ContactCandidateReviewStatus = 'needs_review' | 'accepted' | 'rejected' | 'uncertain';
 
 export type ContactCandidate = {
@@ -2376,6 +2416,7 @@ export type PublicMatchReport = {
   };
   teams: PublicReportTeam[];
   players: PublicReportPlayer[];
+  team_shape?: TeamShapeDocument | null;
   ball?: {
     known_possession_coverage?: number;
     controlled_coverage?: number;
