@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from app.services.match_phase_config import save_match_phase_config
 from app.services.team_shape import (
     build_team_shape_document,
     build_team_shape_takeaways,
@@ -258,6 +259,66 @@ def test_reviewed_side_switch_keeps_shape_density_and_height_aligned() -> None:
     assert result["diagnostics"]["temporal_coverage"] == 1.0
     assert result["timeline"][1]["active_period_duration_sec"] == 0.0
     assert result["timeline"][1]["width_m"] is None
+
+
+def test_real_two_by_twenty_match_excludes_halftime_from_coverage() -> None:
+    team_a_first = POSITIONS + [[15.0, 35.0]]
+    team_a_second = [[PITCH_WIDTH - x, PITCH_LENGTH - y] for x, y in team_a_first]
+    phases = {
+        "periods": [
+            {
+                "period_id": "first_half",
+                "start_time_sec": 0.0,
+                "end_time_sec": 1200.0,
+                "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"},
+            },
+            {
+                "period_id": "second_half",
+                "start_time_sec": 1500.0,
+                "end_time_sec": 2700.0,
+                "team_attack_directions": {"A": "towards_y_max", "B": "towards_y_min"},
+            },
+        ],
+        "summary": {"periods": 2, "has_second_half": True, "needs_review": False},
+    }
+    rows = []
+    for second in (*range(0, 1200, 10), *range(1500, 2700, 10)):
+        first_half = second < 1200
+        rows += observations(
+            team_a_first if first_half else team_a_second,
+            time_sec=float(second),
+            frame=second,
+        )
+        rows += observations(
+            team_a_second if first_half else team_a_first,
+            team="B",
+            time_sec=float(second),
+            frame=second,
+        )
+
+    document = build_team_shape_document(
+        player_observations=rows,
+        pitch_width_m=PITCH_WIDTH,
+        pitch_length_m=PITCH_LENGTH,
+        match_phase_config=phases,
+        video_duration_sec=2700.0,
+        expected_sample_interval_sec=10.0,
+    )
+    result = team(document)
+
+    assert document["available"] is True
+    assert result["readiness"] == "ready"
+    assert result["diagnostics"]["active_period_duration_sec"] == 2400.0
+    assert result["diagnostics"]["expected_active_samples"] == 240
+    assert result["diagnostics"]["temporal_coverage"] == 1.0
+    halftime = result["timeline"][20:25]
+    assert len(halftime) == 5
+    assert all(point["active_period_duration_sec"] == 0.0 for point in halftime)
+    assert all(
+        point[key] is None
+        for point in halftime
+        for key in ("width_m", "depth_m", "compactness_m", "block_height_percent")
+    )
 
 
 def test_over_cap_frame_is_excluded_instead_of_truncated() -> None:
@@ -576,6 +637,32 @@ def test_match_phase_review_state_change_rebuilds_public_availability() -> None:
         reviewed = ensure_team_shape_artifact_fresh(root)
         assert reviewed is not None
         assert reviewed["available"] is True
+
+
+def test_match_phase_save_immediately_rebuilds_team_shape_with_halftime_gap() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_reviewed_shape_fixture(root)
+        match = json.loads((root / "match.json").read_text(encoding="utf-8"))
+        match["video"]["duration_sec"] = 180.0
+        _write_json(root / "match.json", match)
+        previous = ensure_team_shape_artifact_fresh(root)
+        assert previous is not None
+
+        save_match_phase_config(
+            root,
+            match,
+            {
+                "first_half_end_time_sec": 60.0,
+                "second_half_start_time_sec": 120.0,
+                "second_half_end_time_sec": 180.0,
+                "team_a_first_half_direction": "towards_y_min",
+            },
+        )
+
+        rebuilt = json.loads((root / "team_shape.json").read_text(encoding="utf-8"))
+        assert rebuilt["generated_at"] != previous["generated_at"]
+        assert rebuilt["parameters"]["active_period_duration_sec"] == 120.0
 
 
 def _write_reviewed_shape_fixture(root: Path) -> None:

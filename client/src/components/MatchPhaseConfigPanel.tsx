@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getMatchPhaseConfig, saveMatchPhaseConfig } from '../api';
 import type { Match, MatchPhaseConfigDocument } from '../types';
+import { buildMatchPhasePayload, matchPhaseFormValues } from '../utils/matchPhaseConfig';
 
 interface MatchPhaseConfigPanelProps {
   match: Match;
@@ -16,6 +17,7 @@ const TEAM_A_DIRECTIONS = [
 
 export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelProps) {
   const [document, setDocument] = useState<MatchPhaseConfigDocument | null>(match.match_phase_config || null);
+  const [firstHalfEnd, setFirstHalfEnd] = useState('');
   const [secondHalfStart, setSecondHalfStart] = useState('');
   const [teamADirection, setTeamADirection] = useState('towards_y_min');
   const [loading, setLoading] = useState(false);
@@ -29,8 +31,10 @@ export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelP
 
   useEffect(() => {
     if (!document) return;
-    setSecondHalfStart(document.second_half_start_time_sec != null ? String(document.second_half_start_time_sec) : '');
-    setTeamADirection(document.default_team_a_first_half_direction || firstTeamADirection(document) || 'towards_y_min');
+    const values = matchPhaseFormValues(document);
+    setFirstHalfEnd(values.firstHalfEnd);
+    setSecondHalfStart(values.secondHalfStart);
+    setTeamADirection(values.teamADirection);
   }, [document]);
 
   useEffect(() => {
@@ -65,26 +69,16 @@ export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelP
     setSaving(true);
     setError('');
     setMessage('');
-    const trimmed = secondHalfStart.trim();
-    const parsedSecondHalfStart = Number(trimmed);
-    if (trimmed && !Number.isFinite(parsedSecondHalfStart)) {
+    const result = buildMatchPhasePayload({ firstHalfEnd, secondHalfStart, teamADirection });
+    if (result.payload === null) {
       setSaving(false);
-      setError('Start drugiej polowy musi byc liczba sekund.');
+      setError(result.error);
       return;
     }
-    const payload = trimmed
-      ? {
-          second_half_start_time_sec: parsedSecondHalfStart,
-          team_a_first_half_direction: teamADirection
-        }
-      : {
-          second_half_start_time_sec: null,
-          team_a_first_half_direction: teamADirection
-        };
     try {
-      const nextDocument = await saveMatchPhaseConfig(match.id, payload);
+      const nextDocument = await saveMatchPhaseConfig(match.id, result.payload);
       setDocument(nextDocument);
-      setMessage('Zapisano fazy meczu i odswiezono pass_candidates.json.');
+      setMessage('Zapisano fazy meczu i odświeżono zależne analizy.');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
@@ -102,7 +96,7 @@ export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelP
         <div>
           <strong>Match phase / attack direction</strong>
           <span>
-            Ustaw poczatek drugiej polowy, jesli video zawiera zmiane stron. Kierunek jest uzywany w analizie ustawienia druzyn i statystykach kandydatow.
+            Ustaw koniec pierwszej i początek drugiej połowy, aby pominąć przerwę. Kierunek jest używany w analizie ustawienia drużyn i statystykach kandydatów.
           </span>
         </div>
         <button type='button' onClick={save} disabled={saving || loading}>
@@ -114,14 +108,25 @@ export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelP
       {message && <span className='success'>{message}</span>}
       <div className='row'>
         <label>
-          Start drugiej polowy (sek.)
+          Koniec pierwszej połowy (sek.)
+          <input
+            type='number'
+            min='0'
+            step='0.1'
+            value={firstHalfEnd}
+            onChange={(event) => setFirstHalfEnd(event.target.value)}
+            placeholder='np. 1200'
+          />
+        </label>
+        <label>
+          Początek drugiej połowy (sek.)
           <input
             type='number'
             min='0'
             step='0.1'
             value={secondHalfStart}
             onChange={(event) => setSecondHalfStart(event.target.value)}
-            placeholder='np. 2700'
+            placeholder='np. 1500'
           />
         </label>
         <label>
@@ -148,9 +153,4 @@ export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelP
       )}
     </div>
   );
-}
-
-function firstTeamADirection(document: MatchPhaseConfigDocument): string | null {
-  const first = document.periods[0];
-  return first?.team_attack_directions?.A || null;
 }

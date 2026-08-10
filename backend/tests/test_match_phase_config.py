@@ -7,6 +7,7 @@ from pathlib import Path
 from app.services.match_phase_config import (
     build_default_match_phase_config,
     build_two_half_match_phase_config,
+    configured_active_periods,
     direction_for_team_at_time,
     load_match_phase_config,
     match_phase_directions_are_trusted,
@@ -37,6 +38,32 @@ class MatchPhaseConfigTests(unittest.TestCase):
         self.assertEqual(direction_for_team_at_time(document, "A", 2.0)["attack_direction"], "towards_y_min")
         self.assertEqual(direction_for_team_at_time(document, "A", 7.0)["attack_direction"], "towards_y_max")
         self.assertEqual(direction_for_team_at_time(document, "B", 7.0)["attack_direction"], "towards_y_min")
+
+    def test_two_half_config_preserves_explicit_halftime_gap(self) -> None:
+        meta = {"video": {"duration_sec": 2700.0}}
+        document = build_two_half_match_phase_config(
+            meta,
+            first_half_end_time_sec=1200.0,
+            second_half_start_time_sec=1500.0,
+            second_half_end_time_sec=2700.0,
+        )
+
+        self.assertEqual(document["periods"][0]["start_time_sec"], 0.0)
+        self.assertEqual(document["periods"][0]["end_time_sec"], 1200.0)
+        self.assertEqual(document["periods"][1]["start_time_sec"], 1500.0)
+        self.assertEqual(document["periods"][1]["end_time_sec"], 2700.0)
+        self.assertEqual(
+            configured_active_periods(document, duration_sec=2700.0),
+            [(0.0, 1200.0), (1500.0, 2700.0)],
+        )
+
+    def test_two_half_config_rejects_reversed_halftime_boundaries(self) -> None:
+        with self.assertRaisesRegex(ValueError, "First-half end"):
+            build_two_half_match_phase_config(
+                {"video": {"duration_sec": 2700.0}},
+                first_half_end_time_sec=1500.0,
+                second_half_start_time_sec=1200.0,
+            )
 
     def test_save_config_persists_and_refreshes_without_event_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

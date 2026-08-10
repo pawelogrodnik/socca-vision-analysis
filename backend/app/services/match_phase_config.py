@@ -75,6 +75,8 @@ def build_two_half_match_phase_config(
     first_start = _clamp_time(first_half_start_time_sec, duration_sec)
     first_end = _clamp_time(first_half_end_time_sec if first_half_end_time_sec is not None else second_start, duration_sec)
     second_end = _clamp_time(second_half_end_time_sec if second_half_end_time_sec is not None else duration_sec, duration_sec)
+    if first_end > second_start:
+        raise ValueError("First-half end must not be after second-half start")
     team_a_first = _normalize_direction(team_a_first_half_direction)
     team_b_first = _opposite_direction(team_a_first)
     team_a_second = _opposite_direction(team_a_first)
@@ -161,6 +163,9 @@ def save_match_phase_config(match_path: Path, meta: dict[str, Any], payload: dic
         trigger="match_phase_review",
         match_phase_config_doc=document,
     )
+    from app.services.team_shape import ensure_team_shape_artifact_fresh
+
+    ensure_team_shape_artifact_fresh(match_path)
     return document
 
 
