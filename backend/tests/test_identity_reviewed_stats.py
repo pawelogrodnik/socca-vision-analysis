@@ -74,6 +74,45 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             heatmap = documents["reviewed_player_heatmaps.json"]["heatmaps"][0]
             self.assertEqual(heatmap["samples"], 2)
 
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_reviewed_movement_preserves_speed_and_intensity_metrics(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 100,
+            "duration_sec": 4.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [_tracklet("runner", list(range(25)))]}),
+                encoding="utf-8",
+            )
+            snapshot = {
+                "semantic_digest": "snapshot",
+                "tracklet_assignments": [
+                    _assignment("runner", "confirmed", "p1")
+                ],
+                "observation_overrides": [],
+                "observation_demotions": [],
+                "summary": {},
+            }
+
+            documents = build_reviewed_stats(root, snapshot, {})
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            self.assertAlmostEqual(player["speed"]["avg_speed_kmh"], 8.64, places=2)
+            self.assertAlmostEqual(
+                player["speed"]["peak_sustained_speed_kmh"], 9.0, places=1
+            )
+            self.assertEqual(player["speed"]["top_speed_kmh"], player["speed"]["peak_sustained_speed_kmh"])
+            self.assertEqual(player["intensity"]["high_intensity_distance_m"], 0.0)
+            self.assertEqual(player["intensity"]["sprint_count"], 0)
+            self.assertEqual(player["readiness"]["speed"], "experimental")
+
 
 def _tracklet(tracklet_id: str, frames: list[int]) -> dict:
     return {

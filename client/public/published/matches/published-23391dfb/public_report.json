@@ -739,7 +739,7 @@
     "restart_passes": 1,
     "same_team_pass_candidates": 11
   },
-  "generated_at": "2026-08-09T15:01:36.446152+00:00",
+  "generated_at": "2026-08-10T08:41:27.835999+00:00",
   "id": "published-23391dfb",
   "match": {
     "duration_sec": 91.39,
@@ -753,7 +753,7 @@
   "players": [
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 5.2,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 84.35,
       "continuity_gap_time_sec": 0.0,
@@ -1886,8 +1886,8 @@
         "quality": "high",
         "samples": 2528
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 11.22,
+      "peak_speed_kmh": 17.16,
       "player_id": "team-corgi-1fc405-player-7-andrzej",
       "player_name": "Andrzej",
       "player_number": "8",
@@ -1900,11 +1900,11 @@
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
-      "total_distance_m": 121.75
+      "total_distance_m": 121.76
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 4.43,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 80.95,
       "continuity_gap_time_sec": 0.0,
@@ -2907,8 +2907,8 @@
         "quality": "high",
         "samples": 2426
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 6.21,
+      "peak_speed_kmh": 16.18,
       "player_id": "team-corgi-1fc405-player-2-krzysiek",
       "player_name": "Krzysiek",
       "player_number": "10",
@@ -2925,7 +2925,7 @@
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 2.05,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 82.28,
       "continuity_gap_time_sec": 0.0,
@@ -3268,8 +3268,8 @@
         "quality": "high",
         "samples": 2466
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 0.8,
+      "peak_speed_kmh": 10.73,
       "player_id": "team-corgi-1fc405-player-6-mati-gk",
       "player_name": "Mati GK",
       "player_number": null,
@@ -3286,7 +3286,7 @@
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 4.87,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 86.32,
       "continuity_gap_time_sec": 0.0,
@@ -4479,8 +4479,8 @@
         "quality": "high",
         "samples": 2587
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 11.35,
+      "peak_speed_kmh": 18.45,
       "player_id": "team-corgi-1fc405-player-1-pawel",
       "player_name": "Pawel",
       "player_number": "92",
@@ -4497,7 +4497,7 @@
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 5.6,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 76.38,
       "continuity_gap_time_sec": 0.0,
@@ -5660,8 +5660,8 @@
         "quality": "high",
         "samples": 2289
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 16.31,
+      "peak_speed_kmh": 17.93,
       "player_id": "team-corgi-1fc405-player-9-piotrek",
       "player_name": "Piotrek",
       "player_number": "15",
@@ -5674,11 +5674,11 @@
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
-      "total_distance_m": 118.82
+      "total_distance_m": 118.83
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 4.87,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 80.88,
       "continuity_gap_time_sec": 0.0,
@@ -6781,8 +6781,8 @@
         "quality": "high",
         "samples": 2424
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 2.57,
+      "peak_speed_kmh": 13.51,
       "player_id": "team-corgi-1fc405-player-3-przemek",
       "player_name": "Przemek",
       "player_number": null,
@@ -6799,7 +6799,7 @@
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 0.0,
+      "avg_speed_kmh": 6.46,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 83.85,
       "continuity_gap_time_sec": 0.0,
@@ -8212,8 +8212,8 @@
         "quality": "high",
         "samples": 2513
       },
-      "high_intensity_distance_m": 0.0,
-      "peak_speed_kmh": 0.0,
+      "high_intensity_distance_m": 42.13,
+      "peak_speed_kmh": 18.84,
       "player_id": "team-corgi-1fc405-player-10-roman",
       "player_name": "Roman",
       "player_number": "6",
@@ -8230,7 +8230,7 @@
     }
   ],
   "report_type": "public_match_report",
-  "reviewed_identity_digest": "3a8cd5bff786d0f5cd3dac435a58bab44f84026027946e86534e5774a506ae40",
+  "reviewed_identity_digest": "43bad801d348696b4fd1553d22969dc50b60b0c2db3b2f385b899d5e94b76be3",
   "schema_version": "0.1.0",
   "source_match_id": "23391dfb",
   "stats_semantics": {
