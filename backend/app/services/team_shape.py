@@ -9,10 +9,16 @@ from statistics import median
 from typing import Any
 
 from app.services.artifact_lineage import canonical_json_sha256, generated_from_entry
-from app.services.match_phase_config import ATTACK_DIRECTIONS, direction_for_team_at_time
+from app.services.match_phase_config import (
+    ATTACK_DIRECTIONS,
+    configured_active_periods,
+    direction_for_team_at_time,
+    match_phase_directions_are_trusted,
+)
+from app.services.team_assignment import is_trusted_tracklet_team_assignment
 
 
-ALGORITHM_VERSION = "team_shape_spatial_v1"
+ALGORITHM_VERSION = "team_shape_spatial_v1_1"
 MIN_TEAM_POSITIONS = 5
 MAX_TEAM_POSITIONS = 7
 TIMELINE_BIN_SEC = 60.0
@@ -109,6 +115,7 @@ def observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[dict[st
     observations: list[dict[str, Any]] = []
     for tracklet in tracklets:
         team_label = str(tracklet.get("team_label") or "U").upper()
+        trusted = is_trusted_tracklet_team_assignment(tracklet)
         for position in tracklet.get("positions") or tracklet.get("positions_m") or []:
             observations.append(
                 {
@@ -118,7 +125,11 @@ def observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[dict[st
                     "pitch_m": position.get("smoothed_pitch_m") or position.get("pitch_m"),
                     "play_area_status": position.get("play_area_status") or "inside_play",
                     "source": position.get("source") or "detected",
-                    "trusted": team_label in {"A", "B"},
+                    "trusted": trusted,
+                    "team_confidence": tracklet.get("team_confidence"),
+                    "team_assignment_reason": tracklet.get("team_assignment_reason"),
+                    "team_cluster_id": tracklet.get("team_cluster_id"),
+                    "team_id": tracklet.get("team_id"),
                 }
             )
     return observations
@@ -178,6 +189,10 @@ def build_team_shape_document(
         float(video_duration_sec or 0.0),
         max([float(row.get("time_sec") or 0.0) for row in eligible] or [0.0]) + sample_interval_sec,
     )
+    active_periods = configured_active_periods(match_phase_config, duration_sec=duration_sec)
+    active_period_duration_sec = sum(end - start for start, end in active_periods)
+    expected_active_samples = math.ceil(active_period_duration_sec / sample_interval_sec) if active_period_duration_sec > 0 else 0
+    direction_trusted = match_phase_directions_are_trusted(match_phase_config)
     grouped: dict[tuple[str, int, float], list[dict[str, Any]]] = defaultdict(list)
     for row in eligible:
         grouped[(str(row["team_label"]), int(row.get("frame") or 0), float(row.get("time_sec") or 0.0))].append(row)
@@ -193,8 +208,11 @@ def build_team_shape_document(
         for (label, frame, time_sec), rows in sorted(grouped.items(), key=lambda item: (item[0][2], item[0][1])):
             if label != team_label:
                 continue
+            phase = direction_for_team_at_time(match_phase_config, team_label, time_sec)
+            if phase["period_id"] is None:
+                continue
             candidate_frames += 1
-            direction = direction_for_team_at_time(match_phase_config, team_label, time_sec)["attack_direction"]
+            direction = phase["attack_direction"]
             if direction not in ATTACK_DIRECTIONS - {"unknown"}:
                 continue
             direction_frames += 1
@@ -208,12 +226,12 @@ def build_team_shape_document(
                 continue
             frame_shapes.append({**shape, "frame": frame, "time_sec": time_sec})
 
-        expected_frames = max(1, math.ceil(duration_sec / sample_interval_sec))
-        coverage = len(frame_shapes) / expected_frames
+        coverage = len(frame_shapes) / expected_active_samples if expected_active_samples > 0 else 0.0
         direction_coverage = direction_frames / max(1, candidate_frames)
         over_cap_ratio = over_cap_frames / max(1, candidate_frames)
         median_players = float(median([row["players"] for row in frame_shapes])) if frame_shapes else 0.0
-        readiness = _readiness(coverage, median_players, over_cap_ratio, direction_coverage)
+        spatial_readiness = _readiness(coverage, median_players, over_cap_ratio, direction_coverage)
+        readiness = _direction_gated_readiness(spatial_readiness, direction_trusted)
         details = details_by_team.get(team_label, {})
         teams.append(
             {
@@ -223,14 +241,17 @@ def build_team_shape_document(
                 "readiness": readiness,
                 "summary": _summary(frame_shapes),
                 "average_shape": _density(frame_shapes),
-                "timeline": _timeline(frame_shapes, duration_sec, sample_interval_sec),
+                "timeline": _timeline(frame_shapes, duration_sec, sample_interval_sec, active_periods),
                 "diagnostics": {
+                    "active_period_duration_sec": round(active_period_duration_sec, 3),
+                    "expected_active_samples": expected_active_samples,
                     "eligible_frames": len(frame_shapes),
                     "candidate_frames": candidate_frames,
                     "over_cap_frames": over_cap_frames,
                     "invalid_geometry_frames": invalid_geometry_frames,
                     "temporal_coverage": round(coverage, 4),
                     "direction_coverage": round(direction_coverage, 4),
+                    "attack_direction_trusted": direction_trusted,
                     "over_cap_frame_ratio": round(over_cap_ratio, 4),
                     "median_usable_players": median_players,
                 },
@@ -253,6 +274,8 @@ def build_team_shape_document(
             "timeline_bin_sec": TIMELINE_BIN_SEC,
             "minimum_timeline_coverage": MIN_TIMELINE_COVERAGE,
             "expected_sample_interval_sec": round(sample_interval_sec, 6),
+            "active_period_duration_sec": round(active_period_duration_sec, 3),
+            "expected_active_samples": expected_active_samples,
             "density_columns": DENSITY_COLUMNS,
             "density_rows": DENSITY_ROWS,
         },
@@ -307,7 +330,12 @@ def _density(frame_shapes: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _timeline(rows: list[dict[str, Any]], duration_sec: float, sample_interval_sec: float) -> list[dict[str, Any]]:
+def _timeline(
+    rows: list[dict[str, Any]],
+    duration_sec: float,
+    sample_interval_sec: float,
+    active_periods: list[tuple[float, float]],
+) -> list[dict[str, Any]]:
     bin_count = max(1, math.ceil(duration_sec / TIMELINE_BIN_SEC))
     by_bin: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -316,13 +344,15 @@ def _timeline(rows: list[dict[str, Any]], duration_sec: float, sample_interval_s
     for index in range(bin_count):
         start = index * TIMELINE_BIN_SEC
         end = min(duration_sec, start + TIMELINE_BIN_SEC)
-        expected = max(1, math.ceil(max(0.0, end - start) / sample_interval_sec))
+        active_duration = sum(max(0.0, min(end, period_end) - max(start, period_start)) for period_start, period_end in active_periods)
+        expected = math.ceil(active_duration / sample_interval_sec) if active_duration > 0 else 0
         values = by_bin.get(index, [])
-        summary = _summary(values) if len(values) / expected >= MIN_TIMELINE_COVERAGE else None
+        summary = _summary(values) if expected > 0 and len(values) / expected >= MIN_TIMELINE_COVERAGE else None
         timeline.append(
             {
                 "minute": index + 1,
                 "label": f"{int(start // 60):02d}:{int(start % 60):02d}",
+                "active_period_duration_sec": round(active_duration, 3),
                 "width_m": summary["average_width_m"] if summary else None,
                 "depth_m": summary["average_depth_m"] if summary else None,
                 "compactness_m": summary["average_compactness_m"] if summary else None,
@@ -344,6 +374,12 @@ def _readiness(coverage: float, median_players: float, over_cap_ratio: float, di
     if coverage >= 0.6 and median_players >= 5.0 and over_cap_ratio <= 0.05 and direction_coverage >= 0.8:
         return "experimental"
     return "not_available"
+
+
+def _direction_gated_readiness(spatial_readiness: str, direction_trusted: bool) -> str:
+    if direction_trusted or spatial_readiness == "not_available":
+        return spatial_readiness
+    return "experimental"
 
 
 def _document_readiness(teams: list[dict[str, Any]]) -> str:
@@ -395,6 +431,8 @@ def _validate_pitch(width_m: float, length_m: float) -> None:
 def _freshness_status(match_path: Path, document: dict[str, Any] | None) -> str:
     if not document or not isinstance(document.get("generated_from"), list):
         return "missing_inputs"
+    if document.get("algorithm_version") != ALGORITHM_VERSION:
+        return "stale"
     entries = document["generated_from"]
     artifacts = {
         str(entry.get("artifact"))

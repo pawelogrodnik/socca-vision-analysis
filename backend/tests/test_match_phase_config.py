@@ -9,6 +9,7 @@ from app.services.match_phase_config import (
     build_two_half_match_phase_config,
     direction_for_team_at_time,
     load_match_phase_config,
+    match_phase_directions_are_trusted,
     save_match_phase_config,
 )
 
@@ -22,6 +23,8 @@ class MatchPhaseConfigTests(unittest.TestCase):
 
         self.assertEqual(document["summary"]["periods"], 1)
         self.assertFalse(document["summary"]["has_second_half"])
+        self.assertTrue(document["summary"]["needs_review"])
+        self.assertFalse(match_phase_directions_are_trusted(document))
         self.assertEqual(direction_for_team_at_time(document, "A", 1.0)["attack_direction"], "towards_y_min")
         self.assertEqual(direction_for_team_at_time(document, "B", 1.0)["attack_direction"], "towards_y_max")
 
@@ -30,6 +33,7 @@ class MatchPhaseConfigTests(unittest.TestCase):
 
         self.assertEqual(document["summary"]["periods"], 2)
         self.assertTrue(document["summary"]["has_second_half"])
+        self.assertTrue(match_phase_directions_are_trusted(document))
         self.assertEqual(direction_for_team_at_time(document, "A", 2.0)["attack_direction"], "towards_y_min")
         self.assertEqual(direction_for_team_at_time(document, "A", 7.0)["attack_direction"], "towards_y_max")
         self.assertEqual(direction_for_team_at_time(document, "B", 7.0)["attack_direction"], "towards_y_min")
@@ -45,6 +49,18 @@ class MatchPhaseConfigTests(unittest.TestCase):
             self.assertTrue((match_path / "match_phase_config.json").exists())
             self.assertEqual(saved["second_half_start_time_sec"], 5.0)
             self.assertEqual(direction_for_team_at_time(saved, "A", 7.0)["attack_direction"], "towards_y_max")
+
+    def test_explicit_single_period_save_marks_direction_as_reviewed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = save_match_phase_config(
+                Path(tmp),
+                META,
+                {"second_half_start_time_sec": None, "team_a_first_half_direction": "towards_y_max"},
+            )
+
+            self.assertFalse(saved["summary"]["needs_review"])
+            self.assertTrue(match_phase_directions_are_trusted(saved))
+            self.assertEqual(saved["periods"][0]["direction_source"], "configured_single_period")
 
 
 if __name__ == "__main__":

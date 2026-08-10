@@ -102,7 +102,7 @@ export function MatchPhaseConfigPanel({ match, enabled }: MatchPhaseConfigPanelP
         <div>
           <strong>Match phase / attack direction</strong>
           <span>
-            Ustaw poczatek drugiej polowy, jesli video zawiera zmiane stron. Kierunek jest uzywany tylko w candidate stats.
+            Ustaw poczatek drugiej polowy, jesli video zawiera zmiane stron. Kierunek jest uzywany w analizie ustawienia druzyn i statystykach kandydatow.
           </span>
         </div>
         <button type='button' onClick={save} disabled={saving || loading}>

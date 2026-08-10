@@ -19,6 +19,7 @@ def build_default_match_phase_config(
     meta: dict[str, Any],
     *,
     team_a_first_half_direction: str = DEFAULT_TEAM_A_FIRST_HALF_DIRECTION,
+    needs_review: bool = True,
 ) -> dict[str, Any]:
     duration_sec = _video_duration_sec(meta)
     team_a_direction = _normalize_direction(team_a_first_half_direction)
@@ -30,7 +31,7 @@ def build_default_match_phase_config(
         end_time_sec=duration_sec,
         team_a_direction=team_a_direction,
         team_b_direction=team_b_direction,
-        source="default_single_period",
+        source="default_single_period" if needs_review else "configured_single_period",
     )
     return {
         "schema_version": "0.1.0",
@@ -47,10 +48,14 @@ def build_default_match_phase_config(
         "summary": {
             "periods": 1,
             "has_second_half": False,
-            "needs_review": True,
+            "needs_review": needs_review,
         },
         "notes": [
-            "Default assumes Team A attacks towards lower pitch y in the first period and Team B the opposite direction.",
+            (
+                "Default assumes Team A attacks towards lower pitch y in the first period and Team B the opposite direction."
+                if needs_review
+                else "The operator confirmed Team A's attack direction for the configured single period."
+            ),
             "Set second_half_start_time_sec when the video contains a side switch.",
         ],
     }
@@ -144,6 +149,7 @@ def save_match_phase_config(match_path: Path, meta: dict[str, Any], payload: dic
         document = build_default_match_phase_config(
             meta,
             team_a_first_half_direction=str(payload.get("team_a_first_half_direction")),
+            needs_review=False,
         )
     else:
         document = normalize_match_phase_config(dict(payload), meta)
@@ -177,6 +183,51 @@ def direction_for_team_at_time(config: dict[str, Any] | None, team_label: Any, t
                 "direction_source": period.get("direction_source") or period.get("source") or "match_phase_config",
             }
     return {"period_id": None, "attack_direction": "unknown", "direction_source": "outside_configured_periods"}
+
+
+def match_phase_directions_are_trusted(config: dict[str, Any] | None) -> bool:
+    if not isinstance(config, dict):
+        return False
+    summary = config.get("summary") if isinstance(config.get("summary"), dict) else {}
+    periods = config.get("periods") if isinstance(config.get("periods"), list) else []
+    if summary.get("needs_review") is not False or not periods:
+        return False
+    for period in periods:
+        directions = period.get("team_attack_directions") if isinstance(period, dict) else None
+        if not isinstance(directions, dict):
+            return False
+        if any(_normalize_direction(directions.get(label)) == "unknown" for label in ("A", "B")):
+            return False
+    return True
+
+
+def configured_active_periods(
+    config: dict[str, Any] | None,
+    *,
+    duration_sec: float,
+) -> list[tuple[float, float]]:
+    periods = config.get("periods") if isinstance(config, dict) and isinstance(config.get("periods"), list) else []
+    intervals: list[tuple[float, float]] = []
+    for period in periods:
+        if not isinstance(period, dict):
+            continue
+        directions = period.get("team_attack_directions") if isinstance(period.get("team_attack_directions"), dict) else {}
+        if any(_normalize_direction(directions.get(label)) == "unknown" for label in ("A", "B")):
+            continue
+        try:
+            start = max(0.0, float(period.get("start_time_sec") or 0.0))
+            end = min(duration_sec, float(period.get("end_time_sec") if period.get("end_time_sec") is not None else duration_sec))
+        except (TypeError, ValueError):
+            continue
+        if end > start:
+            intervals.append((start, end))
+    merged: list[tuple[float, float]] = []
+    for start, end in sorted(intervals):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def normalize_match_phase_config(document: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:

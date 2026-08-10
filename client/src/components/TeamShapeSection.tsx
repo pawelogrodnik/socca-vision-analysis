@@ -105,6 +105,9 @@ export function TeamShapeSection({ teamShape, reportTeams }: TeamShapeSectionPro
         ))}
       </div>
       <h3>Średnie ustawienie</h3>
+      <p className='muted'>
+        Jaśniejsze pola pokazują strefy boiska częściej zajmowane przez zespół. Obie drużyny pokazano w tym samym kierunku ataku.
+      </p>
       <div className='team-shape-pitches'>
         {teamShape.teams.map((team, index) => (
           <DensityPitch color={colors[index]} key={team.team_label || team.team_id || team.team_name} team={team} />

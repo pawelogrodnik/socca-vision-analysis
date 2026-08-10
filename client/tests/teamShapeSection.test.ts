@@ -68,6 +68,8 @@ test('available Team Shape renders coach-facing metrics and density pitches', ()
   assert.match(html, /Verisk/);
   assert.match(html, /Gęstość Corgi: 0.380/);
   assert.match(html, /Gęstość Verisk: 0.420/);
+  assert.match(html, /Jaśniejsze pola pokazują strefy boiska częściej zajmowane przez zespół/);
+  assert.match(html, /Obie drużyny pokazano w tym samym kierunku ataku/);
   assert.match(html, /Zmiany ustawienia w czasie/);
   assert.doesNotMatch(html, /Próbki|Block height|diagnostics|readiness|sample_count/);
 });

@@ -11,6 +11,7 @@ from app.services.team_shape import (
     build_team_shape_takeaways,
     calculate_frame_shape,
     ensure_team_shape_artifact_fresh,
+    observations_from_tracklets,
     to_team_oriented_coordinates,
 )
 from app.services.public_match_report import build_public_match_report, write_public_match_report_bundle
@@ -23,7 +24,18 @@ POSITIONS = [[5.0, 10.0], [10.0, 15.0], [15.0, 20.0], [20.0, 25.0], [25.0, 30.0]
 
 
 def phase(direction_a: str = "towards_y_max", direction_b: str = "towards_y_min") -> dict:
-    return {"periods": [{"start_time_sec": 0.0, "end_time_sec": 600.0, "team_attack_directions": {"A": direction_a, "B": direction_b}}]}
+    return {
+        "periods": [
+            {
+                "period_id": "full_video",
+                "start_time_sec": 0.0,
+                "end_time_sec": 600.0,
+                "team_attack_directions": {"A": direction_a, "B": direction_b},
+                "direction_source": "configured_single_period",
+            }
+        ],
+        "summary": {"periods": 1, "has_second_half": False, "needs_review": False},
+    }
 
 
 def observations(positions: list[list[float]], *, team: str = "A", time_sec: float = 0.0, frame: int = 0, **extra: object) -> list[dict]:
@@ -104,6 +116,77 @@ def test_identity_swap_and_unresolved_identity_do_not_change_shape() -> None:
     assert team(build(first))["summary"] == team(build(unresolved))["summary"]
 
 
+def test_tracklet_team_trust_reuses_canonical_cluster_acceptance() -> None:
+    def tracklet(**updates: object) -> dict:
+        return {
+            "team_label": "A",
+            "team_cluster_id": "cluster-1",
+            "team_confidence": 0.42,
+            "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": POSITIONS[0]}],
+            **updates,
+        }
+
+    trusted = observations_from_tracklets([tracklet(player_id=None)])[0]
+    low_confidence = observations_from_tracklets([tracklet(team_confidence=0.4199)])[0]
+    missing_cluster = observations_from_tracklets([tracklet(team_cluster_id=None)])[0]
+    ambiguous = observations_from_tracklets(
+        [tracklet(team_assignment_reason="goalkeeper_outlier_requires_review")]
+    )[0]
+    unknown = observations_from_tracklets([tracklet(team_label="U")])[0]
+
+    assert trusted["trusted"] is True
+    assert low_confidence["trusted"] is False
+    assert missing_cluster["trusted"] is False
+    assert ambiguous["trusted"] is False
+    assert unknown["trusted"] is False
+
+
+def test_only_canonically_trusted_tracklets_contribute_to_shape() -> None:
+    tracklets = []
+    trusted_positions = POSITIONS + [[15.0, 35.0]]
+    for index, point in enumerate(trusted_positions):
+        tracklets.append(
+            {
+                "tracklet_id": f"A-{index}",
+                "team_label": "A",
+                "team_cluster_id": "cluster-A",
+                "team_confidence": 0.42,
+                "player_id": None,
+                "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": point}],
+            }
+        )
+    tracklets.extend(
+        [
+            {
+                "tracklet_id": "A-low-confidence",
+                "team_label": "A",
+                "team_cluster_id": "cluster-A",
+                "team_confidence": 0.41,
+                "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": [30.0, 47.4]}],
+            },
+            {
+                "tracklet_id": "A-unreviewed-goalkeeper",
+                "team_label": "A",
+                "team_cluster_id": "cluster-A",
+                "team_confidence": 1.0,
+                "team_assignment_reason": "goalkeeper_outlier_requires_review",
+                "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": [0.0, 0.0]}],
+            },
+            {
+                "tracklet_id": "unknown",
+                "team_label": "U",
+                "team_confidence": 1.0,
+                "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": [0.0, 0.0]}],
+            },
+        ]
+    )
+
+    result = team(build(observations_from_tracklets(tracklets)))
+
+    assert result["diagnostics"]["eligible_frames"] == 1
+    assert_close(result["summary"]["average_width_m"], 20.0)
+
+
 def test_teams_are_isolated_and_invalid_observations_are_excluded() -> None:
     rows = observations(POSITIONS) + observations([[1.0, 1.0]] * 5, team="B")
     rows += observations([[30.0, 47.4]], team="U")
@@ -132,19 +215,49 @@ def test_opposite_x_directions_produce_equivalent_oriented_geometry() -> None:
         assert_close(towards_min[key], towards_max[key])
 
 
-def test_side_switch_keeps_equivalent_shape_and_density_aligned() -> None:
-    rotated = [[PITCH_WIDTH - x, PITCH_LENGTH - y] for x, y in POSITIONS]
+def test_reviewed_side_switch_keeps_shape_density_and_height_aligned() -> None:
+    team_a_positions = POSITIONS + [[15.0, 35.0]]
+    team_b_positions = [[PITCH_WIDTH - x, PITCH_LENGTH - y] for x, y in team_a_positions]
     phases = {
         "periods": [
-            {"start_time_sec": 0.0, "end_time_sec": 60.0, "team_attack_directions": {"A": "towards_y_min"}},
-            {"start_time_sec": 60.0, "end_time_sec": 120.0, "team_attack_directions": {"A": "towards_y_max"}},
-        ]
+            {
+                "period_id": "first_half",
+                "start_time_sec": 0.0,
+                "end_time_sec": 60.0,
+                "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"},
+            },
+            {
+                "period_id": "second_half",
+                "start_time_sec": 120.0,
+                "end_time_sec": 180.0,
+                "team_attack_directions": {"A": "towards_y_max", "B": "towards_y_min"},
+            },
+        ],
+        "summary": {"periods": 2, "has_second_half": True, "needs_review": False},
     }
-    rows = observations(POSITIONS, time_sec=0.0, frame=0) + observations(rotated, time_sec=60.0, frame=60)
-    result = team(build(rows, duration=61.0, phases=phases))
+    rows = []
+    for second in range(60):
+        rows += observations(team_a_positions, time_sec=float(second), frame=second)
+        rows += observations(team_b_positions, team="B", time_sec=float(second), frame=second)
+    for second in range(120, 180):
+        rows += observations(team_b_positions, time_sec=float(second), frame=second)
+        rows += observations(team_a_positions, team="B", time_sec=float(second), frame=second)
+    document = build(rows, duration=180.0, phases=phases)
+    result = team(document)
+    assert document["available"] is True
+    assert result["readiness"] == "ready"
     assert_close(result["summary"]["average_width_m"], 20.0)
-    assert_close(sum(cell["value"] for cell in result["average_shape"]["cells"]), 1.0)
-    assert len(result["average_shape"]["cells"]) == 5
+    assert_close(result["summary"]["average_block_height_percent"], 52.53, absolute_tolerance=0.01)
+    assert_close(
+        sum(cell["value"] for cell in result["average_shape"]["cells"]),
+        1.0,
+        absolute_tolerance=1e-5,
+    )
+    assert result["diagnostics"]["active_period_duration_sec"] == 120.0
+    assert result["diagnostics"]["expected_active_samples"] == 120
+    assert result["diagnostics"]["temporal_coverage"] == 1.0
+    assert result["timeline"][1]["active_period_duration_sec"] == 0.0
+    assert result["timeline"][1]["width_m"] is None
 
 
 def test_over_cap_frame_is_excluded_instead_of_truncated() -> None:
@@ -234,14 +347,38 @@ def test_constant_positions_produce_constant_timeline() -> None:
     assert timeline[0]["width_m"] == timeline[1]["width_m"] == 20.0
 
 
-def ready_document() -> dict:
+def test_partial_timeline_bins_use_only_active_period_overlap() -> None:
+    phases = {
+        "periods": [
+            {
+                "period_id": "active_clip",
+                "start_time_sec": 30.0,
+                "end_time_sec": 90.0,
+                "team_attack_directions": {"A": "towards_y_max", "B": "towards_y_min"},
+            }
+        ],
+        "summary": {"periods": 1, "has_second_half": False, "needs_review": False},
+    }
+    positions = POSITIONS + [[15.0, 35.0]]
+    rows = []
+    for second in range(30, 90):
+        rows += observations(positions, time_sec=float(second), frame=second)
+    result = team(build(rows, duration=120.0, phases=phases))
+
+    assert result["diagnostics"]["expected_active_samples"] == 60
+    assert result["diagnostics"]["temporal_coverage"] == 1.0
+    assert [point["active_period_duration_sec"] for point in result["timeline"]] == [30.0, 30.0]
+    assert [point["width_m"] for point in result["timeline"]] == [20.0, 20.0]
+
+
+def ready_document(*, phases: dict | None = None) -> dict:
     team_a = POSITIONS + [[15.0, 35.0]]
     team_b = [[PITCH_WIDTH - x, PITCH_LENGTH - y] for x, y in team_a]
     return build_team_shape_document(
         player_observations=observations(team_a) + observations(team_b, team="B"),
         pitch_width_m=PITCH_WIDTH,
         pitch_length_m=PITCH_LENGTH,
-        match_phase_config=phase(),
+        match_phase_config=phases or phase(),
         team_config={
             "teams": [
                 {"team_label": "A", "team_id": "team-a", "team_name": "Corgi"},
@@ -317,6 +454,25 @@ def test_public_report_omits_missing_or_partial_team_shape_without_zero_fallback
     assert "team_shape" not in partial_report
 
 
+def test_unreviewed_attack_direction_cannot_reach_public_report() -> None:
+    unreviewed_phase = phase()
+    unreviewed_phase["summary"]["needs_review"] = True
+    unreviewed_phase["periods"][0]["direction_source"] = "default_single_period"
+    document = ready_document(phases=unreviewed_phase)
+
+    assert document["available"] is False
+    assert document["readiness"] == "experimental"
+    assert all(team_row["diagnostics"]["attack_direction_trusted"] is False for team_row in document["teams"])
+    report = build_public_match_report(
+        public_package(document),
+        published_id="published-match-1",
+        source_match_dir=None,
+        heatmap_dir=None,
+        public_heatmap_base="",
+    )
+    assert "team_shape" not in report
+
+
 def test_published_report_bundle_preserves_team_shape() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -383,6 +539,45 @@ def test_incomplete_freshness_dependencies_force_rebuild() -> None:
         }
 
 
+def test_previous_algorithm_version_forces_rebuild() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_reviewed_shape_fixture(root)
+        first = ensure_team_shape_artifact_fresh(root)
+        assert first is not None
+        first["algorithm_version"] = "team_shape_spatial_v1"
+        _write_json(root / "team_shape.json", first)
+
+        rebuilt = ensure_team_shape_artifact_fresh(root)
+        assert rebuilt is not None
+        assert rebuilt["algorithm_version"] == "team_shape_spatial_v1_1"
+
+
+def test_match_phase_review_state_change_rebuilds_public_availability() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _write_reviewed_shape_fixture(root)
+        trusted = ensure_team_shape_artifact_fresh(root)
+        assert trusted is not None
+        assert trusted["available"] is True
+
+        match_phase = json.loads((root / "match_phase_config.json").read_text(encoding="utf-8"))
+        match_phase["summary"]["needs_review"] = True
+        match_phase["periods"][0]["direction_source"] = "default_single_period"
+        _write_json(root / "match_phase_config.json", match_phase)
+        unreviewed = ensure_team_shape_artifact_fresh(root)
+        assert unreviewed is not None
+        assert unreviewed["available"] is False
+        assert unreviewed["readiness"] == "experimental"
+
+        match_phase["summary"]["needs_review"] = False
+        match_phase["periods"][0]["direction_source"] = "configured_single_period"
+        _write_json(root / "match_phase_config.json", match_phase)
+        reviewed = ensure_team_shape_artifact_fresh(root)
+        assert reviewed is not None
+        assert reviewed["available"] is True
+
+
 def _write_reviewed_shape_fixture(root: Path) -> None:
     team_a = POSITIONS + [[15.0, 35.0]]
     team_b = [[PITCH_WIDTH - x, PITCH_LENGTH - y] for x, y in team_a]
@@ -414,6 +609,8 @@ def _write_reviewed_shape_fixture(root: Path) -> None:
                 {
                     "tracklet_id": f"{label}-{index}",
                     "team_label": label,
+                    "team_cluster_id": f"cluster-{label}",
+                    "team_confidence": 1.0,
                     "positions_m": [
                         {
                             "frame": 0,

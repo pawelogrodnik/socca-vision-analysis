@@ -34,6 +34,10 @@ from app.services.identity_unresolved_overlay import (
     is_unresolved_overlay_row,
 )
 from app.services.artifact_lineage import generated_from_entry
+from app.services.team_assignment import (
+    TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE,
+    TEAM_COLOR_UNKNOWN_CONFIDENCE,
+)
 from app.services.team_shape import build_team_shape_document, observations_from_tracklets
 
 
@@ -44,8 +48,6 @@ DEFAULT_ACTIVE_PLAYERS_CAP = 14
 DEFAULT_ACTIVE_PLAYERS_PER_TEAM_CAP = 7
 TEAM_COLOR_MIN_REFERENCE_SAMPLES = 2
 TEAM_COLOR_MIN_REFERENCE_QUALITY = 0.22
-TEAM_COLOR_UNKNOWN_CONFIDENCE = 0.42
-TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE = 95.0
 LIVE_STATS_MAX_SPEED_MPS = 8.5
 LIVE_STATS_SUSTAINED_SPEED_MPS = 8.0
 LIVE_STATS_ESTIMATED_GAP_SEC = 2.0
