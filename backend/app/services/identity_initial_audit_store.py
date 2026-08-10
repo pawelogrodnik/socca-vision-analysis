@@ -102,7 +102,7 @@ def load_operator_identity_audit_seeds(
             _empty_document(
                 source,
                 mode=mode,
-                production_snapshot=_production_identity_snapshot(
+                production_snapshot=_interactive_production_identity_snapshot(
                     match_path,
                     match_document,
                 ),
@@ -175,19 +175,33 @@ def save_operator_identity_audit_seeds(
             )
         existing = None
 
-    production_before = _production_identity_snapshot(match_path, match_document)
+    stored_production_snapshot = (
+        existing.get("production_identity_snapshot")
+        if isinstance(existing, dict)
+        and isinstance(existing.get("production_identity_snapshot"), dict)
+        else None
+    )
+    production_snapshot = (
+        stored_production_snapshot
+        if stored_production_snapshot is not None
+        else _interactive_production_identity_snapshot(match_path, match_document)
+    )
+    metadata_before = _production_identity_metadata_fingerprint(
+        match_path,
+        match_document,
+    )
     document = (
         _normalized_existing_document(
             existing,
             source,
-            production_before,
+            production_snapshot,
             mode=mode,
         )
         if existing is not None
         else _empty_document(
             source,
             mode=mode,
-            production_snapshot=production_before,
+            production_snapshot=production_snapshot,
         )
     )
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
@@ -272,7 +286,7 @@ def save_operator_identity_audit_seeds(
                 **telemetry,
                 "processed_update_ids": sorted(processed_update_ids),
             },
-            "production_identity_snapshot": production_before,
+            "production_identity_snapshot": production_snapshot,
             "updated_at": timestamp,
             "safety": {
                 "observation_level_seeds_only": True,
@@ -284,9 +298,11 @@ def save_operator_identity_audit_seeds(
         }
     )
     _write_atomic(seed_path, document)
-
-    production_after = _production_identity_snapshot(match_path, match_document)
-    if production_after != production_before:
+    metadata_after = _production_identity_metadata_fingerprint(
+        match_path,
+        match_document,
+    )
+    if metadata_after != metadata_before:
         raise RuntimeError(
             "Production identity artifacts changed while saving operator seeds"
         )
@@ -896,6 +912,52 @@ def _production_identity_snapshot(
     return {
         "files": files,
         "snapshot_digest": canonical_digest(files),
+        "metadata_fingerprint": _production_identity_metadata_fingerprint(
+            match_path,
+            match_document,
+        ),
+    }
+
+
+def _interactive_production_identity_snapshot(
+    match_path: Path,
+    match_document: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = _production_identity_metadata_fingerprint(
+        match_path,
+        match_document,
+    )
+    return {
+        "files": metadata["files"],
+        "snapshot_digest": canonical_digest(metadata),
+        "metadata_fingerprint": metadata,
+    }
+
+
+def _production_identity_metadata_fingerprint(
+    match_path: Path,
+    match_document: dict[str, Any],
+) -> dict[str, Any]:
+    files = []
+    for filename in PRODUCTION_IDENTITY_FILENAMES:
+        candidate = _first_artifact_candidate(
+            match_path,
+            match_document,
+            filename,
+        )
+        if candidate is None:
+            continue
+        stat = candidate.stat()
+        files.append(
+            {
+                "artifact": str(candidate.relative_to(match_path)),
+                "size_bytes": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    return {
+        "kind": "file_metadata_size_mtime_v1",
+        "files": files,
     }
 
 

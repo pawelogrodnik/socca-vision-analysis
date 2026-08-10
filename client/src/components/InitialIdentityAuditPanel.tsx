@@ -18,10 +18,12 @@ import type {
 } from '../types';
 import {
   createInitialIdentityAuditEventId,
+  canApplyInitialIdentityAuditAction,
   initialIdentityAuditActionLabel,
   initialIdentityAuditDecisionMap,
   initialIdentityAuditObservationBoxClassName,
   initialIdentityAuditPlayerAction,
+  initialIdentityAuditPlayerUsedElsewhereInFrame,
   observationBoxStyle,
   type InitialIdentityAuditAction,
   type InitialIdentityAuditDecision,
@@ -80,6 +82,10 @@ export function InitialIdentityAuditPanel({
       (observation) => observation.observation_key === selectedObservationKey,
     ) ?? null,
     [frame, selectedObservationKey],
+  );
+  const currentFrameObservationKeys = useMemo(
+    () => frame?.observations.map((observation) => observation.observation_key) ?? [],
+    [frame],
   );
 
   useEffect(() => {
@@ -148,6 +154,7 @@ export function InitialIdentityAuditPanel({
   async function performSave(
     updates: InitialIdentityAuditSeedUpdate[],
     telemetryEvents: InitialIdentityAuditTelemetryEvent[],
+    finalize = false,
   ): Promise<InitialIdentityAuditSeedStoreDocument> {
     const requestedMatchId = match.id;
     pendingSavesRef.current += 1;
@@ -157,6 +164,7 @@ export function InitialIdentityAuditPanel({
         requestedMatchId,
         updates,
         telemetryEvents,
+        finalize,
       );
       if (activeMatchIdRef.current === requestedMatchId) {
         applyServerStore(nextStore);
@@ -188,7 +196,7 @@ export function InitialIdentityAuditPanel({
     if (!frameBatcherRef.current.hasPendingChanges(additionalTelemetry)) return null;
     const save = async () => {
       const result = await frameBatcherRef.current.flush((batch) => (
-        performSave(batch.updates, batch.telemetryEvents)
+        performSave(batch.updates, batch.telemetryEvents, finalize)
       ), additionalTelemetry);
       if (!result) throw new Error('Brak oczekujących zmian audytu.');
       return result;
@@ -261,6 +269,15 @@ export function InitialIdentityAuditPanel({
   ) {
     if (finishingRef.current || transitionSavingRef.current || auditIdentityWorkComplete) return;
     const currentDecisions = decisionsRef.current;
+    if (!canApplyInitialIdentityAuditAction(
+      currentFrameObservationKeys,
+      currentDecisions,
+      observation.observation_key,
+      action,
+    )) {
+      onStatus('Ten zawodnik jest już przypisany do innego bboxa w tej klatce.');
+      return;
+    }
     const localBudgetLimit = maximumActions ?? seedStore?.operator_budget?.limit;
     const decision: InitialIdentityAuditDecision = {
       ...action,
@@ -581,12 +598,19 @@ export function InitialIdentityAuditPanel({
                           const action = initialIdentityAuditPlayerAction(player, team);
                           const active = armedAction?.kind === 'player'
                             && armedAction.playerId === player.player_id;
+                          const usedElsewhere = initialIdentityAuditPlayerUsedElsewhereInFrame(
+                            currentFrameObservationKeys,
+                            decisions,
+                            selectedObservationKey,
+                            player.player_id,
+                          );
                           return (
                             <button
                               type='button'
                               key={player.player_id}
                               className={active ? 'active' : ''}
-                              disabled={!canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete}
+                              disabled={usedElsewhere || !canCreateActiveDecision || transitionSaving || finishing || auditIdentityWorkComplete}
+                              title={usedElsewhere ? 'Już przypisany w tej klatce' : undefined}
                               onClick={() => chooseAction(action)}
                               aria-pressed={active}
                             >
