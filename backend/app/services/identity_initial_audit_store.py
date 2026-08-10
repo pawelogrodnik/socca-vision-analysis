@@ -18,6 +18,7 @@ from app.services.identity_product_flow_state import (
     ProductFlowStateError,
     benchmark_context_for_workspace,
 )
+from app.services.match_roster import require_match_roster
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -72,6 +73,7 @@ def load_initial_identity_audit_seeds(
     match_path: Path,
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
+    require_match_roster(match_document)
     selection = _load_selection(match_path)
     result = load_operator_identity_audit_seeds(
         match_path,
@@ -129,6 +131,7 @@ def save_initial_identity_audit_seeds(
     telemetry_events: list[dict[str, Any]] | None = None,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
+    require_match_roster(match_document)
     selection = _load_selection(match_path)
     result = save_operator_identity_audit_seeds(
         match_path,
@@ -175,7 +178,26 @@ def save_operator_identity_audit_seeds(
             )
         existing = None
 
-    production_before = _production_identity_snapshot(match_path, match_document)
+    stored_production_snapshot = (
+        existing.get("production_identity_snapshot")
+        if isinstance(existing, dict)
+        and isinstance(existing.get("production_identity_snapshot"), dict)
+        else None
+    )
+    production_before = (
+        stored_production_snapshot
+        if stored_production_snapshot is not None
+        and isinstance(stored_production_snapshot.get("metadata_fingerprint"), dict)
+        else _production_identity_snapshot(match_path, match_document)
+    )
+    metadata_before = _production_identity_metadata_fingerprint(
+        match_path,
+        match_document,
+    )
+    if production_before.get("metadata_fingerprint") != metadata_before:
+        raise RuntimeError(
+            "Production identity artifacts changed since the audit baseline"
+        )
     document = (
         _normalized_existing_document(
             existing,
@@ -283,13 +305,15 @@ def save_operator_identity_audit_seeds(
             },
         }
     )
-    _write_atomic(seed_path, document)
-
-    production_after = _production_identity_snapshot(match_path, match_document)
-    if production_after != production_before:
+    metadata_after = _production_identity_metadata_fingerprint(
+        match_path,
+        match_document,
+    )
+    if metadata_after != metadata_before:
         raise RuntimeError(
             "Production identity artifacts changed while saving operator seeds"
         )
+    _write_atomic(seed_path, document)
     return _public_document(
         document,
         status="fresh",
@@ -896,6 +920,37 @@ def _production_identity_snapshot(
     return {
         "files": files,
         "snapshot_digest": canonical_digest(files),
+        "metadata_fingerprint": _production_identity_metadata_fingerprint(
+            match_path,
+            match_document,
+        ),
+    }
+
+
+def _production_identity_metadata_fingerprint(
+    match_path: Path,
+    match_document: dict[str, Any],
+) -> dict[str, Any]:
+    files = []
+    for filename in PRODUCTION_IDENTITY_FILENAMES:
+        candidate = _first_artifact_candidate(
+            match_path,
+            match_document,
+            filename,
+        )
+        if candidate is None:
+            continue
+        stat = candidate.stat()
+        files.append(
+            {
+                "artifact": str(candidate.relative_to(match_path)),
+                "size_bytes": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    return {
+        "kind": "file_metadata_size_mtime_v1",
+        "files": files,
     }
 
 

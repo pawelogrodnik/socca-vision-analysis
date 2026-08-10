@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { Match, Team } from '../types';
 import { createMatch, listTeams } from '../api';
 import { errorMessage } from '../lib/helpers';
+import { selectedMatchRosterReadiness } from '../utils/matchRoster';
 
 interface NewMatchFormProps {
   onCreated: (match: Match) => Promise<void> | void;
@@ -64,18 +65,14 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
       onError('Wybierz plik video.');
       return;
     }
-    if (!teamAId && teamBId) {
-      onError('Najpierw wybierz Team A. Team B bez Team A zmienilby label w analizie.');
+    const teamA = teamRegistry.find((team) => teamKey(team) === teamAId);
+    const teamB = teamRegistry.find((team) => teamKey(team) === teamBId);
+    const rosterStatus = selectedMatchRosterReadiness(teamA, teamB);
+    if (!rosterStatus.ready) {
+      onError(rosterStatus.message || 'Uzupełnij roster meczu.');
       return;
     }
-    if (teamAId && teamBId && teamAId === teamBId) {
-      onError('Wybierz rozne druzyny albo zostaw drugi slot pusty.');
-      return;
-    }
-
-    const selectedTeams = [teamAId, teamBId]
-      .map((teamId) => teamRegistry.find((team) => teamKey(team) === teamId))
-      .filter((team): team is Team => Boolean(team));
+    const selectedTeams = [teamA, teamB].filter((team): team is Team => Boolean(team));
 
     setIsSubmitting(true);
     try {
@@ -96,7 +93,10 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
     }
   }
 
-  const canSubmit = !isSubmitting && Boolean(video);
+  const teamA = teamRegistry.find((team) => teamKey(team) === teamAId);
+  const teamB = teamRegistry.find((team) => teamKey(team) === teamBId);
+  const rosterStatus = selectedMatchRosterReadiness(teamA, teamB);
+  const canSubmit = !isSubmitting && Boolean(video) && rosterStatus.ready;
 
   return (
     <form onSubmit={submit} className='stack'>
@@ -110,11 +110,12 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
         />
       </label>
 
-      <details className='debug-details'>
-        <summary>Opcjonalnie: roster do pozniejszego przypisania zawodnikow</summary>
-        <div className='team-picker'>
+      <section className='team-picker'>
           <div className='row between'>
-            <strong>Druzyny w meczu</strong>
+            <div>
+              <strong>Drużyny i rostery</strong>
+              <p className='muted'>Wybierz obie drużyny biorące udział w meczu. Roster jest używany później podczas Review zawodników.</p>
+            </div>
             <Link to='/teams/add'>Dodaj druzyne</Link>
           </div>
           {isLoadingTeams && (
@@ -125,8 +126,7 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
           )}
           {teamRegistry.length === 0 && !isLoadingTeams && (
             <p className='muted'>
-              Brak druzyn w rejestrze. Mozesz dodac video bez rosteru i wrocic
-              do druzyn pozniej.
+              Brak drużyn w rejestrze. Dodaj obie drużyny wraz z zawodnikami przed utworzeniem meczu.
             </p>
           )}
           <div className='grid two compact'>
@@ -137,7 +137,7 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
                 disabled={isSubmitting || isLoadingTeams}
                 onChange={(event) => setTeamAId(event.target.value)}
               >
-                <option value=''>-- bez rosteru --</option>
+                <option value=''>Wybierz Team A</option>
                 {teamRegistry.map((team) => (
                   <option value={teamKey(team)} key={teamKey(team)}>
                     {team.name} ({team.players?.length || 0} zawodnikow)
@@ -152,7 +152,7 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
                 disabled={isSubmitting || isLoadingTeams}
                 onChange={(event) => setTeamBId(event.target.value)}
               >
-                <option value=''>-- anonimowy przeciwnik --</option>
+                <option value=''>Wybierz Team B</option>
                 {teamRegistry.map((team) => (
                   <option value={teamKey(team)} key={teamKey(team)}>
                     {team.name} ({team.players?.length || 0} zawodnikow)
@@ -161,8 +161,8 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
               </select>
             </label>
           </div>
-        </div>
-      </details>
+          {!isLoadingTeams && !rosterStatus.ready && <p className='error'>{rosterStatus.message}</p>}
+      </section>
 
       <details className='debug-details'>
         <summary>Opcjonalnie: metadane meczu</summary>

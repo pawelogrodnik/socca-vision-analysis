@@ -12,6 +12,7 @@ from app.services.identity_initial_audit_frame_selection import (
     collect_candidate_frame_numbers,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.match_roster import require_match_roster
 
 
 SCHEMA_VERSION = "0.2.0"
@@ -28,6 +29,7 @@ def prepare_initial_identity_audit(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
+    require_match_roster(match_document)
     audit_path = match_path / AUDIT_DIRECTORY
     selection_path = audit_path / SELECTION_FILENAME
     selection = None

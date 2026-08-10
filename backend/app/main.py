@@ -274,7 +274,13 @@ def parse_metadata_form(
         status="uploaded",
         teams=teams,
     )
-    return with_generated_ids(payload.model_dump())
+    metadata = payload.model_dump()
+    from app.services.match_roster import require_match_roster
+
+    require_match_roster(metadata, require_player_ids=False)
+    metadata = with_generated_ids(metadata)
+    require_match_roster(metadata)
+    return metadata
 
 
 def load_tracks(path: Path) -> list[dict[str, Any]]:
@@ -873,6 +879,17 @@ def create_match(
         raise HTTPException(status_code=403, detail="Video upload is disabled in production-viewer mode")
     if not video.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
+    try:
+        meta = parse_metadata_form(
+            title=title,
+            match_date=match_date,
+            season=season,
+            venue=venue,
+            format=format,
+            teams_json=teams_json,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     suffix = Path(video.filename).suffix.lower() or ".mp4"
     match_id = str(uuid.uuid4())[:8]
     path = MATCHES_DIR / match_id
@@ -882,14 +899,6 @@ def create_match(
         shutil.copyfileobj(video.file, f)
 
     metadata = read_video_metadata(video_path)
-    meta = parse_metadata_form(
-        title=title,
-        match_date=match_date,
-        season=season,
-        venue=venue,
-        format=format,
-        teams_json=teams_json,
-    )
     meta.update(
         {
             "id": match_id,
@@ -1545,6 +1554,7 @@ def update_initial_identity_audit_seeds(
     path = match_dir(match_id)
     updates = payload.get("updates")
     telemetry_events = payload.get("telemetry_events") or []
+    finalize = payload.get("finalize", False)
     if not isinstance(updates, list):
         raise HTTPException(status_code=400, detail="updates must be a list")
     if not isinstance(telemetry_events, list):
@@ -1552,6 +1562,8 @@ def update_initial_identity_audit_seeds(
             status_code=400,
             detail="telemetry_events must be a list",
         )
+    if not isinstance(finalize, bool):
+        raise HTTPException(status_code=400, detail="finalize must be a boolean")
     has_identity_updates = bool(updates)
     try:
         match_document = read_match_meta(path)
@@ -1574,9 +1586,9 @@ def update_initial_identity_audit_seeds(
             updates,
             telemetry_events=telemetry_events,
         )
-        if not has_identity_updates:
-            # Delayed autosave/session events carry no identity semantics.  They
-            # must remain valid after the last seed advances the workflow.
+        if not finalize:
+            # Frame transitions only persist decisions and telemetry.  Seeded
+            # identity propagation runs once, after the required final save.
             result["workflow"] = get_review_workflow_state(path, match_document)
             return result
         benchmark_context = benchmark_context_for_workspace(path)
@@ -1600,7 +1612,7 @@ def update_initial_identity_audit_seeds(
         refreshed = refresh_review_after_identity_mutation(
             path,
             match_document,
-            source="initial_audit_decision",
+            source="initial_audit_finish",
         )
         result["workflow"] = refreshed["workflow"]
         result["reviewed_identity"] = refreshed["snapshot"]

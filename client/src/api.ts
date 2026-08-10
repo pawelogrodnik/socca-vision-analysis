@@ -446,6 +446,7 @@ export async function saveInitialIdentityAuditSeeds(
   matchId: string,
   updates: InitialIdentityAuditSeedUpdate[],
   telemetryEvents: InitialIdentityAuditTelemetryEvent[] = [],
+  finalize = false,
 ): Promise<InitialIdentityAuditSeedStoreDocument> {
   return request<InitialIdentityAuditSeedStoreDocument>(
     `/api/matches/${encodeURIComponent(matchId)}/initial-identity-audit/seeds`,
@@ -455,6 +456,7 @@ export async function saveInitialIdentityAuditSeeds(
       body: JSON.stringify({
         updates,
         telemetry_events: telemetryEvents,
+        finalize,
       }),
     },
   );

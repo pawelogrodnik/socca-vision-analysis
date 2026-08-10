@@ -19,6 +19,7 @@ import {
   createReviewedRenderStatusPolling,
   isReviewedRenderInProgress,
 } from '../utils/reviewedRenderPolling';
+import { matchRosterReadiness } from '../utils/matchRoster';
 import { IdentityExceptionReviewPanel } from './IdentityExceptionReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { ReviewedVideoQaPanel } from './ReviewedVideoQaPanel';
@@ -83,6 +84,7 @@ export function IdentityReviewWorkspace({
   }, [workflow?.phase]);
 
   const stage = identityReviewStage(workflow);
+  const rosterStatus = matchRosterReadiness(match.teams);
   useEffect(() => {
     if (stage !== 'rendering' || !isReviewedRenderInProgress(processingJob?.status)) return undefined;
     const polling = createReviewedRenderStatusPolling({
@@ -149,7 +151,15 @@ export function IdentityReviewWorkspace({
       {workflowAllows(workflow, 'retry_render') && <button type='button' onClick={() => void retry('retry_render')} disabled={busy}>Spróbuj ponownie</button>}
     </div>}
 
-    {stage === 'identify_players' && workflow && <section className='identity-review-current-stage'>
+    {stage === 'identify_players' && workflow && !rosterStatus.ready && <section className='identity-review-current-stage'>
+      <div className='identity-review-stage-copy'>
+        <p className='eyebrow'>Wymagany roster</p>
+        <h2>Uzupełnij obie drużyny</h2>
+        <p>{rosterStatus.message} Zapisz roster meczu poniżej, aby otworzyć Szybki audyt tożsamości.</p>
+      </div>
+    </section>}
+
+    {stage === 'identify_players' && workflow && rosterStatus.ready && <section className='identity-review-current-stage'>
       <div className='identity-review-stage-copy'>
         <p className='eyebrow'>Krok 1</p>
         <h2>Rozpoznaj zawodników</h2>

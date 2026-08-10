@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app.services.identity_initial_audit import (
     AUDIT_DIRECTORY,
@@ -17,6 +18,7 @@ from app.services.identity_initial_audit_store import (
     load_initial_identity_audit_seeds,
     save_initial_identity_audit_seeds,
 )
+from app.services import identity_initial_audit_store
 
 
 class InitialIdentityAuditStoreTests(unittest.TestCase):
@@ -47,7 +49,14 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
                 {
                     "id": "team-b",
                     "name": "Verisk",
-                    "players": [],
+                    "players": [
+                        {
+                            "id": "player-3",
+                            "name": "Roman",
+                            "number": "6",
+                            "role": "player",
+                        }
+                    ],
                 },
             ]
         }
@@ -256,6 +265,65 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
                 "active_operator_seconds"
             ],
             4.0,
+        )
+
+    def test_incremental_save_reuses_production_hash_baseline(self) -> None:
+        for filename in ("stable_players.json", "tracklets.json", "tracks.json"):
+            (self.match_path / filename).write_text("{}\n", encoding="utf-8")
+        real_file_sha256 = identity_initial_audit_store._file_sha256
+
+        with patch.object(
+            identity_initial_audit_store,
+            "_file_sha256",
+            wraps=real_file_sha256,
+        ) as hash_file:
+            save_initial_identity_audit_seeds(
+                self.match_path,
+                self.match_document,
+                [
+                    {
+                        "update_id": "update-1",
+                        "observation_key": self.observation_keys[0],
+                        "action": "team_a_unknown",
+                    }
+                ],
+            )
+            self.assertEqual(hash_file.call_count, 4)
+            hash_file.reset_mock()
+
+            saved = save_initial_identity_audit_seeds(
+                self.match_path,
+                self.match_document,
+                [
+                    {
+                        "update_id": "update-2",
+                        "observation_key": self.observation_keys[1],
+                        "action": "team_b_unknown",
+                    }
+                ],
+                telemetry_events=[
+                    {
+                        "event_id": "event-2",
+                        "session_id": "session-1",
+                        "event_type": "action",
+                        "observation_key": self.observation_keys[1],
+                        "active_delta_seconds": 1.0,
+                    }
+                ],
+            )
+
+        self.assertEqual(hash_file.call_count, 0)
+        self.assertEqual(len(saved["decisions"]), 2)
+        stored = json.loads(
+            (self.match_path / SEEDS_FILENAME).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            stored["production_identity_snapshot"]["metadata_fingerprint"]["kind"],
+            "file_metadata_size_mtime_v1",
+        )
+        self.assertEqual(
+            stored["operator_telemetry"]["metrics"]["audit_actions"],
+            1,
         )
 
     def test_same_player_cannot_claim_two_observations_in_one_frame(self) -> None:

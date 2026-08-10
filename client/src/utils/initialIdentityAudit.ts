@@ -27,6 +27,35 @@ export type InitialIdentityAuditDecision = InitialIdentityAuditAction & {
   observationKey: string;
 };
 
+export function initialIdentityAuditPlayerUsedElsewhereInFrame(
+  currentFrameObservationKeys: Iterable<string>,
+  decisions: Record<string, InitialIdentityAuditDecision>,
+  targetObservationKey: string | null,
+  playerId: string,
+): boolean {
+  const frameKeys = new Set(currentFrameObservationKeys);
+  return Object.values(decisions).some((decision) => (
+    decision.kind === 'player'
+    && decision.playerId === playerId
+    && decision.observationKey !== targetObservationKey
+    && frameKeys.has(decision.observationKey)
+  ));
+}
+
+export function canApplyInitialIdentityAuditAction(
+  currentFrameObservationKeys: Iterable<string>,
+  decisions: Record<string, InitialIdentityAuditDecision>,
+  targetObservationKey: string,
+  action: InitialIdentityAuditAction,
+): boolean {
+  return action.kind !== 'player' || !initialIdentityAuditPlayerUsedElsewhereInFrame(
+    currentFrameObservationKeys,
+    decisions,
+    targetObservationKey,
+    action.playerId,
+  );
+}
+
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
