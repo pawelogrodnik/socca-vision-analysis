@@ -149,6 +149,10 @@ def _reviewed_resolved_player_stats(package: dict[str, Any]) -> dict[str, Any]:
         team_label = str(row.get("team_label") or "")
         team = team_by_label.get(team_label, {})
         detected_time_sec = _number(row.get("detected_time_sec"))
+        reviewed_speed = row.get("speed") if isinstance(row.get("speed"), dict) else {}
+        reviewed_intensity = (
+            row.get("intensity") if isinstance(row.get("intensity"), dict) else {}
+        )
         resolved_players.append(
             {
                 "player_id": player_id,
@@ -166,8 +170,41 @@ def _reviewed_resolved_player_stats(package: dict[str, Any]) -> dict[str, Any]:
                     "missing_time_sec": 0.0,
                 },
                 "distance": {"total_distance_m": _number(row.get("total_distance_m"))},
-                "speed": {},
-                "intensity": {},
+                "speed": {
+                    "avg_speed_mps": _number(reviewed_speed.get("avg_speed_mps")),
+                    "avg_speed_kmh": _number(reviewed_speed.get("avg_speed_kmh")),
+                    "observed_avg_speed_mps": _number(
+                        reviewed_speed.get("observed_avg_speed_mps")
+                    ),
+                    "peak_sustained_speed_mps": _number(
+                        reviewed_speed.get("peak_sustained_speed_mps")
+                    ),
+                    "peak_sustained_speed_kmh": _number(
+                        reviewed_speed.get("peak_sustained_speed_kmh")
+                    ),
+                    "top_speed_mps": _number(reviewed_speed.get("top_speed_mps")),
+                    "top_speed_kmh": _number(reviewed_speed.get("top_speed_kmh")),
+                    "raw_segment_top_speed_mps": _number(
+                        reviewed_speed.get("raw_segment_top_speed_mps")
+                    ),
+                    "raw_segment_top_speed_kmh": _number(
+                        reviewed_speed.get("raw_segment_top_speed_kmh")
+                    ),
+                    "quality": reviewed_speed.get("speed_quality") or "not_available",
+                },
+                "intensity": {
+                    "high_intensity_distance_m": _number(
+                        reviewed_intensity.get("high_intensity_distance_m")
+                    ),
+                    "sprint_count": int(reviewed_intensity.get("sprint_count") or 0),
+                    "sprint_time_sec": _number(reviewed_intensity.get("sprint_time_sec")),
+                    "sprint_distance_m": _number(
+                        reviewed_intensity.get("sprint_distance_m")
+                    ),
+                    "max_sprint_speed_kmh": _number(
+                        reviewed_intensity.get("max_sprint_speed_kmh")
+                    ),
+                },
                 "playing_time_method": "reviewed_confirmed_observations",
                 "calculation_method": "reviewed_effective_observations",
                 "quality_flags": [],

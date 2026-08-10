@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   displayJerseyNumber,
+  hasAdvancedPlayerMetrics,
   hasPlayerReadyMomentum,
 } from '../src/lib/publicReportPresentation.ts';
 import type { PublicMatchReport } from '../src/types.ts';
@@ -28,4 +29,13 @@ test('low quality momentum stays out of the player-facing report', () => {
   assert.equal(hasPlayerReadyMomentum(report), false);
   report.ball!.attacking_momentum!.quality = 'medium';
   assert.equal(hasPlayerReadyMomentum(report), true);
+});
+
+test('reviewed speed metrics restore the max-speed player chart option', () => {
+  const players = [
+    { player_id: 'p1', player_name: 'Paweł', peak_speed_kmh: 18.45 },
+  ] as PublicMatchReport['players'];
+  assert.equal(hasAdvancedPlayerMetrics(players), true);
+  players[0].peak_speed_kmh = 0;
+  assert.equal(hasAdvancedPlayerMetrics(players), false);
 });

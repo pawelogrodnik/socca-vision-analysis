@@ -20,6 +20,10 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual([player["player_name"] for player in report["players"]], ["Paweł"])
             self.assertEqual(report["players"][0]["detected_time_sec"], 72.0)
             self.assertEqual(report["players"][0]["playing_time_sec"], 72.0)
+            self.assertEqual(report["players"][0]["avg_speed_kmh"], 4.5)
+            self.assertEqual(report["players"][0]["peak_speed_kmh"], 18.4)
+            self.assertEqual(report["players"][0]["high_intensity_distance_m"], 11.2)
+            self.assertEqual(report["players"][0]["sprint_count"], 1)
             self.assertGreater(len(report["players"][0]["heatmap"]["interactive"]["points"]), 0)
             self.assertEqual(report["players"][0]["heatmap"]["path"], "")
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")
@@ -75,7 +79,29 @@ class ReviewedMatchReportTests(unittest.TestCase):
             {
                 "source_snapshot_digest": "digest-1",
                 "players": [
-                    {"player_id": "pa", "player_name": "Paweł", "team_label": "A", "detected_time_sec": 72.0, "total_distance_m": 100.0},
+                    {
+                        "player_id": "pa",
+                        "player_name": "Paweł",
+                        "team_label": "A",
+                        "detected_time_sec": 72.0,
+                        "total_distance_m": 100.0,
+                        "speed": {
+                            "avg_speed_mps": 1.25,
+                            "avg_speed_kmh": 4.5,
+                            "peak_sustained_speed_mps": 5.111,
+                            "peak_sustained_speed_kmh": 18.4,
+                            "top_speed_mps": 5.111,
+                            "top_speed_kmh": 18.4,
+                            "speed_quality": "medium",
+                        },
+                        "intensity": {
+                            "high_intensity_distance_m": 11.2,
+                            "sprint_count": 1,
+                            "sprint_time_sec": 0.7,
+                            "sprint_distance_m": 4.1,
+                            "max_sprint_speed_kmh": 21.0,
+                        },
+                    },
                     {"player_id": "B03", "player_name": "B03", "team_label": "B", "detected_time_sec": 60.0, "total_distance_m": 90.0},
                 ],
             },

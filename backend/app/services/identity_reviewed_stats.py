@@ -67,13 +67,50 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         detected = [row for row in rows if row.get("pitch_m")]
         fragments = _fragments(rows)
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
+        movement_summary = _aggregate_movement_stats(movement)
         expected_movement_segments = sum(
             _expected_movement_segments(fragment, fps) for fragment in fragments
         )
         frames = sorted({int(row.get("frame") or 0) for row in rows})
         first, last = (frames[0], frames[-1]) if frames else (None, None)
         positions = [row["pitch_m"] for row in detected if isinstance(row.get("pitch_m"), list) and len(row["pitch_m"]) >= 2]
-        player = {"player_id": player_id, "player_name": rows[0].get("player_name") or player_id, "team_label": rows[0].get("team_label"), "roster_number": rows[0].get("roster_number"), "first_confirmed_observation": first, "last_confirmed_observation": last, "confirmed_fragments": len(fragments), "confirmed_tracklets": sorted({str(row["tracklet_id"]) for row in rows}), "confirmed_detected_observations": len(frames), "detected_frames": len(frames), "detected_time_sec": round(len(frames) / fps, 3), "confirmed_observation_span_sec": round((last - first + 1) / fps, 3) if first is not None and last is not None else 0.0, "playing_time_sec": None, "coverage_denominator": "unknown", "average_pitch_position_m": _mean(positions), "heatmap_samples": len(positions), "observed_distance_m": round(sum(float(item["observed_distance_m"]) for item in movement), 2), "estimated_short_gap_distance_m": round(sum(float(item["estimated_gap_distance_m"]) for item in movement), 2), "total_distance_m": round(sum(float(item["total_distance_m"]) for item in movement), 2), "observed_movement_segments": sum(int(item["observed_segments"]) for item in movement), "estimated_gap_movement_segments": sum(int(item["estimated_gap_segments"]) for item in movement), "accepted_movement_segments": sum(int(item["observed_segments"]) + int(item["estimated_gap_segments"]) for item in movement), "expected_positive_movement_segments": expected_movement_segments, "skipped_outlier_segments": sum(int(item["skipped_outlier_segments"]) for item in movement), "skipped_long_gap_segments": sum(int(item["skipped_long_gap_segments"]) for item in movement), "longest_confirmed_gap_sec": _longest_gap(frames, fps), "readiness": {"identity": "ready_with_review", "detected_time": "ready_with_review", "playing_time": "not_available", "heatmap": "ready_with_review" if positions else "not_available", "average_position": "ready_with_review" if positions else "not_available", "distance": "experimental" if movement else "not_available", "possession": "not_available", "passes": "not_available"}}
+        player = {
+            "player_id": player_id,
+            "player_name": rows[0].get("player_name") or player_id,
+            "team_label": rows[0].get("team_label"),
+            "roster_number": rows[0].get("roster_number"),
+            "first_confirmed_observation": first,
+            "last_confirmed_observation": last,
+            "confirmed_fragments": len(fragments),
+            "confirmed_tracklets": sorted({str(row["tracklet_id"]) for row in rows}),
+            "confirmed_detected_observations": len(frames),
+            "detected_frames": len(frames),
+            "detected_time_sec": round(len(frames) / fps, 3),
+            "confirmed_observation_span_sec": (
+                round((last - first + 1) / fps, 3)
+                if first is not None and last is not None
+                else 0.0
+            ),
+            "playing_time_sec": None,
+            "coverage_denominator": "unknown",
+            "average_pitch_position_m": _mean(positions),
+            "heatmap_samples": len(positions),
+            **movement_summary,
+            "expected_positive_movement_segments": expected_movement_segments,
+            "longest_confirmed_gap_sec": _longest_gap(frames, fps),
+            "readiness": {
+                "identity": "ready_with_review",
+                "detected_time": "ready_with_review",
+                "playing_time": "not_available",
+                "heatmap": "ready_with_review" if positions else "not_available",
+                "average_position": "ready_with_review" if positions else "not_available",
+                "distance": "experimental" if movement else "not_available",
+                "speed": "experimental" if movement else "not_available",
+                "intensity": "experimental" if movement else "not_available",
+                "possession": "not_available",
+                "passes": "not_available",
+            },
+        }
         players.append(player)
         timeline.append({"player_id": player_id, "player_name": player["player_name"], "team_label": player["team_label"], "observations": rows})
         heatmaps.append({"player_id": player_id, "team_label": player["team_label"], "samples": len(positions), "positions_m": positions, "bin_dimensions": [12, 8]})
@@ -88,6 +125,141 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
 def _coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
     summary = snapshot.get("summary") or {}
     return {"coverage_unit": summary.get("coverage_unit"), "reliable_player_observations_total": summary.get("reliable_player_observations_total"), "confirmed_observations": summary.get("confirmed_detected_observations"), "unresolved_observations": summary.get("unresolved_detected_observations"), "conflicted_observations": summary.get("conflicted_detected_observations"), "ignored_observations": summary.get("ignored_detected_observations"), "confirmed_ratio": summary.get("confirmed_detected_observation_ratio"), "unresolved_ratio": summary.get("unresolved_detected_observation_ratio")}
+
+
+def _aggregate_movement_stats(movement: list[dict[str, Any]]) -> dict[str, Any]:
+    observed_distance = sum(float(item.get("observed_distance_m") or 0.0) for item in movement)
+    estimated_gap_distance = sum(float(item.get("estimated_gap_distance_m") or 0.0) for item in movement)
+    total_distance = observed_distance + estimated_gap_distance
+    movement_time = sum(float(item.get("playing_time_sec") or 0.0) for item in movement)
+    detected_time = sum(float(item.get("detected_time_sec") or 0.0) for item in movement)
+    avg_speed_mps = total_distance / movement_time if movement_time > 0 else 0.0
+    observed_avg_speed_mps = observed_distance / detected_time if detected_time > 0 else 0.0
+    peak_speed_mps = max(
+        (float(item.get("peak_sustained_speed_mps") or 0.0) for item in movement),
+        default=0.0,
+    )
+    raw_top_speed_mps = max(
+        (float(item.get("raw_segment_top_speed_mps") or 0.0) for item in movement),
+        default=0.0,
+    )
+    intensity_rows = [
+        item.get("intensity")
+        for item in movement
+        if isinstance(item.get("intensity"), dict)
+    ]
+    high_intensity_distance = sum(
+        float(item.get("high_intensity_distance_m") or 0.0)
+        for item in intensity_rows
+    )
+    sprint_distance = sum(
+        float(item.get("sprint_distance_m") or 0.0) for item in intensity_rows
+    )
+    return {
+        "observed_distance_m": round(observed_distance, 2),
+        "estimated_short_gap_distance_m": round(estimated_gap_distance, 2),
+        "total_distance_m": round(total_distance, 2),
+        "observed_movement_segments": sum(
+            int(item.get("observed_segments") or 0) for item in movement
+        ),
+        "estimated_gap_movement_segments": sum(
+            int(item.get("estimated_gap_segments") or 0) for item in movement
+        ),
+        "accepted_movement_segments": sum(
+            int(item.get("observed_segments") or 0)
+            + int(item.get("estimated_gap_segments") or 0)
+            for item in movement
+        ),
+        "skipped_outlier_segments": sum(
+            int(item.get("skipped_outlier_segments") or 0) for item in movement
+        ),
+        "skipped_long_gap_segments": sum(
+            int(item.get("skipped_long_gap_segments") or 0) for item in movement
+        ),
+        "speed": {
+            "avg_speed_mps": round(avg_speed_mps, 3),
+            "avg_speed_kmh": round(avg_speed_mps * 3.6, 2),
+            "observed_avg_speed_mps": round(observed_avg_speed_mps, 3),
+            "peak_sustained_speed_mps": round(peak_speed_mps, 3),
+            "peak_sustained_speed_kmh": round(peak_speed_mps * 3.6, 2),
+            "top_speed_mps": round(peak_speed_mps, 3),
+            "top_speed_kmh": round(peak_speed_mps * 3.6, 2),
+            "raw_segment_top_speed_mps": round(raw_top_speed_mps, 3),
+            "raw_segment_top_speed_kmh": round(raw_top_speed_mps * 3.6, 2),
+            "speed_quality": _lowest_quality(
+                [str(item.get("speed_quality") or "not_available") for item in movement]
+            ),
+            "speed_window_sec": max(
+                (float(item.get("speed_window_sec") or 0.0) for item in movement),
+                default=0.0,
+            ),
+            "samples_used": sum(int(item.get("samples_used") or 0) for item in movement),
+            "sustained_speed_windows": sum(
+                int(item.get("sustained_speed_windows") or 0) for item in movement
+            ),
+        },
+        "intensity": {
+            "high_intensity_threshold_kmh": _common_number(
+                intensity_rows, "high_intensity_threshold_kmh"
+            ),
+            "sprint_threshold_kmh": _common_number(
+                intensity_rows, "sprint_threshold_kmh"
+            ),
+            "min_sprint_duration_sec": _common_number(
+                intensity_rows, "min_sprint_duration_sec"
+            ),
+            "high_intensity_time_sec": round(
+                sum(float(item.get("high_intensity_time_sec") or 0.0) for item in intensity_rows),
+                3,
+            ),
+            "high_intensity_distance_m": round(high_intensity_distance, 2),
+            "high_intensity_segments": sum(
+                int(item.get("high_intensity_segments") or 0) for item in intensity_rows
+            ),
+            "high_intensity_distance_ratio": (
+                round(high_intensity_distance / total_distance, 4)
+                if total_distance > 0
+                else 0.0
+            ),
+            "sprint_count": sum(int(item.get("sprint_count") or 0) for item in intensity_rows),
+            "sprint_time_sec": round(
+                sum(float(item.get("sprint_time_sec") or 0.0) for item in intensity_rows),
+                3,
+            ),
+            "sprint_distance_m": round(sprint_distance, 2),
+            "sprint_distance_ratio": (
+                round(sprint_distance / total_distance, 4)
+                if total_distance > 0
+                else 0.0
+            ),
+            "max_sprint_speed_kmh": max(
+                (float(item.get("max_sprint_speed_kmh") or 0.0) for item in intensity_rows),
+                default=0.0,
+            ),
+            "trusted_speed_segments": sum(
+                int(item.get("trusted_speed_segments") or 0) for item in intensity_rows
+            ),
+            "sprint_candidate_count": sum(
+                int(item.get("sprint_candidate_count") or 0) for item in intensity_rows
+            ),
+            "rejected_sprint_candidate_count": sum(
+                int(item.get("rejected_sprint_candidate_count") or 0)
+                for item in intensity_rows
+            ),
+        },
+    }
+
+
+def _lowest_quality(values: list[str]) -> str:
+    quality_order = {"not_available": 0, "low": 1, "medium": 2, "high": 3}
+    available = [value for value in values if value in quality_order]
+    if not available:
+        return "not_available"
+    return min(available, key=lambda value: quality_order[value])
+
+
+def _common_number(rows: list[dict[str, Any]], key: str) -> float:
+    return float(next((row.get(key) for row in rows if row.get(key) is not None), 0.0))
 def _fragments(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     out=[]; current=[]
     for row in rows:

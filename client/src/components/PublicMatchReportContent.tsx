@@ -16,6 +16,7 @@ import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
 import {
   displayJerseyNumber,
+  hasAdvancedPlayerMetrics,
   hasPlayerReadyMomentum,
 } from '../lib/publicReportPresentation';
 
@@ -233,14 +234,8 @@ export function PublicMatchReportContent({
     [playerChartMetric, report.players],
   );
   const matchDuration = formatSeconds(report.match.duration_sec);
-  const hasAdvancedPlayerMetrics = report.players.some(
-    (player) =>
-      Number(player.avg_speed_kmh || 0) > 0 ||
-      Number(player.peak_speed_kmh || 0) > 0 ||
-      Number(player.high_intensity_distance_m || 0) > 0 ||
-      Number(player.sprint_count || 0) > 0,
-  );
-  const playerChartMetrics = hasAdvancedPlayerMetrics
+  const showAdvancedPlayerMetrics = hasAdvancedPlayerMetrics(report.players);
+  const playerChartMetrics = showAdvancedPlayerMetrics
     ? PLAYER_CHART_METRICS
     : PLAYER_CHART_METRICS.filter((metric) => metric.key !== 'peakSpeed');
   const playerReadyMomentum = hasPlayerReadyMomentum(report)
@@ -453,10 +448,10 @@ export function PublicMatchReportContent({
                 <th>Drużyna</th>
                 <th title='Czas fragmentów nagrania, na których rozpoznano zawodnika'>Czas wykryty</th>
                 <th>Dystans</th>
-                {hasAdvancedPlayerMetrics && <th>Dystans wys. intensywności</th>}
-                {hasAdvancedPlayerMetrics && <th>Sprinty</th>}
-                {hasAdvancedPlayerMetrics && <th>Śr. prędkość</th>}
-                {hasAdvancedPlayerMetrics && <th>Prędkość maks.</th>}
+                {showAdvancedPlayerMetrics && <th>Dystans wys. intensywności</th>}
+                {showAdvancedPlayerMetrics && <th>Sprinty</th>}
+                {showAdvancedPlayerMetrics && <th>Śr. prędkość</th>}
+                {showAdvancedPlayerMetrics && <th>Prędkość maks.</th>}
               </tr>
             </thead>
             <tbody>
@@ -468,10 +463,10 @@ export function PublicMatchReportContent({
                   <td>{player.team_name || player.team_label || 'Team'}</td>
                   <td>{formatSeconds(player.detected_time_sec || player.playing_time_sec)}</td>
                   <td>{formatMeters(player.total_distance_m)}</td>
-                  {hasAdvancedPlayerMetrics && <td>{formatMeters(player.high_intensity_distance_m)}</td>}
-                  {hasAdvancedPlayerMetrics && <td>{player.sprint_count}</td>}
-                  {hasAdvancedPlayerMetrics && <td>{formatSpeed(player.avg_speed_kmh)}</td>}
-                  {hasAdvancedPlayerMetrics && <td>{formatSpeed(player.peak_speed_kmh)}</td>}
+                  {showAdvancedPlayerMetrics && <td>{formatMeters(player.high_intensity_distance_m)}</td>}
+                  {showAdvancedPlayerMetrics && <td>{player.sprint_count}</td>}
+                  {showAdvancedPlayerMetrics && <td>{formatSpeed(player.avg_speed_kmh)}</td>}
+                  {showAdvancedPlayerMetrics && <td>{formatSpeed(player.peak_speed_kmh)}</td>}
                 </tr>
               ))}
             </tbody>
