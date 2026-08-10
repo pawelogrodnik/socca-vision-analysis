@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.public_match_report import build_public_match_report
+from app.services.stabilization import build_team_shape_pack_document_from_team_stats
 
 
 TECHNICAL_PLAYER_NAME = re.compile(r"^[ABU](?:\d+\??|\?)$", re.IGNORECASE)
@@ -34,6 +35,8 @@ def build_reviewed_match_report(match_path: Path) -> dict[str, Any]:
         if value is not None:
             package[key] = value
     apply_reviewed_identity_to_report_package(package, required=True)
+    if "team_shape_pack" not in package and isinstance(package.get("team_stats"), dict):
+        package["team_shape_pack"] = build_team_shape_pack_document_from_team_stats(package["team_stats"])
 
     stats_digest = str(package["reviewed_player_stats"].get("source_snapshot_digest") or "")
     report = build_public_match_report(

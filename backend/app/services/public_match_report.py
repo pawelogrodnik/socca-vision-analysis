@@ -280,6 +280,58 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _team_shape_points(package: dict[str, Any], team_label: str) -> list[dict[str, Any]]:
+    shape_doc = package.get("team_shape_pack") if isinstance(package.get("team_shape_pack"), dict) else {}
+    timeline = shape_doc.get("timeline") if isinstance(shape_doc.get("timeline"), list) else []
+    rows = []
+    for item in timeline:
+        if not isinstance(item, dict) or str(item.get("team_label") or "") != team_label:
+            continue
+        rows.append(
+            {
+                "minute": int(item.get("minute") or 0),
+                "label": str(item.get("label") or item.get("minute") or ""),
+                "width_m": _round(item.get("width_m")),
+                "depth_m": _round(item.get("depth_m")),
+                "compactness_m": _round(item.get("compactness_m")),
+                "block_height_m": _round(item.get("block_height_m")),
+            }
+        )
+    return rows
+
+
+def _team_shape_summary(package: dict[str, Any], team_label: str) -> dict[str, Any]:
+    shape_doc = package.get("team_shape_pack") if isinstance(package.get("team_shape_pack"), dict) else {}
+    teams = shape_doc.get("teams") if isinstance(shape_doc.get("teams"), list) else []
+    for item in teams:
+        if not isinstance(item, dict) or str(item.get("team_label") or "") != team_label:
+            continue
+        average = item.get("average_shape") if isinstance(item.get("average_shape"), dict) else {}
+        return {
+            "width_m": _round(item.get("width_m")),
+            "depth_m": _round(item.get("depth_m")),
+            "compactness_m": _round(item.get("compactness_m")),
+            "block_height_m": _round(item.get("block_height_m")),
+            "sample_count": int(item.get("sample_count") or 0),
+            "average_shape": {
+                "width_m": _round(average.get("width_m")),
+                "depth_m": _round(average.get("depth_m")),
+                "compactness_m": _round(average.get("compactness_m")),
+                "block_height_m": _round(average.get("block_height_m")),
+            },
+            "takeaways": item.get("takeaways") if isinstance(item.get("takeaways"), list) else [],
+        }
+    return {
+        "width_m": 0.0,
+        "depth_m": 0.0,
+        "compactness_m": 0.0,
+        "block_height_m": 0.0,
+        "sample_count": 0,
+        "average_shape": {"width_m": 0.0, "depth_m": 0.0, "compactness_m": 0.0, "block_height_m": 0.0},
+        "takeaways": [],
+    }
+
+
 def _public_match(package: dict[str, Any]) -> dict[str, Any]:
     match = package.get("match") if isinstance(package.get("match"), dict) else {}
     video = match.get("video") if isinstance(match.get("video"), dict) else {}
@@ -628,6 +680,25 @@ def build_public_match_report(
             heatmap_dir=heatmap_dir,
             public_heatmap_base=public_heatmap_base,
         ),
+        "team_shape": {
+            "available": isinstance(package.get("team_shape_pack"), dict),
+            "teams": [
+                {
+                    "team_label": team.get("team_label"),
+                    "team_id": team.get("team_id"),
+                    "team_name": team.get("team_name"),
+                    "summary": _team_shape_summary(package, str(team.get("team_label") or "")),
+                    "timeline": _team_shape_points(package, str(team.get("team_label") or "")),
+                }
+                for team in _public_teams(package)
+            ],
+            "takeaways": (
+                shape_doc.get("takeaways")
+                if isinstance((shape_doc := package.get("team_shape_pack")) if isinstance(package.get("team_shape_pack"), dict) else {}, dict)
+                and isinstance(shape_doc.get("takeaways"), list)
+                else []
+            ),
+        },
         "ball": {
             "known_possession_coverage": _round(possession_summary.get("known_possession_coverage"), 4),
             "controlled_coverage": _round(possession_summary.get("controlled_coverage"), 4),

@@ -415,6 +415,38 @@ export type TeamStatsDocument = {
   teams: Array<Record<string, unknown>>;
 };
 
+export type TeamShapeDocument = {
+  available?: boolean;
+  takeaways?: string[];
+  teams?: Array<{
+    team_label?: string;
+    team_id?: string | null;
+    team_name?: string | null;
+    summary?: {
+      width_m?: number;
+      depth_m?: number;
+      compactness_m?: number;
+      block_height_m?: number;
+      sample_count?: number;
+      average_shape?: {
+        width_m?: number;
+        depth_m?: number;
+        compactness_m?: number;
+        block_height_m?: number;
+      };
+      takeaways?: string[];
+    };
+    timeline?: Array<{
+      minute?: number;
+      label?: string;
+      width_m?: number;
+      depth_m?: number;
+      compactness_m?: number;
+      block_height_m?: number;
+    }>;
+  }>;
+};
+
 export type PlayerHeatmapsDocument = {
   schema_version: string;
   generated_at: string;
@@ -760,6 +792,38 @@ export type AttackingMomentumDocument = {
   points: AttackingMomentumPoint[];
   warnings?: Array<string | AnalyticsWarning>;
   notes?: string[];
+};
+
+export type TeamShapeDocument = {
+  available?: boolean;
+  takeaways?: string[];
+  teams?: Array<{
+    team_label?: string;
+    team_id?: string | null;
+    team_name?: string | null;
+    summary?: {
+      width_m?: number;
+      depth_m?: number;
+      compactness_m?: number;
+      block_height_m?: number;
+      sample_count?: number;
+      average_shape?: {
+        width_m?: number;
+        depth_m?: number;
+        compactness_m?: number;
+        block_height_m?: number;
+      };
+      takeaways?: string[];
+    };
+    timeline?: Array<{
+      minute?: number;
+      label?: string;
+      width_m?: number;
+      depth_m?: number;
+      compactness_m?: number;
+      block_height_m?: number;
+    }>;
+  }>;
 };
 
 export type ContactCandidateReviewStatus = 'needs_review' | 'accepted' | 'rejected' | 'uncertain';
@@ -2353,6 +2417,29 @@ export type PublicReportPlayer = {
         y: number;
         value: number;
       }>;
+    };
+
+    export type PublicMatchReport = {
+      schema_version: string;
+      generated_at: string;
+      id: string;
+      source_match_id: string;
+      report_type: string;
+      stats_semantics: Record<string, string>;
+      match: {
+        id: string;
+        title: string;
+        match_date?: string | null;
+        season?: string | null;
+        venue?: string | null;
+        format?: string | null;
+        duration_sec?: number;
+      };
+      teams: PublicReportTeam[];
+      players: PublicReportPlayer[];
+      team_shape?: TeamShapeDocument | null;
+      ball?: Record<string, unknown>;
+      reviewed_identity_digest?: string | null;
     };
   };
 };
