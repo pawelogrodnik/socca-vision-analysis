@@ -46,7 +46,6 @@ import { IdentityCropReviewPanel } from './IdentityCropReviewPanel';
 import { IdentityRosterSubjectReviewPanel } from './IdentityRosterSubjectReviewPanel';
 import { MatchList } from './MatchList';
 import { MatchRosterPanel } from './MatchRosterPanel';
-import { matchRosterReadiness } from '../utils/matchRoster';
 import { MatchSummary } from './MatchSummary';
 import {
   MatchWorkflowStepper,
@@ -607,7 +606,6 @@ export function AdminPanel() {
   const canAnalyze = Boolean(selected && (pitchPoints.length === 4 || savedPitchConfig));
   const reviewStableOverlay = selected?.analysis_report?.artifacts?.stable_overlay_preview;
   const reviewStableOverlaySkipped = selected?.analysis_report?.parameters?.render_stable_overlay === false;
-  const selectedRosterReady = matchRosterReadiness(selected?.teams).ready;
   const steps = workflowSteps(activeStep, selected, reviewWorkflow);
   const activeJobStep = activeAnalysisJob ? activeProgressStep(activeAnalysisJob) : null;
   const activeJobCurrent = activeAnalysisJob ? progressCurrentText(activeAnalysisJob) : null;
@@ -862,14 +860,7 @@ export function AdminPanel() {
             onWorkflowChanged={setReviewWorkflow}
             onOpenReport={() => setActiveStep('publish')}
           />
-          {!selectedRosterReady ? (
-            <MatchRosterPanel
-              match={selected}
-              disabled={isBusy}
-              onSave={saveRosterTeams}
-              onStatus={setStatus}
-            />
-          ) : <details className='debug-details'>
+          <details className='debug-details'>
             <summary>Kadra meczu</summary>
             <MatchRosterPanel
               match={selected}
@@ -877,7 +868,7 @@ export function AdminPanel() {
               onSave={saveRosterTeams}
               onStatus={setStatus}
             />
-          </details>}
+          </details>
           <details
             className='debug-details'
             onToggle={(event) => setShowDeveloperDiagnostics(event.currentTarget.open)}

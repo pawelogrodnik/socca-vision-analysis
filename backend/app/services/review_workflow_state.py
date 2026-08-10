@@ -17,7 +17,6 @@ from app.services.review_workflow_store import (
     load_json_object,
     load_video_qa_approval,
 )
-from app.services.match_roster import match_roster_readiness
 
 
 WORKFLOW_SCHEMA_VERSION = "1.0.0"
@@ -56,7 +55,6 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     steps = {step_id: _step(step_id, "locked") for step_id in STEP_IDS}
     blockers: list[dict[str, Any]] = []
     allowed: list[str] = []
-    roster = evidence.get("roster") if isinstance(evidence.get("roster"), dict) else {"ready": True}
 
     if not analysis_completed:
         steps["initial_audit"] = _step("initial_audit", "locked", "analysis_not_completed")
@@ -65,14 +63,6 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         steps["video_qa"] = _step("video_qa", "locked", "analysis_not_completed")
         blockers.append(_blocker("analysis_not_completed", "initial_audit"))
         return _state(match_id, False, "unavailable", "initial_audit", steps, blockers, allowed, initial, issues, freshness, render, {"type": "complete_analysis", "step_id": "analysis"})
-
-    if not initial_complete and roster.get("ready") is not True:
-        steps["initial_audit"] = _step("initial_audit", "locked", "roster_required")
-        steps["exceptions"] = _step("exceptions", "locked", "roster_required")
-        steps["finalize"] = _step("finalize", "locked", "roster_required")
-        steps["video_qa"] = _step("video_qa", "locked", "roster_required")
-        blockers.append(_blocker("roster_required", "initial_audit", {"roster_code": roster.get("code")}))
-        return _state(match_id, True, "action_required", "initial_audit", steps, blockers, [], initial, issues, freshness, render, {"type": "configure_match_roster", "step_id": "initial_audit", "detail": roster.get("detail")})
 
     if recompute_failed:
         steps["initial_audit"] = _step("initial_audit", "error", "review_recompute_failed")
@@ -170,7 +160,6 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
     evidence = {
         "match_id": str(match_doc.get("id") or match_path.name),
         "analysis_completed": _analysis_completed(match_path, match_doc),
-        "roster": match_roster_readiness(match_doc),
         "initial_audit": initial,
         "issues": issues,
         "freshness": {

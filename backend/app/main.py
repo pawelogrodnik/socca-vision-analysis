@@ -1567,10 +1567,11 @@ def update_initial_identity_audit_seeds(
     has_identity_updates = bool(updates)
     try:
         match_document = read_match_meta(path)
+        workflow_before = get_review_workflow_state(path, match_document)
         if has_identity_updates:
             try:
                 assert_workflow_action_allowed(
-                    get_review_workflow_state(path, match_document),
+                    workflow_before,
                     "identify_players",
                 )
             except WorkflowActionError as exc:
@@ -1589,7 +1590,14 @@ def update_initial_identity_audit_seeds(
         if not finalize:
             # Frame transitions only persist decisions and telemetry.  Seeded
             # identity propagation runs once, after the required final save.
-            result["workflow"] = get_review_workflow_state(path, match_document)
+            result["workflow"] = (
+                get_review_workflow_state(path, match_document)
+                if has_identity_updates
+                else workflow_before
+            )
+            return result
+        if workflow_before.get("phase") != "initial_audit":
+            result["workflow"] = workflow_before
             return result
         benchmark_context = benchmark_context_for_workspace(path)
         rebuild_status = (

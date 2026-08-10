@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { listTeams } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { Match, Team } from '../types';
-import { selectedMatchRosterReadiness } from '../utils/matchRoster';
 
 interface MatchRosterPanelProps {
   match: Match;
@@ -69,20 +68,26 @@ export function MatchRosterPanel({
 
   async function saveRoster() {
     if (isSaving || disabled) return;
-    const teamA = teamByKey(teamRegistry, teamAKey);
-    const teamB = teamByKey(teamRegistry, teamBKey);
-    const rosterStatus = selectedMatchRosterReadiness(teamA, teamB);
-    if (!rosterStatus.ready) {
-      onStatus(rosterStatus.message || 'Uzupełnij roster meczu.');
+    if (!teamAKey && teamBKey) {
+      onStatus('Najpierw wybierz Team A. Team B bez Team A zmienilby label w analizie.');
       return;
     }
+    if (teamAKey && teamBKey && teamAKey === teamBKey) {
+      onStatus('Team A i Team B musza byc roznymi druzynami.');
+      return;
+    }
+
+    const teamA = teamByKey(teamRegistry, teamAKey);
+    const teamB = teamByKey(teamRegistry, teamBKey);
     const nextTeams = [teamA, teamB].filter((team): team is Team => Boolean(team));
 
     setIsSaving(true);
     try {
       await onSave(nextTeams);
       onStatus(
-        `Zapisano roster meczu: ${nextTeams.map((team) => team.name).join(' / ')}.`,
+        nextTeams.length > 0
+          ? `Zapisano roster meczu: ${nextTeams.map((team) => team.name).join(' / ')}.`
+          : 'Wyczyszczono roster meczu.',
       );
     } catch (error) {
       onStatus(errorMessage(error));
@@ -134,7 +139,7 @@ export function MatchRosterPanel({
             disabled={disabled || isLoading || isSaving}
             onChange={(event) => setTeamAKey(event.target.value)}
           >
-            <option value=''>Wybierz Team A</option>
+            <option value=''>-- bez rosteru --</option>
             {teamRegistry.map((team) => (
               <option value={teamKey(team)} key={teamKey(team)}>
                 {team.name} ({team.players?.length || 0} zawodnikow)
@@ -149,7 +154,7 @@ export function MatchRosterPanel({
             disabled={disabled || isLoading || isSaving}
             onChange={(event) => setTeamBKey(event.target.value)}
           >
-            <option value=''>Wybierz Team B</option>
+            <option value=''>-- anonimowy przeciwnik --</option>
             {teamRegistry.map((team) => (
               <option value={teamKey(team)} key={teamKey(team)}>
                 {team.name} ({team.players?.length || 0} zawodnikow)
@@ -169,6 +174,17 @@ export function MatchRosterPanel({
       <div className='row'>
         <button type='button' onClick={saveRoster} disabled={disabled || isSaving || isLoading}>
           {isSaving ? 'Zapisuje roster...' : 'Zapisz roster w tym meczu'}
+        </button>
+        <button
+          type='button'
+          className='secondary'
+          onClick={() => {
+            setTeamAKey('');
+            setTeamBKey('');
+          }}
+          disabled={disabled || isSaving}
+        >
+          Wyczysc wybor
         </button>
       </div>
     </div>

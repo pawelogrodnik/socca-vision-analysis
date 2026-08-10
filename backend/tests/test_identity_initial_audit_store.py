@@ -49,14 +49,7 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
                 {
                     "id": "team-b",
                     "name": "Verisk",
-                    "players": [
-                        {
-                            "id": "player-3",
-                            "name": "Roman",
-                            "number": "6",
-                            "role": "player",
-                        }
-                    ],
+                    "players": [],
                 },
             ]
         }
@@ -267,16 +260,38 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
             4.0,
         )
 
-    def test_incremental_save_reuses_production_hash_baseline(self) -> None:
-        for filename in ("stable_players.json", "tracklets.json", "tracks.json"):
+    def test_interactive_load_and_saves_never_hash_production_artifacts(self) -> None:
+        for filename in ("stable_players.json", "tracklets.json"):
             (self.match_path / filename).write_text("{}\n", encoding="utf-8")
-        real_file_sha256 = identity_initial_audit_store._file_sha256
+        (self.match_path / "tracks.json").write_bytes(b"x" * (2 * 1024 * 1024))
 
         with patch.object(
             identity_initial_audit_store,
             "_file_sha256",
-            wraps=real_file_sha256,
+            side_effect=AssertionError("interactive seed persistence must not hash"),
         ) as hash_file:
+            loaded = load_initial_identity_audit_seeds(
+                self.match_path,
+                self.match_document,
+            )
+            hash_calls = [hash_file.call_count]
+            self.assertEqual(loaded["status"], "empty")
+
+            save_initial_identity_audit_seeds(
+                self.match_path,
+                self.match_document,
+                [],
+                telemetry_events=[
+                    {
+                        "event_id": "session-started",
+                        "session_id": "session-1",
+                        "event_type": "session_started",
+                        "active_delta_seconds": 0.0,
+                    }
+                ],
+            )
+            hash_calls.append(hash_file.call_count)
+
             save_initial_identity_audit_seeds(
                 self.match_path,
                 self.match_document,
@@ -288,8 +303,7 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
                     }
                 ],
             )
-            self.assertEqual(hash_file.call_count, 4)
-            hash_file.reset_mock()
+            hash_calls.append(hash_file.call_count)
 
             saved = save_initial_identity_audit_seeds(
                 self.match_path,
@@ -301,18 +315,10 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
                         "action": "team_b_unknown",
                     }
                 ],
-                telemetry_events=[
-                    {
-                        "event_id": "event-2",
-                        "session_id": "session-1",
-                        "event_type": "action",
-                        "observation_key": self.observation_keys[1],
-                        "active_delta_seconds": 1.0,
-                    }
-                ],
             )
+            hash_calls.append(hash_file.call_count)
 
-        self.assertEqual(hash_file.call_count, 0)
+        self.assertEqual(hash_calls, [0, 0, 0, 0])
         self.assertEqual(len(saved["decisions"]), 2)
         stored = json.loads(
             (self.match_path / SEEDS_FILENAME).read_text(encoding="utf-8")
@@ -322,9 +328,37 @@ class InitialIdentityAuditStoreTests(unittest.TestCase):
             "file_metadata_size_mtime_v1",
         )
         self.assertEqual(
-            stored["operator_telemetry"]["metrics"]["audit_actions"],
-            1,
+            stored["operator_telemetry"]["metrics"]["audit_actions"], 0
         )
+
+    def test_metadata_safety_check_brackets_atomic_seed_write(self) -> None:
+        real_write_atomic = identity_initial_audit_store._write_atomic
+
+        def write_then_mutate(path: Path, document: dict) -> None:
+            real_write_atomic(path, document)
+            self.production_path.write_text('{"changed":true}\n', encoding="utf-8")
+
+        with patch.object(
+            identity_initial_audit_store,
+            "_write_atomic",
+            side_effect=write_then_mutate,
+        ), self.assertRaisesRegex(
+            RuntimeError,
+            "changed while saving operator seeds",
+        ):
+            save_initial_identity_audit_seeds(
+                self.match_path,
+                self.match_document,
+                [
+                    {
+                        "update_id": "update-1",
+                        "observation_key": self.observation_keys[0],
+                        "action": "team_a_unknown",
+                    }
+                ],
+            )
+
+        self.assertTrue((self.match_path / SEEDS_FILENAME).exists())
 
     def test_same_player_cannot_claim_two_observations_in_one_frame(self) -> None:
         save_initial_identity_audit_seeds(

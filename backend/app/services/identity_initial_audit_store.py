@@ -18,7 +18,6 @@ from app.services.identity_product_flow_state import (
     ProductFlowStateError,
     benchmark_context_for_workspace,
 )
-from app.services.match_roster import require_match_roster
 
 
 SCHEMA_VERSION = "0.1.0"
@@ -73,7 +72,6 @@ def load_initial_identity_audit_seeds(
     match_path: Path,
     match_document: dict[str, Any],
 ) -> dict[str, Any]:
-    require_match_roster(match_document)
     selection = _load_selection(match_path)
     result = load_operator_identity_audit_seeds(
         match_path,
@@ -104,7 +102,7 @@ def load_operator_identity_audit_seeds(
             _empty_document(
                 source,
                 mode=mode,
-                production_snapshot=_production_identity_snapshot(
+                production_snapshot=_interactive_production_identity_snapshot(
                     match_path,
                     match_document,
                 ),
@@ -131,7 +129,6 @@ def save_initial_identity_audit_seeds(
     telemetry_events: list[dict[str, Any]] | None = None,
     updated_at: str | None = None,
 ) -> dict[str, Any]:
-    require_match_roster(match_document)
     selection = _load_selection(match_path)
     result = save_operator_identity_audit_seeds(
         match_path,
@@ -184,32 +181,27 @@ def save_operator_identity_audit_seeds(
         and isinstance(existing.get("production_identity_snapshot"), dict)
         else None
     )
-    production_before = (
+    production_snapshot = (
         stored_production_snapshot
         if stored_production_snapshot is not None
-        and isinstance(stored_production_snapshot.get("metadata_fingerprint"), dict)
-        else _production_identity_snapshot(match_path, match_document)
+        else _interactive_production_identity_snapshot(match_path, match_document)
     )
     metadata_before = _production_identity_metadata_fingerprint(
         match_path,
         match_document,
     )
-    if production_before.get("metadata_fingerprint") != metadata_before:
-        raise RuntimeError(
-            "Production identity artifacts changed since the audit baseline"
-        )
     document = (
         _normalized_existing_document(
             existing,
             source,
-            production_before,
+            production_snapshot,
             mode=mode,
         )
         if existing is not None
         else _empty_document(
             source,
             mode=mode,
-            production_snapshot=production_before,
+            production_snapshot=production_snapshot,
         )
     )
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
@@ -294,7 +286,7 @@ def save_operator_identity_audit_seeds(
                 **telemetry,
                 "processed_update_ids": sorted(processed_update_ids),
             },
-            "production_identity_snapshot": production_before,
+            "production_identity_snapshot": production_snapshot,
             "updated_at": timestamp,
             "safety": {
                 "observation_level_seeds_only": True,
@@ -305,6 +297,7 @@ def save_operator_identity_audit_seeds(
             },
         }
     )
+    _write_atomic(seed_path, document)
     metadata_after = _production_identity_metadata_fingerprint(
         match_path,
         match_document,
@@ -313,7 +306,6 @@ def save_operator_identity_audit_seeds(
         raise RuntimeError(
             "Production identity artifacts changed while saving operator seeds"
         )
-    _write_atomic(seed_path, document)
     return _public_document(
         document,
         status="fresh",
@@ -924,6 +916,21 @@ def _production_identity_snapshot(
             match_path,
             match_document,
         ),
+    }
+
+
+def _interactive_production_identity_snapshot(
+    match_path: Path,
+    match_document: dict[str, Any],
+) -> dict[str, Any]:
+    metadata = _production_identity_metadata_fingerprint(
+        match_path,
+        match_document,
+    )
+    return {
+        "files": metadata["files"],
+        "snapshot_digest": canonical_digest(metadata),
+        "metadata_fingerprint": metadata,
     }
 
 

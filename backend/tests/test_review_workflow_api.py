@@ -38,6 +38,8 @@ class ReviewWorkflowApiTests(unittest.TestCase):
             _assert_publish_workflow(Path(tmp))
 
     def test_legacy_finalize_only_refreshes_identity_and_progress(self) -> None:
+        from app.main import finalize_match_reviewed_identity
+
         refreshed = {
             "snapshot": {"status": "partial_reviewed", "semantic_digest": "identity"},
             "workflow": {"phase": "ready_to_finalize"},
@@ -91,7 +93,7 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         ), patch("app.main.get_review_workflow_state", return_value=state), patch(
             "app.main.save_reviewed_identity_correction", return_value={"saved": True}
         ), patch(
-            "app.main.refresh_review_after_identity_mutation"
+            "app.main.refresh_review_after_identity_mutation", return_value=refreshed
         ) as refresh:
             response = post_match_reviewed_identity_correction(
                 "m1",
@@ -146,7 +148,11 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
             "app.main.read_match_meta", return_value={"id": "m1"}
         ), patch("app.main.match_video_path", return_value=Path("/tmp/m1/video.mp4")), patch(
-            "app.main.get_review_workflow_state"
+            "app.main.get_review_workflow_state", return_value={
+                "phase": "initial_audit",
+                "allowed_actions": ["identify_players"],
+                "blockers": [],
+            }
         ), patch(
             "app.main.prepare_initial_identity_audit"
         ), patch(
@@ -173,6 +179,44 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         rebuild.assert_called_once()
         refresh.assert_called_once()
         self.assertEqual(refresh.call_args.kwargs["source"], "initial_audit_finish")
+        self.assertEqual(response["workflow"]["phase"], "exceptions")
+
+    def test_retried_initial_audit_finish_does_not_recompute(self) -> None:
+        from app.main import update_initial_identity_audit_seeds
+
+        completed_state = {
+            "phase": "exceptions",
+            "allowed_actions": ["review_identity_issue"],
+            "blockers": [],
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.match_video_path", return_value=Path("/tmp/m1/video.mp4")
+        ), patch(
+            "app.main.get_review_workflow_state", return_value=completed_state
+        ), patch(
+            "app.main.prepare_initial_identity_audit"
+        ), patch(
+            "app.main.save_initial_identity_audit_seeds",
+            return_value={"decisions": []},
+        ) as save, patch(
+            "app.main.rebuild_seeded_identity_after_operator_audit"
+        ) as rebuild, patch(
+            "app.main.refresh_review_after_identity_mutation"
+        ) as refresh:
+            response = update_initial_identity_audit_seeds(
+                "m1",
+                {
+                    "updates": [],
+                    "telemetry_events": [{"event_type": "session_finished"}],
+                    "finalize": True,
+                },
+            )
+
+        save.assert_called_once()
+        rebuild.assert_not_called()
+        refresh.assert_not_called()
         self.assertEqual(response["workflow"]["phase"], "exceptions")
 
     def test_initial_audit_telemetry_after_completion_skips_recompute(self) -> None:
