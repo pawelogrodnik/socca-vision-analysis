@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.reviewed_match_report import build_reviewed_match_report
 
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
@@ -113,8 +114,120 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertEqual(player["intensity"]["sprint_count"], 0)
             self.assertEqual(player["readiness"]["speed"], "experimental")
 
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_single_frame_position_spike_does_not_leak_into_reviewed_or_public_max_speed(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 50,
+            "duration_sec": 2.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        positions = [
+            (frame, 12.0 if frame == 20 else frame * 0.1)
+            for frame in range(50)
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {"tracklets": [_tracklet_with_positions("runner", positions)]}
+                ),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(
+                root,
+                _confirmed_snapshot("runner"),
+                {},
+            )
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            speed = player["speed"]
+            self.assertGreaterEqual(player["skipped_outlier_segments"], 2)
+            self.assertGreater(speed["peak_sustained_speed_kmh"], 8.5)
+            self.assertLess(speed["peak_sustained_speed_kmh"], 9.5)
+            self.assertEqual(
+                speed["top_speed_kmh"], speed["peak_sustained_speed_kmh"]
+            )
+            self.assertLess(speed["raw_segment_top_speed_kmh"], 9.5)
+            self.assertGreater(speed["sustained_speed_windows"], 0)
+            self.assertEqual(player["readiness"]["speed"], "experimental")
+
+            public_player = _build_public_report(root)["players"][0]
+            self.assertEqual(
+                public_player["peak_speed_kmh"],
+                speed["peak_sustained_speed_kmh"],
+            )
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_separate_tracklets_do_not_bridge_position_discontinuity_for_max_speed(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 50,
+            "duration_sec": 2.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        first_tracklet = _tracklet_with_positions(
+            "runner-a", [(frame, frame * 0.1) for frame in range(25)]
+        )
+        second_tracklet = _tracklet_with_positions(
+            "runner-b",
+            [(frame, 40.0 + (frame - 25) * 0.1) for frame in range(25, 50)],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [first_tracklet, second_tracklet]}),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(
+                root,
+                _confirmed_snapshot("runner-a", "runner-b"),
+                {},
+            )
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            speed = player["speed"]
+            self.assertEqual(player["confirmed_fragments"], 2)
+            self.assertEqual(
+                player["confirmed_tracklets"], ["runner-a", "runner-b"]
+            )
+            self.assertAlmostEqual(player["observed_distance_m"], 4.8, places=2)
+            self.assertEqual(player["skipped_outlier_segments"], 0)
+            self.assertGreater(speed["avg_speed_kmh"], 8.0)
+            self.assertLess(speed["avg_speed_kmh"], 9.5)
+            self.assertGreater(speed["peak_sustained_speed_kmh"], 8.5)
+            self.assertLess(speed["peak_sustained_speed_kmh"], 9.5)
+            self.assertEqual(
+                speed["top_speed_kmh"], speed["peak_sustained_speed_kmh"]
+            )
+            self.assertLess(speed["raw_segment_top_speed_kmh"], 9.5)
+            self.assertEqual(player["readiness"]["speed"], "experimental")
+
+            public_player = _build_public_report(root)["players"][0]
+            self.assertEqual(
+                public_player["peak_speed_kmh"],
+                speed["peak_sustained_speed_kmh"],
+            )
+
 
 def _tracklet(tracklet_id: str, frames: list[int]) -> dict:
+    return _tracklet_with_positions(
+        tracklet_id,
+        [(frame, float(frame) * 0.1) for frame in frames],
+    )
+
+
+def _tracklet_with_positions(
+    tracklet_id: str, positions: list[tuple[int, float]]
+) -> dict:
     return {
         "tracklet_id": tracklet_id,
         "positions_m": [
@@ -122,13 +235,60 @@ def _tracklet(tracklet_id: str, frames: list[int]) -> dict:
                 "frame": frame,
                 "time_sec": frame / 25.0,
                 "status": "detected",
-                "pitch_m": [float(frame), 10.0],
-                "smoothed_pitch_m": [float(frame) * 0.1, 10.0],
+                "pitch_m": [x, 10.0],
+                "smoothed_pitch_m": [x, 10.0],
                 "bbox_xyxy": [0, 0, 10, 20],
             }
-            for frame in frames
+            for frame, x in positions
         ],
     }
+
+
+def _confirmed_snapshot(*tracklet_ids: str) -> dict:
+    return {
+        "semantic_digest": "snapshot",
+        "tracklet_assignments": [
+            _assignment(tracklet_id, "confirmed", "p1")
+            for tracklet_id in tracklet_ids
+        ],
+        "observation_overrides": [],
+        "observation_demotions": [],
+        "summary": {},
+    }
+
+
+def _build_public_report(root: Path) -> dict:
+    (root / "match.json").write_text(
+        json.dumps(
+            {
+                "id": "reviewed-speed-regression",
+                "title": "Reviewed speed regression",
+                "video": {"duration_sec": 2.0},
+                "teams": [
+                    {
+                        "id": "team-a",
+                        "name": "Team A",
+                        "players": [{"id": "p1", "name": "Player One"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "reviewed_output_manifest.json").write_text(
+        json.dumps(
+            {
+                "reviewed_identity": {"status": "fresh", "digest": "snapshot"},
+                "stats": {
+                    "status": "completed",
+                    "source_snapshot_digest": "snapshot",
+                },
+                "stale": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return build_reviewed_match_report(root)
 
 
 def _assignment(tracklet_id: str, status: str, player_id: str | None) -> dict:
