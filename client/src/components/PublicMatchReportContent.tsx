@@ -368,7 +368,7 @@ export function PublicMatchReportContent({
         </p>
       </section>
 
-      <TeamShapeSection teamShape={report.team_shape} />
+      <TeamShapeSection reportTeams={report.teams} teamShape={report.team_shape} />
 
       {playerReadyMomentum ? (
         <section className='card public-charts-card'>

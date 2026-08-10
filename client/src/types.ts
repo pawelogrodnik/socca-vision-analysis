@@ -415,38 +415,6 @@ export type TeamStatsDocument = {
   teams: Array<Record<string, unknown>>;
 };
 
-export type TeamShapeDocument = {
-  available?: boolean;
-  takeaways?: string[];
-  teams?: Array<{
-    team_label?: string;
-    team_id?: string | null;
-    team_name?: string | null;
-    summary?: {
-      width_m?: number;
-      depth_m?: number;
-      compactness_m?: number;
-      block_height_m?: number;
-      sample_count?: number;
-      average_shape?: {
-        width_m?: number;
-        depth_m?: number;
-        compactness_m?: number;
-        block_height_m?: number;
-      };
-      takeaways?: string[];
-    };
-    timeline?: Array<{
-      minute?: number;
-      label?: string;
-      width_m?: number;
-      depth_m?: number;
-      compactness_m?: number;
-      block_height_m?: number;
-    }>;
-  }>;
-};
-
 export type PlayerHeatmapsDocument = {
   schema_version: string;
   generated_at: string;
@@ -796,32 +764,40 @@ export type AttackingMomentumDocument = {
 
 export type TeamShapeDocument = {
   available?: boolean;
+  scope?: 'all_in_play' | string;
+  pitch_dimensions_m?: {
+    width_m: number;
+    length_m: number;
+  };
   takeaways?: string[];
   teams?: Array<{
     team_label?: string;
     team_id?: string | null;
     team_name?: string | null;
     summary?: {
-      width_m?: number;
-      depth_m?: number;
-      compactness_m?: number;
-      block_height_m?: number;
-      sample_count?: number;
-      average_shape?: {
-        width_m?: number;
-        depth_m?: number;
-        compactness_m?: number;
-        block_height_m?: number;
+      average_width_m?: number;
+      average_depth_m?: number;
+      average_compactness_m?: number;
+      average_block_height_percent?: number;
+    };
+    average_shape?: {
+      grid: {
+        columns: number;
+        rows: number;
       };
-      takeaways?: string[];
+      cells: Array<{
+        column: number;
+        row: number;
+        value: number;
+      }>;
     };
     timeline?: Array<{
       minute?: number;
       label?: string;
-      width_m?: number;
-      depth_m?: number;
-      compactness_m?: number;
-      block_height_m?: number;
+      width_m?: number | null;
+      depth_m?: number | null;
+      compactness_m?: number | null;
+      block_height_percent?: number | null;
     }>;
   }>;
 };
@@ -2418,29 +2394,6 @@ export type PublicReportPlayer = {
         value: number;
       }>;
     };
-
-    export type PublicMatchReport = {
-      schema_version: string;
-      generated_at: string;
-      id: string;
-      source_match_id: string;
-      report_type: string;
-      stats_semantics: Record<string, string>;
-      match: {
-        id: string;
-        title: string;
-        match_date?: string | null;
-        season?: string | null;
-        venue?: string | null;
-        format?: string | null;
-        duration_sec?: number;
-      };
-      teams: PublicReportTeam[];
-      players: PublicReportPlayer[];
-      team_shape?: TeamShapeDocument | null;
-      ball?: Record<string, unknown>;
-      reviewed_identity_digest?: string | null;
-    };
   };
 };
 
@@ -2463,6 +2416,7 @@ export type PublicMatchReport = {
   };
   teams: PublicReportTeam[];
   players: PublicReportPlayer[];
+  team_shape?: TeamShapeDocument | null;
   ball?: {
     known_possession_coverage?: number;
     controlled_coverage?: number;
