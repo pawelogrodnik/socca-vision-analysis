@@ -156,7 +156,11 @@ export function IdentityReviewWorkspace({
         <p>Sprawdź kilka wybranych klatek i przypisz osoby, które rozpoznajesz. Nie musisz oznaczać każdego fragmentu filmu.</p>
         <strong>{workflow.steps.find((step) => step.id === 'initial_audit')?.completed ?? 0} / {workflow.steps.find((step) => step.id === 'initial_audit')?.total ?? 0} potwierdzonych</strong>
       </div>
-      <InitialIdentityAuditPanel match={match} onStatus={setMessage} onFinished={refreshWorkflow} />
+      <InitialIdentityAuditPanel
+        match={match}
+        onStatus={setMessage}
+        onWorkflowChanged={applyWorkflow}
+      />
     </section>}
 
     {stage === 'remaining_issues' && workflow && <IdentityExceptionReviewPanel

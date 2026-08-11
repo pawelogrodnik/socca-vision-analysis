@@ -214,13 +214,14 @@ export function initialIdentityAuditTeamClass(
 
 export function initialIdentityAuditObservationBoxClassName(
   observation: Pick<InitialIdentityAuditObservation, 'team_label'>,
-  options: { selected: boolean; decided: boolean },
+  options: { selected: boolean; decided: boolean; requiredUnresolved?: boolean },
 ): string {
   return [
     'initial-identity-observation-box',
     initialIdentityAuditTeamClass(observation),
     options.selected ? 'selected' : '',
     options.decided ? 'decided' : '',
+    options.requiredUnresolved ? 'required-unresolved' : '',
   ].filter(Boolean).join(' ');
 }
 

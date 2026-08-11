@@ -1723,6 +1723,9 @@ a { color: #93c5fd; }
 .initial-identity-observation-box.decided {
   background: color-mix(in srgb, currentColor 16%, transparent);
 }
+.initial-identity-observation-box.required-unresolved {
+  box-shadow: 0 0 0 3px #facc15, 0 0 0 6px rgba(15, 23, 42, 0.82);
+}
 .initial-identity-observation-box.team-a {
   border-color: #ef4444;
   background: rgba(239, 68, 68, 0.16);
@@ -1761,8 +1764,24 @@ a { color: #93c5fd; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.initial-identity-observation-box.required-unresolved > span {
+  background: #facc15;
+  color: #020617;
+}
 .initial-identity-audit-navigation {
   justify-content: center;
+}
+.initial-identity-audit-required-notice {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #facc15;
+  border-radius: 6px;
+  background: rgba(250, 204, 21, 0.1);
+  color: #f8fafc;
+}
+.initial-identity-audit-required-notice span {
+  color: #cbd5e1;
 }
 .initial-identity-audit-actions {
   display: grid;
