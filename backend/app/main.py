@@ -77,6 +77,10 @@ from app.services.identity_reviewed_output_jobs import (
     generate_reviewed_output,
     reviewed_output_status,
 )
+from app.services.identity_reviewed_action_gate import (
+    DeferredReviewActionError,
+    validate_deferred_review_action,
+)
 from app.services.identity_reviewed_corrections import (
     persist_reviewed_identity_correction,
     reviewed_correction_context,
@@ -2061,27 +2065,34 @@ def post_match_reviewed_identity_correction(
         match_document = read_match_meta(path)
         if payload.get("defer_recompute") is True:
             started = time.perf_counter()
+            validate_deferred_review_action(path, match_document, payload)
+            deferred_gate_ms = round((time.perf_counter() - started) * 1000, 1)
+            persist_started = time.perf_counter()
             result = persist_reviewed_identity_correction(
                 path,
                 match_document,
                 payload,
             )
+            persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(
                 "reviewed_correction_perf mode=deferred match=%s "
-                "workflow_validation_ms=0.0 persist_decision_ms=%.1f "
+                "workflow_validation_ms=0.0 deferred_gate_ms=%.1f "
+                "persist_decision_ms=%.1f "
                 "seeded_candidate_rebuild_ms=0.0 finalize_reviewed_identity_ms=0.0 "
                 "segment_evidence_ms=0.0 progress_build_ms=0.0 final_workflow_ms=0.0 "
                 "total_ms=%.1f",
                 match_document.get("id") or path.name,
-                total_ms,
+                deferred_gate_ms,
+                persist_ms,
                 total_ms,
             )
             return {
                 **result,
                 "performance": {
                     "workflow_validation_ms": 0.0,
-                    "persist_decision_ms": total_ms,
+                    "deferred_gate_ms": deferred_gate_ms,
+                    "persist_decision_ms": persist_ms,
                     "seeded_candidate_rebuild_ms": 0.0,
                     "finalize_reviewed_identity_ms": 0.0,
                     "segment_evidence_ms": 0.0,
@@ -2120,6 +2131,11 @@ def post_match_reviewed_identity_correction(
         raise HTTPException(
             status_code=409,
             detail={"code": str(exc), "message": str(exc)},
+        ) from exc
+    except DeferredReviewActionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": str(exc)},
         ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

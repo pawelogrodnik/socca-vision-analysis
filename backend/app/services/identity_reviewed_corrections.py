@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_reviewed_active_cap import (
+    validate_new_player_active_cap_from_progress,
+)
 from app.services.identity_reviewed_correction_context import (
     build_materialized_subject_context,
     build_subject_context,
@@ -249,6 +252,7 @@ def persist_reviewed_identity_correction(
                     candidate_document,
                     prepared,
                     subject_id,
+                    use_materialized_context=use_materialized_context,
                 )
             write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             if card_key:
@@ -293,7 +297,15 @@ def _validate_new_player_active_cap(
     candidate_document: dict[str, Any],
     prepared: dict[str, Any],
     subject_id: str,
+    *,
+    use_materialized_context: bool,
 ) -> None:
+    if use_materialized_context and validate_new_player_active_cap_from_progress(
+        match_path,
+        prepared,
+        subject_id,
+    ):
+        return
     tracklets_document = load_required(match_path / "tracklets.json")
     tracklets = {
         str(row.get("tracklet_id")): row

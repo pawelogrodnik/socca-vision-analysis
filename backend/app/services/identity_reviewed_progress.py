@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_context
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_segments import load_segment_review
@@ -158,6 +159,10 @@ def build_reviewed_identity_progress(
             "generic_requires_operator_review_requires_operator": False,
         },
         "review_units": [_public_unit(unit, include_pairs=False) for unit in units],
+        "deferred_correction_context": build_reviewed_active_cap_context(
+            match_path,
+            units,
+        ),
     }
 
 

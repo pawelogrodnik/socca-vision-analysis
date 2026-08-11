@@ -18,6 +18,7 @@ from app.services.identity_reviewed_snapshot import (
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_correction_context import (
+    load_required as load_reviewed_required,
     reviewed_decisions_semantic_digest,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
@@ -469,15 +470,76 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
         with _workspace() as root:
             _fixture(root)
             _enable_materialized_candidate_context(root)
+            _materialize_deferred_context(root)
             payload = {
                 "candidate_subject_id": "s1",
                 "action": "create_new_stable_player",
                 "team_label": "A",
             }
-            first = persist_reviewed_identity_correction(root, _match(), payload)
-            second = persist_reviewed_identity_correction(root, _match(), payload)
+            def guarded_load(path: Path) -> dict:
+                if path.name == "tracklets.json":
+                    raise AssertionError("deferred active-cap validation read tracklets")
+                return load_reviewed_required(path)
+
+            with patch(
+                "app.services.identity_reviewed_corrections.load_required",
+                side_effect=guarded_load,
+            ), patch(
+                "app.services.identity_reviewed_corrections.resolve_stable_anonymous_entities",
+                side_effect=AssertionError("deferred active-cap validation ran resolver"),
+            ) as resolver:
+                first = persist_reviewed_identity_correction(root, _match(), payload)
+                second = persist_reviewed_identity_correction(root, _match(), payload)
             self.assertEqual(first["allocated_stable_slot_id"], "A04")
             self.assertEqual(second["allocated_stable_slot_id"], "A04")
+            resolver.assert_not_called()
+
+    def test_deferred_create_new_player_cached_context_preserves_cap_and_constraints(self) -> None:
+        with _workspace() as root:
+            _fixture(root, active_team_a=7)
+            _enable_materialized_candidate_context(root)
+            _materialize_deferred_context(root)
+            with patch(
+                "app.services.identity_reviewed_corrections.resolve_stable_anonymous_entities",
+                side_effect=AssertionError("cached cap check must not run resolver"),
+            ) as resolver:
+                with self.assertRaisesRegex(ValueError, "Eighth simultaneous"):
+                    persist_reviewed_identity_correction(
+                        root,
+                        _match(),
+                        {
+                            "candidate_subject_id": "s1",
+                            "action": "create_new_stable_player",
+                            "team_label": "A",
+                        },
+                    )
+            resolver.assert_not_called()
+
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            _materialize_deferred_context(root)
+            with self.assertRaisesRegex(ValueError, "team mismatch"):
+                persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": "s1",
+                        "action": "create_new_stable_player",
+                        "team_label": "B",
+                    },
+                )
+            allocated = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "create_new_stable_player",
+                    "team_label": "A",
+                    "stable_slot_id": "A09",
+                },
+            )
+            self.assertEqual(allocated["allocated_stable_slot_id"], "A04")
 
     def test_deferred_batch_final_snapshot_matches_immediate_recompute_semantics(self) -> None:
         with _workspace() as immediate_root, _workspace() as deferred_root:
@@ -699,6 +761,26 @@ def _fixture(root: Path, active_team_a: int | None = None) -> None:
             for frame in (3, 4, 8, 9)
         ]
     _write(root / "global_identity.json", global_identity)
+    detected_frames = (3, 4, 8, 9, 20, 30, 31)
+    _write(
+        root / "frame_detection_counts.json",
+        {
+            "schema_version": "1.0.0",
+            "target_players": 14,
+            "frames": [
+                {
+                    "frame": frame,
+                    "active_team_a": (
+                        active_team_a
+                        if active_team_a is not None and frame in {3, 4, 8, 9}
+                        else 0
+                    ),
+                    "active_team_b": 0,
+                }
+                for frame in detected_frames
+            ],
+        },
+    )
     _write(root / "stable_players.json", {"players": []})
     _write(
         root / "identity_roster_subject_review_shadow.json",
@@ -740,6 +822,11 @@ def _enable_materialized_candidate_context(root: Path) -> None:
         ]
     )
     _write(root / "identity_candidate_shadow.json", document)
+
+
+def _materialize_deferred_context(root: Path) -> None:
+    progress = build_reviewed_identity_progress(root, _match())
+    _write(root / "reviewed_identity_progress.json", progress)
 
 
 def _card(subject: str, team: str, key: str, player: str) -> dict:
