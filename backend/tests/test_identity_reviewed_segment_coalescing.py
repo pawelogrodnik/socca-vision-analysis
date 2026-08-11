@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import cv2
+import numpy as np
 
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_segment_coalescing import (
@@ -12,6 +16,7 @@ from app.services.identity_reviewed_segment_coalescing import (
     max_segment_review_gap_frames,
 )
 from app.services.identity_reviewed_segments import (
+    _review_fps,
     build_segment_review_document,
     load_segment_decisions,
     save_segment_decision,
@@ -21,6 +26,71 @@ from app.services.review_workflow_state import _issue_evidence
 
 
 class ReviewedIdentitySegmentCoalescingTests(unittest.TestCase):
+    def test_match_metadata_fps_is_fixture_fallback_and_controls_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root, a03_frames=[100, 106], fps=20.0)
+
+            review = build_segment_review_document(root, match)
+
+            self.assertEqual(_review_fps(root, match), 20.0)
+            self.assertEqual(review["target_policy"]["max_unowned_gap_frames"], 5)
+            self.assertEqual(
+                len([row for row in review["targets"] if row["stable_slot_id"] == "A03"]),
+                1,
+            )
+
+    def test_real_video_fps_wins_over_stale_match_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_video(root / "video.avi", fps=40.0)
+            match = {"video": {"fps": 30.0}}
+
+            fps = _review_fps(root, match)
+
+            self.assertAlmostEqual(fps, 40.0, places=1)
+            self.assertEqual(max_segment_review_gap_frames(fps), 10)
+
+    def test_same_frame_gap_uses_time_semantics_at_different_fps(self) -> None:
+        group = ("subject", "tracklet", "A03", "A")
+        claims = _claims("tracklet", "A03", "A", [100, 108])
+
+        lower_fps = coalesced_conflict_episodes(
+            {group: claims},
+            claims,
+            fps=20.0,
+        )
+        higher_fps = coalesced_conflict_episodes(
+            {group: claims},
+            claims,
+            fps=40.0,
+        )
+
+        self.assertEqual(lower_fps[group], [[100], [108]])
+        self.assertEqual(higher_fps[group], [[100, 108]])
+
+    def test_invalid_container_fps_uses_valid_match_fallback_then_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch(
+                "app.services.identity_reviewed_segments.read_match_video_metadata",
+                return_value={"fps": 0},
+            ):
+                self.assertEqual(
+                    _review_fps(root, {"video": {"fps": 0}, "fps": 24}),
+                    24.0,
+                )
+                self.assertEqual(
+                    _review_fps(root, {"video": {"fps": "invalid"}, "fps": 0}),
+                    30.0,
+                )
+
+    def test_time_policy_thresholds_are_fps_aware(self) -> None:
+        self.assertEqual(max_segment_review_gap_frames(20.0), 5)
+        self.assertEqual(max_segment_review_gap_frames(30.0), 7)
+        self.assertEqual(max_segment_review_gap_frames(40.0), 10)
+        self.assertEqual(max_segment_review_gap_frames(60.0), 15)
+
     def test_same_conflict_coalesces_across_gap_within_policy(self) -> None:
         group = ("subject", "tracklet", "A03", "A")
         episodes = coalesced_conflict_episodes(
@@ -378,6 +448,21 @@ def _target(review: dict, slot_id: str) -> dict:
 
 def _write(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def _write_video(path: Path, *, fps: float) -> None:
+    writer = cv2.VideoWriter(
+        str(path),
+        cv2.VideoWriter_fourcc(*"MJPG"),
+        fps,
+        (32, 24),
+    )
+    if not writer.isOpened():
+        raise RuntimeError("Could not create test video")
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+    for _ in range(3):
+        writer.write(frame)
+    writer.release()
 
 
 if __name__ == "__main__":

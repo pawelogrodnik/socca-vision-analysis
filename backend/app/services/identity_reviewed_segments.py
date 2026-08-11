@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ from app.services.identity_reviewed_segment_coalescing import (
     exact_frame_ranges,
     max_segment_review_gap_frames,
 )
-from app.services.video import resolve_match_video_path
+from app.services.video import read_match_video_metadata, resolve_match_video_path
 
 
 REVIEW_FILENAME = "reviewed_identity_segment_review.json"
@@ -104,7 +105,7 @@ def build_segment_review_document(
     roster = _roster(match_doc)
     targets: list[dict[str, Any]] = []
     matched_decision_ids: set[str] = set()
-    fps = _review_fps(match_doc)
+    fps = _review_fps(match_path, match_doc)
     episodes = coalesced_conflict_episodes(groups, ownership, fps=fps)
     for (subject_id, tracklet_id, slot_id, team_label), grouped_frames in sorted(
         episodes.items()
@@ -593,13 +594,32 @@ def _target_id(
     return f"review-segment:v2:{digest}"
 
 
-def _review_fps(match_doc: dict[str, Any]) -> float:
-    value = float(
-        (match_doc.get("video") or {}).get("fps")
-        or match_doc.get("fps")
-        or 30.0
-    )
-    return value if value > 0 else 30.0
+def _review_fps(match_path: Path, match_doc: dict[str, Any]) -> float:
+    try:
+        container_fps = _positive_fps(
+            read_match_video_metadata(match_path, match_doc).get("fps")
+        )
+        if container_fps is not None:
+            return container_fps
+    except (FileNotFoundError, ValueError):
+        pass
+
+    for candidate in (
+        (match_doc.get("video") or {}).get("fps"),
+        match_doc.get("fps"),
+    ):
+        fallback_fps = _positive_fps(candidate)
+        if fallback_fps is not None:
+            return fallback_fps
+    return 30.0
+
+
+def _positive_fps(value: Any) -> float | None:
+    try:
+        fps = float(value)
+    except (TypeError, ValueError):
+        return None
+    return fps if fps > 0 and isfinite(fps) else None
 
 
 def _legacy_roster_decisions(match_path: Path) -> dict[str, str]:
