@@ -321,12 +321,17 @@ export function InitialIdentityAuditPanel({
       applyServerStore({ ...nextStore, workflow: nextWorkflow });
       onWorkflowChanged?.(nextWorkflow);
       const nextDecisions = initialIdentityAuditDecisionMap(nextStore.decisions);
+      const refreshedEvidence = buildInitialAuditIncompleteFinalizeEvidence(
+        nextWorkflow,
+        nextDecisions,
+      );
       const outcome = initialAuditFinalizeOutcome(
         nextWorkflow,
         nextDecisions,
         nextDocument,
-        incompleteFinalizeEvidence,
+        refreshedEvidence,
       );
+      setIncompleteFinalizeEvidence(refreshedEvidence);
       setCompletionAttempted(!outcome.complete);
       setArmedAction(null);
       setFrameIndex(outcome.firstPendingTarget?.frameIndex ?? 0);

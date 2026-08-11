@@ -328,6 +328,79 @@ test('refresh uses the dedicated workflow response when seed GET has no workflow
   assert.doesNotMatch(refreshAuditView, /initialAuditFinalizeOutcome\(\s*nextStore\.workflow/);
 });
 
+test('manual refresh replaces an unresolvable old required-key baseline', () => {
+  const oldWorkflow = workflow('initial_audit', {
+    completed: 1,
+    total: 2,
+    remaining: 1,
+    required_case_observation_keys: ['old-key'],
+  });
+  const oldEvidence = buildInitialAuditIncompleteFinalizeEvidence(oldWorkflow, {});
+  assert.deepEqual(oldEvidence?.requiredKeys, ['old-key']);
+
+  const refreshedWorkflow = workflow('initial_audit', {
+    completed: 1,
+    total: 2,
+    remaining: 1,
+    required_case_observation_keys: ['new-key'],
+  });
+  const refreshedDocument: InitialIdentityAuditDocument = {
+    ...auditDocument,
+    summary: {
+      ...auditDocument.summary,
+      selected_frames: 1,
+      visible_observations: 1,
+    },
+    frames: [{
+      ...auditDocument.frames[0],
+      observations: [{
+        ...auditDocument.frames[0].observations[0],
+        observation_key: 'new-key',
+      }],
+    }],
+  };
+  const refreshedEvidence = buildInitialAuditIncompleteFinalizeEvidence(
+    refreshedWorkflow,
+    {},
+  );
+  const refreshedOutcome = initialAuditFinalizeOutcome(
+    refreshedWorkflow,
+    {},
+    refreshedDocument,
+    refreshedEvidence,
+  );
+
+  assert.deepEqual(refreshedEvidence?.requiredKeys, ['new-key']);
+  assert.deepEqual(refreshedOutcome.pendingRequiredKeys, ['new-key']);
+  assert.deepEqual(refreshedOutcome.firstPendingTarget, {
+    frameIndex: 0,
+    observationKey: 'new-key',
+  });
+  assert.deepEqual(refreshedOutcome.missingRequiredKeys, []);
+
+  const panel = readFileSync(
+    new URL('../src/components/InitialIdentityAuditPanel.tsx', import.meta.url),
+    'utf8',
+  );
+  const refreshAuditView = panel.slice(
+    panel.indexOf('async function refreshAuditView'),
+    panel.indexOf('function applyAction'),
+  );
+  assert.match(
+    refreshAuditView,
+    /buildInitialAuditIncompleteFinalizeEvidence\(\s*nextWorkflow,\s*nextDecisions/,
+  );
+  assert.match(
+    refreshAuditView,
+    /initialAuditFinalizeOutcome\(\s*nextWorkflow,\s*nextDecisions,\s*nextDocument,\s*refreshedEvidence/,
+  );
+  assert.match(refreshAuditView, /setIncompleteFinalizeEvidence\(refreshedEvidence\)/);
+  assert.doesNotMatch(
+    refreshAuditView,
+    /initialAuditFinalizeOutcome\([\s\S]*?nextDocument,\s*incompleteFinalizeEvidence/,
+  );
+});
+
 test('finish synchronizes parent workflow in both outcomes and closes only when complete', () => {
   const panel = readFileSync(
     new URL('../src/components/InitialIdentityAuditPanel.tsx', import.meta.url),
