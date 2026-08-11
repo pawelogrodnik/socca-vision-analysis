@@ -2,8 +2,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import type { InitialIdentityAuditDocument, ReviewWorkflow } from '../src/types.ts';
+import type {
+  InitialIdentityAuditDocument,
+  InitialIdentityAuditSeedStoreDocument,
+  ReviewWorkflow,
+} from '../src/types.ts';
 import {
+  buildInitialAuditIncompleteFinalizeEvidence,
   initialAuditFinalizeOutcome,
   initialAuditIdentityWorkIsComplete,
   initialAuditPendingRequiredKeys,
@@ -96,6 +101,33 @@ const auditDocument: InitialIdentityAuditDocument = {
     yolo_not_required: true,
     downstream_rebuild_triggered: false,
   },
+};
+
+const threeObservationAuditDocument: InitialIdentityAuditDocument = {
+  ...auditDocument,
+  summary: {
+    ...auditDocument.summary,
+    selected_frames: 3,
+    visible_observations: 3,
+  },
+  frames: [
+    ...auditDocument.frames,
+    {
+      audit_frame_key: 'frame-c',
+      frame_number: 270,
+      time_sec: 9,
+      full_frame_artifact: 'frame-c.jpg',
+      thumbnail_artifact: 'frame-c-thumb.jpg',
+      observations: [{
+        observation_key: 'key-C',
+        bbox_xyxy: [90, 10, 110, 60],
+        team_label: 'A',
+        role: 'field_player',
+        provenance: {},
+        display_order: 1,
+      }],
+    },
+  ],
 };
 
 test('audit panel stops offering identity mutations once its response leaves initial audit', () => {
@@ -196,6 +228,106 @@ test('missing required observations stay incomplete with a safe fallback', () =>
   assert.deepEqual(outcome.missingRequiredKeys, ['missing-key']);
 });
 
+test('incomplete finalize guidance survives a non-finalize save with stale evidence', () => {
+  const authoritativeFinalizeWorkflow = workflow('initial_audit', {
+    completed: 1,
+    total: 3,
+    remaining: 2,
+    required_case_observation_keys: ['key-A', 'key-B', 'key-C'],
+  });
+  const decisionsAtFinalize = { 'key-A': { kind: 'skip' } };
+  const preservedEvidence = buildInitialAuditIncompleteFinalizeEvidence(
+    authoritativeFinalizeWorkflow,
+    decisionsAtFinalize,
+  );
+  assert.ok(preservedEvidence);
+
+  const finalizeOutcome = initialAuditFinalizeOutcome(
+    authoritativeFinalizeWorkflow,
+    decisionsAtFinalize,
+    threeObservationAuditDocument,
+    preservedEvidence,
+  );
+  assert.deepEqual(finalizeOutcome.pendingRequiredKeys, ['key-B', 'key-C']);
+  assert.equal(finalizeOutcome.remaining, 2);
+
+  const decisionsAfterNormalSave = {
+    ...decisionsAtFinalize,
+    'key-B': { kind: 'team_unknown', teamLabel: 'B' },
+  };
+  const staleIncrementalWorkflow = workflow('initial_audit');
+  const outcomeAfterNormalSave = initialAuditFinalizeOutcome(
+    staleIncrementalWorkflow,
+    decisionsAfterNormalSave,
+    threeObservationAuditDocument,
+    preservedEvidence,
+  );
+
+  assert.deepEqual(outcomeAfterNormalSave.pendingRequiredKeys, ['key-C']);
+  assert.equal(outcomeAfterNormalSave.remaining, 1);
+  assert.equal(outcomeAfterNormalSave.completed, 2);
+  assert.deepEqual(outcomeAfterNormalSave.firstPendingTarget, {
+    frameIndex: 2,
+    observationKey: 'key-C',
+  });
+});
+
+test('refresh uses the dedicated workflow response when seed GET has no workflow', () => {
+  const seedGetResponse: InitialIdentityAuditSeedStoreDocument = {
+    schema_version: '1.0.0',
+    mode: 'initial_identity_audit',
+    status: 'fresh',
+    decisions_fresh: true,
+    decisions: [{
+      observation_key: 'key-A',
+      action: 'skip',
+      team_assignment_corrected: false,
+    }],
+    operator_telemetry: {
+      metrics: {
+        audit_frames_shown: 0,
+        audit_crops_clicked: 0,
+        audit_actions: 1,
+        active_operator_seconds: 0,
+        unique_players_seeded: 0,
+        team_assignments_corrected: 0,
+        false_detections_marked: 0,
+      },
+    },
+    safety: {},
+  };
+  const refreshedWorkflow = workflow('initial_audit', {
+    completed: 1,
+    total: 3,
+    remaining: 2,
+    required_case_observation_keys: ['key-A', 'key-B', 'key-C'],
+  });
+  assert.equal(seedGetResponse.workflow, undefined);
+
+  const outcome = initialAuditFinalizeOutcome(
+    refreshedWorkflow,
+    { 'key-A': { kind: 'skip' } },
+    threeObservationAuditDocument,
+  );
+  assert.equal(outcome.remaining, 2);
+  assert.deepEqual(outcome.firstPendingTarget, {
+    frameIndex: 1,
+    observationKey: 'key-B',
+  });
+
+  const panel = readFileSync(
+    new URL('../src/components/InitialIdentityAuditPanel.tsx', import.meta.url),
+    'utf8',
+  );
+  const refreshAuditView = panel.slice(
+    panel.indexOf('async function refreshAuditView'),
+    panel.indexOf('function applyAction'),
+  );
+  assert.match(refreshAuditView, /getReviewWorkflow\(match\.id\)/);
+  assert.match(refreshAuditView, /initialAuditFinalizeOutcome\(\s*nextWorkflow/);
+  assert.doesNotMatch(refreshAuditView, /initialAuditFinalizeOutcome\(\s*nextStore\.workflow/);
+});
+
 test('finish synchronizes parent workflow in both outcomes and closes only when complete', () => {
   const panel = readFileSync(
     new URL('../src/components/InitialIdentityAuditPanel.tsx', import.meta.url),
@@ -210,8 +342,8 @@ test('finish synchronizes parent workflow in both outcomes and closes only when 
   assert.match(finishAudit, /if \(outcome\.complete\)/);
   assert.match(finishAudit, /setOpen\(false\)/);
   assert.match(finishAudit, /setCompletionAttempted\(true\)/);
-  assert.match(finishAudit, /setFrameIndex\(outcome\.firstPendingTarget\.frameIndex\)/);
-  assert.match(finishAudit, /setSelectedObservationKey\(outcome\.firstPendingTarget\.observationKey\)/);
+  assert.match(finishAudit, /setFrameIndex\(incompleteOutcome\.firstPendingTarget\.frameIndex\)/);
+  assert.match(finishAudit, /setSelectedObservationKey\(incompleteOutcome\.firstPendingTarget\.observationKey\)/);
   assert.match(finishAudit, /finally[\s\S]*setFinishing\(false\)/);
   assert.doesNotMatch(finishAudit, /setCurrentDecisions|frameBatcherRef\.current\.reset/);
 });
