@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_reviewed_active_cap import (
+    detected_team_labels_from_progress,
+)
 from app.services.identity_reviewed_correction_context import current_reviewed_decision
 from app.services.identity_reviewed_segments import load_segment_decisions
 
@@ -48,10 +51,23 @@ def validate_deferred_review_action(
             "review_unit_already_decided",
             "Ten przypadek ma już zapisaną inną decyzję. Odśwież Review przed zmianą.",
         )
+    detected_team_labels_by_subject = None
+    if target_id is None:
+        detected_team_labels_by_subject = detected_team_labels_from_progress(progress)
+        if (
+            detected_team_labels_by_subject is None
+            or subject_id not in detected_team_labels_by_subject
+        ):
+            raise DeferredReviewActionError(
+                "review_queue_stale",
+                "Kolejka Review nie zawiera pełnego kontekstu drużyn. "
+                "Uruchom odświeżenie Review.",
+            )
     return {
         "review_unit": unit,
         "idempotent_replay": saved is not None,
         "batch_source_snapshot_digest": progress["source_snapshot_digest"],
+        "detected_team_labels_by_subject": detected_team_labels_by_subject,
     }
 
 

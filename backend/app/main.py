@@ -2065,13 +2065,20 @@ def post_match_reviewed_identity_correction(
         match_document = read_match_meta(path)
         if payload.get("defer_recompute") is True:
             started = time.perf_counter()
-            validate_deferred_review_action(path, match_document, payload)
+            deferred_gate = validate_deferred_review_action(
+                path,
+                match_document,
+                payload,
+            )
             deferred_gate_ms = round((time.perf_counter() - started) * 1000, 1)
             persist_started = time.perf_counter()
             result = persist_reviewed_identity_correction(
                 path,
                 match_document,
                 payload,
+                trusted_materialized_detected_team_labels=deferred_gate.get(
+                    "detected_team_labels_by_subject"
+                ),
             )
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)

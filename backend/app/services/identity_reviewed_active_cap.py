@@ -18,10 +18,6 @@ def build_reviewed_active_cap_context(
     match_path: Path,
     units: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    frame_document = _load_json_object(match_path / "frame_detection_counts.json")
-    if frame_document is None or not isinstance(frame_document.get("frames"), list):
-        return {"schema_version": CONTEXT_SCHEMA_VERSION, "status": "unavailable"}
-
     subjects = []
     relevant_frames: set[int] = set()
     for unit in units:
@@ -39,9 +35,22 @@ def build_reviewed_active_cap_context(
             {
                 "candidate_subject_id": str(unit.get("candidate_subject_id") or ""),
                 "source_team_label": str(unit.get("source_team_label") or "U"),
+                "detected_team_labels": list(unit.get("detected_team_labels") or []),
                 "detected_frames": frames,
             }
         )
+
+    base_context = {
+        "schema_version": CONTEXT_SCHEMA_VERSION,
+        "detected_team_evidence_status": "ready",
+        "subjects": sorted(
+            subjects,
+            key=lambda row: str(row["candidate_subject_id"]),
+        ),
+    }
+    frame_document = _load_json_object(match_path / "frame_detection_counts.json")
+    if frame_document is None or not isinstance(frame_document.get("frames"), list):
+        return {**base_context, "status": "unavailable"}
 
     counts: dict[int, tuple[int, int]] = {}
     for row in frame_document.get("frames") or []:
@@ -52,10 +61,10 @@ def build_reviewed_active_cap_context(
             continue
         counts[frame] = (int(row["active_team_a"]), int(row["active_team_b"]))
     if len(counts) != len(relevant_frames):
-        return {"schema_version": CONTEXT_SCHEMA_VERSION, "status": "incomplete"}
+        return {**base_context, "status": "incomplete"}
 
     return {
-        "schema_version": CONTEXT_SCHEMA_VERSION,
+        **base_context,
         "status": "ready",
         "active_players_per_team": _active_players_per_team(
             match_path,
@@ -65,11 +74,44 @@ def build_reviewed_active_cap_context(
             {"frame": frame, "A": values[0], "B": values[1]}
             for frame, values in sorted(counts.items())
         ],
-        "subjects": sorted(
-            subjects,
-            key=lambda row: str(row["candidate_subject_id"]),
-        ),
     }
+
+
+def detected_team_labels_from_progress(
+    progress: dict[str, Any],
+) -> dict[str, set[str]] | None:
+    context = progress.get("deferred_correction_context")
+    if not isinstance(context, dict):
+        return None
+    if context.get("schema_version") != CONTEXT_SCHEMA_VERSION:
+        return None
+    if context.get("detected_team_evidence_status") != "ready":
+        return None
+    rows = context.get("subjects")
+    if not isinstance(rows, list):
+        return None
+    output: dict[str, set[str]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        subject_id = str(row.get("candidate_subject_id") or "")
+        labels = row.get("detected_team_labels")
+        if not subject_id or subject_id in output or not isinstance(labels, list):
+            return None
+        normalized = [str(value).upper() for value in labels]
+        if normalized != sorted(set(normalized)) or any(
+            value not in {"A", "B"} for value in normalized
+        ):
+            return None
+        output[subject_id] = set(normalized)
+    return output
+
+
+def load_reviewed_detected_team_labels(
+    match_path: Path,
+) -> dict[str, set[str]] | None:
+    progress = _load_json_object(match_path / "reviewed_identity_progress.json")
+    return detected_team_labels_from_progress(progress or {})
 
 
 def validate_new_player_active_cap_from_progress(
@@ -115,9 +157,15 @@ def validate_new_player_active_cap_from_progress(
         if row is None:
             return False
         team = str(decision.get("team_label") or "")
-        source_team = str(row.get("source_team_label") or "U")
+        detected_teams = {
+            str(value).upper()
+            for value in row.get("detected_team_labels") or []
+            if str(value).upper() in {"A", "B"}
+        }
         frames = {int(frame) for frame in row.get("detected_frames") or []}
-        if team not in {"A", "B"} or source_team not in {"U", team} or not frames:
+        if team not in {"A", "B"} or len(detected_teams) > 1 or not frames:
+            return False
+        if detected_teams and detected_teams != {team}:
             return False
         if any((frame, team) not in canonical_visible for frame in frames):
             return False

@@ -21,6 +21,10 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 {"candidate_subject_id": "s1", "action": "unresolved"},
             )
             self.assertFalse(result["idempotent_replay"])
+            self.assertEqual(
+                result["detected_team_labels_by_subject"],
+                {"s1": set()},
+            )
 
     def test_high_priority_segment_requires_exact_target_and_subject(self) -> None:
         with _workspace() as root:
@@ -103,6 +107,49 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                         )
                     self.assertEqual(raised.exception.code, "review_queue_stale")
 
+    def test_whole_subject_without_exact_team_context_fails_closed(self) -> None:
+        with _workspace() as root:
+            _baseline(root, [_whole("s1")])
+            progress = json.loads(
+                (root / "reviewed_identity_progress.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            progress.pop("deferred_correction_context")
+            _write(root / "reviewed_identity_progress.json", progress)
+
+            with self.assertRaises(DeferredReviewActionError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {"candidate_subject_id": "s1", "action": "unresolved"},
+                )
+
+            self.assertEqual(raised.exception.code, "review_queue_stale")
+
+    def test_malformed_materialized_team_labels_fail_closed(self) -> None:
+        for labels in (["B", "A"], ["A", "A"], ["U"]):
+            with self.subTest(labels=labels), _workspace() as root:
+                _baseline(root, [_whole("s1")])
+                progress = json.loads(
+                    (root / "reviewed_identity_progress.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                progress["deferred_correction_context"]["subjects"][0][
+                    "detected_team_labels"
+                ] = labels
+                _write(root / "reviewed_identity_progress.json", progress)
+
+                with self.assertRaises(DeferredReviewActionError) as raised:
+                    validate_deferred_review_action(
+                        root,
+                        {"id": "m1"},
+                        {"candidate_subject_id": "s1", "action": "unresolved"},
+                    )
+
+                self.assertEqual(raised.exception.code, "review_queue_stale")
+
     def test_dirty_marker_does_not_block_later_units_from_same_batch(self) -> None:
         with _workspace() as root:
             _baseline(root, [_whole("s1"), _whole("s2"), _whole("s3")])
@@ -167,6 +214,13 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
 
 
 def _baseline(root: Path, cases: list[dict]) -> None:
+    whole_subject_ids = sorted(
+        {
+            str(case["candidate_subject_id"])
+            for case in cases
+            if case.get("review_target_id") is None
+        }
+    )
     _write(
         root / "reviewed_identity_progress.json",
         {
@@ -175,6 +229,20 @@ def _baseline(root: Path, cases: list[dict]) -> None:
             "match_id": "m1",
             "source_snapshot_digest": "snapshot-1",
             "next_cases": cases,
+            "deferred_correction_context": {
+                "schema_version": "1.0.0",
+                "status": "unavailable",
+                "detected_team_evidence_status": "ready",
+                "subjects": [
+                    {
+                        "candidate_subject_id": subject_id,
+                        "source_team_label": "U",
+                        "detected_team_labels": [],
+                        "detected_frames": [],
+                    }
+                    for subject_id in whole_subject_ids
+                ],
+            },
         },
     )
     _write(

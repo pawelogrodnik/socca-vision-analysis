@@ -64,7 +64,7 @@ def build_reviewed_identity_progress(
         str(row.get("candidate_subject_id") or "")
         for row in segment_review.get("targets") or []
     }
-    units = [
+    whole_subject_units = [
         _unit(
             subject_id,
             tracklet_ids,
@@ -77,7 +77,11 @@ def build_reviewed_identity_progress(
             fps,
         )
         for subject_id, tracklet_ids in sorted(subjects.items())
-        if subject_id not in segmented_subjects
+    ]
+    units = [
+        unit
+        for unit in whole_subject_units
+        if str(unit.get("candidate_subject_id") or "") not in segmented_subjects
     ]
     units.extend(_segment_units(segment_review, roster_teams, fps))
     counts = Counter(str(unit["current_resolution_status"]) for unit in units)
@@ -161,7 +165,7 @@ def build_reviewed_identity_progress(
         "review_units": [_public_unit(unit, include_pairs=False) for unit in units],
         "deferred_correction_context": build_reviewed_active_cap_context(
             match_path,
-            units,
+            whole_subject_units,
         ),
     }
 
@@ -212,6 +216,7 @@ def _unit(
         for tracklet_id in tracklet_ids
         if tracklet_id in tracklets
     }
+    detected_team_labels = sorted(teams & {"A", "B"})
     reason_codes: list[str] = []
     structural = False
     if any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
@@ -267,6 +272,7 @@ def _unit(
         "tracklet_ids": sorted(tracklet_ids),
         "tracklet_count": len(tracklet_ids),
         "source_team_label": source_team,
+        "detected_team_labels": detected_team_labels,
         "effective_team_label": effective_team,
         "frame_start": frames[0] if frames else None,
         "frame_end": frames[-1] if frames else None,

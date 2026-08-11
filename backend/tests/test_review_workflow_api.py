@@ -122,7 +122,10 @@ class ReviewWorkflowApiTests(unittest.TestCase):
             "app.main.read_match_meta", return_value={"id": "m1"}
         ), patch(
             "app.main.validate_deferred_review_action",
-            return_value={"idempotent_replay": False},
+            return_value={
+                "idempotent_replay": False,
+                "detected_team_labels_by_subject": {"subject-1": {"A", "B"}},
+            },
         ) as gate, patch(
             "app.main.persist_reviewed_identity_correction",
             return_value=persisted,
@@ -147,12 +150,17 @@ class ReviewWorkflowApiTests(unittest.TestCase):
                     "candidate_subject_id": "subject-1",
                     "action": "unresolved",
                     "defer_recompute": True,
+                    "detected_team_labels": ["A"],
                 },
             )
 
         self.assertTrue(response["recompute_deferred"])
         gate.assert_called_once()
         persist.assert_called_once()
+        self.assertEqual(
+            persist.call_args.kwargs["trusted_materialized_detected_team_labels"],
+            {"subject-1": {"A", "B"}},
+        )
         workflow_state.assert_not_called()
         legacy_save.assert_not_called()
         refresh.assert_not_called()

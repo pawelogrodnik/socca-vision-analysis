@@ -541,6 +541,118 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             )
             self.assertEqual(allocated["allocated_stable_slot_id"], "A04")
 
+    def test_materialized_mixed_team_subject_rejects_every_team_binding_action(self) -> None:
+        payloads = (
+            {"action": "assign_roster_player", "player_id": "p1"},
+            {"action": "assign_roster_player", "player_id": "p2"},
+            {"action": "assign_existing_slot", "stable_slot_id": "A03"},
+            {"action": "assign_existing_slot", "stable_slot_id": "B03"},
+            {"action": "assign_team", "team_label": "A"},
+            {"action": "assign_team", "team_label": "B"},
+            {"action": "create_new_stable_player", "team_label": "A"},
+            {"action": "create_new_stable_player", "team_label": "B"},
+        )
+        for action_payload in payloads:
+            with self.subTest(payload=action_payload), _workspace() as root:
+                _fixture(root)
+                _enable_materialized_candidate_context(root)
+                _configure_s1_detected_teams(root, {"A", "B"})
+                _materialize_deferred_context(root)
+
+                before = _decision_files(root)
+                with self.assertRaisesRegex(ValueError, "mixed-team subject"):
+                    persist_reviewed_identity_correction(
+                        root,
+                        _match(),
+                        {"candidate_subject_id": "s1", **action_payload},
+                    )
+                self.assertEqual(_decision_files(root), before)
+
+    def test_materialized_single_and_unknown_team_semantics_match_exact_path(self) -> None:
+        cases = (
+            ({"A"}, "A", True),
+            ({"A"}, "B", False),
+            ({"B"}, "B", True),
+            ({"B"}, "A", False),
+            (set(), "A", True),
+            (set(), "B", True),
+        )
+        for detected_teams, requested_team, should_succeed in cases:
+            with (
+                self.subTest(
+                    detected_teams=detected_teams,
+                    requested_team=requested_team,
+                ),
+                _workspace() as root,
+            ):
+                _fixture(root)
+                _enable_materialized_candidate_context(root)
+                _configure_s1_detected_teams(root, detected_teams)
+                _materialize_deferred_context(root)
+                payload = {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_team",
+                    "team_label": requested_team,
+                }
+
+                if should_succeed:
+                    result = persist_reviewed_identity_correction(
+                        root,
+                        _match(),
+                        payload,
+                    )
+                    self.assertEqual(
+                        result["saved_decision"]["team_label"],
+                        requested_team,
+                    )
+                else:
+                    with self.assertRaisesRegex(ValueError, "team mismatch"):
+                        persist_reviewed_identity_correction(
+                            root,
+                            _match(),
+                            payload,
+                        )
+
+    def test_materialized_team_validation_is_equivalent_to_old_exact_validation(self) -> None:
+        cases = (
+            ({"A"}, "A"),
+            ({"B"}, "B"),
+            (set(), "A"),
+            ({"A", "B"}, "A"),
+        )
+        for detected_teams, requested_team in cases:
+            with (
+                self.subTest(
+                    detected_teams=detected_teams,
+                    requested_team=requested_team,
+                ),
+                _workspace() as exact_root,
+                _workspace() as materialized_root,
+            ):
+                for root in (exact_root, materialized_root):
+                    _fixture(root)
+                    _enable_materialized_candidate_context(root)
+                    _configure_s1_detected_teams(root, detected_teams)
+                _materialize_deferred_context(materialized_root)
+                payload = {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_team",
+                    "team_label": requested_team,
+                }
+
+                exact_outcome = _persist_outcome(
+                    exact_root,
+                    payload,
+                    use_materialized_context=False,
+                )
+                materialized_outcome = _persist_outcome(
+                    materialized_root,
+                    payload,
+                    use_materialized_context=True,
+                )
+
+                self.assertEqual(materialized_outcome, exact_outcome)
+
     def test_deferred_batch_final_snapshot_matches_immediate_recompute_semantics(self) -> None:
         with _workspace() as immediate_root, _workspace() as deferred_root:
             for root in (immediate_root, deferred_root):
@@ -827,6 +939,51 @@ def _enable_materialized_candidate_context(root: Path) -> None:
 def _materialize_deferred_context(root: Path) -> None:
     progress = build_reviewed_identity_progress(root, _match())
     _write(root / "reviewed_identity_progress.json", progress)
+
+
+def _configure_s1_detected_teams(root: Path, teams: set[str]) -> None:
+    tracklets = _load(root / "tracklets.json")
+    labels = (
+        ("A", "B")
+        if teams == {"A", "B"}
+        else ((next(iter(teams)),) * 2 if teams else ("U", "U"))
+    )
+    by_tracklet = {row["tracklet_id"]: row for row in tracklets["tracklets"]}
+    by_tracklet["t1"]["team_label"] = labels[0]
+    by_tracklet["t1b"]["team_label"] = labels[1]
+    _write(root / "tracklets.json", tracklets)
+
+    candidate_document = _load(root / "identity_candidate_shadow.json")
+    s1 = next(
+        row
+        for row in candidate_document["subjects"]
+        if row["candidate_subject_id"] == "s1"
+    )
+    s1["team_label"] = next(iter(teams)) if len(teams) == 1 else "U"
+    _write(root / "identity_candidate_shadow.json", candidate_document)
+
+
+def _persist_outcome(
+    root: Path,
+    payload: dict,
+    *,
+    use_materialized_context: bool,
+) -> tuple[str, str]:
+    try:
+        result = persist_reviewed_identity_correction(
+            root,
+            _match(),
+            payload,
+            use_materialized_context=use_materialized_context,
+        )
+    except ValueError as exc:
+        message = str(exc).lower()
+        if "mixed-team" in message:
+            return ("error", "mixed-team")
+        if "team mismatch" in message or "cross-team" in message:
+            return ("error", "team-mismatch")
+        return ("error", message)
+    return ("saved", str(result["saved_decision"]["team_label"]))
 
 
 def _card(subject: str, team: str, key: str, player: str) -> dict:

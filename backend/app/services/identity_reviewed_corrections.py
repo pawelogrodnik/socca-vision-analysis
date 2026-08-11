@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_active_cap import (
+    load_reviewed_detected_team_labels,
     validate_new_player_active_cap_from_progress,
 )
 from app.services.identity_reviewed_correction_context import (
@@ -134,6 +135,7 @@ def persist_reviewed_identity_correction(
     payload: dict[str, Any],
     *,
     use_materialized_context: bool = True,
+    trusted_materialized_detected_team_labels: dict[str, set[str]] | None = None,
 ) -> dict[str, Any]:
     """Validate and durably save one decision without full-match recomputation."""
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
@@ -160,9 +162,17 @@ def persist_reviewed_identity_correction(
         candidate_document = load_required(
             match_path / "identity_candidate_shadow.json"
         )
+        detected_team_labels = trusted_materialized_detected_team_labels
+        if use_materialized_context and detected_team_labels is None:
+            detected_team_labels = load_reviewed_detected_team_labels(match_path)
+        use_exact_materialized_context = bool(
+            use_materialized_context
+            and detected_team_labels is not None
+            and subject_id in detected_team_labels
+        )
         context = (
             build_materialized_subject_context(candidate_document, subject_id)
-            if use_materialized_context
+            if use_exact_materialized_context
             else build_subject_context(match_path, subject_id)
         )
         card_key = review_card_key(match_path, subject_id)
@@ -199,7 +209,7 @@ def persist_reviewed_identity_correction(
                                 candidate_document,
                                 subject_id,
                             )
-                            if use_materialized_context
+                            if use_exact_materialized_context
                             else _safe_subject_canonical_slot(
                                 match_path,
                                 candidate_document,
@@ -209,7 +219,10 @@ def persist_reviewed_identity_correction(
                         "comment": comment,
                     }
                 ],
-                use_materialized_candidate_context=use_materialized_context,
+                use_materialized_candidate_context=use_exact_materialized_context,
+                materialized_detected_team_labels=(
+                    detected_team_labels if use_exact_materialized_context else None
+                ),
             )
             if card_key:
                 save_identity_roster_subject_review(
@@ -244,7 +257,10 @@ def persist_reviewed_identity_correction(
                 match_path,
                 candidate_document,
                 [update],
-                use_materialized_candidate_context=use_materialized_context,
+                use_materialized_candidate_context=use_exact_materialized_context,
+                materialized_detected_team_labels=(
+                    detected_team_labels if use_exact_materialized_context else None
+                ),
             )
             if action == "create_new_stable_player":
                 _validate_new_player_active_cap(
@@ -252,7 +268,7 @@ def persist_reviewed_identity_correction(
                     candidate_document,
                     prepared,
                     subject_id,
-                    use_materialized_context=use_materialized_context,
+                    use_materialized_context=use_exact_materialized_context,
                 )
             write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
             if card_key:
