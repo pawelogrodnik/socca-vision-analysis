@@ -46,3 +46,15 @@ test('manual decision state, selection, and detected team class coexist', () => 
   assert.match(className, /\bselected\b/);
   assert.match(className, /\bdecided\b/);
 });
+
+test('required unresolved state is additive to the detected team color', () => {
+  const className = initialIdentityAuditObservationBoxClassName(observation('B'), {
+    selected: false,
+    decided: false,
+    requiredUnresolved: true,
+  });
+
+  assert.match(className, /\bteam-b\b/);
+  assert.match(className, /\brequired-unresolved\b/);
+  assert.doesNotMatch(className, /\bdecided\b/);
+});

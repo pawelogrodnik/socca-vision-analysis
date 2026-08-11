@@ -1805,6 +1805,19 @@ export type ReviewWorkflow = {
   can_publish: boolean;
   steps: ReviewWorkflowStep[];
   required_action: { type: ReviewWorkflowAction | string; step_id: string; remaining?: number | null } | null;
+  initial_audit?: {
+    prepared?: boolean;
+    selected_frames?: number;
+    visible_observations?: number;
+    completed?: number;
+    total?: number;
+    remaining?: number;
+    safe_to_stop?: boolean;
+    complete?: boolean;
+    completion_evidence_current?: boolean;
+    completion_evidence_reason?: string;
+    required_case_observation_keys?: string[];
+  };
   issues: { blocking: number; important: number; optional: number };
   freshness: {
     reviewed_identity_current: boolean;

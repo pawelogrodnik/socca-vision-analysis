@@ -4,6 +4,7 @@ import {
   artifactUrl,
   getInitialIdentityAudit,
   getInitialIdentityAuditSeeds,
+  getReviewWorkflow,
   saveInitialIdentityAuditSeeds,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
@@ -15,6 +16,7 @@ import type {
   InitialIdentityAuditSeedUpdate,
   InitialIdentityAuditTelemetryEvent,
   Match,
+  ReviewWorkflow,
 } from '../types';
 import {
   createInitialIdentityAuditEventId,
@@ -34,13 +36,20 @@ import {
   canStageInitialAuditDecision,
   initialAuditBudgetReached,
 } from '../utils/initialIdentityAuditFrameBatch';
-import { initialAuditIdentityWorkIsComplete } from '../utils/initialIdentityAuditWorkflow';
+import {
+  buildInitialAuditIncompleteFinalizeEvidence,
+  initialAuditFinalizeOutcome,
+  initialAuditIdentityWorkIsComplete,
+  initialAuditPendingRequiredKeys,
+  type InitialAuditIncompleteFinalizeEvidence,
+} from '../utils/initialIdentityAuditWorkflow';
 
 interface InitialIdentityAuditPanelProps {
   match: Match;
   onStatus: (message: string) => void;
   maximumActions?: number;
   benchmarkState?: string;
+  onWorkflowChanged?: (workflow: ReviewWorkflow) => void;
   onFinished?: () => Promise<void>;
 }
 
@@ -49,6 +58,7 @@ export function InitialIdentityAuditPanel({
   onStatus,
   maximumActions,
   benchmarkState,
+  onWorkflowChanged,
   onFinished,
 }: InitialIdentityAuditPanelProps) {
   const [document, setDocument] = useState<InitialIdentityAuditDocument | null>(null);
@@ -64,6 +74,10 @@ export function InitialIdentityAuditPanel({
   const [finishing, setFinishing] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [auditIdentityWorkComplete, setAuditIdentityWorkComplete] = useState(false);
+  const [completionAttempted, setCompletionAttempted] = useState(false);
+  const [incompleteFinalizeEvidence, setIncompleteFinalizeEvidence] = useState<
+    InitialAuditIncompleteFinalizeEvidence | null
+  >(null);
   const saveQueueRef = useRef(
     new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>(),
   );
@@ -87,6 +101,32 @@ export function InitialIdentityAuditPanel({
     () => frame?.observations.map((observation) => observation.observation_key) ?? [],
     [frame],
   );
+  const pendingRequiredKeys = useMemo(
+    () => initialAuditPendingRequiredKeys(
+      seedStore?.workflow,
+      decisions,
+      incompleteFinalizeEvidence,
+    ),
+    [decisions, incompleteFinalizeEvidence, seedStore?.workflow],
+  );
+  const pendingRequiredKeySet = useMemo(
+    () => new Set(pendingRequiredKeys),
+    [pendingRequiredKeys],
+  );
+  const completionOutcome = useMemo(
+    () => document
+      ? initialAuditFinalizeOutcome(
+        seedStore?.workflow,
+        decisions,
+        document,
+        incompleteFinalizeEvidence,
+      )
+      : null,
+    [decisions, document, incompleteFinalizeEvidence, seedStore?.workflow],
+  );
+  const unresolvedRequiredKeysUnavailable = completionAttempted
+    && (completionOutcome?.remaining ?? 0) > 0
+    && completionOutcome?.firstPendingTarget === null;
 
   useEffect(() => {
     activeMatchIdRef.current = match.id;
@@ -102,6 +142,8 @@ export function InitialIdentityAuditPanel({
     setFinishing(false);
     setSaveError(null);
     setAuditIdentityWorkComplete(false);
+    setCompletionAttempted(false);
+    setIncompleteFinalizeEvidence(null);
     saveQueueRef.current = (
       new RequiredFinalSaveQueue<InitialIdentityAuditSeedStoreDocument>()
     );
@@ -242,6 +284,8 @@ export function InitialIdentityAuditPanel({
       );
       setFrameIndex(0);
       setSelectedObservationKey(null);
+      setCompletionAttempted(false);
+      setIncompleteFinalizeEvidence(null);
       setOpen(true);
       onStatus(
         `Szybki audyt gotowy: ${nextDocument.frames.length} klatek, `
@@ -256,6 +300,47 @@ export function InitialIdentityAuditPanel({
             })]
           : []),
       ]).catch(() => undefined);
+    } catch (error) {
+      onStatus(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function refreshAuditView() {
+    if (loading || finishingRef.current || transitionSavingRef.current) return;
+    setLoading(true);
+    try {
+      const [nextDocument, nextStore, nextWorkflow] = await Promise.all([
+        getInitialIdentityAudit(match.id),
+        getInitialIdentityAuditSeeds(match.id),
+        getReviewWorkflow(match.id),
+      ]);
+      frameBatcherRef.current.reset();
+      setDocument(nextDocument);
+      applyServerStore({ ...nextStore, workflow: nextWorkflow });
+      onWorkflowChanged?.(nextWorkflow);
+      const nextDecisions = initialIdentityAuditDecisionMap(nextStore.decisions);
+      const refreshedEvidence = buildInitialAuditIncompleteFinalizeEvidence(
+        nextWorkflow,
+        nextDecisions,
+      );
+      const outcome = initialAuditFinalizeOutcome(
+        nextWorkflow,
+        nextDecisions,
+        nextDocument,
+        refreshedEvidence,
+      );
+      setIncompleteFinalizeEvidence(refreshedEvidence);
+      setCompletionAttempted(!outcome.complete);
+      setArmedAction(null);
+      setFrameIndex(outcome.firstPendingTarget?.frameIndex ?? 0);
+      setSelectedObservationKey(outcome.firstPendingTarget?.observationKey ?? null);
+      onStatus(
+        outcome.firstPendingTarget
+          ? `Odświeżono audyt. Pozostało ${outcome.remaining} wymaganych przypadków.`
+          : `Audyt nadal wymaga ${outcome.remaining} decyzji, ale nie udało się wskazać ich na aktualnej liście klatek.`,
+      );
     } catch (error) {
       onStatus(errorMessage(error));
     } finally {
@@ -368,19 +453,54 @@ export function InitialIdentityAuditPanel({
     finishingRef.current = true;
     setFinishing(true);
     try {
+      onStatus('Sprawdzam wynik audytu…');
       const finalStore = await flushPendingAuditChanges(
         [telemetryEvent('session_finished')],
         true,
       );
-      if (onFinished) {
-        onStatus('Audyt zakończony. Sprawdzam, czy pozostały przypadki wymagające decyzji…');
-        await onFinished();
-      } else {
-        onStatus(
-          `Zapisano audyt: ${finalStore?.decisions.length ?? 0} decyzji.`,
-        );
+      if (!finalStore?.workflow || !document) {
+        throw new Error('Backend nie zwrócił aktualnego stanu audytu. Odśwież szybki audyt.');
       }
-      setOpen(false);
+      onWorkflowChanged?.(finalStore.workflow);
+      const outcome = initialAuditFinalizeOutcome(
+        finalStore.workflow,
+        decisionsRef.current,
+        document,
+        null,
+      );
+      if (outcome.complete) {
+        setIncompleteFinalizeEvidence(null);
+        await onFinished?.();
+        setCompletionAttempted(false);
+        onStatus('Szybki audyt zakończony.');
+        setOpen(false);
+        return;
+      }
+
+      const nextIncompleteEvidence = buildInitialAuditIncompleteFinalizeEvidence(
+        finalStore.workflow,
+        decisionsRef.current,
+      );
+      const incompleteOutcome = initialAuditFinalizeOutcome(
+        finalStore.workflow,
+        decisionsRef.current,
+        document,
+        nextIncompleteEvidence,
+      );
+      setIncompleteFinalizeEvidence(nextIncompleteEvidence);
+      setCompletionAttempted(true);
+      setArmedAction(null);
+      if (incompleteOutcome.firstPendingTarget) {
+        setFrameIndex(incompleteOutcome.firstPendingTarget.frameIndex);
+        setSelectedObservationKey(incompleteOutcome.firstPendingTarget.observationKey);
+      } else {
+        setSelectedObservationKey(null);
+      }
+      onStatus(
+        incompleteOutcome.firstPendingTarget
+          ? `Pozostało ${incompleteOutcome.remaining} wymaganych przypadków.`
+          : `Audyt nadal wymaga ${incompleteOutcome.remaining} decyzji, ale nie udało się wskazać ich na aktualnej liście klatek. Odśwież szybki audyt.`,
+      );
     } catch (error) {
       const message = errorMessage(error);
       setSaveError(message);
@@ -460,7 +580,7 @@ export function InitialIdentityAuditPanel({
                 onClick={() => void finishAudit()}
                 disabled={saving || finishing || Boolean(saveError)}
               >
-                {finishing ? 'Kończę…' : 'Zakończ audyt'}
+                {finishing ? 'Sprawdzam audyt…' : 'Zakończ audyt'}
               </button>
             </header>
 
@@ -495,6 +615,39 @@ export function InitialIdentityAuditPanel({
               <p className='status'>Wymagany audyt jest zakończony. Możesz zamknąć sesję.</p>
             )}
 
+            {completionAttempted && !auditIdentityWorkComplete && (
+              <div className='initial-identity-audit-required-notice' role='status'>
+                <strong>
+                  Audyt nie jest jeszcze zakończony. Pozostało{' '}
+                  {completionOutcome?.remaining ?? pendingRequiredKeys.length}{' '}
+                  wymaganych przypadków.
+                </strong>
+                <span>
+                  Twoje dotychczasowe decyzje zostały zapisane. Uzupełnij wskazane
+                  przypadki albo wybierz „Pomiń / nie wiem”.
+                </span>
+                {completionOutcome && (
+                  <span>
+                    {completionOutcome.completed} / {completionOutcome.total} potwierdzonych
+                  </span>
+                )}
+                {unresolvedRequiredKeysUnavailable && (
+                  <>
+                    <span>
+                      Nie udało się wskazać wymaganych przypadków na aktualnej liście klatek.
+                    </span>
+                    <button
+                      type='button'
+                      onClick={() => void refreshAuditView()}
+                      disabled={loading || finishing || transitionSaving}
+                    >
+                      {loading ? 'Odświeżam…' : 'Odśwież szybki audyt'}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
             <main className='initial-identity-audit-main'>
               <div className='initial-identity-audit-context'>
                 <div
@@ -516,13 +669,16 @@ export function InitialIdentityAuditPanel({
                   {frame.observations.map((observation, index) => {
                     const decision = decisions[observation.observation_key];
                     const selected = observation.observation_key === selectedObservationKey;
+                    const requiredUnresolved = pendingRequiredKeySet.has(
+                      observation.observation_key,
+                    );
                     return (
                       <button
                         type='button'
                         key={observation.observation_key}
                         className={initialIdentityAuditObservationBoxClassName(
                           observation,
-                          { selected, decided: Boolean(decision) },
+                          { selected, decided: Boolean(decision), requiredUnresolved },
                         )}
                         style={observationBoxStyle(observation, document.video)}
                         onClick={() => chooseObservation(observation)}
@@ -532,10 +688,11 @@ export function InitialIdentityAuditPanel({
                             ? 'nieznana drużyna'
                             : `wykryto Team ${observation.team_label}`,
                           decision ? initialIdentityAuditActionLabel(decision) : '',
+                          requiredUnresolved ? 'wymagana decyzja' : '',
                         ].filter(Boolean).join(': ')}
                         aria-pressed={selected}
                       >
-                        <span>{decision ? 'OK' : index + 1}</span>
+                        <span>{decision ? 'OK' : requiredUnresolved ? 'Wymagana' : index + 1}</span>
                       </button>
                     );
                   })}
