@@ -49,6 +49,7 @@ import type {
   ReviewedOutputJob,
   ReviewedStatsResponse,
   ReviewedCorrectionContext,
+  ReviewedCorrectionFinalizeResponse,
   ReviewedCorrectionRequest,
   ReviewedCorrectionResponse,
   ReviewWorkflow,
@@ -284,6 +285,15 @@ export async function saveReviewedIdentityCorrection(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function finalizeReviewedIdentityCorrections(
+  matchId: string,
+): Promise<ReviewedCorrectionFinalizeResponse> {
+  return request<ReviewedCorrectionFinalizeResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/finalize`,
+    { method: 'POST' },
   );
 }
 

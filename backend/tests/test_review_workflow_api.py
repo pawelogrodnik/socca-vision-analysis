@@ -80,7 +80,7 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         after.assert_called_once()
         lightweight.assert_not_called()
 
-    def test_exception_correction_refreshes_seeded_candidate_evidence(self) -> None:
+    def test_exception_correction_does_not_rebuild_seeded_candidate_evidence(self) -> None:
         from app.main import post_match_reviewed_identity_correction
 
         refreshed = {
@@ -102,7 +102,72 @@ class ReviewWorkflowApiTests(unittest.TestCase):
 
         self.assertTrue(response["saved"])
         self.assertEqual(response["workflow"]["phase"], "exceptions")
-        self.assertTrue(refresh.call_args.kwargs["rebuild_seeded_candidates"])
+        self.assertFalse(refresh.call_args.kwargs["rebuild_seeded_candidates"])
+
+    def test_deferred_exception_correction_only_persists(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        persisted = {
+            "saved_decision": {"candidate_subject_id": "subject-1"},
+            "effective_action": "unresolved",
+            "allocated_stable_slot_id": None,
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "persistence": {
+                "status": "saved",
+                "downstream_recompute_triggered": False,
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.persist_reviewed_identity_correction",
+            return_value=persisted,
+        ) as persist, patch(
+            "app.main.get_review_workflow_state"
+        ) as workflow_state, patch(
+            "app.main.save_reviewed_identity_correction"
+        ) as legacy_save, patch(
+            "app.main.refresh_review_after_identity_mutation"
+        ) as refresh, patch(
+            "app.main.after_video_qa_correction"
+        ) as video_qa:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {
+                    "candidate_subject_id": "subject-1",
+                    "action": "unresolved",
+                    "defer_recompute": True,
+                },
+            )
+
+        self.assertTrue(response["recompute_deferred"])
+        persist.assert_called_once()
+        workflow_state.assert_not_called()
+        legacy_save.assert_not_called()
+        refresh.assert_not_called()
+        video_qa.assert_not_called()
+
+    def test_finalize_deferred_corrections_refreshes_once_without_seeded_rebuild(self) -> None:
+        from app.main import finalize_match_reviewed_identity_corrections
+
+        refreshed = {
+            "snapshot": {"semantic_digest": "identity"},
+            "review_progress": {"summary": {}},
+            "workflow": {"phase": "ready_to_finalize"},
+            "performance": {"total_ms": 10.0},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ) as refresh:
+            response = finalize_match_reviewed_identity_corrections("m1")
+
+        self.assertEqual(response["workflow"]["phase"], "ready_to_finalize")
+        refresh.assert_called_once()
+        self.assertFalse(refresh.call_args.kwargs["rebuild_seeded_candidates"])
 
     def test_initial_audit_frame_save_is_gated_without_recompute(self) -> None:
         from app.main import update_initial_identity_audit_seeds

@@ -40,6 +40,7 @@ function correctionResponse(nextWorkflow: ReviewWorkflow): ReviewedCorrectionRes
     allocated_stable_slot_id: null,
     snapshot: { status: 'partial_reviewed', stale: false },
     semantic_decision_digest: 'decision',
+    recompute_deferred: false,
     review_progress: {
       schema_version: '1.0.0',
       status: 'ready',

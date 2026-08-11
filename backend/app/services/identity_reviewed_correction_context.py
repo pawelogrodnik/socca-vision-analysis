@@ -8,10 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_jersey_number_common import canonical_digest
-from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
+from app.services.identity_reviewed_slot_registry import (
+    build_materialized_reviewed_slot_registry,
+    build_reviewed_slot_registry,
+)
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
+    load_segment_review,
     load_segment_decisions,
     target_for_id,
 )
@@ -34,7 +38,16 @@ def reviewed_correction_context(
             candidate_subject_id,
             review_target_id,
         )
-    context = build_subject_context(match_path, candidate_subject_id)
+    candidate_document = load_required(match_path / "identity_candidate_shadow.json")
+    context = build_materialized_subject_context(
+        candidate_document,
+        candidate_subject_id,
+    )
+    if context["team_label"] == "U" and not _candidate_has_materialized_team(
+        candidate_document,
+        candidate_subject_id,
+    ):
+        context = build_subject_context(match_path, candidate_subject_id)
     source_team_label = context["team_label"]
     current = current_reviewed_decision(match_path, candidate_subject_id)
     effective_team_label = str(
@@ -45,7 +58,12 @@ def reviewed_correction_context(
         player for player in match_roster(match_doc) if player["team_label"] in available_team_labels
     ]
     slot_document = load_reviewed_slot_assignments(match_path)
-    registry = build_reviewed_slot_registry(match_path, slot_document)
+    registry = build_materialized_reviewed_slot_registry(
+        candidate_document,
+        slot_document,
+    )
+    if not registry:
+        registry = build_reviewed_slot_registry(match_path, slot_document)
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": None,
@@ -77,7 +95,9 @@ def _segment_correction_context(
     candidate_subject_id: str,
     review_target_id: str,
 ) -> dict[str, Any]:
-    review = build_segment_review_document(match_path, match_doc)
+    review = load_segment_review(match_path)
+    if not review:
+        review = build_segment_review_document(match_path, match_doc)
     target = target_for_id(review, review_target_id)
     if target is None or str(target.get("candidate_subject_id")) != candidate_subject_id:
         raise ValueError(f"Unknown review_target_id: {review_target_id}")
@@ -192,6 +212,50 @@ def build_subject_context(match_path: Path, subject_id: str) -> dict[str, Any]:
         "tracklet_ids": sorted(subjects[subject_id]),
         "team_label": next(iter(teams), "U"),
     }
+
+
+def build_materialized_subject_context(
+    candidate_document: dict[str, Any],
+    subject_id: str,
+) -> dict[str, Any]:
+    """Validate a correction subject without reparsing full tracklets."""
+    subjects: dict[str, set[str]] = defaultdict(set)
+    memberships: dict[str, set[str]] = defaultdict(set)
+    teams: dict[str, set[str]] = defaultdict(set)
+    for row in candidate_document.get("subjects") or []:
+        current_id = str(row.get("candidate_subject_id") or "")
+        if not current_id:
+            continue
+        tracklet_ids = {str(value) for value in row.get("tracklet_ids") or []}
+        subjects[current_id].update(tracklet_ids)
+        for tracklet_id in tracklet_ids:
+            memberships[tracklet_id].add(current_id)
+        team_label = str(row.get("team_label") or "U").upper()
+        if team_label in {"A", "B"}:
+            teams[current_id].add(team_label)
+    if subject_id not in subjects:
+        raise ValueError(f"Unknown candidate_subject_id: {subject_id or '<missing>'}")
+    if any(len(memberships[tracklet_id]) > 1 for tracklet_id in subjects[subject_id]):
+        raise ValueError(f"Ambiguous candidate subject membership: {subject_id}")
+    subject_teams = teams.get(subject_id) or set()
+    if len(subject_teams) > 1:
+        raise ValueError(f"Mixed-team candidate subject: {subject_id}")
+    return {
+        "candidate_subject_id": subject_id,
+        "tracklet_ids": sorted(subjects[subject_id]),
+        "team_label": next(iter(subject_teams), "U"),
+    }
+
+
+def _candidate_has_materialized_team(
+    candidate_document: dict[str, Any],
+    subject_id: str,
+) -> bool:
+    return any(
+        str(row.get("candidate_subject_id") or "") == subject_id
+        and str(row.get("team_label") or "").upper() in {"A", "B", "U"}
+        for row in candidate_document.get("subjects") or []
+    )
 
 
 def review_card_key(match_path: Path, subject_id: str) -> str | None:

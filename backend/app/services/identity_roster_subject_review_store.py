@@ -168,6 +168,7 @@ def save_identity_roster_subject_review(
     updated_at: str | None = None,
     telemetry_events: list[dict[str, Any]] | None = None,
     allow_seeded_override: bool = False,
+    defer_seeded_reduction: bool = False,
 ) -> dict[str, Any]:
     artifact = _load_object(path / REVIEW_ARTIFACT_FILENAME)
     digest = identity_review_artifact_digest(artifact)
@@ -187,18 +188,19 @@ def save_identity_roster_subject_review(
     } if existing.get("source_artifact_digest") == digest else {}
     for key, card in cards_by_key.items():
         card["operator_decision"] = decisions_by_key.get(key)
-    seeded_assignments, seeded_freshness = load_fresh_seeded_assignments(path)
-    reduced_cards, _ = apply_identity_seeded_review_reduction(
-        list(cards_by_key.values()),
-        seeded_assignments,
-        freshness=seeded_freshness,
-        operator_telemetry=existing.get("operator_telemetry"),
-    )
-    cards_by_key = {
-        str(card["review_card_key"]): card
-        for card in reduced_cards
-        if card.get("review_card_key")
-    }
+    if not defer_seeded_reduction:
+        seeded_assignments, seeded_freshness = load_fresh_seeded_assignments(path)
+        reduced_cards, _ = apply_identity_seeded_review_reduction(
+            list(cards_by_key.values()),
+            seeded_assignments,
+            freshness=seeded_freshness,
+            operator_telemetry=existing.get("operator_telemetry"),
+        )
+        cards_by_key = {
+            str(card["review_card_key"]): card
+            for card in reduced_cards
+            if card.get("review_card_key")
+        }
     annotations_by_crop = (
         _stored_crop_annotations(existing)
         if existing.get("source_artifact_digest") == digest
@@ -336,7 +338,11 @@ def save_identity_roster_subject_review(
         ],
     }
     _write_atomic(path / REVIEW_DECISIONS_FILENAME, document)
-    return load_identity_roster_subject_review(path, match_doc=match_doc)
+    return (
+        document
+        if defer_seeded_reduction
+        else load_identity_roster_subject_review(path, match_doc=match_doc)
+    )
 
 
 def _decision_signature(value: dict[str, Any]) -> tuple[str, str, str]:

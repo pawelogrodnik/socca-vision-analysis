@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from app.services.identity_reviewed_corrections import (
+    persist_reviewed_identity_correction,
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
@@ -16,6 +17,11 @@ from app.services.identity_reviewed_snapshot import (
     reviewed_assignment_at,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_reviewed_correction_context import (
+    reviewed_decisions_semantic_digest,
+)
+from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.review_workflow_state import get_review_workflow_state
 
 
 class ReviewedIdentityCorrectionTests(unittest.TestCase):
@@ -419,6 +425,188 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(row["stable_anonymous_slot_id"], "A03")
             self.assertIsNone(row["canonical_player_id"])
 
+    def test_deferred_roster_correction_persists_without_authoritative_reads(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            with patch(
+                "app.services.identity_reviewed_corrections.build_reviewed_identity_progress",
+                side_effect=AssertionError("progress must be deferred"),
+            ), patch(
+                "app.services.identity_reviewed_corrections.get_reviewed_identity_status",
+                side_effect=AssertionError("snapshot status must be deferred"),
+            ):
+                result = persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": "s1",
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                    },
+                )
+
+            self.assertTrue(result["recompute_deferred"])
+            self.assertEqual(result["persistence"]["status"], "saved")
+            self.assertEqual(result["saved_decision"]["player_id"], "p1")
+            self.assertTrue((root / "reviewed_identity_recompute_required.json").exists())
+            self.assertFalse((root / "reviewed_identity_snapshot.json").exists())
+
+    def test_deferred_terminal_actions_persist_immediately(self) -> None:
+        for action in ("unresolved", "referee", "false_detection"):
+            with self.subTest(action=action), _workspace() as root:
+                _fixture(root)
+                _enable_materialized_candidate_context(root)
+                result = persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {"candidate_subject_id": "s1", "action": action},
+                )
+                self.assertEqual(result["saved_decision"]["action"], action)
+                self.assertTrue(result["recompute_deferred"])
+
+    def test_deferred_create_new_player_retry_reuses_allocated_slot(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            payload = {
+                "candidate_subject_id": "s1",
+                "action": "create_new_stable_player",
+                "team_label": "A",
+            }
+            first = persist_reviewed_identity_correction(root, _match(), payload)
+            second = persist_reviewed_identity_correction(root, _match(), payload)
+            self.assertEqual(first["allocated_stable_slot_id"], "A04")
+            self.assertEqual(second["allocated_stable_slot_id"], "A04")
+
+    def test_deferred_batch_final_snapshot_matches_immediate_recompute_semantics(self) -> None:
+        with _workspace() as immediate_root, _workspace() as deferred_root:
+            for root in (immediate_root, deferred_root):
+                _fixture(root)
+                _enable_materialized_candidate_context(root)
+                global_identity = _load(root / "global_identity.json")
+                next(
+                    row
+                    for row in global_identity["slots"]
+                    if row["stable_player_id"] == "A03"
+                )["tracklet_ids"] = ["t1", "t1b"]
+                _write(root / "global_identity.json", global_identity)
+
+            decisions = [
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                },
+                {"candidate_subject_id": "s2", "action": "referee"},
+                {
+                    "candidate_subject_id": "su",
+                    "action": "assign_team",
+                    "team_label": "B",
+                },
+            ]
+            immediate_snapshot = None
+            for payload in decisions:
+                save_reviewed_identity_correction(
+                    immediate_root,
+                    _match(),
+                    payload,
+                )
+                immediate_snapshot = finalize_reviewed_identity(
+                    immediate_root,
+                    _match(),
+                )
+            for payload in decisions:
+                persist_reviewed_identity_correction(
+                    deferred_root,
+                    _match(),
+                    payload,
+                )
+            deferred_snapshot = finalize_reviewed_identity(deferred_root, _match())
+            immediate_progress = build_reviewed_identity_progress(
+                immediate_root,
+                _match(),
+            )
+            deferred_progress = build_reviewed_identity_progress(
+                deferred_root,
+                _match(),
+            )
+            immediate_workflow = get_review_workflow_state(immediate_root, _match())
+            deferred_workflow = get_review_workflow_state(deferred_root, _match())
+
+            self.assertIsNotNone(immediate_snapshot)
+            self.assertEqual(
+                immediate_snapshot["semantic_digest"],
+                deferred_snapshot["semantic_digest"],
+            )
+            self.assertEqual(
+                immediate_snapshot["tracklet_assignments"],
+                deferred_snapshot["tracklet_assignments"],
+            )
+            self.assertEqual(
+                reviewed_decisions_semantic_digest(immediate_root),
+                reviewed_decisions_semantic_digest(deferred_root),
+            )
+            self.assertEqual(
+                immediate_progress["summary"],
+                deferred_progress["summary"],
+            )
+            self.assertEqual(
+                immediate_progress["observations"],
+                deferred_progress["observations"],
+            )
+            self.assertEqual(
+                immediate_workflow["phase"],
+                deferred_workflow["phase"],
+            )
+            self.assertEqual(
+                immediate_workflow["issues"],
+                deferred_workflow["issues"],
+            )
+
+    def test_deferred_save_does_not_hash_or_recompute_large_production_files(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            (root / "tracks.json").write_text("x" * 5_000_000, encoding="utf-8")
+            immutable_before = _immutable_identity_files(root)
+            with patch(
+                "app.services.identity_initial_audit_store._file_sha256"
+            ) as file_sha, patch(
+                "app.services.identity_seeded_candidate_assignments.production_identity_snapshot"
+            ) as production_snapshot, patch(
+                "app.services.identity_seeded_candidate_assignments.rebuild_identity_seeded_candidate_assignments"
+            ) as seeded_rebuild, patch(
+                "app.services.identity_reviewed_snapshot.finalize_reviewed_identity"
+            ) as finalize_snapshot, patch(
+                "app.services.identity_reviewed_corrections.get_reviewed_identity_status"
+            ) as reviewed_status, patch(
+                "app.services.identity_reviewed_corrections.build_reviewed_identity_progress"
+            ) as progress_build, patch(
+                "app.services.identity_reviewed_segments.render_segment_review_evidence"
+            ) as segment_render, patch(
+                "app.services.identity_reviewed_stats.build_reviewed_stats"
+            ) as reviewed_stats, patch(
+                "app.services.identity_reviewed_output_jobs.generate_reviewed_output"
+            ) as reviewed_output:
+                result = persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {"candidate_subject_id": "s1", "action": "unresolved"},
+                )
+
+            self.assertTrue(result["recompute_deferred"])
+            file_sha.assert_not_called()
+            production_snapshot.assert_not_called()
+            seeded_rebuild.assert_not_called()
+            finalize_snapshot.assert_not_called()
+            reviewed_status.assert_not_called()
+            progress_build.assert_not_called()
+            segment_render.assert_not_called()
+            reviewed_stats.assert_not_called()
+            reviewed_output.assert_not_called()
+            self.assertEqual(_immutable_identity_files(root), immutable_before)
+
     def test_timestamp_lookup_returns_complete_real_detected_entity(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -523,6 +711,37 @@ def _fixture(root: Path, active_team_a: int | None = None) -> None:
     )
 
 
+def _enable_materialized_candidate_context(root: Path) -> None:
+    document = _load(root / "identity_candidate_shadow.json")
+    by_subject = {
+        row["candidate_subject_id"]: row for row in document["subjects"]
+    }
+    by_subject["s1"].update(
+        team_label="A",
+        production_player_ids=["A03"],
+        production_subject_ids=["slot-A03"],
+    )
+    by_subject["s2"].update(
+        team_label="B",
+        production_player_ids=["B03"],
+        production_subject_ids=["slot-B03"],
+    )
+    by_subject["su"].update(team_label="U")
+    document["subjects"].extend(
+        [
+            {
+                "candidate_subject_id": f"materialized-{slot_id}",
+                "team_label": slot_id[0],
+                "tracklet_ids": [],
+                "production_player_ids": [slot_id],
+                "production_subject_ids": [f"slot-{slot_id}"],
+            }
+            for slot_id in ("A01", "A02", "B01", "B02")
+        ]
+    )
+    _write(root / "identity_candidate_shadow.json", document)
+
+
 def _card(subject: str, team: str, key: str, player: str) -> dict:
     return {
         "review_card_key": key,
@@ -559,7 +778,13 @@ def _subject_row(snapshot: dict, subject_id: str) -> dict:
 def _immutable_identity_files(root: Path) -> dict[str, bytes]:
     return {
         name: (root / name).read_bytes()
-        for name in ("tracklets.json", "global_identity.json", "stable_players.json")
+        for name in (
+            "tracklets.json",
+            "global_identity.json",
+            "stable_players.json",
+            "tracks.json",
+        )
+        if (root / name).exists()
     }
 
 

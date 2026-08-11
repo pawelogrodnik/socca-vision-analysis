@@ -10,6 +10,7 @@ from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_slot_registry import (
+    build_materialized_reviewed_slot_registry,
     build_reviewed_slot_registry,
     manual_reviewed_slot_records,
     next_free_reviewed_slot,
@@ -69,6 +70,8 @@ def prepare_reviewed_slot_assignments(
     match_path: Path,
     candidate_document: dict[str, Any],
     updates: list[dict[str, Any]],
+    *,
+    use_materialized_candidate_context: bool = False,
 ) -> dict[str, Any]:
     existing = load_reviewed_slot_assignments(match_path)
     decisions = {
@@ -76,18 +79,27 @@ def prepare_reviewed_slot_assignments(
         for row in existing.get("decisions") or []
         if row.get("candidate_subject_id")
     }
-    tracklets = _load_tracklets(match_path)
-    known_subjects, ambiguous_subjects, subject_teams = _candidate_context(
-        candidate_document,
-        tracklets,
-    )
+    if use_materialized_candidate_context:
+        known_subjects, ambiguous_subjects, subject_teams = (
+            _candidate_context_from_materialized_document(candidate_document)
+        )
+    else:
+        tracklets = _load_tracklets(match_path)
+        known_subjects, ambiguous_subjects, subject_teams = _candidate_context(
+            candidate_document,
+            tracklets,
+        )
     normalized_updates = _normalize_updates(updates, known_subjects)
     if len({row["candidate_subject_id"] for row in normalized_updates}) != len(
         normalized_updates
     ):
         raise ValueError("Each candidate subject may be updated only once per request")
 
-    registry = build_reviewed_slot_registry(match_path, existing)
+    registry = (
+        build_materialized_reviewed_slot_registry(candidate_document, existing)
+        if use_materialized_candidate_context
+        else build_reviewed_slot_registry(match_path, existing)
+    )
     reviewed_slots = {
         str(row["stable_slot_id"]): dict(row)
         for row in manual_reviewed_slot_records(existing)
@@ -324,6 +336,33 @@ def _candidate_context(
         for subject_id, tracklet_ids in subjects.items()
     }
     return set(subjects), ambiguous, teams
+
+
+def _candidate_context_from_materialized_document(
+    candidate_document: dict[str, Any],
+) -> tuple[set[str], set[str], dict[str, set[str]]]:
+    subjects: dict[str, set[str]] = defaultdict(set)
+    memberships: dict[str, set[str]] = defaultdict(set)
+    teams: dict[str, set[str]] = defaultdict(set)
+    for row in candidate_document.get("subjects") or []:
+        subject_id = str(row.get("candidate_subject_id") or "")
+        if not subject_id:
+            continue
+        subjects.setdefault(subject_id, set())
+        team_label = str(row.get("team_label") or "U").upper()
+        if team_label in {"A", "B"}:
+            teams[subject_id].add(team_label)
+        for raw_tracklet_id in row.get("tracklet_ids") or []:
+            tracklet_id = str(raw_tracklet_id)
+            subjects[subject_id].add(tracklet_id)
+            memberships[tracklet_id].add(subject_id)
+    ambiguous = {
+        subject_id
+        for tracklet_subjects in memberships.values()
+        if len(tracklet_subjects) > 1
+        for subject_id in tracklet_subjects
+    }
+    return set(subjects), ambiguous, dict(teams)
 
 
 def _validate_subject_team(

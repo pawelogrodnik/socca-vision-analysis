@@ -282,3 +282,17 @@ test('video QA stays in the unified workspace and report has no interactive revi
   assert.doesNotMatch(reportPage, /ReviewedMatchOutputPanel|ReviewedVideoQaPanel|ReviewedIdentityCorrectionForm/);
   assert.match(reportPage, /Review meczu nie jest jeszcze zakończony/);
 });
+
+test('exception review uses deferred saves and one explicit batch finalize', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
+  const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', components), 'utf8');
+  const api = readFileSync(new URL('../src/api.ts', import.meta.url), 'utf8');
+
+  assert.match(panel, /deferRecompute/);
+  assert.match(panel, /finalizeReviewedIdentityCorrections/);
+  assert.match(panel, /removeResolvedReviewCase/);
+  assert.doesNotMatch(panel, /result\.workflow\?\.phase === 'exceptions'\) void loadCases/);
+  assert.match(form, /payload\.defer_recompute = true/);
+  assert.match(api, /reviewed-identity\/corrections\/finalize/);
+});

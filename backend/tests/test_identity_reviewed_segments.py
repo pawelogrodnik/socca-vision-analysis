@@ -22,6 +22,9 @@ from app.services.identity_reviewed_progress import build_reviewed_identity_prog
 from app.services.identity_reviewed_effective_observation import (
     effective_reviewed_observation,
 )
+from app.services.identity_reviewed_corrections import (
+    persist_reviewed_identity_correction,
+)
 
 
 class ReviewedIdentitySegmentTests(unittest.TestCase):
@@ -173,6 +176,50 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
             self.assertNotEqual(
                 a03_first["review_target_id"], a03_second["review_target_id"]
             )
+
+    def test_deferred_segment_save_uses_materialized_target_without_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            review = build_segment_review_document(root, match)
+            target = review["targets"][0]
+            with patch(
+                "app.services.identity_reviewed_segments.build_segment_review_document",
+                side_effect=AssertionError("segment review must not rebuild per click"),
+            ):
+                result = persist_reviewed_identity_correction(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": target["candidate_subject_id"],
+                        "review_target_id": target["review_target_id"],
+                        "source_ownership_digest": target["source_ownership_digest"],
+                        "action": "unresolved",
+                    },
+                )
+            self.assertTrue(result["recompute_deferred"])
+            self.assertEqual(
+                load_segment_decisions(root)["decisions"][0]["review_target_id"],
+                target["review_target_id"],
+            )
+
+    def test_deferred_segment_save_rejects_stale_ownership_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            target = build_segment_review_document(root, match)["targets"][0]
+            with self.assertRaisesRegex(SegmentTargetError, "review_target_stale"):
+                persist_reviewed_identity_correction(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": target["candidate_subject_id"],
+                        "review_target_id": target["review_target_id"],
+                        "source_ownership_digest": "stale",
+                        "action": "unresolved",
+                    },
+                )
+            self.assertEqual(load_segment_decisions(root)["decisions"], [])
 
     def test_pre_split_decision_is_preserved_as_orphan_and_never_applied(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
