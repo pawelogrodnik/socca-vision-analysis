@@ -13,12 +13,19 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_roster_anchor_crop_renderer import (
     render_identity_roster_anchor_crops,
 )
+from app.services.identity_reviewed_segment_coalescing import (
+    MAX_SEGMENT_REVIEW_GAP_SEC,
+    coalesced_conflict_episodes,
+    exact_frame_ranges,
+    max_segment_review_gap_frames,
+)
 from app.services.video import resolve_match_video_path
 
 
 REVIEW_FILENAME = "reviewed_identity_segment_review.json"
 DECISIONS_FILENAME = "reviewed_identity_segment_decisions.json"
 SCHEMA_VERSION = "1.0.0"
+TARGET_ALGORITHM_VERSION = "gap-coalesced-v2"
 ALLOWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -97,8 +104,12 @@ def build_segment_review_document(
     roster = _roster(match_doc)
     targets: list[dict[str, Any]] = []
     matched_decision_ids: set[str] = set()
-    for (subject_id, tracklet_id, slot_id, team_label), claims in sorted(groups.items()):
-        for frames in _contiguous_frame_runs(claims):
+    fps = _review_fps(match_doc)
+    episodes = coalesced_conflict_episodes(groups, ownership, fps=fps)
+    for (subject_id, tracklet_id, slot_id, team_label), grouped_frames in sorted(
+        episodes.items()
+    ):
+        for frames in grouped_frames:
             ownership_payload = [
                 {
                     "tracklet_id": tracklet_id,
@@ -142,7 +153,7 @@ def build_segment_review_document(
                     ),
                     "frame_start": frames[0],
                     "frame_end": frames[-1],
-                    "frame_ranges": [[frames[0], frames[-1]]],
+                    "frame_ranges": exact_frame_ranges(frames),
                     # This exact list is authoritative. Presentation ranges must
                     # never be used to synthesize an unowned observation.
                     "owned_frames": frames,
@@ -189,6 +200,13 @@ def build_segment_review_document(
             "global_identity_digest": canonical_digest(global_doc),
             "subjects_digest": canonical_digest(subjects_doc),
             "decisions_digest": canonical_digest(decisions_doc.get("decisions") or []),
+        },
+        "target_policy": {
+            "algorithm_version": TARGET_ALGORITHM_VERSION,
+            "max_unowned_gap_sec": MAX_SEGMENT_REVIEW_GAP_SEC,
+            "max_unowned_gap_frames": max_segment_review_gap_frames(fps),
+            "preserves_exact_owned_frames": True,
+            "crosses_canonical_owner_transitions": False,
         },
         "summary": {
             "mixed_tracklets": len({key[1] for key in groups}),
@@ -474,7 +492,7 @@ def _target_evidence(
         dict(row)
         for row in ((card or {}).get("visual_evidence") or {}).get("anchor_crops") or []
         if int(row.get("frame") or -1) in frame_set
-    ][:5]
+    ]
     positions = {
         int(row.get("frame") or 0): row
         for row in tracklet.get("positions_m") or []
@@ -502,7 +520,11 @@ def _target_evidence(
                 "generated_for_segment_review": True,
             }
         )
-    crops = sorted([*existing, *generated], key=lambda row: int(row.get("frame") or 0))[:5]
+    by_frame: dict[int, dict[str, Any]] = {}
+    for crop in [*existing, *generated]:
+        by_frame.setdefault(int(crop.get("frame") or 0), crop)
+    ordered = [by_frame[frame] for frame in sorted(by_frame)]
+    crops = _representative_values(ordered, 5)
     return {
         "status": "ready" if crops else "missing",
         "selected_crop_count": len(crops),
@@ -511,12 +533,20 @@ def _target_evidence(
 
 
 def _representative_frames(frames: list[int], limit: int) -> list[int]:
-    if len(frames) <= limit:
-        return frames
+    return _representative_values(frames, limit)
+
+
+def _representative_values(values: list[Any], limit: int) -> list[Any]:
+    if limit <= 0 or not values:
+        return []
+    if limit == 1:
+        return [values[0]]
+    if len(values) <= limit:
+        return values
     indexes = {
-        round(index * (len(frames) - 1) / (limit - 1)) for index in range(limit)
+        round(index * (len(values) - 1) / (limit - 1)) for index in range(limit)
     }
-    return [frames[index] for index in sorted(indexes)]
+    return [values[index] for index in sorted(indexes)]
 
 
 def _attach_boundary_evidence(targets: list[dict[str, Any]]) -> None:
@@ -543,16 +573,6 @@ def _attach_boundary_evidence(targets: list[dict[str, Any]]) -> None:
         (target.get("visual_evidence") or {})["boundary_crops"] = ranked[:2]
 
 
-def _contiguous_frame_runs(claims: list[dict[str, Any]]) -> list[list[int]]:
-    runs: list[list[int]] = []
-    for frame in sorted({int(row.get("frame") or 0) for row in claims}):
-        if not runs or frame != runs[-1][-1] + 1:
-            runs.append([frame])
-        else:
-            runs[-1].append(frame)
-    return runs
-
-
 def _target_id(
     subject_id: str,
     tracklet_id: str,
@@ -566,12 +586,20 @@ def _target_id(
             "tracklet_id": tracklet_id,
             "stable_slot_id": slot_id,
             "team_label": team_label,
-            "frame_start": frames[0],
-            "frame_end": frames[-1],
-            "frames_digest": canonical_digest(frames),
+            "target_algorithm_version": TARGET_ALGORITHM_VERSION,
+            "owned_frames_digest": canonical_digest(frames),
         }
     )
-    return f"review-segment:v1:{digest}"
+    return f"review-segment:v2:{digest}"
+
+
+def _review_fps(match_doc: dict[str, Any]) -> float:
+    value = float(
+        (match_doc.get("video") or {}).get("fps")
+        or match_doc.get("fps")
+        or 30.0
+    )
+    return value if value > 0 else 30.0
 
 
 def _legacy_roster_decisions(match_path: Path) -> dict[str, str]:
