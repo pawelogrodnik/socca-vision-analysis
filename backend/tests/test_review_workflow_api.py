@@ -80,7 +80,7 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         after.assert_called_once()
         lightweight.assert_not_called()
 
-    def test_exception_correction_refreshes_seeded_candidate_evidence(self) -> None:
+    def test_exception_correction_does_not_rebuild_seeded_candidate_evidence(self) -> None:
         from app.main import post_match_reviewed_identity_correction
 
         refreshed = {
@@ -102,7 +102,125 @@ class ReviewWorkflowApiTests(unittest.TestCase):
 
         self.assertTrue(response["saved"])
         self.assertEqual(response["workflow"]["phase"], "exceptions")
-        self.assertTrue(refresh.call_args.kwargs["rebuild_seeded_candidates"])
+        self.assertFalse(refresh.call_args.kwargs["rebuild_seeded_candidates"])
+
+    def test_deferred_exception_correction_only_persists(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        persisted = {
+            "saved_decision": {"candidate_subject_id": "subject-1"},
+            "effective_action": "unresolved",
+            "allocated_stable_slot_id": None,
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "persistence": {
+                "status": "saved",
+                "downstream_recompute_triggered": False,
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "idempotent_replay": False,
+                "detected_team_labels_by_subject": {"subject-1": {"A", "B"}},
+            },
+        ) as gate, patch(
+            "app.main.persist_reviewed_identity_correction",
+            return_value=persisted,
+        ) as persist, patch(
+            "app.main.get_review_workflow_state"
+        ) as workflow_state, patch(
+            "app.main.save_reviewed_identity_correction"
+        ) as legacy_save, patch(
+            "app.main.refresh_review_after_identity_mutation"
+        ) as refresh, patch(
+            "app.main.after_video_qa_correction"
+        ) as video_qa, patch(
+            "app.main.build_reviewed_identity_progress"
+        ) as progress_build, patch(
+            "app.main.finalize_reviewed_identity"
+        ) as finalize_snapshot, patch(
+            "app.main.rebuild_identity_seeded_candidate_assignments"
+        ) as seeded_rebuild:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {
+                    "candidate_subject_id": "subject-1",
+                    "action": "unresolved",
+                    "defer_recompute": True,
+                    "detected_team_labels": ["A"],
+                },
+            )
+
+        self.assertTrue(response["recompute_deferred"])
+        gate.assert_called_once()
+        persist.assert_called_once()
+        self.assertEqual(
+            persist.call_args.kwargs["trusted_materialized_detected_team_labels"],
+            {"subject-1": {"A", "B"}},
+        )
+        workflow_state.assert_not_called()
+        legacy_save.assert_not_called()
+        refresh.assert_not_called()
+        video_qa.assert_not_called()
+        progress_build.assert_not_called()
+        finalize_snapshot.assert_not_called()
+        seeded_rebuild.assert_not_called()
+
+    def test_deferred_gate_failure_returns_actionable_conflict(self) -> None:
+        from fastapi import HTTPException
+        from app.main import post_match_reviewed_identity_correction
+        from app.services.identity_reviewed_action_gate import (
+            DeferredReviewActionError,
+        )
+
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            side_effect=DeferredReviewActionError(
+                "review_queue_stale",
+                "Odśwież Review.",
+            ),
+        ), patch(
+            "app.main.persist_reviewed_identity_correction"
+        ) as persist:
+            with self.assertRaises(HTTPException) as raised:
+                post_match_reviewed_identity_correction(
+                    "m1",
+                    {
+                        "candidate_subject_id": "subject-1",
+                        "action": "unresolved",
+                        "defer_recompute": True,
+                    },
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "review_queue_stale")
+        persist.assert_not_called()
+
+    def test_finalize_deferred_corrections_refreshes_once_without_seeded_rebuild(self) -> None:
+        from app.main import finalize_match_reviewed_identity_corrections
+
+        refreshed = {
+            "snapshot": {"semantic_digest": "identity"},
+            "review_progress": {"summary": {}},
+            "workflow": {"phase": "ready_to_finalize"},
+            "performance": {"total_ms": 10.0},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ) as refresh:
+            response = finalize_match_reviewed_identity_corrections("m1")
+
+        self.assertEqual(response["workflow"]["phase"], "ready_to_finalize")
+        refresh.assert_called_once()
+        self.assertFalse(refresh.call_args.kwargs["rebuild_seeded_candidates"])
 
     def test_initial_audit_frame_save_is_gated_without_recompute(self) -> None:
         from app.main import update_initial_identity_audit_seeds

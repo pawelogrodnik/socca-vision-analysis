@@ -17,7 +17,6 @@ from app.services.identity_operator_seed_digest import (
 from app.services.identity_seeded_candidate_assignments import (
     CANDIDATE_FILENAME,
     OUTPUT_FILENAME,
-    REVIEW_DECISIONS_FILENAME,
     SeededCandidateAssignmentsStaleError,
     TIMELINE_FILENAME,
     TRACKLETS_FILENAME,
@@ -107,10 +106,6 @@ def load_fresh_seeded_assignments(
         ("candidate_identity_digest", CANDIDATE_FILENAME),
         ("timeline_digest", TIMELINE_FILENAME),
         ("tracklets_digest", TRACKLETS_FILENAME),
-        (
-            "whole_subject_review_decisions_digest",
-            REVIEW_DECISIONS_FILENAME,
-        ),
     ):
         expected = str(source.get(source_key) or "")
         if not expected:

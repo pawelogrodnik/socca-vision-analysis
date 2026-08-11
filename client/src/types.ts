@@ -1958,16 +1958,23 @@ export type ReviewedCorrectionRequest = {
   stable_slot_id?: string;
   team_label?: string;
   comment?: string;
+  defer_recompute?: boolean;
 };
 
 export type ReviewedCorrectionResponse = {
   saved_decision: Record<string, unknown> | null;
   effective_action: ReviewedCorrectionAction;
   allocated_stable_slot_id: string | null;
-  snapshot: { status: string; stale: boolean };
+  snapshot?: { status: string; stale: boolean };
   semantic_decision_digest: string;
-  review_progress: ReviewedIdentityReviewProgress;
-  decision_impact: ReviewedCorrectionDecisionImpact;
+  recompute_deferred: boolean;
+  persistence?: {
+    status: 'saved';
+    downstream_recompute_triggered: boolean;
+  };
+  performance?: Record<string, number>;
+  review_progress?: ReviewedIdentityReviewProgress;
+  decision_impact?: ReviewedCorrectionDecisionImpact;
   workflow?: ReviewWorkflow;
   reviewed_identity?: ReviewedIdentityDocument;
   render_job?: ReviewedOutputJob;
@@ -2034,6 +2041,15 @@ export type ReviewedIdentityReviewProgress = {
     unresolved_tracklet_assignments: number;
   };
   policy: Record<string, number>;
+  recompute_required?: boolean;
+};
+
+export type ReviewedCorrectionFinalizeResponse = {
+  workflow: ReviewWorkflow;
+  reviewed_identity: ReviewedIdentityDocument;
+  review_progress: ReviewedIdentityReviewProgress;
+  recompute_deferred: false;
+  performance?: Record<string, number>;
 };
 
 export type ReviewedCorrectionDecisionImpact = {

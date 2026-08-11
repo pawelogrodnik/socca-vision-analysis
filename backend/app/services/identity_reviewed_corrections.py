@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_reviewed_active_cap import (
+    load_reviewed_detected_team_labels,
+    validate_new_player_active_cap_from_progress,
+)
 from app.services.identity_reviewed_correction_context import (
+    build_materialized_subject_context,
     build_subject_context,
     current_reviewed_decision,
     load_required,
@@ -21,9 +26,14 @@ from app.services.identity_reviewed_slot_review import (
     load_reviewed_slot_assignments,
     prepare_reviewed_slot_assignments,
 )
+from app.services.identity_reviewed_slot_registry import normalize_reviewed_slot_id
+from app.services.identity_reviewed_recompute_state import (
+    mark_reviewed_identity_recompute_required,
+)
 from app.services.identity_reviewed_segments import (
     SegmentTargetError,
     build_segment_review_document,
+    load_segment_review,
     save_segment_decision,
 )
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
@@ -57,153 +67,28 @@ def save_reviewed_identity_correction(
     match_doc: dict[str, Any],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    """Backward-compatible synchronous service response for legacy callers."""
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     action = str(payload.get("action") or "").strip()
     try:
-        if action not in CORRECTION_ACTIONS:
-            raise ValueError(f"Unsupported reviewed identity correction action: {action}")
         progress_before = build_reviewed_identity_progress(match_path, match_doc)
+        result = persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=False,
+        )
         review_target_id = str(payload.get("review_target_id") or "").strip() or None
         if review_target_id:
-            saved = save_segment_decision(match_path, match_doc, payload)
             build_segment_review_document(match_path, match_doc)
-            snapshot = get_reviewed_identity_status(match_path)
-            progress_after = build_reviewed_identity_progress(match_path, match_doc)
-            impact = decision_impact(
-                progress_before,
-                progress_after,
-                subject_id,
-                review_target_id,
-            )
-            return {
-                "saved_decision": saved,
-                "effective_action": action,
-                "allocated_stable_slot_id": None,
-                "snapshot": {
-                    "status": snapshot.get("status"),
-                    "stale": bool(
-                        snapshot.get("stale") or snapshot.get("status") == "stale"
-                    ),
-                },
-                "semantic_decision_digest": reviewed_decisions_semantic_digest(
-                    match_path
-                ),
-                "review_progress": progress_after,
-                "decision_impact": impact,
-            }
-        segment_review = build_segment_review_document(match_path, match_doc)
-        if any(
-            str(row.get("candidate_subject_id") or "") == subject_id
-            for row in segment_review.get("targets") or []
-        ):
-            raise SegmentTargetError("review_target_required")
-        context = build_subject_context(match_path, subject_id)
-        card_key = review_card_key(match_path, subject_id)
-        comment = str(payload.get("comment") or "").strip() or None
-
-        if action == "assign_roster_player":
-            player_id = str(payload.get("player_id") or "").strip()
-            player = next(
-            (row for row in match_roster(match_doc) if row["player_id"] == player_id),
-            None,
-            )
-            if player is None:
-                raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
-            source_team_label = str(context["team_label"])
-            if source_team_label not in {"U", player["team_label"]}:
-                raise ValueError(
-                    f"Cross-team roster assignment is not allowed: subject {subject_id} is "
-                    f"team {context['team_label']}, player is team {player['team_label']}"
-                )
-            candidate_document = load_required(
-                match_path / "identity_candidate_shadow.json"
-            )
-            stable_slot_id = _safe_subject_canonical_slot(
-                match_path,
-                candidate_document,
-                subject_id,
-            )
-            prepared = prepare_reviewed_slot_assignments(
-                match_path,
-                candidate_document,
-                [
-                    {
-                        "candidate_subject_id": subject_id,
-                        "action": action,
-                        "player_id": player_id,
-                        "team_label": player["team_label"],
-                        "stable_slot_id": stable_slot_id,
-                        "comment": comment,
-                    }
-                ],
-            )
-            if card_key:
-                save_identity_roster_subject_review(
-                    match_path,
-                    [
-                        {
-                            "review_card_key": card_key,
-                            "decision": "assign_roster_player",
-                            "player_id": player_id,
-                            "comment": comment,
-                        }
-                    ],
-                    match_doc=match_doc,
-                    allow_seeded_override=True,
-                )
-            # Persist the slot overlay only after the same operator choice has
-            # passed the review-card validation.  This prevents a rejected UI
-            # correction from leaving a partial slot decision behind.
-            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
-            allocated_slot = None
-        else:
-            candidate_document = load_required(
-            match_path / "identity_candidate_shadow.json"
-            )
-            update = {
-            "candidate_subject_id": subject_id,
-            "action": action,
-            "comment": comment,
-            }
-            if action == "assign_existing_slot":
-                update["stable_slot_id"] = payload.get("stable_slot_id")
-            if action in {"assign_team", "create_new_stable_player"}:
-                requested_team = str(payload.get("team_label") or context["team_label"]).upper()
-                update["team_label"] = requested_team
-            prepared = prepare_reviewed_slot_assignments(
-            match_path,
-            candidate_document,
-            [update],
-            )
-            if action == "create_new_stable_player":
-                _validate_new_player_active_cap(
-                match_path,
-                candidate_document,
-                prepared,
-                subject_id,
-                )
-            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
-            if card_key:
-                save_identity_roster_subject_review(
-                match_path,
-                [{"review_card_key": card_key, "decision": "clear_decision"}],
-                match_doc=match_doc,
-                )
-            saved_slot_decision = next(
-            row
-            for row in prepared.get("decisions") or []
-            if row.get("candidate_subject_id") == subject_id
-            )
-            allocated_slot = (
-            saved_slot_decision.get("stable_slot_id")
-            if action == "create_new_stable_player"
-            else None
-            )
-
-        saved = current_reviewed_decision(match_path, subject_id)
         snapshot = get_reviewed_identity_status(match_path)
         progress_after = build_reviewed_identity_progress(match_path, match_doc)
-        impact = decision_impact(progress_before, progress_after, subject_id)
+        impact = decision_impact(
+            progress_before,
+            progress_after,
+            subject_id,
+            review_target_id,
+        )
         logger.info(
             "[review-progress] match=%s action=%s subject=%s affected_tracklets=%s "
             "affected_observations=%s reviewed_ratio=%.2f%%->%.2f%% important_remaining=%s->%s "
@@ -222,14 +107,14 @@ def save_reviewed_identity_correction(
             snapshot.get("status"),
         )
         return {
-        "saved_decision": saved,
-        "effective_action": action,
-        "allocated_stable_slot_id": allocated_slot,
-        "snapshot": {
-            "status": snapshot.get("status"),
-            "stale": bool(snapshot.get("stale") or snapshot.get("status") == "stale"),
-        },
-            "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
+            **result,
+            "recompute_deferred": False,
+            "snapshot": {
+                "status": snapshot.get("status"),
+                "stale": bool(
+                    snapshot.get("stale") or snapshot.get("status") == "stale"
+                ),
+            },
             "review_progress": progress_after,
             "decision_impact": impact,
         }
@@ -244,12 +129,199 @@ def save_reviewed_identity_correction(
         raise
 
 
+def persist_reviewed_identity_correction(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    use_materialized_context: bool = True,
+    trusted_materialized_detected_team_labels: dict[str, set[str]] | None = None,
+) -> dict[str, Any]:
+    """Validate and durably save one decision without full-match recomputation."""
+    subject_id = str(payload.get("candidate_subject_id") or "").strip()
+    action = str(payload.get("action") or "").strip()
+    if action not in CORRECTION_ACTIONS:
+        raise ValueError(f"Unsupported reviewed identity correction action: {action}")
+    review_target_id = str(payload.get("review_target_id") or "").strip() or None
+    if review_target_id:
+        materialized_review = load_segment_review(match_path)
+        saved = save_segment_decision(
+            match_path,
+            match_doc,
+            payload,
+            materialized_review=materialized_review,
+        )
+        allocated_slot = None
+    else:
+        materialized_review = load_segment_review(match_path)
+        if any(
+            str(row.get("candidate_subject_id") or "") == subject_id
+            for row in materialized_review.get("targets") or []
+        ):
+            raise SegmentTargetError("review_target_required")
+        candidate_document = load_required(
+            match_path / "identity_candidate_shadow.json"
+        )
+        detected_team_labels = trusted_materialized_detected_team_labels
+        if use_materialized_context and detected_team_labels is None:
+            detected_team_labels = load_reviewed_detected_team_labels(match_path)
+        use_exact_materialized_context = bool(
+            use_materialized_context
+            and detected_team_labels is not None
+            and subject_id in detected_team_labels
+        )
+        context = (
+            build_materialized_subject_context(candidate_document, subject_id)
+            if use_exact_materialized_context
+            else build_subject_context(match_path, subject_id)
+        )
+        card_key = review_card_key(match_path, subject_id)
+        comment = str(payload.get("comment") or "").strip() or None
+        if action == "assign_roster_player":
+            player_id = str(payload.get("player_id") or "").strip()
+            player = next(
+                (
+                    row
+                    for row in match_roster(match_doc)
+                    if row["player_id"] == player_id
+                ),
+                None,
+            )
+            if player is None:
+                raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
+            source_team_label = str(context["team_label"])
+            if source_team_label not in {"U", player["team_label"]}:
+                raise ValueError(
+                    f"Cross-team roster assignment is not allowed: subject {subject_id} is "
+                    f"team {context['team_label']}, player is team {player['team_label']}"
+                )
+            prepared = prepare_reviewed_slot_assignments(
+                match_path,
+                candidate_document,
+                [
+                    {
+                        "candidate_subject_id": subject_id,
+                        "action": action,
+                        "player_id": player_id,
+                        "team_label": player["team_label"],
+                        "stable_slot_id": (
+                            _materialized_subject_canonical_slot(
+                                candidate_document,
+                                subject_id,
+                            )
+                            if use_exact_materialized_context
+                            else _safe_subject_canonical_slot(
+                                match_path,
+                                candidate_document,
+                                subject_id,
+                            )
+                        ),
+                        "comment": comment,
+                    }
+                ],
+                use_materialized_candidate_context=use_exact_materialized_context,
+                materialized_detected_team_labels=(
+                    detected_team_labels if use_exact_materialized_context else None
+                ),
+            )
+            if card_key:
+                save_identity_roster_subject_review(
+                    match_path,
+                    [
+                        {
+                            "review_card_key": card_key,
+                            "decision": "assign_roster_player",
+                            "player_id": player_id,
+                            "comment": comment,
+                        }
+                    ],
+                    match_doc=match_doc,
+                    allow_seeded_override=True,
+                    defer_seeded_reduction=use_materialized_context,
+                )
+            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
+            allocated_slot = None
+        else:
+            update = {
+                "candidate_subject_id": subject_id,
+                "action": action,
+                "comment": comment,
+            }
+            if action == "assign_existing_slot":
+                update["stable_slot_id"] = payload.get("stable_slot_id")
+            if action in {"assign_team", "create_new_stable_player"}:
+                update["team_label"] = str(
+                    payload.get("team_label") or context["team_label"]
+                ).upper()
+            prepared = prepare_reviewed_slot_assignments(
+                match_path,
+                candidate_document,
+                [update],
+                use_materialized_candidate_context=use_exact_materialized_context,
+                materialized_detected_team_labels=(
+                    detected_team_labels if use_exact_materialized_context else None
+                ),
+            )
+            if action == "create_new_stable_player":
+                _validate_new_player_active_cap(
+                    match_path,
+                    candidate_document,
+                    prepared,
+                    subject_id,
+                    use_materialized_context=use_exact_materialized_context,
+                )
+            write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
+            if card_key:
+                save_identity_roster_subject_review(
+                    match_path,
+                    [{"review_card_key": card_key, "decision": "clear_decision"}],
+                    match_doc=match_doc,
+                    defer_seeded_reduction=use_materialized_context,
+                )
+            saved_slot_decision = next(
+                row
+                for row in prepared.get("decisions") or []
+                if row.get("candidate_subject_id") == subject_id
+            )
+            allocated_slot = (
+                saved_slot_decision.get("stable_slot_id")
+                if action == "create_new_stable_player"
+                else None
+            )
+        saved = current_reviewed_decision(match_path, subject_id)
+
+    semantic_digest = reviewed_decisions_semantic_digest(match_path)
+    mark_reviewed_identity_recompute_required(
+        match_path,
+        semantic_decision_digest=semantic_digest,
+    )
+    return {
+        "saved_decision": saved,
+        "effective_action": action,
+        "allocated_stable_slot_id": allocated_slot,
+        "semantic_decision_digest": semantic_digest,
+        "recompute_deferred": True,
+        "persistence": {
+            "status": "saved",
+            "downstream_recompute_triggered": False,
+        },
+    }
+
+
 def _validate_new_player_active_cap(
     match_path: Path,
     candidate_document: dict[str, Any],
     prepared: dict[str, Any],
     subject_id: str,
+    *,
+    use_materialized_context: bool,
 ) -> None:
+    if use_materialized_context and validate_new_player_active_cap_from_progress(
+        match_path,
+        prepared,
+        subject_id,
+    ):
+        return
     tracklets_document = load_required(match_path / "tracklets.json")
     tracklets = {
         str(row.get("tracklet_id")): row
@@ -305,3 +377,34 @@ def _safe_subject_canonical_slot(
         and not row.get("hard_blockers")
     }
     return next(iter(slots)) if len(slots) == 1 else None
+
+
+def _materialized_subject_canonical_slot(
+    candidate_document: dict[str, Any],
+    subject_id: str,
+) -> str | None:
+    rows = [
+        row
+        for row in candidate_document.get("subjects") or []
+        if str(row.get("candidate_subject_id") or "") == subject_id
+    ]
+    if not rows:
+        return None
+    slots = {
+        slot_id
+        for row in rows
+        for value in (
+            list(row.get("production_player_ids") or [])
+            + list(row.get("production_subject_ids") or [])
+        )
+        if (slot_id := normalize_reviewed_slot_id(value)) is not None
+    }
+    teams = {
+        str(row.get("team_label") or "U").upper()
+        for row in rows
+        if str(row.get("team_label") or "U").upper() in {"A", "B"}
+    }
+    if len(slots) != 1 or len(teams) > 1:
+        return None
+    slot_id = next(iter(slots))
+    return slot_id if not teams or slot_id[0] in teams else None

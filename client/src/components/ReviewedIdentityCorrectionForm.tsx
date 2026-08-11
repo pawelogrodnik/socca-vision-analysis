@@ -22,6 +22,7 @@ type Props = {
   entity: ReviewedIdentityAtEntity;
   onCancel: () => void;
   onSaved: (result: ReviewedCorrectionResponse) => void;
+  deferRecompute?: boolean;
 };
 
 type ActionCard = { action: ReviewedCorrectionAction; label: string; description?: string };
@@ -72,7 +73,7 @@ function actionCardsForUnknownTeam(teamLabel: string): ActionCard[] {
   ];
 }
 
-export function ReviewedIdentityCorrectionForm({ matchId, entity, onCancel, onSaved }: Props) {
+export function ReviewedIdentityCorrectionForm({ matchId, entity, onCancel, onSaved, deferRecompute = false }: Props) {
   const subjectId = entity.candidate_subject_id;
   const [context, setContext] = useState<Awaited<ReturnType<typeof getReviewedCorrectionContext>> | null>(null);
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
@@ -189,6 +190,7 @@ export function ReviewedIdentityCorrectionForm({ matchId, entity, onCancel, onSa
         teamLabel: selectedTeamLabel,
         comment,
       }, context);
+      if (deferRecompute) payload.defer_recompute = true;
       onSaved(await saveReviewedIdentityCorrection(matchId, payload));
     } catch (reason) {
       setError(errorMessage(reason));

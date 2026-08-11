@@ -60,6 +60,40 @@ def build_reviewed_slot_registry(
     return dict(sorted(registry.items()))
 
 
+def build_materialized_reviewed_slot_registry(
+    candidate_document: dict[str, Any],
+    manual_document: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Build the correction-time registry from already materialized identity data.
+
+    Candidate identity records contain the canonical production slots used to
+    prepare Review.  Reusing those server-generated bindings avoids parsing the
+    full global identity document for every operator click.
+    """
+    registry: dict[str, dict[str, Any]] = {}
+    for subject in candidate_document.get("subjects") or []:
+        for raw_slot_id in (
+            list(subject.get("production_player_ids") or [])
+            + list(subject.get("production_subject_ids") or [])
+        ):
+            slot_id = normalize_reviewed_slot_id(raw_slot_id)
+            if not slot_id:
+                continue
+            registry.setdefault(
+                slot_id,
+                {
+                    "stable_slot_id": slot_id,
+                    "team_label": slot_id[0],
+                    "source": "materialized_candidate_identity",
+                    "created_for_candidate_subject_id": None,
+                    "status": "canonical",
+                },
+            )
+    for row in manual_reviewed_slot_records(manual_document):
+        registry.setdefault(str(row["stable_slot_id"]), dict(row))
+    return dict(sorted(registry.items()))
+
+
 def manual_reviewed_slot_records(
     manual_document: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:

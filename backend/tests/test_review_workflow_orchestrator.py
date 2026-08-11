@@ -6,9 +6,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.services.review_workflow_orchestrator import (
+    ReviewWorkflowRecomputeError,
     after_video_qa_correction,
     finalize_review_for_qa,
     refresh_review_after_identity_mutation,
+)
+from app.services.identity_reviewed_recompute_state import (
+    mark_reviewed_identity_recompute_required,
 )
 
 
@@ -19,12 +23,17 @@ def ready_state() -> dict:
 class ReviewWorkflowOrchestratorTests(unittest.TestCase):
     def test_lightweight_identity_refresh_does_not_build_stats_or_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.rebuild_identity_seeded_candidate_assignments"
+        ) as rebuild_seeded, patch(
             "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
             return_value={"semantic_digest": "identity"},
-        ), patch(
+        ) as finalize, patch(
             "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
             return_value={"summary": {}},
-        ), patch(
+        ) as progress, patch(
+            "app.services.review_workflow_orchestrator.render_segment_review_evidence",
+            return_value=set(),
+        ) as segment_evidence, patch(
             "app.services.review_workflow_orchestrator.get_review_workflow_state",
             return_value=ready_state(),
         ), patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
@@ -32,8 +41,56 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         ) as render:
             result = refresh_review_after_identity_mutation(Path(tmp), {"id": "m1"}, source="initial_audit_decision")
             self.assertEqual(result["workflow"]["phase"], "ready_to_finalize")
+            rebuild_seeded.assert_not_called()
+            finalize.assert_called_once()
+            progress.assert_called_once()
+            segment_evidence.assert_called_once()
             stats.assert_not_called()
             render.assert_not_called()
+
+    def test_failed_finalize_keeps_dirty_marker_and_retry_clears_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            mark_reviewed_identity_recompute_required(
+                path,
+                semantic_decision_digest="decision",
+            )
+            with patch(
+                "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+                side_effect=RuntimeError("temporary"),
+            ):
+                with self.assertRaises(ReviewWorkflowRecomputeError):
+                    refresh_review_after_identity_mutation(
+                        path,
+                        {"id": "m1"},
+                        source="review_exception_finish",
+                    )
+            self.assertTrue(
+                (path / "reviewed_identity_recompute_required.json").exists()
+            )
+
+            with patch(
+                "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+                return_value={"semantic_digest": "identity"},
+            ), patch(
+                "app.services.review_workflow_orchestrator.render_segment_review_evidence",
+                return_value=set(),
+            ), patch(
+                "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+                return_value={"summary": {}},
+            ), patch(
+                "app.services.review_workflow_orchestrator.get_review_workflow_state",
+                return_value=ready_state(),
+            ):
+                result = refresh_review_after_identity_mutation(
+                    path,
+                    {"id": "m1"},
+                    source="review_exception_finish",
+                )
+            self.assertEqual(result["workflow"]["phase"], "ready_to_finalize")
+            self.assertFalse(
+                (path / "reviewed_identity_recompute_required.json").exists()
+            )
 
     def test_exception_refresh_rebuilds_only_seeded_candidate_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(

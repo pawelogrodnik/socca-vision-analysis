@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import time
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_output_jobs import generate_reviewed_output
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_recompute_state import (
+    clear_reviewed_identity_recompute_required,
+)
 from app.services.identity_reviewed_snapshot import finalize_reviewed_identity, get_reviewed_identity_status
 from app.services.identity_reviewed_segments import (
     load_segment_review,
@@ -48,14 +52,26 @@ def refresh_review_after_identity_mutation(
     rebuild_seeded_candidates: bool = False,
 ) -> dict[str, Any]:
     """Perform only the cheap reviewed-identity work needed for the next click."""
+    started = time.perf_counter()
+    timings = {
+        "seeded_candidate_rebuild_ms": 0.0,
+        "finalize_reviewed_identity_ms": 0.0,
+        "segment_evidence_ms": 0.0,
+        "progress_build_ms": 0.0,
+        "final_workflow_ms": 0.0,
+    }
     try:
         if rebuild_seeded_candidates:
-            # Corrections change the review-decision digest consumed by the
-            # seeded candidate artifact. Refresh that JSON-only evidence so a
-            # completed Initial Audit cannot become locked retroactively.
-            # This deliberately excludes the crop/video rebuild path.
+            # Callers that mutate actual seed inputs may request this JSON-only
+            # rebuild. Reviewed correction decisions are intentionally not a
+            # semantic seeded-assignment dependency.
+            phase_started = time.perf_counter()
             rebuild_identity_seeded_candidate_assignments(match_path, match_doc)
+            timings["seeded_candidate_rebuild_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         snapshot = finalize_reviewed_identity(match_path, match_doc)
+        timings["finalize_reviewed_identity_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         try:
             render_segment_review_evidence(
                 match_path,
@@ -68,7 +84,10 @@ def refresh_review_after_identity_mutation(
                 match_doc.get("id") or match_path.name,
                 type(exc).__name__,
             )
+        timings["segment_evidence_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         progress = build_reviewed_identity_progress(match_path, match_doc)
+        timings["progress_build_ms"] = _elapsed_ms(phase_started)
         write_identity_json_atomic(
             match_path / PROGRESS_FILENAME,
             {
@@ -95,14 +114,31 @@ def refresh_review_after_identity_mutation(
         )
         raise ReviewWorkflowRecomputeError(str(exc)) from exc
     (match_path / RECOMPUTE_FAILURE_FILENAME).unlink(missing_ok=True)
+    phase_started = time.perf_counter()
     workflow = get_review_workflow_state(match_path, match_doc)
+    timings["final_workflow_ms"] = _elapsed_ms(phase_started)
+    timings["total_ms"] = _elapsed_ms(started)
+    clear_reviewed_identity_recompute_required(match_path)
     logger.info(
-        "review_workflow action=refresh match=%s source=%s phase=%s",
+        "reviewed_correction_perf mode=finalize match=%s source=%s phase=%s "
+        "seeded_candidate_rebuild_ms=%.1f finalize_reviewed_identity_ms=%.1f "
+        "segment_evidence_ms=%.1f progress_build_ms=%.1f final_workflow_ms=%.1f total_ms=%.1f",
         match_doc.get("id") or match_path.name,
         source,
         workflow.get("phase"),
+        timings["seeded_candidate_rebuild_ms"],
+        timings["finalize_reviewed_identity_ms"],
+        timings["segment_evidence_ms"],
+        timings["progress_build_ms"],
+        timings["final_workflow_ms"],
+        timings["total_ms"],
     )
-    return {"snapshot": snapshot, "review_progress": progress, "workflow": workflow}
+    return {
+        "snapshot": snapshot,
+        "review_progress": progress,
+        "workflow": workflow,
+        "performance": timings,
+    }
 
 
 def finalize_review_for_qa(
@@ -181,7 +217,7 @@ def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> di
         match_path,
         match_doc,
         source="video_qa_correction",
-        rebuild_seeded_candidates=True,
+        rebuild_seeded_candidates=False,
     )
     workflow = refreshed["workflow"]
     if workflow["issues"]["blocking"]:
@@ -200,3 +236,7 @@ def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> di
 
 class ReviewWorkflowRecomputeError(RuntimeError):
     code = "review_recompute_failed"
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)

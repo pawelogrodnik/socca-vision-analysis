@@ -219,6 +219,63 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                 "pending_high_priority",
             )
 
+    def test_progress_materializes_exact_detected_team_evidence(self) -> None:
+        with _workspace() as root:
+            _write(
+                root / "tracklets.json",
+                {
+                    "tracklets": [
+                        _tracklet("only-a", "A", [1]),
+                        _tracklet("only-b", "B", [2]),
+                        _tracklet("unknown", "U", [3]),
+                        _tracklet("mixed-a", "A", [4]),
+                        _tracklet("mixed-b", "B", [5]),
+                    ]
+                },
+            )
+            _write(
+                root / "identity_candidate_shadow.json",
+                {
+                    "subjects": [
+                        {
+                            "candidate_subject_id": "only-a",
+                            "tracklet_ids": ["only-a"],
+                        },
+                        {
+                            "candidate_subject_id": "only-b",
+                            "tracklet_ids": ["only-b"],
+                        },
+                        {
+                            "candidate_subject_id": "unknown",
+                            "tracklet_ids": ["unknown"],
+                        },
+                        {
+                            "candidate_subject_id": "mixed",
+                            "tracklet_ids": ["mixed-a", "mixed-b"],
+                        },
+                    ]
+                },
+            )
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(_unit(progress, "mixed")["source_team_label"], "U")
+            context = progress["deferred_correction_context"]
+            self.assertEqual(context["detected_team_evidence_status"], "ready")
+            labels_by_subject = {
+                row["candidate_subject_id"]: row["detected_team_labels"]
+                for row in context["subjects"]
+            }
+            self.assertEqual(
+                labels_by_subject,
+                {
+                    "mixed": ["A", "B"],
+                    "only-a": ["A"],
+                    "only-b": ["B"],
+                    "unknown": [],
+                },
+            )
+
     def test_short_unnamed_team_a_and_team_b_subjects_are_safe_anonymous(self) -> None:
         with _workspace() as root:
             _write(root / "tracklets.json", {"tracklets": [

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   artifactUrl,
+  finalizeReviewedIdentityCorrections,
   getIdentityRosterSubjectReview,
   getReviewedIdentityReviewProgress,
 } from '../api';
@@ -15,13 +16,19 @@ import type {
   ReviewWorkflow,
 } from '../types';
 import { hasOperatorReviewableVisualEvidence } from '../utils/identityReviewWorkspace';
+import {
+  finalizeDeferredReviewBatch,
+  removeResolvedReviewCase,
+  reviewUnitKey,
+  shouldFinalizeDeferredReview,
+} from '../utils/identityExceptionQueue';
 import { requiredCasesLabel } from '../utils/reviewWorkflowPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
 
 type Props = {
   match: Match;
   workflow: ReviewWorkflow;
-  onWorkflowChanged: (workflow: ReviewedCorrectionResponse['workflow']) => void;
+  onWorkflowChanged: (workflow: ReviewWorkflow) => void;
   onRetryReview?: () => Promise<void>;
 };
 
@@ -71,17 +78,20 @@ export function IdentityExceptionReviewPanel({
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeFailed, setFinalizeFailed] = useState(false);
   const [message, setMessage] = useState('');
+  const finalizeInFlight = useRef(false);
 
-  async function loadCases(ignore?: () => boolean) {
+  async function loadCases(ignore?: () => boolean, preserveMessage = false): Promise<ReviewCase[]> {
     setLoading(true);
-    setMessage('');
+    if (!preserveMessage) setMessage('');
     try {
       const [document, progress] = await Promise.all([
         getIdentityRosterSubjectReview(match.id),
         getReviewedIdentityReviewProgress(match.id),
       ]);
-      if (ignore?.()) return;
+      if (ignore?.()) return [];
       const cardsBySubject = new Map(
         document.cards.map((nextCard) => [nextCard.candidate_subject_id, nextCard]),
       );
@@ -91,10 +101,18 @@ export function IdentityExceptionReviewPanel({
           unit,
           card: cardsBySubject.get(unit.candidate_subject_id) || null,
         }));
+      if (shouldFinalizeDeferredReview(actionable, progress.recompute_required)) {
+        setCases([]);
+        setIndex(0);
+        void finalizeCorrections();
+        return [];
+      }
       setCases(actionable);
       setIndex(0);
+      return actionable;
     } catch (error) {
       if (!ignore?.()) setMessage(errorMessage(error));
+      return [];
     } finally {
       if (!ignore?.()) setLoading(false);
     }
@@ -122,12 +140,51 @@ export function IdentityExceptionReviewPanel({
   );
 
   function saved(result: ReviewedCorrectionResponse) {
-    setMessage('Zapisano decyzję. Sprawdzam, czy pozostały jeszcze ważne przypadki.');
-    onWorkflowChanged(result.workflow);
-    if (result.workflow?.phase === 'exceptions') void loadCases();
+    if (!reviewCase || !result.recompute_deferred) {
+      if (result.workflow) onWorkflowChanged(result.workflow);
+      return;
+    }
+    const next = removeResolvedReviewCase(
+      cases,
+      index,
+      reviewUnitKey(reviewCase.unit),
+    );
+    setCases(next.cases);
+    setIndex(next.index);
+    setFinalizeFailed(false);
+    setMessage('Zapisano decyzję.');
+    if (shouldFinalizeDeferredReview(next.cases)) void finalizeCorrections();
   }
 
-  if (loading) return <p className='loading-line'><span className='spinner' /> Ładuję przypadki do sprawdzenia…</p>;
+  async function finalizeCorrections() {
+    if (finalizeInFlight.current) return;
+    finalizeInFlight.current = true;
+    setFinalizing(true);
+    setFinalizeFailed(false);
+    setMessage('Przeliczam Review po zapisaniu decyzji…');
+    try {
+      const { result, cases: authoritativeCases } = await finalizeDeferredReviewBatch(
+        () => finalizeReviewedIdentityCorrections(match.id),
+        () => loadCases(undefined, true),
+        onWorkflowChanged,
+      );
+      if (result.workflow.phase === 'exceptions') {
+        setMessage(`Po przeliczeniu pozostały jeszcze ${authoritativeCases.length} przypadki.`);
+      } else {
+        setCases([]);
+        setIndex(0);
+        setMessage('Review zostało przeliczone.');
+      }
+    } catch (error) {
+      setFinalizeFailed(true);
+      setMessage(`Decyzje są zapisane, ale przeliczenie Review nie powiodło się. ${errorMessage(error)}`);
+    } finally {
+      finalizeInFlight.current = false;
+      setFinalizing(false);
+    }
+  }
+
+  if (loading && !finalizing) return <p className='loading-line'><span className='spinner' /> Ładuję przypadki do sprawdzenia…</p>;
 
   return <section className='identity-exception-review'>
     <div className='row between'>
@@ -166,6 +223,7 @@ export function IdentityExceptionReviewPanel({
         entity={entity}
         onCancel={() => setMessage('Decyzja nie została zapisana.')}
         onSaved={saved}
+        deferRecompute
       />
       {cases.length > 1 && <div className='row'>
         <button type='button' className='secondary' onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0}>Poprzedni</button>
@@ -177,13 +235,20 @@ export function IdentityExceptionReviewPanel({
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
         Odśwież Review
       </button>}
-    </div> : <div className='status'>
+    </div> : finalizing ? null : <div className='status'>
       <strong>Nie udało się przygotować podglądu przypadku wymagającego decyzji.</strong>
       <p>Workflow nadal wskazuje: {requiredCasesLabel(workflow.issues.blocking)}. Odśwież Review albo otwórz diagnostykę.</p>
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
         Odśwież Review
       </button>}
     </div>}
-    {message && <p className='status'>{message}</p>}
+    {finalizing && <p className='loading-line'><span className='spinner' /> Przeliczam Review po zapisaniu decyzji…</p>}
+    {message && <p className={`status${finalizeFailed ? ' error' : ''}`}>{message}</p>}
+    {finalizeFailed && <button
+      type='button'
+      className='secondary'
+      onClick={() => void finalizeCorrections()}
+      disabled={finalizing}
+    >Ponów przeliczenie Review</button>}
   </section>;
 }

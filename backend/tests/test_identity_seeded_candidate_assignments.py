@@ -329,12 +329,9 @@ class IdentitySeededCandidateAssignmentsTests(unittest.TestCase):
                 / "identity_roster_subject_review_decisions_shadow.json"
             )
             self._write_json(review_decisions_path, {"decisions": [{"id": "one"}]})
-            stale, freshness = load_fresh_seeded_assignments(match_path)
-            self.assertIsNone(stale)
-            self.assertIn(
-                "whole_subject_review_decisions_digest_mismatch",
-                freshness["reason_codes"],
-            )
+            still_fresh, freshness = load_fresh_seeded_assignments(match_path)
+            self.assertIsNotNone(still_fresh)
+            self.assertEqual(freshness["status"], "fresh")
             second = rebuild_identity_seeded_candidate_assignments(
                 match_path,
                 {},
@@ -342,6 +339,14 @@ class IdentitySeededCandidateAssignmentsTests(unittest.TestCase):
             refreshed, freshness = load_fresh_seeded_assignments(match_path)
 
             self.assertNotEqual(first["source"], second["source"])
+            self.assertEqual(
+                first["accepted_assignments"],
+                second["accepted_assignments"],
+            )
+            self.assertEqual(
+                first["rejected_propagations"],
+                second["rejected_propagations"],
+            )
             self.assertIsNotNone(refreshed)
             self.assertEqual(freshness["status"], "fresh")
             self.assertEqual(production_path.read_bytes(), production_before)

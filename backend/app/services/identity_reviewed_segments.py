@@ -264,8 +264,10 @@ def save_segment_decision(
     match_path: Path,
     match_doc: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    materialized_review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    review = build_segment_review_document(match_path, match_doc)
+    review = materialized_review or build_segment_review_document(match_path, match_doc)
     target_id = str(payload.get("review_target_id") or "")
     target = next(
         (
