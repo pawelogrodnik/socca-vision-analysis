@@ -28,11 +28,12 @@ from app.services.identity_reviewed_segments import (
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
+from app.services.play_area import is_on_pitch_product_observation
 
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v8-segment-corrections"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v10-product-status-safety"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -247,9 +248,10 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         segment_assignments,
     )
     source = _source_descriptor(documents, match_doc, seeded_freshness)
+    product_tracklets_total = int(summary["product_tracklets_total"])
     status = (
         "blocked"
-        if summary["blocked"] == len(assignments) and assignments
+        if summary["blocked"] == product_tracklets_total and product_tracklets_total
         else "complete_reviewed"
         if summary["unresolved"] == summary["conflicted"] == summary["blocked"] == 0
         else "partial_reviewed"
@@ -267,6 +269,15 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "conflicted": "stable_anonymous_entity_with_marker",
             "exact_observation_seed": "override_only_that_observation",
             "segment_correction": "override_only_canonical_target_observations",
+        },
+        "count_semantics": {
+            "tracklets_total": "technical_all_tracklets",
+            "entities": "technical_all_entities",
+            "stable_anonymous_entities": "technical_all_stable_entities",
+            "product_tracklets_total": "tracklets_with_inside_play_detections",
+            "product_entities_total": "entities_with_inside_play_detections",
+            "product_stable_anonymous_entities": "stable_entities_with_inside_play_detections",
+            "status": "product_tracklets_only",
         },
         "entities": _entities(assignments),
         "tracklet_assignments": assignments,
@@ -683,20 +694,46 @@ def _summary(
     counts, technical = _effective_assignment_status_counts(
         assignments, tracklets, canonical_observations, effective_segment_observations
     )
+    product_tracklet_ids = _product_tracklet_ids(tracklets)
+    confirmed_player_ids = {
+        str(row["canonical_player_id"])
+        for row in assignments
+        if row.get("canonical_player_id")
+        and str(row.get("tracklet_id") or "") in product_tracklet_ids
+    }
+    confirmed_player_ids.update(
+        str(row["canonical_player_id"])
+        for row in effective_segment_observations
+        if row.get("canonical_player_id")
+    )
+    product_assignments = [
+        row
+        for row in assignments
+        if str(row.get("tracklet_id") or "") in product_tracklet_ids
+    ]
+    product_entity_keys = {
+        str(row.get("stable_anonymous_slot_id") or row.get("fragment_id"))
+        for row in product_assignments
+    }
+    product_stable_slot_ids = {
+        str(row["stable_anonymous_slot_id"])
+        for row in product_assignments
+        if row.get("stable_anonymous_slot_id")
+    }
     return {
+        # Technical lineage counts intentionally retain all tracklets/entities.
+        # Product readiness below is scoped only to tracklets with on-pitch
+        # detected observations.
         "tracklets_total": len(assignments),
+        "product_tracklets_total": sum(counts.values()),
+        "product_entities_total": len(product_entity_keys),
+        "product_stable_anonymous_entities": len(product_stable_slot_ids),
         "confirmed": counts["confirmed"],
         "probable": counts["probable"],
         "unresolved": counts["unresolved"],
         "conflicted": counts["conflicted"],
         "blocked": counts["blocked"],
-        "confirmed_players": len(
-            {
-                str(row["canonical_player_id"])
-                for row in [*assignments, *effective_segment_observations]
-                if row.get("canonical_player_id")
-            }
-        ),
+        "confirmed_players": len(confirmed_player_ids),
         **coverage,
         "conflict_count": counts["conflicted"],
         "cross_team_violations": sum(any(value.get("code") == "cross_team_confirmed_assignment" for value in row["conflicts"]) for row in assignments),
@@ -731,17 +768,33 @@ def _effective_assignment_status_counts(
     counts: Counter[str] = Counter()
     fully_resolved = 0
     ownership_gaps = 0
+    excluded_without_inside = 0
+    off_pitch_only = 0
+    product_tracklet_ids = _product_tracklet_ids(tracklets)
     for assignment in assignments:
         tracklet_id = str(assignment.get("tracklet_id") or "")
         technical_multi = "upstream_multi_slot_tracklet_membership" in (
             assignment.get("hard_blockers") or []
         )
-        detected = {
+        positions = tracklets.get(tracklet_id, {}).get("positions_m")
+        all_detected = {
             (tracklet_id, int(position.get("frame") or 0))
-            for position in tracklets.get(tracklet_id, {}).get("positions_m") or []
+            for position in positions or []
             if str(position.get("status") or "detected") == "detected"
             and str(position.get("source") or "detected") not in {"predicted", "interpolated", "unknown", "missing", "ambiguous"}
         }
+        detected = {
+            (tracklet_id, int(position.get("frame") or 0))
+            for position in positions or []
+            if str(position.get("status") or "detected") == "detected"
+            and str(position.get("source") or "detected") not in {"predicted", "interpolated", "unknown", "missing", "ambiguous"}
+            and is_on_pitch_product_observation(position)
+        }
+        if tracklet_id not in product_tracklet_ids:
+            excluded_without_inside += 1
+            if all_detected:
+                off_pitch_only += 1
+            continue
         owned = [ownership.get(key) for key in detected]
         if technical_multi and detected and all(owned):
             statuses = {str(row.get("identity_status") or "unresolved") for row in owned if row}
@@ -765,7 +818,31 @@ def _effective_assignment_status_counts(
         ),
         "fully_resolved_frame_owned_tracklets": fully_resolved,
         "frame_ownership_gap_tracklets": ownership_gaps,
+        "tracklets_without_inside_play_detections": excluded_without_inside,
+        "off_pitch_only_tracklets": off_pitch_only,
     }
+
+
+def _product_tracklet_ids(
+    tracklets: dict[str, dict[str, Any]],
+) -> set[str]:
+    product_tracklet_ids: set[str] = set()
+    for tracklet_id, tracklet in tracklets.items():
+        positions = tracklet.get("positions_m")
+        if not isinstance(positions, list):
+            # Legacy fixtures/artifacts without materialized positions retain
+            # their pre-play-area product semantics until rebuilt.
+            product_tracklet_ids.add(tracklet_id)
+            continue
+        if any(
+            str(position.get("status") or "detected") == "detected"
+            and str(position.get("source") or "detected")
+            not in {"predicted", "interpolated", "unknown", "missing", "ambiguous"}
+            and is_on_pitch_product_observation(position)
+            for position in positions
+        ):
+            product_tracklet_ids.add(tracklet_id)
+    return product_tracklet_ids
 
 
 def _entities(assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:

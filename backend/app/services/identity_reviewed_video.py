@@ -24,7 +24,7 @@ from app.services.video import resolve_match_video_path
 
 
 RenderProgressCallback = Callable[[dict[str, Any]], None]
-RENDERER_VERSION = "reviewed_video:v6-profile"
+RENDERER_VERSION = "reviewed_video:v7-play-area-safety"
 
 
 @dataclass

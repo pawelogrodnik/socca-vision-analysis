@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Iterator
 
+from app.services.play_area import is_on_pitch_product_observation
+
 
 ObservationIndex = dict[tuple[str, int], dict[str, Any]]
 
@@ -95,11 +97,15 @@ def effective_observations_by_frame(
 
 
 def visible_reviewed_overlay(row: dict[str, Any]) -> bool:
-    return str(row.get("identity_status") or "unresolved") not in {
-        "false_detection",
-        "ignored",
-        "blocked",
-    }
+    return (
+        is_on_pitch_product_observation(row)
+        and str(row.get("identity_status") or "unresolved")
+        not in {
+            "false_detection",
+            "ignored",
+            "blocked",
+        }
+    )
 
 
 def visible_reviewed_player(row: dict[str, Any]) -> bool:

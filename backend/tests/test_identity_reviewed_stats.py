@@ -12,6 +12,44 @@ from app.services.reviewed_match_report import build_reviewed_match_report
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_non_inside_observations_do_not_affect_reviewed_player_stats(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 5,
+            "duration_sec": 0.2,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tracklet = _tracklet("runner", [0, 1, 2, 3, 4])
+            tracklet["positions_m"][1]["play_area_status"] = "boundary_transient"
+            tracklet["positions_m"][1]["pitch_m"] = [0.0, 20.0]
+            tracklet["positions_m"][1]["smoothed_pitch_m"] = [0.0, 20.0]
+            tracklet["positions_m"][2]["play_area_status"] = "outside_play"
+            tracklet["positions_m"][2]["pitch_m"] = [30.0, 47.4]
+            tracklet["positions_m"][2]["smoothed_pitch_m"] = [30.0, 47.4]
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [tracklet]}), encoding="utf-8"
+            )
+
+            documents = build_reviewed_stats(root, _confirmed_snapshot("runner"), {})
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            self.assertEqual(player["detected_frames"], 3)
+            self.assertEqual(player["heatmap_samples"], 3)
+            self.assertEqual(
+                player["average_pitch_position_m"],
+                [0.233, 10.0],
+            )
+            heatmap = documents["reviewed_player_heatmaps.json"]["heatmaps"][0]
+            self.assertEqual(heatmap["samples"], 3)
+            self.assertNotIn([0.0, 20.0], heatmap["positions_m"])
+            self.assertNotIn([30.0, 47.4], heatmap["positions_m"])
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_detected_positions_produce_movement_after_final_frame_safety(
         self, metadata
     ) -> None:
@@ -238,6 +276,7 @@ def _tracklet_with_positions(
                 "pitch_m": [x, 10.0],
                 "smoothed_pitch_m": [x, 10.0],
                 "bbox_xyxy": [0, 0, 10, 20],
+                "play_area_status": "inside_play",
             }
             for frame, x in positions
         ],

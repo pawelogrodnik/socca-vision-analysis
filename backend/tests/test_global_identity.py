@@ -6,6 +6,7 @@ from app.services.global_identity import (
     Observation,
     SlotState,
     _select_inactive_slot,
+    _new_slot_candidate_rejection_reason,
     _slot_movement_stats,
     _slot_has_recent_identity_conflict,
     build_frame_detection_counts_from_global_identity,
@@ -747,6 +748,66 @@ class GlobalIdentityTests(unittest.TestCase):
         self.assertEqual(identity["summary"]["spawn_blocked"], 0)
         self.assertEqual(identity["summary"]["rejected_start_candidates"], 4)
         self.assertEqual(identity["rejected_start_candidates"][0]["reason"], "outside_play_area")
+
+    def test_boundary_transient_detection_does_not_start_slot(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet(
+                    "1:1",
+                    "A",
+                    [boundary_position(frame, -0.5, 10.0) for frame in range(4)],
+                )
+            ]
+        )
+
+        self.assertEqual(identity["summary"]["stable_players"], 0)
+        boundary = Observation(
+            frame=0,
+            time_sec=0.0,
+            bbox_xyxy=[0, 0, 10, 20],
+            footpoint=[5.0, 20.0],
+            calibrated_footpoint=[5.0, 20.0],
+            pitch_m=[0.0, 10.0],
+            confidence=0.8,
+            raw_track_id=1,
+            tracklet_id="1:1",
+            tracklet_positions_count=4,
+            team_label="A",
+            team_id="team-a",
+            team_name="Team A",
+            team_confidence=0.9,
+            play_area_status="boundary_transient",
+        )
+        self.assertEqual(
+            _new_slot_candidate_rejection_reason([], boundary),
+            "boundary_transient_not_allowed_to_spawn_slot",
+        )
+
+    def test_inside_boundary_inside_keeps_existing_slot_without_duplicate(self) -> None:
+        identity = self.resolve(
+            [
+                tracklet(
+                    "1:1",
+                    "A",
+                    [
+                        position(0, 1.0, 10.0),
+                        boundary_position(1, -0.5, 10.0),
+                        position(2, 1.1, 10.0),
+                    ],
+                )
+            ]
+        )
+
+        self.assertEqual(identity["summary"]["stable_players"], 1)
+        slot = next(row for row in identity["slots"] if row["slot_id"] == "A01")
+        self.assertEqual(slot["tracklet_ids"], ["1:1"])
+        self.assertEqual(slot["detected_frames"], 2)
+        self.assertTrue(
+            any(
+                event.get("reason") == "boundary_transient_not_trusted"
+                for event in slot["identity_events"]
+            )
+        )
 
     def test_movement_stats_count_short_gap_as_estimated_distance(self) -> None:
         identity = self.resolve(

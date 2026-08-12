@@ -12,6 +12,7 @@ from app.services.identity_reviewed_effective_observation import is_real_detecte
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
+from app.services.play_area import is_on_pitch_product_observation
 from app.services.video import read_match_video_metadata
 
 
@@ -209,11 +210,13 @@ def _unit(
         for tracklet_id in tracklet_ids
         for position in tracklets.get(tracklet_id, {}).get("positions_m") or []
         if is_real_detected_position(position)
+        and is_on_pitch_product_observation(position)
     }
     frames = sorted({frame for _, frame in pairs})
+    on_pitch_tracklet_ids = {tracklet_id for tracklet_id, _ in pairs}
     teams = {
         str(tracklets.get(tracklet_id, {}).get("team_label") or "U")
-        for tracklet_id in tracklet_ids
+        for tracklet_id in on_pitch_tracklet_ids
         if tracklet_id in tracklets
     }
     detected_team_labels = sorted(teams & {"A", "B"})
@@ -240,6 +243,9 @@ def _unit(
         reason_codes.append("review_card_conflict")
     if action in REVIEWED_ACTIONS:
         status = "reviewed_by_operator"
+    elif not pairs:
+        status = "ignored_low_impact"
+        reason_codes.append("no_inside_play_observations")
     elif seeded is not None or (card is not None and not card_requires_review):
         status = "resolved_automatically"
         reason_codes.append("safe_seeded_or_completed_review_card")
@@ -481,6 +487,7 @@ def _all_detected_pairs(tracklets: dict[str, dict[str, Any]]) -> set[tuple[str, 
         for tracklet_id, tracklet in tracklets.items()
         for position in tracklet.get("positions_m") or []
         if is_real_detected_position(position)
+        and is_on_pitch_product_observation(position)
     }
 
 

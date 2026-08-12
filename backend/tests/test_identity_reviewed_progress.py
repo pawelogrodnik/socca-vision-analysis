@@ -61,6 +61,42 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             self.assertEqual(progress["summary"]["optional_cases_remaining"], 100)
             self.assertEqual(progress["next_cases"], [])
 
+    def test_subject_with_only_non_inside_observations_creates_no_review_work(self) -> None:
+        with _workspace() as root:
+            outside = _tracklet("outside", "A", range(1, 31))
+            for row in outside["positions_m"]:
+                row["play_area_status"] = "outside_play"
+            boundary = _tracklet("boundary", "A", range(31, 61))
+            for row in boundary["positions_m"]:
+                row["play_area_status"] = "boundary_transient"
+            _write(root / "tracklets.json", {"tracklets": [outside, boundary]})
+            _write(root / "identity_candidate_shadow.json", {"subjects": [
+                {"candidate_subject_id": "outside", "tracklet_ids": ["outside"]},
+                {"candidate_subject_id": "boundary", "tracklet_ids": ["boundary"]},
+            ]})
+            _write(root / "identity_roster_subject_review_shadow.json", {"cards": [
+                {
+                    "candidate_subject_id": "outside",
+                    "review_status": "blocked_conflict",
+                    "requires_operator_review": True,
+                    "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "outside"}]},
+                },
+                {
+                    "candidate_subject_id": "boundary",
+                    "review_status": "blocked_conflict",
+                    "requires_operator_review": True,
+                    "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "boundary"}]},
+                },
+            ]})
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(progress["summary"]["optional_cases_remaining"], 0)
+            self.assertEqual(progress["summary"]["ignored_low_impact"], 2)
+            self.assertEqual(progress["observations"]["total_detected_observations"], 0)
+            self.assertEqual(progress["next_cases"], [])
+
     def test_legacy_requires_operator_review_without_conflict_is_not_blocking(self) -> None:
         with _workspace() as root:
             _single_subject(root, team="A", frames=range(1, 101), card={
@@ -384,7 +420,15 @@ def _tracklet(tracklet_id: str, team: str, frames: range | list[int]) -> dict:
     return {
         "tracklet_id": tracklet_id,
         "team_label": team,
-        "positions_m": [{"frame": frame, "status": "detected", "source": "detected"} for frame in frames],
+        "positions_m": [
+            {
+                "frame": frame,
+                "status": "detected",
+                "source": "detected",
+                "play_area_status": "inside_play",
+            }
+            for frame in frames
+        ],
     }
 
 

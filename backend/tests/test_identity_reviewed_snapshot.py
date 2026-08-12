@@ -11,10 +11,75 @@ from app.services.identity_reviewed_snapshot import (
     get_reviewed_identity_status,
     reviewed_assignment_at,
 )
+from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_slot_review import save_reviewed_slot_assignments
 
 
 class ReviewedIdentitySnapshotTests(unittest.TestCase):
+    def test_off_pitch_only_tracklet_does_not_block_product_completion(self) -> None:
+        with _workspace() as root:
+            _write_inputs(
+                root,
+                decisions=[_decision("s1", "assign_roster_player", "p1")],
+            )
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            by_id = {row["tracklet_id"]: row for row in tracklets["tracklets"]}
+            by_id["t1"]["positions_m"] = [
+                {
+                    "frame": 1,
+                    "status": "detected",
+                    "source": "detected",
+                    "play_area_status": "inside_play",
+                }
+            ]
+            by_id["t2"]["positions_m"] = [
+                {
+                    "frame": 10,
+                    "status": "detected",
+                    "source": "detected",
+                    "play_area_status": "outside_play",
+                },
+                {
+                    "frame": 11,
+                    "status": "detected",
+                    "source": "detected",
+                    "play_area_status": "boundary_transient",
+                },
+            ]
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
+
+            result = finalize_reviewed_identity(root, _match())
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(result["status"], "complete_reviewed")
+            self.assertEqual(result["summary"]["tracklets_total"], 2)
+            self.assertEqual(result["summary"]["product_tracklets_total"], 1)
+            self.assertEqual(result["summary"]["product_entities_total"], 1)
+            self.assertEqual(
+                result["summary"]["product_stable_anonymous_entities"], 0
+            )
+            self.assertEqual(result["summary"]["confirmed"], 1)
+            self.assertEqual(result["summary"]["confirmed_players"], 1)
+            self.assertEqual(result["summary"]["unresolved"], 0)
+            self.assertEqual(result["summary"]["conflicted"], 0)
+            self.assertEqual(result["summary"]["blocked"], 0)
+            self.assertEqual(result["summary"]["off_pitch_only_tracklets"], 1)
+            self.assertEqual(
+                result["summary"]["tracklets_without_inside_play_detections"],
+                1,
+            )
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(progress["summary"]["optional_cases_remaining"], 0)
+            self.assertEqual(progress["summary"]["ignored_low_impact"], 1)
+            self.assertEqual(
+                result["count_semantics"]["tracklets_total"],
+                "technical_all_tracklets",
+            )
+            self.assertEqual(
+                result["count_semantics"]["status"],
+                "product_tracklets_only",
+            )
+
     def test_explicit_review_wins_and_unresolved_overrides_seed(self) -> None:
         with _workspace() as root:
             _write_inputs(root, decisions=[_decision("s1", "assign_roster_player", "p1"), _decision("s2", "mark_unresolved")], seeded=[_seed("s2", "p1")])
@@ -364,8 +429,8 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             _write_inputs(root, decisions=[])
             tracklets = json.loads((root / "tracklets.json").read_text())
             tracklets["tracklets"][0]["positions_m"] = [
-                {"frame": 0, "status": "detected"},
-                {"frame": 1, "status": "detected"},
+                {"frame": 0, "status": "detected", "play_area_status": "inside_play"},
+                {"frame": 1, "status": "detected", "play_area_status": "inside_play"},
             ]
             (root / "tracklets.json").write_text(json.dumps(tracklets))
             seeds = {
@@ -391,9 +456,9 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             "t1": {
                 "tracklet_id": "t1",
                 "positions_m": [
-                    {"frame": 1, "status": "detected"},
+                    {"frame": 1, "status": "detected", "play_area_status": "inside_play"},
                     {"frame": 5, "status": "predicted", "source": "predicted"},
-                    {"frame": 10, "status": "detected"},
+                    {"frame": 10, "status": "detected", "play_area_status": "inside_play"},
                 ],
             }
         }
@@ -419,7 +484,7 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
         tracklets = {
             "t1": {
                 "tracklet_id": "t1",
-                "positions_m": [{"frame": 10, "status": "detected"}],
+                "positions_m": [{"frame": 10, "status": "detected", "play_area_status": "inside_play"}],
             }
         }
         snapshot = {

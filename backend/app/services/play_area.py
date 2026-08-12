@@ -8,6 +8,20 @@ DEFAULT_PLAY_AREA_INTERIOR_MARGIN_M = 0.35
 DEFAULT_PLAY_AREA_BOUNDARY_MARGIN_M = 1.25
 
 
+def is_on_pitch_product_observation(row: Any) -> bool:
+    """Return whether an observation is eligible for player-facing products.
+
+    Boundary and outside observations remain useful to tracking and identity
+    continuity, but they are not trusted on-pitch evidence for rendered labels,
+    minimaps, coverage, or reviewed player statistics. Legacy artifacts created
+    before play-area classification remain eligible until they are rebuilt.
+    """
+    if not isinstance(row, dict):
+        return False
+    status = row.get("play_area_status")
+    return status is None or str(status) == "inside_play"
+
+
 def classify_pitch_position(
     point: Any,
     *,

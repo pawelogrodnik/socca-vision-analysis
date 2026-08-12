@@ -98,6 +98,23 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
             self.assertIsNone(a03_targets[1]["legacy_suggestion"])
             self.assertIsNone(a05_target["legacy_suggestion"])
 
+    def test_non_inside_ownership_does_not_create_segment_review_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            for position in tracklets["tracklets"][0]["positions_m"]:
+                if position["frame"] in {3, 4}:
+                    position["play_area_status"] = "boundary_transient"
+            (root / "tracklets.json").write_text(
+                json.dumps(tracklets), encoding="utf-8"
+            )
+
+            review = build_segment_review_document(root, match)
+
+            self.assertEqual(review["summary"]["mixed_tracklets"], 0)
+            self.assertEqual(review["summary"]["targets_total"], 0)
+
     def test_segment_decisions_do_not_bleed_and_stale_target_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -406,6 +423,7 @@ def _fixture(root: Path, *, include_bbox: bool = True) -> dict:
             "frame": frame,
             "time_sec": frame / 10,
             "status": "detected",
+            "play_area_status": "inside_play",
             **({"bbox_xyxy": [10, 10, 20, 30]} if include_bbox else {}),
         }
         for frame in range(1, 7)

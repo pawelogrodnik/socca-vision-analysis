@@ -6,6 +6,7 @@ from typing import Any
 from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
 )
+from app.services.play_area import is_on_pitch_product_observation
 
 
 def build_observation_overrides(
@@ -75,7 +76,9 @@ def observation_coverage(
     segment_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     counts: Counter[str] = Counter()
+    play_area_counts: Counter[str] = Counter()
     unique: set[tuple[str, int]] = set()
+    on_pitch_keys: set[tuple[str, int]] = set()
     for row in iter_effective_reviewed_observations(
         tracklets,
         assignments,
@@ -88,23 +91,42 @@ def observation_coverage(
         if key in unique:
             continue
         unique.add(key)
+        play_area_status = str(row.get("play_area_status") or "inside_play")
+        play_area_counts[play_area_status] += 1
+        if not is_on_pitch_product_observation(row):
+            continue
+        on_pitch_keys.add(key)
         counts[str(row.get("identity_status") or "unresolved")] += 1
     reliable = sum(counts[value] for value in ("confirmed", "unresolved", "conflicted", "blocked", "team_unknown"))
+    product_detected = sum(counts.values())
     return {
-        "detected_observations_total": len(unique),
+        "detected_observations_total": product_detected,
         "reliable_player_observations_total": reliable,
         "confirmed_detected_observations": counts["confirmed"],
         "unresolved_detected_observations": counts["unresolved"] + counts["team_unknown"],
         "conflicted_detected_observations": counts["conflicted"] + counts["blocked"],
         "ignored_detected_observations": counts["ignored"] + counts["referee"] + counts["false_detection"],
-        "exact_named_observations": sum(row["identity_status"] == "confirmed" for row in overrides),
+        "exact_named_observations": sum(
+            row.get("identity_status") == "confirmed"
+            and (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            in on_pitch_keys
+            for row in overrides
+        ),
         "segment_named_observations": sum(
             row.get("identity_status") == "confirmed"
+            and (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            in on_pitch_keys
             for row in (segment_overrides or [])
         ),
         "confirmed_detected_observation_ratio": round(counts["confirmed"] / reliable, 4) if reliable else None,
         "unresolved_detected_observation_ratio": round((counts["unresolved"] + counts["team_unknown"]) / reliable, 4) if reliable else None,
         "coverage_unit": "unique_detected_tracklet_frame_observation",
+        "play_area_diagnostics": {
+            "detected_observations_all_play_areas": len(unique),
+            "inside_play_observations": play_area_counts["inside_play"],
+            "boundary_transient_observations": play_area_counts["boundary_transient"],
+            "outside_play_observations": play_area_counts["outside_play"],
+        },
     }
 
 

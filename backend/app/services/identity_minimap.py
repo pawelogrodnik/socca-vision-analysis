@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.play_area import is_on_pitch_product_observation
+
 
 TEAM_COLORS = {"A": (40, 70, 235), "B": (235, 150, 35), "U": (180, 180, 180)}
 
@@ -18,6 +20,8 @@ def draw_reviewed_minimap(frame: Any, rows: list[dict[str, Any]], *, pitch_width
     cv2.circle(frame, (x0 + map_width // 2, y0 + map_height // 2), max(5, map_width // 10), (150, 150, 150), 1)
     rendered = 0
     for row in rows:
+        if not is_on_pitch_product_observation(row):
+            continue
         point = row.get("pitch_m")
         if not isinstance(point, list) or len(point) < 2: continue
         x, y = map_pitch_point(point, x0, y0, map_width, map_height, pitch_width, pitch_length)
