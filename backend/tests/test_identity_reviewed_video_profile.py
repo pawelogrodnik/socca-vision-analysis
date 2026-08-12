@@ -24,7 +24,7 @@ class ReviewedVideoProfileTests(unittest.TestCase):
         profile = _RenderTimingProfile()
         self.assertEqual(profile.decode_sec, 0)
         self.assertEqual(profile.as_dict()["raw_avi_bytes"], 0)
-        self.assertEqual(RENDERER_VERSION, "reviewed_video:v6-profile")
+        self.assertEqual(RENDERER_VERSION, "reviewed_video:v7-play-area-safety")
 
         profile.decode_sec += 0.2
         profile.decode_sec += 0.3

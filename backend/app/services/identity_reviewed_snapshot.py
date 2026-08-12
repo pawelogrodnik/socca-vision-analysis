@@ -32,7 +32,7 @@ from app.services.identity_stable_anonymous import resolve_stable_anonymous_enti
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v8-segment-corrections"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v9-play-area-safety"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:

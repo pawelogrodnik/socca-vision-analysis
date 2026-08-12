@@ -20,6 +20,7 @@ from app.services.identity_reviewed_segment_coalescing import (
     exact_frame_ranges,
     max_segment_review_gap_frames,
 )
+from app.services.play_area import is_on_pitch_product_observation
 from app.services.video import read_match_video_metadata, resolve_match_video_path
 
 
@@ -53,6 +54,12 @@ def build_segment_review_document(
         for row in tracklets_doc.get("tracklets") or []
         if row.get("tracklet_id")
     }
+    on_pitch_pairs = {
+        (tracklet_id, int(position.get("frame") or 0))
+        for tracklet_id, tracklet in tracklets.items()
+        for position in tracklet.get("positions_m") or []
+        if is_on_pitch_product_observation(position)
+    }
     subjects = {
         str(row.get("candidate_subject_id")): {
             str(value) for value in row.get("tracklet_ids") or []
@@ -68,7 +75,10 @@ def build_segment_review_document(
     ownership = global_observation_ownership(global_doc)
     owner_slots: dict[str, set[str]] = defaultdict(set)
     for row in ownership:
-        owner_slots[str(row.get("tracklet_id") or "")].add(
+        tracklet_id = str(row.get("tracklet_id") or "")
+        if (tracklet_id, int(row.get("frame") or 0)) not in on_pitch_pairs:
+            continue
+        owner_slots[tracklet_id].add(
             str(row.get("stable_slot_id") or "")
         )
     mixed_tracklets = {
@@ -84,6 +94,8 @@ def build_segment_review_document(
     groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for claim in ownership:
         tracklet_id = str(claim.get("tracklet_id") or "")
+        if (tracklet_id, int(claim.get("frame") or 0)) not in on_pitch_pairs:
+            continue
         if tracklet_id not in mixed_tracklets:
             continue
         for subject_id in subject_by_tracklet.get(tracklet_id) or set():
@@ -106,7 +118,16 @@ def build_segment_review_document(
     targets: list[dict[str, Any]] = []
     matched_decision_ids: set[str] = set()
     fps = _review_fps(match_path, match_doc)
-    episodes = coalesced_conflict_episodes(groups, ownership, fps=fps)
+    on_pitch_ownership = [
+        claim
+        for claim in ownership
+        if (
+            str(claim.get("tracklet_id") or ""),
+            int(claim.get("frame") or 0),
+        )
+        in on_pitch_pairs
+    ]
+    episodes = coalesced_conflict_episodes(groups, on_pitch_ownership, fps=fps)
     for (subject_id, tracklet_id, slot_id, team_label), grouped_frames in sorted(
         episodes.items()
     ):
@@ -204,6 +225,7 @@ def build_segment_review_document(
         },
         "target_policy": {
             "algorithm_version": TARGET_ALGORITHM_VERSION,
+            "product_play_area_policy": "inside_play_only",
             "max_unowned_gap_sec": MAX_SEGMENT_REVIEW_GAP_SEC,
             "max_unowned_gap_frames": max_segment_review_gap_frames(fps),
             "preserves_exact_owned_frames": True,

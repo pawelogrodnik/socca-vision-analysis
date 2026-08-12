@@ -364,8 +364,8 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             _write_inputs(root, decisions=[])
             tracklets = json.loads((root / "tracklets.json").read_text())
             tracklets["tracklets"][0]["positions_m"] = [
-                {"frame": 0, "status": "detected"},
-                {"frame": 1, "status": "detected"},
+                {"frame": 0, "status": "detected", "play_area_status": "inside_play"},
+                {"frame": 1, "status": "detected", "play_area_status": "inside_play"},
             ]
             (root / "tracklets.json").write_text(json.dumps(tracklets))
             seeds = {
@@ -391,9 +391,9 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             "t1": {
                 "tracklet_id": "t1",
                 "positions_m": [
-                    {"frame": 1, "status": "detected"},
+                    {"frame": 1, "status": "detected", "play_area_status": "inside_play"},
                     {"frame": 5, "status": "predicted", "source": "predicted"},
-                    {"frame": 10, "status": "detected"},
+                    {"frame": 10, "status": "detected", "play_area_status": "inside_play"},
                 ],
             }
         }
@@ -419,7 +419,7 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
         tracklets = {
             "t1": {
                 "tracklet_id": "t1",
-                "positions_m": [{"frame": 10, "status": "detected"}],
+                "positions_m": [{"frame": 10, "status": "detected", "play_area_status": "inside_play"}],
             }
         }
         snapshot = {
