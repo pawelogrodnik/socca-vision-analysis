@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from app.config import WRITE_DEBUG_VIDEO_ARTIFACTS
 from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
 from app.services.analysis_runs import finalize_analysis_report, new_analysis_run_id
 from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label, resolve_yolo_device
+from app.services.tracker import PLAY_AREA_TRACK_BIRTH_POLICY_VERSION
 
 
 def now_iso() -> str:
@@ -229,6 +231,9 @@ def analyze_match_chunked_yolo(
     manifest["parameters"]["yolo_conf"] = yolo_conf
     manifest["parameters"]["yolo_imgsz"] = yolo_imgsz
     manifest["parameters"]["yolo_tracker"] = yolo_tracker
+    manifest["parameters"]["track_birth_policy"] = (
+        PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if yolo_tracker == "centroid_high_recall" else "tracker_native"
+    )
     manifest["parameters"]["yolo_device"] = yolo_device or "auto"
     manifest["parameters"]["yolo_device_requested"] = requested_device_label(payload.get("yolo_device"))
     manifest["parameters"]["camera_motion_compensation"] = camera_motion.enabled
@@ -590,6 +595,10 @@ def analyze_match_chunked_yolo(
     manifest["summary"]["completed_chunks"] = len(chunks)
     manifest["summary"]["merged_tracks"] = len(merged_tracks)
     manifest["summary"]["frames_processed"] = sum(int(((chunk.get("metrics") or {}).get("frames_processed") or 0)) for chunk in chunks)
+    tracker_telemetry: Counter[str] = Counter()
+    for chunk in chunks:
+        tracker_telemetry.update((chunk.get("metrics") or {}).get("tracker_telemetry") or {})
+    manifest["summary"]["tracker_telemetry"] = dict(sorted(tracker_telemetry.items()))
     if include_ball:
         manifest["summary"]["ball_processed_frames"] = sum(
             int((((chunk.get("metrics") or {}).get("ball") or {}).get("processed_frames") or 0))
@@ -658,6 +667,9 @@ def analyze_match_chunked_yolo(
             "camera_motion_reference_frame": camera_motion.reference_frame,
             "camera_motion_reference_time_sec": round(camera_motion.reference_time_sec, 3),
             "tracking_backend": "centroid" if yolo_tracker == "centroid_high_recall" else "ultralytics",
+            "track_birth_policy": (
+                PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if yolo_tracker == "centroid_high_recall" else "tracker_native"
+            ),
             "ball_yolo_model": ball_yolo_model if include_ball else None,
             "ball_yolo_conf": ball_yolo_conf if include_ball else None,
             "ball_yolo_imgsz": ball_yolo_imgsz if include_ball else None,
@@ -679,6 +691,10 @@ def analyze_match_chunked_yolo(
         "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
         "camera_motion_summary": camera_motion.report()["summary"],
         "tracks_count": len(merged_tracks),
+        "track_birth_policy": (
+            PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if yolo_tracker == "centroid_high_recall" else "tracker_native"
+        ),
+        "tracker_telemetry": dict(sorted(tracker_telemetry.items())),
         "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
         "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
         "ball_quality_summary": (ball_tracking or {}).get("ball_quality_report", {}).get("summary"),
@@ -791,6 +807,12 @@ def _load_or_create_real_manifest(
 def _manifest_matches_payload(manifest: dict[str, Any], payload: dict[str, Any]) -> bool:
     parameters = manifest.get("parameters") if isinstance(manifest.get("parameters"), dict) else {}
     if not manifest.get("chunks"):
+        return False
+    expected_tracker = str(payload.get("yolo_tracker") or "centroid_high_recall")
+    expected_birth_policy = (
+        PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if expected_tracker == "centroid_high_recall" else "tracker_native"
+    )
+    if parameters.get("track_birth_policy") != expected_birth_policy:
         return False
     if bool(parameters.get("include_ball")) != bool(payload.get("include_ball")):
         return False

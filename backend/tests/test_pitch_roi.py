@@ -89,6 +89,30 @@ class PitchRoiTests(unittest.TestCase):
         self.assertEqual(result["play_area_status"], "inside_play")
         self.assertFalse(result["pitch_m_clamped"])
 
+    def test_tracking_classification_reuses_canonical_play_area_fields(self) -> None:
+        from app.services.analysis import _classify_detections_for_tracking
+        from app.services.pitch import PitchConfig
+
+        pitch = PitchConfig(
+            image_points=[[0, 0], [30, 0], [30, 47.4], [0, 47.4]],
+            width_m=30.0,
+            length_m=47.4,
+        )
+        detections = [
+            {"footpoint": [5.0, 20.0]},
+            {"footpoint": [0.2, 20.0]},
+            {"footpoint": [-2.0, 20.0]},
+        ]
+
+        classified = _classify_detections_for_tracking(detections, np.eye(3), pitch)
+
+        self.assertEqual(
+            [row["play_area_status"] for row in classified],
+            ["inside_play", "boundary_transient", "outside_play"],
+        )
+        self.assertEqual(classified[0]["pitch_m"], [5.0, 20.0])
+        self.assertEqual(classified[2]["pitch_m_raw"], [-2.0, 20.0])
+
 
 if __name__ == "__main__":
     unittest.main()
