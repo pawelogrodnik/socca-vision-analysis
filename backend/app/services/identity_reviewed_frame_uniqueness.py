@@ -10,6 +10,7 @@ from app.services.identity_reviewed_effective_observation import (
     is_real_detected_position,
     observation_index,
 )
+from app.services.play_area import is_on_pitch_product_observation
 
 
 _SOURCE_PRIORITY = {
@@ -59,6 +60,8 @@ def build_frame_slot_demotions(
             continue
         for position in tracklet.get("positions_m") or []:
             if not is_real_detected_position(position):
+                continue
+            if not is_on_pitch_product_observation(position):
                 continue
             effective = effective_reviewed_observation(
                 assignment,
