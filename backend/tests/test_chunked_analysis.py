@@ -9,6 +9,7 @@ from unittest.mock import patch
 import numpy as np
 
 from app.services.chunked_analysis import (
+    _manifest_matches_payload,
     analyze_match_chunked_yolo,
     build_analysis_chunk_manifest,
     merge_completed_chunk_ball_observations,
@@ -19,6 +20,25 @@ from app.services.chunked_analysis import (
 
 
 class ChunkedAnalysisTests(unittest.TestCase):
+    def test_legacy_chunks_are_not_reused_without_track_birth_policy(self) -> None:
+        manifest = build_analysis_chunk_manifest(
+            video_metadata={"fps": 30.0, "frame_count": 300, "duration_sec": 10.0},
+            payload={"max_seconds": 0, "frame_stride": 1},
+        )
+
+        self.assertFalse(
+            _manifest_matches_payload(
+                manifest,
+                {
+                    "max_seconds": 0,
+                    "frame_stride": 1,
+                    "chunk_duration_sec": 120,
+                    "chunk_overlap_sec": 2,
+                    "yolo_tracker": "centroid_high_recall",
+                },
+            )
+        )
+
     def test_chunk_manifest_splits_video_with_overlap(self) -> None:
         manifest = build_analysis_chunk_manifest(
             video_metadata={"fps": 30.0, "frame_count": 3600, "duration_sec": 120.0},

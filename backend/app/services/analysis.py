@@ -28,7 +28,7 @@ from app.services.pitch import PitchConfig, create_pitch_mask, image_to_pitch_m,
 from app.services.play_area import classify_pitch_position
 from app.services.runtime import collect_runtime_info, normalize_yolo_device, requested_device_label, resolve_yolo_device
 from app.services.stabilization import stabilize_match, write_stable_overlay
-from app.services.tracker import CentroidTracker
+from app.services.tracker import CentroidTracker, PLAY_AREA_TRACK_BIRTH_POLICY_VERSION
 from app.services.video import read_video_metadata
 
 AnalysisAdapter = Literal["motion", "yolo"]
@@ -290,6 +290,32 @@ def _camera_motion_position_fields(
     }
 
 
+def _classify_detections_for_tracking(
+    detections: list[dict[str, Any]],
+    H: np.ndarray,
+    pitch: PitchConfig,
+) -> list[dict[str, Any]]:
+    """Attach canonical play-area metadata before tracker association/birth."""
+    if not detections:
+        return detections
+    source_points = [
+        tuple(detection.get("calibrated_footpoint") or detection["footpoint"])
+        for detection in detections
+    ]
+    mapped = image_to_pitch_m(source_points, H)
+    return [
+        {
+            **detection,
+            **classify_pitch_position(
+                pitch_m,
+                pitch_width_m=pitch.width_m,
+                pitch_length_m=pitch.length_m,
+            ),
+        }
+        for detection, pitch_m in zip(detections, mapped)
+    ]
+
+
 def _tracks_with_pitch_positions(
     raw_tracks: list[dict[str, Any]],
     H: np.ndarray,
@@ -300,17 +326,29 @@ def _tracks_with_pitch_positions(
     tracks_json: list[dict[str, Any]] = []
     for track in raw_tracks:
         positions = []
-        source_points = []
-        for p in track["positions"]:
-            source_point = p.get("calibrated_footpoint") or p["footpoint"]
-            source_points.append((float(source_point[0]), float(source_point[1])))
-        mapped = image_to_pitch_m(source_points, H)
-        for p, pitch_m in zip(track["positions"], mapped):
+        source_positions = track["positions"]
+        already_classified = pitch is not None and clamp_positions_to_pitch and all(
+            position.get("play_area_status") is not None
+            and position.get("pitch_m") is not None
+            and position.get("pitch_m_raw") is not None
+            for position in source_positions
+        )
+        mapped = []
+        if not already_classified:
+            source_points = []
+            for position in source_positions:
+                source_point = position.get("calibrated_footpoint") or position["footpoint"]
+                source_points.append((float(source_point[0]), float(source_point[1])))
+            mapped = image_to_pitch_m(source_points, H)
+        for index, p in enumerate(source_positions):
             row = dict(p)
             row.pop("tracking_footpoint", None)
             if p.get("calibrated_footpoint"):
                 row["pitch_m_source"] = "calibrated_footpoint"
-            if pitch is not None:
+            if already_classified:
+                pass
+            elif pitch is not None:
+                pitch_m = mapped[index]
                 play_area = classify_pitch_position(
                     pitch_m,
                     pitch_width_m=pitch.width_m,
@@ -322,6 +360,7 @@ def _tracks_with_pitch_positions(
                     row.update({key: value for key, value in play_area.items() if key != "pitch_m"})
                     row["pitch_m"] = [round(float(pitch_m[0]), 3), round(float(pitch_m[1]), 3)]
             else:
+                pitch_m = mapped[index]
                 row["pitch_m"] = [round(float(pitch_m[0]), 3), round(float(pitch_m[1]), 3)]
             positions.append(row)
         if positions:
@@ -698,6 +737,8 @@ def collect_yolo_tracks_range(
     centroid_tracker = CentroidTracker(
         max_distance_px=max(45, width * 0.04),
         max_missing=max(12, int(fps * 0.6 / max(frame_stride, 1))),
+        play_area_aware=True,
+        allow_outside_continuation=False,
     )
     tracks: dict[int, list[dict[str, Any]]] = defaultdict(list)
     cap = cv2.VideoCapture(str(video_path))
@@ -761,6 +802,7 @@ def collect_yolo_tracks_range(
                                     "source": "yolo-person-centroid",
                                 }
                             )
+                detections = _classify_detections_for_tracking(detections, H, pitch)
                 detections_kept += len(detections)
                 centroid_tracker.update(detections, frame_idx, frame_idx / fps)
             else:
@@ -850,6 +892,10 @@ def collect_yolo_tracks_range(
             "tracks_count": len(tracks_json),
             "track_id_offset": int(track_id_offset),
             "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
+            "track_birth_policy": (
+                PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if use_centroid_tracker else "tracker_native"
+            ),
+            "tracker_telemetry": centroid_tracker.telemetry() if use_centroid_tracker else {},
             "yolo_tracker_resolved": tracker_config if not use_centroid_tracker else "internal_centroid_tracker",
             "yolo_model_resolved": resolved_yolo_model,
             "yolo_device": normalized_yolo_device or "auto",
@@ -990,7 +1036,12 @@ def analyze_match_yolo(
         ball_model = _load_yolo_model(ball_yolo_model) if include_ball else None
         use_centroid_tracker = yolo_tracker == "centroid_high_recall"
         tracker_config = _resolve_yolo_tracker_config(yolo_tracker)
-        centroid_tracker = CentroidTracker(max_distance_px=max(45, width * 0.04), max_missing=max(12, int(fps * 0.6 / max(frame_stride, 1))))
+        centroid_tracker = CentroidTracker(
+            max_distance_px=max(45, width * 0.04),
+            max_missing=max(12, int(fps * 0.6 / max(frame_stride, 1))),
+            play_area_aware=True,
+            allow_outside_continuation=False,
+        )
         tracks: dict[int, list[dict[str, Any]]] = defaultdict(list)
 
         frame_idx = 0
@@ -1051,6 +1102,7 @@ def analyze_match_yolo(
                                         "source": "yolo-person-centroid",
                                     }
                                 )
+                    detections = _classify_detections_for_tracking(detections, H, pitch)
                     detections_kept += len(detections)
                     active_rows = centroid_tracker.update(detections, frame_idx, frame_idx / fps)
                 else:
@@ -1259,6 +1311,9 @@ def analyze_match_yolo(
                 "pitch_filter_margin_px": DEFAULT_PITCH_FILTER_MARGIN_PX,
                 "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
                 "tracking_backend": "centroid" if use_centroid_tracker else "ultralytics",
+                "track_birth_policy": (
+                    PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if use_centroid_tracker else "tracker_native"
+                ),
                 "include_ball": include_ball,
                 "ball_yolo_model": ball_yolo_model if include_ball else None,
                 "ball_yolo_conf": ball_yolo_conf if include_ball else None,
@@ -1286,6 +1341,10 @@ def analyze_match_yolo(
             "clamp_positions_to_pitch": DEFAULT_CLAMP_POSITIONS_TO_PITCH,
             "camera_motion_summary": camera_motion.report()["summary"],
             "tracks_count": len(tracks_json),
+            "track_birth_policy": (
+                PLAY_AREA_TRACK_BIRTH_POLICY_VERSION if use_centroid_tracker else "tracker_native"
+            ),
+            "tracker_telemetry": centroid_tracker.telemetry() if use_centroid_tracker else {},
             "stable_players_count": stabilization["stable_players"]["summary"]["stable_players"],
             "ball_tracking_summary": (ball_tracking or {}).get("ball_tracking_report", {}).get("summary"),
             "ball_quality_summary": (ball_tracking or {}).get("ball_quality_report", {}).get("summary"),
