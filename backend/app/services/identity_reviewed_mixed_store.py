@@ -135,6 +135,10 @@ def build_mixed_review_queue(
         cases.append(
             {
                 **marker,
+                "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
+                "reviewed_complex_at": marker.get("updated_at")
+                if str(marker.get("resolution_status")) == "unresolved_complex_mix"
+                else None,
                 "temporal_evidence": {
                     "status": "ready" if crops else "missing",
                     "anchor_crops": crops,
@@ -187,7 +191,7 @@ def build_mixed_boundary_refinement(
     ]
     if (after_frame, before_frame) not in set(zip(overview_frames, overview_frames[1:])):
         raise ValueError("Refinement interval must use neighboring overview samples")
-    interval = [row for row in observations if after_frame <= int(row["frame"]) <= before_frame]
+    interval = [row for row in observations if after_frame < int(row["frame"]) <= before_frame]
     if not interval:
         raise ValueError("No detected observations in the selected refinement interval")
     crops = _temporal_evidence(subject_id, interval, card, limit=max(3, min(limit, 16)))

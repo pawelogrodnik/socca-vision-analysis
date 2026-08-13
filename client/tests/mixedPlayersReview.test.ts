@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import type { MixedPlayerCase, MixedSegmentAssignment } from '../src/types.ts';
-import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
+import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
 
 const reviewCase: MixedPlayerCase = {
   candidate_subject_id: 'mixed-1',
@@ -49,12 +49,26 @@ test('adding or moving a boundary preserves unambiguous segment assignments', ()
   const teamA: MixedSegmentAssignment = { action: 'assign_team', team_label: 'A' };
   const teamB: MixedSegmentAssignment = { action: 'assign_team', team_label: 'B' };
 
-  const added = remapMixedAssignments(reviewCase, [30], [20, 30], [teamA, teamB]);
-  assert.deepEqual(added.assignments, [teamA, teamA, teamB]);
-  assert.equal(added.requiresConfirmation, false);
-
   const moved = remapMixedAssignments(reviewCase, [20, 30], [25, 30], [teamA, teamA, teamB]);
   assert.deepEqual(moved.assignments, [teamA, teamA, teamB]);
+  assert.equal(moved.requiresConfirmation, false);
+});
+
+test('inserting a split preserves unaffected segments and explicitly clears the split segment', () => {
+  const teamA: MixedSegmentAssignment = { action: 'assign_team', team_label: 'A' };
+  const teamB: MixedSegmentAssignment = { action: 'assign_team', team_label: 'B' };
+  const added = remapMixedAssignments(reviewCase, [30], [20, 30], [teamA, teamB]);
+  assert.deepEqual(added.assignments, [null, null, teamB]);
+  assert.equal(added.requiresConfirmation, true);
+  assert.deepEqual(added.clearedAssignments, [teamA]);
+});
+
+test('moving the second of three segment boundaries preserves the unaffected first assignment', () => {
+  const teamA: MixedSegmentAssignment = { action: 'assign_team', team_label: 'A' };
+  const referee: MixedSegmentAssignment = { action: 'referee' };
+  const teamB: MixedSegmentAssignment = { action: 'assign_team', team_label: 'B' };
+  const moved = remapMixedAssignments(reviewCase, [20, 35], [20, 40], [teamA, referee, teamB]);
+  assert.deepEqual(moved.assignments, [teamA, referee, teamB]);
   assert.equal(moved.requiresConfirmation, false);
 });
 
@@ -80,6 +94,17 @@ test('local refinement replaces only the split inside the selected overview inte
   assert.deepEqual(replaceMixedBoundaryInInterval([], 20, 30, 27), [27]);
 });
 
+test('refinement evidence is displayed in temporal order and keeps real observation frames', () => {
+  const crops = [30, 22, 27].map((frame) => ({
+    anchor_crop_id: `crop-${frame}`,
+    artifact: `${frame}.jpg`,
+    frame,
+    time_sec: frame / 10,
+  }));
+  assert.deepEqual(sortedMixedEvidenceCrops(crops).map((crop) => crop.frame), [22, 27, 30]);
+  assert.equal(replaceMixedBoundaryInInterval([], 22, 30, crops[2].frame)[0], 27);
+});
+
 test('normal classification stays compact while dedicated workspace owns splitting', () => {
   const form = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentityCorrectionForm.tsx'), 'utf8');
   const mixed = readFileSync(resolve(import.meta.dirname, '../src/components/MixedPlayersReviewPanel.tsx'), 'utf8');
@@ -88,8 +113,11 @@ test('normal classification stays compact while dedicated workspace owns splitti
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.match(mixed, /Materiał w kolejności czasu/);
   assert.match(mixed, /Doprecyzuj moment przejścia/);
+  assert.match(mixed, /observation_count <= 12/);
   assert.match(mixed, /getMixedBoundaryRefinement/);
   assert.match(mixed, /window\.confirm/);
+  assert.match(mixed, /if \(applied\) setRefinement\(null\)/);
+  assert.match(mixed, /Przejrzano: brak prostego podziału czasowego/);
   assert.match(mixed, /Wybrany fragment/);
   assert.match(mixed, /Zapisz podział \+ następny/);
   assert.match(mixed, /Nie ma prostego podziału czasowego/);

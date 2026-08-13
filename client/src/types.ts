@@ -2060,6 +2060,8 @@ export type MixedPlayerCase = {
   observation_count: number;
   frame_start: number;
   frame_end: number;
+  reviewed_complex?: boolean;
+  reviewed_complex_at?: string | null;
   temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
 };
 

@@ -1,4 +1,4 @@
-import type { MixedPlayerCase, MixedSegmentAssignment } from '../types';
+import type { IdentityRosterSubjectAnchorCrop, MixedPlayerCase, MixedSegmentAssignment } from '../types';
 
 export type MixedSegment = {
   index: number;
@@ -49,18 +49,28 @@ export function remapMixedAssignments(
   }
 
   const clearedAssignments: MixedSegmentAssignment[] = [];
+  const previousOverlapCounts = previousSegments.map((previousSegment) => nextSegments.filter(
+    (nextSegment) => previousSegment.frameStart <= nextSegment.frameEnd && previousSegment.frameEnd >= nextSegment.frameStart,
+  ).length);
   const assignments = nextSegments.map((nextSegment) => {
     const overlapping = previousSegments
       .map((segment, index) => ({ segment, assignment: previousAssignments[index] || null }))
       .filter(({ segment }) => segment.frameStart <= nextSegment.frameEnd && segment.frameEnd >= nextSegment.frameStart)
-      .map(({ assignment }) => assignment);
-    const assigned = overlapping.filter((assignment): assignment is MixedSegmentAssignment => assignment !== null);
+      .map(({ segment, assignment }) => ({
+        assignment,
+        previousIndex: previousSegments.indexOf(segment),
+      }));
+    const assigned = overlapping
+      .map(({ assignment }) => assignment)
+      .filter((assignment): assignment is MixedSegmentAssignment => assignment !== null);
     const distinct = uniqueAssignments(assigned);
-    const allSameAssigned = overlapping.length > 0
+    const mapsOneToOne = overlapping.length === 1
+      && previousOverlapCounts[overlapping[0].previousIndex] === 1;
+    if (mapsOneToOne) return overlapping[0].assignment;
+    const allSameAssigned = overlapping.length > 1
       && assigned.length === overlapping.length
       && distinct.length === 1;
     if (allSameAssigned) return distinct[0];
-    if (overlapping.length === 1) return overlapping[0];
     if (assigned.length > 0) clearedAssignments.push(...distinct);
     return null;
   });
@@ -82,6 +92,10 @@ export function replaceMixedBoundaryInInterval(
     ...boundaries.filter((frame) => frame < intervalStart || frame >= intervalEnd),
     nextFrame,
   ].sort((left, right) => left - right);
+}
+
+export function sortedMixedEvidenceCrops<T extends IdentityRosterSubjectAnchorCrop>(crops: T[]): T[] {
+  return [...crops].sort((left, right) => left.frame - right.frame || left.anchor_crop_id.localeCompare(right.anchor_crop_id));
 }
 
 function uniqueAssignments(assignments: MixedSegmentAssignment[]): MixedSegmentAssignment[] {

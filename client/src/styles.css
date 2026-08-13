@@ -572,6 +572,16 @@ a { color: #93c5fd; }
 }
 
 .mixed-player-review { gap: 12px; }
+.mixed-complex-reviewed {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 10px;
+  background: rgba(120, 53, 15, 0.26);
+  color: #fef3c7;
+}
+.mixed-complex-reviewed span { color: #fde68a; }
 .mixed-review-workstation {
   display: grid;
   grid-template-columns: minmax(0, 5fr) minmax(360px, 2fr);
@@ -630,6 +640,7 @@ a { color: #93c5fd; }
 .mixed-boundary-refinement > header div { display: grid; gap: 2px; }
 .mixed-boundary-refinement > header span { color: #cbd5e1; font-size: 12px; }
 .mixed-refinement-strip { display: flex; gap: 6px; min-height: 150px; overflow-x: auto; overscroll-behavior: contain; }
+.mixed-refinement-leading-action { width: 90px; min-width: 90px; padding: 8px; font-size: 11px; }
 .mixed-refinement-crop { display: flex; align-items: center; gap: 5px; }
 .mixed-refinement-crop figure { width: 96px; min-width: 96px; margin: 0; padding: 4px; border: 2px solid #64748b; border-radius: 8px; }
 .mixed-refinement-crop figure.team-a { border-color: #ef4444; }

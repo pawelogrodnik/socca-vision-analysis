@@ -107,8 +107,17 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {"frame": frame, "time_sec": float(frame), "x_m": float(frame), "y_m": 1.0, "detected": True, "play_area_status": "inside_play", "bbox_xyxy": [10, 10, 20, 30]}
                 for frame in range(1, 122)
             ]
+            tracklets["tracklets"].append({
+                "tracklet_id": "unrelated-tracklet",
+                "team_label": "B",
+                "positions_m": [
+                    {"frame": frame, "time_sec": float(frame), "x_m": 40.0, "y_m": 20.0, "detected": True, "play_area_status": "inside_play", "bbox_xyxy": [30, 30, 40, 50]}
+                    for frame in range(1, 122)
+                ],
+            })
             _write(root / "tracklets.json", tracklets)
-            _classify(root, match)
+            marker = _classify(root, match)
+            raw_before = (root / "tracklets.json").read_bytes()
             overview = build_mixed_review_queue(root, match)["cases"][0]["temporal_evidence"]["anchor_crops"]
             after_frame = overview[4]["frame"]
             before_frame = overview[5]["frame"]
@@ -128,10 +137,38 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             self.assertEqual(len(overview), 12)
             self.assertEqual(len(refinement["anchor_crops"]), 10)
-            self.assertTrue(all(after_frame <= crop["frame"] <= before_frame for crop in refinement["anchor_crops"]))
+            refinement_frames = [crop["frame"] for crop in refinement["anchor_crops"]]
+            self.assertEqual(refinement_frames, sorted(refinement_frames))
+            self.assertTrue(all(after_frame < frame <= before_frame for frame in refinement_frames))
+            self.assertEqual({crop["tracklet_id"] for crop in refinement["anchor_crops"]}, {"t1"})
+            overview_spacing = before_frame - after_frame
+            refined_spacing = max(right - left for left, right in zip(refinement_frames, refinement_frames[1:]))
+            self.assertLess(refined_spacing, overview_spacing)
             self.assertEqual(refinement["after_frame"], after_frame)
             self.assertEqual(refinement["before_frame"], before_frame)
             render.assert_called_once()
+            selected_frame = refinement_frames[len(refinement_frames) // 2]
+            save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [selected_frame],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            targets = [
+                row for row in build_segment_review_document(root, match)["targets"]
+                if row.get("target_origin") == "operator_mixed_players"
+            ]
+            self.assertEqual([row["frame_end"] for row in targets], [selected_frame, 121])
+            self.assertEqual([row["frame_start"] for row in targets], [1, selected_frame + 1])
+            self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
 
     def test_boundary_refinement_rejects_stale_case_and_invalid_interval(self) -> None:
         with _workspace() as root:
@@ -168,7 +205,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 )
 
             self.assertEqual(response["candidate_subject_id"], "subject-mixed")
-            self.assertEqual([crop["frame"] for crop in response["anchor_crops"]], [1, 2])
+            self.assertEqual([crop["frame"] for crop in response["anchor_crops"]], [2])
 
     def test_invalid_split_and_partial_assignment_are_rejected_atomically(self) -> None:
         with _workspace() as root:
@@ -253,6 +290,9 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             )
             self.assertEqual(response["saved_case"]["original_issue"], "mixed_players")
             self.assertEqual(response["saved_case"]["resolution_status"], "unresolved_complex_mix")
+            revisited = build_mixed_review_queue(root, match)["cases"][0]
+            self.assertTrue(revisited["reviewed_complex"])
+            self.assertIsNotNone(revisited["reviewed_complex_at"])
             workflow = derive_review_workflow_state(_workflow_evidence(normal=0, mixed=1))
             self.assertEqual(workflow["phase"], "mixed_players")
             self.assertIn("review_mixed_players", workflow["allowed_actions"])

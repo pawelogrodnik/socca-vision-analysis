@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { artifactUrl, finalizeReviewedIdentityCorrections, getMixedBoundaryRefinement, getMixedPlayersReview, saveMixedPlayerResolution } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
-import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, validMixedResolution } from '../utils/mixedPlayersReview';
+import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
 import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
 
 type Props = {
@@ -51,19 +51,20 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   );
 
   function applyBoundaries(next: number[]) {
-    if (!reviewCase) return;
+    if (!reviewCase) return false;
     const remapped = remapMixedAssignments(reviewCase, boundaries, next, assignments);
     if (remapped.requiresConfirmation && !window.confirm(
-      'Ta zmiana połączy fragmenty z różnymi przypisaniami. Sprzeczne przypisania dla połączonego fragmentu zostaną wyczyszczone. Kontynuować?',
-    )) return;
+      'Zmiana podziału zmieni strukturę fragmentów. Niektóre zapisane przypisania trzeba będzie wyczyścić.\n\nAnuluj albo wybierz „OK”, aby zmienić podział.',
+    )) return false;
     setBoundaries(next);
     setAssignments(remapped.assignments);
     setSelectedSegment(Math.min(selectedSegment, next.length));
     if (remapped.requiresConfirmation) {
-      setMessage('Zmieniono granicę. Sprzeczne przypisanie połączonego fragmentu zostało wyczyszczone — przypisz go ponownie.');
+      setMessage('Zmieniono granicę. Niejednoznaczne przypisania zmienionych fragmentów zostały wyczyszczone — przypisz je ponownie.');
     } else {
       setMessage('Zmieniono granicę bez utraty istniejących przypisań.');
     }
+    return true;
   }
 
   async function openRefinement(afterFrame: number, beforeFrame: number) {
@@ -71,12 +72,19 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setRefinementBusy(true);
     setMessage('');
     try {
-      setRefinement(await getMixedBoundaryRefinement(
+      const value = await getMixedBoundaryRefinement(
         match.id,
         reviewCase.candidate_subject_id,
         afterFrame,
         beforeFrame,
-      ));
+      );
+      if (value.anchor_crops.length < 2) {
+        if (applyBoundaries(replaceMixedBoundaryInInterval(boundaries, afterFrame, beforeFrame, afterFrame))) {
+          setMessage('Przedział jest już wystarczająco dokładny — ustawiono podział bez dodatkowego kroku.');
+        }
+      } else {
+        setRefinement(value);
+      }
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -86,21 +94,27 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
 
   function selectRefinedBoundary(frame: number) {
     if (!refinement) return;
-    applyBoundaries(replaceMixedBoundaryInInterval(
+    const applied = applyBoundaries(replaceMixedBoundaryInInterval(
       boundaries,
       refinement.after_frame,
       refinement.before_frame,
       frame,
     ));
-    setRefinement(null);
+    if (applied) setRefinement(null);
   }
 
   function removeRefinedBoundary() {
     if (!refinement) return;
-    applyBoundaries(boundaries.filter(
+    const applied = applyBoundaries(boundaries.filter(
       (frame) => frame < refinement.after_frame || frame >= refinement.before_frame,
     ));
-    setRefinement(null);
+    if (applied) setRefinement(null);
+  }
+
+  function directBoundary(afterFrame: number) {
+    applyBoundaries(boundaries.includes(afterFrame)
+      ? boundaries.filter((frame) => frame !== afterFrame)
+      : [...boundaries, afterFrame].sort((left, right) => left - right));
   }
 
   function assign(assignment: MixedSegmentAssignment) {
@@ -177,7 +191,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
   if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className='status'>{message}</p>}</section>;
 
-  const crops = [...reviewCase.temporal_evidence.anchor_crops].sort((left, right) => left.frame - right.frame);
+  const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
   const selectedAssignment = assignments[selectedSegment] || null;
   const selected = segments[selectedSegment];
   const segmentTimeLabel = (frameStart: number, frameEnd: number) => {
@@ -200,6 +214,10 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
         <span>{reviewCase.observation_count} wykrytych obserwacji</span>
       </div>
     </header>
+    {reviewCase.reviewed_complex && <div className='mixed-complex-reviewed' role='status'>
+      <strong>⚠ Przejrzano: brak prostego podziału czasowego</strong>
+      <span>Przypadek nadal wymaga rozwiązania. Możesz spróbować podziału ponownie albo pozostawić go jako złożony.</span>
+    </div>}
     <div className='mixed-review-workstation'>
       <section className='mixed-temporal-column'>
         <div className='identity-exception-column-heading'><strong>Materiał w kolejności czasu</strong><span>Wybierz przedział i doprecyzuj moment przejścia</span></div>
@@ -212,9 +230,13 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
             {cropIndex < crops.length - 1 && <button
               type='button'
               className={boundaries.some((frame) => frame >= crop.frame && frame < crops[cropIndex + 1].frame) ? 'split-boundary active' : 'split-boundary'}
-              onClick={() => void openRefinement(crop.frame, crops[cropIndex + 1].frame)}
+              onClick={() => crops.length <= 12 && reviewCase.observation_count <= 12
+                ? directBoundary(crop.frame)
+                : void openRefinement(crop.frame, crops[cropIndex + 1].frame)}
               disabled={busy || refinementBusy}
-            >{boundaries.some((frame) => frame >= crop.frame && frame < crops[cropIndex + 1].frame) ? 'Zmień podział' : 'Doprecyzuj'}</button>}
+            >{boundaries.some((frame) => frame >= crop.frame && frame < crops[cropIndex + 1].frame)
+              ? 'Zmień podział'
+              : reviewCase.observation_count <= 12 ? 'Podziel tutaj' : 'Doprecyzuj'}</button>}
           </div>)}
         </div>
         {refinement && <section className='mixed-boundary-refinement' aria-label='Doprecyzowanie granicy podziału'>
@@ -223,12 +245,13 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
             <button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button>
           </header>
           <div className='mixed-refinement-strip'>
-            {refinement.anchor_crops.map((crop, cropIndex) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>
+            <button type='button' className='mixed-refinement-leading-action' onClick={() => selectRefinedBoundary(refinement.after_frame)} disabled={busy}>Podziel zaraz po poprzednim podglądzie</button>
+            {sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop, cropIndex, refinementCrops) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>
               <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
                 <img src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' />
                 <figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption>
               </figure>
-              {cropIndex < refinement.anchor_crops.length - 1 && <button type='button' onClick={() => selectRefinedBoundary(crop.frame)} disabled={busy}>Ustaw tutaj</button>}
+              {cropIndex < refinementCrops.length - 1 && <button type='button' onClick={() => selectRefinedBoundary(crop.frame)} disabled={busy}>Ustaw tutaj</button>}
             </div>)}
           </div>
           {boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={removeRefinedBoundary}>Usuń podział z tego przedziału</button>}
