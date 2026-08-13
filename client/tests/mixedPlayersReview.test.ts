@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import type { MixedPlayerCase, MixedSegmentAssignment } from '../src/types.ts';
-import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
+import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
 
 const reviewCase: MixedPlayerCase = {
   candidate_subject_id: 'mixed-1',
@@ -45,6 +45,41 @@ test('valid split requires a decision for every segment and stays inside range',
   assert.equal(validMixedResolution(reviewCase, [50], assignments), false);
 });
 
+test('adding or moving a boundary preserves unambiguous segment assignments', () => {
+  const teamA: MixedSegmentAssignment = { action: 'assign_team', team_label: 'A' };
+  const teamB: MixedSegmentAssignment = { action: 'assign_team', team_label: 'B' };
+
+  const added = remapMixedAssignments(reviewCase, [30], [20, 30], [teamA, teamB]);
+  assert.deepEqual(added.assignments, [teamA, teamA, teamB]);
+  assert.equal(added.requiresConfirmation, false);
+
+  const moved = remapMixedAssignments(reviewCase, [20, 30], [25, 30], [teamA, teamA, teamB]);
+  assert.deepEqual(moved.assignments, [teamA, teamA, teamB]);
+  assert.equal(moved.requiresConfirmation, false);
+});
+
+test('removing a boundary warns before clearing conflicting assignments', () => {
+  const teamA: MixedSegmentAssignment = { action: 'assign_team', team_label: 'A' };
+  const teamB: MixedSegmentAssignment = { action: 'assign_team', team_label: 'B' };
+  const conflict = remapMixedAssignments(reviewCase, [20], [], [teamA, teamB]);
+  assert.deepEqual(conflict.assignments, [null]);
+  assert.equal(conflict.requiresConfirmation, true);
+  assert.deepEqual(conflict.clearedAssignments, [teamA, teamB]);
+
+  const same = remapMixedAssignments(reviewCase, [20], [], [teamA, teamA]);
+  assert.deepEqual(same.assignments, [teamA]);
+  assert.equal(same.requiresConfirmation, false);
+
+  const partial = remapMixedAssignments(reviewCase, [20], [], [teamA, null]);
+  assert.deepEqual(partial.assignments, [null]);
+  assert.equal(partial.requiresConfirmation, true);
+});
+
+test('local refinement replaces only the split inside the selected overview interval', () => {
+  assert.deepEqual(replaceMixedBoundaryInInterval([15, 35, 45], 30, 40, 38), [15, 38, 45]);
+  assert.deepEqual(replaceMixedBoundaryInInterval([], 20, 30, 27), [27]);
+});
+
 test('normal classification stays compact while dedicated workspace owns splitting', () => {
   const form = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentityCorrectionForm.tsx'), 'utf8');
   const mixed = readFileSync(resolve(import.meta.dirname, '../src/components/MixedPlayersReviewPanel.tsx'), 'utf8');
@@ -52,7 +87,9 @@ test('normal classification stays compact while dedicated workspace owns splitti
   assert.match(form, /osobnego kroku/);
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.match(mixed, /Materiał w kolejności czasu/);
-  assert.match(mixed, /Podziel tutaj/);
+  assert.match(mixed, /Doprecyzuj moment przejścia/);
+  assert.match(mixed, /getMixedBoundaryRefinement/);
+  assert.match(mixed, /window\.confirm/);
   assert.match(mixed, /Wybrany fragment/);
   assert.match(mixed, /Zapisz podział \+ następny/);
   assert.match(mixed, /Nie ma prostego podziału czasowego/);

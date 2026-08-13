@@ -9,10 +9,16 @@ from unittest.mock import patch
 
 from fastapi.responses import FileResponse
 
-from app.main import get_artifact
+from app.main import (
+    get_artifact,
+    get_match_reviewed_identity_mixed_boundary_refinement,
+)
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
 from app.services.identity_reviewed_mixed_resolution import save_mixed_player_resolution
-from app.services.identity_reviewed_mixed_store import build_mixed_review_queue
+from app.services.identity_reviewed_mixed_store import (
+    build_mixed_boundary_refinement,
+    build_mixed_review_queue,
+)
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
@@ -92,6 +98,77 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertEqual({row["identity_status"] for row in rows if row["frame"] <= 3}, {"confirmed"})
             self.assertEqual({row["identity_status"] for row in rows if 4 <= row["frame"] <= 6}, {"referee"})
             self.assertEqual({row["identity_status"] for row in rows if row["frame"] >= 7}, {"unresolved"})
+
+    def test_boundary_refinement_returns_dense_local_evidence_without_expanding_overview(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["positions_m"] = [
+                {"frame": frame, "time_sec": float(frame), "x_m": float(frame), "y_m": 1.0, "detected": True, "play_area_status": "inside_play", "bbox_xyxy": [10, 10, 20, 30]}
+                for frame in range(1, 122)
+            ]
+            _write(root / "tracklets.json", tracklets)
+            _classify(root, match)
+            overview = build_mixed_review_queue(root, match)["cases"][0]["temporal_evidence"]["anchor_crops"]
+            after_frame = overview[4]["frame"]
+            before_frame = overview[5]["frame"]
+
+            with patch(
+                "app.services.identity_reviewed_mixed_store.render_mixed_review_evidence",
+                return_value=set(),
+            ) as render:
+                refinement = build_mixed_boundary_refinement(
+                    root,
+                    match,
+                    "subject-mixed",
+                    after_frame,
+                    before_frame,
+                    limit=10,
+                )
+
+            self.assertEqual(len(overview), 12)
+            self.assertEqual(len(refinement["anchor_crops"]), 10)
+            self.assertTrue(all(after_frame <= crop["frame"] <= before_frame for crop in refinement["anchor_crops"]))
+            self.assertEqual(refinement["after_frame"], after_frame)
+            self.assertEqual(refinement["before_frame"], before_frame)
+            render.assert_called_once()
+
+    def test_boundary_refinement_rejects_stale_case_and_invalid_interval(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _classify(root, match)
+            with self.assertRaisesRegex(ValueError, "increasing frame boundaries"):
+                build_mixed_boundary_refinement(root, match, "subject-mixed", 5, 5)
+            with self.assertRaisesRegex(ValueError, "neighboring overview samples"):
+                build_mixed_boundary_refinement(root, match, "subject-mixed", 2, 8)
+
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["positions_m"].pop()
+            _write(root / "tracklets.json", tracklets)
+            with self.assertRaisesRegex(ValueError, "mixed_player_case_stale"):
+                build_mixed_boundary_refinement(root, match, "subject-mixed", 1, 8)
+
+    def test_boundary_refinement_route_returns_local_crops(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _classify(root, match)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.services.identity_reviewed_mixed_store.render_mixed_review_evidence",
+                    return_value=set(),
+                ),
+            ):
+                response = get_match_reviewed_identity_mixed_boundary_refinement(
+                    "m1",
+                    "subject-mixed",
+                    1,
+                    2,
+                )
+
+            self.assertEqual(response["candidate_subject_id"], "subject-mixed")
+            self.assertEqual([crop["frame"] for crop in response["anchor_crops"]], [1, 2])
 
     def test_invalid_split_and_partial_assignment_are_rejected_atomically(self) -> None:
         with _workspace() as root:

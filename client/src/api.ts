@@ -303,6 +303,22 @@ export async function getMixedPlayersReview(matchId: string): Promise<import('./
   );
 }
 
+export async function getMixedBoundaryRefinement(
+  matchId: string,
+  candidateSubjectId: string,
+  afterFrame: number,
+  beforeFrame: number,
+): Promise<import('./types').MixedBoundaryRefinement> {
+  const query = new URLSearchParams({
+    candidate_subject_id: candidateSubjectId,
+    after_frame: String(afterFrame),
+    before_frame: String(beforeFrame),
+  });
+  return request<import('./types').MixedBoundaryRefinement>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/refine?${query}`,
+  );
+}
+
 export async function saveMixedPlayerResolution(
   matchId: string,
   payload: import('./types').MixedPlayerResolutionRequest,

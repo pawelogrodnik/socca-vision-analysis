@@ -154,6 +154,61 @@ def build_mixed_review_queue(
     }
 
 
+def build_mixed_boundary_refinement(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    subject_id: str,
+    after_frame: int,
+    before_frame: int,
+    *,
+    limit: int = 10,
+) -> dict[str, Any]:
+    case = mixed_case_for_subject(match_path, subject_id)
+    if case is None or str(case.get("resolution_status")) not in UNRESOLVED_STATUSES:
+        raise ValueError(f"Unknown unresolved mixed-player case: {subject_id or '<missing>'}")
+    if after_frame >= before_frame:
+        raise ValueError("Refinement interval must have increasing frame boundaries")
+    if str(case.get("source_subject_digest") or "") != current_mixed_subject_digest(match_path, subject_id):
+        raise ValueError("mixed_player_case_stale")
+
+    subject = _subject(match_path, subject_id)
+    observations = _subject_observations(match_path, subject)
+    card = next(
+        (
+            row
+            for row in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+            if str(row.get("candidate_subject_id") or "") == subject_id
+        ),
+        None,
+    )
+    overview_frames = [
+        int(crop["frame"])
+        for crop in _temporal_evidence(subject_id, observations, card, limit=12)
+    ]
+    if (after_frame, before_frame) not in set(zip(overview_frames, overview_frames[1:])):
+        raise ValueError("Refinement interval must use neighboring overview samples")
+    interval = [row for row in observations if after_frame <= int(row["frame"]) <= before_frame]
+    if not interval:
+        raise ValueError("No detected observations in the selected refinement interval")
+    crops = _temporal_evidence(subject_id, interval, card, limit=max(3, min(limit, 16)))
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "reviewed_identity_mixed_boundary_refinement",
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "candidate_subject_id": subject_id,
+        "source_subject_digest": case.get("source_subject_digest"),
+        "after_frame": after_frame,
+        "before_frame": before_frame,
+        "anchor_crops": crops,
+    }
+    render_mixed_review_evidence(
+        match_path,
+        match_doc,
+        {"cases": [{"temporal_evidence": {"anchor_crops": crops}}]},
+    )
+    return payload
+
+
 def render_mixed_review_evidence(
     match_path: Path,
     match_doc: dict[str, Any],

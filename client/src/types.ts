@@ -2072,6 +2072,17 @@ export type MixedPlayersReviewQueue = {
   cases: MixedPlayerCase[];
 };
 
+export type MixedBoundaryRefinement = {
+  schema_version: string;
+  mode: string;
+  match_id: string;
+  candidate_subject_id: string;
+  source_subject_digest: string;
+  after_frame: number;
+  before_frame: number;
+  anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
+};
+
 export type MixedSegmentAssignment = {
   action: Exclude<ReviewedCorrectionAction, 'mixed_players'>;
   player_id?: string;

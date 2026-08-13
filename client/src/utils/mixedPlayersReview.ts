@@ -7,6 +7,12 @@ export type MixedSegment = {
   cropFrames: number[];
 };
 
+export type MixedAssignmentRemap = {
+  assignments: Array<MixedSegmentAssignment | null>;
+  clearedAssignments: MixedSegmentAssignment[];
+  requiresConfirmation: boolean;
+};
+
 export function toggleMixedBoundary(boundaries: number[], frame: number): number[] {
   return boundaries.includes(frame)
     ? boundaries.filter((value) => value !== frame)
@@ -23,6 +29,69 @@ export function mixedSegments(reviewCase: MixedPlayerCase, boundaries: number[])
     frameEnd: edges[index + 1] - 1,
     cropFrames: cropFrames.filter((frame) => frame >= start && frame < edges[index + 1]),
   }));
+}
+
+export function remapMixedAssignments(
+  reviewCase: MixedPlayerCase,
+  previousBoundaries: number[],
+  nextBoundaries: number[],
+  previousAssignments: Array<MixedSegmentAssignment | null>,
+): MixedAssignmentRemap {
+  const previousSegments = mixedSegments(reviewCase, previousBoundaries);
+  const nextSegments = mixedSegments(reviewCase, nextBoundaries);
+
+  if (previousSegments.length === nextSegments.length) {
+    return {
+      assignments: nextSegments.map((_, index) => previousAssignments[index] || null),
+      clearedAssignments: [],
+      requiresConfirmation: false,
+    };
+  }
+
+  const clearedAssignments: MixedSegmentAssignment[] = [];
+  const assignments = nextSegments.map((nextSegment) => {
+    const overlapping = previousSegments
+      .map((segment, index) => ({ segment, assignment: previousAssignments[index] || null }))
+      .filter(({ segment }) => segment.frameStart <= nextSegment.frameEnd && segment.frameEnd >= nextSegment.frameStart)
+      .map(({ assignment }) => assignment);
+    const assigned = overlapping.filter((assignment): assignment is MixedSegmentAssignment => assignment !== null);
+    const distinct = uniqueAssignments(assigned);
+    const allSameAssigned = overlapping.length > 0
+      && assigned.length === overlapping.length
+      && distinct.length === 1;
+    if (allSameAssigned) return distinct[0];
+    if (overlapping.length === 1) return overlapping[0];
+    if (assigned.length > 0) clearedAssignments.push(...distinct);
+    return null;
+  });
+
+  return {
+    assignments,
+    clearedAssignments: uniqueAssignments(clearedAssignments),
+    requiresConfirmation: clearedAssignments.length > 0,
+  };
+}
+
+export function replaceMixedBoundaryInInterval(
+  boundaries: number[],
+  intervalStart: number,
+  intervalEnd: number,
+  nextFrame: number,
+): number[] {
+  return [
+    ...boundaries.filter((frame) => frame < intervalStart || frame >= intervalEnd),
+    nextFrame,
+  ].sort((left, right) => left - right);
+}
+
+function uniqueAssignments(assignments: MixedSegmentAssignment[]): MixedSegmentAssignment[] {
+  const seen = new Set<string>();
+  return assignments.filter((assignment) => {
+    const key = JSON.stringify(assignment, Object.keys(assignment).sort());
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function mixedFramesPerSecond(reviewCase: MixedPlayerCase): number | null {
