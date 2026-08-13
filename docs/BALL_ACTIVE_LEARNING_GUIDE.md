@@ -5,7 +5,7 @@ Ten proces służy do generowania lepszych klatek do anotacji piłki niż losowe
 Aktualny domyślny model piłki:
 
 ```text
-models/best-balls-only-800-frames.pt
+models/best.pt
 ```
 
 ## Kiedy generować problematyczne klatki
@@ -33,8 +33,8 @@ Domyślnie skrypt korzysta z:
 ```text
 video:        matches_video/corgi_verisk_2_3.mp4
 pitch config: backend/storage/matches/682c5606/pitch_config.json
-teacher:      models/best-balls-only-800-frames.pt
-custom:       models/best-model-with-ball-and-players-500-frames.pt
+teacher:      models/best.pt
+custom:       models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
 output:       training_frames/
 ```
 

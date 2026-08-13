@@ -73,6 +73,7 @@ def prepare_reviewed_slot_assignments(
     *,
     use_materialized_candidate_context: bool = False,
     materialized_detected_team_labels: dict[str, set[str]] | None = None,
+    allow_roster_team_correction: bool = False,
 ) -> dict[str, Any]:
     existing = load_reviewed_slot_assignments(match_path)
     decisions = {
@@ -192,6 +193,7 @@ def prepare_reviewed_slot_assignments(
                 team_label,
                 ambiguous_subjects,
                 subject_teams,
+                allow_detected_team_override=allow_roster_team_correction,
             )
             stable_slot_id = normalize_reviewed_slot_id(raw.get("stable_slot_id"))
             if stable_slot_id:
@@ -233,6 +235,12 @@ def prepare_reviewed_slot_assignments(
         }
         if action == "assign_roster_player":
             decision["player_id"] = str(raw.get("player_id") or "") or None
+            source_team_label = str(raw.get("source_team_label") or "U").upper()
+            decision["source_team_label"] = source_team_label
+            decision["team_correction"] = bool(
+                source_team_label in {"A", "B"}
+                and source_team_label != team_label
+            )
         if _semantic_decision(previous) == _semantic_decision(decision):
             decision["reviewed_at"] = (
                 previous.get("reviewed_at") or decision["reviewed_at"]
@@ -382,13 +390,19 @@ def _validate_subject_team(
     expected_team: str,
     ambiguous_subjects: set[str],
     subject_teams: dict[str, set[str]],
+    *,
+    allow_detected_team_override: bool = False,
 ) -> None:
     if subject_id in ambiguous_subjects:
         raise ValueError(f"ambiguous subject: {subject_id}")
     teams = subject_teams.get(subject_id) or set()
     if len(teams) > 1:
         raise ValueError(f"mixed-team subject: {subject_id}")
-    if teams and teams not in ({expected_team}, {"U"}):
+    if (
+        not allow_detected_team_override
+        and teams
+        and teams not in ({expected_team}, {"U"})
+    ):
         actual = next(iter(teams))
         raise ValueError(
             f"team mismatch: subject {subject_id} is team {actual}, slot is team {expected_team}"

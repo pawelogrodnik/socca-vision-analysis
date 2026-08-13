@@ -5,7 +5,7 @@ Ten guide opisuje, jak przygotowywać lepsze klatki do doskonalenia modelu zawod
 Aktualny domyślny model zawodników:
 
 ```text
-models/best-model-with-ball-and-players-500-frames.pt
+models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
 ```
 
 ## Kiedy generować nowe klatki
@@ -105,8 +105,8 @@ $env:PYTHON = "backend\.venv-cuda\Scripts\python.exe"
 npm run prelabel:player-ball -- `
   --frames-dir training_frames\<video-name>_400frames `
   --out training_frames\<video-name>_400frames_player_prelabels `
-  --player-model models/best-model-with-ball-and-players-500-frames.pt `
-  --ball-model models/best-balls-only-800-frames.pt `
+  --player-model models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt `
+  --ball-model models/best.pt `
   --player-conf 0.05 `
   --ball-conf 0.03 `
   --player-imgsz 1280 `
@@ -252,7 +252,7 @@ backend\.venv-cuda\Scripts\python.exe backend\scripts\benchmark_analysis.py `
 Porównuj z aktualnym defaultem:
 
 ```text
-models/best-model-with-ball-and-players-500-frames.pt
+models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
 ```
 
 Najważniejsze metryki:

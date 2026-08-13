@@ -84,6 +84,12 @@ export function IdentityReviewWorkspace({
 
   const stage = identityReviewStage(workflow);
   useEffect(() => {
+    if (stage !== 'remaining_issues') return undefined;
+    document.body.classList.add('identity-exception-workspace-active');
+    return () => document.body.classList.remove('identity-exception-workspace-active');
+  }, [stage]);
+
+  useEffect(() => {
     if (stage !== 'rendering' || !isReviewedRenderInProgress(processingJob?.status)) return undefined;
     const polling = createReviewedRenderStatusPolling({
       loadStatus: () => getReviewedOutputStatus(match.id),
@@ -125,7 +131,7 @@ export function IdentityReviewWorkspace({
     }
   }
 
-  return <section className='identity-review-workspace'>
+  return <section className={`identity-review-workspace${stage === 'remaining_issues' ? ' remaining-issues-active' : ''}`}>
     <header className='identity-review-workspace-heading'>
       <div>
         <p className='eyebrow'>Krok 3</p>

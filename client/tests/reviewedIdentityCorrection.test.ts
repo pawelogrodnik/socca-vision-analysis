@@ -89,7 +89,7 @@ test('segment payload carries the exact target and ownership digest', () => {
   );
 });
 
-test('filters roster and canonical/manual slot options to the subject team', () => {
+test('known-team correction exposes both rosters while slots remain team-scoped', () => {
   const context: ReviewedCorrectionContext = {
     candidate_subject_id: 'subject-1',
     team_label: 'A',
@@ -111,7 +111,7 @@ test('filters roster and canonical/manual slot options to the subject team', () 
     ],
   };
   const options = correctionOptionsForSubject(context);
-  assert.deepEqual(options.roster.map((row) => row.player_id), ['a']);
+  assert.deepEqual(options.roster.map((row) => row.player_id), ['a', 'b']);
   assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['A03', 'A11']);
 });
 

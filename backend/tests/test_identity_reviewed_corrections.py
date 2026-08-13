@@ -163,21 +163,41 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             )
             self.assertEqual(decision["stable_slot_id"], "A03")
 
-    def test_cross_team_roster_assignment_rejects_without_decision_write(self) -> None:
+    def test_named_roster_assignment_corrects_wrong_detected_team(self) -> None:
         with _workspace() as root:
             _fixture(root)
-            before = _decision_files(root)
-            with self.assertRaisesRegex(ValueError, "Cross-team"):
-                save_reviewed_identity_correction(
-                    root,
-                    _match(),
-                    {
-                        "candidate_subject_id": "s1",
-                        "action": "assign_roster_player",
-                        "player_id": "p2",
-                    },
-                )
-            self.assertEqual(_decision_files(root), before)
+            immutable_before = _immutable_identity_files(root)
+            saved = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p2",
+                },
+            )
+            decision = saved["saved_decision"]
+            self.assertEqual(decision["team_label"], "B")
+            self.assertEqual(decision["source_team_label"], "A")
+            self.assertTrue(decision["team_correction"])
+            self.assertIsNone(decision["stable_slot_id"])
+            self.assertEqual(_immutable_identity_files(root), immutable_before)
+
+            result = finalize_reviewed_identity(root, _match())
+            rows = [
+                row
+                for row in result["tracklet_assignments"]
+                if row["candidate_subject_id"] == "s1"
+            ]
+            self.assertEqual({row["team_label"] for row in rows}, {"B"})
+            self.assertEqual({row["canonical_player_id"] for row in rows}, {"p2"})
+            self.assertEqual({row["identity_status"] for row in rows}, {"confirmed"})
+            self.assertEqual(
+                result["frame_uniqueness_diagnostics"][
+                    "duplicate_canonical_player_claim_groups"
+                ],
+                0,
+            )
 
     def test_unknown_team_assignment_is_reviewed_only_and_deterministic(self) -> None:
         with _workspace() as root:
@@ -265,10 +285,16 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(row["canonical_player_id"], "p2")
             self.assertEqual(row["identity_status"], "confirmed")
             self.assertEqual(result["frame_uniqueness_diagnostics"]["duplicate_canonical_player_claim_groups"], 0)
-            with self.assertRaisesRegex(ValueError, "Cross-team"):
-                save_reviewed_identity_correction(
-                    root, _match(), {"candidate_subject_id": "s1", "action": "assign_roster_player", "player_id": "p2"}
-                )
+            corrected = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p2",
+                },
+            )
+            self.assertTrue(corrected["saved_decision"]["team_correction"])
 
     def test_unknown_team_new_player_uses_bounded_target_team_slot(self) -> None:
         with _workspace() as root:
@@ -284,11 +310,14 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(row["team_label"], "B")
             self.assertEqual(row["stable_anonymous_slot_id"], "B04")
 
-    def test_context_and_existing_slots_are_team_filtered(self) -> None:
+    def test_context_exposes_both_rosters_but_existing_slots_stay_team_filtered(self) -> None:
         with _workspace() as root:
             _fixture(root)
             context = reviewed_correction_context(root, _match(), "s1")
-            self.assertEqual([row["player_id"] for row in context["roster_options"]], ["p1"])
+            self.assertEqual(
+                [row["player_id"] for row in context["roster_options"]],
+                ["p1", "p2"],
+            )
             self.assertEqual(
                 [row["stable_slot_id"] for row in context["slot_options"]],
                 ["A01", "A02", "A03"],
@@ -612,6 +641,28 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                             _match(),
                             payload,
                         )
+
+    def test_materialized_named_player_can_correct_single_wrong_detected_team(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            _configure_s1_detected_teams(root, {"A"})
+            _materialize_deferred_context(root)
+
+            result = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p2",
+                },
+            )
+
+            self.assertEqual(result["saved_decision"]["source_team_label"], "A")
+            self.assertEqual(result["saved_decision"]["team_label"], "B")
+            self.assertTrue(result["saved_decision"]["team_correction"])
+            self.assertIsNone(result["saved_decision"]["stable_slot_id"])
 
     def test_materialized_team_validation_is_equivalent_to_old_exact_validation(self) -> None:
         cases = (

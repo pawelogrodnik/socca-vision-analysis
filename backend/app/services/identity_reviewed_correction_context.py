@@ -54,9 +54,11 @@ def reviewed_correction_context(
         (current or {}).get("team_label") or source_team_label
     ).upper()
     available_team_labels = ["A", "B"] if source_team_label == "U" else [source_team_label]
-    roster_options = [
-        player for player in match_roster(match_doc) if player["team_label"] in available_team_labels
-    ]
+    # A certain named-player choice is authoritative for both identity and team.
+    # Keep slot/team-only actions scoped to the detected team, but expose both
+    # rosters so the operator can correct a wrong automatic team assignment in
+    # one action.
+    roster_options = match_roster(match_doc)
     slot_document = load_reviewed_slot_assignments(match_path)
     registry = build_materialized_reviewed_slot_registry(
         candidate_document,
@@ -103,11 +105,7 @@ def _segment_correction_context(
         raise ValueError(f"Unknown review_target_id: {review_target_id}")
     team_label = str(target.get("source_team_label") or "U")
     available_team_labels = ["A", "B"] if team_label == "U" else [team_label]
-    roster_options = [
-        player
-        for player in match_roster(match_doc)
-        if player["team_label"] in available_team_labels
-    ]
+    roster_options = match_roster(match_doc)
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": review_target_id,

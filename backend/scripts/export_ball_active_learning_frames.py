@@ -24,7 +24,7 @@ from app.services.ball_tracking import _resolve_ball_model_classes
 DEFAULT_VIDEO = REPO_ROOT / "matches_video" / "corgi_verisk_2_3.mp4"
 DEFAULT_PITCH_CONFIG = BACKEND_DIR / "storage" / "matches" / "682c5606" / "pitch_config.json"
 DEFAULT_TEACHER_MODEL = DEFAULT_BALL_YOLO_MODEL
-DEFAULT_CUSTOM_MODEL = "models/best-model-with-ball-and-players-500-frames.pt"
+DEFAULT_CUSTOM_MODEL = "models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt"
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "training_frames"
 
 CATEGORY_WEIGHTS = {

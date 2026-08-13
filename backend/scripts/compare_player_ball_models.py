@@ -27,7 +27,10 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--baseline-player-model", default="yolov8n.pt")
     parser.add_argument("--baseline-ball-model", default="models/best.pt")
-    parser.add_argument("--custom-model", default="models/best-model-with-ball-and-players.pt")
+    parser.add_argument(
+        "--custom-model",
+        default="models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt",
+    )
     parser.add_argument("--yolo-conf", type=float, default=0.05)
     parser.add_argument("--ball-conf", type=float, default=0.03)
     parser.add_argument("--player-imgsz", type=int, default=1280)

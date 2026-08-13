@@ -270,10 +270,10 @@ Do not collapse `track_id`, `tracklet_id` and `player_id` into one concept.
 
 Keep the default analysis pipeline aligned with the current local models:
 
-- Player detector: `models/best-model-with-ball-and-players-500-frames.pt`
-- Ball detector: `models/best-balls-only-800-frames.pt`
+- Player detector: `models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt`
+- Ball detector: `models/best.pt`
 
-These are paths resolved from `backend/models/`. When moving work to another laptop, copy `backend/models/` or restore these `.pt` files before running analysis. Treat `yolov8n.pt` and `models/best.pt` as legacy/fallback comparison models unless the user explicitly asks to benchmark them.
+These are paths resolved from `backend/models/`. When moving work to another laptop, copy `backend/models/` or restore these `.pt` files before running analysis. Treat `yolov8n.pt` and explicitly named `--legacy.pt` checkpoints as comparison models unless the user explicitly asks to benchmark them.
 
 ## Coding style
 
