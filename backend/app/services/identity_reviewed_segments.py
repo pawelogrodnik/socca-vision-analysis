@@ -11,6 +11,16 @@ from typing import Any
 from app.services.identity_canonical_ownership import global_observation_ownership
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_reviewed_mixed_store import operator_mixed_targets
+from app.services.identity_reviewed_slot_registry import (
+    build_reviewed_slot_registry,
+    next_free_reviewed_slot,
+    normalize_reviewed_slot_id,
+)
+from app.services.identity_reviewed_slot_review import (
+    FILENAME as SLOT_REVIEW_FILENAME,
+    load_reviewed_slot_assignments,
+)
 from app.services.identity_roster_anchor_crop_renderer import (
     render_identity_roster_anchor_crops,
 )
@@ -31,7 +41,9 @@ TARGET_ALGORITHM_VERSION = "gap-coalesced-v2"
 ALLOWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
+        "assign_existing_slot",
         "assign_team",
+        "create_new_stable_player",
         "referee",
         "false_detection",
         "team_unknown",
@@ -211,6 +223,21 @@ def build_segment_review_document(
                 "requires_confirmation": True,
             }
 
+    for target in operator_mixed_targets(match_path):
+        target_id = str(target["review_target_id"])
+        decision = stored_decisions.get(target_id)
+        decision_current = bool(
+            decision
+            and decision.get("source_ownership_digest")
+            == target.get("source_ownership_digest")
+        )
+        if decision is not None:
+            matched_decision_ids.add(target_id)
+        target["current_decision"] = decision if decision_current else None
+        target["decision_status"] = "reviewed" if decision_current else "pending"
+        target["stale_decision"] = bool(decision and not decision_current)
+        targets.append(target)
+
     _attach_boundary_evidence(targets)
 
     document = {
@@ -233,6 +260,9 @@ def build_segment_review_document(
         },
         "summary": {
             "mixed_tracklets": len({key[1] for key in groups}),
+            "operator_mixed_targets": sum(
+                row.get("target_origin") == "operator_mixed_players" for row in targets
+            ),
             "targets_total": len(targets),
             "targets_reviewed": sum(
                 target["decision_status"] == "reviewed" for target in targets
@@ -334,6 +364,51 @@ def save_segment_decision(
         if player is None:
             raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
         team_label = str(player["team_label"])
+    elif action == "assign_existing_slot":
+        registry = build_reviewed_slot_registry(match_path)
+        stable_slot_id = normalize_reviewed_slot_id(payload.get("stable_slot_id"))
+        if not stable_slot_id or stable_slot_id not in registry:
+            raise ValueError("assign_existing_slot requires an existing stable slot")
+        team_label = str(registry[stable_slot_id]["team_label"])
+        player_id = None
+    elif action == "create_new_stable_player":
+        if team_label not in {"A", "B"}:
+            raise ValueError("create_new_stable_player requires team_label A or B")
+        slot_document = load_reviewed_slot_assignments(match_path)
+        registry = build_reviewed_slot_registry(match_path, slot_document)
+        previous = next(
+            (
+                row
+                for row in load_segment_decisions(match_path).get("decisions") or []
+                if str(row.get("review_target_id") or "") == target_id
+                and row.get("action") == "create_new_stable_player"
+            ),
+            None,
+        )
+        stable_slot_id = normalize_reviewed_slot_id((previous or {}).get("stable_slot_id"))
+        if stable_slot_id is None:
+            stable_slot_id = next_free_reviewed_slot(team_label, registry)
+        if stable_slot_id is None:
+            raise ValueError(f"bounded pool exhausted for team {team_label}")
+        reviewed_slots = list(slot_document.get("reviewed_slots") or [])
+        if not any(
+            normalize_reviewed_slot_id(row.get("stable_slot_id")) == stable_slot_id
+            for row in reviewed_slots
+        ):
+            reviewed_slots.append(
+                {
+                    "stable_slot_id": stable_slot_id,
+                    "team_label": team_label,
+                    "source": "manual_new_player_confirmation",
+                    "created_for_candidate_subject_id": target["candidate_subject_id"],
+                    "status": "active",
+                }
+            )
+            write_identity_json_atomic(
+                match_path / SLOT_REVIEW_FILENAME,
+                {**slot_document, "reviewed_slots": reviewed_slots},
+            )
+        player_id = None
     elif action == "assign_team":
         if team_label not in {"A", "B"}:
             raise ValueError("assign_team requires team_label A or B")
@@ -372,6 +447,8 @@ def save_segment_decision(
         "comment": str(payload.get("comment") or "").strip() or None,
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
+    if action in {"assign_existing_slot", "create_new_stable_player"}:
+        decision["stable_slot_id"] = stable_slot_id
     decisions[target_id] = decision
     document = _decision_document(
         sorted(decisions.values(), key=lambda row: str(row["review_target_id"]))
@@ -399,8 +476,22 @@ def segment_observation_assignments(
             continue
         action = str(decision.get("action") or "")
         player = roster.get(str(decision.get("player_id") or ""))
-        for frame in target.get("owned_frames") or []:
-            row = _segment_assignment_row(target, decision, action, player, int(frame))
+        observations = target.get("owned_observations") or [
+            {
+                "tracklet_id": str((target.get("tracklet_ids") or [""])[0]),
+                "frame": frame,
+            }
+            for frame in target.get("owned_frames") or []
+        ]
+        for observation in observations:
+            row = _segment_assignment_row(
+                target,
+                decision,
+                action,
+                player,
+                int(observation["frame"]),
+                str(observation["tracklet_id"]),
+            )
             if row is not None:
                 output.append(row)
     return sorted(output, key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
@@ -427,9 +518,11 @@ def _segment_assignment_row(
     action: str,
     player: dict[str, Any] | None,
     frame: int,
+    tracklet_id: str,
 ) -> dict[str, Any] | None:
-    tracklet_id = str((target.get("tracklet_ids") or [""])[0])
-    slot_id = str(target.get("stable_slot_id") or "") or None
+    slot_id = str(
+        decision.get("stable_slot_id") or target.get("stable_slot_id") or ""
+    ) or None
     team = str(decision.get("team_label") or target.get("source_team_label") or "U")
     common = {
         "review_target_id": target.get("review_target_id"),
@@ -464,6 +557,18 @@ def _segment_assignment_row(
             "fallback_label": f"{team}?",
             "display_label": f"{team}?",
             "identity_status": "unresolved",
+            "canonical_player_id": None,
+            "player_name": None,
+        }
+    if action in {"assign_existing_slot", "create_new_stable_player"} and slot_id:
+        return {
+            **common,
+            "stable_anonymous_slot_id": slot_id,
+            "stable_anonymous_entity_id": slot_id,
+            "team_label": slot_id[0],
+            "fallback_label": slot_id,
+            "display_label": slot_id,
+            "identity_status": "stable_anonymous",
             "canonical_player_id": None,
             "player_name": None,
         }

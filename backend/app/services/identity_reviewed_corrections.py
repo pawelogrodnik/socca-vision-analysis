@@ -41,6 +41,7 @@ from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
     decision_impact,
 )
+from app.services.identity_reviewed_mixed_store import save_mixed_player_classification
 from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
@@ -57,6 +58,7 @@ CORRECTION_ACTIONS = frozenset(
         "false_detection",
         "team_unknown",
         "unresolved",
+        "mixed_players",
     }
 )
 logger = logging.getLogger(__name__)
@@ -143,6 +145,32 @@ def persist_reviewed_identity_correction(
     if action not in CORRECTION_ACTIONS:
         raise ValueError(f"Unsupported reviewed identity correction action: {action}")
     review_target_id = str(payload.get("review_target_id") or "").strip() or None
+    if action == "mixed_players":
+        if review_target_id:
+            raise ValueError("mixed_players is a whole-subject classification")
+        saved = save_mixed_player_classification(
+            match_path,
+            match_doc,
+            subject_id,
+            payload.get("mixed_hint"),
+            payload.get("comment"),
+        )
+        semantic_digest = reviewed_decisions_semantic_digest(match_path)
+        mark_reviewed_identity_recompute_required(
+            match_path,
+            semantic_decision_digest=semantic_digest,
+        )
+        return {
+            "saved_decision": saved,
+            "effective_action": action,
+            "allocated_stable_slot_id": None,
+            "semantic_decision_digest": semantic_digest,
+            "recompute_deferred": True,
+            "persistence": {
+                "status": "saved",
+                "downstream_recompute_triggered": False,
+            },
+        }
     if review_target_id:
         materialized_review = load_segment_review(match_path)
         saved = save_segment_decision(

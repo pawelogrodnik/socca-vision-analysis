@@ -226,7 +226,7 @@ export function IdentityExceptionReviewPanel({
         {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cases.length}</span>}
         {caseTimeRange && <strong>{caseTimeRange}</strong>}
         {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} wykrytych obserwacji</span>}
-        <small>{requiredCasesLabel(workflow.issues.blocking)}</small>
+        <small>{requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)}</small>
       </div>
     </header>
 
@@ -287,7 +287,7 @@ export function IdentityExceptionReviewPanel({
       </button>}
     </div> : finalizing ? null : <div className='status'>
       <strong>Nie udało się przygotować podglądu przypadku wymagającego decyzji.</strong>
-      <p>Workflow nadal wskazuje: {requiredCasesLabel(workflow.issues.blocking)}. Odśwież Review albo otwórz diagnostykę.</p>
+      <p>Workflow nadal wskazuje: {requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)}. Odśwież Review albo otwórz diagnostykę.</p>
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
         Odśwież Review
       </button>}

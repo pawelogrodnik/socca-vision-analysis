@@ -56,8 +56,25 @@ const SEGMENT_ACTION_CARDS: ActionCard[] = [
 const UNKNOWN_TEAM_SPECIAL_ACTIONS: ActionCard[] = [
   { action: 'referee', label: 'Sędzia' },
   { action: 'false_detection', label: 'Fałszywa detekcja' },
+  {
+    action: 'mixed_players',
+    label: 'Zmieszani gracze',
+    description: 'Widoki zawierają więcej niż jedną rzeczywistą osobę.',
+  },
   { action: 'unresolved', label: 'Nie wiem' },
 ];
+
+const MIXED_PLAYERS_ACTION: ActionCard = {
+  action: 'mixed_players',
+  label: 'Zmieszani gracze',
+  description: 'Widoki zawierają więcej niż jedną rzeczywistą osobę.',
+};
+
+function withMixedPlayersAction(cards: ActionCard[]): ActionCard[] {
+  if (cards.some((card) => card.action === 'mixed_players')) return cards;
+  const insertAt = Math.max(0, cards.length - 1);
+  return [...cards.slice(0, insertAt), MIXED_PLAYERS_ACTION, ...cards.slice(insertAt)];
+}
 
 function correctionRange(entity: ReviewedIdentityAtEntity): string | null {
   if (!entity.time_sec || !entity.frame || entity.frame_end < entity.frame_start) return null;
@@ -96,6 +113,7 @@ export function ReviewedIdentityCorrectionForm({
   const [playerId, setPlayerId] = useState('');
   const [stableSlotId, setStableSlotId] = useState('');
   const [comment, setComment] = useState('');
+  const [mixedHint, setMixedHint] = useState<NonNullable<import('../types').ReviewedCorrectionRequest['mixed_hint']>>('unknown');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -108,6 +126,7 @@ export function ReviewedIdentityCorrectionForm({
     setPlayerId('');
     setStableSlotId('');
     setComment('');
+    setMixedHint('unknown');
     setError('');
 
     if (!subjectId) {
@@ -154,11 +173,14 @@ export function ReviewedIdentityCorrectionForm({
   }), [options.roster]);
   const selectedRosterPlayer = options.roster.find((player) => player.player_id === playerId);
   const range = correctionRange(entity);
-  const actionCards = segmentScope
+  const baseActionCards = segmentScope
     ? SEGMENT_ACTION_CARDS
     : sourceTeamUnknown
     ? actionCardsForUnknownTeam(selectedTeamLabel)
     : STANDARD_ACTION_CARDS;
+  const actionCards = segmentScope
+    ? baseActionCards
+    : withMixedPlayersAction(baseActionCards);
   const choiceComplete = Boolean(action)
     && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))
     && (action !== 'assign_roster_player' || Boolean(playerId))
@@ -222,6 +244,7 @@ export function ReviewedIdentityCorrectionForm({
         stableSlotId,
         teamLabel: selectedTeamLabel,
         comment,
+        mixedHint,
       }, context);
       if (deferRecompute) payload.defer_recompute = true;
       await persistReviewDecision(
@@ -356,6 +379,19 @@ export function ReviewedIdentityCorrectionForm({
       </div> : null}
 
       {action && <section className='reviewed-correction-detail' aria-label={`Wybrana decyzja: ${actionLabel}`}>
+        {action === 'mixed_players' && <div className='reviewed-mixed-confirmation'>
+          <strong>Zmieszani gracze</strong>
+          <p>Ten przypadek zostanie przeniesiony do osobnego kroku, gdzie będzie można rozdzielić jego fragmenty.</p>
+          <label>Opcjonalna wskazówka
+            <select value={mixedHint} onChange={(event) => setMixedHint(event.target.value as typeof mixedHint)} disabled={busy}>
+              <option value='unknown'>Inna mieszanka / nie wiem</option>
+              <option value='cross_team'>Team A + Team B</option>
+              <option value='same_team_a'>Kilku graczy Team A</option>
+              <option value='same_team_b'>Kilku graczy Team B</option>
+              <option value='player_referee'>Gracz + sędzia</option>
+            </select>
+          </label>
+        </div>}
         {action === 'assign_team' && <p className='reviewed-correction-range'>Przypiszę tylko {teamLabelForOperator(selectedTeamLabel)}. Nie powstanie nowy slot ani indywidualne statystyki zawodnika.</p>}
         {action === 'assign_roster_player' && <label>Zawodnik z kadry — Team A lub Team B
           <select value={playerId} onChange={(event) => chooseRosterPlayer(event.target.value)} disabled={busy}>
@@ -381,7 +417,7 @@ export function ReviewedIdentityCorrectionForm({
           </select>
         </label>}
         {action === 'create_new_stable_player' && <p className='reviewed-correction-range'>Utworzy nowego, odrębnego anonimowego zawodnika w {teamLabelForOperator(selectedTeamLabel)}.</p>}
-        {!['assign_team', 'assign_roster_player', 'assign_existing_slot', 'create_new_stable_player'].includes(action)
+        {!['assign_team', 'assign_roster_player', 'assign_existing_slot', 'create_new_stable_player', 'mixed_players'].includes(action)
           && <p className='reviewed-correction-range'>Wybrano: <strong>{actionLabel}</strong>. Zapisz decyzję, aby przejść do kolejnego przypadku.</p>}
         <label>Dodatkowy komentarz (opcjonalnie)
           <textarea value={comment} onChange={(event) => setComment(event.target.value)} disabled={busy} rows={3} />

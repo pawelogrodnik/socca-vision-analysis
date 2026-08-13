@@ -20,7 +20,7 @@ from app.services.review_workflow_store import (
 
 
 WORKFLOW_SCHEMA_VERSION = "1.0.0"
-STEP_IDS = ("initial_audit", "exceptions", "finalize", "video_qa")
+STEP_IDS = ("initial_audit", "exceptions", "mixed_players", "finalize", "video_qa")
 PROCESSING_RENDER_STATUSES = {"queued", "running"}
 
 
@@ -44,6 +44,15 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     qa_current = bool(freshness.get("qa_approval_current"))
     initial_complete = bool(initial.get("complete"))
     blocking = max(0, int(issues.get("blocking") or 0))
+    normal_blocking = max(
+        0,
+        int(
+            issues["normal_blocking"]
+            if "normal_blocking" in issues
+            else blocking
+        ),
+    )
+    mixed_blocking = max(0, int(issues.get("mixed_blocking") or 0))
     render_status = str(render.get("status") or "missing")
     render_current = bool(freshness.get("reviewed_output_current"))
     stats_current = bool(freshness.get("reviewed_stats_current"))
@@ -60,6 +69,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         steps["initial_audit"] = _step("initial_audit", "locked", "analysis_not_completed")
         steps["exceptions"] = _step("exceptions", "locked", "analysis_not_completed")
         steps["finalize"] = _step("finalize", "locked", "analysis_not_completed")
+        steps["mixed_players"] = _step("mixed_players", "locked", "analysis_not_completed")
         steps["video_qa"] = _step("video_qa", "locked", "analysis_not_completed")
         blockers.append(_blocker("analysis_not_completed", "initial_audit"))
         return _state(match_id, False, "unavailable", "initial_audit", steps, blockers, allowed, initial, issues, freshness, render, {"type": "complete_analysis", "step_id": "analysis"})
@@ -68,6 +78,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         steps["initial_audit"] = _step("initial_audit", "error", "review_recompute_failed")
         steps["exceptions"] = _step("exceptions", "locked", "review_recompute_failed")
         steps["finalize"] = _step("finalize", "locked", "review_recompute_failed")
+        steps["mixed_players"] = _step("mixed_players", "locked", "review_recompute_failed")
         steps["video_qa"] = _step("video_qa", "locked", "review_recompute_failed")
         blockers.append(_blocker("review_recompute_failed", "initial_audit"))
         return _state(match_id, True, "error", "initial_audit", steps, blockers, ["retry_review_recompute"], initial, issues, freshness, render, {"type": "retry_review_recompute", "step_id": "initial_audit"})
@@ -76,6 +87,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         steps["initial_audit"] = _step("initial_audit", "current", completed=initial.get("completed"), total=initial.get("total"), remaining=initial.get("remaining"))
         steps["exceptions"] = _step("exceptions", "locked", "initial_audit_incomplete")
         steps["finalize"] = _step("finalize", "locked", "initial_audit_incomplete")
+        steps["mixed_players"] = _step("mixed_players", "locked", "initial_audit_incomplete")
         steps["video_qa"] = _step("video_qa", "locked", "initial_audit_incomplete")
         blockers.append(_blocker("initial_audit_incomplete", "initial_audit", {"remaining": initial.get("remaining")}))
         allowed = ["identify_players"]
@@ -85,6 +97,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     if not progress_current:
         steps["exceptions"] = _step("exceptions", "error", progress_reason)
         steps["finalize"] = _step("finalize", "locked", progress_reason)
+        steps["mixed_players"] = _step("mixed_players", "locked", progress_reason)
         steps["video_qa"] = _step("video_qa", "locked", progress_reason)
         blockers.append(_blocker(progress_reason, "exceptions"))
         return _state(
@@ -102,15 +115,23 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             {"type": "retry_review_recompute", "step_id": "exceptions"},
         )
 
-    if blocking:
-        steps["exceptions"] = _step("exceptions", "current", completed=issues.get("completed"), total=issues.get("total"), remaining=blocking)
+    if normal_blocking:
+        steps["exceptions"] = _step("exceptions", "current", completed=issues.get("completed"), total=issues.get("total"), remaining=normal_blocking)
+        steps["mixed_players"] = _step("mixed_players", "locked", "identity_issues_remaining", {"count": normal_blocking})
         steps["finalize"] = _step("finalize", "locked", "identity_issues_remaining", {"count": blocking})
         steps["video_qa"] = _step("video_qa", "locked", "identity_issues_remaining", {"count": blocking})
-        blockers.append(_blocker("identity_issues_remaining", "exceptions", {"count": blocking}))
+        blockers.append(_blocker("identity_issues_remaining", "exceptions", {"count": normal_blocking}))
         allowed = ["review_identity_issue"]
-        return _state(match_id, True, "action_required", "exceptions", steps, blockers, allowed, initial, issues, freshness, render, {"type": "review_identity_issue", "step_id": "exceptions", "remaining": blocking})
+        return _state(match_id, True, "action_required", "exceptions", steps, blockers, allowed, initial, issues, freshness, render, {"type": "review_identity_issue", "step_id": "exceptions", "remaining": normal_blocking})
 
     steps["exceptions"] = _step("exceptions", "completed", completed=issues.get("completed"), total=issues.get("total"), remaining=0)
+    if mixed_blocking:
+        steps["mixed_players"] = _step("mixed_players", "current", remaining=mixed_blocking, total=issues.get("mixed_total"), completed=issues.get("mixed_resolved"))
+        steps["finalize"] = _step("finalize", "locked", "mixed_player_issues_remaining", {"count": mixed_blocking})
+        steps["video_qa"] = _step("video_qa", "locked", "mixed_player_issues_remaining", {"count": mixed_blocking})
+        blockers.append(_blocker("mixed_player_issues_remaining", "mixed_players", {"count": mixed_blocking}))
+        return _state(match_id, True, "action_required", "mixed_players", steps, blockers, ["review_mixed_players"], initial, issues, freshness, render, {"type": "review_mixed_players", "step_id": "mixed_players", "remaining": mixed_blocking})
+    steps["mixed_players"] = _step("mixed_players", "completed", remaining=0, total=issues.get("mixed_total"), completed=issues.get("mixed_resolved"))
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
         steps["video_qa"] = _step("video_qa", "locked", "render_running")
@@ -212,6 +233,8 @@ def _current_cached_progress(
 def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, int]:
     progress_summary = (progress or {}).get("summary") or {}
     pending = int(progress_summary.get("important_decisions_remaining") or 0)
+    mixed = (progress or {}).get("mixed_players", {}).get("summary", {})
+    mixed_pending = int(mixed.get("unresolved") or 0)
     # The progress artifact is the authoritative operator queue.  The reviewed
     # snapshot can still report technical conflicts after an operator has made
     # every available decision (for example a multi-slot tracker fragment).
@@ -219,11 +242,15 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
     # exceptions screen.  Keep them in snapshot diagnostics, but only block on
     # an actually actionable high-priority case.
     return {
-        "blocking": pending,
-        "important": pending,
+        "blocking": pending + mixed_pending,
+        "normal_blocking": pending,
+        "mixed_blocking": mixed_pending,
+        "important": pending + mixed_pending,
         "optional": int(progress_summary.get("optional_cases_remaining") or 0),
         "completed": int(progress_summary.get("review_units_completed") or 0),
         "total": int(progress_summary.get("review_units_actionable_total") or 0),
+        "mixed_total": int(mixed.get("total") or 0),
+        "mixed_resolved": int(mixed.get("resolved") or 0),
     }
 
 
@@ -256,7 +283,7 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "important": int(issues.get("important") or 0), "optional": int(issues.get("optional") or 0)},
+        "issues": {"blocking": int(issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "optional": int(issues.get("optional") or 0)},
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

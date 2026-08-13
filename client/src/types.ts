@@ -1770,11 +1770,12 @@ export type ReviewedOutputJob = {
   error?: { message?: string } | null;
 };
 
-export type ReviewWorkflowStepId = 'initial_audit' | 'exceptions' | 'finalize' | 'video_qa';
+export type ReviewWorkflowStepId = 'initial_audit' | 'exceptions' | 'mixed_players' | 'finalize' | 'video_qa';
 export type ReviewWorkflowStepStatus = 'locked' | 'current' | 'processing' | 'completed' | 'error';
 export type ReviewWorkflowAction =
   | 'identify_players'
   | 'review_identity_issue'
+  | 'review_mixed_players'
   | 'finalize_identity'
   | 'wait_for_render'
   | 'review_video'
@@ -1818,7 +1819,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; important: number; optional: number };
+  issues: { blocking: number; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; optional: number };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -1898,7 +1899,8 @@ export type ReviewedCorrectionAction =
   | 'referee'
   | 'false_detection'
   | 'team_unknown'
-  | 'unresolved';
+  | 'unresolved'
+  | 'mixed_players';
 
 export type ReviewedCorrectionRosterOption = {
   player_id: string;
@@ -1958,6 +1960,7 @@ export type ReviewedCorrectionRequest = {
   stable_slot_id?: string;
   team_label?: string;
   comment?: string;
+  mixed_hint?: 'cross_team' | 'same_team_a' | 'same_team_b' | 'player_referee' | 'unknown';
   defer_recompute?: boolean;
 };
 
@@ -2035,6 +2038,7 @@ export type ReviewedIdentityReviewProgress = {
     confirmed_player_observation_ratio: number;
   };
   next_cases: ReviewedIdentityReviewUnit[];
+  mixed_players: MixedPlayersReviewQueue;
   technical_diagnostics: {
     candidate_subjects: number;
     tracklets: number;
@@ -2042,6 +2046,52 @@ export type ReviewedIdentityReviewProgress = {
   };
   policy: Record<string, number>;
   recompute_required?: boolean;
+};
+
+export type MixedPlayerHint = 'cross_team' | 'same_team_a' | 'same_team_b' | 'player_referee' | 'unknown';
+
+export type MixedPlayerCase = {
+  candidate_subject_id: string;
+  original_issue: 'mixed_players';
+  mixed_hint: MixedPlayerHint;
+  resolution_status: 'unresolved' | 'resolved' | 'unresolved_complex_mix';
+  source_subject_digest: string;
+  source_tracklet_ids: string[];
+  observation_count: number;
+  frame_start: number;
+  frame_end: number;
+  temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
+};
+
+export type MixedPlayersReviewQueue = {
+  schema_version: string;
+  mode: string;
+  match_id: string;
+  summary: { total: number; unresolved: number; resolved: number; complex_unresolved: number };
+  assignment_options: { roster: ReviewedCorrectionRosterOption[]; slots: ReviewedCorrectionSlotOption[] };
+  cases: MixedPlayerCase[];
+};
+
+export type MixedSegmentAssignment = {
+  action: Exclude<ReviewedCorrectionAction, 'mixed_players'>;
+  player_id?: string;
+  stable_slot_id?: string;
+  team_label?: string;
+};
+
+export type MixedPlayerResolutionRequest = {
+  candidate_subject_id: string;
+  source_subject_digest: string;
+  resolution: 'split' | 'unresolved_complex_mix';
+  split_after_frames?: number[];
+  segment_assignments?: MixedSegmentAssignment[];
+  comment?: string;
+};
+
+export type MixedPlayerResolutionResponse = {
+  saved_case: MixedPlayerCase;
+  semantic_decision_digest: string;
+  recompute_deferred: true;
 };
 
 export type ReviewedCorrectionFinalizeResponse = {

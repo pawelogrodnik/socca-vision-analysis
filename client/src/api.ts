@@ -297,6 +297,26 @@ export async function finalizeReviewedIdentityCorrections(
   );
 }
 
+export async function getMixedPlayersReview(matchId: string): Promise<import('./types').MixedPlayersReviewQueue> {
+  return request<import('./types').MixedPlayersReviewQueue>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players`,
+  );
+}
+
+export async function saveMixedPlayerResolution(
+  matchId: string,
+  payload: import('./types').MixedPlayerResolutionRequest,
+): Promise<import('./types').MixedPlayerResolutionResponse> {
+  return request<import('./types').MixedPlayerResolutionResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/resolve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export function reviewedVideoUrl(matchId: string, digest: string): string {
   return `${API_BASE}/api/matches/${encodeURIComponent(matchId)}/reviewed-output/video?digest=${encodeURIComponent(digest)}`;
 }

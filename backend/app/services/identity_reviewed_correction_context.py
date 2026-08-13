@@ -13,6 +13,10 @@ from app.services.identity_reviewed_slot_registry import (
     build_reviewed_slot_registry,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_mixed_store import (
+    FILENAME as MIXED_PLAYERS_FILENAME,
+    mixed_case_for_subject,
+)
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_review,
@@ -106,6 +110,8 @@ def _segment_correction_context(
     team_label = str(target.get("source_team_label") or "U")
     available_team_labels = ["A", "B"] if team_label == "U" else [team_label]
     roster_options = match_roster(match_doc)
+    slot_document = load_reviewed_slot_assignments(match_path)
+    registry = build_reviewed_slot_registry(match_path, slot_document)
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": review_target_id,
@@ -117,7 +123,11 @@ def _segment_correction_context(
         "tracklet_ids": list(target.get("tracklet_ids") or []),
         "review_card_key": None,
         "roster_options": roster_options,
-        "slot_options": [],
+        "slot_options": [
+            registry[key]
+            for key in sorted(registry)
+            if registry[key].get("team_label") in available_team_labels
+        ],
         "current_decision": target.get("current_decision"),
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
         "source_ownership_digest": target.get("source_ownership_digest"),
@@ -134,6 +144,7 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
     roster = load_optional(match_path / REVIEW_DECISIONS_FILENAME)
     slots = load_reviewed_slot_assignments(match_path)
     segments = load_segment_decisions(match_path)
+    mixed = load_optional(match_path / MIXED_PLAYERS_FILENAME)
     return canonical_digest(
         {
             "roster": sorted(
@@ -172,6 +183,21 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                     for row in segments.get("decisions") or []
                 ),
                 key=lambda row: str(row.get("review_target_id") or ""),
+            ),
+            "mixed_players": sorted(
+                (
+                    {
+                        "candidate_subject_id": row.get("candidate_subject_id"),
+                        "original_issue": row.get("original_issue"),
+                        "mixed_hint": row.get("mixed_hint"),
+                        "resolution_status": row.get("resolution_status"),
+                        "source_subject_digest": row.get("source_subject_digest"),
+                        "split_after_frames": row.get("split_after_frames") or [],
+                        "segment_target_ids": row.get("segment_target_ids") or [],
+                    }
+                    for row in mixed.get("cases") or []
+                ),
+                key=lambda row: str(row.get("candidate_subject_id") or ""),
             ),
         }
     )
@@ -275,6 +301,14 @@ def current_reviewed_decision(
     match_path: Path,
     subject_id: str,
 ) -> dict[str, Any] | None:
+    mixed = mixed_case_for_subject(match_path, subject_id)
+    if mixed:
+        return {
+            "candidate_subject_id": subject_id,
+            "action": "mixed_players",
+            "mixed_hint": mixed.get("mixed_hint"),
+            "resolution_status": mixed.get("resolution_status"),
+        }
     slots = load_reviewed_slot_assignments(match_path)
     slot_decision = next(
         (

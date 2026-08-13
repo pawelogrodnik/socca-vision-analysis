@@ -11,6 +11,10 @@ from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_segments import load_segment_review
+from app.services.identity_reviewed_mixed_store import (
+    build_mixed_review_queue,
+    load_mixed_player_cases,
+)
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.video import read_match_video_metadata
@@ -28,6 +32,7 @@ REVIEWED_ACTIONS = frozenset(
         "false_detection",
         "team_unknown",
         "unresolved",
+        "mixed_players",
     }
 )
 SEMANTIC_CONFLICT_REASON_MARKERS = (
@@ -61,6 +66,12 @@ def build_reviewed_identity_progress(
     memberships = _memberships(subjects)
     fps = _fps(match_path, match_doc)
     segment_review = load_segment_review(match_path)
+    mixed_document = load_mixed_player_cases(match_path)
+    mixed_by_subject = {
+        str(row.get("candidate_subject_id")): row
+        for row in mixed_document.get("cases") or []
+        if row.get("candidate_subject_id")
+    }
     segmented_subjects = {
         str(row.get("candidate_subject_id") or "")
         for row in segment_review.get("targets") or []
@@ -83,6 +94,7 @@ def build_reviewed_identity_progress(
         unit
         for unit in whole_subject_units
         if str(unit.get("candidate_subject_id") or "") not in segmented_subjects
+        and str(unit.get("candidate_subject_id") or "") not in mixed_by_subject
     ]
     units.extend(_segment_units(segment_review, roster_teams, fps))
     counts = Counter(str(unit["current_resolution_status"]) for unit in units)
@@ -122,6 +134,7 @@ def build_reviewed_identity_progress(
         + counts["safe_anonymous"]
     )
     queue_total = completed + counts["pending_high_priority"]
+    mixed_queue = build_mixed_review_queue(match_path, match_doc)
     return {
         "schema_version": "1.0.0",
         "status": "ready",
@@ -152,6 +165,7 @@ def build_reviewed_identity_progress(
             "confirmed_player_observation_ratio": _ratio(len(confirmed_pairs), len(observed_pairs)),
         },
         "next_cases": [_public_unit(unit) for unit in next_cases],
+        "mixed_players": mixed_queue,
         "technical_diagnostics": {
             "candidate_subjects": len(subjects),
             "tracklets": len(tracklets),
@@ -321,7 +335,10 @@ def _segment_units(
         player_id = str((decision or {}).get("player_id") or "") or None
         frames = {int(frame) for frame in target.get("owned_frames") or []}
         tracklet_ids = [str(value) for value in target.get("tracklet_ids") or []]
-        pairs = {(tracklet_id, frame) for tracklet_id in tracklet_ids for frame in frames}
+        pairs = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in target.get("owned_observations") or []
+        } or {(tracklet_id, frame) for tracklet_id in tracklet_ids for frame in frames}
         reviewed = action in REVIEWED_ACTIONS
         has_operator_visual_evidence = bool(
             ((target.get("visual_evidence") or {}).get("anchor_crops") or [])
@@ -469,7 +486,16 @@ def _manual_decisions(path: Path) -> dict[str, dict[str, Any]]:
         for row in load_reviewed_slot_assignments(path).get("decisions") or []
         if row.get("candidate_subject_id") and row.get("action") in REVIEWED_ACTIONS
     }
-    return {**roster, **slots}
+    mixed = {
+        str(row.get("candidate_subject_id")): {
+            "action": "mixed_players",
+            "mixed_hint": row.get("mixed_hint"),
+            "resolution_status": row.get("resolution_status"),
+        }
+        for row in load_mixed_player_cases(path).get("cases") or []
+        if row.get("candidate_subject_id")
+    }
+    return {**roster, **slots, **mixed}
 
 
 def _roster_teams(match_doc: dict[str, Any]) -> dict[str, str]:

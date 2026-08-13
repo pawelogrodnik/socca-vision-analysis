@@ -25,6 +25,10 @@ from app.services.identity_reviewed_segments import (
     load_segment_decisions,
     segment_observation_assignments,
 )
+from app.services.identity_reviewed_mixed_store import (
+    FILENAME as MIXED_PLAYERS_FILENAME,
+    unresolved_mixed_observation_assignments,
+)
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
@@ -214,6 +218,8 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         documents["segment_decisions"],
         roster,
     )
+    segment_assignments.extend(unresolved_mixed_observation_assignments(match_path))
+    segment_assignments.sort(key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
     observation_demotions, uniqueness = build_frame_slot_demotions(
         tracklets,
         assignments,
@@ -387,6 +393,7 @@ def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
         "stable_players": _optional(path / "stable_players.json"),
         "global_identity": _optional(path / "global_identity.json"),
         "segment_decisions": load_segment_decisions(path),
+        "mixed_players": _optional(path / MIXED_PLAYERS_FILENAME),
     }
 
 
@@ -404,6 +411,11 @@ def _source_descriptor(
         "operator_seed_decisions_digest": _decisions_digest(documents["seeds"]),
         "whole_subject_review_decisions_digest": _decisions_digest(documents["review_decisions"]),
         "segment_review_decisions_digest": _decisions_digest(documents["segment_decisions"]),
+        "mixed_players_digest": (
+            canonical_digest(_semantic_input(documents["mixed_players"]))
+            if documents["mixed_players"]
+            else None
+        ),
         "stable_identity_digests": {key: values[key] for key in ("gallery", "stable_players", "global_identity")},
         "seeded_assignment_freshness": seeded_freshness,
         "algorithm_version": ALGORITHM_VERSION,

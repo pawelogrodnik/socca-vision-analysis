@@ -18,6 +18,10 @@ from app.services.identity_reviewed_segments import (
     load_segment_review,
     render_segment_review_evidence,
 )
+from app.services.identity_reviewed_mixed_store import (
+    build_mixed_review_queue,
+    render_mixed_review_evidence,
+)
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_seeded_candidate_assignments import (
     rebuild_identity_seeded_candidate_assignments,
@@ -77,6 +81,11 @@ def refresh_review_after_identity_mutation(
                 match_path,
                 match_doc,
                 load_segment_review(match_path),
+            )
+            render_mixed_review_evidence(
+                match_path,
+                match_doc,
+                build_mixed_review_queue(match_path, match_doc),
             )
         except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
             logger.warning(

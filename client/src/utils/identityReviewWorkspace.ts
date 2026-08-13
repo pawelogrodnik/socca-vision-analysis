@@ -8,6 +8,7 @@ import type {
 export type IdentityReviewStage =
   | 'identify_players'
   | 'remaining_issues'
+  | 'mixed_players'
   | 'prepare_result'
   | 'rendering'
   | 'video_qa'
@@ -24,6 +25,7 @@ export type IdentityReviewProgressItem = {
 const stageByPhase: Record<string, IdentityReviewStage> = {
   initial_audit: 'identify_players',
   exceptions: 'remaining_issues',
+  mixed_players: 'mixed_players',
   ready_to_finalize: 'prepare_result',
   rendering_review_video: 'rendering',
   video_qa: 'video_qa',
@@ -33,6 +35,7 @@ const stageByPhase: Record<string, IdentityReviewStage> = {
 const progressLabels: Record<ReviewWorkflowStepId, string> = {
   initial_audit: 'Rozpoznaj zawodników',
   exceptions: 'Pozostałe przypadki',
+  mixed_players: 'Zmieszani gracze',
   finalize: 'Przygotuj wynik',
   video_qa: 'Sprawdź wideo',
 };
