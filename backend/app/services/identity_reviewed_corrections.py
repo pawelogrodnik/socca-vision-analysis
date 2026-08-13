@@ -190,11 +190,10 @@ def persist_reviewed_identity_correction(
             if player is None:
                 raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
             source_team_label = str(context["team_label"])
-            if source_team_label not in {"U", player["team_label"]}:
-                raise ValueError(
-                    f"Cross-team roster assignment is not allowed: subject {subject_id} is "
-                    f"team {context['team_label']}, player is team {player['team_label']}"
-                )
+            corrects_detected_team = bool(
+                source_team_label in {"A", "B"}
+                and source_team_label != player["team_label"]
+            )
             prepared = prepare_reviewed_slot_assignments(
                 match_path,
                 candidate_document,
@@ -204,16 +203,21 @@ def persist_reviewed_identity_correction(
                         "action": action,
                         "player_id": player_id,
                         "team_label": player["team_label"],
+                        "source_team_label": source_team_label,
                         "stable_slot_id": (
-                            _materialized_subject_canonical_slot(
-                                candidate_document,
-                                subject_id,
-                            )
-                            if use_exact_materialized_context
-                            else _safe_subject_canonical_slot(
-                                match_path,
-                                candidate_document,
-                                subject_id,
+                            None
+                            if corrects_detected_team
+                            else (
+                                _materialized_subject_canonical_slot(
+                                    candidate_document,
+                                    subject_id,
+                                )
+                                if use_exact_materialized_context
+                                else _safe_subject_canonical_slot(
+                                    match_path,
+                                    candidate_document,
+                                    subject_id,
+                                )
                             )
                         ),
                         "comment": comment,
@@ -223,8 +227,12 @@ def persist_reviewed_identity_correction(
                 materialized_detected_team_labels=(
                     detected_team_labels if use_exact_materialized_context else None
                 ),
+                allow_roster_team_correction=corrects_detected_team,
             )
-            if card_key:
+            # The legacy card store intentionally exposes same-team choices only.
+            # A cross-team named correction is fully represented by the reviewed
+            # slot decision, including its source-team contradiction.
+            if card_key and not corrects_detected_team:
                 save_identity_roster_subject_review(
                     match_path,
                     [

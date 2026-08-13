@@ -22,7 +22,9 @@ import {
   reviewUnitKey,
   shouldFinalizeDeferredReview,
 } from '../utils/identityExceptionQueue';
+import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
 import { requiredCasesLabel } from '../utils/reviewWorkflowPresentation';
+import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
 
 type Props = {
@@ -67,6 +69,27 @@ function toCorrectionEntity(reviewCase: ReviewCase): ReviewedIdentityAtEntity {
     scope_kind: unit.scope_kind,
     source_ownership_digest: unit.source_ownership_digest,
   };
+}
+
+function reviewCaseTimeRange(reviewCase: ReviewCase): string | null {
+  const evidence = reviewCase.unit.visual_evidence || reviewCase.card?.visual_evidence;
+  const timedCrop = evidence?.anchor_crops.find((crop) => crop.time_sec && crop.frame);
+  const frameStart = reviewCase.unit.frame_start ?? reviewCase.card?.start_frame;
+  const frameEnd = reviewCase.unit.frame_end ?? reviewCase.card?.end_frame;
+  if (!timedCrop?.time_sec || !timedCrop.frame || frameStart == null || frameEnd == null) return null;
+  const fps = timedCrop.frame / timedCrop.time_sec;
+  if (!Number.isFinite(fps) || fps <= 0) return null;
+  return `${formatReviewTime(frameStart / fps)}–${formatReviewTime(frameEnd / fps)}`;
+}
+
+function cropQualityLabel(qualityClass?: string | null): string | null {
+  if (!qualityClass) return null;
+  const labels: Record<string, string> = {
+    high: 'wysoka jakość',
+    medium: 'średnia jakość',
+    low: 'niska jakość',
+  };
+  return labels[qualityClass] || qualityClass.split('_').join(' ');
 }
 
 export function IdentityExceptionReviewPanel({
@@ -138,6 +161,12 @@ export function IdentityExceptionReviewPanel({
     unitEvidence?.anchor_crops.length
     || (card && hasOperatorReviewableVisualEvidence(card)),
   );
+  const caseTimeRange = reviewCase ? reviewCaseTimeRange(reviewCase) : null;
+
+  function moveToCase(nextIndex: number) {
+    setIndex(moveReviewCaseIndex(nextIndex, cases.length));
+    setMessage('');
+  }
 
   function saved(result: ReviewedCorrectionResponse) {
     if (!reviewCase || !result.recompute_deferred) {
@@ -187,48 +216,69 @@ export function IdentityExceptionReviewPanel({
   if (loading && !finalizing) return <p className='loading-line'><span className='spinner' /> Ładuję przypadki do sprawdzenia…</p>;
 
   return <section className='identity-exception-review'>
-    <div className='row between'>
-      <div>
+    <header className='identity-exception-header'>
+      <div className='identity-exception-heading'>
         <p className='eyebrow'>Krok 2</p>
         <h2>Pozostałe przypadki</h2>
         <p>System zakończył automatyczne przypisania. Sprawdź tylko przypadki, w których wykryto konflikt wymagający decyzji.</p>
-        <strong>{requiredCasesLabel(workflow.issues.blocking)}</strong>
       </div>
-      {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cases.length}</span>}
-    </div>
+      <div className='identity-exception-case-context' aria-live='polite'>
+        {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cases.length}</span>}
+        {caseTimeRange && <strong>{caseTimeRange}</strong>}
+        {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} wykrytych obserwacji</span>}
+        <small>{requiredCasesLabel(workflow.issues.blocking)}</small>
+      </div>
+    </header>
 
     {reviewCase && entity && hasVisualEvidence && evidence ? <>
       {reviewCase.unit.scope_kind === 'canonical_segment' && <div className='status'>
         <strong>System połączył w jednym tracklecie różne osoby.</strong>
         <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
       </div>}
-      <div className='identity-exception-evidence'>
-        {evidence.anchor_crops.map((crop) => <figure
-          key={crop.anchor_crop_id}
-          className={`team-${reviewCase.unit.source_team_label.toLowerCase()}`}
-        >
-          <img src={artifactUrl(match.id, crop.artifact)} alt='Widok zawodnika do identyfikacji' />
-          <figcaption>Wybrany widok zawodnika</figcaption>
-        </figure>)}
-        {(unitEvidence?.boundary_crops || []).map((crop) => <figure
-          key={`boundary-${crop.anchor_crop_id}`}
-          className='outside-target'
-        >
-          <img src={artifactUrl(match.id, crop.artifact)} alt='Sąsiedni fragment poza zakresem decyzji' />
-          <figcaption>Sąsiedni fragment — poza zakresem decyzji</figcaption>
-        </figure>)}
+      <div className='identity-exception-workstation'>
+        <section className='identity-exception-evidence-column' aria-label='Widoki zawodnika'>
+          <div className='identity-exception-column-heading'>
+            <strong>Porównaj widoki</strong>
+            <span>{evidence.anchor_crops.length} {evidence.anchor_crops.length === 1 ? 'widok' : 'widoków'}</span>
+          </div>
+          <div className='identity-exception-evidence'>
+            {evidence.anchor_crops.map((crop) => <figure
+              key={crop.anchor_crop_id}
+              className={`team-${reviewCase.unit.source_team_label.toLowerCase()}`}
+            >
+              <img src={artifactUrl(match.id, crop.artifact)} alt='Widok zawodnika do identyfikacji' />
+              <figcaption>
+                <span>Wybrany widok zawodnika</span>
+                {cropQualityLabel(crop.quality_class) && <small>{cropQualityLabel(crop.quality_class)}</small>}
+              </figcaption>
+            </figure>)}
+            {(unitEvidence?.boundary_crops || []).map((crop) => <figure
+              key={`boundary-${crop.anchor_crop_id}`}
+              className='outside-target'
+            >
+              <img src={artifactUrl(match.id, crop.artifact)} alt='Sąsiedni fragment poza zakresem decyzji' />
+              <figcaption><span>Sąsiedni fragment</span><small>poza zakresem decyzji</small></figcaption>
+            </figure>)}
+          </div>
+        </section>
+        <aside className='identity-exception-decision-column' aria-label='Decyzja operatora'>
+          <ReviewedIdentityCorrectionForm
+            key={reviewUnitKey(reviewCase.unit)}
+            matchId={match.id}
+            entity={entity}
+            onCancel={() => setMessage('Decyzja nie została zapisana.')}
+            onSaved={saved}
+            deferRecompute
+            navigation={{
+              onPrevious: () => moveToCase(index - 1),
+              onNext: () => moveToCase(index + 1),
+              previousDisabled: index === 0,
+              nextDisabled: index >= cases.length - 1,
+              saveLabel: 'Zapisz + następny',
+            }}
+          />
+        </aside>
       </div>
-      <ReviewedIdentityCorrectionForm
-        matchId={match.id}
-        entity={entity}
-        onCancel={() => setMessage('Decyzja nie została zapisana.')}
-        onSaved={saved}
-        deferRecompute
-      />
-      {cases.length > 1 && <div className='row'>
-        <button type='button' className='secondary' onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0}>Poprzedni</button>
-        <button type='button' className='secondary' onClick={() => setIndex((current) => Math.min(cases.length - 1, current + 1))} disabled={index >= cases.length - 1}>Następny</button>
-      </div>}
     </> : reviewCase && entity ? <div className='status'>
       <strong>Brak materiału pozwalającego wiarygodnie rozstrzygnąć ten przypadek.</strong>
       <p>Odśwież Review — ten przypadek nie powinien wymagać ręcznej decyzji.</p>

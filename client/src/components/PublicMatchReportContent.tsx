@@ -14,11 +14,14 @@ import { useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
 import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
+import { PublicPlayerTeamFilter } from './PublicPlayerTeamFilter';
 import { TeamShapeSection } from './TeamShapeSection';
 import {
   displayJerseyNumber,
   hasAdvancedPlayerMetrics,
   hasPlayerReadyMomentum,
+  publicReportPlayersForTeam,
+  publicReportTeamKey,
 } from '../lib/publicReportPresentation';
 
 type PublicMatchReportContentProps = {
@@ -221,24 +224,43 @@ export function PublicMatchReportContent({
   assetHref = (path) => `/${path}`,
 }: PublicMatchReportContentProps) {
   const [playerChartMetric, setPlayerChartMetric] = useState<PlayerChartMetric>('minutes');
+  const [selectedTeamKey, setSelectedTeamKey] = useState<string | null>(null);
   const isReviewedReport = report.report_type === 'reviewed_match_report';
   const leftTeam = report.teams[0];
   const rightTeam = report.teams[1];
-  const possessionTimeline = report.ball?.possession_timeline || [];
-  const playerMetricConfig =
-    PLAYER_CHART_METRICS.find((metric) => metric.key === playerChartMetric) || PLAYER_CHART_METRICS[0];
-  const playerChartData = useMemo<PlayerChartRow[]>(
-    () =>
-      playerChartRows(report.players).sort(
-        (left, right) => right[playerChartMetric] - left[playerChartMetric],
-      ),
-    [playerChartMetric, report.players],
+  const teamOptions = report.teams.map((team, index) => ({
+    key: publicReportTeamKey(team, index),
+    team,
+  }));
+  const selectedTeamOption =
+    teamOptions.find((option) => option.key === selectedTeamKey) || teamOptions[0];
+  const activeTeam = selectedTeamOption?.team;
+  const activeTeamKey = selectedTeamOption?.key;
+  const visiblePlayers = useMemo(
+    () => publicReportPlayersForTeam(report.players, activeTeam),
+    [activeTeam, report.players],
   );
+  const possessionTimeline = report.ball?.possession_timeline || [];
   const matchDuration = formatSeconds(report.match.duration_sec);
-  const showAdvancedPlayerMetrics = hasAdvancedPlayerMetrics(report.players);
+  const showAdvancedPlayerMetrics = hasAdvancedPlayerMetrics(visiblePlayers);
   const playerChartMetrics = showAdvancedPlayerMetrics
     ? PLAYER_CHART_METRICS
     : PLAYER_CHART_METRICS.filter((metric) => metric.key !== 'peakSpeed');
+  const effectivePlayerChartMetric = playerChartMetrics.some(
+    (metric) => metric.key === playerChartMetric,
+  )
+    ? playerChartMetric
+    : 'minutes';
+  const playerMetricConfig =
+    PLAYER_CHART_METRICS.find((metric) => metric.key === effectivePlayerChartMetric) ||
+    PLAYER_CHART_METRICS[0];
+  const playerChartData = useMemo<PlayerChartRow[]>(
+    () =>
+      playerChartRows(visiblePlayers).sort(
+        (left, right) => right[effectivePlayerChartMetric] - left[effectivePlayerChartMetric],
+      ),
+    [effectivePlayerChartMetric, visiblePlayers],
+  );
   const playerReadyMomentum = hasPlayerReadyMomentum(report)
     ? report.ball?.attacking_momentum
     : undefined;
@@ -384,12 +406,24 @@ export function PublicMatchReportContent({
         </section>
       ) : null}
 
+      {teamOptions.length > 0 && (
+        <PublicPlayerTeamFilter
+          activeTeamKey={activeTeamKey}
+          onSelect={setSelectedTeamKey}
+          players={report.players}
+          teams={report.teams}
+        />
+      )}
+
       <section className='card public-charts-card'>
-        <h2>Porównanie rozpoznanych zawodników</h2>
+        <h2>
+          Porównanie rozpoznanych zawodników
+          {activeTeam?.team_name ? ` — ${activeTeam.team_name}` : ''}
+        </h2>
         <div className='chart-filter-bar' aria-label='Metryka wykresu graczy'>
           {playerChartMetrics.map((metric) => (
             <button
-              className={`chart-filter-button${metric.key === playerChartMetric ? ' active' : ''}`}
+              className={`chart-filter-button${metric.key === effectivePlayerChartMetric ? ' active' : ''}`}
               key={metric.key}
               type='button'
               onClick={() => setPlayerChartMetric(metric.key)}
@@ -398,8 +432,9 @@ export function PublicMatchReportContent({
             </button>
           ))}
         </div>
-        <div className='public-chart tall'>
-          <ResponsiveContainer width='100%' height='100%'>
+        {playerChartData.length > 0 ? (
+          <div className='public-chart tall'>
+            <ResponsiveContainer width='100%' height='100%'>
             <BarChart
               data={playerChartData}
               layout='vertical'
@@ -431,18 +466,26 @@ export function PublicMatchReportContent({
                 )}
               />
               <Bar
-                dataKey={playerChartMetric}
+                dataKey={effectivePlayerChartMetric}
                 name={playerMetricConfig.label}
                 fill={playerMetricConfig.color}
                 radius={[0, 6, 6, 0]}
               />
             </BarChart>
-          </ResponsiveContainer>
-        </div>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <p className='muted player-team-empty'>
+            Brak rozpoznanych z imienia zawodników tej drużyny.
+          </p>
+        )}
       </section>
 
       <section className='card'>
-        <h2>Statystyki rozpoznanych zawodników</h2>
+        <h2>
+          Statystyki rozpoznanych zawodników
+          {activeTeam?.team_name ? ` — ${activeTeam.team_name}` : ''}
+        </h2>
         <div className='stats-table-wrap'>
           <table className='stats-table'>
             <thead>
@@ -458,7 +501,7 @@ export function PublicMatchReportContent({
               </tr>
             </thead>
             <tbody>
-              {report.players.map((player) => (
+              {visiblePlayers.map((player) => (
                 <tr key={player.player_id}>
                   <td>
                     <strong>{playerLabel(player)}</strong>
@@ -472,29 +515,45 @@ export function PublicMatchReportContent({
                   {showAdvancedPlayerMetrics && <td>{formatSpeed(player.peak_speed_kmh)}</td>}
                 </tr>
               ))}
+              {visiblePlayers.length === 0 && (
+                <tr>
+                  <td colSpan={showAdvancedPlayerMetrics ? 8 : 4}>
+                    Brak rozpoznanych z imienia zawodników tej drużyny.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </section>
 
       <section className='card'>
-        <h2>Heatmapy rozpoznanych zawodników</h2>
-        <div className='player-heatmap-grid'>
-          {report.players.map((player) => (
-            <figure className='player-heatmap' key={`${player.player_id}-heatmap`}>
-              <PublicPlayerHeatmap
-                alt={`Heatmapa ${playerLabel(player)}`}
-                fallbackSrc={player.heatmap?.path ? assetHref(player.heatmap.path) : undefined}
-                heatmap={player.heatmap}
-              />
-              <figcaption>
-                {playerLabel(player)}
-                <br />
-                {player.team_name || player.team_label || 'Drużyna'}
-              </figcaption>
-            </figure>
-          ))}
-        </div>
+        <h2>
+          Heatmapy rozpoznanych zawodników
+          {activeTeam?.team_name ? ` — ${activeTeam.team_name}` : ''}
+        </h2>
+        {visiblePlayers.length > 0 ? (
+          <div className='player-heatmap-grid'>
+            {visiblePlayers.map((player) => (
+              <figure className='player-heatmap' key={`${player.player_id}-heatmap`}>
+                <PublicPlayerHeatmap
+                  alt={`Heatmapa ${playerLabel(player)}`}
+                  fallbackSrc={player.heatmap?.path ? assetHref(player.heatmap.path) : undefined}
+                  heatmap={player.heatmap}
+                />
+                <figcaption>
+                  {playerLabel(player)}
+                  <br />
+                  {player.team_name || player.team_label || 'Drużyna'}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : (
+          <p className='muted player-team-empty'>
+            Brak heatmap rozpoznanych z imienia zawodników tej drużyny.
+          </p>
+        )}
       </section>
     </>
   );

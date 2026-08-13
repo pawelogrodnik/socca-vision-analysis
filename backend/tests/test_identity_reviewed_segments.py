@@ -220,6 +220,46 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
                 target["review_target_id"],
             )
 
+    def test_named_segment_assignment_corrects_wrong_detected_team_only_in_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            review = build_segment_review_document(root, match)
+            target = next(
+                row
+                for row in review["targets"]
+                if row["stable_slot_id"] == "A03" and row["frame_start"] == 1
+            )
+
+            decision = save_segment_decision(
+                root,
+                match,
+                {
+                    "review_target_id": target["review_target_id"],
+                    "source_ownership_digest": target["source_ownership_digest"],
+                    "action": "assign_roster_player",
+                    "player_id": "p2",
+                },
+            )
+
+            self.assertEqual(decision["source_team_label"], "A")
+            self.assertEqual(decision["team_label"], "B")
+            self.assertTrue(decision["team_correction"])
+            rows = segment_observation_assignments(
+                review,
+                load_segment_decisions(root),
+                {
+                    "p2": {
+                        "name": "Opponent",
+                        "number": 9,
+                        "team_label": "B",
+                    }
+                },
+            )
+            self.assertEqual({int(row["frame"]) for row in rows}, {1, 2})
+            self.assertEqual({row["team_label"] for row in rows}, {"B"})
+            self.assertEqual({row["canonical_player_id"] for row in rows}, {"p2"})
+
     def test_deferred_segment_save_rejects_stale_ownership_digest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -415,7 +455,10 @@ def _fixture(root: Path, *, include_bbox: bool = True) -> dict:
                 "team_label": "A",
                 "players": [{"id": "p1", "name": "Pawel", "number": 92}],
             },
-            {"team_label": "B", "players": []},
+            {
+                "team_label": "B",
+                "players": [{"id": "p2", "name": "Opponent", "number": 9}],
+            },
         ],
     }
     positions = [

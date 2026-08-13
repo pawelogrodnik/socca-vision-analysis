@@ -78,8 +78,8 @@ http://localhost:8000/docs
 Domyślny pipeline analizy jest ustawiony na lokalne modele w `backend/models/`:
 
 ```text
-player model: models/best-model-with-ball-and-players-500-frames.pt
-ball model:   models/best-balls-only-800-frames.pt
+player model: models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
+ball model:   models/best.pt
 ```
 
 Te pliki muszą istnieć w `backend/models/` na maszynie, na której uruchamiasz analizę. Przy przenoszeniu pracy na drugi laptop skopiuj cały katalog `backend/models/` razem z repo albo odtwórz te pliki ręcznie z backupu.
@@ -115,7 +115,7 @@ docs/MACBOOK_BENCHMARK_GUIDE.md
 7. Ustaw:
 
 ```text
-model: models/best-model-with-ball-and-players-500-frames.pt
+model: models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
 tracker: centroid_high_recall
 imgsz: 1280
 conf: 0.05

@@ -17,8 +17,8 @@ Po sklonowaniu repo upewnij się, że istnieją:
 ```text
 scripts/benchmark_video.mp4
 scripts/benchmark_video_pitch_config.json
-backend/models/best-model-with-ball-and-players-500-frames.pt
-backend/models/best-balls-only-800-frames.pt
+backend/models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
+backend/models/best.pt
 ```
 
 Jeśli `scripts/benchmark_video.mp4` nie jest w repo, skopiuj dokładnie ten sam plik z Windowsa. Benchmark nie będzie porównywalny na innym video.
@@ -111,8 +111,8 @@ include_ball: true
 yolo_imgsz: 1280
 ball_yolo_imgsz: 1280
 ball_yolo_conf: 0.03
-player model: models/best-model-with-ball-and-players-500-frames.pt
-ball model: models/best-balls-only-800-frames.pt
+player model: models/best-model-with-ball-and-players-shadow-hardened-2026-08-13.pt
+ball model: models/best.pt
 ```
 
 Różni się tylko:

@@ -333,8 +333,6 @@ def save_segment_decision(
         player = roster.get(player_id or "")
         if player is None:
             raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
-        if str(player["team_label"]) != str(target["source_team_label"]):
-            raise ValueError("player_id must match the selected segment team")
         team_label = str(player["team_label"])
     elif action == "assign_team":
         if team_label not in {"A", "B"}:
@@ -361,6 +359,12 @@ def save_segment_decision(
         "action": action,
         "player_id": player_id,
         "team_label": team_label,
+        "source_team_label": str(target["source_team_label"]),
+        "team_correction": bool(
+            action == "assign_roster_player"
+            and str(target["source_team_label"]) in {"A", "B"}
+            and team_label != str(target["source_team_label"])
+        ),
         "source": "manual_segment_review",
         "supersedes_legacy_whole_subject_decision": bool(
             target.get("legacy_suggestion")
