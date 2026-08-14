@@ -41,8 +41,9 @@ export function removeResolvedReviewCase<T extends ReviewCaseWithUnit>(
 export function shouldFinalizeDeferredReview(
   cases: ReviewCaseWithUnit[],
   recomputeRequired = false,
+  globalRemaining = cases.length,
 ): boolean {
-  return recomputeRequired || cases.length === 0;
+  return recomputeRequired || (cases.length === 0 && globalRemaining === 0);
 }
 
 

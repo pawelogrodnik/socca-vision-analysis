@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -1977,6 +1977,7 @@ def get_match_reviewed_identity_progress(
     match_id: str,
     offset: int = 0,
     limit: int = 20,
+    team_label: Literal["A", "B"] | None = None,
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
@@ -1996,7 +1997,12 @@ def get_match_reviewed_identity_progress(
             else build_reviewed_identity_progress(path, read_match_meta(path))
         )
         return {
-            **paginate_progress(progress, offset=offset, limit=limit),
+            **paginate_progress(
+                progress,
+                offset=offset,
+                limit=limit,
+                team_label=team_label,
+            ),
             "recompute_required": reviewed_identity_recompute_required(path),
         }
     except FileNotFoundError as exc:

@@ -266,8 +266,20 @@ def paginate_progress(
     *,
     offset: int = 0,
     limit: int = DEFAULT_PAGE_SIZE,
+    team_label: str | None = None,
 ) -> dict[str, Any]:
     cases = list(progress.get("next_cases") or [])
+    active_team_label = _validated_filter_team_label(team_label)
+    classified_cases = [
+        (unit, review_case_team_label(unit))
+        for unit in cases
+    ]
+    filter_counts = Counter(label for _, label in classified_cases)
+    filtered_cases = [
+        unit
+        for unit, label in classified_cases
+        if active_team_label is None or label == active_team_label
+    ]
     public_progress = {
         key: value
         for key, value in progress.items()
@@ -275,18 +287,53 @@ def paginate_progress(
     }
     safe_offset = max(0, int(offset))
     safe_limit = min(MAX_PAGE_SIZE, max(1, int(limit)))
-    page = cases[safe_offset : safe_offset + safe_limit]
+    page = filtered_cases[safe_offset : safe_offset + safe_limit]
     return {
         **public_progress,
-        "next_cases": page,
+        "next_cases": [
+            {**unit, "filter_team_label": review_case_team_label(unit)}
+            for unit in page
+        ],
+        "filters": {
+            "active_team_label": active_team_label,
+            "counts": {
+                "all": len(cases),
+                "A": filter_counts["A"],
+                "B": filter_counts["B"],
+                "U": filter_counts["U"],
+            },
+        },
         "pagination": {
             "offset": safe_offset,
             "limit": safe_limit,
             "returned": len(page),
-            "total_remaining": len(cases),
-            "has_more": safe_offset + len(page) < len(cases),
+            "total_remaining": len(filtered_cases),
+            "global_total_remaining": len(cases),
+            "has_more": safe_offset + len(page) < len(filtered_cases),
         },
     }
+
+
+def review_case_team_label(unit: dict[str, Any]) -> str:
+    """Return the authoritative navigation team without changing case meaning."""
+    for field in (
+        "coverage_team_label",
+        "effective_team_label",
+        "source_team_label",
+    ):
+        team = str(unit.get(field) or "").upper()
+        if team in {"A", "B"}:
+            return team
+    return "U"
+
+
+def _validated_filter_team_label(team_label: str | None) -> str | None:
+    if team_label is None:
+        return None
+    normalized = str(team_label)
+    if normalized not in {"A", "B"}:
+        raise ValueError("team_label must be A or B")
+    return normalized
 
 
 def roster_scope(match_doc: dict[str, Any], team_label: str) -> str:

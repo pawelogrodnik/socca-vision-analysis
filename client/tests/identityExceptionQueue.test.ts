@@ -148,6 +148,17 @@ test('reload with a dirty recompute marker finalizes before showing stale cases'
 });
 
 
+test('an empty team filter never masquerades as global review completion', () => {
+  assert.equal(shouldFinalizeDeferredReview([], false, 180), false);
+  assert.equal(shouldFinalizeDeferredReview([], false, 0), true);
+});
+
+
+test('a dirty deferred decision remains authoritative when switching filters', () => {
+  assert.equal(shouldFinalizeDeferredReview([], true, 180), true);
+});
+
+
 test('review navigation crosses page boundaries without hiding remaining cases', () => {
   assert.deepEqual(resolveReviewPageNavigation({
     direction: 'next',

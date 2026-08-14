@@ -2015,6 +2015,19 @@ export type ReviewedIdentityReviewUnit = {
   potential_named_coverage_gain_pp?: number | null;
   named_coverage_before?: number | null;
   named_coverage_after_max?: number | null;
+  filter_team_label?: 'A' | 'B' | 'U';
+};
+
+export type ReviewedIdentityTeamFilterLabel = 'A' | 'B';
+
+export type ReviewedIdentityReviewFilters = {
+  active_team_label: ReviewedIdentityTeamFilterLabel | null;
+  counts: {
+    all: number;
+    A: number;
+    B: number;
+    U: number;
+  };
 };
 
 export type ReviewedIdentityCoverageRow = {
@@ -2080,8 +2093,10 @@ export type ReviewedIdentityReviewProgress = {
     limit: number;
     returned: number;
     total_remaining: number;
+    global_total_remaining: number;
     has_more: boolean;
   };
+  filters: ReviewedIdentityReviewFilters;
   observations: {
     total_detected_observations: number;
     operator_reviewed_observations: number;

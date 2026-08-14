@@ -243,9 +243,15 @@ export async function getReviewedIdentityReviewProgress(
   matchId: string,
   offset = 0,
   limit = 20,
+  teamLabel?: import('./types').ReviewedIdentityTeamFilterLabel,
 ): Promise<ReviewedIdentityReviewProgress> {
+  const query = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+  });
+  if (teamLabel) query.set('team_label', teamLabel);
   return request<ReviewedIdentityReviewProgress>(
-    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?offset=${offset}&limit=${limit}`,
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?${query}`,
   );
 }
 
