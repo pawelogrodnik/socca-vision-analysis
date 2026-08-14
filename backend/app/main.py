@@ -86,7 +86,11 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
-from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_coverage import paginate_progress
+from app.services.identity_reviewed_progress import (
+    build_reviewed_identity_progress,
+    reviewed_snapshot_file_fingerprint,
+)
 from app.services.identity_reviewed_recompute_state import (
     reviewed_identity_recompute_required,
 )
@@ -1969,11 +1973,30 @@ def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/matches/{match_id}/reviewed-identity/review-progress")
-def get_match_reviewed_identity_progress(match_id: str) -> dict[str, Any]:
+def get_match_reviewed_identity_progress(
+    match_id: str,
+    offset: int = 0,
+    limit: int = 20,
+) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
+        snapshot_file = reviewed_snapshot_file_fingerprint(path)
+        if snapshot_file is None:
+            raise FileNotFoundError(path / "reviewed_identity_snapshot.json")
+        cached_path = path / "reviewed_identity_progress.json"
+        try:
+            cached = json.loads(cached_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError):
+            cached = None
+        progress = (
+            cached
+            if isinstance(cached, dict)
+            and cached.get("schema_version") == "2.0.0"
+            and cached.get("source_snapshot_file") == snapshot_file
+            else build_reviewed_identity_progress(path, read_match_meta(path))
+        )
         return {
-            **build_reviewed_identity_progress(path, read_match_meta(path)),
+            **paginate_progress(progress, offset=offset, limit=limit),
             "recompute_required": reviewed_identity_recompute_required(path),
         }
     except FileNotFoundError as exc:

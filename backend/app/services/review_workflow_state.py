@@ -160,6 +160,7 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
     """Read compact artifacts only; this function must remain mutation-free."""
     snapshot = get_reviewed_identity_status(match_path)
     stats = load_json_object(match_path / "reviewed_player_stats.json")
+    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
     output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
     job = reviewed_output_status_read_only(match_path, snapshot)
     approval = load_video_qa_approval(match_path)
@@ -168,6 +169,10 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
         stats
         and snapshot.get("semantic_digest")
         and stats.get("source_snapshot_digest") == snapshot.get("semantic_digest")
+        and (
+            not stats_readiness
+            or stats_readiness.get("status") == "completed"
+        )
     )
     output_current = bool(
         job.get("status") == "completed"
@@ -227,10 +232,12 @@ def _current_cached_progress(
     snapshot_digest = str(snapshot.get("semantic_digest") or "")
     if not snapshot_digest or progress.get("source_snapshot_digest") != snapshot_digest:
         return None, "review_progress_stale"
+    if progress.get("schema_version") != "2.0.0":
+        return None, "review_progress_policy_stale"
     return progress, None
 
 
-def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, int]:
+def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, Any]:
     progress_summary = (progress or {}).get("summary") or {}
     pending = int(progress_summary.get("important_decisions_remaining") or 0)
     mixed = (progress or {}).get("mixed_players", {}).get("summary", {})
@@ -246,11 +253,16 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         "normal_blocking": pending,
         "mixed_blocking": mixed_pending,
         "important": pending + mixed_pending,
+        "semantic": int(progress_summary.get("semantic_decisions_remaining") or 0),
+        "coverage": int(progress_summary.get("coverage_decisions_remaining") or 0),
         "optional": int(progress_summary.get("optional_cases_remaining") or 0),
         "completed": int(progress_summary.get("review_units_completed") or 0),
         "total": int(progress_summary.get("review_units_actionable_total") or 0),
         "mixed_total": int(mixed.get("total") or 0),
         "mixed_resolved": int(mixed.get("resolved") or 0),
+        "coverage_readiness": (progress or {}).get("coverage_readiness"),
+        "identity_coverage": (progress or {}).get("identity_coverage"),
+        "workload": (progress or {}).get("workload"),
     }
 
 
@@ -283,7 +295,7 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "optional": int(issues.get("optional") or 0)},
+        "issues": {"blocking": int(issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload")},
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

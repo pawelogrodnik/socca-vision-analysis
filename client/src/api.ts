@@ -239,9 +239,13 @@ export async function retryReviewRecompute(matchId: string): Promise<ReviewWorkf
   return response.workflow;
 }
 
-export async function getReviewedIdentityReviewProgress(matchId: string): Promise<ReviewedIdentityReviewProgress> {
+export async function getReviewedIdentityReviewProgress(
+  matchId: string,
+  offset = 0,
+  limit = 20,
+): Promise<ReviewedIdentityReviewProgress> {
   return request<ReviewedIdentityReviewProgress>(
-    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress`,
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?offset=${offset}&limit=${limit}`,
   );
 }
 

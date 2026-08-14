@@ -12,6 +12,58 @@ from app.services.reviewed_match_report import build_reviewed_match_report
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_coverage_readiness_blocks_new_stats_until_queue_is_complete(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 10,
+            "duration_sec": 0.4,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [_tracklet("runner", list(range(10)))]}),
+                encoding="utf-8",
+            )
+            progress = {
+                "schema_version": "2.0.0",
+                "source_snapshot_digest": "snapshot",
+                "coverage_readiness": {
+                    "status": "incomplete",
+                    "allows_finalize": False,
+                    "blockers": [{"code": "significant_named_coverage_debt"}],
+                },
+            }
+            (root / "reviewed_identity_progress.json").write_text(
+                json.dumps(progress), encoding="utf-8"
+            )
+
+            blocked = build_reviewed_stats(
+                root, _confirmed_snapshot("runner"), _match_document()
+            )
+            self.assertEqual(
+                blocked["reviewed_stats_readiness.json"]["status"],
+                "incomplete_identity_coverage",
+            )
+
+            progress["coverage_readiness"] = {
+                "status": "ready_with_review",
+                "allows_finalize": True,
+                "blockers": [],
+            }
+            (root / "reviewed_identity_progress.json").write_text(
+                json.dumps(progress), encoding="utf-8"
+            )
+            ready = build_reviewed_stats(
+                root, _confirmed_snapshot("runner"), _match_document()
+            )
+            self.assertEqual(ready["reviewed_stats_readiness.json"]["status"], "completed")
+            self.assertIn("identity_coverage", ready["reviewed_player_stats.json"])
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_non_inside_observations_do_not_affect_reviewed_player_stats(
         self, metadata
     ) -> None:
@@ -328,6 +380,19 @@ def _build_public_report(root: Path) -> dict:
         encoding="utf-8",
     )
     return build_reviewed_match_report(root)
+
+
+def _match_document() -> dict:
+    return {
+        "id": "match",
+        "teams": [
+            {
+                "team_label": "A",
+                "players": [{"id": "p1", "name": "Player One"}],
+            },
+            {"team_label": "B", "players": []},
+        ],
+    }
 
 
 def _assignment(tracklet_id: str, status: str, player_id: str | None) -> dict:

@@ -1819,7 +1819,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; optional: number };
+  issues: { blocking: number; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -1995,7 +1995,7 @@ export type ReviewedIdentityReviewUnit = {
   detected_observation_count: number;
   detected_time_sec: number;
   current_resolution_status: string;
-  priority: 'high' | 'optional' | null;
+  priority: 'high' | 'coverage' | 'optional' | null;
   reason_codes: string[];
   review_target_id?: string | null;
   scope_kind?: 'whole_subject' | 'canonical_segment';
@@ -2009,6 +2009,47 @@ export type ReviewedIdentityReviewUnit = {
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
   legacy_suggestion?: ReviewedCorrectionContext['legacy_suggestion'];
+  coverage_team_label?: string | null;
+  potential_named_observation_gain?: number | null;
+  potential_team_unnamed_share?: number | null;
+  potential_named_coverage_gain_pp?: number | null;
+  named_coverage_before?: number | null;
+  named_coverage_after_max?: number | null;
+};
+
+export type ReviewedIdentityCoverageRow = {
+  roster_scope: string;
+  reliable_observations: number;
+  confirmed_named_observations: number;
+  named_observation_coverage: number | null;
+  team_known_observations: number;
+  team_known_observation_coverage: number | null;
+  unresolved_observations: number;
+  conflicted_observations: number;
+  ignored_observations: number;
+  unresolved_observation_share: number | null;
+};
+
+export type ReviewedIdentityCoverage = ReviewedIdentityCoverageRow & {
+  schema_version: string;
+  policy_version: string;
+  coverage_unit: string;
+  per_team: Record<string, ReviewedIdentityCoverageRow>;
+};
+
+export type ReviewedIdentityCoverageReadiness = {
+  status: 'not_assessable' | 'incomplete' | 'ready' | 'ready_with_review';
+  policy_version: string;
+  allows_finalize: boolean;
+  blockers: Array<Record<string, unknown>>;
+  roster_scope: Record<string, string>;
+};
+
+export type ReviewedIdentityWorkload = {
+  remaining_cases: number;
+  level: 'normal' | 'elevated' | 'excessive' | 'critical';
+  diagnostic_only: boolean;
+  queue_truncated: boolean;
 };
 
 export type ReviewedIdentityReviewProgress = {
@@ -2022,11 +2063,24 @@ export type ReviewedIdentityReviewProgress = {
     completed_by_operator: number;
     completed_automatically: number;
     important_decisions_remaining: number;
+    semantic_decisions_remaining: number;
+    coverage_decisions_remaining: number;
     optional_cases_remaining: number;
     structural_blockers: number;
     ignored_low_impact: number;
     operator_decisions_saved: number;
     operator_queue_completion_ratio: number;
+  };
+  identity_coverage: ReviewedIdentityCoverage;
+  coverage_readiness: ReviewedIdentityCoverageReadiness;
+  coverage_residuals: Record<string, Record<string, number>>;
+  workload: ReviewedIdentityWorkload;
+  pagination: {
+    offset: number;
+    limit: number;
+    returned: number;
+    total_remaining: number;
+    has_more: boolean;
   };
   observations: {
     total_detected_observations: number;
@@ -2497,6 +2551,8 @@ export type PublicMatchReport = {
   report_type: 'public_match_report' | string;
   stats_semantics?: Record<string, string>;
   reviewed_identity_digest?: string | null;
+  identity_coverage?: ReviewedIdentityCoverage | null;
+  identity_coverage_readiness?: ReviewedIdentityCoverageReadiness | null;
   match: {
     id: string;
     title: string;

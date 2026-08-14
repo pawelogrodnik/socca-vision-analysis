@@ -12,13 +12,16 @@ import type {
   Match,
   ReviewedCorrectionResponse,
   ReviewedIdentityAtEntity,
+  ReviewedIdentityCoverage,
   ReviewedIdentityReviewUnit,
+  ReviewedIdentityWorkload,
   ReviewWorkflow,
 } from '../types';
 import { hasOperatorReviewableVisualEvidence } from '../utils/identityReviewWorkspace';
 import {
   finalizeDeferredReviewBatch,
   removeResolvedReviewCase,
+  resolveReviewPageNavigation,
   reviewUnitKey,
   shouldFinalizeDeferredReview,
 } from '../utils/identityExceptionQueue';
@@ -38,6 +41,8 @@ type ReviewCase = {
   unit: ReviewedIdentityReviewUnit;
   card: IdentityRosterSubjectReviewCard | null;
 };
+
+const REVIEW_PAGE_SIZE = 20;
 
 function toCorrectionEntity(reviewCase: ReviewCase): ReviewedIdentityAtEntity {
   const { card, unit } = reviewCase;
@@ -104,26 +109,47 @@ export function IdentityExceptionReviewPanel({
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeFailed, setFinalizeFailed] = useState(false);
   const [message, setMessage] = useState('');
+  const [totalRemaining, setTotalRemaining] = useState(0);
+  const [pageOffset, setPageOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [coverage, setCoverage] = useState<ReviewedIdentityCoverage | null>(null);
+  const [workload, setWorkload] = useState<ReviewedIdentityWorkload | null>(null);
   const finalizeInFlight = useRef(false);
+  const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
 
-  async function loadCases(ignore?: () => boolean, preserveMessage = false): Promise<ReviewCase[]> {
+  async function loadCases(
+    ignore?: () => boolean,
+    preserveMessage = false,
+    offset = 0,
+    preferredIndex = 0,
+  ): Promise<ReviewCase[]> {
     setLoading(true);
     if (!preserveMessage) setMessage('');
     try {
       const [document, progress] = await Promise.all([
-        getIdentityRosterSubjectReview(match.id),
-        getReviewedIdentityReviewProgress(match.id),
+        cardsBySubjectRef.current
+          ? Promise.resolve(null)
+          : getIdentityRosterSubjectReview(match.id),
+        getReviewedIdentityReviewProgress(match.id, offset),
       ]);
       if (ignore?.()) return [];
-      const cardsBySubject = new Map(
-        document.cards.map((nextCard) => [nextCard.candidate_subject_id, nextCard]),
-      );
+      if (document) {
+        cardsBySubjectRef.current = new Map(
+          document.cards.map((nextCard) => [nextCard.candidate_subject_id, nextCard]),
+        );
+      }
+      const cardsBySubject = cardsBySubjectRef.current || new Map();
       const actionable = progress.next_cases
-        .filter((item) => item.priority === 'high')
+        .filter((item) => item.priority === 'high' || item.priority === 'coverage')
         .map((unit) => ({
           unit,
           card: cardsBySubject.get(unit.candidate_subject_id) || null,
         }));
+      setTotalRemaining(progress.pagination?.total_remaining ?? actionable.length);
+      setPageOffset(progress.pagination?.offset ?? offset);
+      setHasMore(progress.pagination?.has_more ?? false);
+      setCoverage(progress.identity_coverage || null);
+      setWorkload(progress.workload || null);
       if (shouldFinalizeDeferredReview(actionable, progress.recompute_required)) {
         setCases([]);
         setIndex(0);
@@ -131,7 +157,9 @@ export function IdentityExceptionReviewPanel({
         return [];
       }
       setCases(actionable);
-      setIndex(0);
+      setIndex(actionable.length > 0
+        ? Math.min(Math.max(0, preferredIndex), actionable.length - 1)
+        : 0);
       return actionable;
     } catch (error) {
       if (!ignore?.()) setMessage(errorMessage(error));
@@ -168,6 +196,22 @@ export function IdentityExceptionReviewPanel({
     setMessage('');
   }
 
+  function navigate(direction: 'previous' | 'next') {
+    const destination = resolveReviewPageNavigation({
+      direction,
+      currentIndex: index,
+      pageLength: cases.length,
+      pageOffset,
+      pageSize: REVIEW_PAGE_SIZE,
+      hasMore,
+    });
+    if (destination.kind === 'local') {
+      moveToCase(destination.index);
+    } else if (destination.kind === 'page') {
+      void loadCases(undefined, true, destination.offset, destination.index);
+    }
+  }
+
   function saved(result: ReviewedCorrectionResponse) {
     if (!reviewCase || !result.recompute_deferred) {
       if (result.workflow) onWorkflowChanged(result.workflow);
@@ -182,7 +226,11 @@ export function IdentityExceptionReviewPanel({
     setIndex(next.index);
     setFinalizeFailed(false);
     setMessage('Zapisano decyzję.');
-    if (shouldFinalizeDeferredReview(next.cases)) void finalizeCorrections();
+    if (next.cases.length === 0 && hasMore) {
+      void loadCases(undefined, true, pageOffset + REVIEW_PAGE_SIZE);
+    } else if (shouldFinalizeDeferredReview(next.cases)) {
+      void finalizeCorrections();
+    }
   }
 
   async function finalizeCorrections() {
@@ -192,13 +240,13 @@ export function IdentityExceptionReviewPanel({
     setFinalizeFailed(false);
     setMessage('Przeliczam Review po zapisaniu decyzji…');
     try {
-      const { result, cases: authoritativeCases } = await finalizeDeferredReviewBatch(
+      const { result } = await finalizeDeferredReviewBatch(
         () => finalizeReviewedIdentityCorrections(match.id),
-        () => loadCases(undefined, true),
+        () => loadCases(undefined, true, 0),
         onWorkflowChanged,
       );
       if (result.workflow.phase === 'exceptions') {
-        setMessage(`Po przeliczeniu pozostały jeszcze ${authoritativeCases.length} przypadki.`);
+        setMessage(`Po przeliczeniu pozostały kolejne przypadki do sprawdzenia.`);
       } else {
         setCases([]);
         setIndex(0);
@@ -220,20 +268,42 @@ export function IdentityExceptionReviewPanel({
       <div className='identity-exception-heading'>
         <p className='eyebrow'>Krok 2</p>
         <h2>Pozostałe przypadki</h2>
-        <p>System zakończył automatyczne przypisania. Sprawdź tylko przypadki, w których wykryto konflikt wymagający decyzji.</p>
+        <p>Najpierw pokażemy konflikty, a potem największe nierozpoznane fragmenty wpływające na statystyki zawodników.</p>
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
-        {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {index + 1} z {cases.length}</span>}
+        {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {pageOffset + index + 1} z {totalRemaining}</span>}
         {caseTimeRange && <strong>{caseTimeRange}</strong>}
         {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} wykrytych obserwacji</span>}
         <small>{requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)}</small>
       </div>
     </header>
 
+    {coverage && <section className='identity-coverage-summary' aria-label='Pokrycie rozpoznania zawodników'>
+      <div>
+        <strong>Pokrycie rozpoznania</strong>
+        <span>Imiennie: {Math.round((coverage.named_observation_coverage || 0) * 100)}%</span>
+        <span>Drużyna znana: {Math.round((coverage.team_known_observation_coverage || 0) * 100)}%</span>
+      </div>
+      {Object.entries(coverage.per_team).filter(([team]) => team === 'A' || team === 'B').map(([team, row]) => <div key={team}>
+        <strong>Team {team}</strong>
+        <span>Imiennie {Math.round((row.named_observation_coverage || 0) * 100)}%</span>
+        <progress max={1} value={row.named_observation_coverage || 0} aria-label={`Pokrycie imienne Team ${team}`} />
+      </div>)}
+    </section>}
+    {workload && workload.level !== 'normal' && <div className='status warning identity-coverage-warning'>
+      <strong>Dużo fragmentów wymaga sprawdzenia ({workload.remaining_cases}).</strong>
+      <p>To sygnał słabej ciągłości trackingu. Decyzje są uporządkowane według wpływu, a nie ucięte limitem.</p>
+    </div>}
+
     {reviewCase && entity && hasVisualEvidence && evidence ? <>
       {reviewCase.unit.scope_kind === 'canonical_segment' && <div className='status'>
         <strong>System połączył w jednym tracklecie różne osoby.</strong>
         <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
+      </div>}
+      {reviewCase.unit.priority === 'coverage' && <div className='status identity-coverage-impact'>
+        <strong>Ten fragment ma duży wpływ na kompletność statystyk.</strong>
+        <p>Może przypisać do {reviewCase.unit.potential_named_observation_gain || reviewCase.unit.detected_observation_count} obserwacji
+          {reviewCase.unit.potential_named_coverage_gain_pp ? ` (+${reviewCase.unit.potential_named_coverage_gain_pp.toFixed(1)} pp dla Team ${reviewCase.unit.coverage_team_label})` : ''}.</p>
       </div>}
       <div className='identity-exception-workstation'>
         <section className='identity-exception-evidence-column' aria-label='Widoki zawodnika'>
@@ -270,10 +340,10 @@ export function IdentityExceptionReviewPanel({
             onSaved={saved}
             deferRecompute
             navigation={{
-              onPrevious: () => moveToCase(index - 1),
-              onNext: () => moveToCase(index + 1),
-              previousDisabled: index === 0,
-              nextDisabled: index >= cases.length - 1,
+              onPrevious: () => navigate('previous'),
+              onNext: () => navigate('next'),
+              previousDisabled: pageOffset === 0 && index === 0,
+              nextDisabled: !hasMore && index >= cases.length - 1,
               saveLabel: 'Zapisz + następny',
             }}
           />

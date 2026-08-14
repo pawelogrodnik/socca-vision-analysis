@@ -12,6 +12,32 @@ from app.services.identity_reviewed_action_gate import (
 
 
 class DeferredReviewedActionGateTests(unittest.TestCase):
+    def test_coverage_priority_unit_from_v2_baseline_is_actionable(self) -> None:
+        with _workspace() as root:
+            coverage = {
+                **_whole("coverage-subject"),
+                "priority": "coverage",
+                "current_resolution_status": "pending_coverage_review",
+            }
+            _baseline(root, [coverage])
+            progress = json.loads(
+                (root / "reviewed_identity_progress.json").read_text(encoding="utf-8")
+            )
+            progress["schema_version"] = "2.0.0"
+            _write(root / "reviewed_identity_progress.json", progress)
+
+            result = validate_deferred_review_action(
+                root,
+                {"id": "m1"},
+                {
+                    "candidate_subject_id": "coverage-subject",
+                    "action": "assign_team",
+                    "team_label": "A",
+                },
+            )
+
+            self.assertEqual(result["review_unit"]["priority"], "coverage")
+
     def test_high_priority_whole_subject_is_actionable(self) -> None:
         with _workspace() as root:
             _baseline(root, [_whole("s1")])

@@ -49,6 +49,12 @@ def build_reviewed_match_report(match_path: Path) -> dict[str, Any]:
     )
     report["report_type"] = "reviewed_match_report"
     report["reviewed_identity_digest"] = stats_digest
+    report["identity_coverage"] = package["reviewed_player_stats"].get(
+        "identity_coverage"
+    ) or package["reviewed_stats_readiness"].get("identity_coverage")
+    report["identity_coverage_readiness"] = package[
+        "reviewed_stats_readiness"
+    ].get("coverage_readiness")
     return report
 
 

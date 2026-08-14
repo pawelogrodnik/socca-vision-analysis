@@ -66,11 +66,16 @@ test('exception workstation keeps one active case and stateful correction subvie
   const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
   const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', components), 'utf8');
 
-  assert.match(panel, /Przypadek \{index \+ 1\} z \{cases\.length\}/);
+  assert.match(panel, /Przypadek \{pageOffset \+ index \+ 1\} z \{totalRemaining\}/);
+  assert.match(panel, /item\.priority === 'high' \|\| item\.priority === 'coverage'/);
+  assert.match(panel, /progress\.pagination\?\.total_remaining/);
+  assert.match(panel, /pageOffset \+ REVIEW_PAGE_SIZE/);
+  assert.match(panel, /Pokrycie rozpoznania/);
+  assert.match(panel, /potencjal_named_observation_gain|potential_named_observation_gain/);
   assert.match(panel, /identity-exception-workstation/);
   assert.match(panel, /key=\{reviewUnitKey\(reviewCase\.unit\)\}/);
-  assert.match(panel, /onPrevious: \(\) => moveToCase\(index - 1\)/);
-  assert.match(panel, /onNext: \(\) => moveToCase\(index \+ 1\)/);
+  assert.match(panel, /onPrevious: \(\) => navigate\('previous'\)/);
+  assert.match(panel, /onNext: \(\) => navigate\('next'\)/);
   assert.match(form, /returnToCategories/);
   assert.match(form, /← Wróć/);
   assert.match(form, /showActionCategories && segmentScope/);

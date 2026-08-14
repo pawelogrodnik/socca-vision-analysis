@@ -28,7 +28,7 @@ def validate_deferred_review_action(
     match_doc: dict[str, Any],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Authorize one save from the last materialized high-priority queue.
+    """Authorize one save from the last materialized coverage queue.
 
     The queue is a deliberate batch baseline. A dirty recompute marker does not
     invalidate it, so decisions two and three can still be saved before the one
@@ -80,7 +80,7 @@ def _load_batch_baseline(
     expected_match_id = str(match_doc.get("id") or match_path.name)
     valid = (
         progress is not None
-        and progress.get("schema_version") == "1.0.0"
+        and progress.get("schema_version") in {"1.0.0", "2.0.0"}
         and progress.get("status") == "ready"
         and str(progress.get("match_id") or "") == expected_match_id
         and isinstance(progress.get("next_cases"), list)
@@ -110,9 +110,12 @@ def _actionable_unit(
         raw_target_id = str(raw.get("review_target_id") or "").strip() or None
         if raw_target_id != target_id:
             continue
-        if raw.get("priority") != "high":
+        if raw.get("priority") not in {"high", "coverage"}:
             continue
-        if raw.get("current_resolution_status") != "pending_high_priority":
+        if raw.get("current_resolution_status") not in {
+            "pending_high_priority",
+            "pending_coverage_review",
+        }:
             continue
         if target_id is None:
             if raw_target_id is None and raw.get("scope_kind") in {None, "whole_subject"}:

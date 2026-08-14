@@ -9,6 +9,7 @@ import type {
 import {
   finalizeDeferredReviewBatch,
   removeResolvedReviewCase,
+  resolveReviewPageNavigation,
   reviewUnitKey,
   shouldFinalizeDeferredReview,
 } from '../src/utils/identityExceptionQueue.ts';
@@ -144,4 +145,32 @@ test('reload with a dirty recompute marker finalizes before showing stale cases'
   const staleCases = [{ unit: unit('already-saved') }, { unit: unit('still-pending') }];
   assert.equal(shouldFinalizeDeferredReview(staleCases, true), true);
   assert.equal(shouldFinalizeDeferredReview(staleCases, false), false);
+});
+
+
+test('review navigation crosses page boundaries without hiding remaining cases', () => {
+  assert.deepEqual(resolveReviewPageNavigation({
+    direction: 'next',
+    currentIndex: 19,
+    pageLength: 20,
+    pageOffset: 0,
+    pageSize: 20,
+    hasMore: true,
+  }), { kind: 'page', offset: 20, index: 0 });
+  assert.deepEqual(resolveReviewPageNavigation({
+    direction: 'previous',
+    currentIndex: 0,
+    pageLength: 20,
+    pageOffset: 20,
+    pageSize: 20,
+    hasMore: true,
+  }), { kind: 'page', offset: 0, index: 19 });
+  assert.deepEqual(resolveReviewPageNavigation({
+    direction: 'next',
+    currentIndex: 19,
+    pageLength: 20,
+    pageOffset: 520,
+    pageSize: 20,
+    hasMore: false,
+  }), { kind: 'none' });
 });

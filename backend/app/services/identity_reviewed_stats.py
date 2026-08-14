@@ -17,6 +17,7 @@ from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
 )
+from app.services.identity_reviewed_coverage import summarize_effective_observations
 from app.services.video import read_match_video_metadata
 
 
@@ -26,15 +27,20 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
     fps = float(video_metadata["fps"])
     if fps <= 0:
         raise ValueError("Source video does not expose a valid FPS value")
-    observations_by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for effective in iter_effective_reviewed_observations(
+    effective_observations = list(iter_effective_reviewed_observations(
         tracklets,
         list(snapshot.get("tracklet_assignments") or []),
         list(snapshot.get("observation_overrides") or []),
         list(snapshot.get("observation_demotions") or []),
         list(snapshot.get("canonical_observation_assignments") or []),
         list(snapshot.get("segment_observation_assignments") or []),
-    ):
+    ))
+    identity_coverage, _ = summarize_effective_observations(
+        effective_observations,
+        match_doc,
+    )
+    observations_by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for effective in effective_observations:
         if (
             effective.get("identity_status") != "confirmed"
             or not effective.get("canonical_player_id")
@@ -116,8 +122,20 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         heatmaps.append({"player_id": player_id, "team_label": player["team_label"], "samples": len(positions), "positions_m": positions, "bin_dimensions": [12, 8]})
     snapshot_digest = str(snapshot["semantic_digest"])
     coverage = _coverage(snapshot)
+    progress = _load(match_path / "reviewed_identity_progress.json")
+    coverage_readiness = (
+        progress.get("coverage_readiness")
+        if progress.get("schema_version") == "2.0.0"
+        and progress.get("source_snapshot_digest") == snapshot_digest
+        else None
+    )
+    stats_status = (
+        "completed"
+        if not coverage_readiness or coverage_readiness.get("allows_finalize") is True
+        else "incomplete_identity_coverage"
+    )
     shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "video_timing": {"fps": fps, "frame_count": video_metadata["frame_count"], "duration_sec": video_metadata["duration_sec"], "source": video_metadata["source"], "filename": video_metadata["filename"]}, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
-    documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "global_coverage": coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_stats_readiness.json": {**shared, "status": "completed", "global_coverage": coverage, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
+    documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "global_coverage": coverage, "identity_coverage": identity_coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_stats_readiness.json": {**shared, "schema_version": "2.0.0" if coverage_readiness else shared["schema_version"], "status": stats_status, "global_coverage": coverage, "identity_coverage": identity_coverage, "coverage_readiness": coverage_readiness, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
     for name, document in documents.items(): write_identity_json_atomic(match_path / name, document)
     return documents
 
@@ -293,4 +311,8 @@ def _expected_movement_segments(rows: list[dict[str, Any]], fps: float) -> int:
     return expected
 def _load(path: Path) -> dict[str, Any]:
     import json
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
