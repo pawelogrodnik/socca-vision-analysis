@@ -8,8 +8,16 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_context
+from app.services.identity_reviewed_coverage import (
+    COVERAGE_POLICY_VERSION,
+    apply_coverage_policy,
+    load_effective_coverage_context,
+)
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
-from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_slot_review import (
+    load_reviewed_slot_assignments,
+    whole_subject_reviewability,
+)
 from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
@@ -22,6 +30,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
+PROGRESS_SCHEMA_VERSION = "2.1.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -45,6 +54,17 @@ SEMANTIC_CONFLICT_REASON_MARKERS = (
     "cross_team",
     "team_mismatch",
 )
+
+
+def reviewed_snapshot_file_fingerprint(match_path: Path) -> dict[str, int] | None:
+    try:
+        stat = (match_path / "reviewed_identity_snapshot.json").stat()
+    except OSError:
+        return None
+    return {
+        "mtime_ns": int(stat.st_mtime_ns),
+        "size_bytes": int(stat.st_size),
+    }
 
 
 def build_reviewed_identity_progress(
@@ -97,7 +117,23 @@ def build_reviewed_identity_progress(
         and str(unit.get("candidate_subject_id") or "") not in mixed_by_subject
     ]
     units.extend(_segment_units(segment_review, roster_teams, fps))
+    coverage_context = load_effective_coverage_context(match_path, match_doc)
+    coverage_policy = apply_coverage_policy(
+        units,
+        coverage_context["coverage"],
+        coverage_context["pair_index"],
+        match_doc,
+    )
+    queue_by_key = {
+        _unit_key(unit): unit for unit in coverage_policy["next_cases"]
+    }
+    units = [queue_by_key.get(_unit_key(unit), unit) for unit in units]
     counts = Counter(str(unit["current_resolution_status"]) for unit in units)
+    non_actionable_reason_counts = Counter(
+        str(unit.get("non_actionable_reason") or "unknown")
+        for unit in units
+        if unit.get("operator_actionable") is False
+    )
     observed_pairs = _all_detected_pairs(tracklets)
     operator_pairs = {
         pair
@@ -117,28 +153,25 @@ def build_reviewed_identity_progress(
         if unit["canonical_player_id"]
         for pair in unit["detected_pairs"]
     }
-    # Do not cap this list. A normal match should have very few semantic
-    # conflicts, but hiding a real larger set would make the workflow lie.
-    next_cases = sorted(
-        (unit for unit in units if unit["current_resolution_status"] == "pending_high_priority"),
-        key=lambda unit: (
-            0 if "conflict" in " ".join(unit["reason_codes"]) else 1,
-            -int(unit["detected_observation_count"]),
-            -float(unit["detected_time_sec"]),
-            str(unit["candidate_subject_id"]),
-        ),
-    )
+    # Coverage policy is authoritative and deliberately uncapped. Pagination
+    # is applied only at the API presentation boundary.
+    next_cases = coverage_policy["next_cases"]
     completed = (
         counts["reviewed_by_operator"]
         + counts["resolved_automatically"]
         + counts["safe_anonymous"]
     )
-    queue_total = completed + counts["pending_high_priority"]
+    important_remaining = int(coverage_policy["semantic_blockers"]) + int(
+        coverage_policy["coverage_blockers"]
+    )
+    queue_total = completed + important_remaining
     mixed_queue = build_mixed_review_queue(match_path, match_doc)
     return {
-        "schema_version": "1.0.0",
+        "schema_version": PROGRESS_SCHEMA_VERSION,
         "status": "ready",
         "match_id": str(match_doc.get("id") or match_path.name),
+        "source_snapshot_digest": coverage_context["source_snapshot_digest"],
+        "source_snapshot_file": reviewed_snapshot_file_fingerprint(match_path),
         "summary": {
             "review_units_total": len(units),
             "review_units_completed": completed,
@@ -147,10 +180,14 @@ def build_reviewed_identity_progress(
             "completed_automatically": (
                 counts["resolved_automatically"] + counts["safe_anonymous"]
             ),
-            "important_decisions_remaining": counts["pending_high_priority"],
+            "important_decisions_remaining": important_remaining,
+            "semantic_decisions_remaining": coverage_policy["semantic_blockers"],
+            "coverage_decisions_remaining": coverage_policy["coverage_blockers"],
             "optional_cases_remaining": counts["pending_optional"],
             "safe_anonymous_units": counts["safe_anonymous"],
             "structural_blockers": counts["structurally_blocked"],
+            "non_actionable_review_units": sum(non_actionable_reason_counts.values()),
+            "non_actionable_reason_counts": dict(sorted(non_actionable_reason_counts.items())),
             "ignored_low_impact": counts["ignored_low_impact"],
             "operator_decisions_saved": counts["reviewed_by_operator"],
             "operator_queue_completion_ratio": _ratio(completed, queue_total),
@@ -164,6 +201,10 @@ def build_reviewed_identity_progress(
             "confirmed_player_observations": len(confirmed_pairs),
             "confirmed_player_observation_ratio": _ratio(len(confirmed_pairs), len(observed_pairs)),
         },
+        "identity_coverage": coverage_context["coverage"],
+        "coverage_readiness": coverage_policy["readiness"],
+        "coverage_residuals": coverage_policy["residual_by_team"],
+        "workload": coverage_policy["workload"],
         "next_cases": [_public_unit(unit) for unit in next_cases],
         "mixed_players": mixed_queue,
         "technical_diagnostics": {
@@ -172,10 +213,12 @@ def build_reviewed_identity_progress(
             "unresolved_tracklet_assignments": _technical_unresolved(match_path, len(tracklets)),
         },
         "policy": {
+            "version": COVERAGE_POLICY_VERSION,
             "optional_min_detected_sec": OPTIONAL_MIN_DETECTED_SEC,
             "optional_min_observations": OPTIONAL_MIN_OBSERVATIONS,
-            "long_unresolved_requires_operator": False,
-            "generic_requires_operator_review_requires_operator": False,
+            "long_unresolved_requires_operator": True,
+            "generic_requires_operator_review_requires_operator": True,
+            "queue_has_hard_case_cap": False,
         },
         "review_units": [_public_unit(unit, include_pairs=False) for unit in units],
         "deferred_correction_context": build_reviewed_active_cap_context(
@@ -239,6 +282,10 @@ def _unit(
     if any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
         structural = True
         reason_codes.append("ambiguous_candidate_subject_membership")
+    reviewability = whole_subject_reviewability(
+        ambiguous_membership=structural,
+        detected_team_labels=set(detected_team_labels),
+    )
     team_conflict = len(teams) > 1
     if team_conflict:
         reason_codes.append("conflicting_detected_team_labels")
@@ -304,6 +351,10 @@ def _unit(
         "canonical_player_id": canonical_player_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
+        "correction_scope": "whole_subject",
+        "operator_actionable": bool(reviewability["actionable"]),
+        "non_actionable_reason": reviewability["reason"],
+        "has_operator_visual_evidence": has_operator_visual_evidence,
         "detected_pairs": sorted(pairs),
     }
 
@@ -316,6 +367,11 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "current_resolution_status", "priority", "reason_codes", "review_target_id",
         "scope_kind", "source_ownership_digest", "stable_slot_id", "frame_ranges",
         "visual_evidence", "legacy_suggestion",
+        "coverage_team_label", "potential_named_observation_gain",
+        "potential_team_unnamed_share", "potential_named_coverage_gain_pp",
+        "named_coverage_before", "named_coverage_after_max",
+        "correction_scope", "operator_actionable", "non_actionable_reason",
+        "has_operator_visual_evidence",
     )
     result = {key: unit.get(key) for key in keys}
     if include_pairs:
@@ -366,6 +422,9 @@ def _segment_units(
                 "candidate_subject_id": target.get("candidate_subject_id"),
                 "review_target_id": target.get("review_target_id"),
                 "scope_kind": "canonical_segment",
+                "correction_scope": "canonical_segment",
+                "operator_actionable": True,
+                "non_actionable_reason": None,
                 "tracklet_ids": tracklet_ids,
                 "tracklet_count": len(tracklet_ids),
                 "source_team_label": target.get("source_team_label") or "U",
@@ -391,6 +450,7 @@ def _segment_units(
                 "stable_slot_id": target.get("stable_slot_id"),
                 "visual_evidence": target.get("visual_evidence") or {},
                 "legacy_suggestion": target.get("legacy_suggestion"),
+                "has_operator_visual_evidence": has_operator_visual_evidence,
                 "detected_pairs": sorted(pairs),
             }
         )
@@ -441,6 +501,13 @@ def _find_unit(
             )
         ),
         None,
+    )
+
+
+def _unit_key(unit: dict[str, Any]) -> tuple[str, str | None]:
+    return (
+        str(unit.get("candidate_subject_id") or ""),
+        str(unit.get("review_target_id") or "") or None,
     )
 
 

@@ -10,6 +10,12 @@ export type ReviewCaseWithUnit = {
 };
 
 
+export type ReviewPageNavigation =
+  | { kind: 'local'; index: number }
+  | { kind: 'page'; offset: number; index: number }
+  | { kind: 'none' };
+
+
 export function reviewUnitKey(unit: ReviewedIdentityReviewUnit): string {
   return unit.review_target_id
     ? `segment:${unit.review_target_id}`
@@ -35,8 +41,46 @@ export function removeResolvedReviewCase<T extends ReviewCaseWithUnit>(
 export function shouldFinalizeDeferredReview(
   cases: ReviewCaseWithUnit[],
   recomputeRequired = false,
+  globalRemaining = cases.length,
+  coverageAllowsFinalize = true,
 ): boolean {
-  return recomputeRequired || cases.length === 0;
+  return recomputeRequired || (
+    cases.length === 0
+    && globalRemaining === 0
+    && coverageAllowsFinalize
+  );
+}
+
+
+export function resolveReviewPageNavigation({
+  direction,
+  currentIndex,
+  pageLength,
+  pageOffset,
+  pageSize,
+  hasMore,
+}: {
+  direction: 'previous' | 'next';
+  currentIndex: number;
+  pageLength: number;
+  pageOffset: number;
+  pageSize: number;
+  hasMore: boolean;
+}): ReviewPageNavigation {
+  if (direction === 'previous') {
+    if (currentIndex > 0) return { kind: 'local', index: currentIndex - 1 };
+    if (pageOffset <= 0) return { kind: 'none' };
+    return {
+      kind: 'page',
+      offset: Math.max(0, pageOffset - pageSize),
+      index: pageSize - 1,
+    };
+  }
+  if (currentIndex + 1 < pageLength) {
+    return { kind: 'local', index: currentIndex + 1 };
+  }
+  if (!hasMore) return { kind: 'none' };
+  return { kind: 'page', offset: pageOffset + pageSize, index: 0 };
 }
 
 

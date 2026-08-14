@@ -39,6 +39,42 @@ class ReviewedMatchReportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "same identity snapshot"):
                 build_reviewed_match_report(root)
 
+    def test_report_exposes_coverage_for_new_reviewed_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_fixture(root)
+            stats = json.loads(
+                (root / "reviewed_player_stats.json").read_text(encoding="utf-8")
+            )
+            stats["identity_coverage"] = {
+                "coverage_unit": "unique_detected_tracklet_frame_observation",
+                "named_observation_coverage": 0.4,
+                "per_team": {
+                    "A": {
+                        "named_observation_coverage": 0.5,
+                        "team_known_observation_coverage": 1.0,
+                    }
+                },
+            }
+            self._write(root / "reviewed_player_stats.json", stats)
+            readiness = json.loads(
+                (root / "reviewed_stats_readiness.json").read_text(encoding="utf-8")
+            )
+            readiness["coverage_readiness"] = {
+                "status": "ready_with_review",
+                "allows_finalize": True,
+                "blockers": [],
+            }
+            self._write(root / "reviewed_stats_readiness.json", readiness)
+
+            report = build_reviewed_match_report(root)
+
+            self.assertEqual(report["identity_coverage"]["named_observation_coverage"], 0.4)
+            self.assertEqual(
+                report["identity_coverage_readiness"]["status"],
+                "ready_with_review",
+            )
+
     def _write_fixture(self, root: Path) -> None:
         self._write(
             root / "match.json",

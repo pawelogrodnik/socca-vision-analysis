@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_seeded_review_reduction import (
     load_initial_audit_completion_evidence,
 )
@@ -53,6 +54,9 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     mixed_blocking = max(0, int(issues.get("mixed_blocking") or 0))
+    coverage_readiness_blocked = bool(
+        issues.get("coverage_readiness_blocked")
+    )
     render_status = str(render.get("status") or "missing")
     render_current = bool(freshness.get("reviewed_output_current"))
     stats_current = bool(freshness.get("reviewed_stats_current"))
@@ -132,6 +136,55 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
         blockers.append(_blocker("mixed_player_issues_remaining", "mixed_players", {"count": mixed_blocking}))
         return _state(match_id, True, "action_required", "mixed_players", steps, blockers, ["review_mixed_players"], initial, issues, freshness, render, {"type": "review_mixed_players", "step_id": "mixed_players", "remaining": mixed_blocking})
     steps["mixed_players"] = _step("mixed_players", "completed", remaining=0, total=issues.get("mixed_total"), completed=issues.get("mixed_resolved"))
+    if coverage_readiness_blocked:
+        readiness = issues.get("coverage_readiness") or {}
+        details = {
+            "readiness_status": readiness.get("status"),
+            "blockers": list(readiness.get("blockers") or []),
+        }
+        steps["exceptions"] = _step(
+            "exceptions",
+            "error",
+            "identity_coverage_unresolved_without_reviewable_evidence",
+            details,
+            completed=issues.get("completed"),
+            total=issues.get("total"),
+            remaining=0,
+        )
+        steps["finalize"] = _step(
+            "finalize",
+            "locked",
+            "identity_coverage_unresolved_without_reviewable_evidence",
+            details,
+        )
+        steps["video_qa"] = _step(
+            "video_qa",
+            "locked",
+            "identity_coverage_unresolved_without_reviewable_evidence",
+            details,
+        )
+        blockers.append(
+            _blocker(
+                "identity_coverage_unresolved_without_reviewable_evidence",
+                "exceptions",
+                details,
+                user_actionable=False,
+            )
+        )
+        return _state(
+            match_id,
+            True,
+            "action_required",
+            "exceptions",
+            steps,
+            blockers,
+            [],
+            initial,
+            issues,
+            freshness,
+            render,
+            None,
+        )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
         steps["video_qa"] = _step("video_qa", "locked", "render_running")
@@ -160,6 +213,7 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
     """Read compact artifacts only; this function must remain mutation-free."""
     snapshot = get_reviewed_identity_status(match_path)
     stats = load_json_object(match_path / "reviewed_player_stats.json")
+    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
     output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
     job = reviewed_output_status_read_only(match_path, snapshot)
     approval = load_video_qa_approval(match_path)
@@ -168,6 +222,10 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
         stats
         and snapshot.get("semantic_digest")
         and stats.get("source_snapshot_digest") == snapshot.get("semantic_digest")
+        and (
+            not stats_readiness
+            or stats_readiness.get("status") == "completed"
+        )
     )
     output_current = bool(
         job.get("status") == "completed"
@@ -227,14 +285,21 @@ def _current_cached_progress(
     snapshot_digest = str(snapshot.get("semantic_digest") or "")
     if not snapshot_digest or progress.get("source_snapshot_digest") != snapshot_digest:
         return None, "review_progress_stale"
+    if progress.get("schema_version") != PROGRESS_SCHEMA_VERSION:
+        return None, "review_progress_policy_stale"
     return progress, None
 
 
-def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, int]:
+def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, Any]:
     progress_summary = (progress or {}).get("summary") or {}
     pending = int(progress_summary.get("important_decisions_remaining") or 0)
     mixed = (progress or {}).get("mixed_players", {}).get("summary", {})
     mixed_pending = int(mixed.get("unresolved") or 0)
+    coverage_readiness = (progress or {}).get("coverage_readiness")
+    coverage_readiness_blocked = bool(
+        isinstance(coverage_readiness, dict)
+        and coverage_readiness.get("allows_finalize") is False
+    )
     # The progress artifact is the authoritative operator queue.  The reviewed
     # snapshot can still report technical conflicts after an operator has made
     # every available decision (for example a multi-slot tracker fragment).
@@ -243,14 +308,24 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
     # an actually actionable high-priority case.
     return {
         "blocking": pending + mixed_pending,
+        "actionable_blocking": pending + mixed_pending,
+        "coverage_readiness_blocked": coverage_readiness_blocked,
+        "overall_identity_blocked": bool(
+            pending or mixed_pending or coverage_readiness_blocked
+        ),
         "normal_blocking": pending,
         "mixed_blocking": mixed_pending,
         "important": pending + mixed_pending,
+        "semantic": int(progress_summary.get("semantic_decisions_remaining") or 0),
+        "coverage": int(progress_summary.get("coverage_decisions_remaining") or 0),
         "optional": int(progress_summary.get("optional_cases_remaining") or 0),
         "completed": int(progress_summary.get("review_units_completed") or 0),
         "total": int(progress_summary.get("review_units_actionable_total") or 0),
         "mixed_total": int(mixed.get("total") or 0),
         "mixed_resolved": int(mixed.get("resolved") or 0),
+        "coverage_readiness": coverage_readiness,
+        "identity_coverage": (progress or {}).get("identity_coverage"),
+        "workload": (progress or {}).get("workload"),
     }
 
 
@@ -265,8 +340,19 @@ def _step(step_id: str, status: str, locked_reason_code: str | None = None, lock
     return result
 
 
-def _blocker(code: str, step_id: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {"code": code, "step_id": step_id, "user_actionable": True, "details": details or {}}
+def _blocker(
+    code: str,
+    step_id: str,
+    details: dict[str, Any] | None = None,
+    *,
+    user_actionable: bool = True,
+) -> dict[str, Any]:
+    return {
+        "code": code,
+        "step_id": step_id,
+        "user_actionable": user_actionable,
+        "details": details or {},
+    }
 
 
 def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None) -> dict[str, Any]:
@@ -283,7 +369,7 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "optional": int(issues.get("optional") or 0)},
+        "issues": {"blocking": int(issues.get("blocking") or 0), "actionable_blocking": int(issues.get("actionable_blocking") or issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "coverage_readiness_blocked": bool(issues.get("coverage_readiness_blocked")), "overall_identity_blocked": bool(issues.get("overall_identity_blocked") or int(issues.get("blocking") or 0)), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload")},
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

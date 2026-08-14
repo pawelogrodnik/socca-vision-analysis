@@ -11,6 +11,7 @@ from app.services.identity_reviewed_active_cap import (
 )
 from app.services.identity_reviewed_correction_context import current_reviewed_decision
 from app.services.identity_reviewed_segments import load_segment_decisions
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 
 
 PROGRESS_FILENAME = "reviewed_identity_progress.json"
@@ -28,7 +29,7 @@ def validate_deferred_review_action(
     match_doc: dict[str, Any],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Authorize one save from the last materialized high-priority queue.
+    """Authorize one save from the last materialized coverage queue.
 
     The queue is a deliberate batch baseline. A dirty recompute marker does not
     invalidate it, so decisions two and three can still be saved before the one
@@ -80,7 +81,7 @@ def _load_batch_baseline(
     expected_match_id = str(match_doc.get("id") or match_path.name)
     valid = (
         progress is not None
-        and progress.get("schema_version") == "1.0.0"
+        and progress.get("schema_version") == PROGRESS_SCHEMA_VERSION
         and progress.get("status") == "ready"
         and str(progress.get("match_id") or "") == expected_match_id
         and isinstance(progress.get("next_cases"), list)
@@ -110,9 +111,14 @@ def _actionable_unit(
         raw_target_id = str(raw.get("review_target_id") or "").strip() or None
         if raw_target_id != target_id:
             continue
-        if raw.get("priority") != "high":
+        if raw.get("priority") not in {"high", "coverage"}:
             continue
-        if raw.get("current_resolution_status") != "pending_high_priority":
+        if raw.get("operator_actionable") is False:
+            continue
+        if raw.get("current_resolution_status") not in {
+            "pending_high_priority",
+            "pending_coverage_review",
+        }:
             continue
         if target_id is None:
             if raw_target_id is None and raw.get("scope_kind") in {None, "whole_subject"}:

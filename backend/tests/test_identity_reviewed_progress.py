@@ -15,10 +15,18 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             before = {path.name: path.read_bytes() for path in root.iterdir() if path.is_file()}
             progress = build_reviewed_identity_progress(root, _match())
             self.assertEqual(progress["summary"]["review_units_total"], 6)
-            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
             self.assertEqual(progress["summary"]["optional_cases_remaining"], 2)
             self.assertEqual(progress["summary"]["safe_anonymous_units"], 1)
             self.assertEqual(progress["summary"]["structural_blockers"], 2)
+            self.assertEqual(progress["summary"]["non_actionable_review_units"], 3)
+            self.assertEqual(
+                progress["summary"]["non_actionable_reason_counts"],
+                {
+                    "ambiguous_candidate_subject_membership": 2,
+                    "mixed_team_subject": 1,
+                },
+            )
             long = _unit(progress, "long")
             self.assertEqual(long["tracklet_count"], 2)
             self.assertEqual(long["detected_observation_count"], 120)
@@ -38,7 +46,7 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             self.assertEqual(long["current_resolution_status"], "reviewed_by_operator")
             self.assertEqual(progress["summary"]["completed_by_operator"], 1)
             self.assertEqual(progress["observations"]["operator_reviewed_observations"], 120)
-            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
 
     def test_many_long_unnamed_subjects_are_optional_not_blocking(self) -> None:
         with _workspace() as root:
@@ -240,7 +248,7 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                 subject["reason_codes"],
             )
 
-    def test_team_conflict_with_visual_evidence_is_blocking(self) -> None:
+    def test_team_conflict_with_visual_evidence_is_not_a_whole_subject_task(self) -> None:
         with _workspace() as root:
             _team_conflict_subject(
                 root,
@@ -249,11 +257,13 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
 
             progress = build_reviewed_identity_progress(root, _match())
 
-            self.assertEqual(progress["summary"]["important_decisions_remaining"], 1)
-            self.assertEqual(
-                _unit(progress, "subject")["current_resolution_status"],
-                "pending_high_priority",
-            )
+            subject = _unit(progress, "subject")
+            self.assertEqual(progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(subject["current_resolution_status"], "pending_high_priority")
+            self.assertFalse(subject["operator_actionable"])
+            self.assertEqual(subject["non_actionable_reason"], "mixed_team_subject")
+            self.assertEqual(progress["next_cases"], [])
+            self.assertFalse(progress["coverage_readiness"]["allows_finalize"])
 
     def test_progress_materializes_exact_detected_team_evidence(self) -> None:
         with _workspace() as root:
@@ -356,6 +366,42 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
 
             self.assertEqual(progress["summary"]["important_decisions_remaining"], 7)
             self.assertEqual(len(progress["next_cases"]), 7)
+
+    def test_mixed_player_subject_is_excluded_from_normal_queue(self) -> None:
+        with _workspace() as root:
+            _single_subject(
+                root,
+                team="A",
+                frames=range(1, 101),
+                card={
+                    "visual_evidence": {
+                        "anchor_crops": [{
+                            "anchor_crop_id": "mixed-crop",
+                            "tracklet_id": "tracklet",
+                            "frame": 50,
+                            "artifact": "crop.jpg",
+                        }],
+                    },
+                },
+            )
+            _write(root / "reviewed_identity_mixed_players.json", {
+                "schema_version": "1.0.0",
+                "mode": "reviewed_identity_mixed_players",
+                "cases": [{
+                    "candidate_subject_id": "subject",
+                    "resolution_status": "unresolved",
+                    "source_tracklet_ids": ["tracklet"],
+                    "observation_count": 100,
+                    "frame_start": 1,
+                    "frame_end": 100,
+                }],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            self.assertEqual(progress["next_cases"], [])
+            self.assertEqual(progress["review_units"], [])
+            self.assertEqual(progress["mixed_players"]["summary"]["unresolved"], 1)
 
 
 def _fixture(root: Path) -> None:

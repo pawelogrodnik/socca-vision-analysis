@@ -288,6 +288,27 @@ export function PublicMatchReportContent({
         </p>
       </section>
 
+      {report.identity_coverage && (
+        <section className='card public-identity-coverage'>
+          <div>
+            <h2>Kompletność rozpoznania zawodników</h2>
+            <p className='muted'>
+              Statystyki imienne obejmują tylko fragmenty przypisane konkretnym zawodnikom.
+              Rozpoznanie drużyny jest liczone osobno.
+            </p>
+          </div>
+          <div className='public-identity-coverage-grid'>
+            {Object.entries(report.identity_coverage.per_team)
+              .filter(([team]) => team === 'A' || team === 'B')
+              .map(([team, row]) => <div key={team}>
+                <strong>Team {team}</strong>
+                <span>Imiennie: {Math.round((row.named_observation_coverage || 0) * 100)}%</span>
+                <span>Drużyna znana: {Math.round((row.team_known_observation_coverage || 0) * 100)}%</span>
+              </div>)}
+          </div>
+        </section>
+      )}
+
       {leftTeam && rightTeam && (
         <section className='card team-comparison-card'>
           <h2>Statystyki drużyn</h2>
