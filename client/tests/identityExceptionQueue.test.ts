@@ -154,8 +154,14 @@ test('an empty team filter never masquerades as global review completion', () =>
 });
 
 
+test('an empty global queue does not finalize when canonical coverage readiness blocks', () => {
+  assert.equal(shouldFinalizeDeferredReview([], false, 0, false), false);
+  assert.equal(shouldFinalizeDeferredReview([], false, 0, true), true);
+});
+
+
 test('a dirty deferred decision remains authoritative when switching filters', () => {
-  assert.equal(shouldFinalizeDeferredReview([], true, 180), true);
+  assert.equal(shouldFinalizeDeferredReview([], true, 180, false), true);
 });
 
 

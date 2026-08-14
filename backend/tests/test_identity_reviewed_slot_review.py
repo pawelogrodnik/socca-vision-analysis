@@ -12,7 +12,10 @@ from app import main as app_main
 from app.services.identity_initial_audit_store import production_identity_snapshot
 from app.services.identity_reviewed_frame_uniqueness import build_frame_slot_demotions
 from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
-from app.services.identity_reviewed_slot_review import save_reviewed_slot_assignments
+from app.services.identity_reviewed_slot_review import (
+    save_reviewed_slot_assignments,
+    whole_subject_reviewability,
+)
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
 
 
@@ -335,6 +338,42 @@ class ReviewedSlotReviewTests(unittest.TestCase):
                 save_reviewed_slot_assignments(
                     root, candidates, [_create("mixed", "A")]
                 )
+            self.assertEqual(
+                whole_subject_reviewability(
+                    ambiguous_membership=True,
+                    detected_team_labels={"A"},
+                )["reason"],
+                "ambiguous_candidate_subject_membership",
+            )
+            self.assertEqual(
+                whole_subject_reviewability(
+                    ambiguous_membership=False,
+                    detected_team_labels={"A", "B"},
+                )["reason"],
+                "mixed_team_subject",
+            )
+
+    def test_shared_reviewability_accepts_the_same_single_team_subject_as_persistence(self) -> None:
+        with _workspace() as root:
+            candidates, _ = _prepare(
+                root,
+                ("safe", "safe-tracklet", "A", 1),
+                canonical_a=10,
+            )
+            reviewability = whole_subject_reviewability(
+                ambiguous_membership=False,
+                detected_team_labels={"A"},
+            )
+
+            document = save_reviewed_slot_assignments(
+                root,
+                candidates,
+                [_create("safe", "A")],
+            )
+
+            self.assertTrue(reviewability["actionable"])
+            self.assertIsNone(reviewability["reason"])
+            self.assertEqual(_decision(document, "safe")["stable_slot_id"], "A11")
 
     def test_unknown_team_does_not_make_subject_mixed(self) -> None:
         with _workspace() as root:

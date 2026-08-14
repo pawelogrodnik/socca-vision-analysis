@@ -11,6 +11,7 @@ from app.services.identity_reviewed_active_cap import (
 )
 from app.services.identity_reviewed_correction_context import current_reviewed_decision
 from app.services.identity_reviewed_segments import load_segment_decisions
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 
 
 PROGRESS_FILENAME = "reviewed_identity_progress.json"
@@ -80,7 +81,7 @@ def _load_batch_baseline(
     expected_match_id = str(match_doc.get("id") or match_path.name)
     valid = (
         progress is not None
-        and progress.get("schema_version") in {"1.0.0", "2.0.0"}
+        and progress.get("schema_version") == PROGRESS_SCHEMA_VERSION
         and progress.get("status") == "ready"
         and str(progress.get("match_id") or "") == expected_match_id
         and isinstance(progress.get("next_cases"), list)
@@ -111,6 +112,8 @@ def _actionable_unit(
         if raw_target_id != target_id:
             continue
         if raw.get("priority") not in {"high", "coverage"}:
+            continue
+        if raw.get("operator_actionable") is False:
             continue
         if raw.get("current_resolution_status") not in {
             "pending_high_priority",

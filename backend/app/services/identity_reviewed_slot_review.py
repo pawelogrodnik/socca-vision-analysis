@@ -33,6 +33,35 @@ ALLOWED_ACTIONS = frozenset(
 )
 
 
+def whole_subject_reviewability(
+    *,
+    ambiguous_membership: bool,
+    detected_team_labels: set[str],
+) -> dict[str, Any]:
+    """Describe whether one correction may safely cover the whole subject.
+
+    This is shared by queue construction and persistence validation so the UI
+    never offers a normal whole-subject task that the authoritative store must
+    reject for structural reasons.
+    """
+    normalized_teams = {
+        str(value).upper()
+        for value in detected_team_labels
+        if str(value).upper() in {"A", "B"}
+    }
+    if ambiguous_membership:
+        return {
+            "actionable": False,
+            "reason": "ambiguous_candidate_subject_membership",
+        }
+    if len(normalized_teams) > 1:
+        return {
+            "actionable": False,
+            "reason": "mixed_team_subject",
+        }
+    return {"actionable": True, "reason": None}
+
+
 def load_reviewed_slot_assignments(match_path: Path) -> dict[str, Any]:
     path = match_path / FILENAME
     if not path.exists():
@@ -393,11 +422,15 @@ def _validate_subject_team(
     *,
     allow_detected_team_override: bool = False,
 ) -> None:
-    if subject_id in ambiguous_subjects:
+    reviewability = whole_subject_reviewability(
+        ambiguous_membership=subject_id in ambiguous_subjects,
+        detected_team_labels=subject_teams.get(subject_id) or set(),
+    )
+    if reviewability["reason"] == "ambiguous_candidate_subject_membership":
         raise ValueError(f"ambiguous subject: {subject_id}")
-    teams = subject_teams.get(subject_id) or set()
-    if len(teams) > 1:
+    if reviewability["reason"] == "mixed_team_subject":
         raise ValueError(f"mixed-team subject: {subject_id}")
+    teams = subject_teams.get(subject_id) or set()
     if (
         not allow_detected_team_override
         and teams

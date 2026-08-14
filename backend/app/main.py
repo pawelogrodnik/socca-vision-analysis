@@ -88,6 +88,7 @@ from app.services.identity_reviewed_corrections import (
 )
 from app.services.identity_reviewed_coverage import paginate_progress
 from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
     build_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
 )
@@ -1992,7 +1993,7 @@ def get_match_reviewed_identity_progress(
         progress = (
             cached
             if isinstance(cached, dict)
-            and cached.get("schema_version") == "2.0.0"
+            and cached.get("schema_version") == PROGRESS_SCHEMA_VERSION
             and cached.get("source_snapshot_file") == snapshot_file
             else build_reviewed_identity_progress(path, read_match_meta(path))
         )

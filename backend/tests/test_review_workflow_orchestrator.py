@@ -11,6 +11,7 @@ from app.services.review_workflow_orchestrator import (
     finalize_review_for_qa,
     refresh_review_after_identity_mutation,
 )
+from app.services.review_workflow_state import WorkflowActionError
 from app.services.identity_reviewed_recompute_state import (
     mark_reviewed_identity_recompute_required,
 )
@@ -138,6 +139,35 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             stats.assert_called_once()
             self.assertTrue(render.call_args.kwargs["stats_already_current"])
 
+    def test_finalize_rejects_non_actionable_coverage_blocker_after_refresh(self) -> None:
+        blocked = {
+            "issues": {
+                "blocking": 0,
+                "coverage_readiness_blocked": True,
+                "overall_identity_blocked": True,
+            },
+            "allowed_actions": [],
+            "phase": "exceptions",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=ready_state(),
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value={"workflow": blocked, "snapshot": {}},
+        ), patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
+            "app.services.review_workflow_orchestrator.generate_reviewed_output"
+        ) as render:
+            with self.assertRaises(WorkflowActionError) as raised:
+                finalize_review_for_qa(Path(tmp), {"id": "m1"})
+
+            self.assertEqual(
+                raised.exception.code,
+                "identity_coverage_unresolved_without_reviewable_evidence",
+            )
+            stats.assert_not_called()
+            render.assert_not_called()
+
     def test_video_qa_correction_with_blocker_does_not_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
             "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
@@ -145,6 +175,26 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         ), patch("app.services.review_workflow_orchestrator.generate_reviewed_output") as render:
             result = after_video_qa_correction(Path(tmp), {"id": "m1"})
             self.assertEqual(result["workflow"]["phase"], "exceptions")
+            render.assert_not_called()
+
+    def test_video_qa_correction_with_non_actionable_coverage_blocker_does_not_render(self) -> None:
+        workflow = {
+            "issues": {
+                "blocking": 0,
+                "coverage_readiness_blocked": True,
+                "overall_identity_blocked": True,
+            },
+            "phase": "exceptions",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value={"workflow": workflow, "snapshot": {}},
+        ), patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
+            "app.services.review_workflow_orchestrator.generate_reviewed_output"
+        ) as render:
+            result = after_video_qa_correction(Path(tmp), {"id": "m1"})
+            self.assertEqual(result["workflow"]["phase"], "exceptions")
+            stats.assert_not_called()
             render.assert_not_called()
 
     def test_video_qa_correction_without_blocker_rebuilds_once_and_returns_to_qa(self) -> None:

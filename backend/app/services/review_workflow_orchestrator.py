@@ -159,8 +159,14 @@ def finalize_review_for_qa(
     assert_workflow_action_allowed(state, "finalize_identity")
     refreshed = refresh_review_after_identity_mutation(match_path, match_doc, source="finalize")
     state = refreshed["workflow"]
-    if state["issues"]["blocking"]:
-        raise WorkflowActionError("identity_issues_remaining", state, "finalize_identity")
+    if state["issues"].get("overall_identity_blocked") or state["issues"].get("blocking"):
+        code = (
+            "identity_coverage_unresolved_without_reviewable_evidence"
+            if state["issues"].get("coverage_readiness_blocked")
+            and not state["issues"].get("blocking")
+            else "identity_issues_remaining"
+        )
+        raise WorkflowActionError(code, state, "finalize_identity")
     snapshot = get_reviewed_identity_status(match_path)
     build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))
     job = generate_reviewed_output(
@@ -229,7 +235,7 @@ def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> di
         rebuild_seeded_candidates=False,
     )
     workflow = refreshed["workflow"]
-    if workflow["issues"]["blocking"]:
+    if workflow["issues"].get("overall_identity_blocked") or workflow["issues"].get("blocking"):
         return refreshed
     snapshot = get_reviewed_identity_status(match_path)
     build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))

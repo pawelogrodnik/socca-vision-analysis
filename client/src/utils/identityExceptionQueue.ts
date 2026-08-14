@@ -42,8 +42,13 @@ export function shouldFinalizeDeferredReview(
   cases: ReviewCaseWithUnit[],
   recomputeRequired = false,
   globalRemaining = cases.length,
+  coverageAllowsFinalize = true,
 ): boolean {
-  return recomputeRequired || (cases.length === 0 && globalRemaining === 0);
+  return recomputeRequired || (
+    cases.length === 0
+    && globalRemaining === 0
+    && coverageAllowsFinalize
+  );
 }
 
 

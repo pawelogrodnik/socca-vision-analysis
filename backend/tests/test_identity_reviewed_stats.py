@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.reviewed_match_report import build_reviewed_match_report
 
 
@@ -29,7 +30,7 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 encoding="utf-8",
             )
             progress = {
-                "schema_version": "2.0.0",
+                "schema_version": PROGRESS_SCHEMA_VERSION,
                 "source_snapshot_digest": "snapshot",
                 "coverage_readiness": {
                     "status": "incomplete",

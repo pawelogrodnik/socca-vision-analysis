@@ -9,6 +9,7 @@ from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
 )
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 
 
 class DeferredReviewedActionGateTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
             progress = json.loads(
                 (root / "reviewed_identity_progress.json").read_text(encoding="utf-8")
             )
-            progress["schema_version"] = "2.0.0"
+            progress["schema_version"] = PROGRESS_SCHEMA_VERSION
             _write(root / "reviewed_identity_progress.json", progress)
 
             result = validate_deferred_review_action(
@@ -250,7 +251,7 @@ def _baseline(root: Path, cases: list[dict]) -> None:
     _write(
         root / "reviewed_identity_progress.json",
         {
-            "schema_version": "1.0.0",
+            "schema_version": PROGRESS_SCHEMA_VERSION,
             "status": "ready",
             "match_id": "m1",
             "source_snapshot_digest": "snapshot-1",

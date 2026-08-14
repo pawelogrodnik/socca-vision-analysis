@@ -1819,7 +1819,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null };
+  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -1888,6 +1888,10 @@ export type ReviewedIdentityAtEntity = {
   bbox_xyxy?: number[] | null;
   review_target_id?: string | null;
   scope_kind?: 'whole_subject' | 'canonical_segment';
+  correction_scope?: 'whole_subject' | 'canonical_segment';
+  operator_actionable?: boolean;
+  non_actionable_reason?: string | null;
+  has_operator_visual_evidence?: boolean;
   source_ownership_digest?: string | null;
 };
 
@@ -2080,13 +2084,15 @@ export type ReviewedIdentityReviewProgress = {
     coverage_decisions_remaining: number;
     optional_cases_remaining: number;
     structural_blockers: number;
+    non_actionable_review_units?: number;
+    non_actionable_reason_counts?: Record<string, number>;
     ignored_low_impact: number;
     operator_decisions_saved: number;
     operator_queue_completion_ratio: number;
   };
   identity_coverage: ReviewedIdentityCoverage;
   coverage_readiness: ReviewedIdentityCoverageReadiness;
-  coverage_residuals: Record<string, Record<string, number>>;
+  coverage_residuals: Record<string, Record<string, unknown>>;
   workload: ReviewedIdentityWorkload;
   pagination: {
     offset: number;

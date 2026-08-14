@@ -19,7 +19,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v1-experimental"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v2-actionable-readiness"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -154,6 +154,7 @@ def apply_coverage_policy(
         unit
         for unit in units
         if unit.get("current_resolution_status") == "pending_high_priority"
+        and unit.get("operator_actionable") is not False
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -164,9 +165,15 @@ def apply_coverage_policy(
         if int(enriched["potential_named_observation_gain"]) <= 0:
             continue
         team = _team_label(enriched.get("coverage_team_label"))
-        if enriched.get("has_operator_visual_evidence"):
+        operator_actionable = enriched.get("operator_actionable") is not False
+        if operator_actionable and enriched.get("has_operator_visual_evidence"):
             candidates[team].append(enriched)
         else:
+            enriched["coverage_non_actionable_reason"] = (
+                enriched.get("non_actionable_reason")
+                if not operator_actionable
+                else "no_visual_evidence"
+            )
             unreviewable[team].append(enriched)
 
     coverage_blockers: list[dict[str, Any]] = []
@@ -190,6 +197,15 @@ def apply_coverage_policy(
             int(row.get("potential_named_observation_gain") or 0)
             for row in unreviewable.get(team, [])
         )
+        unreviewable_reason_counts = Counter(
+            str(row.get("coverage_non_actionable_reason") or "unknown")
+            for row in unreviewable.get(team, [])
+        )
+        unreviewable_observations_by_reason: Counter[str] = Counter()
+        for row in unreviewable.get(team, []):
+            unreviewable_observations_by_reason[
+                str(row.get("coverage_non_actionable_reason") or "unknown")
+            ] += int(row.get("potential_named_observation_gain") or 0)
         residual_budget = round(
             reliable * (1.0 - REVIEWED_OBSERVATION_TARGET_RATIO)
         )
@@ -217,8 +233,17 @@ def apply_coverage_policy(
             "residual_unreviewed_ratio": _ratio(residual, reliable),
             "residual_budget_observations": residual_budget,
             "coverage_cases": selected_count,
+            "low_impact_reviewable_units": max(0, len(rows) - selected_count),
+            "low_impact_reviewable_observations": max(
+                0,
+                reviewable_debt - selected_gain,
+            ),
             "unreviewable_observations": unreviewable_debt,
             "unreviewable_units": len(unreviewable.get(team, [])),
+            "unreviewable_reason_counts": dict(sorted(unreviewable_reason_counts.items())),
+            "unreviewable_observations_by_reason": dict(
+                sorted(unreviewable_observations_by_reason.items())
+            ),
         }
 
     semantic_sorted = sorted(
@@ -444,6 +469,11 @@ def _readiness(
                     "code": "coverage_evidence_unavailable",
                     "team_label": team,
                     "observations": row.get("unreviewable_observations"),
+                    "unreviewable_units": row.get("unreviewable_units"),
+                    "reason_counts": row.get("unreviewable_reason_counts"),
+                    "observations_by_reason": row.get(
+                        "unreviewable_observations_by_reason"
+                    ),
                 }
             )
     complete_roster_failures = []

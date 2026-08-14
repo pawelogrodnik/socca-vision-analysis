@@ -85,3 +85,15 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(form, /Zapisz \+ następny|navigation\.saveLabel/);
   assert.match(form, /persistReviewDecision/);
 });
+
+
+test('empty actionable queue renders an explicit canonical coverage blocker', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
+
+  assert.match(panel, /coverageReadiness\?\.allows_finalize === false/);
+  assert.match(panel, /Nie można zakończyć Review\./);
+  assert.match(panel, /nie ma bezpiecznych przypadków do ręcznego przypisania/);
+  assert.match(panel, /coverageBlockedWithoutCases \?/);
+  assert.match(panel, /cases\.length > 0 && <span className='reviewed-status-badge'>/);
+});

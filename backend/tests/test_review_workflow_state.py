@@ -120,6 +120,76 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(derive_review_workflow_state(evidence(issues=conflict))["phase"], "exceptions")
         self.assertEqual(derive_review_workflow_state(evidence(issues=resolved))["phase"], "ready_to_finalize")
 
+    def test_actionable_coverage_debt_keeps_existing_exception_queue(self) -> None:
+        issues = _issue_evidence({}, {
+            "summary": {
+                "important_decisions_remaining": 3,
+                "semantic_decisions_remaining": 0,
+                "coverage_decisions_remaining": 3,
+            },
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "significant_named_coverage_debt"}],
+            },
+        })
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(state["phase"], "exceptions")
+        self.assertEqual(state["issues"]["blocking"], 3)
+        self.assertTrue(state["issues"]["overall_identity_blocked"])
+        self.assertEqual(state["allowed_actions"], ["review_identity_issue"])
+        self.assertNotIn("finalize_identity", state["allowed_actions"])
+
+    def test_non_actionable_coverage_debt_blocks_without_fake_case(self) -> None:
+        issues = _issue_evidence({}, {
+            "summary": {
+                "important_decisions_remaining": 0,
+                "semantic_decisions_remaining": 0,
+                "coverage_decisions_remaining": 0,
+            },
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "coverage_evidence_unavailable"}],
+            },
+            "mixed_players": {"summary": {"unresolved": 0}},
+        })
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(state["phase"], "exceptions")
+        self.assertEqual(state["status"], "action_required")
+        self.assertEqual(state["issues"]["blocking"], 0)
+        self.assertEqual(state["issues"]["actionable_blocking"], 0)
+        self.assertTrue(state["issues"]["coverage_readiness_blocked"])
+        self.assertTrue(state["issues"]["overall_identity_blocked"])
+        self.assertEqual(state["allowed_actions"], [])
+        self.assertIsNone(state["required_action"])
+        self.assertEqual(
+            state["blockers"][0]["code"],
+            "identity_coverage_unresolved_without_reviewable_evidence",
+        )
+        self.assertFalse(state["blockers"][0]["user_actionable"])
+        exceptions = next(row for row in state["steps"] if row["id"] == "exceptions")
+        self.assertEqual(exceptions["remaining"], 0)
+
+    def test_empty_queue_with_ready_or_ready_with_review_coverage_can_finalize(self) -> None:
+        for readiness_status in ("ready", "ready_with_review"):
+            with self.subTest(readiness_status=readiness_status):
+                issues = _issue_evidence({}, {
+                    "summary": {"important_decisions_remaining": 0},
+                    "coverage_readiness": {
+                        "status": readiness_status,
+                        "allows_finalize": True,
+                        "blockers": [],
+                    },
+                })
+                state = derive_review_workflow_state(evidence(issues=issues))
+                self.assertEqual(state["phase"], "ready_to_finalize")
+                self.assertIn("finalize_identity", state["allowed_actions"])
+
     def test_approval_requires_exact_current_fingerprints(self) -> None:
         snapshot = {"semantic_digest": "identity"}
         stats = {"source_snapshot_digest": "identity", "players": []}

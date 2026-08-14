@@ -14,7 +14,10 @@ from app.services.identity_reviewed_coverage import (
     load_effective_coverage_context,
 )
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
-from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_slot_review import (
+    load_reviewed_slot_assignments,
+    whole_subject_reviewability,
+)
 from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
@@ -27,6 +30,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
+PROGRESS_SCHEMA_VERSION = "2.1.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -125,6 +129,11 @@ def build_reviewed_identity_progress(
     }
     units = [queue_by_key.get(_unit_key(unit), unit) for unit in units]
     counts = Counter(str(unit["current_resolution_status"]) for unit in units)
+    non_actionable_reason_counts = Counter(
+        str(unit.get("non_actionable_reason") or "unknown")
+        for unit in units
+        if unit.get("operator_actionable") is False
+    )
     observed_pairs = _all_detected_pairs(tracklets)
     operator_pairs = {
         pair
@@ -158,7 +167,7 @@ def build_reviewed_identity_progress(
     queue_total = completed + important_remaining
     mixed_queue = build_mixed_review_queue(match_path, match_doc)
     return {
-        "schema_version": "2.0.0",
+        "schema_version": PROGRESS_SCHEMA_VERSION,
         "status": "ready",
         "match_id": str(match_doc.get("id") or match_path.name),
         "source_snapshot_digest": coverage_context["source_snapshot_digest"],
@@ -177,6 +186,8 @@ def build_reviewed_identity_progress(
             "optional_cases_remaining": counts["pending_optional"],
             "safe_anonymous_units": counts["safe_anonymous"],
             "structural_blockers": counts["structurally_blocked"],
+            "non_actionable_review_units": sum(non_actionable_reason_counts.values()),
+            "non_actionable_reason_counts": dict(sorted(non_actionable_reason_counts.items())),
             "ignored_low_impact": counts["ignored_low_impact"],
             "operator_decisions_saved": counts["reviewed_by_operator"],
             "operator_queue_completion_ratio": _ratio(completed, queue_total),
@@ -271,6 +282,10 @@ def _unit(
     if any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
         structural = True
         reason_codes.append("ambiguous_candidate_subject_membership")
+    reviewability = whole_subject_reviewability(
+        ambiguous_membership=structural,
+        detected_team_labels=set(detected_team_labels),
+    )
     team_conflict = len(teams) > 1
     if team_conflict:
         reason_codes.append("conflicting_detected_team_labels")
@@ -336,6 +351,9 @@ def _unit(
         "canonical_player_id": canonical_player_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
+        "correction_scope": "whole_subject",
+        "operator_actionable": bool(reviewability["actionable"]),
+        "non_actionable_reason": reviewability["reason"],
         "has_operator_visual_evidence": has_operator_visual_evidence,
         "detected_pairs": sorted(pairs),
     }
@@ -352,6 +370,8 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "coverage_team_label", "potential_named_observation_gain",
         "potential_team_unnamed_share", "potential_named_coverage_gain_pp",
         "named_coverage_before", "named_coverage_after_max",
+        "correction_scope", "operator_actionable", "non_actionable_reason",
+        "has_operator_visual_evidence",
     )
     result = {key: unit.get(key) for key in keys}
     if include_pairs:
@@ -402,6 +422,9 @@ def _segment_units(
                 "candidate_subject_id": target.get("candidate_subject_id"),
                 "review_target_id": target.get("review_target_id"),
                 "scope_kind": "canonical_segment",
+                "correction_scope": "canonical_segment",
+                "operator_actionable": True,
+                "non_actionable_reason": None,
                 "tracklet_ids": tracklet_ids,
                 "tracklet_count": len(tracklet_ids),
                 "source_team_label": target.get("source_team_label") or "U",

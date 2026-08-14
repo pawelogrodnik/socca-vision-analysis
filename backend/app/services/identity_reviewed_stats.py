@@ -18,6 +18,7 @@ from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
 )
 from app.services.identity_reviewed_coverage import summarize_effective_observations
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.video import read_match_video_metadata
 
 
@@ -125,7 +126,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
     progress = _load(match_path / "reviewed_identity_progress.json")
     coverage_readiness = (
         progress.get("coverage_readiness")
-        if progress.get("schema_version") == "2.0.0"
+        if progress.get("schema_version") == PROGRESS_SCHEMA_VERSION
         and progress.get("source_snapshot_digest") == snapshot_digest
         else None
     )

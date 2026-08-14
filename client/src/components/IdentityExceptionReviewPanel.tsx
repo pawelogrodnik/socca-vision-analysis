@@ -13,6 +13,7 @@ import type {
   ReviewedCorrectionResponse,
   ReviewedIdentityAtEntity,
   ReviewedIdentityCoverage,
+  ReviewedIdentityCoverageReadiness,
   ReviewedIdentityReviewFilters,
   ReviewedIdentityReviewUnit,
   ReviewedIdentityWorkload,
@@ -120,6 +121,7 @@ export function IdentityExceptionReviewPanel({
   const [pageOffset, setPageOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [coverage, setCoverage] = useState<ReviewedIdentityCoverage | null>(null);
+  const [coverageReadiness, setCoverageReadiness] = useState<ReviewedIdentityCoverageReadiness | null>(null);
   const [workload, setWorkload] = useState<ReviewedIdentityWorkload | null>(null);
   const [activeTeamFilter, setActiveTeamFilter] = useState<TeamReviewFilter>('all');
   const [reviewFilters, setReviewFilters] = useState<ReviewedIdentityReviewFilters | null>(null);
@@ -166,6 +168,7 @@ export function IdentityExceptionReviewPanel({
       setPageOffset(progress.pagination?.offset ?? offset);
       setHasMore(progress.pagination?.has_more ?? false);
       setCoverage(progress.identity_coverage || null);
+      setCoverageReadiness(progress.coverage_readiness || null);
       setWorkload(progress.workload || null);
       setReviewFilters(progress.filters || null);
       if (shouldFinalizeDeferredReview(
@@ -174,6 +177,7 @@ export function IdentityExceptionReviewPanel({
         progress.filters?.counts.all
           ?? progress.pagination?.global_total_remaining
           ?? actionable.length,
+        progress.coverage_readiness?.allows_finalize !== false,
       )) {
         setCases([]);
         setIndex(0);
@@ -223,6 +227,8 @@ export function IdentityExceptionReviewPanel({
     ? 'Wszystkie'
     : matchTeamName(match.teams || [], activeTeamFilter);
   const globalRemaining = reviewFilters?.counts.all ?? totalRemaining;
+  const coverageBlockedWithoutCases = globalRemaining === 0
+    && coverageReadiness?.allows_finalize === false;
 
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;
@@ -431,7 +437,14 @@ export function IdentityExceptionReviewPanel({
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
         Odśwież Review
       </button>}
-    </div> : finalizing ? null : activeTeamFilter !== 'all' && totalRemaining === 0 && globalRemaining > 0 ? <div className='status identity-team-filter-empty'>
+    </div> : finalizing ? null : coverageBlockedWithoutCases ? <div className='status error identity-coverage-blocked' role='alert'>
+      <strong>Nie można zakończyć Review.</strong>
+      <p>Pozostała istotna liczba nierozpoznanych obserwacji, ale system nie ma bezpiecznych przypadków do ręcznego przypisania.</p>
+      <p>To wskazuje na problem jakości lub struktury identity. Review nie zostanie automatycznie zakończone ani opublikowane.</p>
+      {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
+        Odśwież Review
+      </button>}
+    </div> : activeTeamFilter !== 'all' && totalRemaining === 0 && globalRemaining > 0 ? <div className='status identity-team-filter-empty'>
       <strong>Brak pozostałych przypadków dla {activeTeamName}.</strong>
       <p>Możesz wybrać inną drużynę. Globalny Review nadal ma {globalRemaining} przypadków do sprawdzenia.</p>
     </div> : <div className='status'>

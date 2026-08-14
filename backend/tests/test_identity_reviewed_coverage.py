@@ -68,6 +68,10 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["semantic_blockers"], 0)
         self.assertEqual(policy["coverage_blockers"], 162)
         self.assertEqual(len(policy["next_cases"]), 162)
+        self.assertEqual(
+            policy["residual_by_team"]["A"]["low_impact_reviewable_units"],
+            18,
+        )
         self.assertEqual(policy["workload"]["level"], "elevated")
         self.assertFalse(policy["workload"]["queue_truncated"])
         self.assertFalse(policy["readiness"]["allows_finalize"])
@@ -393,6 +397,87 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             policy["readiness"]["blockers"][0]["code"],
             "coverage_evidence_unavailable",
         )
+        self.assertEqual(
+            policy["residual_by_team"]["A"]["unreviewable_reason_counts"],
+            {"no_visual_evidence": 1},
+        )
+
+    def test_structurally_ambiguous_visual_unit_is_not_promoted_and_debt_is_retained(self) -> None:
+        rows = [
+            _observation("ambiguous", frame, "A", "unresolved", None)
+            for frame in range(100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _match())
+        unit = _unit(
+            "ambiguous-subject",
+            [("ambiguous", frame) for frame in range(100)],
+            visual=True,
+        )
+        unit.update({
+            "current_resolution_status": "structurally_blocked",
+            "operator_actionable": False,
+            "non_actionable_reason": "ambiguous_candidate_subject_membership",
+        })
+
+        policy = apply_coverage_policy([unit], coverage, pair_index, _match())
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["residual_by_team"]["A"]["unreviewable_units"], 1)
+        self.assertEqual(
+            policy["residual_by_team"]["A"]["low_impact_reviewable_units"],
+            0,
+        )
+        self.assertEqual(
+            policy["residual_by_team"]["A"]["unreviewable_observations"],
+            100,
+        )
+        self.assertEqual(
+            policy["residual_by_team"]["A"]["unreviewable_reason_counts"],
+            {"ambiguous_candidate_subject_membership": 1},
+        )
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+        blocker = next(
+            row
+            for row in policy["readiness"]["blockers"]
+            if row["code"] == "coverage_evidence_unavailable"
+        )
+        self.assertEqual(
+            blocker["observations_by_reason"],
+            {"ambiguous_candidate_subject_membership": 100},
+        )
+
+    def test_reviewable_whole_subject_and_canonical_segment_remain_eligible(self) -> None:
+        rows = [
+            _observation("whole", frame, "A", "unresolved", None)
+            for frame in range(100)
+        ] + [
+            _observation("segment", frame, "A", "unresolved", None)
+            for frame in range(100, 200)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _match())
+        whole = _unit("whole", [("whole", frame) for frame in range(100)], visual=True)
+        whole.update({"operator_actionable": True, "correction_scope": "whole_subject"})
+        segment = _unit(
+            "segment",
+            [("segment", frame) for frame in range(100, 200)],
+            visual=True,
+        )
+        segment.update({
+            "operator_actionable": True,
+            "correction_scope": "canonical_segment",
+            "scope_kind": "canonical_segment",
+            "review_target_id": "segment-target",
+        })
+
+        policy = apply_coverage_policy([whole, segment], coverage, pair_index, _match())
+
+        self.assertEqual(policy["coverage_blockers"], 2)
+        self.assertEqual(
+            {row["candidate_subject_id"] for row in policy["next_cases"]},
+            {"whole", "segment"},
+        )
+        self.assertTrue(all(row["priority"] == "coverage" for row in policy["next_cases"]))
 
 
 def _match(scope_a: str | None = None) -> dict:
