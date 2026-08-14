@@ -1,5 +1,6 @@
 import type {
   ReviewedCorrectionFinalizeResponse,
+  ReviewedIdentityReviewQueue,
   ReviewedIdentityReviewUnit,
   ReviewWorkflow,
 } from '../types';
@@ -48,6 +49,22 @@ export function shouldFinalizeDeferredReview(
     cases.length === 0
     && globalRemaining === 0
     && coverageAllowsFinalize
+  );
+}
+
+
+export function shouldAutoFinalizeDeferredQueue(
+  queue: ReviewedIdentityReviewQueue,
+  cases: ReviewCaseWithUnit[],
+  recomputeRequired = false,
+  globalRemaining = cases.length,
+  coverageAllowsFinalize = true,
+): boolean {
+  return queue === 'required' && shouldFinalizeDeferredReview(
+    cases,
+    recomputeRequired,
+    globalRemaining,
+    coverageAllowsFinalize,
   );
 }
 

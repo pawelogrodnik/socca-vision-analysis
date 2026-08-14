@@ -3,6 +3,7 @@ from __future__ import annotations
 """Cheap fail-closed authorization for deferred exception-review saves."""
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from app.services.identity_reviewed_active_cap import (
 from app.services.identity_reviewed_correction_context import current_reviewed_decision
 from app.services.identity_reviewed_segments import load_segment_decisions
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_review_scope import review_scope_dependency_matches
 
 
 PROGRESS_FILENAME = "reviewed_identity_progress.json"
@@ -85,7 +87,9 @@ def _load_batch_baseline(
         and progress.get("status") == "ready"
         and str(progress.get("match_id") or "") == expected_match_id
         and isinstance(progress.get("next_cases"), list)
+        and isinstance(progress.get("optional_audit_cases", []), list)
         and bool(str(progress.get("source_snapshot_digest") or ""))
+        and review_scope_dependency_matches(match_doc, progress)
         and report is not None
         and str(report.get("snapshot_digest") or "")
         == str(progress.get("source_snapshot_digest") or "")
@@ -103,7 +107,7 @@ def _actionable_unit(
     subject_id: str,
     target_id: str | None,
 ) -> dict[str, Any] | None:
-    for raw in progress.get("next_cases") or []:
+    for queue, raw in _iter_authorized_review_units(progress):
         if not isinstance(raw, dict):
             continue
         if str(raw.get("candidate_subject_id") or "") != subject_id:
@@ -111,14 +115,9 @@ def _actionable_unit(
         raw_target_id = str(raw.get("review_target_id") or "").strip() or None
         if raw_target_id != target_id:
             continue
-        if raw.get("priority") not in {"high", "coverage"}:
-            continue
         if raw.get("operator_actionable") is False:
             continue
-        if raw.get("current_resolution_status") not in {
-            "pending_high_priority",
-            "pending_coverage_review",
-        }:
+        if not _authorized_queue_semantics(queue, raw):
             continue
         if target_id is None:
             if raw_target_id is None and raw.get("scope_kind") in {None, "whole_subject"}:
@@ -126,6 +125,25 @@ def _actionable_unit(
         elif raw.get("scope_kind") == "canonical_segment":
             return raw
     return None
+
+
+def _iter_authorized_review_units(
+    progress: dict[str, Any],
+) -> Iterator[tuple[str, Any]]:
+    for raw in progress.get("next_cases") or []:
+        yield "required", raw
+    for raw in progress.get("optional_audit_cases") or []:
+        yield "optional", raw
+
+
+def _authorized_queue_semantics(queue: str, unit: dict[str, Any]) -> bool:
+    if queue == "required":
+        return unit.get("priority") in {"high", "coverage"} and unit.get(
+            "current_resolution_status"
+        ) in {"pending_high_priority", "pending_coverage_review"}
+    return unit.get("priority") == "optional" and unit.get(
+        "current_resolution_status"
+    ) == "optional_team_audit"
 
 
 def _saved_decision(

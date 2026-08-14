@@ -26,7 +26,7 @@ import {
   removeResolvedReviewCase,
   resolveReviewPageNavigation,
   reviewUnitKey,
-  shouldFinalizeDeferredReview,
+  shouldAutoFinalizeDeferredQueue,
 } from '../utils/identityExceptionQueue';
 import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
 import {
@@ -179,7 +179,8 @@ export function IdentityExceptionReviewPanel({
       setWorkload(progress.workload || null);
       setReviewFilters(progress.filters || null);
       setOptionalAuditRemaining(progress.summary.optional_audit_cases_remaining || 0);
-      if (queue === 'required' && shouldFinalizeDeferredReview(
+      if (shouldAutoFinalizeDeferredQueue(
+        queue,
         actionable,
         progress.recompute_required,
         progress.filters?.counts.all
@@ -313,7 +314,7 @@ export function IdentityExceptionReviewPanel({
         activeTeamFilter,
         activeQueue,
       );
-    } else if (shouldFinalizeDeferredReview(next.cases)) {
+    } else if (shouldAutoFinalizeDeferredQueue(activeQueue, next.cases)) {
       void finalizeCorrections(activeTeamFilter, activeQueue);
     }
   }

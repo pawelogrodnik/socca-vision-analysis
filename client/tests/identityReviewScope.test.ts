@@ -49,10 +49,15 @@ test('Remaining Cases UI separates required and optional opponent audit', () => 
     resolve(import.meta.dirname, '../src/components/ReviewedIdentityCorrectionForm.tsx'),
     'utf8',
   );
+  const queueUtils = readFileSync(
+    resolve(import.meta.dirname, '../src/utils/identityExceptionQueue.ts'),
+    'utf8',
+  );
   assert.match(source, /Wymagane/);
   assert.match(source, /Audyt opcjonalny/);
   assert.match(source, /nie blokują publikacji/);
-  assert.match(source, /queue === 'required'/);
+  assert.match(source, /shouldAutoFinalizeDeferredQueue/);
+  assert.match(queueUtils, /queue === 'required'/);
   assert.match(source, /loadCases\(undefined, false, 0, 0, 'all', nextQueue\)/);
   assert.match(source, /pageOffset \+ REVIEW_PAGE_SIZE,[\s\S]*activeQueue/);
   assert.match(source, /Zapisz \+ następny/);

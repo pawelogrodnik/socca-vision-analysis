@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import tempfile
@@ -231,6 +232,95 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         finalize_snapshot.assert_not_called()
         seeded_rebuild.assert_not_called()
 
+    def test_optional_team_audit_deferred_payload_passes_real_action_gate(self) -> None:
+        from app.main import app
+        from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+        from app.services.identity_review_scope import identity_review_scope_digest
+
+        match = {
+            "id": "m1",
+            "identity_review_scope": {
+                "teams": {"A": "complete_roster", "B": "team_stats_only"}
+            },
+        }
+        optional_unit = {
+            "candidate_subject_id": "optional-b",
+            "review_target_id": None,
+            "scope_kind": "whole_subject",
+            "priority": "optional",
+            "operator_actionable": True,
+            "current_resolution_status": "optional_team_audit",
+        }
+        persisted = {
+            "saved_decision": {"candidate_subject_id": "optional-b"},
+            "effective_action": "assign_team",
+            "allocated_stable_slot_id": None,
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "persistence": {
+                "status": "saved",
+                "downstream_recompute_triggered": False,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "reviewed_identity_progress.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": PROGRESS_SCHEMA_VERSION,
+                        "status": "ready",
+                        "match_id": "m1",
+                        "source_snapshot_digest": "snapshot-1",
+                        "source_review_scope_digest": identity_review_scope_digest(match),
+                        "next_cases": [],
+                        "optional_audit_cases": [optional_unit],
+                        "deferred_correction_context": {
+                            "schema_version": "1.0.0",
+                            "status": "unavailable",
+                            "detected_team_evidence_status": "ready",
+                            "subjects": [
+                                {
+                                    "candidate_subject_id": "optional-b",
+                                    "source_team_label": "B",
+                                    "detected_team_labels": ["B"],
+                                    "detected_frames": [1],
+                                }
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "reviewed_identity_report.json").write_text(
+                json.dumps({"snapshot_digest": "snapshot-1"}),
+                encoding="utf-8",
+            )
+
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value=match
+            ), patch(
+                "app.main.persist_reviewed_identity_correction",
+                return_value=persisted,
+            ) as persist:
+                status, response = asyncio.run(_asgi_post_json(
+                    app,
+                    "/api/matches/m1/reviewed-identity/corrections",
+                    {
+                        "candidate_subject_id": "optional-b",
+                        "action": "assign_team",
+                        "team_label": "B",
+                        "defer_recompute": True,
+                    },
+                ))
+
+        self.assertEqual(status, 200)
+        self.assertTrue(response["recompute_deferred"])
+        persist.assert_called_once()
+        self.assertEqual(
+            persist.call_args.kwargs["trusted_materialized_detected_team_labels"],
+            {"optional-b": {"B"}},
+        )
+
     def test_deferred_gate_failure_returns_actionable_conflict(self) -> None:
         from fastapi import HTTPException
         from app.main import post_match_reviewed_identity_correction
@@ -454,6 +544,48 @@ class ReviewWorkflowApiTests(unittest.TestCase):
                 )
         self.assertEqual(raised.exception.status_code, 409)
         save.assert_not_called()
+
+
+async def _asgi_post_json(app, path: str, payload: dict) -> tuple[int, dict]:
+    body = json.dumps(payload).encode("utf-8")
+    request_sent = False
+    messages: list[dict] = []
+
+    async def receive() -> dict:
+        nonlocal request_sent
+        if request_sent:
+            return {"type": "http.disconnect"}
+        request_sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message: dict) -> None:
+        messages.append(message)
+
+    await app(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode("ascii"),
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+            "client": ("test", 1234),
+            "server": ("testserver", 80),
+            "root_path": "",
+        },
+        receive,
+        send,
+    )
+    status = next(message["status"] for message in messages if message["type"] == "http.response.start")
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return status, json.loads(response_body)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import {
   removeResolvedReviewCase,
   resolveReviewPageNavigation,
   reviewUnitKey,
+  shouldAutoFinalizeDeferredQueue,
   shouldFinalizeDeferredReview,
 } from '../src/utils/identityExceptionQueue.ts';
 
@@ -78,6 +79,23 @@ test('saved whole-subject and segment cases are removed by stable identity', () 
   assert.equal(next.index, 1);
   assert.equal(next.cases[next.index].unit.candidate_subject_id, 'C');
   assert.equal(shouldFinalizeDeferredReview(next.cases), false);
+});
+
+
+test('optional Save + Next stays in optional audit and never auto-finalizes an empty queue', () => {
+  const optionalCases = [{ unit: unit('optional-1') }, { unit: unit('optional-2') }];
+  const next = removeResolvedReviewCase(
+    optionalCases,
+    0,
+    reviewUnitKey(optionalCases[0].unit),
+  );
+  assert.deepEqual(
+    next.cases.map(({ unit: row }) => row.candidate_subject_id),
+    ['optional-2'],
+  );
+  assert.equal(shouldAutoFinalizeDeferredQueue('optional_audit', next.cases), false);
+  assert.equal(shouldAutoFinalizeDeferredQueue('optional_audit', [], true), false);
+  assert.equal(shouldAutoFinalizeDeferredQueue('required', []), true);
 });
 
 
