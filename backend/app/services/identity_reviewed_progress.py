@@ -23,6 +23,10 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     load_mixed_player_cases,
 )
+from app.services.identity_review_scope import (
+    identity_review_scope_digest,
+    identity_review_scope_read_model,
+)
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.video import read_match_video_metadata
@@ -30,7 +34,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.1.0"
+PROGRESS_SCHEMA_VERSION = "2.2.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -125,7 +129,11 @@ def build_reviewed_identity_progress(
         match_doc,
     )
     queue_by_key = {
-        _unit_key(unit): unit for unit in coverage_policy["next_cases"]
+        _unit_key(unit): unit
+        for unit in [
+            *coverage_policy["next_cases"],
+            *coverage_policy["optional_audit_cases"],
+        ]
     }
     units = [queue_by_key.get(_unit_key(unit), unit) for unit in units]
     counts = Counter(str(unit["current_resolution_status"]) for unit in units)
@@ -172,6 +180,8 @@ def build_reviewed_identity_progress(
         "match_id": str(match_doc.get("id") or match_path.name),
         "source_snapshot_digest": coverage_context["source_snapshot_digest"],
         "source_snapshot_file": reviewed_snapshot_file_fingerprint(match_path),
+        "source_review_scope_digest": identity_review_scope_digest(match_doc),
+        "identity_review_scope": identity_review_scope_read_model(match_doc),
         "summary": {
             "review_units_total": len(units),
             "review_units_completed": completed,
@@ -184,6 +194,9 @@ def build_reviewed_identity_progress(
             "semantic_decisions_remaining": coverage_policy["semantic_blockers"],
             "coverage_decisions_remaining": coverage_policy["coverage_blockers"],
             "optional_cases_remaining": counts["pending_optional"],
+            "optional_audit_cases_remaining": len(
+                coverage_policy["optional_audit_cases"]
+            ),
             "safe_anonymous_units": counts["safe_anonymous"],
             "structural_blockers": counts["structurally_blocked"],
             "non_actionable_review_units": sum(non_actionable_reason_counts.values()),
@@ -205,7 +218,11 @@ def build_reviewed_identity_progress(
         "coverage_readiness": coverage_policy["readiness"],
         "coverage_residuals": coverage_policy["residual_by_team"],
         "workload": coverage_policy["workload"],
+        "optional_audit": coverage_policy["optional_audit"],
         "next_cases": [_public_unit(unit) for unit in next_cases],
+        "optional_audit_cases": [
+            _public_unit(unit) for unit in coverage_policy["optional_audit_cases"]
+        ],
         "mixed_players": mixed_queue,
         "technical_diagnostics": {
             "candidate_subjects": len(subjects),

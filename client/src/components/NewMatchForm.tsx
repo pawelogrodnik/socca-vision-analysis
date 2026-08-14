@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Match, Team } from '../types';
+import type { IdentityReviewScopeChoice, Match, Team } from '../types';
 import { createMatch, listTeams } from '../api';
 import { errorMessage } from '../lib/helpers';
 import { selectedMatchRosterReadiness } from '../utils/matchRoster';
+import { scopeForPlayerStatsChoice } from '../utils/identityReviewScope';
+import { IdentityReviewScopeSelector } from './IdentityReviewScopeSelector';
 
 interface NewMatchFormProps {
   onCreated: (match: Match) => Promise<void> | void;
@@ -35,6 +37,7 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
   const [teamRegistry, setTeamRegistry] = useState<Team[]>([]);
   const [teamAId, setTeamAId] = useState('');
   const [teamBId, setTeamBId] = useState('');
+  const [playerStatsChoice, setPlayerStatsChoice] = useState<IdentityReviewScopeChoice>('A');
   const [video, setVideo] = useState<File | null>(null);
   const [isLoadingTeams, setIsLoadingTeams] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -67,7 +70,8 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
     }
     const teamA = teamRegistry.find((team) => teamKey(team) === teamAId);
     const teamB = teamRegistry.find((team) => teamKey(team) === teamBId);
-    const rosterStatus = selectedMatchRosterReadiness(teamA, teamB);
+    const reviewScope = scopeForPlayerStatsChoice(playerStatsChoice);
+    const rosterStatus = selectedMatchRosterReadiness(teamA, teamB, reviewScope);
     if (!rosterStatus.ready) {
       onError(rosterStatus.message || 'Uzupełnij roster meczu.');
       return;
@@ -84,6 +88,7 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
         venue,
         format,
         teams: selectedTeams,
+        identity_review_scope: reviewScope,
       });
       await onCreated(match);
     } catch (error) {
@@ -95,7 +100,8 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
 
   const teamA = teamRegistry.find((team) => teamKey(team) === teamAId);
   const teamB = teamRegistry.find((team) => teamKey(team) === teamBId);
-  const rosterStatus = selectedMatchRosterReadiness(teamA, teamB);
+  const reviewScope = scopeForPlayerStatsChoice(playerStatsChoice);
+  const rosterStatus = selectedMatchRosterReadiness(teamA, teamB, reviewScope);
   const canSubmit = !isSubmitting && Boolean(video) && rosterStatus.ready;
 
   return (
@@ -161,6 +167,12 @@ export function NewMatchForm({ onCreated, onError }: NewMatchFormProps) {
               </select>
             </label>
           </div>
+          <IdentityReviewScopeSelector
+            teams={[teamA, teamB]}
+            value={playerStatsChoice}
+            onChange={setPlayerStatsChoice}
+            disabled={isSubmitting || isLoadingTeams}
+          />
           {!isLoadingTeams && !rosterStatus.ready && <p className='error'>{rosterStatus.message}</p>}
       </section>
 

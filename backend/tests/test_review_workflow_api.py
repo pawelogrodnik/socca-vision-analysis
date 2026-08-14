@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,67 @@ FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for workflow API tests")
 class ReviewWorkflowApiTests(unittest.TestCase):
+    def test_scope_change_rebuilds_only_progress_and_preserves_identity_decisions(self) -> None:
+        from app.main import update_match_metadata
+        from app.models import MatchMetadataPayload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            match = {
+                "id": "m1",
+                "title": "Match",
+                "format": "7v7",
+                "status": "analyzed",
+                "teams": [
+                    {"id": "a", "name": "Corgi", "players": [{"id": "pa", "name": "Paweł"}]},
+                    {"id": "b", "name": "Verisk", "players": [{"id": "pb", "name": "Opponent"}]},
+                ],
+                "identity_review_scope": {
+                    "teams": {"A": "complete_roster", "B": "complete_roster"}
+                },
+            }
+            (root / "match.json").write_text(json.dumps(match), encoding="utf-8")
+            (root / "reviewed_identity_snapshot.json").write_text(
+                json.dumps({"semantic_digest": "snapshot"}), encoding="utf-8"
+            )
+            decisions = root / "reviewed_slot_assignments.json"
+            decisions.write_text(
+                json.dumps({"decisions": [{"candidate_subject_id": "subject", "action": "assign_team"}]}),
+                encoding="utf-8",
+            )
+            team_stats = root / "team_stats.json"
+            team_stats.write_text(
+                json.dumps({"teams": [{"team_label": "B", "observations": 1200}]}),
+                encoding="utf-8",
+            )
+            before_decisions = decisions.read_bytes()
+            before_team_stats = team_stats.read_bytes()
+            payload = MatchMetadataPayload(
+                title="Match",
+                format="7v7",
+                status="analyzed",
+                teams=match["teams"],
+                identity_review_scope={
+                    "teams": {"A": "complete_roster", "B": "team_stats_only"}
+                },
+            )
+            progress = {
+                "schema_version": "2.2.0",
+                "source_snapshot_digest": "snapshot",
+                "next_cases": [],
+            }
+
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.build_reviewed_identity_progress", return_value=progress
+            ) as build_progress, patch("app.main.refresh_review_after_identity_mutation") as identity_rebuild:
+                updated = update_match_metadata("m1", payload)
+
+            self.assertEqual(updated["identity_review_scope"]["teams"]["B"], "team_stats_only")
+            self.assertEqual(decisions.read_bytes(), before_decisions)
+            self.assertEqual(team_stats.read_bytes(), before_team_stats)
+            build_progress.assert_called_once()
+            identity_rebuild.assert_not_called()
+
     def test_publish_gate_rejects_direct_backend_bypass(self) -> None:
         from fastapi import HTTPException
         from app.main import _assert_publish_workflow

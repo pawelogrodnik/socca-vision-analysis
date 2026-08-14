@@ -79,6 +79,30 @@ class MatchRosterTests(unittest.TestCase):
         self.assertTrue(status["ready"])
         self.assertIsNone(status["code"])
 
+    def test_team_stats_only_allows_empty_opponent_roster(self) -> None:
+        status = match_roster_readiness({
+            "teams": [
+                _team("Corgi", "team-a", [_player("Pawel", "pawel")]),
+                _team("Verisk", "team-b", []),
+            ],
+            "identity_review_scope": {
+                "teams": {"A": "complete_roster", "B": "team_stats_only"},
+            },
+        })
+        self.assertTrue(status["ready"])
+
+    def test_complete_roster_still_rejects_empty_focus_roster(self) -> None:
+        status = match_roster_readiness({
+            "teams": [
+                _team("Corgi", "team-a", []),
+                _team("Verisk", "team-b", []),
+            ],
+            "identity_review_scope": {
+                "teams": {"A": "complete_roster", "B": "team_stats_only"},
+            },
+        })
+        self.assertEqual(status["code"], "empty_team_a_roster")
+
     def test_metadata_parser_generates_team_and_player_ids(self) -> None:
         teams = [
             _team("Corgi", None, [_player("Pawel")]),

@@ -14,6 +14,162 @@ from app.services.identity_reviewed_progress import reviewed_snapshot_file_finge
 
 
 class ReviewedIdentityCoverageTests(unittest.TestCase):
+    def test_team_stats_only_moves_clean_named_debt_to_optional_audit(self) -> None:
+        rows = [
+            _observation("a", frame, "A", "confirmed" if frame < 95 else "unresolved", "p1" if frame < 95 else None)
+            for frame in range(100)
+        ] + [
+            _observation("b", frame, "B", "unresolved", None)
+            for frame in range(200)
+        ]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        b_unit = _unit("b-subject", [("b", frame) for frame in range(200)], visual=True)
+        b_unit.update({"source_team_label": "B", "effective_team_label": "B"})
+
+        policy = apply_coverage_policy([b_unit], coverage, pair_index, match)
+
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(len(policy["optional_audit_cases"]), 1)
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+        self.assertEqual(policy["workload"]["remaining_cases"], 0)
+        self.assertEqual(
+            coverage["per_team"]["B"]["named_coverage_status"],
+            "not_required_by_scope",
+        )
+
+    def test_team_stats_only_does_not_hide_semantic_conflict(self) -> None:
+        rows = [_observation("b", frame, "B", "unresolved", None) for frame in range(100)]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        conflict = _unit("b-conflict", [("b", frame) for frame in range(100)], visual=True)
+        conflict.update({
+            "source_team_label": "A",
+            "effective_team_label": "B",
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["cross_team_conflict"],
+        })
+
+        policy = apply_coverage_policy([conflict], coverage, pair_index, match)
+
+        self.assertEqual(policy["semantic_blockers"], 1)
+        self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], "b-conflict")
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+
+    def test_team_stats_only_explains_non_actionable_team_uncertainty(self) -> None:
+        rows = [_observation("u", frame, "B", "unresolved", None) for frame in range(100)]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        uncertain = _unit("unknown-without-crops", [("u", frame) for frame in range(100)], visual=False)
+        uncertain.update({
+            "coverage_team_label": "B",
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "operator_actionable": False,
+            "non_actionable_reason": "missing_visual_evidence",
+        })
+
+        policy = apply_coverage_policy([uncertain], coverage, pair_index, match)
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+        cases = policy["residual_by_team"]["B"][
+            "non_actionable_required_team_uncertainty_cases"
+        ]
+        self.assertEqual(cases[0]["candidate_subject_id"], "unknown-without-crops")
+        self.assertIn("team_attribution_uncertain", cases[0]["reason_codes"])
+
+    def test_unknown_case_becomes_sufficient_after_assigning_team_stats_only_team(self) -> None:
+        rows = [_observation("u", frame, "U", "unresolved", None) for frame in range(100)]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        unknown = _unit("unknown", [("u", frame) for frame in range(100)], visual=True)
+        unknown.update({"source_team_label": "U", "effective_team_label": "U"})
+
+        before = apply_coverage_policy([unknown], coverage, pair_index, match)
+        reviewed = {
+            **unknown,
+            "effective_team_label": "B",
+            "current_decision": {"action": "assign_team", "team_label": "B"},
+            "current_resolution_status": "reviewed_by_operator",
+        }
+        after = apply_coverage_policy([reviewed], coverage, pair_index, match)
+
+        self.assertEqual(len(before["next_cases"]), 1)
+        self.assertEqual(after["next_cases"], [])
+        self.assertEqual(after["optional_audit_cases"], [])
+
+    def test_optional_audit_is_filtered_then_paginated_without_affecting_workload(self) -> None:
+        optional = [_queue_unit(f"b-{index:03d}", "B", priority="optional") for index in range(75)]
+        progress = {
+            "next_cases": [_queue_unit("required-a", "A")],
+            "optional_audit_cases": optional,
+            "workload": {"remaining_cases": 1, "level": "normal"},
+        }
+
+        page = paginate_progress(
+            progress,
+            queue="optional_audit",
+            team_label="B",
+            offset=20,
+            limit=20,
+        )
+
+        self.assertEqual(page["queue"], "optional_audit")
+        self.assertEqual(len(page["next_cases"]), 20)
+        self.assertEqual(page["pagination"]["total_remaining"], 75)
+        self.assertEqual(page["next_cases"][0]["candidate_subject_id"], "b-020")
+        self.assertEqual(page["workload"]["remaining_cases"], 1)
+
+    def test_scope_switch_reclassifies_named_debt_without_losing_the_review_unit(self) -> None:
+        rows = [
+            _observation("b", frame, "B", "unresolved", None)
+            for frame in range(200)
+        ]
+        review_unit = _unit(
+            "b-subject",
+            [("b", frame) for frame in range(200)],
+            visual=True,
+        )
+        review_unit.update({"source_team_label": "B", "effective_team_label": "B"})
+        team_only = _scoped_match()
+        both_complete = _scoped_match()
+        both_complete["identity_review_scope"]["teams"]["B"] = "complete_roster"
+
+        optional_coverage, optional_pairs = summarize_effective_observations(
+            rows,
+            team_only,
+        )
+        required_coverage, required_pairs = summarize_effective_observations(
+            rows,
+            both_complete,
+        )
+        optional = apply_coverage_policy(
+            [review_unit],
+            optional_coverage,
+            optional_pairs,
+            team_only,
+        )
+        required = apply_coverage_policy(
+            [review_unit],
+            required_coverage,
+            required_pairs,
+            both_complete,
+        )
+
+        self.assertEqual(optional["next_cases"], [])
+        self.assertEqual(
+            optional["optional_audit_cases"][0]["candidate_subject_id"],
+            "b-subject",
+        )
+        self.assertEqual(
+            required["next_cases"][0]["candidate_subject_id"],
+            "b-subject",
+        )
+        self.assertEqual(required["optional_audit_cases"], [])
+
     def test_snapshot_file_fingerprint_changes_without_rehashing_identity_sources(self) -> None:
         with TemporaryDirectory() as directory:
             match_path = Path(directory)
@@ -488,6 +644,15 @@ def _match(scope_a: str | None = None) -> dict:
         "id": "match",
         "teams": [team_a, {"team_label": "B", "players": []}],
     }
+
+
+def _scoped_match() -> dict:
+    match = _match()
+    match["identity_review_scope"] = {
+        "schema_version": "1.0.0",
+        "teams": {"A": "complete_roster", "B": "team_stats_only"},
+    }
+    return match
 
 
 def _observation(

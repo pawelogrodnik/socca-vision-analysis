@@ -55,6 +55,9 @@ def build_reviewed_match_report(match_path: Path) -> dict[str, Any]:
     report["identity_coverage_readiness"] = package[
         "reviewed_stats_readiness"
     ].get("coverage_readiness")
+    report["identity_review_scope"] = package["reviewed_stats_readiness"].get(
+        "identity_review_scope"
+    )
     return report
 
 

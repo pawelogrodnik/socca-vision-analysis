@@ -15,6 +15,7 @@ import type {
   ReviewedIdentityCoverage,
   ReviewedIdentityCoverageReadiness,
   ReviewedIdentityReviewFilters,
+  ReviewedIdentityReviewQueue,
   ReviewedIdentityReviewUnit,
   ReviewedIdentityWorkload,
   ReviewWorkflow,
@@ -43,6 +44,7 @@ type Props = {
   workflow: ReviewWorkflow;
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
   onRetryReview?: () => Promise<void>;
+  initialQueue?: ReviewedIdentityReviewQueue;
 };
 
 type ReviewCase = {
@@ -110,6 +112,7 @@ export function IdentityExceptionReviewPanel({
   workflow,
   onWorkflowChanged,
   onRetryReview,
+  initialQueue = 'required',
 }: Props) {
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
@@ -125,6 +128,8 @@ export function IdentityExceptionReviewPanel({
   const [workload, setWorkload] = useState<ReviewedIdentityWorkload | null>(null);
   const [activeTeamFilter, setActiveTeamFilter] = useState<TeamReviewFilter>('all');
   const [reviewFilters, setReviewFilters] = useState<ReviewedIdentityReviewFilters | null>(null);
+  const [activeQueue, setActiveQueue] = useState<ReviewedIdentityReviewQueue>(initialQueue);
+  const [optionalAuditRemaining, setOptionalAuditRemaining] = useState(0);
   const finalizeInFlight = useRef(false);
   const loadRequestIdRef = useRef(0);
   const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
@@ -135,6 +140,7 @@ export function IdentityExceptionReviewPanel({
     offset = 0,
     preferredIndex = 0,
     teamFilter: TeamReviewFilter = activeTeamFilter,
+    queue: ReviewedIdentityReviewQueue = activeQueue,
   ): Promise<ReviewCase[]> {
     const requestId = ++loadRequestIdRef.current;
     setLoading(true);
@@ -149,6 +155,7 @@ export function IdentityExceptionReviewPanel({
           offset,
           REVIEW_PAGE_SIZE,
           apiTeamFilter(teamFilter),
+          queue,
         ),
       ]);
       if (ignore?.() || requestId !== loadRequestIdRef.current) return [];
@@ -159,7 +166,7 @@ export function IdentityExceptionReviewPanel({
       }
       const cardsBySubject = cardsBySubjectRef.current || new Map();
       const actionable = progress.next_cases
-        .filter((item) => item.priority === 'high' || item.priority === 'coverage')
+        .filter((item) => ['high', 'coverage', 'optional'].includes(item.priority || ''))
         .map((unit) => ({
           unit,
           card: cardsBySubject.get(unit.candidate_subject_id) || null,
@@ -171,7 +178,8 @@ export function IdentityExceptionReviewPanel({
       setCoverageReadiness(progress.coverage_readiness || null);
       setWorkload(progress.workload || null);
       setReviewFilters(progress.filters || null);
-      if (shouldFinalizeDeferredReview(
+      setOptionalAuditRemaining(progress.summary.optional_audit_cases_remaining || 0);
+      if (queue === 'required' && shouldFinalizeDeferredReview(
         actionable,
         progress.recompute_required,
         progress.filters?.counts.all
@@ -181,7 +189,7 @@ export function IdentityExceptionReviewPanel({
       )) {
         setCases([]);
         setIndex(0);
-        void finalizeCorrections(teamFilter);
+        void finalizeCorrections(teamFilter, queue);
         return [];
       }
       setCases(actionable);
@@ -200,11 +208,12 @@ export function IdentityExceptionReviewPanel({
   useEffect(() => {
     let disposed = false;
     setActiveTeamFilter('all');
-    void loadCases(() => disposed, false, 0, 0, 'all');
+    setActiveQueue(initialQueue);
+    void loadCases(() => disposed, false, 0, 0, 'all', initialQueue);
     return () => { disposed = true; };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [match.id]);
+  }, [initialQueue, match.id]);
 
   const reviewCase = cases[index] || null;
   const card = reviewCase?.card || null;
@@ -238,7 +247,19 @@ export function IdentityExceptionReviewPanel({
     setPageOffset(0);
     setTotalRemaining(0);
     setMessage('');
-    void loadCases(undefined, false, 0, 0, nextFilter);
+    void loadCases(undefined, false, 0, 0, nextFilter, activeQueue);
+  }
+
+  function changeQueue(nextQueue: ReviewedIdentityReviewQueue) {
+    if (nextQueue === activeQueue || loading || finalizing) return;
+    setActiveQueue(nextQueue);
+    setActiveTeamFilter('all');
+    setCases([]);
+    setIndex(0);
+    setPageOffset(0);
+    setTotalRemaining(0);
+    setMessage('');
+    void loadCases(undefined, false, 0, 0, 'all', nextQueue);
   }
 
   function moveToCase(nextIndex: number) {
@@ -264,6 +285,7 @@ export function IdentityExceptionReviewPanel({
         destination.offset,
         destination.index,
         activeTeamFilter,
+        activeQueue,
       );
     }
   }
@@ -289,13 +311,17 @@ export function IdentityExceptionReviewPanel({
         pageOffset + REVIEW_PAGE_SIZE,
         0,
         activeTeamFilter,
+        activeQueue,
       );
     } else if (shouldFinalizeDeferredReview(next.cases)) {
-      void finalizeCorrections(activeTeamFilter);
+      void finalizeCorrections(activeTeamFilter, activeQueue);
     }
   }
 
-  async function finalizeCorrections(teamFilter: TeamReviewFilter = activeTeamFilter) {
+  async function finalizeCorrections(
+    teamFilter: TeamReviewFilter = activeTeamFilter,
+    queue: ReviewedIdentityReviewQueue = activeQueue,
+  ) {
     if (finalizeInFlight.current) return;
     finalizeInFlight.current = true;
     setFinalizing(true);
@@ -304,7 +330,7 @@ export function IdentityExceptionReviewPanel({
     try {
       const { result } = await finalizeDeferredReviewBatch(
         () => finalizeReviewedIdentityCorrections(match.id),
-        () => loadCases(undefined, true, 0, 0, teamFilter),
+        () => loadCases(undefined, true, 0, 0, teamFilter, queue),
         onWorkflowChanged,
       );
       if (result.workflow.phase === 'exceptions') {
@@ -330,9 +356,15 @@ export function IdentityExceptionReviewPanel({
       <div className='identity-exception-heading'>
         <p className='eyebrow'>Krok 2</p>
         <h2>Pozostałe przypadki</h2>
-        <p>Najpierw pokażemy konflikty, a potem największe nierozpoznane fragmenty wpływające na statystyki zawodników.</p>
+        <p>{activeQueue === 'required'
+          ? 'Te przypadki trzeba rozwiązać, aby zakończyć Review.'
+          : 'To dobrowolny audyt drużyny. Pozostałe przypadki nie blokują zakończenia Review.'}</p>
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
+        <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
+          <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
+          <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Audyt opcjonalny <span>{optionalAuditRemaining}</span></button>
+        </nav>
         <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
           {filterOptions.map((option) => <button
             type='button'
@@ -347,7 +379,9 @@ export function IdentityExceptionReviewPanel({
         {activeTeamFilter !== 'all' && <small>Łącznie pozostało: {globalRemaining}</small>}
         {caseTimeRange && <strong>{caseTimeRange}</strong>}
         {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} wykrytych obserwacji</span>}
-        <small>{requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)}</small>
+        <small>{activeQueue === 'required'
+          ? requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)
+          : `${totalRemaining} opcjonalnych — nie blokują publikacji`}</small>
       </div>
     </header>
 
@@ -362,7 +396,9 @@ export function IdentityExceptionReviewPanel({
         className={activeTeamFilter === team ? 'active-team' : ''}
       >
         <strong>{matchTeamName(match.teams || [], team as 'A' | 'B')}</strong>
-        <span>Imiennie {Math.round((row.named_observation_coverage || 0) * 100)}%</span>
+        <span>Imiennie {Math.round((row.named_observation_coverage || 0) * 100)}%
+          {row.named_coverage_status === 'not_required_by_scope' ? ' · informacyjnie' : ''}
+        </span>
         <progress
           max={1}
           value={row.named_observation_coverage || 0}
@@ -379,6 +415,10 @@ export function IdentityExceptionReviewPanel({
       {reviewCase.unit.scope_kind === 'canonical_segment' && <div className='status'>
         <strong>System połączył w jednym tracklecie różne osoby.</strong>
         <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
+      </div>}
+      {activeQueue === 'optional_audit' && <div className='status identity-coverage-impact'>
+        <strong>Audyt opcjonalny — decyzja nie jest wymagana.</strong>
+        <p>Możesz sprawdzić, czy to rzeczywiście zawodnik tej drużyny, albo przejść dalej bez decyzji.</p>
       </div>}
       {reviewCase.unit.priority === 'coverage' && <div className='status identity-coverage-impact'>
         <strong>Ten fragment ma duży wpływ na kompletność statystyk.</strong>
@@ -456,10 +496,11 @@ export function IdentityExceptionReviewPanel({
     </div>}
     {finalizing && <p className='loading-line'><span className='spinner' /> Przeliczam Review po zapisaniu decyzji…</p>}
     {message && <p className={`status${finalizeFailed ? ' error' : ''}`}>{message}</p>}
+    {activeQueue === 'optional_audit' && !reviewCase && !loading && <button type='button' className='secondary' onClick={() => changeQueue('required')}>Wróć do wymaganych</button>}
     {finalizeFailed && <button
       type='button'
       className='secondary'
-      onClick={() => void finalizeCorrections(activeTeamFilter)}
+      onClick={() => void finalizeCorrections(activeTeamFilter, activeQueue)}
       disabled={finalizing}
     >Ponów przeliczenie Review</button>}
   </section>;

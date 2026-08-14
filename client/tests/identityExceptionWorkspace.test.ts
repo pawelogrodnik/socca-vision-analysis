@@ -69,7 +69,7 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(panel, /Przypadek \{pageOffset \+ index \+ 1\} z \{totalRemaining\}/);
   assert.match(panel, /identity-team-review-filter/);
   assert.match(panel, /teamReviewFilterOptions\(match\.teams \|\| \[\], reviewFilters\)/);
-  assert.match(panel, /item\.priority === 'high' \|\| item\.priority === 'coverage'/);
+  assert.match(panel, /\['high', 'coverage', 'optional'\]\.includes/);
   assert.match(panel, /progress\.pagination\?\.total_remaining/);
   assert.match(panel, /pageOffset \+ REVIEW_PAGE_SIZE/);
   assert.match(panel, /Pokrycie rozpoznania/);

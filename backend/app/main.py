@@ -39,6 +39,7 @@ from app.services.identity_initial_audit_store import (
     OperatorDecisionBudgetExceededError,
     load_initial_identity_audit_seeds,
     save_initial_identity_audit_seeds,
+    write_identity_json_atomic,
 )
 from app.services.identity_product_flow_state import (
     ProductFlowStateError,
@@ -91,6 +92,11 @@ from app.services.identity_reviewed_progress import (
     PROGRESS_SCHEMA_VERSION,
     build_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
+)
+from app.services.identity_review_scope import (
+    identity_review_scope_digest,
+    review_scope_dependency_matches,
+    validate_identity_review_scope,
 )
 from app.services.identity_reviewed_recompute_state import (
     reviewed_identity_recompute_required,
@@ -277,6 +283,7 @@ def parse_metadata_form(
     venue: str | None,
     format: str,
     teams_json: str | None,
+    identity_review_scope_json: str | None = None,
 ) -> dict[str, Any]:
     teams: list[dict[str, Any]] = []
     if teams_json:
@@ -287,6 +294,17 @@ def parse_metadata_form(
         if not isinstance(loaded, list):
             raise HTTPException(status_code=400, detail="teams_json must be a JSON array")
         teams = loaded
+    review_scope = None
+    if identity_review_scope_json:
+        try:
+            review_scope = validate_identity_review_scope(
+                json.loads(identity_review_scope_json)
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid identity_review_scope_json: {exc}",
+            ) from exc
     payload = MatchMetadataPayload(
         title=title,
         match_date=match_date or None,
@@ -295,8 +313,11 @@ def parse_metadata_form(
         format=format or "7v7",
         status="uploaded",
         teams=teams,
+        identity_review_scope=review_scope,
     )
     metadata = payload.model_dump()
+    if metadata.get("identity_review_scope") is None:
+        metadata.pop("identity_review_scope", None)
     from app.services.match_roster import require_match_roster
 
     require_match_roster(metadata, require_player_ids=False)
@@ -896,6 +917,7 @@ def create_match(
     venue: str | None = Form(None),
     format: str = Form("7v7"),
     teams_json: str | None = Form(None),
+    identity_review_scope_json: str | None = Form(None),
 ) -> dict[str, Any]:
     if APP_MODE == "production-viewer":
         raise HTTPException(status_code=403, detail="Video upload is disabled in production-viewer mode")
@@ -909,6 +931,11 @@ def create_match(
             venue=venue,
             format=format,
             teams_json=teams_json,
+            identity_review_scope_json=(
+                identity_review_scope_json
+                if isinstance(identity_review_scope_json, str)
+                else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1153,9 +1180,29 @@ def get_match(match_id: str) -> dict[str, Any]:
 def update_match_metadata(match_id: str, payload: MatchMetadataPayload) -> dict[str, Any]:
     path = match_dir(match_id)
     meta = read_match_meta(path)
-    next_metadata = with_generated_ids(payload.model_dump())
+    previous_scope_digest = identity_review_scope_digest(meta)
+    next_metadata = payload.model_dump()
+    if next_metadata.get("identity_review_scope") is None:
+        next_metadata.pop("identity_review_scope", None)
+    next_metadata = with_generated_ids(next_metadata)
+    if next_metadata.get("identity_review_scope") is not None:
+        try:
+            next_metadata["identity_review_scope"] = validate_identity_review_scope(
+                next_metadata["identity_review_scope"]
+            )
+            from app.services.match_roster import require_match_roster
+
+            require_match_roster(next_metadata)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     meta.update(next_metadata)
     write_match_meta(path, meta)
+    if (
+        identity_review_scope_digest(meta) != previous_scope_digest
+        and (path / "reviewed_identity_snapshot.json").exists()
+    ):
+        progress = build_reviewed_identity_progress(path, meta)
+        write_identity_json_atomic(path / "reviewed_identity_progress.json", progress)
     return meta
 
 
@@ -1979,6 +2026,7 @@ def get_match_reviewed_identity_progress(
     offset: int = 0,
     limit: int = 20,
     team_label: Literal["A", "B"] | None = None,
+    queue: Literal["required", "optional_audit"] = "required",
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
@@ -1995,6 +2043,7 @@ def get_match_reviewed_identity_progress(
             if isinstance(cached, dict)
             and cached.get("schema_version") == PROGRESS_SCHEMA_VERSION
             and cached.get("source_snapshot_file") == snapshot_file
+            and review_scope_dependency_matches(read_match_meta(path), cached)
             else build_reviewed_identity_progress(path, read_match_meta(path))
         )
         return {
@@ -2003,6 +2052,7 @@ def get_match_reviewed_identity_progress(
                 offset=offset,
                 limit=limit,
                 team_label=team_label,
+                queue=queue,
             ),
             "recompute_required": reviewed_identity_recompute_required(path),
         }

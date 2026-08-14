@@ -136,6 +136,7 @@ export async function createMatch(input: {
   venue?: string;
   format: string;
   teams: Team[];
+  identity_review_scope?: import('./types').IdentityReviewScope;
 }): Promise<Match> {
   const body = new FormData();
   body.append('title', input.title);
@@ -145,6 +146,9 @@ export async function createMatch(input: {
   if (input.season) body.append('season', input.season);
   if (input.venue) body.append('venue', input.venue);
   body.append('teams_json', JSON.stringify(input.teams));
+  if (input.identity_review_scope) {
+    body.append('identity_review_scope_json', JSON.stringify(input.identity_review_scope));
+  }
   return request<Match>('/api/matches', { method: 'POST', body });
 }
 
@@ -244,12 +248,14 @@ export async function getReviewedIdentityReviewProgress(
   offset = 0,
   limit = 20,
   teamLabel?: import('./types').ReviewedIdentityTeamFilterLabel,
+  queue: import('./types').ReviewedIdentityReviewQueue = 'required',
 ): Promise<ReviewedIdentityReviewProgress> {
   const query = new URLSearchParams({
     offset: String(offset),
     limit: String(limit),
   });
   if (teamLabel) query.set('team_label', teamLabel);
+  query.set('queue', queue);
   return request<ReviewedIdentityReviewProgress>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?${query}`,
   );

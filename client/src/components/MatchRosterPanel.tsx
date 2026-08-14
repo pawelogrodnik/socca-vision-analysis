@@ -2,13 +2,18 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listTeams } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { Match, Team } from '../types';
+import type { IdentityReviewScope, IdentityReviewScopeChoice, Match, Team } from '../types';
+import {
+  playerStatsChoiceFromScope,
+  scopeForPlayerStatsChoice,
+} from '../utils/identityReviewScope';
+import { IdentityReviewScopeSelector } from './IdentityReviewScopeSelector';
 
 interface MatchRosterPanelProps {
   match: Match;
   disabled?: boolean;
   surface?: 'card' | 'panel';
-  onSave: (teams: Team[]) => Promise<void> | void;
+  onSave: (teams: Team[], scope: IdentityReviewScope) => Promise<void> | void;
   onStatus: (message: string) => void;
 }
 
@@ -38,6 +43,9 @@ export function MatchRosterPanel({
   const [teamRegistry, setTeamRegistry] = useState<Team[]>([]);
   const [teamAKey, setTeamAKey] = useState('');
   const [teamBKey, setTeamBKey] = useState('');
+  const [playerStatsChoice, setPlayerStatsChoice] = useState<IdentityReviewScopeChoice>(
+    playerStatsChoiceFromScope(match.identity_review_scope),
+  );
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -48,6 +56,7 @@ export function MatchRosterPanel({
       setTeamRegistry(teams);
       setTeamAKey(findRegistryKey(teams, match.teams?.[0]));
       setTeamBKey(findRegistryKey(teams, match.teams?.[1]));
+      setPlayerStatsChoice(playerStatsChoiceFromScope(match.identity_review_scope));
     } catch (error) {
       onStatus(errorMessage(error));
     } finally {
@@ -64,7 +73,7 @@ export function MatchRosterPanel({
     if (teamRegistry.length === 0) return;
     setTeamAKey(findRegistryKey(teamRegistry, match.teams?.[0]));
     setTeamBKey(findRegistryKey(teamRegistry, match.teams?.[1]));
-  }, [match.teams, teamRegistry]);
+  }, [match.identity_review_scope, match.teams, teamRegistry]);
 
   async function saveRoster() {
     if (isSaving || disabled) return;
@@ -83,7 +92,7 @@ export function MatchRosterPanel({
 
     setIsSaving(true);
     try {
-      await onSave(nextTeams);
+      await onSave(nextTeams, scopeForPlayerStatsChoice(playerStatsChoice));
       onStatus(
         nextTeams.length > 0
           ? `Zapisano roster meczu: ${nextTeams.map((team) => team.name).join(' / ')}.`
@@ -95,6 +104,9 @@ export function MatchRosterPanel({
       setIsSaving(false);
     }
   }
+
+  const selectedTeamA = teamByKey(teamRegistry, teamAKey);
+  const selectedTeamB = teamByKey(teamRegistry, teamBKey);
 
   return (
     <div className={surface === 'card' ? 'card workflow-card' : 'team-picker'}>
@@ -113,6 +125,13 @@ export function MatchRosterPanel({
           </button>
         </div>
       </div>
+
+      <IdentityReviewScopeSelector
+        teams={[selectedTeamA, selectedTeamB]}
+        value={playerStatsChoice}
+        onChange={setPlayerStatsChoice}
+        disabled={disabled || isLoading || isSaving}
+      />
 
       {(match.teams || []).length > 0 && (
         <div className='team-snapshot'>
@@ -181,6 +200,7 @@ export function MatchRosterPanel({
           onClick={() => {
             setTeamAKey('');
             setTeamBKey('');
+            setPlayerStatsChoice('A');
           }}
           disabled={disabled || isSaving}
         >
