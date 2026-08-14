@@ -11,6 +11,7 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
+from app.services.identity_reviewed_action_gate import validate_deferred_review_action
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
     get_reviewed_identity_status,
@@ -481,6 +482,62 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(result["saved_decision"]["player_id"], "p1")
             self.assertTrue((root / "reviewed_identity_recompute_required.json").exists())
             self.assertFalse((root / "reviewed_identity_snapshot.json").exists())
+
+    def test_optional_gate_context_persists_cross_team_roster_correction(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            progress = build_reviewed_identity_progress(root, _match())
+            optional = next(
+                row
+                for row in progress["review_units"]
+                if row["candidate_subject_id"] == "s2"
+            )
+            optional.update(
+                priority="optional",
+                current_resolution_status="optional_team_audit",
+                operator_actionable=True,
+            )
+            progress.update(
+                status="ready",
+                source_snapshot_digest="snapshot-1",
+                next_cases=[
+                    row
+                    for row in progress["next_cases"]
+                    if row["candidate_subject_id"] != "s2"
+                ],
+                optional_audit_cases=[optional],
+            )
+            _write(root / "reviewed_identity_progress.json", progress)
+            _write(
+                root / "reviewed_identity_report.json",
+                {"snapshot_digest": "snapshot-1"},
+            )
+            payload = {
+                "candidate_subject_id": "s2",
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "defer_recompute": True,
+            }
+
+            gate = validate_deferred_review_action(root, _match(), payload)
+            result = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                payload,
+                trusted_materialized_detected_team_labels=gate[
+                    "detected_team_labels_by_subject"
+                ],
+            )
+
+            self.assertTrue(result["recompute_deferred"])
+            self.assertEqual(result["saved_decision"]["source_team_label"], "B")
+            self.assertEqual(result["saved_decision"]["team_label"], "A")
+            self.assertEqual(result["saved_decision"]["player_id"], "p1")
+            self.assertTrue(result["saved_decision"]["team_correction"])
+            self.assertTrue(
+                (root / "reviewed_identity_recompute_required.json").exists()
+            )
 
     def test_deferred_terminal_actions_persist_immediately(self) -> None:
         for action in ("unresolved", "referee", "false_detection"):

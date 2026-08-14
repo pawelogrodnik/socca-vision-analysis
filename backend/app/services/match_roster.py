@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.identity_review_scope import TEAM_STATS_ONLY, team_review_scope
+
 
 def match_roster_readiness(
     match_document_or_teams: dict[str, Any] | list[dict[str, Any]],
     *,
     require_player_ids: bool = True,
 ) -> dict[str, Any]:
+    match_document = (
+        match_document_or_teams
+        if isinstance(match_document_or_teams, dict)
+        else {"teams": match_document_or_teams}
+    )
     teams = (
         match_document_or_teams.get("teams") or []
         if isinstance(match_document_or_teams, dict)
@@ -21,9 +28,15 @@ def match_roster_readiness(
         return _not_ready("missing_team_b", "Wybierz Team B z rosterem zawodników.")
     if _same_team(team_a, team_b):
         return _not_ready("duplicate_teams", "Team A i Team B muszą być różnymi drużynami.")
-    if not _valid_players(team_a, require_player_ids=require_player_ids):
+    if (
+        team_review_scope(match_document, "A") != TEAM_STATS_ONLY
+        and not _valid_players(team_a, require_player_ids=require_player_ids)
+    ):
         return _not_ready("empty_team_a_roster", "Team A musi mieć co najmniej jednego zawodnika w rosterze.")
-    if not _valid_players(team_b, require_player_ids=require_player_ids):
+    if (
+        team_review_scope(match_document, "B") != TEAM_STATS_ONLY
+        and not _valid_players(team_b, require_player_ids=require_player_ids)
+    ):
         return _not_ready("empty_team_b_roster", "Team B musi mieć co najmniej jednego zawodnika w rosterze.")
     return {"ready": True, "code": None, "detail": None}
 

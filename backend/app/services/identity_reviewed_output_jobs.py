@@ -12,6 +12,7 @@ from typing import Any
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_video import (
     RENDERER_VERSION,
     render_reviewed_video,
@@ -61,10 +62,12 @@ def _generate_reviewed_output(
     stats_already_current: bool,
 ) -> dict[str, Any]:
     source_video_digest = reviewed_source_video_digest(match_path, match_doc)
+    review_scope_digest = identity_review_scope_digest(match_doc)
     key = canonical_digest(
         {
             "snapshot": snapshot["semantic_digest"],
             "source_video": source_video_digest,
+            "identity_review_scope": review_scope_digest,
             "options": options,
             "renderer_version": RENDERER_VERSION,
         }
@@ -100,6 +103,7 @@ def _generate_reviewed_output(
             "options": options,
             "renderer_version": RENDERER_VERSION,
             "source_snapshot_digest": snapshot["semantic_digest"],
+            "source_review_scope_digest": review_scope_digest,
             "source_video_digest": source_video_digest,
             "error": None,
         }
@@ -229,17 +233,20 @@ def _run(
                 "match_id": snapshot.get("match_id"),
                 "job_key": job_key,
                 "reviewed_identity": {"status": "fresh", "digest": snapshot["semantic_digest"]},
+                "source_review_scope_digest": identity_review_scope_digest(match_doc),
                 "video": {
                     "status": "completed",
                     "path": "reviewed_video.mp4",
                     "digest": manifest["digest"],
                     "source_snapshot_digest": snapshot["semantic_digest"],
+                    "source_review_scope_digest": identity_review_scope_digest(match_doc),
                 },
                 "minimap": manifest["minimap"],
                 "semantic_checks": manifest["semantic_checks"],
                 "stats": {
                     "status": "completed",
                     "source_snapshot_digest": snapshot["semantic_digest"],
+                    "source_review_scope_digest": identity_review_scope_digest(match_doc),
                     "players": len(stats["reviewed_player_stats.json"].get("players") or []),
                 },
                 "stale": False,

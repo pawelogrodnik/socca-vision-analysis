@@ -28,6 +28,7 @@ class MatchMetadataPayload(BaseModel):
     format: str = "7v7"
     status: str = "draft"  # draft | uploaded | calibrated | analyzed | reviewed | published
     teams: list[TeamPayload] = Field(default_factory=list, min_length=0, max_length=8)
+    identity_review_scope: dict[str, object] | None = None
 
 
 class PitchConfigPayload(BaseModel):

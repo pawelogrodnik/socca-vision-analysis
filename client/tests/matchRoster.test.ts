@@ -48,3 +48,21 @@ test('different Team A and Team B rosters are ready', () => {
     message: null,
   });
 });
+
+test('team-stats-only opponent does not require named roster players', () => {
+  assert.equal(
+    selectedMatchRosterReadiness(corgi, team('Verisk', 'team-b', []), {
+      teams: { A: 'complete_roster', B: 'team_stats_only' },
+    }).ready,
+    true,
+  );
+});
+
+test('complete-roster focus team still requires a named roster player', () => {
+  assert.equal(
+    selectedMatchRosterReadiness(team('Corgi', 'team-a', []), verisk, {
+      teams: { A: 'complete_roster', B: 'team_stats_only' },
+    }).code,
+    'empty_team_a_roster',
+  );
+});

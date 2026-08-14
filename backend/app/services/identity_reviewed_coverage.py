@@ -15,11 +15,18 @@ from typing import Any, Iterable
 from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
 )
+from app.services.identity_review_scope import (
+    COMPLETE_ROSTER,
+    SUPPORTED_TEAM_SCOPES,
+    TEAM_STATS_ONLY,
+    identity_review_scope_read_model,
+    team_review_scope,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v2-actionable-readiness"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v3-per-team-scope"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -30,12 +37,7 @@ WORKLOAD_THRESHOLDS = {
     "excessive": 500,
     "critical": 1000,
 }
-ROSTER_SCOPES = {
-    "complete_roster",
-    "partial_roster",
-    "players_of_interest",
-    "unspecified",
-}
+ROSTER_SCOPES = SUPPORTED_TEAM_SCOPES
 RELIABLE_STATUSES = frozenset(
     {"confirmed", "unresolved", "conflicted", "blocked", "team_unknown"}
 )
@@ -157,15 +159,41 @@ def apply_coverage_policy(
         and unit.get("operator_actionable") is not False
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    optional_audit: dict[str, list[dict[str, Any]]] = defaultdict(list)
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for unit in units:
         if unit in semantic or _has_explicit_disposition(unit, match_doc):
             continue
         enriched = _coverage_impact(unit, pair_index, coverage)
-        if int(enriched["potential_named_observation_gain"]) <= 0:
-            continue
         team = _team_label(enriched.get("coverage_team_label"))
         operator_actionable = enriched.get("operator_actionable") is not False
+        if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+            if _has_team_uncertainty(enriched):
+                enriched["reason_codes"] = sorted(
+                    set(enriched.get("reason_codes") or [])
+                    | {"team_attribution_uncertain"}
+                )
+                if operator_actionable and enriched.get("has_operator_visual_evidence"):
+                    enriched["current_resolution_status"] = "pending_high_priority"
+                    enriched["priority"] = "high"
+                    semantic.append(enriched)
+                else:
+                    non_actionable_team_uncertainty[team].append(enriched)
+                continue
+            if int(enriched["potential_named_observation_gain"]) <= 0:
+                continue
+            if operator_actionable and enriched.get("has_operator_visual_evidence"):
+                enriched["current_resolution_status"] = "optional_team_audit"
+                enriched["priority"] = "optional"
+                enriched["reason_codes"] = sorted(
+                    set(enriched.get("reason_codes") or [])
+                    | {"team_stats_only_optional_identity_audit"}
+                )
+                optional_audit[team].append(enriched)
+            continue
+        if int(enriched["potential_named_observation_gain"]) <= 0:
+            continue
         if operator_actionable and enriched.get("has_operator_visual_evidence"):
             candidates[team].append(enriched)
         else:
@@ -178,9 +206,16 @@ def apply_coverage_policy(
 
     coverage_blockers: list[dict[str, Any]] = []
     residual_by_team: dict[str, dict[str, Any]] = {}
-    for team in sorted(set((coverage.get("per_team") or {}).keys()) | set(candidates) | set(unreviewable)):
+    for team in sorted(
+        set((coverage.get("per_team") or {}).keys())
+        | set(candidates)
+        | set(unreviewable)
+        | set(optional_audit)
+        | set(non_actionable_team_uncertainty)
+    ):
         team_coverage = (coverage.get("per_team") or {}).get(team) or {}
         reliable = int(team_coverage.get("reliable_observations") or 0)
+        scope = team_review_scope(match_doc, team)
         rows = sorted(
             candidates.get(team, []),
             key=lambda row: (
@@ -206,10 +241,12 @@ def apply_coverage_policy(
             unreviewable_observations_by_reason[
                 str(row.get("coverage_non_actionable_reason") or "unknown")
             ] += int(row.get("potential_named_observation_gain") or 0)
-        residual_budget = round(
-            reliable * (1.0 - REVIEWED_OBSERVATION_TARGET_RATIO)
+        residual_budget = round(reliable * (1.0 - REVIEWED_OBSERVATION_TARGET_RATIO))
+        required_gain = (
+            0
+            if scope == TEAM_STATS_ONLY
+            else max(0, reviewable_debt + unreviewable_debt - residual_budget)
         )
-        required_gain = max(0, reviewable_debt + unreviewable_debt - residual_budget)
         selected_gain = 0
         selected_count = 0
         for row in rows:
@@ -226,6 +263,9 @@ def apply_coverage_policy(
             selected_count += 1
         residual = max(0, reviewable_debt + unreviewable_debt - selected_gain)
         residual_by_team[team] = {
+            "scope": scope,
+            "named_player_review_required": scope != TEAM_STATS_ONLY,
+            "team_stats_required": True,
             "reliable_observations": reliable,
             "unreviewed_unnamed_observations": reviewable_debt + unreviewable_debt,
             "selected_coverage_gain": selected_gain,
@@ -244,6 +284,32 @@ def apply_coverage_policy(
             "unreviewable_observations_by_reason": dict(
                 sorted(unreviewable_observations_by_reason.items())
             ),
+            "optional_audit_cases": len(optional_audit.get(team, [])),
+            "non_actionable_required_team_uncertainty_units": len(
+                non_actionable_team_uncertainty.get(team, [])
+            ),
+            "non_actionable_required_team_uncertainty_observations": sum(
+                int(row.get("detected_observation_count") or 0)
+                for row in non_actionable_team_uncertainty.get(team, [])
+            ),
+            "non_actionable_required_team_uncertainty_cases": [
+                {
+                    "candidate_subject_id": row.get("candidate_subject_id"),
+                    "detected_observation_count": int(
+                        row.get("detected_observation_count") or 0
+                    ),
+                    "coverage_team_label": row.get("coverage_team_label"),
+                    "effective_team_label": row.get("effective_team_label"),
+                    "reason_codes": list(row.get("reason_codes") or []),
+                }
+                for row in sorted(
+                    non_actionable_team_uncertainty.get(team, []),
+                    key=lambda value: (
+                        -int(value.get("detected_observation_count") or 0),
+                        str(value.get("candidate_subject_id") or ""),
+                    ),
+                )
+            ],
         }
 
     semantic_sorted = sorted(
@@ -263,6 +329,14 @@ def apply_coverage_policy(
             str(unit.get("candidate_subject_id") or ""),
         ),
     )
+    optional_sorted = sorted(
+        [row for rows in optional_audit.values() for row in rows],
+        key=lambda unit: (
+            -int(unit.get("detected_observation_count") or 0),
+            -float(unit.get("detected_time_sec") or 0.0),
+            str(unit.get("candidate_subject_id") or ""),
+        ),
+    )
     workload_count = len(semantic_sorted) + len(coverage_sorted)
     readiness = _readiness(
         coverage,
@@ -270,9 +344,11 @@ def apply_coverage_policy(
         match_doc,
         semantic_count=len(semantic_sorted),
         coverage_count=len(coverage_sorted),
+        non_actionable_team_uncertainty=non_actionable_team_uncertainty,
     )
     return {
         "next_cases": [*semantic_sorted, *coverage_sorted],
+        "optional_audit_cases": optional_sorted,
         "semantic_blockers": len(semantic_sorted),
         "coverage_blockers": len(coverage_sorted),
         "residual_by_team": residual_by_team,
@@ -283,6 +359,13 @@ def apply_coverage_policy(
             "diagnostic_only": True,
             "queue_truncated": False,
         },
+        "optional_audit": {
+            "remaining_cases": len(optional_sorted),
+            "blocking": False,
+            "per_team": {
+                team: len(rows) for team, rows in sorted(optional_audit.items())
+            },
+        },
     }
 
 
@@ -292,8 +375,12 @@ def paginate_progress(
     offset: int = 0,
     limit: int = DEFAULT_PAGE_SIZE,
     team_label: str | None = None,
+    queue: str = "required",
 ) -> dict[str, Any]:
-    cases = list(progress.get("next_cases") or [])
+    if queue not in {"required", "optional_audit"}:
+        raise ValueError("queue must be required or optional_audit")
+    source_key = "next_cases" if queue == "required" else "optional_audit_cases"
+    cases = list(progress.get(source_key) or [])
     active_team_label = _validated_filter_team_label(team_label)
     classified_cases = [
         (unit, review_case_team_label(unit))
@@ -308,18 +395,25 @@ def paginate_progress(
     public_progress = {
         key: value
         for key, value in progress.items()
-        if key not in {"review_units", "deferred_correction_context"}
+        if key not in {
+            "review_units",
+            "deferred_correction_context",
+            "next_cases",
+            "optional_audit_cases",
+        }
     }
     safe_offset = max(0, int(offset))
     safe_limit = min(MAX_PAGE_SIZE, max(1, int(limit)))
     page = filtered_cases[safe_offset : safe_offset + safe_limit]
     return {
         **public_progress,
+        "queue": queue,
         "next_cases": [
             {**unit, "filter_team_label": review_case_team_label(unit)}
             for unit in page
         ],
         "filters": {
+            "queue": queue,
             "active_team_label": active_team_label,
             "counts": {
                 "all": len(cases),
@@ -362,19 +456,7 @@ def _validated_filter_team_label(team_label: str | None) -> str | None:
 
 
 def roster_scope(match_doc: dict[str, Any], team_label: str) -> str:
-    team = next(
-        (
-            row
-            for row in match_doc.get("teams") or []
-            if _team_label(row.get("team_label") or row.get("label")) == team_label
-        ),
-        {},
-    )
-    configured = str(team.get("identity_coverage_scope") or "").strip()
-    if not configured:
-        scopes = match_doc.get("identity_review_scope") or {}
-        configured = str((scopes.get("teams") or {}).get(team_label) or "").strip()
-    return configured if configured in ROSTER_SCOPES else "unspecified"
+    return team_review_scope(match_doc, team_label)
 
 
 def workload_level(case_count: int) -> str:
@@ -454,13 +536,29 @@ def _readiness(
     *,
     semantic_count: int,
     coverage_count: int,
+    non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     if semantic_count:
         blockers.append({"code": "semantic_identity_conflicts", "count": semantic_count})
     if coverage_count:
         blockers.append({"code": "significant_named_coverage_debt", "count": coverage_count})
+    for team, units in non_actionable_team_uncertainty.items():
+        if units:
+            blockers.append(
+                {
+                    "code": "team_attribution_evidence_unavailable",
+                    "team_label": team,
+                    "units": len(units),
+                    "observations": sum(
+                        int(unit.get("detected_observation_count") or 0)
+                        for unit in units
+                    ),
+                }
+            )
     for team, row in residual_by_team.items():
+        if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+            continue
         if int(row.get("unreviewable_observations") or 0) > int(
             row.get("residual_budget_observations") or 0
         ):
@@ -478,7 +576,7 @@ def _readiness(
             )
     complete_roster_failures = []
     for team, row in (coverage.get("per_team") or {}).items():
-        if roster_scope(match_doc, team) != "complete_roster":
+        if roster_scope(match_doc, team) != COMPLETE_ROSTER:
             continue
         ratio = row.get("named_observation_coverage")
         if ratio is None or float(ratio) < COMPLETE_ROSTER_NAMED_TARGET_RATIO:
@@ -513,6 +611,7 @@ def _readiness(
         "reviewed_observation_target_ratio": REVIEWED_OBSERVATION_TARGET_RATIO,
         "complete_roster_named_target_ratio": COMPLETE_ROSTER_NAMED_TARGET_RATIO,
         "roster_scope": scopes,
+        "identity_review_scope": identity_review_scope_read_model(match_doc),
         "blockers": blockers,
         "allows_finalize": status in {"ready", "ready_with_review"},
     }
@@ -541,7 +640,13 @@ def _coverage_row(
     conflicted = counts["conflicted"] + counts["blocked"]
     ignored = sum(counts[status] for status in IGNORED_STATUSES)
     return {
+        "scope": scope,
         "roster_scope": scope,
+        "named_player_review_required": scope != TEAM_STATS_ONLY,
+        "team_stats_required": True,
+        "named_coverage_status": (
+            "not_required_by_scope" if scope == TEAM_STATS_ONLY else "required"
+        ),
         "reliable_observations": reliable,
         "confirmed_named_observations": confirmed,
         "named_observation_coverage": _ratio(confirmed, reliable),
@@ -581,3 +686,19 @@ def _load(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _has_team_uncertainty(unit: dict[str, Any]) -> bool:
+    if _team_label(unit.get("effective_team_label")) == "U":
+        return True
+    markers = (
+        "conflict",
+        "contradict",
+        "cross_team",
+        "team_mismatch",
+    )
+    return any(
+        marker in str(reason).lower()
+        for reason in unit.get("reason_codes") or []
+        for marker in markers
+    )

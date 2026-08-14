@@ -10,6 +10,7 @@ from app.services.identity_reviewed_action_gate import (
     validate_deferred_review_action,
 )
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_review_scope import identity_review_scope_digest
 
 
 class DeferredReviewedActionGateTests(unittest.TestCase):
@@ -90,24 +91,72 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 ):
                     validate_deferred_review_action(root, {"id": "m1"}, payload)
 
-    def test_absent_and_optional_units_are_rejected(self) -> None:
-        optional = {
-            **_whole("optional"),
-            "priority": "optional",
-            "current_resolution_status": "pending_optional",
-        }
+    def test_optional_team_audit_whole_subject_actions_are_actionable(self) -> None:
+        actions = (
+            {"action": "assign_team", "team_label": "B"},
+            {"action": "assign_roster_player", "player_id": "team-a-player"},
+            {"action": "referee"},
+            {"action": "false_detection"},
+            {"action": "mixed_players", "mixed_hint": "unknown"},
+            {"action": "unresolved"},
+        )
+        for action in actions:
+            with self.subTest(action=action), _workspace() as root:
+                match_doc = _scoped_match()
+                _baseline(root, [], [_optional("optional-b")], match_doc)
+                result = validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {"candidate_subject_id": "optional-b", **action},
+                )
+                self.assertEqual(result["review_unit"]["priority"], "optional")
+                self.assertEqual(
+                    result["review_unit"]["current_resolution_status"],
+                    "optional_team_audit",
+                )
+
+    def test_absent_and_malformed_optional_units_are_rejected(self) -> None:
+        malformed = (
+            {**_optional("wrong-priority"), "priority": "coverage"},
+            {
+                **_optional("wrong-status"),
+                "current_resolution_status": "pending_optional",
+            },
+            {**_optional("not-actionable"), "operator_actionable": False},
+        )
         with _workspace() as root:
-            _baseline(root, [_whole("s1"), optional])
-            for subject_id in ("missing", "optional"):
+            match_doc = _scoped_match()
+            _baseline(root, [_whole("s1")], list(malformed), match_doc)
+            for subject_id in (
+                "missing",
+                "wrong-priority",
+                "wrong-status",
+                "not-actionable",
+            ):
                 with self.subTest(subject_id=subject_id), self.assertRaises(
                     DeferredReviewActionError
                 ) as raised:
                     validate_deferred_review_action(
                         root,
-                        {"id": "m1"},
+                        match_doc,
                         {"candidate_subject_id": subject_id, "action": "unresolved"},
                     )
                 self.assertEqual(raised.exception.code, "review_unit_not_actionable")
+
+    def test_scope_change_makes_optional_batch_stale(self) -> None:
+        with _workspace() as root:
+            complete = _scoped_match(b_scope="complete_roster")
+            current = _scoped_match(b_scope="team_stats_only")
+            _baseline(root, [], [_optional("optional-b")], complete)
+
+            with self.assertRaises(DeferredReviewActionError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    current,
+                    {"candidate_subject_id": "optional-b", "action": "unresolved"},
+                )
+
+            self.assertEqual(raised.exception.code, "review_queue_stale")
 
     def test_missing_malformed_or_clearly_stale_queue_fails_closed(self) -> None:
         with _workspace() as root:
@@ -205,6 +254,53 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 )
                 self.assertFalse(result["idempotent_replay"])
 
+    def test_dirty_marker_does_not_block_later_optional_unit_from_same_batch(self) -> None:
+        with _workspace() as root:
+            match_doc = _scoped_match()
+            _baseline(
+                root,
+                [],
+                [_optional("optional-1"), _optional("optional-2")],
+                match_doc,
+            )
+            validate_deferred_review_action(
+                root,
+                match_doc,
+                {
+                    "candidate_subject_id": "optional-1",
+                    "action": "assign_team",
+                    "team_label": "B",
+                },
+            )
+            _write(
+                root / "reviewed_identity_slot_assignments.json",
+                {
+                    "decisions": [
+                        {
+                            "candidate_subject_id": "optional-1",
+                            "action": "assign_team",
+                            "team_label": "B",
+                        }
+                    ]
+                },
+            )
+            _write(
+                root / "reviewed_identity_recompute_required.json",
+                {"status": "required"},
+            )
+
+            result = validate_deferred_review_action(
+                root,
+                match_doc,
+                {
+                    "candidate_subject_id": "optional-2",
+                    "action": "assign_team",
+                    "team_label": "B",
+                },
+            )
+
+            self.assertFalse(result["idempotent_replay"])
+
     def test_exact_replay_is_idempotent_but_conflicting_replay_is_rejected(self) -> None:
         with _workspace() as root:
             _baseline(root, [_whole("s1")])
@@ -240,37 +336,48 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
             self.assertEqual(raised.exception.code, "review_unit_already_decided")
 
 
-def _baseline(root: Path, cases: list[dict]) -> None:
+def _baseline(
+    root: Path,
+    cases: list[dict],
+    optional_cases: list[dict] | None = None,
+    match_doc: dict | None = None,
+) -> None:
+    optional_cases = optional_cases or []
+    all_cases = [*cases, *optional_cases]
     whole_subject_ids = sorted(
         {
             str(case["candidate_subject_id"])
-            for case in cases
+            for case in all_cases
             if case.get("review_target_id") is None
         }
     )
+    progress = {
+        "schema_version": PROGRESS_SCHEMA_VERSION,
+        "status": "ready",
+        "match_id": "m1",
+        "source_snapshot_digest": "snapshot-1",
+        "next_cases": cases,
+        "optional_audit_cases": optional_cases,
+        "deferred_correction_context": {
+            "schema_version": "1.0.0",
+            "status": "unavailable",
+            "detected_team_evidence_status": "ready",
+            "subjects": [
+                {
+                    "candidate_subject_id": subject_id,
+                    "source_team_label": "U",
+                    "detected_team_labels": [],
+                    "detected_frames": [],
+                }
+                for subject_id in whole_subject_ids
+            ],
+        },
+    }
+    if match_doc is not None:
+        progress["source_review_scope_digest"] = identity_review_scope_digest(match_doc)
     _write(
         root / "reviewed_identity_progress.json",
-        {
-            "schema_version": PROGRESS_SCHEMA_VERSION,
-            "status": "ready",
-            "match_id": "m1",
-            "source_snapshot_digest": "snapshot-1",
-            "next_cases": cases,
-            "deferred_correction_context": {
-                "schema_version": "1.0.0",
-                "status": "unavailable",
-                "detected_team_evidence_status": "ready",
-                "subjects": [
-                    {
-                        "candidate_subject_id": subject_id,
-                        "source_team_label": "U",
-                        "detected_team_labels": [],
-                        "detected_frames": [],
-                    }
-                    for subject_id in whole_subject_ids
-                ],
-            },
-        },
+        progress,
     )
     _write(
         root / "reviewed_identity_report.json",
@@ -296,6 +403,24 @@ def _segment(subject_id: str, target_id: str) -> dict:
         "priority": "high",
         "current_resolution_status": "pending_high_priority",
         "source_ownership_digest": "owner-1",
+    }
+
+
+def _optional(subject_id: str) -> dict:
+    return {
+        **_whole(subject_id),
+        "priority": "optional",
+        "current_resolution_status": "optional_team_audit",
+        "operator_actionable": True,
+    }
+
+
+def _scoped_match(b_scope: str = "team_stats_only") -> dict:
+    return {
+        "id": "m1",
+        "identity_review_scope": {
+            "teams": {"A": "complete_roster", "B": b_scope},
+        },
     }
 
 

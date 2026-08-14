@@ -22,6 +22,13 @@ export type Team = {
   players: Player[];
 };
 
+export type IdentityReviewTeamScope = 'complete_roster' | 'partial_roster' | 'players_of_interest' | 'unspecified' | 'team_stats_only';
+export type IdentityReviewScopeChoice = 'A' | 'B' | 'both';
+export type IdentityReviewScope = {
+  schema_version?: string;
+  teams: { A: IdentityReviewTeamScope; B: IdentityReviewTeamScope };
+};
+
 export type MatchMetadataPayload = {
   title: string;
   match_date?: string | null;
@@ -30,6 +37,7 @@ export type MatchMetadataPayload = {
   format: string;
   status: string;
   teams: Team[];
+  identity_review_scope?: IdentityReviewScope | null;
 };
 
 export type TrackletAssignmentStatus = 'unassigned' | 'assigned' | 'unknown' | 'false_positive' | 'referee' | 'opponent';
@@ -1819,7 +1827,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null };
+  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -2023,8 +2031,10 @@ export type ReviewedIdentityReviewUnit = {
 };
 
 export type ReviewedIdentityTeamFilterLabel = 'A' | 'B';
+export type ReviewedIdentityReviewQueue = 'required' | 'optional_audit';
 
 export type ReviewedIdentityReviewFilters = {
+  queue?: ReviewedIdentityReviewQueue;
   active_team_label: ReviewedIdentityTeamFilterLabel | null;
   counts: {
     all: number;
@@ -2035,7 +2045,8 @@ export type ReviewedIdentityReviewFilters = {
 };
 
 export type ReviewedIdentityCoverageRow = {
-  roster_scope: string;
+  scope?: IdentityReviewTeamScope;
+  roster_scope?: IdentityReviewTeamScope;
   reliable_observations: number;
   confirmed_named_observations: number;
   named_observation_coverage: number | null;
@@ -2045,6 +2056,9 @@ export type ReviewedIdentityCoverageRow = {
   conflicted_observations: number;
   ignored_observations: number;
   unresolved_observation_share: number | null;
+  named_player_review_required?: boolean;
+  team_stats_required?: boolean;
+  named_coverage_status?: 'required' | 'not_required_by_scope';
 };
 
 export type ReviewedIdentityCoverage = ReviewedIdentityCoverageRow & {
@@ -2073,6 +2087,17 @@ export type ReviewedIdentityReviewProgress = {
   schema_version: string;
   status: 'ready';
   match_id: string;
+  queue: ReviewedIdentityReviewQueue;
+  identity_review_scope?: {
+    schema_version: string;
+    explicit: boolean;
+    teams: Record<string, {
+      scope: IdentityReviewTeamScope;
+      named_player_review_required: boolean;
+      team_stats_required: boolean;
+      player_stats_status: 'reviewed' | 'not_reviewed_by_scope';
+    }>;
+  };
   summary: {
     review_units_total: number;
     review_units_completed: number;
@@ -2083,6 +2108,7 @@ export type ReviewedIdentityReviewProgress = {
     semantic_decisions_remaining: number;
     coverage_decisions_remaining: number;
     optional_cases_remaining: number;
+    optional_audit_cases_remaining?: number;
     structural_blockers: number;
     non_actionable_review_units?: number;
     non_actionable_reason_counts?: Record<string, number>;

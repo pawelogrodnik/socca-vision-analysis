@@ -54,10 +54,12 @@ test('exception panel resets filters to page one and preserves filters for navig
 
   assert.match(panel, /changeTeamFilter\(nextFilter: TeamReviewFilter\)/);
   assert.match(panel, /setPageOffset\(0\)/);
-  assert.match(panel, /loadCases\(undefined, false, 0, 0, nextFilter\)/);
+  assert.match(panel, /loadCases\(undefined, false, 0, 0, nextFilter, activeQueue\)/);
   assert.match(panel, /destination\.index,[\s\S]*activeTeamFilter/);
   assert.match(panel, /pageOffset \+ REVIEW_PAGE_SIZE,[\s\S]*activeTeamFilter/);
-  assert.match(panel, /finalizeCorrections\(activeTeamFilter\)/);
+  assert.match(panel, /finalizeCorrections\(activeTeamFilter, activeQueue\)/);
+  assert.match(panel, /shouldAutoFinalizeDeferredQueue\(activeQueue, next\.cases\)/);
+  assert.match(panel, /<ReviewedIdentityCorrectionForm[\s\S]*deferRecompute/);
   assert.match(panel, /Brak pozostałych przypadków dla \{activeTeamName\}/);
   assert.match(panel, /Łącznie pozostało: \{globalRemaining\}/);
   assert.match(panel, /className=\{activeTeamFilter === team \? 'active-team' : ''\}/);

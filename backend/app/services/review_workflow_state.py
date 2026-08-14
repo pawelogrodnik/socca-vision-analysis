@@ -9,6 +9,9 @@ from typing import Any
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_review_scope import (
+    review_scope_dependency_matches,
+)
 from app.services.identity_seeded_review_reduction import (
     load_initial_audit_completion_evidence,
 )
@@ -198,7 +201,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     if not (identity_current and stats_current and render_current):
         steps["finalize"] = _step("finalize", "current")
         steps["video_qa"] = _step("video_qa", "locked", "reviewed_output_stale")
-        allowed = ["finalize_identity"]
+        allowed = ["finalize_identity", "review_identity_issue"]
         return _state(match_id, True, "ready", "ready_to_finalize", steps, blockers, allowed, initial, issues, freshness, render, {"type": "finalize_identity", "step_id": "finalize"})
 
     steps["finalize"] = _step("finalize", "completed")
@@ -222,6 +225,7 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
         stats
         and snapshot.get("semantic_digest")
         and stats.get("source_snapshot_digest") == snapshot.get("semantic_digest")
+        and review_scope_dependency_matches(match_doc, stats)
         and (
             not stats_readiness
             or stats_readiness.get("status") == "completed"
@@ -230,10 +234,15 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
     output_current = bool(
         job.get("status") == "completed"
         and job.get("source_snapshot_digest") == snapshot.get("semantic_digest")
+        and review_scope_dependency_matches(match_doc, job)
         and output_manifest
         and output_manifest.get("stale") is not True
     )
-    progress, progress_reason = _current_cached_progress(match_path, snapshot)
+    progress, progress_reason = _current_cached_progress(
+        match_path,
+        snapshot,
+        match_doc,
+    )
     initial = load_initial_audit_completion_evidence(match_path)
     issues = _issue_evidence(snapshot, progress)
     evidence = {
@@ -278,6 +287,7 @@ def _analysis_completed(match_path: Path, match_doc: dict[str, Any]) -> bool:
 def _current_cached_progress(
     match_path: Path,
     snapshot: dict[str, Any],
+    match_doc: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
     progress = load_json_object(match_path / "reviewed_identity_progress.json")
     if not progress:
@@ -287,6 +297,8 @@ def _current_cached_progress(
         return None, "review_progress_stale"
     if progress.get("schema_version") != PROGRESS_SCHEMA_VERSION:
         return None, "review_progress_policy_stale"
+    if not review_scope_dependency_matches(match_doc, progress):
+        return None, "review_progress_scope_stale"
     return progress, None
 
 
@@ -319,6 +331,9 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         "semantic": int(progress_summary.get("semantic_decisions_remaining") or 0),
         "coverage": int(progress_summary.get("coverage_decisions_remaining") or 0),
         "optional": int(progress_summary.get("optional_cases_remaining") or 0),
+        "optional_audit": int(
+            progress_summary.get("optional_audit_cases_remaining") or 0
+        ),
         "completed": int(progress_summary.get("review_units_completed") or 0),
         "total": int(progress_summary.get("review_units_actionable_total") or 0),
         "mixed_total": int(mixed.get("total") or 0),
@@ -369,7 +384,7 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "actionable_blocking": int(issues.get("actionable_blocking") or issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "coverage_readiness_blocked": bool(issues.get("coverage_readiness_blocked")), "overall_identity_blocked": bool(issues.get("overall_identity_blocked") or int(issues.get("blocking") or 0)), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload")},
+        "issues": {"blocking": int(issues.get("blocking") or 0), "actionable_blocking": int(issues.get("actionable_blocking") or issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "optional_audit": int(issues.get("optional_audit") or 0), "coverage_readiness_blocked": bool(issues.get("coverage_readiness_blocked")), "overall_identity_blocked": bool(issues.get("overall_identity_blocked") or int(issues.get("blocking") or 0)), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload")},
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

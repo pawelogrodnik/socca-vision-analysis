@@ -48,12 +48,12 @@ class ReviewWorkflowStateTests(unittest.TestCase):
             ("analysis", evidence(analysis_completed=False), "unavailable", "initial_audit", []),
             ("audit", evidence(initial_audit={"complete": False, "completed": 2, "total": 8, "remaining": 6}), "action_required", "initial_audit", ["identify_players"]),
             ("exceptions", evidence(issues={"blocking": 2, "important": 2}), "action_required", "exceptions", ["review_identity_issue"]),
-            ("ready", evidence(), "ready", "ready_to_finalize", ["finalize_identity"]),
+            ("ready", evidence(), "ready", "ready_to_finalize", ["finalize_identity", "review_identity_issue"]),
             ("queued", evidence(render={"status": "queued"}), "processing", "rendering_review_video", []),
             ("running", evidence(render={"status": "running"}), "processing", "rendering_review_video", []),
             ("failed", evidence(render={"status": "failed"}), "error", "rendering_review_video", ["retry_render"]),
             ("recompute", evidence(recompute_failed=True), "error", "initial_audit", ["retry_review_recompute"]),
-            ("stale-render", evidence(freshness={"reviewed_identity_current": True, "reviewed_stats_current": True, "reviewed_output_current": False, "qa_approval_current": True}, render={"status": "completed"}), "ready", "ready_to_finalize", ["finalize_identity"]),
+            ("stale-render", evidence(freshness={"reviewed_identity_current": True, "reviewed_stats_current": True, "reviewed_output_current": False, "qa_approval_current": True}, render={"status": "completed"}), "ready", "ready_to_finalize", ["finalize_identity", "review_identity_issue"]),
             ("qa", evidence(freshness={"reviewed_identity_current": True, "reviewed_stats_current": True, "reviewed_output_current": True, "qa_approval_current": False}, render={"status": "completed"}), "action_required", "video_qa", ["review_video", "approve_video_qa", "correct_video_identity"]),
             ("complete", evidence(freshness={"reviewed_identity_current": True, "reviewed_stats_current": True, "reviewed_output_current": True, "qa_approval_current": True}, render={"status": "completed"}), "complete", "complete", ["review_video", "correct_video_identity"]),
         ]
@@ -95,6 +95,27 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         state = derive_review_workflow_state(evidence(issues=issues))
         self.assertEqual(issues["blocking"], 0)
         self.assertEqual(state["phase"], "ready_to_finalize")
+
+    def test_optional_team_audit_remains_available_without_blocking_finalize(self) -> None:
+        progress = {
+            "summary": {
+                "important_decisions_remaining": 0,
+                "optional_audit_cases_remaining": 180,
+            },
+            "coverage_readiness": {
+                "status": "ready_with_review",
+                "allows_finalize": True,
+                "blockers": [],
+            },
+        }
+        issues = _issue_evidence({"summary": {}}, progress)
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(state["phase"], "ready_to_finalize")
+        self.assertEqual(state["issues"]["optional_audit"], 180)
+        self.assertIn("finalize_identity", state["allowed_actions"])
+        self.assertIn("review_identity_issue", state["allowed_actions"])
 
     def test_zero_evidence_conflict_diagnostic_does_not_block_finalize(self) -> None:
         progress = {"summary": {

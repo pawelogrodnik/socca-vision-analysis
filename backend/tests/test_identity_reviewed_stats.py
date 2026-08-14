@@ -8,10 +8,57 @@ from unittest.mock import patch
 
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.reviewed_match_report import build_reviewed_match_report
 
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_team_stats_only_omits_opponent_player_rows_but_keeps_scope_metadata(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 10,
+            "duration_sec": 0.4,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [_tracklet("a", list(range(5))), _tracklet("b", list(range(5, 10)))]}),
+                encoding="utf-8",
+            )
+            b_assignment = _assignment("b", "confirmed", "p2")
+            b_assignment.update({"team_label": "B", "player_name": "Opponent"})
+            snapshot = {
+                "semantic_digest": "snapshot",
+                "tracklet_assignments": [_assignment("a", "confirmed", "p1"), b_assignment],
+                "observation_overrides": [],
+                "observation_demotions": [],
+                "summary": {},
+            }
+            match = {
+                "teams": [
+                    {"team_label": "A", "players": [{"id": "p1", "name": "Player One"}]},
+                    {"team_label": "B", "players": [{"id": "p2", "name": "Opponent"}]},
+                ],
+                "identity_review_scope": {
+                    "teams": {"A": "complete_roster", "B": "team_stats_only"},
+                },
+            }
+
+            documents = build_reviewed_stats(root, snapshot, match)
+
+            self.assertEqual(
+                [row["player_id"] for row in documents["reviewed_player_stats.json"]["players"]],
+                ["p1"],
+            )
+            scope = documents["reviewed_stats_readiness.json"]["identity_review_scope"]
+            self.assertEqual(scope["teams"]["B"]["player_stats_status"], "not_reviewed_by_scope")
+            self.assertTrue(scope["teams"]["B"]["team_stats_required"])
+
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_coverage_readiness_blocks_new_stats_until_queue_is_complete(
         self, metadata
@@ -32,6 +79,9 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             progress = {
                 "schema_version": PROGRESS_SCHEMA_VERSION,
                 "source_snapshot_digest": "snapshot",
+                "source_review_scope_digest": identity_review_scope_digest(
+                    _match_document()
+                ),
                 "coverage_readiness": {
                     "status": "incomplete",
                     "allows_finalize": False,

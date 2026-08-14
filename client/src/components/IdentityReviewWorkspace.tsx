@@ -20,6 +20,7 @@ import {
   isReviewedRenderInProgress,
 } from '../utils/reviewedRenderPolling';
 import { IdentityExceptionReviewPanel } from './IdentityExceptionReviewPanel';
+import { IdentityReviewScopeSummary } from './IdentityReviewScopeSummary';
 import { MixedPlayersReviewPanel } from './MixedPlayersReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { ReviewedVideoQaPanel } from './ReviewedVideoQaPanel';
@@ -55,6 +56,7 @@ export function IdentityReviewWorkspace({
   const [showApprovedVideo, setShowApprovedVideo] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showOptionalAudit, setShowOptionalAudit] = useState(false);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
@@ -133,6 +135,7 @@ export function IdentityReviewWorkspace({
   }
 
   return <section className={`identity-review-workspace${['remaining_issues', 'mixed_players'].includes(stage) ? ' remaining-issues-active' : ''}`}>
+    <IdentityReviewScopeSummary teams={match.teams || []} scope={match.identity_review_scope} />
     <header className='identity-review-workspace-heading'>
       <div>
         <p className='eyebrow'>Krok 3</p>
@@ -188,13 +191,16 @@ export function IdentityReviewWorkspace({
       onWorkflowChanged={applyWorkflow}
     />}
 
-    {stage === 'prepare_result' && workflow && <section className='reviewed-next-step'>
+    {stage === 'prepare_result' && workflow && !showOptionalAudit && <section className='reviewed-next-step'>
       <div>
         <p className='eyebrow'>Krok 3</p>
         <h2>Tożsamości są gotowe</h2>
         <p>System może teraz przygotować statystyki i wideo do końcowego sprawdzenia.</p>
       </div>
       <button type='button' onClick={() => void finalize()} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Przygotuj wideo do sprawdzenia</button>
+      {(workflow.issues.optional_audit || 0) > 0 && <button type='button' className='secondary' onClick={() => setShowOptionalAudit(true)}>
+        Przejrzyj opcjonalnie przeciwnika ({workflow.issues.optional_audit})
+      </button>}
       <details className='reviewed-video-settings'>
         <summary>Ustawienia wideo</summary>
         <div className='reviewed-checkboxes'>
@@ -204,6 +210,19 @@ export function IdentityReviewWorkspace({
         </div>
       </details>
     </section>}
+
+    {stage === 'prepare_result' && workflow && showOptionalAudit && <>
+      <button type='button' className='secondary' onClick={() => setShowOptionalAudit(false)}>Wróć do przygotowania wyniku</button>
+      <IdentityExceptionReviewPanel
+        match={match}
+        workflow={workflow}
+        initialQueue='optional_audit'
+        onWorkflowChanged={(next) => {
+          if (next) applyWorkflow(next);
+          else void refreshWorkflow();
+        }}
+      />
+    </>}
 
     {stage === 'rendering' && <div className='reviewed-rendering-card' role='status'>
       <span className='spinner' aria-hidden='true' />

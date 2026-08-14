@@ -566,7 +566,10 @@ export function AdminPanel() {
     }
   }
 
-  async function saveRosterTeams(teams: Match['teams']) {
+  async function saveRosterTeams(
+    teams: Match['teams'],
+    identityReviewScope: NonNullable<Match['identity_review_scope']>,
+  ) {
     if (!selectedId || !selected || isBusy) return;
     setBusyAction('metadata');
     setStatus('Zapisuje roster meczu...');
@@ -579,6 +582,7 @@ export function AdminPanel() {
         format: selected.format || '7v7',
         status: selected.status || 'uploaded',
         teams,
+        identity_review_scope: identityReviewScope,
       });
       setSelected(updated);
       await refresh(updated.id, activeStep);
