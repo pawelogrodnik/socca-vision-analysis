@@ -149,7 +149,7 @@ def _saved_decision(
 
 def _semantic_decision(
     value: dict[str, Any],
-) -> tuple[str, str | None, str | None, str | None]:
+) -> tuple[str, str | None, str | None, str | None, str | None]:
     action = str(value.get("action") or "")
     return (
         action,
@@ -161,6 +161,9 @@ def _semantic_decision(
         else None,
         str(value.get("team_label") or "").upper() or None
         if action in {"assign_team", "create_new_stable_player"}
+        else None,
+        str(value.get("mixed_hint") or "unknown")
+        if action == "mixed_players"
         else None,
     )
 

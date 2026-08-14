@@ -20,6 +20,7 @@ import {
   isReviewedRenderInProgress,
 } from '../utils/reviewedRenderPolling';
 import { IdentityExceptionReviewPanel } from './IdentityExceptionReviewPanel';
+import { MixedPlayersReviewPanel } from './MixedPlayersReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { ReviewedVideoQaPanel } from './ReviewedVideoQaPanel';
 
@@ -84,7 +85,7 @@ export function IdentityReviewWorkspace({
 
   const stage = identityReviewStage(workflow);
   useEffect(() => {
-    if (stage !== 'remaining_issues') return undefined;
+    if (!['remaining_issues', 'mixed_players'].includes(stage)) return undefined;
     document.body.classList.add('identity-exception-workspace-active');
     return () => document.body.classList.remove('identity-exception-workspace-active');
   }, [stage]);
@@ -131,7 +132,7 @@ export function IdentityReviewWorkspace({
     }
   }
 
-  return <section className={`identity-review-workspace${stage === 'remaining_issues' ? ' remaining-issues-active' : ''}`}>
+  return <section className={`identity-review-workspace${['remaining_issues', 'mixed_players'].includes(stage) ? ' remaining-issues-active' : ''}`}>
     <header className='identity-review-workspace-heading'>
       <div>
         <p className='eyebrow'>Krok 3</p>
@@ -179,6 +180,12 @@ export function IdentityReviewWorkspace({
       onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
         ? () => retry('retry_review_recompute')
         : undefined}
+    />}
+
+    {stage === 'mixed_players' && workflow && <MixedPlayersReviewPanel
+      match={match}
+      workflow={workflow}
+      onWorkflowChanged={applyWorkflow}
     />}
 
     {stage === 'prepare_result' && workflow && <section className='reviewed-next-step'>

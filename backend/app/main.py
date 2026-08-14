@@ -101,6 +101,14 @@ from app.services.identity_reviewed_slot_review import (
     save_reviewed_slot_assignments,
 )
 from app.services.identity_reviewed_segments import SegmentTargetError
+from app.services.identity_reviewed_mixed_store import (
+    build_mixed_boundary_refinement,
+    build_mixed_review_queue,
+)
+from app.services.identity_reviewed_mixed_resolution import (
+    MixedPlayerTargetError,
+    save_mixed_player_resolution,
+)
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
     after_video_qa_correction,
@@ -2178,6 +2186,63 @@ def finalize_match_reviewed_identity_corrections(match_id: str) -> dict[str, Any
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/matches/{match_id}/reviewed-identity/mixed-players")
+def get_match_reviewed_identity_mixed_players(match_id: str) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_mixed_review_queue(path, read_match_meta(path))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/mixed-players/refine")
+def get_match_reviewed_identity_mixed_boundary_refinement(
+    match_id: str,
+    candidate_subject_id: str = Query(..., min_length=1),
+    after_frame: int = Query(..., ge=0),
+    before_frame: int = Query(..., ge=1),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_mixed_boundary_refinement(
+            path,
+            read_match_meta(path),
+            candidate_subject_id,
+            after_frame,
+            before_frame,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        status = 409 if str(exc) == "mixed_player_case_stale" else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.post("/api/matches/{match_id}/reviewed-identity/mixed-players/resolve")
+def post_match_reviewed_identity_mixed_resolution(
+    match_id: str,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        state = get_review_workflow_state(path, read_match_meta(path))
+        assert_workflow_action_allowed(state, "review_mixed_players")
+        return save_mixed_player_resolution(path, read_match_meta(path), payload)
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except MixedPlayerTargetError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": str(exc), "message": str(exc)},
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/matches/{match_id}/reviewed-identity/at")
 def get_reviewed_identity_at(match_id: str, time_sec: float = Query(..., ge=0)) -> dict[str, Any]:
     path = match_dir(match_id); snapshot = get_reviewed_identity_status(path)
@@ -2920,6 +2985,14 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         len(artifact_rel.parts) == 3
         and artifact_rel.parts[0] == "reviewed_identity_segments"
         and len(artifact_rel.parts[1]) == 64
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1])
+        and artifact_basename.lower().endswith((".jpg", ".jpeg"))
+    ):
+        allowed[artifact_basename] = "image/jpeg"
+    if (
+        len(artifact_rel.parts) == 3
+        and artifact_rel.parts[0] == "reviewed_identity_mixed"
+        and len(artifact_rel.parts[1]) == 16
         and all(character in "0123456789abcdef" for character in artifact_rel.parts[1])
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):

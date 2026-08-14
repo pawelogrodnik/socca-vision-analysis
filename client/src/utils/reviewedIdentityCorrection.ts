@@ -10,6 +10,7 @@ export type ReviewedCorrectionFormValues = {
   stableSlotId: string;
   teamLabel: string;
   comment: string;
+  mixedHint?: ReviewedCorrectionRequest['mixed_hint'];
 };
 
 export function defaultCorrectionTeam(context: ReviewedCorrectionContext): string {
@@ -75,6 +76,7 @@ export function buildReviewedCorrectionPayload(
     payload.team_label = values.teamLabel;
   }
   if (values.comment.trim()) payload.comment = values.comment.trim();
+  if (values.action === 'mixed_players') payload.mixed_hint = values.mixedHint || 'unknown';
   return payload;
 }
 
@@ -87,4 +89,5 @@ export const REVIEWED_CORRECTION_ACTION_LABELS: Record<ReviewedCorrectionAction,
   false_detection: 'Oznacz false detection',
   team_unknown: 'Team unknown',
   unresolved: 'Pozostaw unresolved',
+  mixed_players: 'Zmieszani gracze',
 };

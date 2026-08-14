@@ -66,9 +66,10 @@ test('only an existing anchor crop makes an identity conflict operator-reviewabl
   }), true);
 });
 
-test('maps persisted workflow phases to the four operator stages', () => {
+test('maps persisted workflow phases to the conditional operator stages', () => {
   assert.equal(identityReviewStage(workflow({ phase: 'initial_audit' })), 'identify_players');
   assert.equal(identityReviewStage(workflow({ phase: 'exceptions' })), 'remaining_issues');
+  assert.equal(identityReviewStage(workflow({ phase: 'mixed_players' })), 'mixed_players');
   assert.equal(identityReviewStage(workflow({ phase: 'ready_to_finalize', status: 'ready' })), 'prepare_result');
   assert.equal(identityReviewStage(workflow({ phase: 'rendering_review_video', status: 'processing' })), 'rendering');
   assert.equal(identityReviewStage(workflow({ phase: 'video_qa' })), 'video_qa');
@@ -85,7 +86,7 @@ test('progress labels stay friendly and follow workflow step status', () => {
   const steps = identityReviewProgress(workflow({
     steps: [{ id: 'initial_audit', status: 'completed', completed: 5, total: 5, remaining: 0, locked_reason_code: null }],
   }));
-  assert.deepEqual(steps.map((step) => step.label), ['Rozpoznaj zawodników', 'Pozostałe przypadki', 'Przygotuj wynik', 'Sprawdź wideo']);
+  assert.deepEqual(steps.map((step) => step.label), ['Rozpoznaj zawodników', 'Pozostałe przypadki', 'Zmieszani gracze', 'Przygotuj wynik', 'Sprawdź wideo']);
   assert.equal(steps[0].status, 'completed');
   assert.equal(steps[1].status, 'locked');
 });
@@ -149,7 +150,7 @@ test('normal Step 3 entry renders only the unified workspace before diagnostics'
   assert.match(exceptions, /Brak materiału pozwalającego wiarygodnie rozstrzygnąć ten przypadek/);
   assert.match(exceptions, /ten przypadek nie powinien wymagać ręcznej decyzji/);
   assert.match(exceptions, /Nie udało się przygotować podglądu przypadku wymagającego decyzji/);
-  assert.match(exceptions, /requiredCasesLabel\(workflow\.issues\.blocking\)/);
+  assert.match(exceptions, /requiredCasesLabel\(workflow\.issues\.normal_blocking \?\? workflow\.issues\.blocking\)/);
   assert.doesNotMatch(exceptions, /workflow\.issues\.blocking \+ workflow\.issues\.important/);
   assert.doesNotMatch(report, /onBuildPackage|createMatchPackage/);
 });
