@@ -61,7 +61,7 @@ test('exception panel resets filters to page one and preserves filters for navig
   assert.match(panel, /shouldAutoFinalizeDeferredQueue\(activeQueue, next\.cases\)/);
   assert.match(panel, /<ReviewedIdentityCorrectionForm[\s\S]*deferRecompute/);
   assert.match(panel, /Brak pozostałych przypadków dla \{activeTeamName\}/);
-  assert.match(panel, /Łącznie pozostało: \{globalRemaining\}/);
+  assert.match(panel, /Łącznie: \{globalRemaining\}/);
   assert.match(panel, /className=\{activeTeamFilter === team \? 'active-team' : ''\}/);
   assert.match(api, /query\.set\('team_label', teamLabel\)/);
 });

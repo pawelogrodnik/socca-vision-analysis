@@ -75,6 +75,9 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(panel, /Pokrycie rozpoznania/);
   assert.match(panel, /potencjal_named_observation_gain|potential_named_observation_gain/);
   assert.match(panel, /identity-exception-workstation/);
+  assert.match(panel, /identity-exception-controls/);
+  assert.match(panel, /identity-exception-case-meta/);
+  assert.match(panel, /identity-exception-guidance/);
   assert.match(panel, /key=\{reviewUnitKey\(reviewCase\.unit\)\}/);
   assert.match(panel, /onPrevious: \(\) => navigate\('previous'\)/);
   assert.match(panel, /onNext: \(\) => navigate\('next'\)/);
@@ -95,5 +98,5 @@ test('empty actionable queue renders an explicit canonical coverage blocker', ()
   assert.match(panel, /Nie można zakończyć Review\./);
   assert.match(panel, /nie ma bezpiecznych przypadków do ręcznego przypisania/);
   assert.match(panel, /coverageBlockedWithoutCases \?/);
-  assert.match(panel, /cases\.length > 0 && <span className='reviewed-status-badge'>/);
+  assert.match(panel, /cases\.length > 0 && <strong className='reviewed-status-badge'>/);
 });

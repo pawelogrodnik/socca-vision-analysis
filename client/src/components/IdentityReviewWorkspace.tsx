@@ -135,21 +135,23 @@ export function IdentityReviewWorkspace({
   }
 
   return <section className={`identity-review-workspace${['remaining_issues', 'mixed_players'].includes(stage) ? ' remaining-issues-active' : ''}`}>
-    <IdentityReviewScopeSummary teams={match.teams || []} scope={match.identity_review_scope} />
-    <header className='identity-review-workspace-heading'>
-      <div>
-        <p className='eyebrow'>Krok 3</p>
-        <h1>Review zawodników</h1>
-        <p>Rozpoznaj osoby, rozwiąż tylko pozostałe ważne przypadki, a na końcu sprawdź gotowe wideo.</p>
-      </div>
-    </header>
+    <div className='identity-review-workspace-chrome'>
+      <IdentityReviewScopeSummary teams={match.teams || []} scope={match.identity_review_scope} />
+      <header className='identity-review-workspace-heading'>
+        <div>
+          <p className='eyebrow'>Krok 3</p>
+          <h1>Review zawodników</h1>
+          <p>Rozpoznaj osoby, rozwiąż tylko pozostałe ważne przypadki, a na końcu sprawdź gotowe wideo.</p>
+        </div>
+      </header>
 
-    <ol className='identity-review-progress' aria-label='Postęp review zawodników'>
-      {identityReviewProgress(workflow).map((item) => <li key={item.id} className={item.status}>
-        <span aria-hidden='true'>{item.status === 'completed' ? '✓' : item.status === 'current' || item.status === 'processing' ? '→' : '○'}</span>
-        {item.label}
-      </li>)}
-    </ol>
+      <ol className='identity-review-progress' aria-label='Postęp review zawodników'>
+        {identityReviewProgress(workflow).map((item) => <li key={item.id} className={item.status}>
+          <span aria-hidden='true'>{item.status === 'completed' ? '✓' : item.status === 'current' || item.status === 'processing' ? '→' : '○'}</span>
+          {item.label}
+        </li>)}
+      </ol>
+    </div>
 
     {!workflow && <p className='loading-line'><span className='spinner' /> Ładuję status review…</p>}
     {stage === 'unavailable' && workflow && <div className='status'>Review będzie dostępny po zakończeniu analizy meczu.</div>}
