@@ -55,7 +55,7 @@ test('Remaining Cases UI separates required and optional opponent audit', () => 
   );
   assert.match(source, /Wymagane/);
   assert.match(source, /Audyt opcjonalny/);
-  assert.match(source, /nie blokują publikacji/);
+  assert.match(source, /nie blokuje zakończenia Review/);
   assert.match(source, /shouldAutoFinalizeDeferredQueue/);
   assert.match(queueUtils, /queue === 'required'/);
   assert.match(source, /loadCases\(undefined, false, 0, 0, 'all', nextQueue\)/);

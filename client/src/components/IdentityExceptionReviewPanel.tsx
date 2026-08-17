@@ -239,6 +239,9 @@ export function IdentityExceptionReviewPanel({
   const globalRemaining = reviewFilters?.counts.all ?? totalRemaining;
   const coverageBlockedWithoutCases = globalRemaining === 0
     && coverageReadiness?.allows_finalize === false;
+  const guidanceCount = Number(reviewCase?.unit.scope_kind === 'canonical_segment')
+    + Number(activeQueue === 'optional_audit')
+    + Number(reviewCase?.unit.priority === 'coverage');
 
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;
@@ -355,34 +358,37 @@ export function IdentityExceptionReviewPanel({
   return <section className='identity-exception-review'>
     <header className='identity-exception-header'>
       <div className='identity-exception-heading'>
-        <p className='eyebrow'>Krok 2</p>
         <h2>Pozostałe przypadki</h2>
         <p>{activeQueue === 'required'
-          ? 'Te przypadki trzeba rozwiązać, aby zakończyć Review.'
-          : 'To dobrowolny audyt drużyny. Pozostałe przypadki nie blokują zakończenia Review.'}</p>
+          ? 'Rozwiąż przypadki wymagane do zakończenia Review.'
+          : 'Dobrowolny audyt nie blokuje zakończenia Review.'}</p>
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
-        <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
-          <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
-          <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Audyt opcjonalny <span>{optionalAuditRemaining}</span></button>
-        </nav>
-        <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
-          {filterOptions.map((option) => <button
-            type='button'
-            key={option.value}
-            className={activeTeamFilter === option.value ? 'active' : ''}
-            aria-pressed={activeTeamFilter === option.value}
-            onClick={() => changeTeamFilter(option.value)}
-            disabled={loading || finalizing}
-          >{option.label} <span>{option.count}</span></button>)}
-        </nav>
-        {cases.length > 0 && <span className='reviewed-status-badge'>Przypadek {pageOffset + index + 1} z {totalRemaining}</span>}
-        {activeTeamFilter !== 'all' && <small>Łącznie pozostało: {globalRemaining}</small>}
-        {caseTimeRange && <strong>{caseTimeRange}</strong>}
-        {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} wykrytych obserwacji</span>}
-        <small>{activeQueue === 'required'
-          ? requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)
-          : `${totalRemaining} opcjonalnych — nie blokują publikacji`}</small>
+        <div className='identity-exception-controls'>
+          <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
+            <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
+            <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Audyt opcjonalny <span>{optionalAuditRemaining}</span></button>
+          </nav>
+          <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
+            {filterOptions.map((option) => <button
+              type='button'
+              key={option.value}
+              className={activeTeamFilter === option.value ? 'active' : ''}
+              aria-pressed={activeTeamFilter === option.value}
+              onClick={() => changeTeamFilter(option.value)}
+              disabled={loading || finalizing}
+            >{option.label} <span>{option.count}</span></button>)}
+          </nav>
+        </div>
+        <div className='identity-exception-case-meta'>
+          {cases.length > 0 && <strong className='reviewed-status-badge'>Przypadek {pageOffset + index + 1} z {totalRemaining}</strong>}
+          {caseTimeRange && <span>{caseTimeRange}</span>}
+          {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} obserwacji</span>}
+          {activeTeamFilter !== 'all' && <span>Łącznie: {globalRemaining}</span>}
+          <span>{activeQueue === 'required'
+            ? requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)
+            : `${totalRemaining} opcjonalnych`}</span>
+        </div>
       </div>
     </header>
 
@@ -407,27 +413,32 @@ export function IdentityExceptionReviewPanel({
         />
       </div>)}
     </section>}
-    {workload && workload.level !== 'normal' && <div className='status warning identity-coverage-warning'>
-      <strong>Dużo fragmentów wymaga sprawdzenia ({workload.remaining_cases}).</strong>
+    {workload && workload.level !== 'normal' && <details className='identity-exception-guidance identity-coverage-warning'>
+      <summary>Duża kolejka: {workload.remaining_cases} fragmentów <span>Szczegóły</span></summary>
       <p>To sygnał słabej ciągłości trackingu. Decyzje są uporządkowane według wpływu, a nie ucięte limitem.</p>
-    </div>}
+    </details>}
 
     {reviewCase && entity && hasVisualEvidence && evidence ? <>
-      {reviewCase.unit.scope_kind === 'canonical_segment' && <div className='status'>
-        <strong>System połączył w jednym tracklecie różne osoby.</strong>
-        <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
-      </div>}
-      {activeQueue === 'optional_audit' && <div className='status identity-coverage-impact'>
-        <strong>Audyt opcjonalny — decyzja nie jest wymagana.</strong>
-        <p>Możesz sprawdzić, czy to rzeczywiście zawodnik tej drużyny, albo przejść dalej bez decyzji.</p>
-      </div>}
-      {reviewCase.unit.priority === 'coverage' && <div className='status identity-coverage-impact'>
-        <strong>Ten fragment ma duży wpływ na kompletność statystyk.</strong>
-        <p>Może przypisać do {reviewCase.unit.potential_named_observation_gain || reviewCase.unit.detected_observation_count} obserwacji
-          {reviewCase.unit.potential_named_coverage_gain_pp && ['A', 'B'].includes(reviewCase.unit.coverage_team_label || '')
-            ? ` (+${reviewCase.unit.potential_named_coverage_gain_pp.toFixed(1)} pp dla ${matchTeamName(match.teams || [], reviewCase.unit.coverage_team_label as 'A' | 'B')})`
-            : ''}.</p>
-      </div>}
+      {guidanceCount > 0 && <details className='identity-exception-guidance'>
+        <summary>Informacje o tym przypadku <span>{guidanceCount}</span></summary>
+        <div className='identity-exception-guidance-content'>
+          {reviewCase.unit.scope_kind === 'canonical_segment' && <div>
+            <strong>System połączył w jednym tracklecie różne osoby.</strong>
+            <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
+          </div>}
+          {activeQueue === 'optional_audit' && <div>
+            <strong>Audyt opcjonalny — decyzja nie jest wymagana.</strong>
+            <p>Możesz sprawdzić zawodnika albo przejść dalej bez decyzji.</p>
+          </div>}
+          {reviewCase.unit.priority === 'coverage' && <div>
+            <strong>Ten fragment ma duży wpływ na kompletność statystyk.</strong>
+            <p>Może przypisać do {reviewCase.unit.potential_named_observation_gain || reviewCase.unit.detected_observation_count} obserwacji
+              {reviewCase.unit.potential_named_coverage_gain_pp && ['A', 'B'].includes(reviewCase.unit.coverage_team_label || '')
+                ? ` (+${reviewCase.unit.potential_named_coverage_gain_pp.toFixed(1)} pp dla ${matchTeamName(match.teams || [], reviewCase.unit.coverage_team_label as 'A' | 'B')})`
+                : ''}.</p>
+          </div>}
+        </div>
+      </details>}
       <div className='identity-exception-workstation'>
         <section className='identity-exception-evidence-column' aria-label='Widoki zawodnika'>
           <div className='identity-exception-column-heading'>
