@@ -76,7 +76,14 @@ def build_frame_slot_demotions(
                 continue
             frame = int(position.get("frame") or 0)
             slot_id = effective.get("stable_anonymous_slot_id")
-            if slot_id:
+            propagation_conflicted_stable_slot_ids = {
+                str(value)
+                for value in effective.get(
+                    "propagation_conflicted_stable_slot_ids"
+                )
+                or []
+            }
+            if slot_id and str(slot_id) not in propagation_conflicted_stable_slot_ids:
                 stable_claims[(frame, str(slot_id))].append(effective)
             player_id = effective.get("canonical_player_id")
             if status == "confirmed" and player_id:

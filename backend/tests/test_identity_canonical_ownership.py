@@ -152,6 +152,54 @@ class CanonicalOwnershipTests(unittest.TestCase):
         self.assertEqual(diagnostics["duplicate_stable_slot_claim_groups"], 1)
         self.assertEqual([row["tracklet_id"] for row in demotions], ["duplicate"])
 
+    def test_canonical_slot_override_only_skips_its_own_propagation_conflict(
+        self,
+    ) -> None:
+        tracklets = {
+            "canonical": _tracklet("canonical", "A", [10]),
+            "duplicate": _tracklet("duplicate", "A", [10]),
+        }
+        assignments = [
+            {
+                **_assignment("canonical", "A03"),
+                "propagation_conflicted_stable_slot_ids": ["A03"],
+            },
+            _assignment("duplicate", "A04"),
+        ]
+        canonical = _canonical_observation_assignments(
+            [
+                {
+                    "tracklet_id": "canonical",
+                    "frame": 10,
+                    "stable_slot_id": "A04",
+                    "team_label": "A",
+                    "ownership_evidence_source": "global_identity",
+                    "ownership_evidence_field": "overlay_positions",
+                }
+            ],
+            assignments,
+            {},
+            set(),
+            {},
+        )
+
+        self.assertEqual(canonical[0]["stable_anonymous_slot_id"], "A04")
+        self.assertEqual(
+            canonical[0]["propagation_conflicted_stable_slot_ids"],
+            ["A03"],
+        )
+        demotions, diagnostics = build_frame_slot_demotions(
+            tracklets,
+            assignments,
+            canonical_ownership=canonical,
+        )
+
+        self.assertEqual(diagnostics["duplicate_stable_slot_claim_groups"], 1)
+        self.assertEqual(
+            {row["tracklet_id"] for row in demotions},
+            {"canonical", "duplicate"},
+        )
+
     def test_explicit_unresolved_suppresses_frame_slot_roster_binding(self) -> None:
         claims = [_ownership("A05", 10), _ownership("A08", 20)]
         base = {
@@ -173,6 +221,35 @@ class CanonicalOwnershipTests(unittest.TestCase):
         self.assertEqual(by_frame[10]["display_label"], "A05")
         self.assertEqual(by_frame[20]["stable_anonymous_slot_id"], "A08")
         self.assertIsNone(by_frame[20]["canonical_player_id"])
+
+    def test_explicit_subject_player_beats_canonical_slot_conflict_and_binding(self) -> None:
+        rows = _canonical_observation_assignments(
+            [_ownership("A05", 10)],
+            [
+                {
+                    **_assignment("t1", "A05"),
+                    "identity_status": "confirmed",
+                    "identity_source": "operator_review",
+                    "canonical_player_id": "p08",
+                    "player_name": "Paweł",
+                }
+            ],
+            {"A05": {"player_id": "p05", "source": "manual_stable_slot_binding"}},
+            {"A05"},
+            {
+                "p05": {"name": "Krzysiek", "number": "5"},
+                "p08": {"name": "Paweł", "number": "8"},
+            },
+        )
+
+        self.assertEqual(rows[0]["identity_status"], "confirmed")
+        self.assertEqual(rows[0]["canonical_player_id"], "p08")
+        self.assertEqual(rows[0]["player_name"], "Paweł")
+        self.assertEqual(rows[0]["identity_source"], "operator_review")
+        self.assertEqual(
+            rows[0]["propagation_conflicted_stable_slot_ids"],
+            ["A05"],
+        )
 
     def test_special_operator_actions_are_not_overridden_by_frame_ownership(self) -> None:
         claim = [_ownership("A05", 10)]

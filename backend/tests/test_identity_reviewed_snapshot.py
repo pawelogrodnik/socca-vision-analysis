@@ -246,6 +246,140 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
                 "legacy_subject_to_stable_slot_binding",
             )
 
+    def test_conflicting_slot_claims_preserve_explicit_subject_assignments(self) -> None:
+        with _workspace() as root:
+            _write_inputs(
+                root,
+                decisions=[
+                    _decision("s1", "assign_roster_player", "p1"),
+                    _decision("s2", "assign_roster_player", "p3"),
+                ],
+            )
+            _write_shared_slot_fixture(root, include_unreviewed_subject=False)
+
+            result = finalize_reviewed_identity(root, _match())
+            rows = {
+                row["tracklet_id"]: row
+                for row in result["tracklet_assignments"]
+            }
+
+            self.assertEqual(rows["t1"]["identity_status"], "confirmed")
+            self.assertEqual(rows["t1"]["canonical_player_id"], "p1")
+            self.assertEqual(rows["t2"]["identity_status"], "confirmed")
+            self.assertEqual(rows["t2"]["canonical_player_id"], "p3")
+            tracklets = {
+                row["tracklet_id"]: row
+                for row in json.loads((root / "tracklets.json").read_text())["tracklets"]
+            }
+            self.assertEqual(
+                reviewed_assignment_at(result, tracklets, 0.0, 1)[0]["canonical_player_id"],
+                "p1",
+            )
+            self.assertEqual(
+                reviewed_assignment_at(result, tracklets, 10.0, 1)[0]["canonical_player_id"],
+                "p3",
+            )
+
+    def test_conflicting_slot_claims_do_not_propagate_to_unreviewed_subject(self) -> None:
+        with _workspace() as root:
+            _write_inputs(
+                root,
+                decisions=[
+                    _decision("s1", "assign_roster_player", "p1"),
+                    _decision("s2", "assign_roster_player", "p3"),
+                ],
+            )
+            _write_shared_slot_fixture(root, include_unreviewed_subject=True)
+
+            rows = {
+                row["tracklet_id"]: row
+                for row in finalize_reviewed_identity(root, _match())[
+                    "tracklet_assignments"
+                ]
+            }
+
+            self.assertEqual(rows["t1"]["canonical_player_id"], "p1")
+            self.assertEqual(rows["t2"]["canonical_player_id"], "p3")
+            self.assertEqual(rows["t3"]["identity_status"], "conflicted")
+            self.assertIsNone(rows["t3"]["canonical_player_id"])
+            self.assertIn(
+                "conflicting_stable_slot_roster_bindings",
+                rows["t3"]["hard_blockers"],
+            )
+            self.assertEqual(
+                rows["t3"]["propagation_conflicted_stable_slot_ids"],
+                ["A03"],
+            )
+
+    def test_conflicted_slot_diagnostic_survives_exact_observation_override(self) -> None:
+        with _workspace() as root:
+            _write_inputs(
+                root,
+                decisions=[
+                    _decision("s1", "assign_roster_player", "p1"),
+                    _decision("s2", "assign_roster_player", "p3"),
+                ],
+            )
+            _write_shared_slot_fixture(root, include_unreviewed_subject=True)
+            _set_shared_slot_frame(root, 500)
+            (root / "identity_operator_seeds.json").write_text(
+                json.dumps(
+                    {
+                        "decisions": [
+                            _exact_seed("t3", 500, "p4"),
+                        ]
+                    }
+                )
+            )
+
+            result = finalize_reviewed_identity(root, _match())
+            assignments = {
+                row["tracklet_id"]: row for row in result["tracklet_assignments"]
+            }
+            tracklets = {
+                row["tracklet_id"]: row
+                for row in json.loads((root / "tracklets.json").read_text())["tracklets"]
+            }
+            effective = {
+                row["tracklet_id"]: row
+                for row in reviewed_assignment_at(result, tracklets, 50.0, 10)
+            }
+
+            self.assertEqual(assignments["t3"]["identity_status"], "conflicted")
+            self.assertEqual(
+                assignments["t3"]["propagation_conflicted_stable_slot_ids"],
+                ["A03"],
+            )
+            self.assertEqual(effective["t1"]["canonical_player_id"], "p1")
+            self.assertEqual(effective["t2"]["canonical_player_id"], "p3")
+            self.assertEqual(effective["t3"]["canonical_player_id"], "p4")
+            self.assertEqual(result["observation_demotions"], [])
+
+    def test_exact_override_on_conflicted_slot_keeps_canonical_player_guard(self) -> None:
+        with _workspace() as root:
+            _write_inputs(
+                root,
+                decisions=[
+                    _decision("s1", "assign_roster_player", "p1"),
+                    _decision("s2", "assign_roster_player", "p3"),
+                ],
+            )
+            _write_shared_slot_fixture(root, include_unreviewed_subject=True)
+            _set_shared_slot_frame(root, 500)
+            (root / "identity_operator_seeds.json").write_text(
+                json.dumps({"decisions": [_exact_seed("t3", 500, "p1")]})
+            )
+
+            result = finalize_reviewed_identity(root, _match())
+            conflict_codes = {
+                conflict["code"]
+                for row in result["observation_demotions"]
+                for conflict in row["conflicts"]
+            }
+
+            self.assertIn("duplicate_canonical_player_in_frame", conflict_codes)
+            self.assertNotIn("duplicate_stable_slot_in_frame", conflict_codes)
+
     def test_multi_slot_subject_is_not_inferred_as_a_slot_binding(self) -> None:
         stable = {
             "t1": {
@@ -528,7 +662,7 @@ class _workspace:
 
 
 def _match() -> dict:
-    return {"id": "m1", "teams": [{"id": "ta", "players": [{"id": "p1", "name": "Paweł", "number": "8"}]}, {"id": "tb", "players": [{"id": "p2", "name": "Opponent"}]}]}
+    return {"id": "m1", "teams": [{"id": "ta", "players": [{"id": "p1", "name": "Paweł", "number": "8"}, {"id": "p3", "name": "Kuba", "number": "10"}, {"id": "p4", "name": "Roman", "number": "11"}]}, {"id": "tb", "players": [{"id": "p2", "name": "Opponent"}]}]}
 def _tracklet(tracklet_id: str, label: str, team_id: str, start: int) -> dict:
     return {"tracklet_id": tracklet_id, "team_label": label, "team_id": team_id, "start_frame": start, "end_frame": start + 2}
 def _decision(subject: str, decision: str, player: str | None = None) -> dict:
@@ -541,3 +675,64 @@ def _write_inputs(root: Path, *, decisions: list[dict], seeded: list[dict] | Non
     (root / "identity_candidate_shadow.json").write_text(json.dumps({"subjects": [{"candidate_subject_id": "s1", "tracklet_ids": ["t1"]}, {"candidate_subject_id": "s2", "tracklet_ids": ["t2"]}]}))
     (root / "identity_roster_subject_review_decisions_shadow.json").write_text(json.dumps({"decisions": decisions}))
     (root / "identity_seeded_candidate_assignments.json").write_text(json.dumps({"accepted_assignments": seeded or []}))
+
+
+def _write_shared_slot_fixture(root: Path, *, include_unreviewed_subject: bool) -> None:
+    tracklets = json.loads((root / "tracklets.json").read_text())
+    candidates = json.loads((root / "identity_candidate_shadow.json").read_text())
+    tracklet_ids = ["t1", "t2"]
+    if include_unreviewed_subject:
+        tracklets["tracklets"].append(_tracklet("t3", "A", "ta", 20))
+        candidates["subjects"].append(
+            {"candidate_subject_id": "s3", "tracklet_ids": ["t3"]}
+        )
+        tracklet_ids.append("t3")
+    for tracklet in tracklets["tracklets"]:
+        tracklet["positions_m"] = [
+            {
+                "frame": int(tracklet["start_frame"]),
+                "status": "detected",
+                "source": "detected",
+                "play_area_status": "inside_play",
+            }
+        ]
+    (root / "tracklets.json").write_text(json.dumps(tracklets))
+    (root / "identity_candidate_shadow.json").write_text(json.dumps(candidates))
+    (root / "global_identity.json").write_text(
+        json.dumps(
+            {
+                "slots": [
+                    {
+                        "stable_player_id": "A03",
+                        "team_label": "A",
+                        "tracklet_ids": tracklet_ids,
+                    }
+                ]
+            }
+        )
+    )
+
+
+def _set_shared_slot_frame(root: Path, frame: int) -> None:
+    tracklets = json.loads((root / "tracklets.json").read_text())
+    for tracklet in tracklets["tracklets"]:
+        tracklet["positions_m"] = [
+            {
+                "frame": frame,
+                "status": "detected",
+                "source": "detected",
+                "play_area_status": "inside_play",
+            }
+        ]
+    (root / "tracklets.json").write_text(json.dumps(tracklets))
+
+
+def _exact_seed(tracklet_id: str, frame: int, player_id: str) -> dict:
+    return {
+        "observation_key": f"{tracklet_id}:{frame}",
+        "frame_number": frame,
+        "action": "assign_roster_player",
+        "assigned_team": {"team_label": "A"},
+        "assigned_player": {"player_id": player_id},
+        "provenance": {"tracklet_id": tracklet_id},
+    }
