@@ -144,13 +144,11 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         if _has_conflicting_review_decisions(decisions):
             assignment_conflicts.append({"code": "conflicting_explicit_operator_decisions"})
         if slot_id in conflicting_slot_roster_bindings:
-            if _is_explicit_subject_player_decision(decision):
-                # Stable slots are propagation hypotheses. Disagreement at that
-                # broader scope must not erase a specific operator assignment.
-                propagation_diagnostics.append(
-                    "stable_slot_propagation_conflicted"
-                )
-            else:
+            # The conflict belongs to the stable-slot hypothesis itself. Keep
+            # it on every assignment so stronger exact/segment evidence does
+            # not later reuse this technical slot as a frame-uniqueness person.
+            propagation_diagnostics.append("stable_slot_propagation_conflicted")
+            if not _is_explicit_subject_player_decision(decision):
                 blockers.append("conflicting_stable_slot_roster_bindings")
                 assignment_conflicts.append(
                     {"code": "conflicting_stable_slot_roster_bindings"}

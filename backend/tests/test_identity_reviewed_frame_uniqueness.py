@@ -96,6 +96,74 @@ class ReviewedFrameUniquenessPlayAreaTests(unittest.TestCase):
             )
         )
 
+    def test_segment_override_inherits_conflicted_slot_diagnostic(self) -> None:
+        tracklets = {
+            "explicit": _tracklet("explicit", "inside_play"),
+            "segment": _tracklet("segment", "inside_play"),
+        }
+        assignments = [
+            _confirmed_assignment(
+                "explicit",
+                team_label="A",
+                stable_slot_id="A03",
+                player_id="player-kuba",
+                propagation_diagnostics=["stable_slot_propagation_conflicted"],
+            ),
+            _conflicted_assignment("segment"),
+        ]
+        segment_overrides = [
+            _segment_assignment("segment", player_id="player-roman"),
+        ]
+
+        demotions, diagnostics = build_frame_slot_demotions(
+            tracklets,
+            assignments,
+            segment_overrides=segment_overrides,
+        )
+
+        self.assertEqual(demotions, [])
+        self.assertEqual(diagnostics["duplicate_stable_slot_claim_groups"], 0)
+        self.assertEqual(diagnostics["duplicate_canonical_player_claim_groups"], 0)
+
+    def test_segment_override_on_conflicted_slot_still_blocks_same_player(
+        self,
+    ) -> None:
+        tracklets = {
+            "explicit": _tracklet("explicit", "inside_play"),
+            "segment": _tracklet("segment", "inside_play"),
+        }
+        assignments = [
+            _confirmed_assignment(
+                "explicit",
+                team_label="A",
+                stable_slot_id="A03",
+                player_id="player-kuba",
+                propagation_diagnostics=["stable_slot_propagation_conflicted"],
+            ),
+            _conflicted_assignment("segment"),
+        ]
+        segment_overrides = [
+            _segment_assignment("segment", player_id="player-kuba"),
+        ]
+
+        demotions, diagnostics = build_frame_slot_demotions(
+            tracklets,
+            assignments,
+            segment_overrides=segment_overrides,
+        )
+
+        self.assertEqual(diagnostics["duplicate_stable_slot_claim_groups"], 0)
+        self.assertEqual(diagnostics["duplicate_canonical_player_claim_groups"], 1)
+        self.assertTrue(
+            all(
+                any(
+                    conflict["code"] == "duplicate_canonical_player_in_frame"
+                    for conflict in demotion["conflicts"]
+                )
+                for demotion in demotions
+            )
+        )
+
     def test_nonconflicted_slot_still_blocks_duplicate_slot_in_same_frame(self) -> None:
         tracklets = {
             "first": _tracklet("first", "inside_play"),
@@ -163,6 +231,29 @@ def _confirmed_assignment(
         "identity_status": "confirmed",
         "canonical_player_id": player_id,
         "propagation_diagnostics": propagation_diagnostics or [],
+    }
+
+
+def _conflicted_assignment(tracklet_id: str) -> dict:
+    return {
+        "tracklet_id": tracklet_id,
+        "team_label": "A",
+        "stable_anonymous_slot_id": "A03",
+        "identity_status": "conflicted",
+        "canonical_player_id": None,
+        "propagation_diagnostics": ["stable_slot_propagation_conflicted"],
+    }
+
+
+def _segment_assignment(tracklet_id: str, *, player_id: str) -> dict:
+    return {
+        "tracklet_id": tracklet_id,
+        "frame": 10,
+        "team_label": "A",
+        "stable_anonymous_slot_id": "A03",
+        "identity_status": "confirmed",
+        "canonical_player_id": player_id,
+        "identity_source": "manual_segment_review",
     }
 
 
