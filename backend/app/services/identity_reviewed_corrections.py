@@ -11,6 +11,10 @@ from app.services.identity_reviewed_active_cap import (
     load_reviewed_detected_team_labels,
     validate_new_player_active_cap_from_progress,
 )
+from app.services.identity_reviewed_action_scope import (
+    review_unit_for_payload,
+    validate_review_unit_action_scope,
+)
 from app.services.identity_reviewed_correction_context import (
     build_materialized_subject_context,
     build_subject_context,
@@ -79,6 +83,7 @@ def save_reviewed_identity_correction(
             match_doc,
             payload,
             use_materialized_context=False,
+            authorized_review_unit=review_unit_for_payload(progress_before, payload),
         )
         review_target_id = str(payload.get("review_target_id") or "").strip() or None
         if review_target_id:
@@ -138,12 +143,14 @@ def persist_reviewed_identity_correction(
     *,
     use_materialized_context: bool = True,
     trusted_materialized_detected_team_labels: dict[str, set[str]] | None = None,
+    authorized_review_unit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate and durably save one decision without full-match recomputation."""
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     action = str(payload.get("action") or "").strip()
     if action not in CORRECTION_ACTIONS:
         raise ValueError(f"Unsupported reviewed identity correction action: {action}")
+    validate_review_unit_action_scope(payload, authorized_review_unit)
     review_target_id = str(payload.get("review_target_id") or "").strip() or None
     if action == "mixed_players":
         if review_target_id:

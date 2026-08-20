@@ -35,6 +35,9 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             "app.services.review_workflow_orchestrator.render_segment_review_evidence",
             return_value=set(),
         ) as segment_evidence, patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={"summary": {}},
+        ) as team_evidence, patch(
             "app.services.review_workflow_orchestrator.get_review_workflow_state",
             return_value=ready_state(),
         ), patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
@@ -46,6 +49,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             finalize.assert_called_once()
             progress.assert_called_once()
             segment_evidence.assert_called_once()
+            team_evidence.assert_called_once()
             stats.assert_not_called()
             render.assert_not_called()
 

@@ -22,6 +22,9 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     render_mixed_review_evidence,
 )
+from app.services.identity_reviewed_team_attribution_evidence import (
+    materialize_team_attribution_evidence,
+)
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_seeded_candidate_assignments import (
     rebuild_identity_seeded_candidate_assignments,
@@ -61,6 +64,7 @@ def refresh_review_after_identity_mutation(
         "seeded_candidate_rebuild_ms": 0.0,
         "finalize_reviewed_identity_ms": 0.0,
         "segment_evidence_ms": 0.0,
+        "team_attribution_evidence_ms": 0.0,
         "progress_build_ms": 0.0,
         "final_workflow_ms": 0.0,
     }
@@ -94,6 +98,16 @@ def refresh_review_after_identity_mutation(
                 type(exc).__name__,
             )
         timings["segment_evidence_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
+        try:
+            materialize_team_attribution_evidence(match_path)
+        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+            logger.warning(
+                "review_workflow team_attribution_evidence_render_failed match=%s error=%s",
+                match_doc.get("id") or match_path.name,
+                type(exc).__name__,
+            )
+        timings["team_attribution_evidence_ms"] = _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
         progress = build_reviewed_identity_progress(match_path, match_doc)
         timings["progress_build_ms"] = _elapsed_ms(phase_started)
@@ -131,13 +145,15 @@ def refresh_review_after_identity_mutation(
     logger.info(
         "reviewed_correction_perf mode=finalize match=%s source=%s phase=%s "
         "seeded_candidate_rebuild_ms=%.1f finalize_reviewed_identity_ms=%.1f "
-        "segment_evidence_ms=%.1f progress_build_ms=%.1f final_workflow_ms=%.1f total_ms=%.1f",
+        "segment_evidence_ms=%.1f team_attribution_evidence_ms=%.1f "
+        "progress_build_ms=%.1f final_workflow_ms=%.1f total_ms=%.1f",
         match_doc.get("id") or match_path.name,
         source,
         workflow.get("phase"),
         timings["seeded_candidate_rebuild_ms"],
         timings["finalize_reviewed_identity_ms"],
         timings["segment_evidence_ms"],
+        timings["team_attribution_evidence_ms"],
         timings["progress_build_ms"],
         timings["final_workflow_ms"],
         timings["total_ms"],

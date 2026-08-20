@@ -9,6 +9,9 @@ from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
 )
+from app.services.identity_reviewed_action_scope import (
+    ReviewedIdentityActionScopeError,
+)
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import identity_review_scope_digest
 
@@ -114,6 +117,56 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                     result["review_unit"]["current_resolution_status"],
                     "optional_team_audit",
                 )
+
+    def test_deferred_team_attribution_unit_allows_only_team_or_disposition_actions(self) -> None:
+        allowed = (
+            {"action": "assign_team", "team_label": "A"},
+            {"action": "assign_team", "team_label": "B"},
+            {"action": "referee"},
+            {"action": "false_detection"},
+            {"action": "team_unknown"},
+            {"action": "unresolved"},
+        )
+        forbidden = (
+            {"action": "assign_roster_player", "player_id": "team-a-player"},
+            {"action": "assign_existing_slot", "stable_slot_id": "A01"},
+            {"action": "create_new_stable_player", "team_label": "A"},
+            {"action": "mixed_players", "mixed_hint": "unknown"},
+        )
+        for payload in allowed:
+            with self.subTest(allowed=payload), _workspace() as root:
+                _baseline(root, [_team_attribution("team-u")])
+                result = validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {"candidate_subject_id": "team-u", **payload},
+                )
+                self.assertEqual(result["review_unit"]["visual_evidence"]["kind"], "team_attribution")
+        for payload in forbidden:
+            with self.subTest(forbidden=payload), _workspace() as root:
+                _baseline(root, [_team_attribution("team-u")])
+                with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+                    validate_deferred_review_action(
+                        root,
+                        {"id": "m1"},
+                        {"candidate_subject_id": "team-u", **payload},
+                    )
+                self.assertEqual(raised.exception.code, "team_attribution_action_not_allowed")
+
+    def test_deferred_team_attribution_assign_team_requires_canonical_a_or_b(self) -> None:
+        with _workspace() as root:
+            _baseline(root, [_team_attribution("team-u")])
+            with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {
+                        "candidate_subject_id": "team-u",
+                        "action": "assign_team",
+                        "team_label": "Corgi",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "team_attribution_team_label_invalid")
 
     def test_absent_and_malformed_optional_units_are_rejected(self) -> None:
         malformed = (
@@ -392,6 +445,13 @@ def _whole(subject_id: str) -> dict:
         "scope_kind": None,
         "priority": "high",
         "current_resolution_status": "pending_high_priority",
+    }
+
+
+def _team_attribution(subject_id: str) -> dict:
+    return {
+        **_whole(subject_id),
+        "visual_evidence": {"kind": "team_attribution", "anchor_crops": [{}, {}, {}]},
     }
 
 

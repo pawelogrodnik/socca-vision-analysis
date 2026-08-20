@@ -9,6 +9,7 @@ import type {
   ReviewedCorrectionAction,
   ReviewedCorrectionResponse,
   ReviewedIdentityAtEntity,
+  Team,
 } from '../types';
 import {
   buildReviewedCorrectionPayload,
@@ -17,12 +18,18 @@ import {
 } from '../utils/reviewedIdentityCorrection';
 import { persistReviewDecision } from '../utils/identityExceptionWorkspace';
 import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
+import {
+  TEAM_ATTRIBUTION_ONLY_ACTIONS,
+  teamAttributionTeamActions,
+} from '../utils/reviewedTeamAttributionActions';
 
 type Props = {
   matchId: string;
   entity: ReviewedIdentityAtEntity;
   onCancel: () => void;
   onSaved: (result: ReviewedCorrectionResponse) => void;
+  teams?: Team[];
+  teamAttributionOnly?: boolean;
   deferRecompute?: boolean;
   navigation?: {
     onPrevious: () => void;
@@ -103,6 +110,8 @@ export function ReviewedIdentityCorrectionForm({
   entity,
   onCancel,
   onSaved,
+  teams,
+  teamAttributionOnly = false,
   deferRecompute = false,
   navigation,
 }: Props) {
@@ -142,7 +151,7 @@ export function ReviewedIdentityCorrectionForm({
         if (cancelled) return;
         setContext(value);
         setSelectedTeamLabel(defaultCorrectionTeam(value));
-        if (value.legacy_suggestion?.requires_confirmation) {
+        if (!teamAttributionOnly && value.legacy_suggestion?.requires_confirmation) {
           setAction('assign_roster_player');
           setPlayerId(value.legacy_suggestion.player_id);
           setSelectedTeamLabel(value.legacy_suggestion.team_label);
@@ -158,7 +167,7 @@ export function ReviewedIdentityCorrectionForm({
     return () => {
       cancelled = true;
     };
-  }, [entity.review_target_id, matchId, subjectId]);
+  }, [entity.review_target_id, matchId, subjectId, teamAttributionOnly]);
 
   const sourceTeamLabel = context?.source_team_label ?? entity.team_label;
   const sourceTeamUnknown = sourceTeamLabel === 'U';
@@ -173,14 +182,20 @@ export function ReviewedIdentityCorrectionForm({
   }), [options.roster]);
   const selectedRosterPlayer = options.roster.find((player) => player.player_id === playerId);
   const range = correctionRange(entity);
-  const baseActionCards = segmentScope
+  const baseActionCards = teamAttributionOnly
+    ? [...TEAM_ATTRIBUTION_ONLY_ACTIONS]
+    : segmentScope
     ? SEGMENT_ACTION_CARDS
     : sourceTeamUnknown
     ? actionCardsForUnknownTeam(selectedTeamLabel)
     : STANDARD_ACTION_CARDS;
-  const actionCards = segmentScope
+  const actionCards = teamAttributionOnly || segmentScope
     ? baseActionCards
     : withMixedPlayersAction(baseActionCards);
+  const teamAttributionActions = useMemo(
+    () => teamAttributionTeamActions(teams),
+    [teams],
+  );
   const choiceComplete = Boolean(action)
     && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))
     && (action !== 'assign_roster_player' || Boolean(playerId))
@@ -284,13 +299,48 @@ export function ReviewedIdentityCorrectionForm({
     </header>
 
     <div className='reviewed-correction-body'>
-      {context?.legacy_suggestion && <p className='reviewed-correction-suggestion'>
+      {context?.legacy_suggestion && !teamAttributionOnly && <p className='reviewed-correction-suggestion'>
         Poprzednia decyzja sugeruje: <strong>{context.legacy_suggestion.player_name}</strong>.
         Sprawdź pokazany fragment i zapisz, aby potwierdzić zakres.
       </p>}
       {range && <p className='reviewed-correction-range'>Zakres: {range}<br />{entity.detected_evidence_count} wykryte obserwacje</p>}
 
-      {showActionCategories && segmentScope ? <>
+      {showActionCategories && teamAttributionOnly ? <>
+        <section className='reviewed-correction-step'>
+          <h5>Do której drużyny należy ta osoba?</h5>
+          <div className='reviewed-action-cards reviewed-team-cards' role='radiogroup' aria-label='Potwierdzenie drużyny'>
+            {teamAttributionActions.map(({ label, teamLabel }) => <button
+              type='button'
+              key={teamLabel}
+              role='radio'
+              aria-checked={false}
+              className='reviewed-action-card'
+              onClick={() => {
+                setSelectedTeamLabel(teamLabel);
+                setAction('assign_team');
+                setPlayerId('');
+                setStableSlotId('');
+                setError('');
+              }}
+              disabled={busy || !context?.available_team_labels.includes(teamLabel)}
+            >{label}</button>)}
+          </div>
+        </section>
+        <section className='reviewed-correction-step'>
+          <h5>Albo wybierz rodzaj detekcji</h5>
+          <div className='reviewed-action-cards' role='radiogroup' aria-label='Rodzaj detekcji'>
+            {actionCards.map((card) => <button
+              type='button'
+              key={card.action}
+              role='radio'
+              aria-checked={false}
+              className='reviewed-action-card'
+              onClick={() => selectAction(card.action)}
+              disabled={busy}
+            >{card.label}</button>)}
+          </div>
+        </section>
+      </> : showActionCategories && segmentScope ? <>
         <section className='reviewed-correction-step'>
           <h5>Jeśli znasz tylko drużynę</h5>
           <div className='reviewed-action-cards reviewed-team-cards' role='radiogroup' aria-label='Potwierdzenie drużyny segmentu'>

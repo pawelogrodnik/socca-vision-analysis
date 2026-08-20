@@ -36,6 +36,10 @@ import {
   type TeamReviewFilter,
 } from '../utils/identityExceptionTeamFilter';
 import { requiredCasesLabel } from '../utils/reviewWorkflowPresentation';
+import {
+  reviewRecomputeMessage,
+  teamAttributionBlockerMessage,
+} from '../utils/reviewedIdentityBlockerPresentation';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
 
@@ -239,9 +243,11 @@ export function IdentityExceptionReviewPanel({
   const globalRemaining = reviewFilters?.counts.all ?? totalRemaining;
   const coverageBlockedWithoutCases = globalRemaining === 0
     && coverageReadiness?.allows_finalize === false;
+  const teamAttributionBlocker = teamAttributionBlockerMessage(coverageReadiness);
   const guidanceCount = Number(reviewCase?.unit.scope_kind === 'canonical_segment')
     + Number(activeQueue === 'optional_audit')
-    + Number(reviewCase?.unit.priority === 'coverage');
+    + Number(reviewCase?.unit.priority === 'coverage')
+    + Number(unitEvidence?.kind === 'team_attribution');
 
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;
@@ -332,18 +338,19 @@ export function IdentityExceptionReviewPanel({
     setFinalizeFailed(false);
     setMessage('Przeliczam Review po zapisaniu decyzji…');
     try {
-      const { result } = await finalizeDeferredReviewBatch(
+      const { result, cases: refreshedCases } = await finalizeDeferredReviewBatch(
         () => finalizeReviewedIdentityCorrections(match.id),
         () => loadCases(undefined, true, 0, 0, teamFilter, queue),
         onWorkflowChanged,
       );
-      if (result.workflow.phase === 'exceptions') {
-        setMessage(`Po przeliczeniu pozostały kolejne przypadki do sprawdzenia.`);
-      } else {
+      if (refreshedCases.length === 0) {
         setCases([]);
         setIndex(0);
-        setMessage('Review zostało przeliczone.');
       }
+      setMessage(reviewRecomputeMessage(
+        refreshedCases.length,
+        result.workflow.issues.coverage_readiness?.allows_finalize === false,
+      ));
     } catch (error) {
       setFinalizeFailed(true);
       setMessage(`Decyzje są zapisane, ale przeliczenie Review nie powiodło się. ${errorMessage(error)}`);
@@ -430,6 +437,10 @@ export function IdentityExceptionReviewPanel({
             <strong>Audyt opcjonalny — decyzja nie jest wymagana.</strong>
             <p>Możesz sprawdzić zawodnika albo przejść dalej bez decyzji.</p>
           </div>}
+          {unitEvidence?.kind === 'team_attribution' && <div>
+            <strong>Potwierdź tylko drużynę albo rodzaj detekcji.</strong>
+            <p>Te widoki nie służą do rozpoznania imienia. Wybierz Team A, Team B, sędziego, fałszywą detekcję albo „Nie wiem”.</p>
+          </div>}
           {reviewCase.unit.priority === 'coverage' && <div>
             <strong>Ten fragment ma duży wpływ na kompletność statystyk.</strong>
             <p>Może przypisać do {reviewCase.unit.potential_named_observation_gain || reviewCase.unit.detected_observation_count} obserwacji
@@ -470,6 +481,8 @@ export function IdentityExceptionReviewPanel({
             key={reviewUnitKey(reviewCase.unit)}
             matchId={match.id}
             entity={entity}
+            teams={match.teams}
+            teamAttributionOnly={unitEvidence?.kind === 'team_attribution'}
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}
             deferRecompute
@@ -491,7 +504,7 @@ export function IdentityExceptionReviewPanel({
       </button>}
     </div> : finalizing ? null : coverageBlockedWithoutCases ? <div className='status error identity-coverage-blocked' role='alert'>
       <strong>Nie można zakończyć Review.</strong>
-      <p>Pozostała istotna liczba nierozpoznanych obserwacji, ale system nie ma bezpiecznych przypadków do ręcznego przypisania.</p>
+      <p>{teamAttributionBlocker || 'Pozostała istotna liczba nierozpoznanych obserwacji, ale system nie ma bezpiecznych przypadków do ręcznego przypisania.'}</p>
       <p>To wskazuje na problem jakości lub struktury identity. Review nie zostanie automatycznie zakończone ani opublikowane.</p>
       {onRetryReview && <button type='button' className='secondary' onClick={() => void onRetryReview()}>
         Odśwież Review

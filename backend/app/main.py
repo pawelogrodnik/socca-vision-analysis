@@ -82,6 +82,7 @@ from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
 )
+from app.services.identity_reviewed_action_scope import ReviewedIdentityActionScopeError
 from app.services.identity_reviewed_corrections import (
     persist_reviewed_identity_correction,
     reviewed_correction_context,
@@ -2172,6 +2173,7 @@ def post_match_reviewed_identity_correction(
                 trusted_materialized_detected_team_labels=deferred_gate.get(
                     "detected_team_labels_by_subject"
                 ),
+                authorized_review_unit=deferred_gate.get("review_unit"),
             )
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -2235,6 +2237,11 @@ def post_match_reviewed_identity_correction(
     except DeferredReviewActionError as exc:
         raise HTTPException(
             status_code=409,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ReviewedIdentityActionScopeError as exc:
+        raise HTTPException(
+            status_code=400,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
     except FileNotFoundError as exc:
@@ -3079,6 +3086,15 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
         and artifact_rel.parts[0] == "reviewed_identity_mixed"
         and len(artifact_rel.parts[1]) == 16
         and all(character in "0123456789abcdef" for character in artifact_rel.parts[1])
+        and artifact_basename.lower().endswith((".jpg", ".jpeg"))
+    ):
+        allowed[artifact_basename] = "image/jpeg"
+    if (
+        len(artifact_rel.parts) == 3
+        and artifact_rel.parts[0] == "team_attribution_evidence"
+        and artifact_rel.parts[1].startswith("shadow-u-")
+        and len(artifact_rel.parts[1]) == len("shadow-u-") + 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][len("shadow-u-"):])
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):
         allowed[artifact_basename] = "image/jpeg"

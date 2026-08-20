@@ -27,7 +27,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v4-target-shortfall"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v5-team-attribution-evidence"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -166,22 +166,30 @@ def apply_coverage_policy(
     for unit in units:
         if unit in semantic or _has_explicit_disposition(unit, match_doc):
             continue
+        # A raw subject may have a diagnostic card while every observation is
+        # outside the product play area.  It cannot become a team-attribution
+        # task because it contributes no player-facing observation at all.
+        if not unit.get("detected_pairs"):
+            continue
         enriched = _coverage_impact(unit, pair_index, coverage)
         team = _team_label(enriched.get("coverage_team_label"))
         operator_actionable = enriched.get("operator_actionable") is not False
+        # A Team-U or cross-team fragment must be resolved before named-player
+        # coverage is considered.  It is a team-attribution decision, not a
+        # request to name a player for the wrong roster scope.
+        if _has_team_uncertainty(enriched):
+            enriched["reason_codes"] = sorted(
+                set(enriched.get("reason_codes") or [])
+                | {"team_attribution_uncertain"}
+            )
+            if operator_actionable and enriched.get("has_operator_visual_evidence"):
+                enriched["current_resolution_status"] = "pending_high_priority"
+                enriched["priority"] = "high"
+                semantic.append(enriched)
+            else:
+                non_actionable_team_uncertainty[team].append(enriched)
+            continue
         if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
-            if _has_team_uncertainty(enriched):
-                enriched["reason_codes"] = sorted(
-                    set(enriched.get("reason_codes") or [])
-                    | {"team_attribution_uncertain"}
-                )
-                if operator_actionable and enriched.get("has_operator_visual_evidence"):
-                    enriched["current_resolution_status"] = "pending_high_priority"
-                    enriched["priority"] = "high"
-                    semantic.append(enriched)
-                else:
-                    non_actionable_team_uncertainty[team].append(enriched)
-                continue
             if int(enriched["potential_named_observation_gain"]) <= 0:
                 continue
             if operator_actionable and enriched.get("has_operator_visual_evidence"):
@@ -611,6 +619,10 @@ def _readiness(
         blockers.append({"code": "significant_named_coverage_debt", "count": coverage_count})
     for team, units in non_actionable_team_uncertainty.items():
         if units:
+            evidence_status_counts = Counter(
+                str(unit.get("team_attribution_evidence_status") or "no_safe_visual_evidence")
+                for unit in units
+            )
             blockers.append(
                 {
                     "code": "team_attribution_evidence_unavailable",
@@ -620,6 +632,7 @@ def _readiness(
                         int(unit.get("detected_observation_count") or 0)
                         for unit in units
                     ),
+                    "evidence_status_counts": dict(sorted(evidence_status_counts.items())),
                 }
             )
     for team, row in residual_by_team.items():
