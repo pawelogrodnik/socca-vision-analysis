@@ -179,6 +179,21 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(optional["current_named_coverage"], 0.95)
         self.assertEqual(optional["safe_max_named_coverage"], 1.0)
         self.assertEqual(optional["remaining_actionable_named_gain"], 5)
+        self.assertEqual(policy["optional_audit_cases"][0]["optional_max_marginal_coverage_gain_pp"], 5.0)
+
+    def test_safe_maximum_at_one_hundred_percent_has_no_negative_residual(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+
+        optional = apply_coverage_policy([], coverage, pair_index, _scoped_match())["optional_audit"]
+
+        self.assertEqual(optional["status"], "safe_max_reached")
+        self.assertEqual(optional["safe_max_named_coverage"], 1.0)
+        self.assertEqual(optional["unavailable_residual_observations"], 0)
+        self.assertEqual(optional["unavailable_residual_ratio"], 0.0)
 
     def test_continue_to_max_ranks_overlapping_cases_by_marginal_unique_gain(self) -> None:
         rows = [
@@ -214,7 +229,34 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["optional_audit_cases"], [])
         self.assertEqual(policy["optional_audit"]["status"], "safe_max_reached")
         self.assertEqual(policy["optional_audit"]["safe_max_named_coverage"], 0.95)
-        self.assertEqual(policy["optional_audit"]["unavailable_reason_counts"], {"explicit_unresolved": 1})
+        self.assertEqual(policy["optional_audit"]["unavailable_reason_counts"], {"explicit_unresolved": 5})
+        self.assertEqual(policy["optional_audit"]["unavailable_residual_observations"], 5)
+        self.assertEqual(
+            sum(policy["optional_audit"]["unavailable_reason_counts"].values()),
+            policy["optional_audit"]["unavailable_residual_observations"],
+        )
+
+    def test_explicit_non_naming_disposition_is_residual_not_a_max_case(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(95)
+        ] + [
+            _observation("false", frame, "A", "unresolved", None)
+            for frame in range(95, 100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        unit = _unit("false", [("false", frame) for frame in range(95, 100)], visual=True)
+        unit["current_decision"] = {"action": "false_detection"}
+        unit["current_resolution_status"] = "reviewed_by_operator"
+
+        optional = apply_coverage_policy([unit], coverage, pair_index, _scoped_match())["optional_audit"]
+
+        self.assertEqual(optional["remaining_cases"], 0)
+        self.assertEqual(optional["safe_max_named_coverage"], 0.95)
+        self.assertEqual(
+            optional["unavailable_reason_counts"],
+            {"explicit_non_naming_disposition": 5},
+        )
 
     def test_deferred_roster_assignment_is_projected_without_double_counting_max_queue(self) -> None:
         rows = [
@@ -239,6 +281,55 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(optional["projected_named_coverage"], 0.95)
         self.assertEqual(optional["safe_max_named_coverage"], 1.0)
         self.assertEqual([row["candidate_subject_id"] for row in policy["optional_audit_cases"]], ["next"])
+
+    def test_numeric_minimum_is_distinct_from_required_readiness(self) -> None:
+        members = _continuity_members(team="A")
+        material = next(
+            row
+            for row in coalesce_material_continuity_units(members, fps=10.0)
+            if row.get("scope_kind") == "material_continuity"
+        )
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(3_000)
+        ] + [
+            _observation(tracklet_id, frame, "A", "unresolved", None)
+            for member in members
+            for tracklet_id, frame in member["detected_pairs"]
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+
+        optional = apply_coverage_policy([material], coverage, pair_index, _scoped_match())["optional_audit"]
+
+        self.assertTrue(optional["current_minimum_target_met"])
+        self.assertTrue(optional["projected_minimum_target_met"])
+        self.assertFalse(optional["required_readiness_met"])
+        self.assertEqual(optional["status"], "not_ready")
+
+    def test_optional_max_queue_is_uncapped_and_its_global_summary_is_not_page_scoped(self) -> None:
+        named = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(9_000)
+        ]
+        unnamed = []
+        units = []
+        for index in range(250):
+            tracklet_id = f"optional-{index:03d}"
+            pairs = [(tracklet_id, frame) for frame in range(4)]
+            unnamed.extend(_observation(tracklet_id, frame, "A", "unresolved", None) for _, frame in pairs)
+            units.append(_unit(f"optional-{index:03d}", pairs, visual=True))
+        coverage, pair_index = summarize_effective_observations([*named, *unnamed], _scoped_match())
+
+        policy = apply_coverage_policy(units, coverage, pair_index, _scoped_match())
+        page = paginate_progress(policy, queue="optional_audit", limit=20)
+
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+        self.assertEqual(len(policy["optional_audit_cases"]), 250)
+        self.assertFalse(policy["workload"]["queue_truncated"])
+        self.assertEqual(policy["optional_audit"]["remaining_cases"], 250)
+        self.assertEqual(policy["optional_audit"]["actionable_unique_observations_remaining"], 1_000)
+        self.assertEqual(len(page["next_cases"]), 20)
+        self.assertEqual(page["pagination"]["global_total_remaining"], 250)
 
     def test_continue_to_max_excludes_team_b_material_and_semantic_units(self) -> None:
         rows = [

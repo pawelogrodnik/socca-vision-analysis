@@ -46,7 +46,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.7.0"
+PROGRESS_SCHEMA_VERSION = "2.8.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -433,6 +433,7 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "potential_team_unnamed_share", "potential_named_coverage_gain_pp",
         "named_coverage_before", "named_coverage_after_max",
         "coverage_rank_within_team", "marginal_named_observation_gain",
+        "optional_max_rank", "optional_max_marginal_coverage_gain_pp",
         "cumulative_selected_named_gain",
         "correction_scope", "operator_actionable", "non_actionable_reason",
         "has_operator_visual_evidence", "team_attribution_evidence_status",

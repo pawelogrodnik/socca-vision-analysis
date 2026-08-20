@@ -106,13 +106,21 @@ test('optional MAX audit stays non-blocking and supports local skip navigation',
   const components = new URL('../src/components/', import.meta.url);
   const workspace = readFileSync(new URL('IdentityReviewWorkspace.tsx', components), 'utf8');
   const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
+  const maxSummary = readFileSync(new URL('ReviewedIdentityMaxSummary.tsx', components), 'utf8');
   const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', components), 'utf8');
 
   assert.match(workspace, /Kontynuuj do MAX/);
-  assert.match(workspace, /safe_max_named_coverage/);
+  assert.match(workspace, /matchTeamName\(match\.teams \|\| \[\], 'A'\)/);
+  assert.doesNotMatch(workspace, /Pełny audyt tożsamości — Corgi/);
+  assert.match(maxSummary, /safe_max_named_coverage/);
+  assert.match(maxSummary, /formatReviewedIdentityPercent/);
   assert.match(workspace, /Zakończ mimo to/);
-  assert.match(workspace, /nie będą blokować raportu/);
-  assert.match(panel, /Pełny audyt tożsamości Corgi/);
+  assert.match(workspace, /pozostaną anonimowe w tym raporcie/);
+  assert.match(panel, /Pełny audyt tożsamości \$\{matchTeamName/);
+  assert.match(panel, /onOptionalAuditSummaryChanged/);
+  assert.match(panel, /progress\.optional_audit\) onOptionalAuditSummaryChanged/);
+  assert.match(panel, /void loadCases\(undefined, true, 0, 0, 'all', 'optional_audit'\)/);
+  assert.match(panel, /optional_max_marginal_coverage_gain_pp/);
   assert.match(panel, /Pomiń na razie/);
   assert.match(form, /nextLabel\?: string/);
 });

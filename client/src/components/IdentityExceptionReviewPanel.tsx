@@ -17,6 +17,7 @@ import type {
   ReviewedIdentityReviewFilters,
   ReviewedIdentityReviewQueue,
   ReviewedIdentityReviewUnit,
+  ReviewedIdentityOptionalAudit,
   ReviewedIdentityWorkload,
   ReviewWorkflow,
 } from '../types';
@@ -41,6 +42,10 @@ import {
   teamAttributionBlockerMessage,
 } from '../utils/reviewedIdentityBlockerPresentation';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
+import {
+  formatReviewedIdentityPercent,
+  formatReviewedIdentityPercentagePoints,
+} from '../utils/reviewedIdentityMaxPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
 
 type Props = {
@@ -49,7 +54,7 @@ type Props = {
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
   onRetryReview?: () => Promise<void>;
   initialQueue?: ReviewedIdentityReviewQueue;
-  onOptionalAuditRemainingChanged?: (remaining: number) => void;
+  onOptionalAuditSummaryChanged?: (summary: ReviewedIdentityOptionalAudit) => void;
 };
 
 type ReviewCase = {
@@ -118,7 +123,7 @@ export function IdentityExceptionReviewPanel({
   onWorkflowChanged,
   onRetryReview,
   initialQueue = 'required',
-  onOptionalAuditRemainingChanged,
+  onOptionalAuditSummaryChanged,
 }: Props) {
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
@@ -184,9 +189,9 @@ export function IdentityExceptionReviewPanel({
       setCoverageReadiness(progress.coverage_readiness || null);
       setWorkload(progress.workload || null);
       setReviewFilters(progress.filters || null);
-      const nextOptionalRemaining = progress.summary.optional_audit_cases_remaining || 0;
+      const nextOptionalRemaining = progress.optional_audit?.remaining_cases || 0;
       setOptionalAuditRemaining(nextOptionalRemaining);
-      onOptionalAuditRemainingChanged?.(nextOptionalRemaining);
+      if (progress.optional_audit) onOptionalAuditSummaryChanged?.(progress.optional_audit);
       if (shouldAutoFinalizeDeferredQueue(
         queue,
         actionable,
@@ -320,9 +325,10 @@ export function IdentityExceptionReviewPanel({
     setFinalizeFailed(false);
     setMessage('Zapisano decyzję.');
     if (activeQueue === 'optional_audit') {
-      onOptionalAuditRemainingChanged?.(Math.max(0, totalRemaining - 1));
-    }
-    if (next.cases.length === 0 && hasMore) {
+      // Coverage is never inferred in the client. The new queue and complete
+      // MAX summary come from the read-only progress endpoint after every save.
+      void loadCases(undefined, true, 0, 0, 'all', 'optional_audit');
+    } else if (next.cases.length === 0 && hasMore) {
       void loadCases(
         undefined,
         true,
@@ -376,7 +382,7 @@ export function IdentityExceptionReviewPanel({
         <h2>Pozostałe przypadki</h2>
         <p>{activeQueue === 'required'
           ? 'Rozwiąż przypadki wymagane do zakończenia Review.'
-          : 'Pełny audyt tożsamości Corgi jest dobrowolny i nie blokuje zakończenia Review.'}</p>
+          : `Pełny audyt tożsamości ${matchTeamName(match.teams || [], 'A')} jest dobrowolny i nie blokuje zakończenia Review.`}</p>
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
         <div className='identity-exception-controls'>
@@ -384,7 +390,7 @@ export function IdentityExceptionReviewPanel({
             <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
             <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Kontynuuj do MAX <span>{optionalAuditRemaining}</span></button>
           </nav>
-          <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
+          {activeQueue === 'required' && <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
             {filterOptions.map((option) => <button
               type='button'
               key={option.value}
@@ -393,7 +399,7 @@ export function IdentityExceptionReviewPanel({
               onClick={() => changeTeamFilter(option.value)}
               disabled={loading || finalizing}
             >{option.label} <span>{option.count}</span></button>)}
-          </nav>
+          </nav>}
         </div>
         <div className='identity-exception-case-meta'>
           {cases.length > 0 && <strong className='reviewed-status-badge'>Przypadek {pageOffset + index + 1} z {totalRemaining}</strong>}
@@ -410,15 +416,15 @@ export function IdentityExceptionReviewPanel({
     {coverage && <section className='identity-coverage-summary' aria-label='Pokrycie rozpoznania zawodników'>
       <div>
         <strong>Pokrycie rozpoznania</strong>
-        <span>Imiennie: {Math.round((coverage.named_observation_coverage || 0) * 100)}%</span>
-        <span>Drużyna znana: {Math.round((coverage.team_known_observation_coverage || 0) * 100)}%</span>
+        <span>Imiennie: {formatReviewedIdentityPercent(coverage.named_observation_coverage)}</span>
+        <span>Drużyna znana: {formatReviewedIdentityPercent(coverage.team_known_observation_coverage)}</span>
       </div>
       {Object.entries(coverage.per_team).filter(([team]) => team === 'A' || team === 'B').map(([team, row]) => <div
         key={team}
         className={activeTeamFilter === team ? 'active-team' : ''}
       >
         <strong>{matchTeamName(match.teams || [], team as 'A' | 'B')}</strong>
-        <span>Imiennie {Math.round((row.named_observation_coverage || 0) * 100)}%
+        <span>Imiennie {formatReviewedIdentityPercent(row.named_observation_coverage)}
           {row.named_coverage_status === 'not_required_by_scope' ? ' · informacyjnie' : ''}
         </span>
         <progress
@@ -446,8 +452,14 @@ export function IdentityExceptionReviewPanel({
             <p>To {reviewCase.unit.continuity_fragment_count || reviewCase.unit.tracklet_count} bezpieczne fragmenty tego samego lokalnego ciągu. Wybór obejmie wyłącznie pokazane obserwacje, nie cały slot.</p>
           </div>}
           {activeQueue === 'optional_audit' && <div>
-            <strong>Pełny audyt tożsamości Corgi — decyzja nie jest wymagana.</strong>
-            <p>Możesz nazwać zawodnika, oznaczyć „Nie wiem” albo pominąć ten fragment bez zapisywania.</p>
+            <strong>Opcjonalny MAX — decyzja nie jest wymagana.</strong>
+            <p>Możesz nazwać zawodnika, oznaczyć „Nie wiem” albo pominąć na razie bez zapisywania.</p>
+            <p>
+              Potencjalny wzrost: {reviewCase.unit.marginal_named_observation_gain || 0} obserwacji
+              {reviewCase.unit.optional_max_marginal_coverage_gain_pp != null
+                ? ` (${formatReviewedIdentityPercentagePoints(reviewCase.unit.optional_max_marginal_coverage_gain_pp)})`
+                : ''}.
+            </p>
           </div>}
           {unitEvidence?.kind === 'team_attribution' && <div>
             <strong>Potwierdź tylko drużynę albo rodzaj detekcji.</strong>

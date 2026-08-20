@@ -30,8 +30,8 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v7-optional-max"
-OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v1-safe-complete-roster"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v8-optional-max"
+OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v2-exact-residual-accounting"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -407,7 +407,8 @@ def apply_coverage_policy(
     for unit in units:
         enriched = _coverage_impact(unit, pair_index, coverage)
         if _optional_max_ineligible(enriched, match_doc, required_keys):
-            if _optional_max_explicitly_unresolved(enriched):
+            action = str((enriched.get("current_decision") or {}).get("action") or "")
+            if action and action != "assign_roster_player":
                 optional_max_unavailable.append(enriched)
             continue
         if int(enriched.get("potential_named_observation_gain") or 0) <= 0:
@@ -419,6 +420,12 @@ def apply_coverage_policy(
     optional_sorted = _rank_optional_max_cases(
         optional_max_candidates,
         accounted_pairs=deferred_named_pairs,
+        reliable_observations=int(
+            ((coverage.get("per_team") or {}).get("A") or {}).get(
+                "reliable_observations"
+            )
+            or 0
+        ),
     )
     optional_audit = _optional_max_summary(
         coverage,
@@ -427,6 +434,7 @@ def apply_coverage_policy(
         readiness,
         match_doc,
         deferred_named_pairs,
+        pair_index,
     )
     for team, residual in residual_by_team.items():
         residual["optional_audit_cases"] = (
@@ -723,6 +731,7 @@ def _rank_optional_max_cases(
     rows: list[dict[str, Any]],
     *,
     accounted_pairs: set[tuple[str, int]] | None = None,
+    reliable_observations: int = 0,
 ) -> list[dict[str, Any]]:
     """Greedily rank by *marginal* unique observation gain, without a cap."""
     remaining = list(rows)
@@ -750,6 +759,11 @@ def _rank_optional_max_cases(
         chosen["priority"] = "optional"
         chosen["optional_max_rank"] = len(selected) + 1
         chosen["marginal_named_observation_gain"] = gain
+        chosen["optional_max_marginal_coverage_gain_pp"] = (
+            round(100.0 * gain / reliable_observations, 4)
+            if reliable_observations > 0
+            else 0.0
+        )
         chosen["cumulative_selected_named_gain"] = len(accounted)
         chosen["reason_codes"] = sorted(
             set(chosen.get("reason_codes") or []) | {"optional_max_named_coverage"}
@@ -765,13 +779,24 @@ def _optional_max_summary(
     readiness: dict[str, Any],
     match_doc: dict[str, Any],
     deferred_named_pairs: set[tuple[str, int]],
+    pair_index: dict[tuple[str, int], dict[str, Any]],
 ) -> dict[str, Any]:
     team = "A"
     row = (coverage.get("per_team") or {}).get(team) or {}
     reliable = int(row.get("reliable_observations") or 0)
     current_named = int(row.get("confirmed_named_observations") or 0)
-    safely_actionable_pairs = _unique_named_gain_pairs(rows) - deferred_named_pairs
-    unavailable_pairs = _unique_named_gain_pairs(unavailable)
+    team_unnamed_pairs = {
+        pair
+        for pair, observation in pair_index.items()
+        if _team_label(observation.get("team_label")) == team
+        and str(observation.get("identity_status") or "unresolved") in RELIABLE_STATUSES
+        and not observation.get("canonical_player_id")
+    }
+    deferred_pairs = team_unnamed_pairs & deferred_named_pairs
+    safely_actionable_pairs = (
+        _unique_named_gain_pairs(rows) & team_unnamed_pairs
+    ) - deferred_pairs
+    unavailable_pairs = team_unnamed_pairs - deferred_pairs - safely_actionable_pairs
     scope_ready = team_review_scope(match_doc, team) == COMPLETE_ROSTER
     normal_ready = bool(readiness.get("allows_finalize"))
     status = (
@@ -781,14 +806,36 @@ def _optional_max_summary(
         if rows
         else "safe_max_reached"
     )
-    reason_counts = Counter(
-        "explicit_unresolved"
-        if _optional_max_explicitly_unresolved(value)
-        else str(value.get("non_actionable_reason") or "no_safe_visual_evidence")
-        for value in unavailable
-    )
-    projected_named = min(reliable, current_named + len(deferred_named_pairs))
+    unavailable_reason_by_pair = {
+        pair: "other_no_safe_path"
+        for pair in unavailable_pairs
+    }
+    # Classify only the residual pairs. A unit can overlap another unit, so a
+    # pair receives one deterministic reason; the public counts then reconcile
+    # exactly with the residual total rather than with the number of units.
+    for value in unavailable:
+        if _optional_max_explicitly_unresolved(value):
+            reason = "explicit_unresolved"
+        elif (value.get("current_decision") or {}).get("action"):
+            reason = "explicit_non_naming_disposition"
+        elif not value.get("has_operator_visual_evidence"):
+            reason = "insufficient_safe_evidence"
+        else:
+            reason = "safety_constraint"
+        for pair in set(value.get("_potential_named_observation_pairs") or set()):
+            if pair in unavailable_pairs:
+                unavailable_reason_by_pair[pair] = reason
+    reason_counts = Counter(unavailable_reason_by_pair.values())
+    projected_named = min(reliable, current_named + len(deferred_pairs))
     safe_max = min(projected_named + len(safely_actionable_pairs), reliable)
+    current_minimum_target_met = (
+        reliable > 0
+        and current_named / reliable >= COMPLETE_ROSTER_NAMED_TARGET_RATIO
+    )
+    projected_minimum_target_met = (
+        reliable > 0
+        and projected_named / reliable >= COMPLETE_ROSTER_NAMED_TARGET_RATIO
+    )
     return {
         "policy_version": OPTIONAL_MAX_POLICY_VERSION,
         "queue": "optional_audit",
@@ -798,27 +845,27 @@ def _optional_max_summary(
         "status": status,
         "eligible_to_start": status in {"available", "safe_max_reached"},
         "minimum_target_ratio": COMPLETE_ROSTER_NAMED_TARGET_RATIO,
-        "minimum_target_met": normal_ready,
+        # Retained for compatibility, but it is intentionally numeric rather
+        # than a proxy for workflow readiness. Consumers should use the three
+        # explicit facts below.
+        "minimum_target_met": current_minimum_target_met,
+        "current_minimum_target_met": current_minimum_target_met,
+        "projected_minimum_target_met": projected_minimum_target_met,
+        "required_readiness_met": normal_ready,
         "remaining_cases": len(rows),
         "actionable_cases_remaining": len(rows),
         "current_named_observations": current_named,
         "reliable_observations": reliable,
         "current_named_coverage": _ratio(current_named, reliable),
-        "pending_named_gain": len(deferred_named_pairs),
+        "pending_named_gain": len(deferred_pairs),
         "projected_named_observations": projected_named,
         "projected_named_coverage": _ratio(projected_named, reliable),
         "safe_max_named_observations": safe_max,
         "safe_max_named_coverage": _ratio(safe_max, reliable),
         "remaining_actionable_named_gain": len(safely_actionable_pairs),
         "actionable_unique_observations_remaining": len(safely_actionable_pairs),
-        "unavailable_residual_observations": max(
-            0,
-            reliable - projected_named - len(safely_actionable_pairs),
-        ),
-        "unavailable_residual_ratio": _ratio(
-            max(0, reliable - projected_named - len(safely_actionable_pairs)),
-            reliable,
-        ),
+        "unavailable_residual_observations": len(unavailable_pairs),
+        "unavailable_residual_ratio": _ratio(len(unavailable_pairs), reliable),
         "unavailable_actionable_observations": len(unavailable_pairs),
         "unavailable_reason_counts": dict(sorted(reason_counts.items())),
         "per_team": {team: len(rows)},

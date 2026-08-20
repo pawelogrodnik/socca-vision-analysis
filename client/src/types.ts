@@ -2032,8 +2032,11 @@ export type ReviewedIdentityReviewUnit = {
   material_continuity_required?: boolean;
   coverage_team_label?: string | null;
   potential_named_observation_gain?: number | null;
+  marginal_named_observation_gain?: number | null;
   potential_team_unnamed_share?: number | null;
   potential_named_coverage_gain_pp?: number | null;
+  optional_max_rank?: number | null;
+  optional_max_marginal_coverage_gain_pp?: number | null;
   named_coverage_before?: number | null;
   named_coverage_after_max?: number | null;
   filter_team_label?: 'A' | 'B' | 'U';
@@ -2102,6 +2105,9 @@ export type ReviewedIdentityOptionalAudit = {
   eligible_to_start: boolean;
   minimum_target_ratio: number;
   minimum_target_met: boolean;
+  current_minimum_target_met: boolean;
+  projected_minimum_target_met: boolean;
+  required_readiness_met: boolean;
   remaining_cases: number;
   actionable_cases_remaining: number;
   current_named_observations: number;
