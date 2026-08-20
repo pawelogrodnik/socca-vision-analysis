@@ -6,6 +6,9 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from fastapi.responses import FileResponse
+
+from app.main import get_artifact
 from app.services.identity_reviewed_team_attribution_evidence import (
     build_team_attribution_evidence,
     evidence_status_for_unit,
@@ -15,6 +18,20 @@ from app.services.identity_reviewed_team_attribution_evidence import (
 
 
 class TeamAttributionEvidenceTests(unittest.TestCase):
+    def test_generated_team_attribution_crop_is_available_through_match_artifact_route(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            relative = Path("team_attribution_evidence") / "shadow-u-a1b2c3d4e5f60708" / "01_f000001.jpg"
+            artifact = root / relative
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"jpeg")
+
+            with patch("app.main.match_dir", return_value=root):
+                response = get_artifact("match", str(relative))
+
+            self.assertIsInstance(response, FileResponse)
+            self.assertEqual(response.media_type, "image/jpeg")
+
     def test_recovers_exact_inside_play_team_u_observations_without_reid_gates(self) -> None:
         document = build_team_attribution_evidence(
             {
