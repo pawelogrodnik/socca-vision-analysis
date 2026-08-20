@@ -37,7 +37,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v10-product-status-safety"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v11-explicit-subject-precedence"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -138,15 +138,23 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         if player and team_label == "U":
             team_label = str(player["team_label"])
         assignment_conflicts: list[dict[str, Any]] = []
+        propagation_diagnostics: list[str] = []
         if len(accepted_seeds) > 1:
             blockers.append("ambiguous_seeded_subject_membership")
         if _has_conflicting_review_decisions(decisions):
             assignment_conflicts.append({"code": "conflicting_explicit_operator_decisions"})
         if slot_id in conflicting_slot_roster_bindings:
-            blockers.append("conflicting_stable_slot_roster_bindings")
-            assignment_conflicts.append(
-                {"code": "conflicting_stable_slot_roster_bindings"}
-            )
+            if _is_explicit_subject_player_decision(decision):
+                # Stable slots are propagation hypotheses. Disagreement at that
+                # broader scope must not erase a specific operator assignment.
+                propagation_diagnostics.append(
+                    "stable_slot_propagation_conflicted"
+                )
+            else:
+                blockers.append("conflicting_stable_slot_roster_bindings")
+                assignment_conflicts.append(
+                    {"code": "conflicting_stable_slot_roster_bindings"}
+                )
         for blocker in stable_row["hard_blockers"]:
             assignment_conflicts.append({"code": blocker})
         if assignment_conflicts or len(accepted_seeds) > 1:
@@ -202,6 +210,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "rejected_evidence": [],
             "hard_blockers": sorted(set(blockers)),
             "conflicts": assignment_conflicts,
+            "propagation_diagnostics": sorted(set(propagation_diagnostics)),
         }
         assignments.append(row)
         conflicts.extend({"tracklet_id": tracklet_id, **item} for item in assignment_conflicts)
@@ -581,18 +590,32 @@ def _canonical_observation_assignments(
             and str(base.get("identity_source") or "")
             in {"operator_review", "manual_review"}
         )
-        binding = slot_roster_bindings.get(slot_id)
-        player_id = None if explicit_unresolved else str((binding or {}).get("player_id") or "") or None
-        player = roster.get(player_id or "")
-        status = "unresolved" if explicit_unresolved else "confirmed" if player else "unresolved"
-        source = (
-            str(base.get("identity_source") or "manual_review")
-            if explicit_unresolved
-            else str((binding or {}).get("source") or "")
-            if player
-            else "canonical_frame_global_identity"
+        explicit_subject_player = (
+            str(base.get("identity_status") or "") == "confirmed"
+            and str(base.get("identity_source") or "") == "operator_review"
+            and bool(base.get("canonical_player_id"))
         )
-        if slot_id in conflicting_slot_roster_bindings:
+        binding = slot_roster_bindings.get(slot_id)
+        if explicit_subject_player:
+            player_id = str(base.get("canonical_player_id") or "") or None
+            player = roster.get(player_id or "")
+            status = "confirmed" if player else "blocked"
+            source = str(base.get("identity_source") or "operator_review")
+        elif explicit_unresolved:
+            player_id = None
+            player = None
+            status = "unresolved"
+            source = str(base.get("identity_source") or "manual_review")
+        else:
+            player_id = str((binding or {}).get("player_id") or "") or None
+            player = roster.get(player_id or "")
+            status = "confirmed" if player else "unresolved"
+            source = (
+                str((binding or {}).get("source") or "")
+                if player
+                else "canonical_frame_global_identity"
+            )
+        if slot_id in conflicting_slot_roster_bindings and not explicit_subject_player:
             blockers.append("conflicting_stable_slot_roster_bindings")
             conflicts.append({"code": "conflicting_stable_slot_roster_bindings"})
             status, player_id, player, source = (
@@ -660,6 +683,14 @@ def _canonical_observation_assignments(
                 "eligible_for_player_stats": status == "confirmed",
                 "hard_blockers": sorted(set(blockers)),
                 "conflicts": conflicts,
+                "propagation_diagnostics": sorted(
+                    set(base.get("propagation_diagnostics") or [])
+                    | (
+                        {"stable_slot_propagation_conflicted"}
+                        if slot_id in conflicting_slot_roster_bindings
+                        else set()
+                    )
+                ),
                 "canonical_ownership_evidence": {
                     "source": claim["ownership_evidence_source"],
                     "field": claim["ownership_evidence_field"],
@@ -691,6 +722,17 @@ def _resolve_assignment(
             [],
         )
     return "unresolved", None, None, [], []
+
+
+def _is_explicit_subject_player_decision(
+    decision: dict[str, Any] | None,
+) -> bool:
+    return bool(
+        decision
+        and decision.get("decision")
+        in {"assign_roster_player", "confirm_recommended_player"}
+        and decision.get("player_id")
+    )
 
 
 def _summary(
