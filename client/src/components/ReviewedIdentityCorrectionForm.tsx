@@ -37,6 +37,7 @@ type Props = {
     previousDisabled: boolean;
     nextDisabled: boolean;
     saveLabel: string;
+    nextLabel?: string;
   };
 };
 
@@ -521,7 +522,7 @@ export function ReviewedIdentityCorrectionForm({
     {navigation ? <footer className='reviewed-correction-navigation'>
       <button type='button' className='secondary' onClick={navigation.onPrevious} disabled={busy || navigation.previousDisabled}>Poprzedni</button>
       <button type='button' onClick={() => void save()} disabled={busy || !context || !choiceComplete}>{navigation.saveLabel}</button>
-      <button type='button' className='secondary' onClick={navigation.onNext} disabled={busy || navigation.nextDisabled} title='Przejdź bez zapisywania'>Następny</button>
+      <button type='button' className='secondary' onClick={navigation.onNext} disabled={busy || navigation.nextDisabled} title='Przejdź bez zapisywania'>{navigation.nextLabel || 'Następny'}</button>
     </footer> : <div className='row'>
       <button type='button' onClick={() => void save()} disabled={busy || !context || !choiceComplete}>Zapisz poprawkę</button>
       <button type='button' className='secondary' onClick={onCancel} disabled={busy}>Anuluj</button>

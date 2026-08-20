@@ -159,7 +159,7 @@ def _authorized_queue_semantics(queue: str, unit: dict[str, Any]) -> bool:
         }
     return unit.get("priority") == "optional" and unit.get(
         "current_resolution_status"
-    ) == "optional_team_audit"
+    ) in {"optional_team_audit", "pending_optional_max_audit"}
 
 
 def _saved_decision(

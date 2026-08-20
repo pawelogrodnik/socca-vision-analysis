@@ -40,7 +40,7 @@ test('scope selector renders actual team names and hides persisted policy identi
   assert.doesNotMatch(source, />team_stats_only</);
 });
 
-test('Remaining Cases UI separates required and optional opponent audit', () => {
+test('Remaining Cases UI separates required work from optional Team-A MAX audit', () => {
   const source = readFileSync(
     resolve(import.meta.dirname, '../src/components/IdentityExceptionReviewPanel.tsx'),
     'utf8',
@@ -54,7 +54,7 @@ test('Remaining Cases UI separates required and optional opponent audit', () => 
     'utf8',
   );
   assert.match(source, /Wymagane/);
-  assert.match(source, /Audyt opcjonalny/);
+  assert.match(source, /Kontynuuj do MAX/);
   assert.match(source, /nie blokuje zakończenia Review/);
   assert.match(source, /shouldAutoFinalizeDeferredQueue/);
   assert.match(queueUtils, /queue === 'required'/);
@@ -64,12 +64,12 @@ test('Remaining Cases UI separates required and optional opponent audit', () => 
   assert.match(correctionForm, /Team A lub Team B/);
 });
 
-test('ready-to-finalize UI still exposes optional opponent audit', () => {
+test('ready-to-finalize UI exposes optional Team-A MAX audit', () => {
   const source = readFileSync(
     resolve(import.meta.dirname, '../src/components/IdentityReviewWorkspace.tsx'),
     'utf8',
   );
-  assert.match(source, /Przejrzyj opcjonalnie przeciwnika/);
+  assert.match(source, /Kontynuuj do MAX/);
   assert.match(source, /initialQueue='optional_audit'/);
 });
 

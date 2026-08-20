@@ -49,6 +49,7 @@ type Props = {
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
   onRetryReview?: () => Promise<void>;
   initialQueue?: ReviewedIdentityReviewQueue;
+  onOptionalAuditRemainingChanged?: (remaining: number) => void;
 };
 
 type ReviewCase = {
@@ -117,6 +118,7 @@ export function IdentityExceptionReviewPanel({
   onWorkflowChanged,
   onRetryReview,
   initialQueue = 'required',
+  onOptionalAuditRemainingChanged,
 }: Props) {
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
@@ -182,7 +184,9 @@ export function IdentityExceptionReviewPanel({
       setCoverageReadiness(progress.coverage_readiness || null);
       setWorkload(progress.workload || null);
       setReviewFilters(progress.filters || null);
-      setOptionalAuditRemaining(progress.summary.optional_audit_cases_remaining || 0);
+      const nextOptionalRemaining = progress.summary.optional_audit_cases_remaining || 0;
+      setOptionalAuditRemaining(nextOptionalRemaining);
+      onOptionalAuditRemainingChanged?.(nextOptionalRemaining);
       if (shouldAutoFinalizeDeferredQueue(
         queue,
         actionable,
@@ -315,6 +319,9 @@ export function IdentityExceptionReviewPanel({
     setIndex(next.index);
     setFinalizeFailed(false);
     setMessage('Zapisano decyzję.');
+    if (activeQueue === 'optional_audit') {
+      onOptionalAuditRemainingChanged?.(Math.max(0, totalRemaining - 1));
+    }
     if (next.cases.length === 0 && hasMore) {
       void loadCases(
         undefined,
@@ -369,13 +376,13 @@ export function IdentityExceptionReviewPanel({
         <h2>Pozostałe przypadki</h2>
         <p>{activeQueue === 'required'
           ? 'Rozwiąż przypadki wymagane do zakończenia Review.'
-          : 'Dobrowolny audyt nie blokuje zakończenia Review.'}</p>
+          : 'Pełny audyt tożsamości Corgi jest dobrowolny i nie blokuje zakończenia Review.'}</p>
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
         <div className='identity-exception-controls'>
           <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
             <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
-            <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Audyt opcjonalny <span>{optionalAuditRemaining}</span></button>
+            <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Kontynuuj do MAX <span>{optionalAuditRemaining}</span></button>
           </nav>
           <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
             {filterOptions.map((option) => <button
@@ -439,8 +446,8 @@ export function IdentityExceptionReviewPanel({
             <p>To {reviewCase.unit.continuity_fragment_count || reviewCase.unit.tracklet_count} bezpieczne fragmenty tego samego lokalnego ciągu. Wybór obejmie wyłącznie pokazane obserwacje, nie cały slot.</p>
           </div>}
           {activeQueue === 'optional_audit' && <div>
-            <strong>Audyt opcjonalny — decyzja nie jest wymagana.</strong>
-            <p>Możesz sprawdzić zawodnika albo przejść dalej bez decyzji.</p>
+            <strong>Pełny audyt tożsamości Corgi — decyzja nie jest wymagana.</strong>
+            <p>Możesz nazwać zawodnika, oznaczyć „Nie wiem” albo pominąć ten fragment bez zapisywania.</p>
           </div>}
           {unitEvidence?.kind === 'team_attribution' && <div>
             <strong>Potwierdź tylko drużynę albo rodzaj detekcji.</strong>
@@ -497,6 +504,7 @@ export function IdentityExceptionReviewPanel({
               previousDisabled: pageOffset === 0 && index === 0,
               nextDisabled: !hasMore && index >= cases.length - 1,
               saveLabel: 'Zapisz + następny',
+              nextLabel: activeQueue === 'optional_audit' ? 'Pomiń na razie' : 'Następny',
             }}
           />
         </aside>

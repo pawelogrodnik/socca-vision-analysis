@@ -97,7 +97,7 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(issues["blocking"], 0)
         self.assertEqual(state["phase"], "ready_to_finalize")
 
-    def test_optional_team_audit_remains_available_without_blocking_finalize(self) -> None:
+    def test_optional_max_audit_remains_available_without_blocking_finalize(self) -> None:
         progress = {
             "summary": {
                 "important_decisions_remaining": 0,
@@ -108,6 +108,12 @@ class ReviewWorkflowStateTests(unittest.TestCase):
                 "allows_finalize": True,
                 "blockers": [],
             },
+            "optional_audit": {
+                "status": "available",
+                "blocking": False,
+                "remaining_cases": 180,
+                "safe_max_named_coverage": 0.987,
+            },
         }
         issues = _issue_evidence({"summary": {}}, progress)
 
@@ -115,6 +121,7 @@ class ReviewWorkflowStateTests(unittest.TestCase):
 
         self.assertEqual(state["phase"], "ready_to_finalize")
         self.assertEqual(state["issues"]["optional_audit"], 180)
+        self.assertEqual(state["issues"]["optional_audit_summary"]["status"], "available")
         self.assertIn("finalize_identity", state["allowed_actions"])
         self.assertIn("review_identity_issue", state["allowed_actions"])
 

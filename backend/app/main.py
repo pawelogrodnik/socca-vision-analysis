@@ -2042,6 +2042,7 @@ def get_match_reviewed_identity_progress(
             cached = json.loads(cached_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, ValueError):
             cached = None
+        recompute_required = reviewed_identity_recompute_required(path)
         progress = (
             cached
             if isinstance(cached, dict)
@@ -2050,6 +2051,10 @@ def get_match_reviewed_identity_progress(
             == COVERAGE_POLICY_VERSION
             and cached.get("source_snapshot_file") == snapshot_file
             and review_scope_dependency_matches(read_match_meta(path), cached)
+            # Deferred corrections intentionally avoid an expensive snapshot
+            # rebuild. Their decision store must nevertheless be reflected
+            # immediately when the optional MAX queue is resumed.
+            and not recompute_required
             else build_reviewed_identity_progress(path, read_match_meta(path))
         )
         return {
@@ -2060,7 +2065,7 @@ def get_match_reviewed_identity_progress(
                 team_label=team_label,
                 queue=queue,
             ),
-            "recompute_required": reviewed_identity_recompute_required(path),
+            "recompute_required": recompute_required,
         }
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

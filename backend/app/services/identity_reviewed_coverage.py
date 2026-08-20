@@ -30,7 +30,8 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v6-material-continuity"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v7-optional-max"
+OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v1-safe-complete-roster"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -164,7 +165,11 @@ def apply_coverage_policy(
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
     material_continuity: list[dict[str, Any]] = []
-    optional_audit: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    # This queue is intentionally not an opponent-name review.  It is the
+    # optional, Team-A-only full audit available after the required gate is
+    # already safe to finalize.
+    optional_max_candidates: list[dict[str, Any]] = []
+    optional_max_unavailable: list[dict[str, Any]] = []
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
     non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for unit in units:
@@ -206,16 +211,6 @@ def apply_coverage_policy(
             material_continuity.append(enriched)
             continue
         if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
-            if int(enriched["potential_named_observation_gain"]) <= 0:
-                continue
-            if operator_actionable and enriched.get("has_operator_visual_evidence"):
-                enriched["current_resolution_status"] = "optional_team_audit"
-                enriched["priority"] = "optional"
-                enriched["reason_codes"] = sorted(
-                    set(enriched.get("reason_codes") or [])
-                    | {"team_stats_only_optional_identity_audit"}
-                )
-                optional_audit[team].append(enriched)
             continue
         if int(enriched["potential_named_observation_gain"]) <= 0:
             continue
@@ -248,7 +243,6 @@ def apply_coverage_policy(
         set((coverage.get("per_team") or {}).keys())
         | set(candidates)
         | set(unreviewable)
-        | set(optional_audit)
         | set(non_actionable_team_uncertainty)
         | set(independently_required)
     ):
@@ -345,7 +339,7 @@ def apply_coverage_policy(
             "unreviewable_observations_by_reason": dict(
                 sorted(unreviewable_observations_by_reason.items())
             ),
-            "optional_audit_cases": len(optional_audit.get(team, [])),
+            "optional_audit_cases": 0,
             "non_actionable_required_team_uncertainty_units": len(
                 non_actionable_team_uncertainty.get(team, [])
             ),
@@ -398,14 +392,6 @@ def apply_coverage_policy(
             str(unit.get("candidate_subject_id") or ""),
         ),
     )
-    optional_sorted = sorted(
-        [row for rows in optional_audit.values() for row in rows],
-        key=lambda unit: (
-            -int(unit.get("detected_observation_count") or 0),
-            -float(unit.get("detected_time_sec") or 0.0),
-            str(unit.get("candidate_subject_id") or ""),
-        ),
-    )
     workload_count = len(semantic_sorted) + len(material_sorted) + len(coverage_sorted)
     readiness = _readiness(
         coverage,
@@ -416,6 +402,36 @@ def apply_coverage_policy(
         coverage_count=len(coverage_sorted),
         non_actionable_team_uncertainty=non_actionable_team_uncertainty,
     )
+    required_keys = {_unit_key(unit) for unit in [*semantic_sorted, *material_sorted, *coverage_sorted]}
+    deferred_named_pairs = _deferred_named_gain_pairs(units, pair_index)
+    for unit in units:
+        enriched = _coverage_impact(unit, pair_index, coverage)
+        if _optional_max_ineligible(enriched, match_doc, required_keys):
+            if _optional_max_explicitly_unresolved(enriched):
+                optional_max_unavailable.append(enriched)
+            continue
+        if int(enriched.get("potential_named_observation_gain") or 0) <= 0:
+            continue
+        if enriched.get("operator_actionable") is not False and enriched.get("has_operator_visual_evidence"):
+            optional_max_candidates.append(enriched)
+        else:
+            optional_max_unavailable.append(enriched)
+    optional_sorted = _rank_optional_max_cases(
+        optional_max_candidates,
+        accounted_pairs=deferred_named_pairs,
+    )
+    optional_audit = _optional_max_summary(
+        coverage,
+        optional_sorted,
+        optional_max_unavailable,
+        readiness,
+        match_doc,
+        deferred_named_pairs,
+    )
+    for team, residual in residual_by_team.items():
+        residual["optional_audit_cases"] = (
+            len(optional_sorted) if team == "A" else 0
+        )
     return {
         "next_cases": [*semantic_sorted, *material_sorted, *coverage_sorted],
         "optional_audit_cases": optional_sorted,
@@ -430,13 +446,7 @@ def apply_coverage_policy(
             "diagnostic_only": True,
             "queue_truncated": False,
         },
-        "optional_audit": {
-            "remaining_cases": len(optional_sorted),
-            "blocking": False,
-            "per_team": {
-                team: len(rows) for team, rows in sorted(optional_audit.items())
-            },
-        },
+        "optional_audit": optional_audit,
     }
 
 
@@ -640,6 +650,179 @@ def _select_required_coverage_cases(
         if len(selected_pairs) >= required_gain:
             break
     return selected_rows, selected_pairs
+
+
+def _unit_key(unit: dict[str, Any]) -> str:
+    return str(unit.get("review_target_id") or unit.get("candidate_subject_id") or "")
+
+
+def _optional_max_explicitly_unresolved(unit: dict[str, Any]) -> bool:
+    return str((unit.get("current_decision") or {}).get("action") or "") == "unresolved"
+
+
+def _optional_max_ineligible(
+    unit: dict[str, Any],
+    match_doc: dict[str, Any],
+    required_keys: set[str],
+) -> bool:
+    """Keep MAX strictly separate from safety and required-review semantics."""
+    team = _team_label(unit.get("coverage_team_label"))
+    if (
+        team != "A"
+        or _team_label(unit.get("effective_team_label")) != "A"
+        or team_review_scope(match_doc, team) != COMPLETE_ROSTER
+        or unit.get("canonical_player_id")
+    ):
+        return True
+    if _unit_key(unit) in required_keys:
+        return True
+    if _has_team_uncertainty(unit) or is_material_continuity_case(unit):
+        return True
+    if str(unit.get("scope_kind") or "") == "material_continuity":
+        return True
+    reasons = " ".join(str(value).lower() for value in unit.get("reason_codes") or [])
+    if any(marker in reasons for marker in ("mixed", "conflict", "contradict", "cross_team", "team_mismatch")):
+        return True
+    decision = unit.get("current_decision") or {}
+    if decision.get("action"):
+        # An explicit "Nie wiem" is a valid outcome of MAX: it removes the
+        # fragment from the safe maximum instead of immediately presenting it
+        # again. Other explicit dispositions are likewise final for this queue.
+        return True
+    return str(unit.get("current_resolution_status") or "") in {
+        "pending_high_priority",
+        "pending_material_continuity_review",
+        "structurally_blocked",
+    }
+
+
+def _deferred_named_gain_pairs(
+    units: list[dict[str, Any]],
+    pair_index: dict[tuple[str, int], dict[str, Any]],
+) -> set[tuple[str, int]]:
+    """Named deferred saves are real projected coverage before the batch rebuild."""
+    pairs: set[tuple[str, int]] = set()
+    for unit in units:
+        if str((unit.get("current_decision") or {}).get("action") or "") != "assign_roster_player":
+            continue
+        for pair in unit.get("detected_pairs") or []:
+            if not isinstance(pair, (tuple, list)) or len(pair) < 2:
+                continue
+            normalized = (str(pair[0]), int(pair[1]))
+            row = pair_index.get(normalized) or {}
+            if (
+                _team_label(row.get("team_label")) == "A"
+                and row.get("identity_status") in RELIABLE_STATUSES
+                and not row.get("canonical_player_id")
+            ):
+                pairs.add(normalized)
+    return pairs
+
+
+def _rank_optional_max_cases(
+    rows: list[dict[str, Any]],
+    *,
+    accounted_pairs: set[tuple[str, int]] | None = None,
+) -> list[dict[str, Any]]:
+    """Greedily rank by *marginal* unique observation gain, without a cap."""
+    remaining = list(rows)
+    selected: list[dict[str, Any]] = []
+    accounted: set[tuple[str, int]] = set(accounted_pairs or set())
+    while remaining:
+        # Keep the ordering deterministic. Bigger unique gain wins; equal
+        # gains prefer longer evidence, then the earlier fragment boundary.
+        chosen = min(
+            remaining,
+            key=lambda row: (
+                -len(set(row.get("_potential_named_observation_pairs") or set()) - accounted),
+                -float(row.get("detected_time_sec") or 0.0),
+                int(row.get("frame_start") or 0),
+                str(row.get("candidate_subject_id") or ""),
+            ),
+        )
+        gain = len(set(chosen.get("_potential_named_observation_pairs") or set()) - accounted)
+        remaining.remove(chosen)
+        if gain <= 0:
+            continue
+        pairs = set(chosen.get("_potential_named_observation_pairs") or set()) - accounted
+        accounted.update(pairs)
+        chosen["current_resolution_status"] = "pending_optional_max_audit"
+        chosen["priority"] = "optional"
+        chosen["optional_max_rank"] = len(selected) + 1
+        chosen["marginal_named_observation_gain"] = gain
+        chosen["cumulative_selected_named_gain"] = len(accounted)
+        chosen["reason_codes"] = sorted(
+            set(chosen.get("reason_codes") or []) | {"optional_max_named_coverage"}
+        )
+        selected.append(chosen)
+    return selected
+
+
+def _optional_max_summary(
+    coverage: dict[str, Any],
+    rows: list[dict[str, Any]],
+    unavailable: list[dict[str, Any]],
+    readiness: dict[str, Any],
+    match_doc: dict[str, Any],
+    deferred_named_pairs: set[tuple[str, int]],
+) -> dict[str, Any]:
+    team = "A"
+    row = (coverage.get("per_team") or {}).get(team) or {}
+    reliable = int(row.get("reliable_observations") or 0)
+    current_named = int(row.get("confirmed_named_observations") or 0)
+    safely_actionable_pairs = _unique_named_gain_pairs(rows) - deferred_named_pairs
+    unavailable_pairs = _unique_named_gain_pairs(unavailable)
+    scope_ready = team_review_scope(match_doc, team) == COMPLETE_ROSTER
+    normal_ready = bool(readiness.get("allows_finalize"))
+    status = (
+        "not_ready"
+        if not scope_ready or not normal_ready
+        else "available"
+        if rows
+        else "safe_max_reached"
+    )
+    reason_counts = Counter(
+        "explicit_unresolved"
+        if _optional_max_explicitly_unresolved(value)
+        else str(value.get("non_actionable_reason") or "no_safe_visual_evidence")
+        for value in unavailable
+    )
+    projected_named = min(reliable, current_named + len(deferred_named_pairs))
+    safe_max = min(projected_named + len(safely_actionable_pairs), reliable)
+    return {
+        "policy_version": OPTIONAL_MAX_POLICY_VERSION,
+        "queue": "optional_audit",
+        "team_label": team,
+        "scope": team_review_scope(match_doc, team),
+        "blocking": False,
+        "status": status,
+        "eligible_to_start": status in {"available", "safe_max_reached"},
+        "minimum_target_ratio": COMPLETE_ROSTER_NAMED_TARGET_RATIO,
+        "minimum_target_met": normal_ready,
+        "remaining_cases": len(rows),
+        "actionable_cases_remaining": len(rows),
+        "current_named_observations": current_named,
+        "reliable_observations": reliable,
+        "current_named_coverage": _ratio(current_named, reliable),
+        "pending_named_gain": len(deferred_named_pairs),
+        "projected_named_observations": projected_named,
+        "projected_named_coverage": _ratio(projected_named, reliable),
+        "safe_max_named_observations": safe_max,
+        "safe_max_named_coverage": _ratio(safe_max, reliable),
+        "remaining_actionable_named_gain": len(safely_actionable_pairs),
+        "actionable_unique_observations_remaining": len(safely_actionable_pairs),
+        "unavailable_residual_observations": max(
+            0,
+            reliable - projected_named - len(safely_actionable_pairs),
+        ),
+        "unavailable_residual_ratio": _ratio(
+            max(0, reliable - projected_named - len(safely_actionable_pairs)),
+            reliable,
+        ),
+        "unavailable_actionable_observations": len(unavailable_pairs),
+        "unavailable_reason_counts": dict(sorted(reason_counts.items())),
+        "per_team": {team: len(rows)},
+    }
 
 
 def _has_explicit_disposition(unit: dict[str, Any], match_doc: dict[str, Any]) -> bool:

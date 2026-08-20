@@ -57,6 +57,8 @@ export function IdentityReviewWorkspace({
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [showOptionalAudit, setShowOptionalAudit] = useState(false);
+  const [showOptionalFinishConfirmation, setShowOptionalFinishConfirmation] = useState(false);
+  const [optionalAuditRemaining, setOptionalAuditRemaining] = useState<number | null>(null);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
@@ -118,6 +120,19 @@ export function IdentityReviewWorkspace({
       setBusy(false);
     }
   }
+
+  function requestFinalize() {
+    const optional = workflow?.issues.optional_audit_summary;
+    const remaining = optionalAuditRemaining ?? optional?.remaining_cases ?? 0;
+    if (showOptionalAudit && remaining > 0) {
+      setShowOptionalFinishConfirmation(true);
+      return;
+    }
+    void finalize();
+  }
+
+  const optionalAudit = workflow?.issues.optional_audit_summary;
+  const optionalRemaining = optionalAuditRemaining ?? optionalAudit?.remaining_cases ?? 0;
 
   async function retry(action: 'retry_render' | 'retry_review_recompute') {
     if (!workflowAllows(workflow, action)) return;
@@ -197,11 +212,17 @@ export function IdentityReviewWorkspace({
       <div>
         <p className='eyebrow'>Krok 3</p>
         <h2>Tożsamości są gotowe</h2>
-        <p>System może teraz przygotować statystyki i wideo do końcowego sprawdzenia.</p>
+        <p>Możesz zakończyć Review albo dobrowolnie podnieść imienne pokrycie Corgi do bezpiecznego maksimum.</p>
+        {optionalAudit?.status === 'available' && <p>
+          Corgi: {Math.round((optionalAudit.current_named_coverage || 0) * 100)}% teraz → {Math.round((optionalAudit.projected_named_coverage || 0) * 100)}% po zapisanych decyzjach → maksymalnie {Math.round((optionalAudit.safe_max_named_coverage || 0) * 100)}% przy obecnych bezpiecznych dowodach.
+        </p>}
+        {optionalAudit?.status === 'safe_max_reached' && <p>
+          Bezpieczne maksimum Corgi zostało osiągnięte: {Math.round((optionalAudit.safe_max_named_coverage || 0) * 100)}% imiennie.
+        </p>}
       </div>
-      <button type='button' onClick={() => void finalize()} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Przygotuj wideo do sprawdzenia</button>
-      {(workflow.issues.optional_audit || 0) > 0 && <button type='button' className='secondary' onClick={() => setShowOptionalAudit(true)}>
-        Przejrzyj opcjonalnie przeciwnika ({workflow.issues.optional_audit})
+      <button type='button' onClick={requestFinalize} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Zakończ przegląd — Przygotuj wideo do sprawdzenia</button>
+      {optionalAudit?.status === 'available' && <button type='button' className='secondary' onClick={() => { setOptionalAuditRemaining(null); setShowOptionalAudit(true); }}>
+        Kontynuuj do MAX ({optionalRemaining})
       </button>}
       <details className='reviewed-video-settings'>
         <summary>Ustawienia wideo</summary>
@@ -214,11 +235,31 @@ export function IdentityReviewWorkspace({
     </section>}
 
     {stage === 'prepare_result' && workflow && showOptionalAudit && <>
-      <button type='button' className='secondary' onClick={() => setShowOptionalAudit(false)}>Wróć do przygotowania wyniku</button>
+      <section className='reviewed-next-step identity-optional-audit-summary'>
+        <div>
+          <p className='eyebrow'>Dobrowolny audyt</p>
+          <h2>Pełny audyt tożsamości — Corgi</h2>
+          <p>Sprawdzaj wyłącznie bezpieczne, pozostałe fragmenty. Nie musisz dojść do 100% i możesz zakończyć Review w każdej chwili.</p>
+          <p>Imiennie: {Math.round((optionalAudit?.current_named_coverage || 0) * 100)}% teraz → {Math.round((optionalAudit?.projected_named_coverage || 0) * 100)}% po zapisanych decyzjach → bezpieczne maksimum: {Math.round((optionalAudit?.safe_max_named_coverage || 0) * 100)}%.</p>
+        </div>
+        <div className='row'>
+          <button type='button' className='secondary' onClick={() => { setOptionalAuditRemaining(null); setShowOptionalAudit(false); void refreshWorkflow(); }}>Wróć</button>
+          <button type='button' onClick={requestFinalize} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Zakończ przegląd</button>
+        </div>
+      </section>
+      {showOptionalFinishConfirmation && <div className='status identity-optional-finish-confirmation' role='alert'>
+        <strong>Pozostało {optionalRemaining} dobrowolnych przypadków.</strong>
+        <p>Możesz zakończyć bez ich rozstrzygania — nie będą blokować raportu.</p>
+        <div className='row'>
+          <button type='button' className='secondary' onClick={() => setShowOptionalFinishConfirmation(false)}>Kontynuuj audyt</button>
+          <button type='button' onClick={() => { setShowOptionalFinishConfirmation(false); void finalize(); }} disabled={busy}>Zakończ mimo to</button>
+        </div>
+      </div>}
       <IdentityExceptionReviewPanel
         match={match}
         workflow={workflow}
         initialQueue='optional_audit'
+        onOptionalAuditRemainingChanged={setOptionalAuditRemaining}
         onWorkflowChanged={(next) => {
           if (next) applyWorkflow(next);
           else void refreshWorkflow();
