@@ -17,6 +17,9 @@ from app.services.identity_reviewed_mixed_store import (
     FILENAME as MIXED_PLAYERS_FILENAME,
     mixed_case_for_subject,
 )
+from app.services.identity_reviewed_material_continuity import (
+    load_material_continuity_decisions,
+)
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_review,
@@ -148,9 +151,9 @@ def _material_continuity_correction_context(
             for key in sorted(registry)
             if registry[key].get("team_label") == team_label
         ],
-        "current_decision": None,
+        "current_decision": unit.get("current_decision"),
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
-        "source_ownership_digest": None,
+        "source_ownership_digest": unit.get("source_ownership_digest"),
         "frame_ranges": list(unit.get("frame_ranges") or []),
         "frame_start": unit.get("frame_start"),
         "frame_end": unit.get("frame_end"),
@@ -209,6 +212,7 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
     roster = load_optional(match_path / REVIEW_DECISIONS_FILENAME)
     slots = load_reviewed_slot_assignments(match_path)
     segments = load_segment_decisions(match_path)
+    material = load_material_continuity_decisions(match_path)
     mixed = load_optional(match_path / MIXED_PLAYERS_FILENAME)
     return canonical_digest(
         {
@@ -248,6 +252,19 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                     for row in segments.get("decisions") or []
                 ),
                 key=lambda row: str(row.get("review_target_id") or ""),
+            ),
+            "material_continuity": sorted(
+                (
+                    {
+                        "continuity_group_id": row.get("continuity_group_id"),
+                        "source_ownership_digest": row.get("source_ownership_digest"),
+                        "action": row.get("action"),
+                        "player_id": row.get("player_id"),
+                        "owned_observations": row.get("owned_observations") or [],
+                    }
+                    for row in material.get("decisions") or []
+                ),
+                key=lambda row: str(row.get("continuity_group_id") or ""),
             ),
             "mixed_players": sorted(
                 (

@@ -46,6 +46,9 @@ from app.services.identity_reviewed_progress import (
     decision_impact,
 )
 from app.services.identity_reviewed_mixed_store import save_mixed_player_classification
+from app.services.identity_reviewed_material_continuity import (
+    save_material_continuity_decision,
+)
 from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
@@ -78,12 +81,23 @@ def save_reviewed_identity_correction(
     action = str(payload.get("action") or "").strip()
     try:
         progress_before = build_reviewed_identity_progress(match_path, match_doc)
+        authorized_review_unit = review_unit_for_payload(progress_before, payload)
+        if (
+            isinstance(authorized_review_unit, dict)
+            and authorized_review_unit.get("scope_kind") == "material_continuity"
+        ):
+            internal_progress = build_reviewed_identity_progress(
+                match_path,
+                match_doc,
+                include_internal_units=True,
+            )
+            authorized_review_unit = review_unit_for_payload(internal_progress, payload)
         result = persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
             use_materialized_context=False,
-            authorized_review_unit=review_unit_for_payload(progress_before, payload),
+            authorized_review_unit=authorized_review_unit,
         )
         review_target_id = str(payload.get("review_target_id") or "").strip() or None
         if review_target_id:
@@ -369,79 +383,14 @@ def _persist_material_continuity_correction(
     payload: dict[str, Any],
     review_unit: dict[str, Any],
 ) -> dict[str, Any]:
-    """Persist one decision across the exact safe members of a gap group.
-
-    The continuity group is rebuilt and authorized by the normal Review queue.
-    It is deliberately not a stable-slot assignment: A12 is evidence of local
-    continuity, never a global player binding.
-    """
+    """Persist only the exact owned pairs of the reviewed continuity case."""
     action = str(payload.get("action") or "").strip()
-    if action not in {"assign_roster_player", "unresolved"}:
-        raise ValueError("material_continuity_action_not_allowed")
-    subject_ids = sorted(
-        {
-            str(value).strip()
-            for value in review_unit.get("continuity_subject_ids") or []
-            if str(value).strip()
-        }
-    )
-    if not subject_ids:
-        raise ValueError("material_continuity_members_missing")
-    team_label = str(review_unit.get("effective_team_label") or "").upper()
-    if team_label != "A":
-        raise ValueError("material_continuity_team_not_supported")
-    candidate_document = load_required(match_path / "identity_candidate_shadow.json")
-    comment = str(payload.get("comment") or "").strip() or None
-    player_id: str | None = None
-    if action == "assign_roster_player":
-        player_id = str(payload.get("player_id") or "").strip()
-        player = next(
-            (row for row in match_roster(match_doc) if row["player_id"] == player_id),
-            None,
-        )
-        if player is None:
-            raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
-        if str(player.get("team_label") or "").upper() != team_label:
-            raise ValueError("player_id must be one of the same-team operator roster options")
-
-    updates: list[dict[str, Any]] = []
-    for member_subject_id in subject_ids:
-        context = build_materialized_subject_context(candidate_document, member_subject_id)
-        if str(context.get("team_label") or "").upper() != team_label:
-            raise ValueError("material_continuity_member_team_mismatch")
-        update: dict[str, Any] = {
-            "candidate_subject_id": member_subject_id,
-            "action": action,
-            "comment": comment,
-            # Preserve the exact, already-safe Team-A context for each raw
-            # member.  This is provenance only; it does not promote the
-            # continuity slot to a global player binding.
-            "source_team_label": team_label,
-        }
-        if player_id is not None:
-            update.update(
-                {
-                    "player_id": player_id,
-                    "team_label": team_label,
-                    # Keep this None: the correction applies only to the four
-                    # exact subjects, not to every A12 observation.
-                    "stable_slot_id": None,
-                }
-            )
-        updates.append(update)
-
-    prepared = prepare_reviewed_slot_assignments(
+    saved = save_material_continuity_decision(
         match_path,
-        candidate_document,
-        updates,
-        use_materialized_candidate_context=True,
+        match_doc,
+        payload,
+        review_unit,
     )
-    write_identity_json_atomic(match_path / SLOT_REVIEW_FILENAME, prepared)
-    saved_members = [
-        row
-        for row in prepared.get("decisions") or []
-        if str(row.get("candidate_subject_id") or "") in set(subject_ids)
-    ]
     semantic_digest = reviewed_decisions_semantic_digest(match_path)
     mark_reviewed_identity_recompute_required(
         match_path,
@@ -450,9 +399,10 @@ def _persist_material_continuity_correction(
     return {
         "saved_decision": {
             "scope_kind": "material_continuity",
-            "continuity_group_id": review_unit.get("continuity_group_id"),
-            "continuity_subject_ids": subject_ids,
-            "member_decisions": saved_members,
+            "continuity_group_id": saved.get("continuity_group_id"),
+            "continuity_subject_ids": saved.get("continuity_subject_ids"),
+            "owned_observations": saved.get("owned_observations"),
+            "decision": saved,
         },
         "effective_action": action,
         "allocated_stable_slot_id": None,

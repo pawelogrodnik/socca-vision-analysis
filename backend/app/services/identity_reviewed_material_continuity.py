@@ -9,33 +9,40 @@ coverage policy so its threshold can be calibrated independently.
 """
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from math import ceil
+from pathlib import Path
 from typing import Any
 
+from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_jersey_number_common import canonical_digest
 
-MATERIAL_CONTINUITY_POLICY_VERSION = "material-continuity:v1-safe-team-a-20s-4fragments"
+
+MATERIAL_CONTINUITY_POLICY_VERSION = "material-continuity:v1-safe-team-a-20s"
 # V1 intentionally promotes only the single, severe class observed in the
 # acceptance match.  It is not a claim that 20 seconds is the final product
 # threshold for longer matches.
 MATERIAL_CONTINUITY_MIN_SPAN_SEC = 20.0
-# A lone long anonymous tracker fragment is still an optional naming task. V1
-# promotes only a material *continuity failure* split across several exact,
-# safe subjects. This prevents the coverage-independent queue from expanding
-# to every long anonymous player until we calibrate the policy on longer games.
-MATERIAL_CONTINUITY_MIN_FRAGMENT_COUNT = 4
+# Fragment count is useful diagnostics, not a materiality gate: a clean
+# tracker can retain one anonymous subject through a long identity gap. The
+# versioned 20-second V1 threshold remains deliberately provisional.
 MATERIAL_CONTINUITY_MAX_JOIN_GAP_SEC = 1.0
 MATERIAL_CONTINUITY_MAX_EVIDENCE_CROPS = 5
+DECISIONS_FILENAME = "reviewed_identity_material_continuity_decisions.json"
+DECISIONS_SCHEMA_VERSION = "1.0.0"
+ALLOWED_ACTIONS = frozenset({"assign_roster_player", "unresolved"})
 
 
 def coalesce_material_continuity_units(
     units: list[dict[str, Any]],
     fps: float,
+    decisions: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Replace safe, adjacent anonymous Team-A fragments with one case.
 
     The grouped unit owns the exact union of its members' detected pairs.
-    Stable slots are used only as a local continuity hypothesis; the resulting
-    decision still writes separate subject-scoped operator decisions.
+    Stable slots are used only as a local continuity hypothesis. Any saved
+    decision is limited to this group's exact tracklet/frame ownership.
     """
     safe_fps = fps if fps > 0 else 30.0
     by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -65,6 +72,10 @@ def coalesce_material_continuity_units(
             case = _continuity_case(slot, run, safe_fps)
             if case is None:
                 continue
+            decision = _current_decision(case, decisions or {})
+            if decision is not None:
+                case["current_decision"] = decision
+                case["current_resolution_status"] = "reviewed_by_operator"
             continuity_units.append(case)
             grouped_pairs.update(
                 (str(tracklet_id), int(frame))
@@ -125,17 +136,23 @@ def _continuity_case(
     )
     if not subject_ids:
         return None
-    if len(subject_ids) < MATERIAL_CONTINUITY_MIN_FRAGMENT_COUNT:
-        return None
     crops = _balanced_anchor_crops(members)
     if not crops:
         return None
     frame_start, frame_end = frames[0], frames[-1]
     group_id = f"continuity:{slot}:{frame_start}-{frame_end}"
+    members_payload = _members_payload(members)
+    ownership_digest = _ownership_digest(
+        group_id=group_id,
+        slot=slot,
+        team_label="A",
+        members=members_payload,
+    )
     return {
         "candidate_subject_id": group_id,
         "continuity_group_id": group_id,
         "continuity_subject_ids": subject_ids,
+        "continuity_members": members_payload,
         "continuity_fragment_count": len(subject_ids),
         "scope_kind": "material_continuity",
         "correction_scope": "material_continuity",
@@ -171,6 +188,11 @@ def _continuity_case(
             "anchor_crops": crops,
         },
         "detected_pairs": sorted(pairs),
+        "owned_observations": [
+            {"tracklet_id": tracklet_id, "frame": frame}
+            for tracklet_id, frame in sorted(pairs)
+        ],
+        "source_ownership_digest": ownership_digest,
     }
 
 
@@ -298,3 +320,261 @@ def _frame_end(unit: dict[str, Any]) -> int:
 
 def _unit_sort_key(unit: dict[str, Any]) -> tuple[int, int, str]:
     return (_frame_start(unit), _frame_end(unit), str(unit.get("candidate_subject_id") or ""))
+
+
+def load_material_continuity_decisions(match_path: Path) -> dict[str, Any]:
+    document = _load(match_path / DECISIONS_FILENAME)
+    return document if document else _decision_document([])
+
+
+def save_material_continuity_decision(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+    review_unit: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist a decision owned by the exact observations in one gap group."""
+    group_id = str(review_unit.get("continuity_group_id") or "")
+    expected_digest = str(review_unit.get("source_ownership_digest") or "")
+    if not group_id or str(payload.get("source_ownership_digest") or "") != expected_digest:
+        from app.services.identity_reviewed_segments import SegmentTargetError
+
+        raise SegmentTargetError("material_continuity_target_stale")
+    action = str(payload.get("action") or "")
+    if action not in ALLOWED_ACTIONS:
+        raise ValueError("material_continuity_action_not_allowed")
+    team_label = str(review_unit.get("effective_team_label") or "").upper()
+    if team_label != "A":
+        raise ValueError("material_continuity_team_not_supported")
+    player_id = str(payload.get("player_id") or "") or None
+    roster = _roster(match_doc)
+    if action == "assign_roster_player":
+        player = roster.get(player_id or "")
+        if player is None or str(player.get("team_label") or "").upper() != team_label:
+            raise ValueError("player_id must be one of the same-team operator roster options")
+    else:
+        player_id = None
+
+    # A delayed request can carry old candidate ownership. Rebuild the queue
+    # and require the exact group/digest before modifying any reviewed data.
+    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+
+    fresh_unit = next(
+        (
+            row
+            for row in build_reviewed_identity_progress(
+                match_path,
+                match_doc,
+                include_internal_units=True,
+            ).get("_internal_review_units") or []
+            if str(row.get("continuity_group_id") or "") == group_id
+            and row.get("scope_kind") == "material_continuity"
+        ),
+        None,
+    )
+    if not isinstance(fresh_unit, dict) or str(fresh_unit.get("source_ownership_digest") or "") != expected_digest:
+        from app.services.identity_reviewed_segments import SegmentTargetError
+
+        raise SegmentTargetError("material_continuity_target_stale")
+
+    existing = load_material_continuity_decisions(match_path)
+    decisions = {
+        str(row.get("continuity_group_id") or ""): dict(row)
+        for row in existing.get("decisions") or []
+        if row.get("continuity_group_id")
+    }
+    decision = {
+        "continuity_group_id": group_id,
+        "candidate_subject_id": group_id,
+        "scope_kind": "material_continuity",
+        "source_ownership_digest": expected_digest,
+        "source_team_label": team_label,
+        "team_label": team_label,
+        "continuity_subject_ids": list(review_unit.get("continuity_subject_ids") or []),
+        "continuity_members": list(review_unit.get("continuity_members") or []),
+        "owned_observations": list(review_unit.get("owned_observations") or []),
+        "action": action,
+        "player_id": player_id,
+        "comment": str(payload.get("comment") or "").strip() or None,
+        "source": "manual_material_continuity_review",
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    decisions[group_id] = decision
+    write_identity_json_atomic(
+        match_path / DECISIONS_FILENAME,
+        _decision_document(sorted(decisions.values(), key=lambda row: str(row["continuity_group_id"]))),
+    )
+    return decision
+
+
+def material_continuity_observation_assignments(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    decisions: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return exact, fail-closed observation overlays for current decisions."""
+    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+
+    current_units = {
+        str(unit.get("continuity_group_id") or ""): unit
+        for unit in build_reviewed_identity_progress(
+            match_path,
+            match_doc,
+            include_internal_units=True,
+        ).get("_internal_review_units") or []
+        if unit.get("scope_kind") == "material_continuity"
+    }
+    roster = _roster(match_doc)
+    output: list[dict[str, Any]] = []
+    for decision in decisions.get("decisions") or []:
+        group_id = str(decision.get("continuity_group_id") or "")
+        unit = current_units.get(group_id)
+        if not unit or str(decision.get("source_ownership_digest") or "") != str(unit.get("source_ownership_digest") or ""):
+            continue
+        owned = _pairs_from_observations(unit.get("owned_observations"))
+        if owned != _pairs_from_observations(decision.get("owned_observations")):
+            continue
+        action = str(decision.get("action") or "")
+        player = roster.get(str(decision.get("player_id") or ""))
+        if action == "assign_roster_player" and (
+            player is None or str(player.get("team_label") or "").upper() != "A"
+        ):
+            continue
+        for tracklet_id, frame in owned:
+            output.append(_assignment_row(unit, decision, player, tracklet_id, frame))
+    return sorted(output, key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
+
+
+def _assignment_row(
+    unit: dict[str, Any],
+    decision: dict[str, Any],
+    player: dict[str, Any] | None,
+    tracklet_id: str,
+    frame: int,
+) -> dict[str, Any]:
+    action = str(decision.get("action") or "")
+    slot_id = str(unit.get("stable_slot_id") or "") or None
+    common = {
+        "continuity_group_id": unit.get("continuity_group_id"),
+        "tracklet_id": tracklet_id,
+        "frame": frame,
+        "identity_source": "manual_material_continuity_review",
+        "hard_blockers": [],
+        "conflicts": [],
+        "eligible_for_player_stats": False,
+    }
+    if action == "assign_roster_player" and player is not None:
+        name = str(player.get("player_name") or player.get("name") or decision.get("player_id"))
+        return {
+            **common,
+            "stable_anonymous_slot_id": slot_id,
+            "stable_anonymous_entity_id": slot_id,
+            "team_label": "A",
+            "fallback_label": slot_id or "A?",
+            "identity_status": "confirmed",
+            "canonical_player_id": str(decision.get("player_id")),
+            "player_name": name,
+            "roster_number": player.get("roster_number", player.get("number")),
+            "display_label": name,
+            "eligible_for_player_stats": True,
+        }
+    return {
+        **common,
+        "stable_anonymous_slot_id": slot_id,
+        "stable_anonymous_entity_id": slot_id,
+        "team_label": "A",
+        "fallback_label": slot_id or "A?",
+        "identity_status": "unresolved",
+        "canonical_player_id": None,
+        "player_name": None,
+        "display_label": slot_id or "A?",
+    }
+
+
+def _current_decision(unit: dict[str, Any], decisions: dict[str, Any]) -> dict[str, Any] | None:
+    group_id = str(unit.get("continuity_group_id") or "")
+    decision = next(
+        (
+            row
+            for row in decisions.get("decisions") or []
+            if str(row.get("continuity_group_id") or "") == group_id
+            and str(row.get("source_ownership_digest") or "") == str(unit.get("source_ownership_digest") or "")
+        ),
+        None,
+    )
+    return dict(decision) if isinstance(decision, dict) else None
+
+
+def _members_payload(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "candidate_subject_id": str(member.get("candidate_subject_id") or ""),
+            "detected_pairs": [
+                [str(tracklet_id), int(frame)]
+                for tracklet_id, frame in sorted(
+                    {
+                        (str(pair[0]), int(pair[1]))
+                        for pair in member.get("detected_pairs") or []
+                        if isinstance(pair, (list, tuple)) and len(pair) >= 2
+                    }
+                )
+            ],
+        }
+        for member in members
+    ]
+
+
+def _ownership_digest(*, group_id: str, slot: str, team_label: str, members: list[dict[str, Any]]) -> str:
+    return canonical_digest(
+        {
+            "continuity_group_id": group_id,
+            "stable_slot_id": slot,
+            "team_label": team_label,
+            "members": members,
+            "policy_version": MATERIAL_CONTINUITY_POLICY_VERSION,
+        }
+    )
+
+
+def _pairs_from_observations(value: Any) -> set[tuple[str, int]]:
+    return {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+        for row in value or []
+        if isinstance(row, dict) and row.get("tracklet_id") is not None and row.get("frame") is not None
+    }
+
+
+def _decision_document(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema_version": DECISIONS_SCHEMA_VERSION,
+        "mode": "reviewed_identity_material_continuity_decisions",
+        "decisions": decisions,
+    }
+
+
+def _roster(match_doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        str(player.get("player_id") or player.get("id") or ""): {
+            **player,
+            "player_id": str(player.get("player_id") or player.get("id") or ""),
+            "team_label": str(
+                player.get("team_label")
+                or team.get("team_label")
+                or team.get("label")
+                or chr(ord("A") + team_index)
+            ).upper(),
+        }
+        for team_index, team in enumerate(match_doc.get("teams") or [])
+        for player in team.get("players") or []
+        if player.get("player_id") or player.get("id")
+    }
+
+
+def _load(path: Path) -> dict[str, Any]:
+    try:
+        import json
+
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}

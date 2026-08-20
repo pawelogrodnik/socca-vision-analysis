@@ -89,6 +89,37 @@ test('segment payload carries the exact target and ownership digest', () => {
   );
 });
 
+test('material continuity payload carries its exact ownership digest without a segment target', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'continuity:A12:100-400',
+    scope_kind: 'material_continuity',
+    source_ownership_digest: 'continuity-owned-pairs',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
+    tracklet_ids: ['tracklet-1'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'semantic-digest',
+    roster_options: [],
+    slot_options: [],
+  };
+  assert.deepEqual(
+    buildReviewedCorrectionPayload(
+      context.candidate_subject_id,
+      { ...base, action: 'assign_roster_player', playerId: 'mateusz' },
+      context,
+    ),
+    {
+      candidate_subject_id: context.candidate_subject_id,
+      action: 'assign_roster_player',
+      source_ownership_digest: 'continuity-owned-pairs',
+      player_id: 'mateusz',
+    },
+  );
+});
+
 test('known-team correction exposes both rosters while slots remain team-scoped', () => {
   const context: ReviewedCorrectionContext = {
     candidate_subject_id: 'subject-1',

@@ -690,6 +690,131 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["next_cases"][0]["priority"], "continuity")
         self.assertIn("material_identity_continuity_gap", policy["next_cases"][0]["reason_codes"])
 
+    def test_material_gain_alone_satisfies_sub_target_coverage_without_ordinary_cards(self) -> None:
+        material = _material_case("material", range(870, 1320))
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(870)
+        ] + [
+            _observation("material", frame, "A", "unresolved", None)
+            for frame in range(870, 1320)
+        ]
+        coverage, pairs = summarize_effective_observations(rows, _scoped_match())
+
+        policy = apply_coverage_policy([material], coverage, pairs, _scoped_match())
+
+        residual = policy["residual_by_team"]["A"]
+        self.assertLess(coverage["per_team"]["A"]["named_observation_coverage"], 0.90)
+        self.assertEqual(policy["material_continuity_blockers"], 1)
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertGreater(residual["required_named_gain"], 0)
+        self.assertGreaterEqual(
+            residual["independently_required_named_gain"],
+            residual["required_named_gain"],
+        )
+        self.assertEqual(residual["remaining_uncovered_named_gain"], 0)
+        self.assertNotIn(
+            "complete_roster_named_coverage_gap_unreachable",
+            {row["code"] for row in policy["readiness"]["blockers"]},
+        )
+
+    def test_material_gain_leaves_only_residual_ordinary_coverage_selection(self) -> None:
+        material = _material_case("material", range(870, 990))
+        ordinary = _continuity_unit(
+            "ordinary",
+            "ordinary",
+            range(990, 1290),
+            stable_slot_id="A11",
+            team="A",
+        )
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(870)
+        ] + [
+            _observation("material", frame, "A", "unresolved", None)
+            for frame in range(870, 990)
+        ] + [
+            _observation("ordinary", frame, "A", "unresolved", None)
+            for frame in range(990, 1290)
+        ]
+        coverage, pairs = summarize_effective_observations(rows, _scoped_match())
+
+        policy = apply_coverage_policy([material, ordinary], coverage, pairs, _scoped_match())
+
+        residual = policy["residual_by_team"]["A"]
+        self.assertGreater(residual["required_named_gain"], residual["independently_required_named_gain"])
+        self.assertEqual(policy["coverage_blockers"], 1)
+        self.assertEqual(policy["next_cases"][-1]["candidate_subject_id"], "ordinary")
+        self.assertEqual(residual["remaining_uncovered_named_gain"], 0)
+
+    def test_material_and_ordinary_overlap_use_unique_pair_gain(self) -> None:
+        material = _material_case("material", range(870, 970))
+        ordinary = _continuity_unit(
+            "ordinary",
+            "ordinary",
+            range(920, 1070),
+            stable_slot_id="A11",
+            team="A",
+        )
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(870)
+        ] + [
+            _observation("material", frame, "A", "unresolved", None)
+            for frame in range(870, 970)
+        ] + [
+            _observation("ordinary", frame, "A", "unresolved", None)
+            for frame in range(920, 1070)
+        ]
+        coverage, pairs = summarize_effective_observations(rows, _scoped_match())
+
+        policy = apply_coverage_policy([material, ordinary], coverage, pairs, _scoped_match())
+
+        # Different tracklets at the same frame are separate observations;
+        # make the ordinary case reuse the same exact pairs to exercise union.
+        ordinary["detected_pairs"] = list(material["detected_pairs"]) + ordinary["detected_pairs"][:50]
+        policy = apply_coverage_policy([material, ordinary], coverage, pairs, _scoped_match())
+        self.assertEqual(policy["residual_by_team"]["A"]["available_actionable_named_gain"], 150)
+
+    def test_single_safe_25_second_subject_is_material_without_fragment_gate(self) -> None:
+        single = _continuity_unit(
+            "single",
+            "single-tracklet",
+            range(1_000, 1_250),
+            stable_slot_id="A17",
+            team="A",
+        )
+        grouped = coalesce_material_continuity_units([single], fps=10.0)
+        material = next(row for row in grouped if row.get("scope_kind") == "material_continuity")
+        self.assertEqual(material["continuity_fragment_count"], 1)
+        self.assertTrue(material["material_continuity_required"])
+
+    def test_just_under_twenty_second_subject_is_not_material(self) -> None:
+        single = _continuity_unit(
+            "short-single",
+            "short-tracklet",
+            range(1_000, 1_199),
+            stable_slot_id="A17",
+            team="A",
+        )
+        grouped = coalesce_material_continuity_units([single], fps=10.0)
+        self.assertFalse(any(row.get("scope_kind") == "material_continuity" for row in grouped))
+
+    def test_team_u_subject_is_never_promoted_to_material_continuity(self) -> None:
+        unknown_team = _continuity_unit(
+            "unknown-team",
+            "unknown-tracklet",
+            range(0, 250),
+            stable_slot_id="U12",
+            team="U",
+        )
+
+        grouped = coalesce_material_continuity_units([unknown_team], fps=10.0)
+
+        self.assertFalse(
+            any(row.get("scope_kind") == "material_continuity" for row in grouped)
+        )
+
     def test_short_safe_residual_is_not_promoted_to_material_continuity(self) -> None:
         short_members = _continuity_members(team="A", frames_per_member=10)
 
@@ -1054,6 +1179,24 @@ def _continuity_unit(
                 for frame in sample_frames
             ]
         },
+    }
+
+
+def _material_case(subject_id: str, frames: range) -> dict:
+    unit = _continuity_unit(
+        subject_id,
+        subject_id,
+        frames,
+        stable_slot_id="A12",
+        team="A",
+    )
+    return {
+        **unit,
+        "scope_kind": "material_continuity",
+        "correction_scope": "material_continuity",
+        "material_continuity_required": True,
+        "continuity_group_id": f"continuity:A12:{frames.start}-{frames.stop - 1}",
+        "current_resolution_status": "pending_material_continuity_review",
     }
 
 

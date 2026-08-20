@@ -54,10 +54,10 @@ export function buildReviewedCorrectionPayload(
     candidate_subject_id: candidateSubjectId,
     action: values.action,
   };
-  if (context?.review_target_id) {
-    payload.review_target_id = context.review_target_id;
+  if (context?.review_target_id || context?.scope_kind === 'material_continuity') {
+    if (context.review_target_id) payload.review_target_id = context.review_target_id;
     if (!context.source_ownership_digest) {
-      throw new Error('Segment wymaga odświeżenia przed zapisem.');
+      throw new Error('Ten fragment wymaga odświeżenia przed zapisem.');
     }
     payload.source_ownership_digest = context.source_ownership_digest;
   }

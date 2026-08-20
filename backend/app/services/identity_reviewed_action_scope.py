@@ -57,6 +57,7 @@ def review_unit_for_payload(
     """Find the current queue unit addressed by a correction payload."""
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     target_id = str(payload.get("review_target_id") or "").strip() or None
+    queued_unit: dict[str, Any] | None = None
     for queue_name in ("next_cases", "optional_audit_cases"):
         for unit in progress.get(queue_name) or []:
             if not isinstance(unit, dict):
@@ -65,5 +66,26 @@ def review_unit_for_payload(
                 continue
             unit_target_id = str(unit.get("review_target_id") or "").strip() or None
             if unit_target_id == target_id:
-                return unit
-    return None
+                queued_unit = unit
+                break
+        if queued_unit is not None:
+            break
+    if not isinstance(queued_unit, dict):
+        return None
+    if queued_unit.get("scope_kind") != "material_continuity":
+        return queued_unit
+
+    # Material cases are displayed without raw tracklet/frame pairs. The
+    # correction service supplies this server-only collection so saving can be
+    # exact without exposing technical ownership through the operator API.
+    group_id = str(queued_unit.get("continuity_group_id") or subject_id)
+    digest = str(queued_unit.get("source_ownership_digest") or "")
+    for unit in progress.get("_internal_review_units") or []:
+        if (
+            isinstance(unit, dict)
+            and unit.get("scope_kind") == "material_continuity"
+            and str(unit.get("continuity_group_id") or "") == group_id
+            and str(unit.get("source_ownership_digest") or "") == digest
+        ):
+            return unit
+    return queued_unit

@@ -231,12 +231,26 @@ def apply_coverage_policy(
 
     coverage_blockers: list[dict[str, Any]] = []
     residual_by_team: dict[str, dict[str, Any]] = {}
+    independently_required: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for unit in [*semantic, *material_continuity]:
+        enriched = _coverage_impact(unit, pair_index, coverage)
+        team = _team_label(enriched.get("coverage_team_label"))
+        if (
+            team in {"A", "B"}
+            and team_review_scope(match_doc, team) == COMPLETE_ROSTER
+            and enriched.get("operator_actionable") is not False
+            and enriched.get("has_operator_visual_evidence")
+            and not _has_team_uncertainty(enriched)
+            and int(enriched.get("potential_named_observation_gain") or 0) > 0
+        ):
+            independently_required[team].append(enriched)
     for team in sorted(
         set((coverage.get("per_team") or {}).keys())
         | set(candidates)
         | set(unreviewable)
         | set(optional_audit)
         | set(non_actionable_team_uncertainty)
+        | set(independently_required)
     ):
         team_coverage = (coverage.get("per_team") or {}).get(team) or {}
         reliable = int(team_coverage.get("reliable_observations") or 0)
@@ -251,8 +265,9 @@ def apply_coverage_policy(
             ),
         )
         reviewable_pairs = _unique_named_gain_pairs(rows)
+        preselected_pairs = _unique_named_gain_pairs(independently_required.get(team, []))
         unreviewable_pairs = _unique_named_gain_pairs(unreviewable.get(team, []))
-        reviewable_debt = len(reviewable_pairs)
+        reviewable_debt = len(reviewable_pairs | preselected_pairs)
         unreviewable_debt = len(unreviewable_pairs)
         unreviewable_reason_counts = Counter(
             str(row.get("coverage_non_actionable_reason") or "unknown")
@@ -284,17 +299,20 @@ def apply_coverage_policy(
             if scope == TEAM_STATS_ONLY
             else max(0, reviewable_debt + unreviewable_debt - residual_budget)
         )
+        remaining_required_gain = max(0, required_gain - len(preselected_pairs))
         selected_rows, selected_pairs = _select_required_coverage_cases(
             rows,
-            required_gain,
+            remaining_required_gain,
+            existing_pairs=preselected_pairs,
         )
         for row in selected_rows:
             coverage_blockers.append(row)
         selected_gain = len(selected_pairs)
+        selected_total_gain = len(preselected_pairs | selected_pairs)
         selected_count = len(selected_rows)
         residual = max(
             0,
-            len(reviewable_pairs | unreviewable_pairs) - selected_gain,
+            len(reviewable_pairs | unreviewable_pairs | preselected_pairs) - selected_total_gain,
         )
         residual_by_team[team] = {
             "scope": scope,
@@ -304,11 +322,13 @@ def apply_coverage_policy(
             "current_named_observations": current_named,
             "target_named_observations": target_named,
             "required_named_gain": required_gain,
+            "independently_required_named_gain": len(preselected_pairs),
+            "remaining_required_named_gain": remaining_required_gain,
             "available_actionable_named_gain": reviewable_debt,
-            "selected_required_named_gain": selected_gain,
-            "remaining_uncovered_named_gain": max(0, required_gain - selected_gain),
+            "selected_required_named_gain": selected_total_gain,
+            "remaining_uncovered_named_gain": max(0, required_gain - selected_total_gain),
             "nonactionable_or_unavailable_gap": max(0, required_gain - reviewable_debt),
-            "unreviewed_unnamed_observations": len(reviewable_pairs | unreviewable_pairs),
+            "unreviewed_unnamed_observations": len(reviewable_pairs | unreviewable_pairs | preselected_pairs),
             "selected_coverage_gain": selected_gain,
             "residual_unreviewed_observations": residual,
             "residual_unreviewed_ratio": _ratio(residual, reliable),
@@ -317,7 +337,7 @@ def apply_coverage_policy(
             "low_impact_reviewable_units": max(0, len(rows) - selected_count),
             "low_impact_reviewable_observations": max(
                 0,
-                reviewable_debt - selected_gain,
+                max(0, len(reviewable_pairs) - selected_gain),
             ),
             "unreviewable_observations": unreviewable_debt,
             "unreviewable_units": len(unreviewable.get(team, [])),
@@ -593,20 +613,24 @@ def _unique_named_gain_pairs(rows: Iterable[dict[str, Any]]) -> set[tuple[str, i
 def _select_required_coverage_cases(
     rows: list[dict[str, Any]],
     required_gain: int,
+    *,
+    existing_pairs: set[tuple[str, int]] | None = None,
 ) -> tuple[list[dict[str, Any]], set[tuple[str, int]]]:
     if required_gain <= 0:
         return [], set()
     selected_rows: list[dict[str, Any]] = []
     selected_pairs: set[tuple[str, int]] = set()
+    accounted_pairs: set[tuple[str, int]] = set(existing_pairs or set())
     for row in rows:
         gain_pairs = set(row.get("_potential_named_observation_pairs") or set())
-        marginal_pairs = gain_pairs - selected_pairs
+        marginal_pairs = gain_pairs - accounted_pairs
         if not marginal_pairs:
             continue
         selected_pairs.update(marginal_pairs)
+        accounted_pairs.update(marginal_pairs)
         row["coverage_rank_within_team"] = len(selected_rows) + 1
         row["marginal_named_observation_gain"] = len(marginal_pairs)
-        row["cumulative_selected_named_gain"] = len(selected_pairs)
+        row["cumulative_selected_named_gain"] = len(accounted_pairs)
         row["current_resolution_status"] = "pending_coverage_review"
         row["priority"] = "coverage"
         row["reason_codes"] = sorted(
@@ -710,30 +734,10 @@ def _readiness(
                     ),
                 }
             )
-    complete_roster_failures = []
-    for team, row in (coverage.get("per_team") or {}).items():
-        if roster_scope(match_doc, team) != COMPLETE_ROSTER:
-            continue
-        reliable = int(row.get("reliable_observations") or 0)
-        current_named = int(row.get("confirmed_named_observations") or 0)
-        target_named = target_named_observations(
-            reliable,
-            COMPLETE_ROSTER_NAMED_TARGET_RATIO,
-        )
-        required_named_gain = max(0, target_named - current_named)
-        if reliable <= 0 or required_named_gain > 0:
-            complete_roster_failures.append(
-                {
-                    "code": "complete_roster_named_coverage_below_target",
-                    "team_label": team,
-                    "actual": row.get("named_observation_coverage"),
-                    "target": COMPLETE_ROSTER_NAMED_TARGET_RATIO,
-                    "target_named_observations": target_named,
-                    "current_named_observations": current_named,
-                    "required_named_gain": required_named_gain,
-                }
-            )
-    blockers.extend(complete_roster_failures)
+    # Coverage debt is represented by the selected review units and any
+    # unavailable residual above. Do not separately declare a raw gap
+    # unreachable while an independently-required material case can supply its
+    # unique named observations after the operator makes one choice.
     reliable = int(coverage.get("reliable_observations") or 0)
     scopes = {
         team: roster_scope(match_doc, team)

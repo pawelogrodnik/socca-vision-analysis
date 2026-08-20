@@ -27,6 +27,7 @@ from app.services.identity_reviewed_mixed_store import (
 from app.services.identity_reviewed_material_continuity import (
     MATERIAL_CONTINUITY_POLICY_VERSION,
     coalesce_material_continuity_units,
+    load_material_continuity_decisions,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
     evidence_status_for_unit,
@@ -84,6 +85,8 @@ def reviewed_snapshot_file_fingerprint(match_path: Path) -> dict[str, int] | Non
 def build_reviewed_identity_progress(
     match_path: Path,
     match_doc: dict[str, Any],
+    *,
+    include_internal_units: bool = False,
 ) -> dict[str, Any]:
     """Build progress from frozen identity artifacts without writing anything."""
     tracklets = _tracklets(match_path)
@@ -137,7 +140,11 @@ def build_reviewed_identity_progress(
         and str(unit.get("candidate_subject_id") or "") not in mixed_by_subject
     ]
     units.extend(_segment_units(segment_review, roster_teams, fps))
-    units = coalesce_material_continuity_units(units, fps)
+    units = coalesce_material_continuity_units(
+        units,
+        fps,
+        load_material_continuity_decisions(match_path),
+    )
     coverage_context = load_effective_coverage_context(match_path, match_doc)
     coverage_policy = apply_coverage_policy(
         units,
@@ -193,7 +200,7 @@ def build_reviewed_identity_progress(
     )
     queue_total = completed + important_remaining
     mixed_queue = build_mixed_review_queue(match_path, match_doc)
-    return {
+    result = {
         "schema_version": PROGRESS_SCHEMA_VERSION,
         "status": "ready",
         "match_id": str(match_doc.get("id") or match_path.name),
@@ -266,6 +273,12 @@ def build_reviewed_identity_progress(
             whole_subject_units,
         ),
     }
+    if include_internal_units:
+        # Server-only correction paths need the original exact ownership for
+        # material continuity decisions. The normal progress contract remains
+        # compact and keeps this technical pair list out of the operator UI.
+        result["_internal_review_units"] = units
+    return result
 
 
 def decision_impact(

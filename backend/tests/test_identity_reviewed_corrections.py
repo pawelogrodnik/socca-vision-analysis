@@ -139,10 +139,25 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertGreater(player["observed_distance_m"], 0)
             self.assertEqual(player["heatmap_samples"], 4)
 
-    def test_material_continuity_assignment_is_limited_to_exact_member_subjects(self) -> None:
+    def test_material_continuity_assignment_changes_exact_pairs_not_outside_subject_run(self) -> None:
         with _workspace() as root:
             _fixture(root)
             _add_material_continuity_members(root)
+            tracklets = _load(root / "tracklets.json")
+            next(row for row in tracklets["tracklets"] if row["tracklet_id"] == "tm1")["positions_m"].append(
+                {
+                    "frame": 900,
+                    "status": "detected",
+                    "pitch_m": [12.0, 2.0],
+                    "bbox_xyxy": [30, 10, 40, 30],
+                }
+            )
+            _write(root / "tracklets.json", tracklets)
+            owned_observations = [
+                {"tracklet_id": f"tm{index + 1}", "frame": 100 + index * 10 + offset}
+                for index in range(4)
+                for offset in (0, 1)
+            ]
             unit = {
                 "candidate_subject_id": "continuity:A12:100-139",
                 "continuity_group_id": "continuity:A12:100-139",
@@ -151,35 +166,109 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 "effective_team_label": "A",
                 "priority": "continuity",
                 "current_resolution_status": "pending_material_continuity_review",
+                "source_ownership_digest": "exact-owned-pairs-v1",
+                "owned_observations": owned_observations,
+                "continuity_members": [
+                    {
+                        "candidate_subject_id": f"mc{index + 1}",
+                        "detected_pairs": [
+                            [f"tm{index + 1}", 100 + index * 10],
+                            [f"tm{index + 1}", 101 + index * 10],
+                        ],
+                    }
+                    for index in range(4)
+                ],
             }
+            progress = {"_internal_review_units": [unit]}
+            with patch(
+                "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
+                return_value=progress,
+            ):
+                saved = persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": unit["candidate_subject_id"],
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                        "source_ownership_digest": unit["source_ownership_digest"],
+                    },
+                    authorized_review_unit=unit,
+                )
+                snapshot = finalize_reviewed_identity(root, _match())
 
-            saved = persist_reviewed_identity_correction(
-                root,
-                _match(),
-                {
-                    "candidate_subject_id": unit["candidate_subject_id"],
-                    "action": "assign_roster_player",
-                    "player_id": "p1",
-                },
-                authorized_review_unit=unit,
+            self.assertEqual(saved["saved_decision"]["owned_observations"], owned_observations)
+            self.assertFalse((root / "reviewed_identity_slot_assignments.json").exists())
+            material = snapshot["segment_observation_assignments"]
+            self.assertEqual(
+                {(row["tracklet_id"], row["frame"]) for row in material},
+                {(row["tracklet_id"], row["frame"]) for row in owned_observations},
             )
-            snapshot = finalize_reviewed_identity(root, _match())
-            decisions = _load(root / "reviewed_identity_slot_assignments.json")["decisions"]
+            self.assertEqual({row["canonical_player_id"] for row in material}, {"p1"})
+            self.assertNotIn(("tm1", 900), {(row["tracklet_id"], row["frame"]) for row in material})
+            outside_rows = reviewed_assignment_at(snapshot, _tracklets(root), 90.0, 10.0)
+            self.assertNotIn(
+                "p1",
+                {
+                    row.get("canonical_player_id")
+                    for row in outside_rows
+                    if row.get("tracklet_id") == "tm1"
+                },
+            )
+            with patch(
+                "app.services.identity_reviewed_stats.read_match_video_metadata",
+                return_value={
+                    "fps": 10.0,
+                    "frame_count": 1_000,
+                    "duration_sec": 100.0,
+                    "source": "fixture",
+                    "filename": "fixture.mp4",
+                },
+            ):
+                stats = build_reviewed_stats(root, snapshot, _match())
+            player = next(
+                row
+                for row in stats["reviewed_player_stats.json"]["players"]
+                if row["player_id"] == "p1"
+            )
+            self.assertEqual(player["confirmed_detected_observations"], len(owned_observations))
+            self.assertEqual(player["heatmap_samples"], len(owned_observations))
 
-            self.assertEqual(saved["saved_decision"]["continuity_subject_ids"], unit["continuity_subject_ids"])
-            member_decisions = [
-                row for row in decisions if row["candidate_subject_id"] in set(unit["continuity_subject_ids"])
-            ]
-            self.assertEqual(len(member_decisions), 4)
-            self.assertEqual({row["player_id"] for row in member_decisions}, {"p1"})
-            self.assertEqual({row["stable_slot_id"] for row in member_decisions}, {None})
-            assigned_subjects = {
-                row["candidate_subject_id"]
-                for row in snapshot["tracklet_assignments"]
-                if row.get("canonical_player_id") == "p1"
+    def test_material_continuity_rejects_stale_exact_ownership_before_writing(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            unit = {
+                "candidate_subject_id": "continuity:A12:100-101",
+                "continuity_group_id": "continuity:A12:100-101",
+                "scope_kind": "material_continuity",
+                "effective_team_label": "A",
+                "source_ownership_digest": "ownership-before",
+                "owned_observations": [
+                    {"tracklet_id": "tm1", "frame": 100},
+                    {"tracklet_id": "tm1", "frame": 101},
+                ],
             }
-            self.assertEqual(assigned_subjects, set(unit["continuity_subject_ids"]))
-            self.assertNotIn("s1", assigned_subjects)
+            changed_ownership = {**unit, "source_ownership_digest": "ownership-after"}
+
+            with patch(
+                "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
+                return_value={"_internal_review_units": [changed_ownership]},
+            ), self.assertRaisesRegex(ValueError, "material_continuity_target_stale"):
+                persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": unit["candidate_subject_id"],
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                        "source_ownership_digest": unit["source_ownership_digest"],
+                    },
+                    authorized_review_unit=unit,
+                )
+
+            self.assertFalse(
+                (root / "reviewed_identity_material_continuity_decisions.json").exists()
+            )
 
     def test_roster_assignment_persists_safe_canonical_slot_binding(self) -> None:
         with _workspace() as root:
