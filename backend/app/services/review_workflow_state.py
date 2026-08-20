@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
+from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import (
@@ -296,6 +297,8 @@ def _current_cached_progress(
     if not snapshot_digest or progress.get("source_snapshot_digest") != snapshot_digest:
         return None, "review_progress_stale"
     if progress.get("schema_version") != PROGRESS_SCHEMA_VERSION:
+        return None, "review_progress_policy_stale"
+    if (progress.get("policy") or {}).get("version") != COVERAGE_POLICY_VERSION:
         return None, "review_progress_policy_stale"
     if not review_scope_dependency_matches(match_doc, progress):
         return None, "review_progress_scope_stale"

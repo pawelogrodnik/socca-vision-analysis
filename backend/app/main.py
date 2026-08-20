@@ -87,7 +87,10 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
-from app.services.identity_reviewed_coverage import paginate_progress
+from app.services.identity_reviewed_coverage import (
+    COVERAGE_POLICY_VERSION,
+    paginate_progress,
+)
 from app.services.identity_reviewed_progress import (
     PROGRESS_SCHEMA_VERSION,
     build_reviewed_identity_progress,
@@ -2042,6 +2045,8 @@ def get_match_reviewed_identity_progress(
             cached
             if isinstance(cached, dict)
             and cached.get("schema_version") == PROGRESS_SCHEMA_VERSION
+            and (cached.get("policy") or {}).get("version")
+            == COVERAGE_POLICY_VERSION
             and cached.get("source_snapshot_file") == snapshot_file
             and review_scope_dependency_matches(read_match_meta(path), cached)
             else build_reviewed_identity_progress(path, read_match_meta(path))

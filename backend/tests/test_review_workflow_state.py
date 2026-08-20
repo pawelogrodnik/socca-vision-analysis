@@ -11,6 +11,7 @@ from app.services.review_workflow_state import (
     assert_workflow_action_allowed,
     derive_review_workflow_state,
     get_review_workflow_state,
+    _current_cached_progress,
     _issue_evidence,
 )
 from app.services.identity_seeded_review_reduction import (
@@ -234,6 +235,25 @@ class ReviewWorkflowStateTests(unittest.TestCase):
             after = {path.name: path.read_bytes() for path in root.iterdir()}
             self.assertEqual(before, after)
             self.assertEqual(state["phase"], "initial_audit")
+
+    def test_cached_progress_with_an_old_coverage_policy_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            progress = {
+                "schema_version": "2.3.0",
+                "source_snapshot_digest": "identity",
+                "policy": {"version": "coverage-driven-review:v3-per-team-scope"},
+            }
+            write_json(root / "reviewed_identity_progress.json", progress)
+
+            current, reason = _current_cached_progress(
+                root,
+                {"semantic_digest": "identity"},
+                {"teams": []},
+            )
+
+            self.assertIsNone(current)
+            self.assertEqual(reason, "review_progress_policy_stale")
 
     def test_get_state_does_not_recover_or_write_an_interrupted_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

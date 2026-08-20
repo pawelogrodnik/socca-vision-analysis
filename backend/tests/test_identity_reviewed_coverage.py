@@ -9,11 +9,176 @@ from app.services.identity_reviewed_coverage import (
     paginate_progress,
     review_case_team_label,
     summarize_effective_observations,
+    target_named_observations,
 )
 from app.services.identity_reviewed_progress import reviewed_snapshot_file_fingerprint
 
 
 class ReviewedIdentityCoverageTests(unittest.TestCase):
+    def test_complete_roster_selection_uses_named_target_shortfall(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(880)
+        ] + [
+            _observation("unnamed", frame, "A", "unresolved", None)
+            for frame in range(880, 1000)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        units = [
+            _unit("a", [("unnamed", frame) for frame in range(880, 892)], visual=True),
+            _unit("b", [("unnamed", frame) for frame in range(892, 899)], visual=True),
+            _unit("c", [("unnamed", frame) for frame in range(899, 904)], visual=True),
+        ]
+
+        policy = apply_coverage_policy(units, coverage, pair_index, _scoped_match())
+        residual = policy["residual_by_team"]["A"]
+
+        self.assertEqual(target_named_observations(1_000, 0.90), 900)
+        self.assertEqual(residual["required_named_gain"], 20)
+        self.assertEqual(residual["selected_required_named_gain"], 24)
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in policy["next_cases"]],
+            ["a", "b", "c"],
+        )
+
+    def test_overlapping_candidate_gain_is_selected_by_unique_pairs(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(886)
+        ] + [
+            _observation("unnamed", frame, "A", "unresolved", None)
+            for frame in range(886, 1000)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        units = [
+            _unit("a", [("unnamed", frame) for frame in range(886, 896)], visual=True),
+            _unit("b", [("unnamed", frame) for frame in range(890, 900)], visual=True),
+        ]
+
+        policy = apply_coverage_policy(units, coverage, pair_index, _scoped_match())
+        residual = policy["residual_by_team"]["A"]
+
+        self.assertEqual(residual["required_named_gain"], 14)
+        self.assertEqual(residual["available_actionable_named_gain"], 14)
+        self.assertEqual(residual["selected_required_named_gain"], 14)
+        self.assertEqual(len(policy["next_cases"]), 2)
+        self.assertEqual(
+            policy["next_cases"][1]["marginal_named_observation_gain"],
+            4,
+        )
+
+    def test_golden_shaped_shortfall_selects_past_the_old_residual_budget_stop(
+        self,
+    ) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(64_783)
+        ] + [
+            _observation("unnamed", frame, "A", "unresolved", None)
+            for frame in range(64_783, 73_420)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        units = [
+            _unit("high", [("unnamed", frame) for frame in range(64_783, 65_476)], visual=True),
+            _unit("medium", [("unnamed", frame) for frame in range(65_476, 65_877)], visual=True),
+            _unit("lower", [("unnamed", frame) for frame in range(65_877, 66_153)], visual=True),
+        ]
+
+        policy = apply_coverage_policy(units, coverage, pair_index, _scoped_match())
+        residual = policy["residual_by_team"]["A"]
+
+        self.assertEqual(target_named_observations(73_420, 0.90), 66_078)
+        self.assertEqual(residual["required_named_gain"], 1_295)
+        self.assertEqual(residual["available_actionable_named_gain"], 1_370)
+        self.assertEqual(residual["selected_required_named_gain"], 1_370)
+        self.assertEqual(residual["remaining_uncovered_named_gain"], 0)
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in policy["next_cases"]],
+            ["high", "medium", "lower"],
+        )
+
+    def test_insufficient_safe_evidence_surfaces_all_cases_and_quantifies_gap(
+        self,
+    ) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(880)
+        ] + [
+            _observation("unnamed", frame, "A", "unresolved", None)
+            for frame in range(880, 1_000)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        units = [
+            _unit("safe-eight", [("unnamed", frame) for frame in range(880, 888)], visual=True),
+            _unit("safe-five", [("unnamed", frame) for frame in range(888, 893)], visual=True),
+            _unit("no-evidence", [("unnamed", frame) for frame in range(893, 943)], visual=False),
+        ]
+
+        policy = apply_coverage_policy(units, coverage, pair_index, _scoped_match())
+        residual = policy["residual_by_team"]["A"]
+        blocker = next(
+            row
+            for row in policy["readiness"]["blockers"]
+            if row["code"] == "complete_roster_named_coverage_gap_unreachable"
+        )
+
+        self.assertEqual(residual["required_named_gain"], 20)
+        self.assertEqual(residual["available_actionable_named_gain"], 13)
+        self.assertEqual(residual["selected_required_named_gain"], 13)
+        self.assertEqual(residual["remaining_uncovered_named_gain"], 7)
+        self.assertEqual(residual["nonactionable_or_unavailable_gap"], 7)
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in policy["next_cases"]],
+            ["safe-eight", "safe-five"],
+        )
+        self.assertEqual(blocker["remaining_uncovered_named_gain"], 7)
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+
+    def test_target_met_does_not_require_ordinary_named_coverage_cases(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(905)
+        ] + [
+            _observation("unnamed", frame, "A", "unresolved", None)
+            for frame in range(905, 1_000)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        case = _unit("optional-now", [("unnamed", frame) for frame in range(905, 1_000)], visual=True)
+
+        policy = apply_coverage_policy([case], coverage, pair_index, _scoped_match())
+
+        self.assertEqual(policy["residual_by_team"]["A"]["required_named_gain"], 0)
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"], [])
+
+    def test_explicit_roster_decision_is_not_requeued_for_safety_debt(self) -> None:
+        rows = [
+            _observation("demoted", frame, "A", "conflicted", None)
+            for frame in range(20)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        already_reviewed = _unit(
+            "roman",
+            [("demoted", frame) for frame in range(20)],
+            visual=True,
+        )
+        already_reviewed["current_decision"] = {
+            "action": "assign_roster_player",
+            "player_id": "p1",
+        }
+
+        policy = apply_coverage_policy(
+            [already_reviewed],
+            coverage,
+            pair_index,
+            _scoped_match(),
+        )
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(
+            policy["residual_by_team"]["A"]["available_actionable_named_gain"],
+            0,
+        )
     def test_team_stats_only_moves_clean_named_debt_to_optional_audit(self) -> None:
         rows = [
             _observation("a", frame, "A", "confirmed" if frame < 95 else "unresolved", "p1" if frame < 95 else None)
