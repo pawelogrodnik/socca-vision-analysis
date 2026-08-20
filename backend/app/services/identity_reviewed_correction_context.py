@@ -17,6 +17,9 @@ from app.services.identity_reviewed_mixed_store import (
     FILENAME as MIXED_PLAYERS_FILENAME,
     mixed_case_for_subject,
 )
+from app.services.identity_reviewed_material_continuity import (
+    load_material_continuity_decisions,
+)
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_review,
@@ -41,6 +44,12 @@ def reviewed_correction_context(
             match_doc,
             candidate_subject_id,
             review_target_id,
+        )
+    if candidate_subject_id.startswith("continuity:"):
+        return _material_continuity_correction_context(
+            match_path,
+            match_doc,
+            candidate_subject_id,
         )
     candidate_document = load_required(match_path / "identity_candidate_shadow.json")
     context = build_materialized_subject_context(
@@ -95,6 +104,65 @@ def reviewed_correction_context(
     }
 
 
+def _material_continuity_correction_context(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    continuity_group_id: str,
+) -> dict[str, Any]:
+    """Return a server-authoritative context for a grouped safe gap."""
+    # Import here to avoid a progress -> correction-context module cycle.
+    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+
+    progress = build_reviewed_identity_progress(match_path, match_doc)
+    unit = next(
+        (
+            row
+            for row in progress.get("next_cases") or []
+            if str(row.get("candidate_subject_id") or "") == continuity_group_id
+            and row.get("scope_kind") == "material_continuity"
+        ),
+        None,
+    )
+    if not isinstance(unit, dict):
+        raise ValueError(f"Unknown material continuity case: {continuity_group_id}")
+    team_label = str(unit.get("effective_team_label") or "A").upper()
+    if team_label not in {"A", "B"}:
+        raise ValueError("Material continuity case has no safe team")
+    candidate_document = load_required(match_path / "identity_candidate_shadow.json")
+    slot_document = load_reviewed_slot_assignments(match_path)
+    registry = build_materialized_reviewed_slot_registry(candidate_document, slot_document)
+    if not registry:
+        registry = build_reviewed_slot_registry(match_path, slot_document)
+    return {
+        "candidate_subject_id": continuity_group_id,
+        "review_target_id": None,
+        "scope_kind": "material_continuity",
+        "team_label": team_label,
+        "source_team_label": team_label,
+        "effective_team_label": team_label,
+        "available_team_labels": [team_label],
+        "tracklet_ids": list(unit.get("tracklet_ids") or []),
+        "continuity_subject_ids": list(unit.get("continuity_subject_ids") or []),
+        "continuity_group_id": continuity_group_id,
+        "review_card_key": None,
+        "roster_options": match_roster(match_doc),
+        "slot_options": [
+            registry[key]
+            for key in sorted(registry)
+            if registry[key].get("team_label") == team_label
+        ],
+        "current_decision": unit.get("current_decision"),
+        "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
+        "source_ownership_digest": unit.get("source_ownership_digest"),
+        "frame_ranges": list(unit.get("frame_ranges") or []),
+        "frame_start": unit.get("frame_start"),
+        "frame_end": unit.get("frame_end"),
+        "detected_observation_count": unit.get("detected_observation_count"),
+        "visual_evidence": unit.get("visual_evidence") or {},
+        "legacy_suggestion": None,
+    }
+
+
 def _segment_correction_context(
     match_path: Path,
     match_doc: dict[str, Any],
@@ -144,6 +212,7 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
     roster = load_optional(match_path / REVIEW_DECISIONS_FILENAME)
     slots = load_reviewed_slot_assignments(match_path)
     segments = load_segment_decisions(match_path)
+    material = load_material_continuity_decisions(match_path)
     mixed = load_optional(match_path / MIXED_PLAYERS_FILENAME)
     return canonical_digest(
         {
@@ -183,6 +252,19 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                     for row in segments.get("decisions") or []
                 ),
                 key=lambda row: str(row.get("review_target_id") or ""),
+            ),
+            "material_continuity": sorted(
+                (
+                    {
+                        "continuity_group_id": row.get("continuity_group_id"),
+                        "source_ownership_digest": row.get("source_ownership_digest"),
+                        "action": row.get("action"),
+                        "player_id": row.get("player_id"),
+                        "owned_observations": row.get("owned_observations") or [],
+                    }
+                    for row in material.get("decisions") or []
+                ),
+                key=lambda row: str(row.get("continuity_group_id") or ""),
             ),
             "mixed_players": sorted(
                 (

@@ -14,6 +14,9 @@ from app.services.identity_reviewed_action_scope import (
     validate_review_unit_action_scope,
 )
 from app.services.identity_reviewed_correction_context import current_reviewed_decision
+from app.services.identity_reviewed_material_continuity import (
+    load_material_continuity_decisions,
+)
 from app.services.identity_reviewed_segments import load_segment_decisions
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import review_scope_dependency_matches
@@ -60,7 +63,7 @@ def validate_deferred_review_action(
             "Ten przypadek ma już zapisaną inną decyzję. Odśwież Review przed zmianą.",
         )
     detected_team_labels_by_subject = None
-    if target_id is None:
+    if target_id is None and unit.get("scope_kind") != "material_continuity":
         detected_team_labels_by_subject = detected_team_labels_from_progress(progress)
         if (
             detected_team_labels_by_subject is None
@@ -125,7 +128,11 @@ def _actionable_unit(
         if not _authorized_queue_semantics(queue, raw):
             continue
         if target_id is None:
-            if raw_target_id is None and raw.get("scope_kind") in {None, "whole_subject"}:
+            if raw_target_id is None and raw.get("scope_kind") in {
+                None,
+                "whole_subject",
+                "material_continuity",
+            }:
                 return raw
         elif raw.get("scope_kind") == "canonical_segment":
             return raw
@@ -143,9 +150,13 @@ def _iter_authorized_review_units(
 
 def _authorized_queue_semantics(queue: str, unit: dict[str, Any]) -> bool:
     if queue == "required":
-        return unit.get("priority") in {"high", "coverage"} and unit.get(
+        return unit.get("priority") in {"high", "coverage", "continuity"} and unit.get(
             "current_resolution_status"
-        ) in {"pending_high_priority", "pending_coverage_review"}
+        ) in {
+            "pending_high_priority",
+            "pending_coverage_review",
+            "pending_material_continuity_review",
+        }
     return unit.get("priority") == "optional" and unit.get(
         "current_resolution_status"
     ) == "optional_team_audit"
@@ -157,6 +168,20 @@ def _saved_decision(
     target_id: str | None,
     unit: dict[str, Any],
 ) -> dict[str, Any] | None:
+    if unit.get("scope_kind") == "material_continuity":
+        continuity_group_id = str(unit.get("continuity_group_id") or "")
+        source_ownership_digest = str(unit.get("source_ownership_digest") or "")
+        return next(
+            (
+                dict(row)
+                for row in load_material_continuity_decisions(match_path).get("decisions")
+                or []
+                if str(row.get("continuity_group_id") or "") == continuity_group_id
+                and str(row.get("source_ownership_digest") or "")
+                == source_ownership_digest
+            ),
+            None,
+        )
     if target_id is None:
         return current_reviewed_decision(match_path, subject_id)
     saved = next(

@@ -46,10 +46,28 @@ def render_identity_roster_anchor_crops(
                     top = max(0, int(y1) - margin_y)
                     right = min(width, int(x2) + margin_x)
                     bottom = min(height, int(y2) + margin_y)
-                    image = frame[top:bottom, left:right]
+                    image = frame[top:bottom, left:right].copy()
+                    if not image.size:
+                        continue
+                    # The padded crop deliberately keeps nearby players for
+                    # context.  Mark the one detection the operator is being
+                    # asked about, so overlapping people cannot be confused
+                    # for the review target.
+                    target_left = max(0, min(image.shape[1] - 1, int(round(x1)) - left))
+                    target_top = max(0, min(image.shape[0] - 1, int(round(y1)) - top))
+                    target_right = max(0, min(image.shape[1] - 1, int(round(x2)) - left))
+                    target_bottom = max(0, min(image.shape[0] - 1, int(round(y2)) - top))
+                    if target_right > target_left and target_bottom > target_top:
+                        cv2.rectangle(
+                            image,
+                            (target_left, target_top),
+                            (target_right, target_bottom),
+                            (0, 255, 255),
+                            thickness=max(1, min(3, image.shape[0] // 48)),
+                        )
                     artifact_path = output_root / str(crop["artifact"])
                     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-                    if image.size and cv2.imwrite(str(artifact_path), image):
+                    if cv2.imwrite(str(artifact_path), image):
                         rendered.add(str(crop["artifact"]))
                 target_frames.remove(frame_index)
             frame_index += 1

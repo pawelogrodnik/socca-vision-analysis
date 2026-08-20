@@ -1895,8 +1895,8 @@ export type ReviewedIdentityAtEntity = {
   observation_key?: string;
   bbox_xyxy?: number[] | null;
   review_target_id?: string | null;
-  scope_kind?: 'whole_subject' | 'canonical_segment';
-  correction_scope?: 'whole_subject' | 'canonical_segment';
+  scope_kind?: 'whole_subject' | 'canonical_segment' | 'material_continuity';
+  correction_scope?: 'whole_subject' | 'canonical_segment' | 'material_continuity';
   operator_actionable?: boolean;
   non_actionable_reason?: string | null;
   has_operator_visual_evidence?: boolean;
@@ -1931,7 +1931,7 @@ export type ReviewedCorrectionSlotOption = {
 export type ReviewedCorrectionContext = {
   candidate_subject_id: string;
   review_target_id?: string | null;
-  scope_kind?: 'whole_subject' | 'canonical_segment';
+  scope_kind?: 'whole_subject' | 'canonical_segment' | 'material_continuity';
   team_label: string;
   source_team_label: string;
   effective_team_label: string;
@@ -1947,8 +1947,10 @@ export type ReviewedCorrectionContext = {
   frame_start?: number | null;
   frame_end?: number | null;
   detected_observation_count?: number | null;
+  continuity_group_id?: string | null;
+  continuity_subject_ids?: string[];
   visual_evidence?: {
-    kind?: 'team_attribution';
+    kind?: 'team_attribution' | 'identity_continuity';
     status?: string;
     selected_crop_count?: number;
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
@@ -2008,21 +2010,26 @@ export type ReviewedIdentityReviewUnit = {
   detected_observation_count: number;
   detected_time_sec: number;
   current_resolution_status: string;
-  priority: 'high' | 'coverage' | 'optional' | null;
+  priority: 'high' | 'coverage' | 'continuity' | 'optional' | null;
   reason_codes: string[];
   review_target_id?: string | null;
-  scope_kind?: 'whole_subject' | 'canonical_segment';
+  scope_kind?: 'whole_subject' | 'canonical_segment' | 'material_continuity';
   source_ownership_digest?: string | null;
   stable_slot_id?: string | null;
   frame_ranges?: number[][];
   visual_evidence?: {
-    kind?: 'team_attribution';
+    kind?: 'team_attribution' | 'identity_continuity';
     status?: string;
     selected_crop_count?: number;
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
   legacy_suggestion?: ReviewedCorrectionContext['legacy_suggestion'];
+  continuity_group_id?: string | null;
+  continuity_subject_ids?: string[];
+  continuity_fragment_count?: number | null;
+  continuity_span_sec?: number | null;
+  material_continuity_required?: boolean;
   coverage_team_label?: string | null;
   potential_named_observation_gain?: number | null;
   potential_team_unnamed_share?: number | null;

@@ -60,6 +60,11 @@ const SEGMENT_ACTION_CARDS: ActionCard[] = [
   { action: 'unresolved', label: 'Nie wiem' },
 ];
 
+const MATERIAL_CONTINUITY_ACTION_CARDS: ActionCard[] = [
+  { action: 'assign_roster_player', label: 'Wybierz zawodnika z kadry' },
+  { action: 'unresolved', label: 'Nie wiem' },
+];
+
 const UNKNOWN_TEAM_SPECIAL_ACTIONS: ActionCard[] = [
   { action: 'referee', label: 'Sędzia' },
   { action: 'false_detection', label: 'Fałszywa detekcja' },
@@ -172,6 +177,7 @@ export function ReviewedIdentityCorrectionForm({
   const sourceTeamLabel = context?.source_team_label ?? entity.team_label;
   const sourceTeamUnknown = sourceTeamLabel === 'U';
   const segmentScope = context?.scope_kind === 'canonical_segment';
+  const materialContinuityScope = context?.scope_kind === 'material_continuity';
   const options = useMemo(
     () => context ? correctionOptionsForSubject(context, selectedTeamLabel) : { roster: [], slots: [] },
     [context, selectedTeamLabel],
@@ -184,12 +190,14 @@ export function ReviewedIdentityCorrectionForm({
   const range = correctionRange(entity);
   const baseActionCards = teamAttributionOnly
     ? [...TEAM_ATTRIBUTION_ONLY_ACTIONS]
+    : materialContinuityScope
+    ? MATERIAL_CONTINUITY_ACTION_CARDS
     : segmentScope
     ? SEGMENT_ACTION_CARDS
     : sourceTeamUnknown
     ? actionCardsForUnknownTeam(selectedTeamLabel)
     : STANDARD_ACTION_CARDS;
-  const actionCards = teamAttributionOnly || segmentScope
+  const actionCards = teamAttributionOnly || segmentScope || materialContinuityScope
     ? baseActionCards
     : withMixedPlayersAction(baseActionCards);
   const teamAttributionActions = useMemo(
@@ -240,7 +248,7 @@ export function ReviewedIdentityCorrectionForm({
 
   function actionIsAvailable(card: ActionCard): boolean {
     if (card.action === 'assign_roster_player') {
-      return segmentScope
+      return segmentScope || materialContinuityScope
         ? Boolean(context?.roster_options.length)
         : options.roster.length > 0;
     }
@@ -289,7 +297,9 @@ export function ReviewedIdentityCorrectionForm({
     <header className='reviewed-correction-heading'>
       <div>
         <h4>{action ? actionLabel : 'Popraw przypisanie'}</h4>
-        <p>{segmentScope
+        <p>{materialContinuityScope
+          ? 'Decyzja obejmie tylko pokazane, bezpieczne fragmenty ciągłości.'
+          : segmentScope
           ? 'Decyzja obejmie tylko pokazany fragment.'
           : 'Decyzja obejmie cały fragment zawodnika.'}</p>
       </div>
@@ -337,6 +347,22 @@ export function ReviewedIdentityCorrectionForm({
               className='reviewed-action-card'
               onClick={() => selectAction(card.action)}
               disabled={busy}
+            >{card.label}</button>)}
+          </div>
+        </section>
+      </> : showActionCategories && materialContinuityScope ? <>
+        <section className='reviewed-correction-step'>
+          <h5>Kim jest ten zawodnik?</h5>
+          <p>Wybór obejmie tylko ten ciąg, a nie wszystkie obserwacje tego slotu.</p>
+          <div className='reviewed-action-cards' role='radiogroup' aria-label='Tożsamość ciągłości zawodnika'>
+            {actionCards.map((card) => <button
+              type='button'
+              key={card.action}
+              role='radio'
+              aria-checked={false}
+              className='reviewed-action-card'
+              onClick={() => selectAction(card.action)}
+              disabled={busy || !actionIsAvailable(card)}
             >{card.label}</button>)}
           </div>
         </section>

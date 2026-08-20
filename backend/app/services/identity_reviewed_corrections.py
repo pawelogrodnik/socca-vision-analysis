@@ -46,6 +46,9 @@ from app.services.identity_reviewed_progress import (
     decision_impact,
 )
 from app.services.identity_reviewed_mixed_store import save_mixed_player_classification
+from app.services.identity_reviewed_material_continuity import (
+    save_material_continuity_decision,
+)
 from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
@@ -78,12 +81,23 @@ def save_reviewed_identity_correction(
     action = str(payload.get("action") or "").strip()
     try:
         progress_before = build_reviewed_identity_progress(match_path, match_doc)
+        authorized_review_unit = review_unit_for_payload(progress_before, payload)
+        if (
+            isinstance(authorized_review_unit, dict)
+            and authorized_review_unit.get("scope_kind") == "material_continuity"
+        ):
+            internal_progress = build_reviewed_identity_progress(
+                match_path,
+                match_doc,
+                include_internal_units=True,
+            )
+            authorized_review_unit = review_unit_for_payload(internal_progress, payload)
         result = persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
             use_materialized_context=False,
-            authorized_review_unit=review_unit_for_payload(progress_before, payload),
+            authorized_review_unit=authorized_review_unit,
         )
         review_target_id = str(payload.get("review_target_id") or "").strip() or None
         if review_target_id:
@@ -152,6 +166,18 @@ def persist_reviewed_identity_correction(
         raise ValueError(f"Unsupported reviewed identity correction action: {action}")
     validate_review_unit_action_scope(payload, authorized_review_unit)
     review_target_id = str(payload.get("review_target_id") or "").strip() or None
+    if (
+        isinstance(authorized_review_unit, dict)
+        and authorized_review_unit.get("scope_kind") == "material_continuity"
+    ):
+        if review_target_id:
+            raise ValueError("material_continuity_review_target_not_supported")
+        return _persist_material_continuity_correction(
+            match_path,
+            match_doc,
+            payload,
+            authorized_review_unit,
+        )
     if action == "mixed_players":
         if review_target_id:
             raise ValueError("mixed_players is a whole-subject classification")
@@ -342,6 +368,44 @@ def persist_reviewed_identity_correction(
         "saved_decision": saved,
         "effective_action": action,
         "allocated_stable_slot_id": allocated_slot,
+        "semantic_decision_digest": semantic_digest,
+        "recompute_deferred": True,
+        "persistence": {
+            "status": "saved",
+            "downstream_recompute_triggered": False,
+        },
+    }
+
+
+def _persist_material_continuity_correction(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+    review_unit: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist only the exact owned pairs of the reviewed continuity case."""
+    action = str(payload.get("action") or "").strip()
+    saved = save_material_continuity_decision(
+        match_path,
+        match_doc,
+        payload,
+        review_unit,
+    )
+    semantic_digest = reviewed_decisions_semantic_digest(match_path)
+    mark_reviewed_identity_recompute_required(
+        match_path,
+        semantic_decision_digest=semantic_digest,
+    )
+    return {
+        "saved_decision": {
+            "scope_kind": "material_continuity",
+            "continuity_group_id": saved.get("continuity_group_id"),
+            "continuity_subject_ids": saved.get("continuity_subject_ids"),
+            "owned_observations": saved.get("owned_observations"),
+            "decision": saved,
+        },
+        "effective_action": action,
+        "allocated_stable_slot_id": None,
         "semantic_decision_digest": semantic_digest,
         "recompute_deferred": True,
         "persistence": {

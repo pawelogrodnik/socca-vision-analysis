@@ -170,7 +170,7 @@ export function IdentityExceptionReviewPanel({
       }
       const cardsBySubject = cardsBySubjectRef.current || new Map();
       const actionable = progress.next_cases
-        .filter((item) => ['high', 'coverage', 'optional'].includes(item.priority || ''))
+        .filter((item) => ['high', 'coverage', 'continuity', 'optional'].includes(item.priority || ''))
         .map((unit) => ({
           unit,
           card: cardsBySubject.get(unit.candidate_subject_id) || null,
@@ -245,6 +245,7 @@ export function IdentityExceptionReviewPanel({
     && coverageReadiness?.allows_finalize === false;
   const teamAttributionBlocker = teamAttributionBlockerMessage(coverageReadiness);
   const guidanceCount = Number(reviewCase?.unit.scope_kind === 'canonical_segment')
+    + Number(reviewCase?.unit.scope_kind === 'material_continuity')
     + Number(activeQueue === 'optional_audit')
     + Number(reviewCase?.unit.priority === 'coverage')
     + Number(unitEvidence?.kind === 'team_attribution');
@@ -432,6 +433,10 @@ export function IdentityExceptionReviewPanel({
           {reviewCase.unit.scope_kind === 'canonical_segment' && <div>
             <strong>System połączył w jednym tracklecie różne osoby.</strong>
             <p>Oceń tylko pokazany fragment. Decyzja nie obejmie sąsiednich ani niejednoznacznych klatek.</p>
+          </div>}
+          {reviewCase.unit.scope_kind === 'material_continuity' && <div>
+            <strong>Duża luka ciągłości: {reviewCase.unit.stable_slot_id}</strong>
+            <p>To {reviewCase.unit.continuity_fragment_count || reviewCase.unit.tracklet_count} bezpieczne fragmenty tego samego lokalnego ciągu. Wybór obejmie wyłącznie pokazane obserwacje, nie cały slot.</p>
           </div>}
           {activeQueue === 'optional_audit' && <div>
             <strong>Audyt opcjonalny — decyzja nie jest wymagana.</strong>
