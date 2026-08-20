@@ -1948,6 +1948,7 @@ export type ReviewedCorrectionContext = {
   frame_end?: number | null;
   detected_observation_count?: number | null;
   visual_evidence?: {
+    kind?: 'team_attribution';
     status?: string;
     selected_crop_count?: number;
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
@@ -2015,6 +2016,7 @@ export type ReviewedIdentityReviewUnit = {
   stable_slot_id?: string | null;
   frame_ranges?: number[][];
   visual_evidence?: {
+    kind?: 'team_attribution';
     status?: string;
     selected_crop_count?: number;
     anchor_crops: IdentityRosterSubjectAnchorCrop[];

@@ -266,6 +266,77 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(after["next_cases"], [])
         self.assertEqual(after["optional_audit_cases"], [])
 
+    def test_team_u_with_team_attribution_evidence_is_required_semantic_case(self) -> None:
+        rows = [_observation("u", frame, "U", "unresolved", None) for frame in range(12)]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        unknown = _unit("unknown", [("u", frame) for frame in range(12)], visual=True)
+        unknown.update({"source_team_label": "U", "effective_team_label": "U"})
+
+        policy = apply_coverage_policy([unknown], coverage, pair_index, match)
+
+        self.assertEqual(policy["semantic_blockers"], 1)
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], "unknown")
+        self.assertEqual(policy["next_cases"][0]["priority"], "high")
+        self.assertIn(
+            "team_attribution_uncertain",
+            policy["next_cases"][0]["reason_codes"],
+        )
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+
+    def test_team_u_team_assignment_or_non_player_disposition_leaves_safety_queue(self) -> None:
+        match = _scoped_match()
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(100)
+        ] + [
+            _observation("u", frame, "A", "unresolved", None)
+            for frame in range(100, 110)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        assigned_a = _unit("u", [("u", frame) for frame in range(100, 110)], visual=True)
+        assigned_a.update({
+            "source_team_label": "U",
+            "effective_team_label": "A",
+            "current_decision": {"action": "assign_team", "team_label": "A"},
+            "current_resolution_status": "reviewed_by_operator",
+        })
+        assigned_b = {
+            **assigned_a,
+            "effective_team_label": "B",
+            "current_decision": {"action": "assign_team", "team_label": "B"},
+        }
+        false_detection = {
+            **assigned_a,
+            "effective_team_label": "U",
+            "current_decision": {"action": "false_detection"},
+        }
+        referee = {
+            **assigned_a,
+            "effective_team_label": "U",
+            "current_decision": {"action": "referee"},
+        }
+
+        self.assertEqual(
+            apply_coverage_policy([assigned_a], coverage, pair_index, match)["next_cases"],
+            [],
+        )
+        assigned_b_policy = apply_coverage_policy([assigned_b], coverage, pair_index, match)
+        self.assertEqual(assigned_b_policy["next_cases"], [])
+        self.assertEqual(
+            assigned_b_policy["residual_by_team"]["B"]["scope"],
+            "team_stats_only",
+        )
+        self.assertEqual(
+            apply_coverage_policy([false_detection], coverage, pair_index, match)["next_cases"],
+            [],
+        )
+        self.assertEqual(
+            apply_coverage_policy([referee], coverage, pair_index, match)["next_cases"],
+            [],
+        )
+
     def test_optional_audit_is_filtered_then_paginated_without_affecting_workload(self) -> None:
         optional = [_queue_unit(f"b-{index:03d}", "B", priority="optional") for index in range(75)]
         progress = {

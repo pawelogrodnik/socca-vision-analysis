@@ -23,6 +23,11 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     load_mixed_player_cases,
 )
+from app.services.identity_reviewed_team_attribution_evidence import (
+    evidence_status_for_unit,
+    load_team_attribution_evidence,
+    visual_evidence_for_unit,
+)
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     identity_review_scope_read_model,
@@ -34,7 +39,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.3.0"
+PROGRESS_SCHEMA_VERSION = "2.4.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -114,6 +119,10 @@ def build_reviewed_identity_progress(
         )
         for subject_id, tracklet_ids in sorted(subjects.items())
     ]
+    _attach_team_attribution_evidence(
+        whole_subject_units,
+        load_team_attribution_evidence(match_path),
+    )
     units = [
         unit
         for unit in whole_subject_units
@@ -390,12 +399,48 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "coverage_rank_within_team", "marginal_named_observation_gain",
         "cumulative_selected_named_gain",
         "correction_scope", "operator_actionable", "non_actionable_reason",
-        "has_operator_visual_evidence",
+        "has_operator_visual_evidence", "team_attribution_evidence_status",
     )
     result = {key: unit.get(key) for key in keys}
     if include_pairs:
         result["detected_pairs"] = unit.get("detected_pairs")
     return result
+
+
+def _attach_team_attribution_evidence(
+    units: list[dict[str, Any]],
+    document: dict[str, Any],
+) -> None:
+    """Add Team-U-only crops without replacing stricter naming evidence."""
+    for unit in units:
+        if (
+            str(unit.get("source_team_label") or "").upper() != "U"
+            or unit.get("has_operator_visual_evidence")
+        ):
+            continue
+        subject_id = str(unit.get("candidate_subject_id") or "")
+        evidence = visual_evidence_for_unit(
+            document,
+            candidate_subject_id=subject_id,
+            detected_pairs=unit.get("detected_pairs") or [],
+        )
+        if evidence is None:
+            unit["team_attribution_evidence_status"] = evidence_status_for_unit(
+                document,
+                candidate_subject_id=subject_id,
+                detected_pairs=unit.get("detected_pairs") or [],
+            )
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                | {"team_attribution_evidence_unavailable"}
+            )
+            continue
+        unit["visual_evidence"] = evidence
+        unit["has_operator_visual_evidence"] = True
+        unit["reason_codes"] = sorted(
+            set(unit.get("reason_codes") or [])
+            | {"team_attribution_evidence_recovered"}
+        )
 
 
 def _segment_units(
