@@ -306,9 +306,9 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
                 "conflicting_stable_slot_roster_bindings",
                 rows["t3"]["hard_blockers"],
             )
-            self.assertIn(
-                "stable_slot_propagation_conflicted",
-                rows["t3"]["propagation_diagnostics"],
+            self.assertEqual(
+                rows["t3"]["propagation_conflicted_stable_slot_ids"],
+                ["A03"],
             )
 
     def test_conflicted_slot_diagnostic_survives_exact_observation_override(self) -> None:
@@ -346,9 +346,9 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             }
 
             self.assertEqual(assignments["t3"]["identity_status"], "conflicted")
-            self.assertIn(
-                "stable_slot_propagation_conflicted",
-                assignments["t3"]["propagation_diagnostics"],
+            self.assertEqual(
+                assignments["t3"]["propagation_conflicted_stable_slot_ids"],
+                ["A03"],
             )
             self.assertEqual(effective["t1"]["canonical_player_id"], "p1")
             self.assertEqual(effective["t2"]["canonical_player_id"], "p3")

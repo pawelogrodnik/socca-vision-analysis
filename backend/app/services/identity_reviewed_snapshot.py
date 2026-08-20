@@ -37,7 +37,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v11-explicit-subject-precedence"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v11-slot-scoped-propagation"
 
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
@@ -138,16 +138,17 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         if player and team_label == "U":
             team_label = str(player["team_label"])
         assignment_conflicts: list[dict[str, Any]] = []
-        propagation_diagnostics: list[str] = []
+        propagation_conflicted_stable_slot_ids: list[str] = []
         if len(accepted_seeds) > 1:
             blockers.append("ambiguous_seeded_subject_membership")
         if _has_conflicting_review_decisions(decisions):
             assignment_conflicts.append({"code": "conflicting_explicit_operator_decisions"})
         if slot_id in conflicting_slot_roster_bindings:
-            # The conflict belongs to the stable-slot hypothesis itself. Keep
-            # it on every assignment so stronger exact/segment evidence does
-            # not later reuse this technical slot as a frame-uniqueness person.
-            propagation_diagnostics.append("stable_slot_propagation_conflicted")
+            # The conflict belongs to this stable-slot hypothesis itself. Keep
+            # the slot identifier on every assignment so a stronger
+            # exact/segment layer only disables stable-slot uniqueness when it
+            # still uses this exact slot.
+            propagation_conflicted_stable_slot_ids.append(str(slot_id))
             if not _is_explicit_subject_player_decision(decision):
                 blockers.append("conflicting_stable_slot_roster_bindings")
                 assignment_conflicts.append(
@@ -208,7 +209,9 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "rejected_evidence": [],
             "hard_blockers": sorted(set(blockers)),
             "conflicts": assignment_conflicts,
-            "propagation_diagnostics": sorted(set(propagation_diagnostics)),
+            "propagation_conflicted_stable_slot_ids": sorted(
+                set(propagation_conflicted_stable_slot_ids)
+            ),
         }
         assignments.append(row)
         conflicts.extend({"tracklet_id": tracklet_id, **item} for item in assignment_conflicts)
@@ -681,10 +684,16 @@ def _canonical_observation_assignments(
                 "eligible_for_player_stats": status == "confirmed",
                 "hard_blockers": sorted(set(blockers)),
                 "conflicts": conflicts,
-                "propagation_diagnostics": sorted(
-                    set(base.get("propagation_diagnostics") or [])
+                "propagation_conflicted_stable_slot_ids": sorted(
+                    {
+                        str(value)
+                        for value in base.get(
+                            "propagation_conflicted_stable_slot_ids"
+                        )
+                        or []
+                    }
                     | (
-                        {"stable_slot_propagation_conflicted"}
+                        {str(slot_id)}
                         if slot_id in conflicting_slot_roster_bindings
                         else set()
                     )
