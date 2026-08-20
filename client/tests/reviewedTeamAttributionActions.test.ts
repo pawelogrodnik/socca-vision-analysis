@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TEAM_ATTRIBUTION_ONLY_ACTIONS } from '../src/utils/reviewedTeamAttributionActions';
+import {
+  TEAM_ATTRIBUTION_ONLY_ACTIONS,
+  teamAttributionTeamActions,
+} from '../src/utils/reviewedTeamAttributionActions';
 
 test('Team-U attribution exposes only team-neutral resolution actions', () => {
   assert.deepEqual(
@@ -14,4 +17,16 @@ test('Team-U attribution exposes only team-neutral resolution actions', () => {
     )),
     false,
   );
+});
+
+test('Team-attribution team labels use the match names while preserving A/B payload values', () => {
+  const actions = teamAttributionTeamActions([
+    { id: 'corgi', name: 'Corgi', players: [] },
+    { id: 'verisk', name: 'Verisk', players: [] },
+  ]);
+
+  assert.deepEqual(actions, [
+    { action: 'assign_team', teamLabel: 'A', label: 'Corgi — zawodnik nieznany' },
+    { action: 'assign_team', teamLabel: 'B', label: 'Verisk — zawodnik nieznany' },
+  ]);
 });

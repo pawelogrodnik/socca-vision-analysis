@@ -481,6 +481,7 @@ export function IdentityExceptionReviewPanel({
             key={reviewUnitKey(reviewCase.unit)}
             matchId={match.id}
             entity={entity}
+            teams={match.teams}
             teamAttributionOnly={unitEvidence?.kind === 'team_attribution'}
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}

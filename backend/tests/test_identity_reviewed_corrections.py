@@ -12,6 +12,9 @@ from app.services.identity_reviewed_corrections import (
     save_reviewed_identity_correction,
 )
 from app.services.identity_reviewed_action_gate import validate_deferred_review_action
+from app.services.identity_reviewed_action_scope import (
+    ReviewedIdentityActionScopeError,
+)
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
     get_reviewed_identity_status,
@@ -551,6 +554,91 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 )
                 self.assertEqual(result["saved_decision"]["action"], action)
                 self.assertTrue(result["recompute_deferred"])
+
+    def test_team_attribution_actions_are_enforced_at_persistence_boundary(self) -> None:
+        allowed = (
+            {"action": "assign_team", "team_label": "A"},
+            {"action": "assign_team", "team_label": "B"},
+            {"action": "referee"},
+            {"action": "false_detection"},
+            {"action": "team_unknown"},
+            {"action": "unresolved"},
+        )
+        forbidden = (
+            {"action": "assign_roster_player", "player_id": "p1"},
+            {"action": "assign_existing_slot", "stable_slot_id": "A03"},
+            {"action": "create_new_stable_player", "team_label": "A"},
+            {"action": "mixed_players", "mixed_hint": "unknown"},
+        )
+        contract = {"visual_evidence": {"kind": "team_attribution"}}
+        for action_payload in allowed:
+            with self.subTest(allowed=action_payload), _workspace() as root:
+                _fixture(root)
+                _configure_s1_detected_teams(root, set())
+                saved = persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {"candidate_subject_id": "s1", **action_payload},
+                    authorized_review_unit=contract,
+                )
+                self.assertEqual(saved["saved_decision"]["action"], action_payload["action"])
+        for action_payload in forbidden:
+            with self.subTest(forbidden=action_payload), _workspace() as root:
+                _fixture(root)
+                before = _decision_files(root)
+                with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+                    persist_reviewed_identity_correction(
+                        root,
+                        _match(),
+                        {"candidate_subject_id": "s1", **action_payload},
+                        authorized_review_unit=contract,
+                    )
+                self.assertEqual(raised.exception.code, "team_attribution_action_not_allowed")
+                self.assertEqual(_decision_files(root), before)
+
+    def test_synchronous_correction_cannot_bypass_team_attribution_contract(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            progress = {
+                "next_cases": [
+                    {
+                        "candidate_subject_id": "s1",
+                        "visual_evidence": {"kind": "team_attribution"},
+                    }
+                ],
+                "optional_audit_cases": [],
+            }
+            before = _decision_files(root)
+            with patch(
+                "app.services.identity_reviewed_corrections.build_reviewed_identity_progress",
+                return_value=progress,
+            ), self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+                save_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": "s1",
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "team_attribution_action_not_allowed")
+            self.assertEqual(_decision_files(root), before)
+
+    def test_normal_review_unit_retains_roster_assignment_action(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            saved = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                },
+                authorized_review_unit={"visual_evidence": {"kind": "player_identity"}},
+            )
+            self.assertEqual(saved["saved_decision"]["player_id"], "p1")
 
     def test_deferred_create_new_player_retry_reuses_allocated_slot(self) -> None:
         with _workspace() as root:

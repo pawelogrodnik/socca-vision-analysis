@@ -1,4 +1,5 @@
-import type { ReviewedCorrectionAction } from '../types';
+import type { ReviewedCorrectionAction, Team } from '../types';
+import { matchTeamName } from './identityExceptionTeamFilter';
 
 export type TeamAttributionActionCard = {
   action: ReviewedCorrectionAction;
@@ -12,3 +13,20 @@ export const TEAM_ATTRIBUTION_ONLY_ACTIONS: readonly TeamAttributionActionCard[]
   { action: 'team_unknown', label: 'Nieznana drużyna' },
   { action: 'unresolved', label: 'Nie wiem' },
 ];
+
+export type TeamAttributionTeamAction = {
+  action: 'assign_team';
+  teamLabel: 'A' | 'B';
+  label: string;
+};
+
+export function teamAttributionTeamActions(
+  teams: Team[] | undefined,
+): TeamAttributionTeamAction[] {
+  const availableTeams = teams || [];
+  return (['A', 'B'] as const).map((teamLabel) => ({
+    action: 'assign_team',
+    teamLabel,
+    label: `${matchTeamName(availableTeams, teamLabel)} — zawodnik nieznany`,
+  }));
+}

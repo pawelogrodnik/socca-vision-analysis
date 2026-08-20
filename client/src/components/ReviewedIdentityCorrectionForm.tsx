@@ -9,6 +9,7 @@ import type {
   ReviewedCorrectionAction,
   ReviewedCorrectionResponse,
   ReviewedIdentityAtEntity,
+  Team,
 } from '../types';
 import {
   buildReviewedCorrectionPayload,
@@ -17,13 +18,17 @@ import {
 } from '../utils/reviewedIdentityCorrection';
 import { persistReviewDecision } from '../utils/identityExceptionWorkspace';
 import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
-import { TEAM_ATTRIBUTION_ONLY_ACTIONS } from '../utils/reviewedTeamAttributionActions';
+import {
+  TEAM_ATTRIBUTION_ONLY_ACTIONS,
+  teamAttributionTeamActions,
+} from '../utils/reviewedTeamAttributionActions';
 
 type Props = {
   matchId: string;
   entity: ReviewedIdentityAtEntity;
   onCancel: () => void;
   onSaved: (result: ReviewedCorrectionResponse) => void;
+  teams?: Team[];
   teamAttributionOnly?: boolean;
   deferRecompute?: boolean;
   navigation?: {
@@ -105,6 +110,7 @@ export function ReviewedIdentityCorrectionForm({
   entity,
   onCancel,
   onSaved,
+  teams,
   teamAttributionOnly = false,
   deferRecompute = false,
   navigation,
@@ -186,6 +192,10 @@ export function ReviewedIdentityCorrectionForm({
   const actionCards = teamAttributionOnly || segmentScope
     ? baseActionCards
     : withMixedPlayersAction(baseActionCards);
+  const teamAttributionActions = useMemo(
+    () => teamAttributionTeamActions(teams),
+    [teams],
+  );
   const choiceComplete = Boolean(action)
     && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))
     && (action !== 'assign_roster_player' || Boolean(playerId))
@@ -299,7 +309,7 @@ export function ReviewedIdentityCorrectionForm({
         <section className='reviewed-correction-step'>
           <h5>Do której drużyny należy ta osoba?</h5>
           <div className='reviewed-action-cards reviewed-team-cards' role='radiogroup' aria-label='Potwierdzenie drużyny'>
-            {['A', 'B'].map((teamLabel) => <button
+            {teamAttributionActions.map(({ label, teamLabel }) => <button
               type='button'
               key={teamLabel}
               role='radio'
@@ -313,7 +323,7 @@ export function ReviewedIdentityCorrectionForm({
                 setError('');
               }}
               disabled={busy || !context?.available_team_labels.includes(teamLabel)}
-            >{teamLabelForOperator(teamLabel)} — zawodnik nieznany</button>)}
+            >{label}</button>)}
           </div>
         </section>
         <section className='reviewed-correction-step'>

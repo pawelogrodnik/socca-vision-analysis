@@ -10,6 +10,9 @@ from typing import Any
 from app.services.identity_reviewed_active_cap import (
     detected_team_labels_from_progress,
 )
+from app.services.identity_reviewed_action_scope import (
+    validate_review_unit_action_scope,
+)
 from app.services.identity_reviewed_correction_context import current_reviewed_decision
 from app.services.identity_reviewed_segments import load_segment_decisions
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
@@ -47,6 +50,8 @@ def validate_deferred_review_action(
             "Ten przypadek nie znajduje się już w aktualnej kolejce Review. "
             "Odśwież Review i spróbuj ponownie.",
         )
+
+    validate_review_unit_action_scope(payload, unit)
 
     saved = _saved_decision(match_path, subject_id, target_id, unit)
     if saved is not None and _semantic_decision(saved) != _semantic_decision(payload):
