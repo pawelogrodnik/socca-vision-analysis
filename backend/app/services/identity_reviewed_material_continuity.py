@@ -343,20 +343,13 @@ def save_material_continuity_decision(
     action = str(payload.get("action") or "")
     if action not in ALLOWED_ACTIONS:
         raise ValueError("material_continuity_action_not_allowed")
-    team_label = str(review_unit.get("effective_team_label") or "").upper()
-    if team_label != "A":
-        raise ValueError("material_continuity_team_not_supported")
     player_id = str(payload.get("player_id") or "") or None
-    roster = _roster(match_doc)
-    if action == "assign_roster_player":
-        player = roster.get(player_id or "")
-        if player is None or str(player.get("team_label") or "").upper() != team_label:
-            raise ValueError("player_id must be one of the same-team operator roster options")
-    else:
-        player_id = None
 
     # A delayed request can carry old candidate ownership. Rebuild the queue
     # and require the exact group/digest before modifying any reviewed data.
+    # The normal operator contract deliberately omits raw tracklet/frame pairs,
+    # so every persisted ownership field below must come from this fresh
+    # server-side unit rather than the browser-visible review unit.
     from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 
     fresh_unit = next(
@@ -376,6 +369,16 @@ def save_material_continuity_decision(
         from app.services.identity_reviewed_segments import SegmentTargetError
 
         raise SegmentTargetError("material_continuity_target_stale")
+    team_label = str(fresh_unit.get("effective_team_label") or "").upper()
+    if team_label != "A":
+        raise ValueError("material_continuity_team_not_supported")
+    roster = _roster(match_doc)
+    if action == "assign_roster_player":
+        player = roster.get(player_id or "")
+        if player is None or str(player.get("team_label") or "").upper() != team_label:
+            raise ValueError("player_id must be one of the same-team operator roster options")
+    else:
+        player_id = None
 
     existing = load_material_continuity_decisions(match_path)
     decisions = {
@@ -390,9 +393,9 @@ def save_material_continuity_decision(
         "source_ownership_digest": expected_digest,
         "source_team_label": team_label,
         "team_label": team_label,
-        "continuity_subject_ids": list(review_unit.get("continuity_subject_ids") or []),
-        "continuity_members": list(review_unit.get("continuity_members") or []),
-        "owned_observations": list(review_unit.get("owned_observations") or []),
+        "continuity_subject_ids": list(fresh_unit.get("continuity_subject_ids") or []),
+        "continuity_members": list(fresh_unit.get("continuity_members") or []),
+        "owned_observations": list(fresh_unit.get("owned_observations") or []),
         "action": action,
         "player_id": player_id,
         "comment": str(payload.get("comment") or "").strip() or None,

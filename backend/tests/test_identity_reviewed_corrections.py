@@ -270,6 +270,130 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 (root / "reviewed_identity_material_continuity_decisions.json").exists()
             )
 
+    def test_deferred_material_correction_recovers_exact_internal_ownership(self) -> None:
+        """The browser-visible queue never supplies raw tracklet/frame pairs."""
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            snapshot = finalize_reviewed_identity(root, _match())
+            public_progress = build_reviewed_identity_progress(root, _match())
+            public_case = next(
+                row
+                for row in public_progress["next_cases"]
+                if row.get("scope_kind") == "material_continuity"
+            )
+            self.assertNotIn("owned_observations", public_case)
+            self.assertNotIn("detected_pairs", public_case)
+            internal_progress = build_reviewed_identity_progress(
+                root,
+                _match(),
+                include_internal_units=True,
+            )
+            internal_case = next(
+                row
+                for row in internal_progress["_internal_review_units"]
+                if row.get("continuity_group_id")
+                == public_case.get("continuity_group_id")
+            )
+            expected_owned = list(internal_case["owned_observations"])
+            self.assertTrue(expected_owned)
+            _write(root / "reviewed_identity_progress.json", public_progress)
+            _write(
+                root / "reviewed_identity_report.json",
+                {"snapshot_digest": snapshot["semantic_digest"]},
+            )
+            payload = {
+                "candidate_subject_id": public_case["candidate_subject_id"],
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "source_ownership_digest": public_case["source_ownership_digest"],
+                "defer_recompute": True,
+            }
+
+            gate = validate_deferred_review_action(root, _match(), payload)
+            self.assertNotIn("owned_observations", gate["review_unit"])
+            result = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                payload,
+                authorized_review_unit=gate["review_unit"],
+            )
+
+            stored = _load(root / "reviewed_identity_material_continuity_decisions.json")[
+                "decisions"
+            ][0]
+            self.assertEqual(result["saved_decision"]["owned_observations"], expected_owned)
+            self.assertEqual(stored["owned_observations"], expected_owned)
+            stored_pairs = {
+                (row["tracklet_id"], row["frame"])
+                for row in stored["owned_observations"]
+            }
+            self.assertNotIn(("material-tracklet", 900), stored_pairs)
+
+    def test_stale_persisted_unresolved_material_decision_does_not_hide_new_case(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            finalize_reviewed_identity(root, _match())
+            progress = build_reviewed_identity_progress(
+                root,
+                _match(),
+                include_internal_units=True,
+            )
+            original = next(
+                row
+                for row in progress["_internal_review_units"]
+                if row.get("scope_kind") == "material_continuity"
+            )
+            persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": original["candidate_subject_id"],
+                    "action": "unresolved",
+                    "source_ownership_digest": original["source_ownership_digest"],
+                },
+                authorized_review_unit=original,
+            )
+            stored = _load(root / "reviewed_identity_material_continuity_decisions.json")[
+                "decisions"
+            ][0]
+            self.assertEqual(stored["action"], "unresolved")
+            tracklets = _load(root / "tracklets.json")
+            material_tracklet = next(
+                row
+                for row in tracklets["tracklets"]
+                if row["tracklet_id"] == "material-tracklet"
+            )
+            material_tracklet["positions_m"].append(
+                {
+                    "frame": 600,
+                    "status": "detected",
+                    "pitch_m": [5.0, 2.0],
+                    "bbox_xyxy": [10, 10, 20, 30],
+                }
+            )
+            _write(root / "tracklets.json", tracklets)
+
+            changed_progress = build_reviewed_identity_progress(
+                root,
+                _match(),
+                include_internal_units=True,
+            )
+            changed = next(
+                row
+                for row in changed_progress["_internal_review_units"]
+                if row.get("scope_kind") == "material_continuity"
+            )
+
+            self.assertNotEqual(
+                changed["source_ownership_digest"],
+                original["source_ownership_digest"],
+            )
+            self.assertIsNone(changed["current_decision"])
+            self.assertEqual(
+                changed["current_resolution_status"], "pending_material_continuity_review")
+
     def test_roster_assignment_persists_safe_canonical_slot_binding(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -1302,6 +1426,73 @@ def _add_material_continuity_members(root: Path) -> None:
         )
     _write(root / "tracklets.json", tracklets)
     _write(root / "identity_candidate_shadow.json", candidates)
+
+
+def _add_natural_material_continuity_case(root: Path) -> None:
+    """Create one real 20-second material unit plus one outside observation."""
+    tracklets = _load(root / "tracklets.json")
+    candidates = _load(root / "identity_candidate_shadow.json")
+    cards = _load(root / "identity_roster_subject_review_shadow.json")
+    positions = [
+        {
+            "frame": frame,
+            "status": "detected",
+            "pitch_m": [float(frame - 100) / 100.0, 2.0],
+            "bbox_xyxy": [10, 10, 20, 30],
+        }
+        for frame in range(100, 600)
+    ]
+    positions.append(
+        {
+            "frame": 900,
+            "status": "detected",
+            "pitch_m": [12.0, 2.0],
+            "bbox_xyxy": [30, 10, 40, 30],
+        }
+    )
+    tracklets["tracklets"].append(
+        {
+            "tracklet_id": "material-tracklet",
+            "team_label": "A",
+            "team_id": "ta",
+            "positions_m": positions,
+        }
+    )
+    candidates["subjects"].append(
+        {
+            "candidate_subject_id": "material-subject",
+            "tracklet_ids": ["material-tracklet"],
+            "team_label": "A",
+            "production_player_ids": ["A12"],
+            "production_subject_ids": ["slot-A12"],
+        }
+    )
+    cards["cards"].append(
+        {
+            **_card("material-subject", "A", "card-material", "p1"),
+            "visual_evidence": {
+                "anchor_crops": [
+                    {
+                        "anchor_crop_id": "material-100",
+                        "artifact": "anchor_crops/material-100.jpg",
+                        "frame": 100,
+                        "tracklet_id": "material-tracklet",
+                        "bbox_xyxy": [10, 10, 20, 30],
+                    },
+                    {
+                        "anchor_crop_id": "material-599",
+                        "artifact": "anchor_crops/material-599.jpg",
+                        "frame": 599,
+                        "tracklet_id": "material-tracklet",
+                        "bbox_xyxy": [10, 10, 20, 30],
+                    },
+                ]
+            },
+        }
+    )
+    _write(root / "tracklets.json", tracklets)
+    _write(root / "identity_candidate_shadow.json", candidates)
+    _write(root / "identity_roster_subject_review_shadow.json", cards)
 
 
 def _materialize_deferred_context(root: Path) -> None:

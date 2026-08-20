@@ -690,6 +690,117 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["next_cases"][0]["priority"], "continuity")
         self.assertIn("material_identity_continuity_gap", policy["next_cases"][0]["reason_codes"])
 
+    def test_unresolved_material_case_is_complete_above_named_coverage_target(self) -> None:
+        members = _continuity_members(team="A")
+        material = next(
+            row
+            for row in coalesce_material_continuity_units(members, fps=10.0)
+            if row.get("scope_kind") == "material_continuity"
+        )
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(3_000)
+        ] + [
+            _observation(tracklet_id, frame, "A", "unresolved", None)
+            for member in members
+            for tracklet_id, frame in member["detected_pairs"]
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        named_coverage_before = coverage["per_team"]["A"]["named_observation_coverage"]
+        material.update(
+            current_decision={"action": "unresolved"},
+            current_resolution_status="reviewed_by_operator",
+        )
+
+        policy = apply_coverage_policy([material], coverage, pair_index, _scoped_match())
+
+        self.assertGreater(named_coverage_before, 0.90)
+        self.assertEqual(
+            coverage["per_team"]["A"]["named_observation_coverage"],
+            named_coverage_before,
+        )
+        self.assertEqual(policy["material_continuity_blockers"], 0)
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"], [])
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+
+    def test_unresolved_material_case_leaves_normal_coverage_debt_below_target(self) -> None:
+        material = _material_case("material", range(880, 1_000))
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(880)
+        ] + [
+            _observation("material", frame, "A", "unresolved", None)
+            for frame in range(880, 1_000)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        named_coverage_before = coverage["per_team"]["A"]["named_observation_coverage"]
+        material.update(
+            current_decision={"action": "unresolved"},
+            current_resolution_status="reviewed_by_operator",
+        )
+
+        policy = apply_coverage_policy([material], coverage, pair_index, _scoped_match())
+
+        self.assertEqual(named_coverage_before, 0.88)
+        self.assertEqual(
+            coverage["per_team"]["A"]["named_observation_coverage"],
+            named_coverage_before,
+        )
+        self.assertEqual(policy["material_continuity_blockers"], 0)
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"], [])
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+        self.assertIn(
+            "complete_roster_named_coverage_gap_unreachable",
+            {row["code"] for row in policy["readiness"]["blockers"]},
+        )
+
+    def test_stale_unresolved_material_decision_does_not_hide_changed_case(self) -> None:
+        members = _continuity_members(team="A")
+        original = next(
+            row
+            for row in coalesce_material_continuity_units(members, fps=10.0)
+            if row.get("scope_kind") == "material_continuity"
+        )
+        decisions = {
+            "decisions": [
+                {
+                    "continuity_group_id": original["continuity_group_id"],
+                    "source_ownership_digest": original["source_ownership_digest"],
+                    "action": "unresolved",
+                }
+            ]
+        }
+        changed_members = [dict(member) for member in members]
+        changed_members[0] = {
+            **changed_members[0],
+            "detected_pairs": [
+                *changed_members[0]["detected_pairs"],
+                ["continuity-tracklet-1", 4_060],
+            ],
+        }
+
+        changed = next(
+            row
+            for row in coalesce_material_continuity_units(
+                changed_members,
+                fps=10.0,
+                decisions=decisions,
+            )
+            if row.get("scope_kind") == "material_continuity"
+        )
+
+        self.assertNotEqual(
+            changed["source_ownership_digest"],
+            original["source_ownership_digest"],
+        )
+        self.assertIsNone(changed["current_decision"])
+        self.assertEqual(
+            changed["current_resolution_status"],
+            "pending_material_continuity_review",
+        )
+
     def test_material_gain_alone_satisfies_sub_target_coverage_without_ordinary_cards(self) -> None:
         material = _material_case("material", range(870, 1320))
         rows = [
