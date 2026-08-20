@@ -23,11 +23,14 @@ from app.services.identity_review_scope import (
     identity_review_scope_read_model,
     team_review_scope,
 )
+from app.services.identity_reviewed_material_continuity import (
+    is_material_continuity_case,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v5-team-attribution-evidence"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v6-material-continuity"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -160,6 +163,7 @@ def apply_coverage_policy(
         and unit.get("operator_actionable") is not False
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    material_continuity: list[dict[str, Any]] = []
     optional_audit: dict[str, list[dict[str, Any]]] = defaultdict(list)
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
     non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -188,6 +192,18 @@ def apply_coverage_policy(
                 semantic.append(enriched)
             else:
                 non_actionable_team_uncertainty[team].append(enriched)
+            continue
+        # Aggregate coverage is deliberately not allowed to hide a severe,
+        # safe, Team-A continuity break.  This is independent of the 90%
+        # coverage target and only applies to pre-grouped material cases.
+        if is_material_continuity_case(enriched):
+            enriched["current_resolution_status"] = "pending_material_continuity_review"
+            enriched["priority"] = "continuity"
+            enriched["reason_codes"] = sorted(
+                set(enriched.get("reason_codes") or [])
+                | {"material_identity_continuity_gap"}
+            )
+            material_continuity.append(enriched)
             continue
         if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
             if int(enriched["potential_named_observation_gain"]) <= 0:
@@ -354,6 +370,14 @@ def apply_coverage_policy(
             str(unit.get("candidate_subject_id") or ""),
         ),
     )
+    material_sorted = sorted(
+        material_continuity,
+        key=lambda unit: (
+            -float(unit.get("continuity_span_sec") or unit.get("detected_time_sec") or 0.0),
+            -int(unit.get("potential_named_observation_gain") or 0),
+            str(unit.get("candidate_subject_id") or ""),
+        ),
+    )
     optional_sorted = sorted(
         [row for rows in optional_audit.values() for row in rows],
         key=lambda unit: (
@@ -362,19 +386,21 @@ def apply_coverage_policy(
             str(unit.get("candidate_subject_id") or ""),
         ),
     )
-    workload_count = len(semantic_sorted) + len(coverage_sorted)
+    workload_count = len(semantic_sorted) + len(material_sorted) + len(coverage_sorted)
     readiness = _readiness(
         coverage,
         residual_by_team,
         match_doc,
         semantic_count=len(semantic_sorted),
+        material_continuity_count=len(material_sorted),
         coverage_count=len(coverage_sorted),
         non_actionable_team_uncertainty=non_actionable_team_uncertainty,
     )
     return {
-        "next_cases": [*semantic_sorted, *coverage_sorted],
+        "next_cases": [*semantic_sorted, *material_sorted, *coverage_sorted],
         "optional_audit_cases": optional_sorted,
         "semantic_blockers": len(semantic_sorted),
+        "material_continuity_blockers": len(material_sorted),
         "coverage_blockers": len(coverage_sorted),
         "residual_by_team": residual_by_team,
         "readiness": readiness,
@@ -609,12 +635,20 @@ def _readiness(
     match_doc: dict[str, Any],
     *,
     semantic_count: int,
+    material_continuity_count: int,
     coverage_count: int,
     non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     if semantic_count:
         blockers.append({"code": "semantic_identity_conflicts", "count": semantic_count})
+    if material_continuity_count:
+        blockers.append(
+            {
+                "code": "material_identity_continuity_gap",
+                "count": material_continuity_count,
+            }
+        )
     if coverage_count:
         blockers.append({"code": "significant_named_coverage_debt", "count": coverage_count})
     for team, units in non_actionable_team_uncertainty.items():

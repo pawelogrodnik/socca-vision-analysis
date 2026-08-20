@@ -18,10 +18,15 @@ from app.services.identity_reviewed_slot_review import (
     load_reviewed_slot_assignments,
     whole_subject_reviewability,
 )
+from app.services.identity_reviewed_slot_registry import normalize_reviewed_slot_id
 from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     load_mixed_player_cases,
+)
+from app.services.identity_reviewed_material_continuity import (
+    MATERIAL_CONTINUITY_POLICY_VERSION,
+    coalesce_material_continuity_units,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
     evidence_status_for_unit,
@@ -39,7 +44,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.4.0"
+PROGRESS_SCHEMA_VERSION = "2.6.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -83,6 +88,7 @@ def build_reviewed_identity_progress(
     """Build progress from frozen identity artifacts without writing anything."""
     tracklets = _tracklets(match_path)
     subjects = _subjects(match_path)
+    stable_slots = _subject_stable_slots(match_path)
     cards = _cards(match_path)
     roster_teams = _roster_teams(match_doc)
     manual = _manual_decisions(match_path)
@@ -116,6 +122,7 @@ def build_reviewed_identity_progress(
             safe_seeded.get(subject_id),
             roster_teams,
             fps,
+            stable_slots.get(subject_id),
         )
         for subject_id, tracklet_ids in sorted(subjects.items())
     ]
@@ -130,6 +137,7 @@ def build_reviewed_identity_progress(
         and str(unit.get("candidate_subject_id") or "") not in mixed_by_subject
     ]
     units.extend(_segment_units(segment_review, roster_teams, fps))
+    units = coalesce_material_continuity_units(units, fps)
     coverage_context = load_effective_coverage_context(match_path, match_doc)
     coverage_policy = apply_coverage_policy(
         units,
@@ -178,8 +186,10 @@ def build_reviewed_identity_progress(
         + counts["resolved_automatically"]
         + counts["safe_anonymous"]
     )
-    important_remaining = int(coverage_policy["semantic_blockers"]) + int(
-        coverage_policy["coverage_blockers"]
+    important_remaining = (
+        int(coverage_policy["semantic_blockers"])
+        + int(coverage_policy["coverage_blockers"])
+        + int(coverage_policy["material_continuity_blockers"])
     )
     queue_total = completed + important_remaining
     mixed_queue = build_mixed_review_queue(match_path, match_doc)
@@ -202,6 +212,9 @@ def build_reviewed_identity_progress(
             "important_decisions_remaining": important_remaining,
             "semantic_decisions_remaining": coverage_policy["semantic_blockers"],
             "coverage_decisions_remaining": coverage_policy["coverage_blockers"],
+            "material_continuity_decisions_remaining": coverage_policy[
+                "material_continuity_blockers"
+            ],
             "optional_cases_remaining": counts["pending_optional"],
             "optional_audit_cases_remaining": len(
                 coverage_policy["optional_audit_cases"]
@@ -240,6 +253,7 @@ def build_reviewed_identity_progress(
         },
         "policy": {
             "version": COVERAGE_POLICY_VERSION,
+            "material_continuity_version": MATERIAL_CONTINUITY_POLICY_VERSION,
             "optional_min_detected_sec": OPTIONAL_MIN_DETECTED_SEC,
             "optional_min_observations": OPTIONAL_MIN_OBSERVATIONS,
             "long_unresolved_requires_operator": True,
@@ -287,6 +301,7 @@ def _unit(
     seeded: dict[str, Any] | None,
     roster_teams: dict[str, str],
     fps: float,
+    stable_slot_id: str | None,
 ) -> dict[str, Any]:
     pairs = {
         (tracklet_id, int(position.get("frame") or 0))
@@ -318,6 +333,8 @@ def _unit(
     action = str((decision or {}).get("action") or "")
     player_id = str((decision or {}).get("player_id") or "") or None
     source_team = next(iter(teams), "U") if len(teams) == 1 else "U"
+    if stable_slot_id and source_team in {"A", "B"} and not stable_slot_id.startswith(source_team):
+        stable_slot_id = None
     effective_team = str((decision or {}).get("team_label") or "").upper()
     if action == "assign_roster_player" and player_id:
         effective_team = roster_teams.get(player_id, effective_team)
@@ -375,12 +392,14 @@ def _unit(
         "current_decision": decision,
         "current_resolution_status": status,
         "canonical_player_id": canonical_player_id,
+        "stable_slot_id": stable_slot_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
         "correction_scope": "whole_subject",
         "operator_actionable": bool(reviewability["actionable"]),
         "non_actionable_reason": reviewability["reason"],
         "has_operator_visual_evidence": has_operator_visual_evidence,
+        "visual_evidence": dict((card or {}).get("visual_evidence") or {}),
         "detected_pairs": sorted(pairs),
     }
 
@@ -392,6 +411,8 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "detected_observation_count", "detected_time_sec", "current_decision",
         "current_resolution_status", "priority", "reason_codes", "review_target_id",
         "scope_kind", "source_ownership_digest", "stable_slot_id", "frame_ranges",
+        "continuity_group_id", "continuity_subject_ids", "continuity_fragment_count",
+        "continuity_span_sec", "material_continuity_required",
         "visual_evidence", "legacy_suggestion",
         "coverage_team_label", "potential_named_observation_gain",
         "potential_team_unnamed_share", "potential_named_coverage_gain_pp",
@@ -585,6 +606,25 @@ def _subjects(path: Path) -> dict[str, set[str]]:
         for row in _load(path / "identity_candidate_shadow.json").get("subjects") or []
         if row.get("candidate_subject_id")
     }
+
+
+def _subject_stable_slots(path: Path) -> dict[str, str | None]:
+    """Read a single safe canonical slot hypothesis for each raw subject."""
+    output: dict[str, str | None] = {}
+    for row in _load(path / "identity_candidate_shadow.json").get("subjects") or []:
+        subject_id = str(row.get("candidate_subject_id") or "")
+        if not subject_id:
+            continue
+        slots = {
+            slot_id
+            for value in (
+                list(row.get("production_player_ids") or [])
+                + list(row.get("production_subject_ids") or [])
+            )
+            if (slot_id := normalize_reviewed_slot_id(value)) is not None
+        }
+        output[subject_id] = next(iter(slots)) if len(slots) == 1 else None
+    return output
 
 
 def _memberships(subjects: dict[str, set[str]]) -> dict[str, set[str]]:

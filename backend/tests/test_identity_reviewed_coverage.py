@@ -11,6 +11,9 @@ from app.services.identity_reviewed_coverage import (
     summarize_effective_observations,
     target_named_observations,
 )
+from app.services.identity_reviewed_material_continuity import (
+    coalesce_material_continuity_units,
+)
 from app.services.identity_reviewed_progress import reviewed_snapshot_file_fingerprint
 
 
@@ -661,6 +664,77 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["coverage_blockers"], 0)
         self.assertTrue(policy["readiness"]["allows_finalize"])
 
+    def test_material_continuity_stays_required_above_complete_roster_target(self) -> None:
+        members = _continuity_members(team="A")
+        grouped = coalesce_material_continuity_units(members, fps=10.0)
+        material = next(
+            row for row in grouped if row.get("scope_kind") == "material_continuity"
+        )
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(3_000)
+        ] + [
+            _observation(tracklet_id, frame, "A", "unresolved", None)
+            for member in members
+            for tracklet_id, frame in member["detected_pairs"]
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+
+        policy = apply_coverage_policy(grouped, coverage, pair_index, _scoped_match())
+
+        self.assertGreater(coverage["per_team"]["A"]["named_observation_coverage"], 0.90)
+        self.assertEqual(policy["residual_by_team"]["A"]["required_named_gain"], 0)
+        self.assertEqual(policy["material_continuity_blockers"], 1)
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], material["candidate_subject_id"])
+        self.assertEqual(policy["next_cases"][0]["priority"], "continuity")
+        self.assertIn("material_identity_continuity_gap", policy["next_cases"][0]["reason_codes"])
+
+    def test_short_safe_residual_is_not_promoted_to_material_continuity(self) -> None:
+        short_members = _continuity_members(team="A", frames_per_member=10)
+
+        grouped = coalesce_material_continuity_units(short_members, fps=10.0)
+
+        self.assertFalse(any(row.get("scope_kind") == "material_continuity" for row in grouped))
+        self.assertEqual(
+            {row["candidate_subject_id"] for row in grouped},
+            {row["candidate_subject_id"] for row in short_members},
+        )
+
+    def test_material_case_groups_exact_multi_fragment_observations_only(self) -> None:
+        members = _continuity_members(team="A")
+        unrelated = _continuity_unit(
+            "later-subject",
+            "later-tracklet",
+            range(1_000, 1_050),
+            stable_slot_id="A12",
+            team="A",
+        )
+
+        grouped = coalesce_material_continuity_units([*members, unrelated], fps=10.0)
+        material = next(
+            row for row in grouped if row.get("scope_kind") == "material_continuity"
+        )
+
+        expected_pairs = {
+            pair for member in members for pair in member["detected_pairs"]
+        }
+        self.assertEqual(set(map(tuple, material["detected_pairs"])), expected_pairs)
+        self.assertEqual(material["continuity_fragment_count"], 4)
+        self.assertEqual(
+            set(material["continuity_subject_ids"]),
+            {member["candidate_subject_id"] for member in members},
+        )
+        self.assertNotIn("later-subject", material["continuity_subject_ids"])
+        self.assertIn("later-subject", {row["candidate_subject_id"] for row in grouped})
+
+    def test_team_b_fragments_never_gain_required_naming_workload(self) -> None:
+        members = _continuity_members(team="B")
+
+        grouped = coalesce_material_continuity_units(members, fps=10.0)
+
+        self.assertFalse(any(row.get("scope_kind") == "material_continuity" for row in grouped))
+
     def test_named_decision_improves_coverage_by_exact_owned_observations(self) -> None:
         before_rows = [
             _observation("subject", frame, "A", "unresolved", None)
@@ -923,6 +997,63 @@ def _unit(subject_id: str, pairs: list[tuple[str, int]], *, visual: bool) -> dic
         "reason_codes": ["long_unresolved_safe_anonymous"],
         "has_operator_visual_evidence": visual,
         "detected_pairs": pairs,
+    }
+
+
+def _continuity_members(
+    *,
+    team: str,
+    frames_per_member: int = 60,
+) -> list[dict]:
+    members: list[dict] = []
+    frame = 4_000
+    for index in range(4):
+        end = frame + frames_per_member
+        members.append(
+            _continuity_unit(
+                f"continuity-subject-{index + 1}",
+                f"continuity-tracklet-{index + 1}",
+                range(frame, end),
+                stable_slot_id=f"{team}12",
+                team=team,
+            )
+        )
+        frame = end
+    return members
+
+
+def _continuity_unit(
+    subject_id: str,
+    tracklet_id: str,
+    frames: range,
+    *,
+    stable_slot_id: str,
+    team: str,
+) -> dict:
+    pairs = [(tracklet_id, frame) for frame in frames]
+    sample_frames = [pairs[0][1], pairs[-1][1]]
+    return {
+        **_unit(subject_id, pairs, visual=True),
+        "tracklet_ids": [tracklet_id],
+        "tracklet_count": 1,
+        "effective_team_label": team,
+        "source_team_label": team,
+        "stable_slot_id": stable_slot_id,
+        "canonical_player_id": None,
+        "operator_actionable": True,
+        "correction_scope": "whole_subject",
+        "visual_evidence": {
+            "anchor_crops": [
+                {
+                    "anchor_crop_id": f"{subject_id}-{frame}",
+                    "artifact": f"anchor_crops/{subject_id}-{frame}.jpg",
+                    "frame": frame,
+                    "tracklet_id": tracklet_id,
+                    "bbox_xyxy": [10, 10, 20, 40],
+                }
+                for frame in sample_frames
+            ]
+        },
     }
 
 

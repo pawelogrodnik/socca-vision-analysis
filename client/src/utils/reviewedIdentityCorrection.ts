@@ -34,7 +34,7 @@ export function correctionOptionsForSubject(
   context: ReviewedCorrectionContext,
   selectedTeamLabel = context.effective_team_label,
 ) {
-  const roster = context.source_team_label === 'U'
+  const roster = context.source_team_label === 'U' || context.scope_kind === 'material_continuity'
     ? context.roster_options.filter((option) => option.team_label === selectedTeamLabel)
     : context.roster_options;
   return {

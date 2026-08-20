@@ -139,6 +139,48 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertGreater(player["observed_distance_m"], 0)
             self.assertEqual(player["heatmap_samples"], 4)
 
+    def test_material_continuity_assignment_is_limited_to_exact_member_subjects(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_material_continuity_members(root)
+            unit = {
+                "candidate_subject_id": "continuity:A12:100-139",
+                "continuity_group_id": "continuity:A12:100-139",
+                "continuity_subject_ids": ["mc1", "mc2", "mc3", "mc4"],
+                "scope_kind": "material_continuity",
+                "effective_team_label": "A",
+                "priority": "continuity",
+                "current_resolution_status": "pending_material_continuity_review",
+            }
+
+            saved = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": unit["candidate_subject_id"],
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                },
+                authorized_review_unit=unit,
+            )
+            snapshot = finalize_reviewed_identity(root, _match())
+            decisions = _load(root / "reviewed_identity_slot_assignments.json")["decisions"]
+
+            self.assertEqual(saved["saved_decision"]["continuity_subject_ids"], unit["continuity_subject_ids"])
+            member_decisions = [
+                row for row in decisions if row["candidate_subject_id"] in set(unit["continuity_subject_ids"])
+            ]
+            self.assertEqual(len(member_decisions), 4)
+            self.assertEqual({row["player_id"] for row in member_decisions}, {"p1"})
+            self.assertEqual({row["stable_slot_id"] for row in member_decisions}, {None})
+            assigned_subjects = {
+                row["candidate_subject_id"]
+                for row in snapshot["tracklet_assignments"]
+                if row.get("canonical_player_id") == "p1"
+            }
+            self.assertEqual(assigned_subjects, set(unit["continuity_subject_ids"]))
+            self.assertNotIn("s1", assigned_subjects)
+
     def test_roster_assignment_persists_safe_canonical_slot_binding(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -1130,6 +1172,47 @@ def _enable_materialized_candidate_context(root: Path) -> None:
         ]
     )
     _write(root / "identity_candidate_shadow.json", document)
+
+
+def _add_material_continuity_members(root: Path) -> None:
+    tracklets = _load(root / "tracklets.json")
+    candidates = _load(root / "identity_candidate_shadow.json")
+    for index in range(4):
+        subject_id = f"mc{index + 1}"
+        tracklet_id = f"tm{index + 1}"
+        frame = 100 + index * 10
+        tracklets["tracklets"].append(
+            {
+                "tracklet_id": tracklet_id,
+                "team_label": "A",
+                "team_id": "ta",
+                "positions_m": [
+                    {
+                        "frame": frame,
+                        "status": "detected",
+                        "pitch_m": [float(index + 1), 2.0],
+                        "bbox_xyxy": [10, 10, 20, 30],
+                    },
+                    {
+                        "frame": frame + 1,
+                        "status": "detected",
+                        "pitch_m": [float(index + 1.2), 2.0],
+                        "bbox_xyxy": [11, 10, 21, 30],
+                    },
+                ],
+            }
+        )
+        candidates["subjects"].append(
+            {
+                "candidate_subject_id": subject_id,
+                "tracklet_ids": [tracklet_id],
+                "team_label": "A",
+                "production_player_ids": ["A12"],
+                "production_subject_ids": ["slot-A12"],
+            }
+        )
+    _write(root / "tracklets.json", tracklets)
+    _write(root / "identity_candidate_shadow.json", candidates)
 
 
 def _materialize_deferred_context(root: Path) -> None:

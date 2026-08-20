@@ -60,7 +60,7 @@ def validate_deferred_review_action(
             "Ten przypadek ma już zapisaną inną decyzję. Odśwież Review przed zmianą.",
         )
     detected_team_labels_by_subject = None
-    if target_id is None:
+    if target_id is None and unit.get("scope_kind") != "material_continuity":
         detected_team_labels_by_subject = detected_team_labels_from_progress(progress)
         if (
             detected_team_labels_by_subject is None
@@ -125,7 +125,11 @@ def _actionable_unit(
         if not _authorized_queue_semantics(queue, raw):
             continue
         if target_id is None:
-            if raw_target_id is None and raw.get("scope_kind") in {None, "whole_subject"}:
+            if raw_target_id is None and raw.get("scope_kind") in {
+                None,
+                "whole_subject",
+                "material_continuity",
+            }:
                 return raw
         elif raw.get("scope_kind") == "canonical_segment":
             return raw
@@ -143,9 +147,13 @@ def _iter_authorized_review_units(
 
 def _authorized_queue_semantics(queue: str, unit: dict[str, Any]) -> bool:
     if queue == "required":
-        return unit.get("priority") in {"high", "coverage"} and unit.get(
+        return unit.get("priority") in {"high", "coverage", "continuity"} and unit.get(
             "current_resolution_status"
-        ) in {"pending_high_priority", "pending_coverage_review"}
+        ) in {
+            "pending_high_priority",
+            "pending_coverage_review",
+            "pending_material_continuity_review",
+        }
     return unit.get("priority") == "optional" and unit.get(
         "current_resolution_status"
     ) == "optional_team_audit"
@@ -157,6 +165,22 @@ def _saved_decision(
     target_id: str | None,
     unit: dict[str, Any],
 ) -> dict[str, Any] | None:
+    if unit.get("scope_kind") == "material_continuity":
+        subject_ids = [
+            str(value)
+            for value in unit.get("continuity_subject_ids") or []
+            if str(value)
+        ]
+        decisions = [
+            current_reviewed_decision(match_path, subject_id)
+            for subject_id in subject_ids
+        ]
+        if not decisions or any(decision is None for decision in decisions):
+            return None
+        first = decisions[0]
+        if all(_semantic_decision(decision) == _semantic_decision(first) for decision in decisions[1:]):
+            return first
+        return None
     if target_id is None:
         return current_reviewed_decision(match_path, subject_id)
     saved = next(

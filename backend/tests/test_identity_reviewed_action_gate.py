@@ -57,6 +57,24 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 {"s1": set()},
             )
 
+    def test_material_continuity_group_is_authorized_without_synthetic_subject_context(self) -> None:
+        with _workspace() as root:
+            material = _material("continuity:A12:5737-7132")
+            _baseline(root, [material])
+
+            result = validate_deferred_review_action(
+                root,
+                {"id": "m1"},
+                {
+                    "candidate_subject_id": material["candidate_subject_id"],
+                    "action": "assign_roster_player",
+                    "player_id": "mateusz",
+                },
+            )
+
+            self.assertEqual(result["review_unit"]["scope_kind"], "material_continuity")
+            self.assertEqual(result["detected_team_labels_by_subject"], None)
+
     def test_high_priority_segment_requires_exact_target_and_subject(self) -> None:
         with _workspace() as root:
             _baseline(root, [_segment("s1", "target-1")])
@@ -472,6 +490,20 @@ def _optional(subject_id: str) -> dict:
         "priority": "optional",
         "current_resolution_status": "optional_team_audit",
         "operator_actionable": True,
+    }
+
+
+def _material(subject_id: str) -> dict:
+    return {
+        "candidate_subject_id": subject_id,
+        "review_target_id": None,
+        "scope_kind": "material_continuity",
+        "priority": "continuity",
+        "current_resolution_status": "pending_material_continuity_review",
+        "operator_actionable": True,
+        "effective_team_label": "A",
+        "continuity_subject_ids": ["fragment-1", "fragment-2", "fragment-3", "fragment-4"],
+        "visual_evidence": {"kind": "identity_continuity", "anchor_crops": [{}, {}]},
     }
 
 
