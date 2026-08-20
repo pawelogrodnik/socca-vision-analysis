@@ -11,7 +11,10 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
-from app.services.identity_reviewed_action_gate import validate_deferred_review_action
+from app.services.identity_reviewed_action_gate import (
+    DeferredReviewActionError,
+    validate_deferred_review_action,
+)
 from app.services.identity_reviewed_action_scope import (
     ReviewedIdentityActionScopeError,
 )
@@ -329,6 +332,133 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 for row in stored["owned_observations"]
             }
             self.assertNotIn(("material-tracklet", 900), stored_pairs)
+
+    def test_deferred_material_identical_retry_uses_material_decision_store(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            public_case = _materialize_natural_material_deferred_case(root)
+            payload = {
+                "candidate_subject_id": public_case["candidate_subject_id"],
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "source_ownership_digest": public_case["source_ownership_digest"],
+                "defer_recompute": True,
+            }
+
+            first_gate = validate_deferred_review_action(root, _match(), payload)
+            self.assertFalse(first_gate["idempotent_replay"])
+            persist_reviewed_identity_correction(
+                root,
+                _match(),
+                payload,
+                authorized_review_unit=first_gate["review_unit"],
+            )
+
+            retry = validate_deferred_review_action(root, _match(), payload)
+            self.assertTrue(retry["idempotent_replay"])
+            decisions = _load(
+                root / "reviewed_identity_material_continuity_decisions.json"
+            )["decisions"]
+            matching = [
+                row
+                for row in decisions
+                if row["continuity_group_id"] == public_case["continuity_group_id"]
+            ]
+            self.assertEqual(len(matching), 1)
+            self.assertEqual(matching[0]["action"], "assign_roster_player")
+            self.assertEqual(matching[0]["player_id"], "p1")
+
+    def test_deferred_material_conflicting_retry_fails_closed(self) -> None:
+        scenarios = (
+            (
+                {"action": "assign_roster_player", "player_id": "p1"},
+                {"action": "unresolved"},
+            ),
+            (
+                {"action": "unresolved"},
+                {"action": "assign_roster_player", "player_id": "p1"},
+            ),
+        )
+        for first_action, second_action in scenarios:
+            with (
+                self.subTest(first_action=first_action, second_action=second_action),
+                _workspace() as root,
+            ):
+                _fixture(root)
+                _add_natural_material_continuity_case(root)
+                public_case = _materialize_natural_material_deferred_case(root)
+                common = {
+                    "candidate_subject_id": public_case["candidate_subject_id"],
+                    "source_ownership_digest": public_case["source_ownership_digest"],
+                    "defer_recompute": True,
+                }
+                first_payload = {**common, **first_action}
+                first_gate = validate_deferred_review_action(root, _match(), first_payload)
+                persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    first_payload,
+                    authorized_review_unit=first_gate["review_unit"],
+                )
+
+                with self.assertRaises(DeferredReviewActionError) as raised:
+                    validate_deferred_review_action(
+                        root,
+                        _match(),
+                        {**common, **second_action},
+                    )
+                self.assertEqual(raised.exception.code, "review_unit_already_decided")
+                stored = _load(
+                    root / "reviewed_identity_material_continuity_decisions.json"
+                )["decisions"]
+                self.assertEqual(len(stored), 1)
+                self.assertEqual(stored[0]["action"], first_action["action"])
+
+    def test_stale_material_decision_does_not_make_changed_case_idempotent(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            original_case = _materialize_natural_material_deferred_case(root)
+            original_payload = {
+                "candidate_subject_id": original_case["candidate_subject_id"],
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "source_ownership_digest": original_case["source_ownership_digest"],
+                "defer_recompute": True,
+            }
+            gate = validate_deferred_review_action(root, _match(), original_payload)
+            persist_reviewed_identity_correction(
+                root,
+                _match(),
+                original_payload,
+                authorized_review_unit=gate["review_unit"],
+            )
+
+            tracklets = _load(root / "tracklets.json")
+            material_tracklet = next(
+                row
+                for row in tracklets["tracklets"]
+                if row["tracklet_id"] == "material-tracklet"
+            )
+            material_tracklet["positions_m"] = [
+                position
+                for position in material_tracklet["positions_m"]
+                if position["frame"] != 300
+            ]
+            _write(root / "tracklets.json", tracklets)
+
+            changed_case = _materialize_natural_material_deferred_case(root)
+            self.assertNotEqual(
+                changed_case["source_ownership_digest"],
+                original_case["source_ownership_digest"],
+            )
+            changed_payload = {
+                **original_payload,
+                "source_ownership_digest": changed_case["source_ownership_digest"],
+            }
+            result = validate_deferred_review_action(root, _match(), changed_payload)
+            self.assertFalse(result["idempotent_replay"])
 
     def test_stale_persisted_unresolved_material_decision_does_not_hide_new_case(self) -> None:
         with _workspace() as root:
@@ -1493,6 +1623,22 @@ def _add_natural_material_continuity_case(root: Path) -> None:
     _write(root / "tracklets.json", tracklets)
     _write(root / "identity_candidate_shadow.json", candidates)
     _write(root / "identity_roster_subject_review_shadow.json", cards)
+
+
+def _materialize_natural_material_deferred_case(root: Path) -> dict:
+    snapshot = finalize_reviewed_identity(root, _match())
+    progress = build_reviewed_identity_progress(root, _match())
+    public_case = next(
+        row
+        for row in progress["next_cases"]
+        if row.get("scope_kind") == "material_continuity"
+    )
+    _write(root / "reviewed_identity_progress.json", progress)
+    _write(
+        root / "reviewed_identity_report.json",
+        {"snapshot_digest": snapshot["semantic_digest"]},
+    )
+    return public_case
 
 
 def _materialize_deferred_context(root: Path) -> None:
