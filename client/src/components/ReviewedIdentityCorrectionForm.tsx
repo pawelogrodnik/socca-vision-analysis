@@ -235,6 +235,10 @@ export function ReviewedIdentityCorrectionForm({
         Poprzednia decyzja sugeruje: <strong>{context.legacy_suggestion.player_name}</strong>.
         Sprawdź pokazany fragment i zapisz, aby potwierdzić zakres.
       </p>}
+      {context?.temporal_split?.resolution_status === 'resolved' && !splitOpen && <div className='reviewed-correction-suggestion'>
+        <strong>Aktualna decyzja: Podział na {context.temporal_split.segment_assignments.length} fragmentów.</strong>
+        <button type='button' className='secondary compact-button' onClick={() => selectAction('split')} disabled={busy}>Edytuj podział</button>
+      </div>}
       {range && <p className='reviewed-correction-range'>Zakres: {range}<br />{entity.detected_evidence_count} wykryte obserwacje</p>}
 
       {showActionCategories && <>
@@ -260,6 +264,9 @@ export function ReviewedIdentityCorrectionForm({
       />}
 
       {action && <section className='reviewed-correction-detail' aria-label={`Wybrana decyzja: ${actionLabel}`}>
+        {context?.temporal_split?.resolution_status === 'resolved' && <p className='reviewed-correction-suggestion'>
+          Ta decyzja zastąpi zapisany podział oraz decyzje jego fragmentów.
+        </p>}
         {action === 'assign_team' && <p className='reviewed-correction-range'>Przypiszę tylko {operatorTeamName(selectedTeamLabel)}. Nie powstanie nowy slot ani indywidualne statystyki zawodnika.</p>}
         {action === 'assign_team' && <div className='reviewed-action-cards' role='radiogroup' aria-label='Wybierz drużynę'>
           {(['A', 'B'] as const).map((teamLabel) => <button
@@ -321,7 +328,7 @@ export function ReviewedIdentityCorrectionForm({
       {error && <p className='status error' role='alert'>{error}</p>}
     </div>
 
-    {navigation ? <footer className='reviewed-correction-navigation'>
+    {splitOpen ? null : navigation ? <footer className='reviewed-correction-navigation'>
       <button type='button' className='secondary' onClick={navigation.onPrevious} disabled={busy || navigation.previousDisabled}>Poprzedni</button>
       <button type='button' onClick={() => void save()} disabled={busy || !context || !choiceComplete}>{navigation.saveLabel}</button>
       <button type='button' className='secondary' onClick={navigation.onNext} disabled={busy || navigation.nextDisabled} title='Przejdź bez zapisywania'>{navigation.nextLabel || 'Następny'}</button>

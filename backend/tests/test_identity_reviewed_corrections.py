@@ -256,11 +256,22 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             snapshot = finalize_reviewed_identity(root, _match())
 
             self.assertEqual(saved["effective_action"], "false_detection")
-            material_pairs = {
-                (row["tracklet_id"], row["frame"])
-                for row in snapshot["segment_observation_assignments"]
-            }
-            self.assertNotIn(("material-tracklet", 100), material_pairs)
+            material = [
+                row for row in snapshot["segment_observation_assignments"]
+                if row.get("tracklet_id") == "material-tracklet" and row.get("frame") == 100
+            ]
+            self.assertEqual(len(material), 1)
+            self.assertEqual(material[0]["identity_status"], "false_detection")
+            self.assertEqual(material[0]["team_label"], "U")
+            self.assertIsNone(material[0]["canonical_player_id"])
+            self.assertFalse(material[0]["eligible_for_player_stats"])
+            self.assertNotIn(
+                ("material-tracklet", 100),
+                {
+                    (row.get("tracklet_id"), row.get("frame"))
+                    for row in reviewed_assignment_at(snapshot, _tracklets(root), 10.0, 10.0)
+                },
+            )
             # Unrelated source observations remain in raw/effective resolution.
             self.assertTrue(any(
                 row.get("tracklet_id") == "t1"
@@ -270,8 +281,9 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
     def test_material_continuity_terminal_and_team_actions_materialize_exact_owned_pairs(self) -> None:
         expectations = {
             "assign_team": {"payload": {"team_label": "B"}, "team_label": "B", "status": "unresolved"},
-            "team_unknown": {"payload": {}, "team_label": "U", "status": "unresolved"},
+            "team_unknown": {"payload": {}, "team_label": "U", "status": "team_unknown"},
             "referee": {"payload": {}, "team_label": "U", "status": "referee"},
+            "false_detection": {"payload": {}, "team_label": "U", "status": "false_detection"},
         }
         for action, expected in expectations.items():
             with self.subTest(action=action), _workspace() as root:
@@ -298,20 +310,20 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(rows[0]["team_label"], expected["team_label"])
                 self.assertEqual(rows[0]["identity_status"], expected["status"])
+                self.assertIsNone(rows[0]["stable_anonymous_slot_id"])
+                self.assertIsNone(rows[0]["stable_anonymous_entity_id"])
+                self.assertFalse(rows[0]["eligible_for_player_stats"])
 
     def test_team_attribution_context_preserves_semantic_origin_separately_from_crop_kind(self) -> None:
         with _workspace() as root:
             _fixture(root)
+            artifact = _load(root / "identity_roster_subject_review_shadow.json")
+            artifact["cards"][0]["visual_evidence"] = {"kind": "team_attribution"}
+            _write(root / "identity_roster_subject_review_shadow.json", artifact)
             with patch(
-                "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
-                return_value={
-                    "next_cases": [
-                        {
-                            "candidate_subject_id": "s1",
-                            "visual_evidence": {"kind": "team_attribution"},
-                        }
-                    ]
-                },
+                "app.services.identity_reviewed_correction_context.build_reviewed_identity_progress",
+                side_effect=AssertionError("whole correction context must not rebuild progress"),
+                create=True,
             ):
                 context = reviewed_correction_context(root, _match(), "s1")
 

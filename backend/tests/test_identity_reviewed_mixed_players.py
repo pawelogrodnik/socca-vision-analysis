@@ -22,7 +22,10 @@ from app.services.identity_reviewed_mixed_resolution import (
     save_inline_temporal_split,
     save_mixed_player_resolution,
 )
-from app.services.identity_reviewed_mixed_store import current_mixed_subject_digest
+from app.services.identity_reviewed_mixed_store import (
+    current_mixed_subject_digest,
+    load_mixed_player_cases,
+)
 from app.services.identity_reviewed_correction_context import reviewed_correction_context
 from app.services.identity_reviewed_review_source import build_review_source_boundary_refinement
 from app.services.identity_reviewed_mixed_store import (
@@ -593,6 +596,97 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertNotEqual(old_ids, current_ids)
             self.assertTrue(current_ids <= decision_ids)
             self.assertFalse(old_ids & decision_ids)
+
+    def test_direct_parent_decision_atomically_retires_exact_saved_inline_split(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            split = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_roster_player", "player_id": "player-a"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            child_ids = set(split["saved_case"]["segment_target_ids"])
+            raw_before = (root / "tracklets.json").read_bytes()
+
+            direct = persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "action": "assign_team",
+                    "team_label": "A",
+                    "source_ownership_digest": digest,
+                },
+                use_materialized_context=False,
+            )
+            replay = persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "action": "assign_team",
+                    "team_label": "A",
+                    "source_ownership_digest": digest,
+                },
+                use_materialized_context=False,
+            )
+
+            self.assertEqual(direct["effective_action"], "assign_team")
+            self.assertEqual(replay["effective_action"], "assign_team")
+            self.assertIsNone(reviewed_correction_context(root, match, "subject-mixed")["temporal_split"])
+            self.assertFalse(
+                any(row.get("case_id") == split["saved_case"]["case_id"] for row in load_mixed_player_cases(root)["cases"])
+            )
+            decision_ids = {
+                row["review_target_id"] for row in load_segment_decisions(root)["decisions"]
+            }
+            self.assertFalse(child_ids & decision_ids)
+            self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
+
+    def test_invalid_direct_parent_decision_keeps_saved_inline_split_intact(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            split = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            before = (root / "reviewed_identity_mixed_players.json").read_bytes()
+            with self.assertRaisesRegex(ValueError, "Invalid player_id"):
+                persist_reviewed_identity_correction(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "action": "assign_roster_player",
+                        "player_id": "missing-player",
+                        "source_ownership_digest": digest,
+                    },
+                    use_materialized_context=False,
+                )
+            self.assertEqual((root / "reviewed_identity_mixed_players.json").read_bytes(), before)
+            restored = reviewed_correction_context(root, match, "subject-mixed")["temporal_split"]
+            self.assertEqual(restored["split_semantic_digest"], split["saved_case"]["split_semantic_digest"])
 
     def test_inline_split_rolls_back_partial_child_decisions(self) -> None:
         with _workspace() as root:

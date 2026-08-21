@@ -32,9 +32,11 @@ from app.services.identity_reviewed_slot_review import (
 )
 from app.services.identity_reviewed_slot_registry import normalize_reviewed_slot_id
 from app.services.identity_reviewed_recompute_state import (
+    FILENAME as RECOMPUTE_FILENAME,
     mark_reviewed_identity_recompute_required,
 )
 from app.services.identity_reviewed_segments import (
+    DECISIONS_FILENAME as SEGMENT_DECISIONS_FILENAME,
     SegmentTargetError,
     build_segment_review_document,
     load_segment_review,
@@ -45,11 +47,24 @@ from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
     decision_impact,
 )
-from app.services.identity_reviewed_mixed_store import save_mixed_player_classification
+from app.services.identity_reviewed_mixed_store import (
+    FILENAME as MIXED_PLAYERS_FILENAME,
+    inline_temporal_split_for_source,
+    load_mixed_player_cases,
+    save_mixed_case_document,
+    save_mixed_player_classification,
+)
+from app.services.identity_reviewed_review_source import (
+    ReviewedIdentityReviewSourceError,
+    resolve_review_source,
+    source_case_id,
+)
 from app.services.identity_reviewed_material_continuity import (
+    DECISIONS_FILENAME as MATERIAL_CONTINUITY_DECISIONS_FILENAME,
     save_material_continuity_decision,
 )
 from app.services.identity_roster_subject_review_store import (
+    REVIEW_DECISIONS_FILENAME,
     save_identity_roster_subject_review,
 )
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
@@ -159,6 +174,81 @@ def persist_reviewed_identity_correction(
     trusted_materialized_detected_team_labels: dict[str, set[str]] | None = None,
     authorized_review_unit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Persist a direct correction, retiring an exact saved split if present.
+
+    A parent source has one active operator intent: either its direct decision
+    or a durable inline split plus child decisions.  The transaction below is
+    deliberately scoped by the full source key/digest, never presentation
+    ranges, so neighboring or unrelated splits cannot be touched.
+    """
+    action = str(payload.get("action") or "").strip()
+    if action == "mixed_players":
+        return _persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
+    try:
+        source = _direct_correction_source(match_path, match_doc, payload)
+    except ReviewedIdentityReviewSourceError:
+        # Preserve the existing, scope-specific stale-target validation and
+        # error contract in the direct persistence path.
+        return _persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
+    saved_split = inline_temporal_split_for_source(match_path, source) if source else None
+    if saved_split is None:
+        return _persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
+
+    rollback_paths = _direct_correction_rollback_paths(match_path)
+    try:
+        result = _persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
+        _retire_exact_inline_split(match_path, source)
+        # Persisted target status must reflect retired children before the next
+        # workflow read.  The raw detector/tracker files are never touched.
+        build_segment_review_document(match_path, match_doc)
+        semantic_digest = reviewed_decisions_semantic_digest(match_path)
+        mark_reviewed_identity_recompute_required(
+            match_path,
+            semantic_decision_digest=semantic_digest,
+        )
+        return {**result, "semantic_decision_digest": semantic_digest}
+    except Exception:
+        _restore_paths(rollback_paths)
+        raise
+
+
+def _persist_reviewed_identity_correction(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    use_materialized_context: bool = True,
+    trusted_materialized_detected_team_labels: dict[str, set[str]] | None = None,
+    authorized_review_unit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Validate and durably save one decision without full-match recomputation."""
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     action = str(payload.get("action") or "").strip()
@@ -217,6 +307,7 @@ def persist_reviewed_identity_correction(
         materialized_review = load_segment_review(match_path)
         if any(
             str(row.get("candidate_subject_id") or "") == subject_id
+            and str(row.get("target_origin") or "") != "operator_temporal_split"
             for row in materialized_review.get("targets") or []
         ):
             raise SegmentTargetError("review_target_required")
@@ -422,6 +513,97 @@ def _persist_material_continuity_correction(
             "downstream_recompute_triggered": False,
         },
     }
+
+
+def _direct_correction_source(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve the exact parent only when a saved split could be superseded."""
+    subject_id = str(payload.get("candidate_subject_id") or "").strip()
+    if not subject_id:
+        return None
+    return resolve_review_source(
+        match_path,
+        match_doc,
+        candidate_subject_id=subject_id,
+        review_target_id=str(payload.get("review_target_id") or "").strip() or None,
+        continuity_group_id=str(payload.get("continuity_group_id") or "").strip() or None,
+        source_ownership_digest=str(payload.get("source_ownership_digest") or "") or None,
+    )
+
+
+def _direct_correction_rollback_paths(match_path: Path) -> dict[Path, bytes | None]:
+    """Snapshot every reviewed decision artifact a direct save can change."""
+    names = (
+        MIXED_PLAYERS_FILENAME,
+        SEGMENT_DECISIONS_FILENAME,
+        "reviewed_identity_segment_review.json",
+        SLOT_REVIEW_FILENAME,
+        MATERIAL_CONTINUITY_DECISIONS_FILENAME,
+        REVIEW_DECISIONS_FILENAME,
+        RECOMPUTE_FILENAME,
+    )
+    return {
+        match_path / name: (match_path / name).read_bytes()
+        if (match_path / name).exists()
+        else None
+        for name in names
+    }
+
+
+def _restore_paths(paths: dict[Path, bytes | None]) -> None:
+    for path, previous in paths.items():
+        if previous is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(previous)
+
+
+def _retire_exact_inline_split(match_path: Path, source: dict[str, Any]) -> None:
+    """Retire only the child state belonging to this exact direct parent."""
+    document = load_mixed_player_cases(match_path)
+    case_id = source_case_id(source)
+    matching = next(
+        (
+            row
+            for row in document.get("cases") or []
+            if isinstance(row, dict) and str(row.get("case_id") or "") == case_id
+        ),
+        None,
+    )
+    if matching is None:
+        return
+    # Defend against a manually forged/corrupt case id: the complete source
+    # tuple is the authority for deletion, not a frame range or subject alone.
+    stored_source = matching.get("source")
+    source_keys = (
+        "scope_kind",
+        "candidate_subject_id",
+        "review_target_id",
+        "continuity_group_id",
+        "source_ownership_digest",
+    )
+    if not isinstance(stored_source, dict) or any(
+        stored_source.get(key) != source.get(key) for key in source_keys
+    ):
+        raise ValueError("inline_temporal_split_source_conflict")
+    target_ids = {
+        str(value)
+        for value in matching.get("segment_target_ids") or []
+        if str(value)
+    }
+    if target_ids:
+        from app.services.identity_reviewed_mixed_resolution import _remove_superseded_segment_decisions
+
+        _remove_superseded_segment_decisions(match_path, target_ids)
+    retained = [
+        row
+        for row in document.get("cases") or []
+        if not (isinstance(row, dict) and str(row.get("case_id") or "") == case_id)
+    ]
+    save_mixed_case_document(match_path, {**document, "cases": retained})
 
 
 def _validate_new_player_active_cap(

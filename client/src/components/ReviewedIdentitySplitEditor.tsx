@@ -243,7 +243,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
     {selected && <section className='reviewed-split-child-decision'>
       <h5>Przypisz fragment {selected.index + 1}</h5>
       <div className='reviewed-action-cards'>
-        {CHILD_ACTIONS.filter((card) => context.action_capabilities[card.action]?.allowed !== false).map((card) => <button type='button' key={card.action} disabled={busy}
+        {CHILD_ACTIONS.filter((card) => context.action_capabilities[card.action]?.allowed === true).map((card) => <button type='button' key={card.action} disabled={busy}
           className={assignments[selectedSegment]?.action === card.action ? 'reviewed-action-card selected' : 'reviewed-action-card'}
           onClick={() => {
             if (card.action === 'assign_roster_player') return setAssignment({ action: 'assign_roster_player' });

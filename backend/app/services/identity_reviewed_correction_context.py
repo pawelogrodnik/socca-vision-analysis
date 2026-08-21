@@ -99,7 +99,6 @@ def reviewed_correction_context(
     temporal_evidence = _source_temporal_evidence(match_path, match_doc, source)
     source_evidence_kind = _review_source_evidence_kind(
         match_path,
-        match_doc,
         candidate_subject_id,
     )
     return {
@@ -301,25 +300,16 @@ def _source_temporal_evidence(
 
 def _review_source_evidence_kind(
     match_path: Path,
-    match_doc: dict[str, Any],
     candidate_subject_id: str,
 ) -> str:
-    """Keep the original review semantics when generic crops are rendered."""
-    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
-
-    progress = build_reviewed_identity_progress(
-        match_path,
-        match_doc,
-        include_internal_units=True,
-    )
-    units = [
-        *(progress.get("next_cases") or []),
-        *(progress.get("optional_audit_cases") or []),
-        *(progress.get("_internal_review_units") or []),
-    ]
-    for unit in units:
-        if str(unit.get("candidate_subject_id") or "") == candidate_subject_id:
-            return str((unit.get("visual_evidence") or {}).get("kind") or "identity_continuity")
+    """Read the persisted card provenance without rebuilding full progress."""
+    artifact = load_optional(match_path / REVIEW_ARTIFACT_FILENAME)
+    for card in artifact.get("cards") or []:
+        if str(card.get("candidate_subject_id") or "") == candidate_subject_id:
+            return str(
+                (card.get("visual_evidence") or {}).get("kind")
+                or "identity_continuity"
+            )
     return "identity_continuity"
 
 

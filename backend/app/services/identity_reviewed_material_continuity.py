@@ -473,7 +473,7 @@ def _assignment_row(
     frame: int,
 ) -> dict[str, Any] | None:
     action = str(decision.get("action") or "")
-    slot_id = str(unit.get("stable_slot_id") or "") or None
+    source_slot_id = str(unit.get("stable_slot_id") or "") or None
     common = {
         "continuity_group_id": unit.get("continuity_group_id"),
         "tracklet_id": tracklet_id,
@@ -485,12 +485,16 @@ def _assignment_row(
     }
     if action == "assign_roster_player" and player is not None:
         name = str(player.get("player_name") or player.get("name") or decision.get("player_id"))
+        player_team = str(player.get("team_label") or "U").upper()
+        # A safe continuity slot is only a hypothesis.  Do not carry an A-slot
+        # into a named Team-B correction (or vice versa).
+        slot_id = source_slot_id if source_slot_id and source_slot_id.startswith(player_team) else None
         return {
             **common,
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
-            "team_label": str(player.get("team_label") or "U").upper(),
-            "fallback_label": slot_id or f"{str(player.get('team_label') or 'U').upper()}?",
+            "team_label": player_team,
+            "fallback_label": slot_id or f"{player_team}?",
             "identity_status": "confirmed",
             "canonical_player_id": str(decision.get("player_id")),
             "player_name": name,
@@ -498,13 +502,50 @@ def _assignment_row(
             "display_label": name,
             "eligible_for_player_stats": True,
         }
-    team_label = str(decision.get("team_label") or unit.get("effective_team_label") or "U").upper()
     if action == "false_detection":
-        return None
+        return {
+            **common,
+            "stable_anonymous_slot_id": None,
+            "stable_anonymous_entity_id": None,
+            "team_label": "U",
+            "fallback_label": "Fałszywa detekcja",
+            "identity_status": "false_detection",
+            "canonical_player_id": None,
+            "player_name": None,
+            "display_label": "Fałszywa detekcja",
+        }
     if action == "referee":
         return {**common, "stable_anonymous_slot_id": None, "stable_anonymous_entity_id": None,
                 "team_label": "U", "fallback_label": "REF", "identity_status": "referee",
                 "canonical_player_id": None, "player_name": None, "display_label": "Sędzia"}
+    if action == "team_unknown":
+        return {
+            **common,
+            "stable_anonymous_slot_id": None,
+            "stable_anonymous_entity_id": None,
+            "team_label": "U",
+            "fallback_label": "U?",
+            "identity_status": "team_unknown",
+            "canonical_player_id": None,
+            "player_name": None,
+            "display_label": "U?",
+        }
+    team_label = str(decision.get("team_label") or unit.get("effective_team_label") or "U").upper()
+    if action == "assign_team":
+        return {
+            **common,
+            "stable_anonymous_slot_id": None,
+            "stable_anonymous_entity_id": None,
+            "team_label": team_label,
+            "fallback_label": f"{team_label}?",
+            "identity_status": "unresolved",
+            "canonical_player_id": None,
+            "player_name": None,
+            "display_label": f"{team_label}?",
+        }
+    # Only an explicit unresolved choice is allowed to preserve the safe
+    # anonymous continuity hypothesis.  It remains ineligible for stats.
+    slot_id = source_slot_id
     return {
         **common,
         "stable_anonymous_slot_id": slot_id,
