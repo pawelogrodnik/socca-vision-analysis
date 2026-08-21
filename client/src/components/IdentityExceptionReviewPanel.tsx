@@ -242,6 +242,10 @@ export function IdentityExceptionReviewPanel({
     || (card && hasOperatorReviewableVisualEvidence(card)),
   );
   const caseTimeRange = reviewCase ? reviewCaseTimeRange(reviewCase) : null;
+  const optionalMaxSlot = reviewCase?.unit.stable_slot_id || null;
+  const optionalMaxDuration = reviewCase?.unit.detected_time_sec ?? null;
+  const optionalMaxMarginalObservations = reviewCase?.unit.marginal_named_observation_gain ?? 0;
+  const optionalMaxMarginalCoverage = reviewCase?.unit.optional_max_marginal_coverage_gain_pp ?? null;
   const filterOptions = useMemo(
     () => teamReviewFilterOptions(match.teams || [], reviewFilters),
     [match.teams, reviewFilters],
@@ -405,6 +409,19 @@ export function IdentityExceptionReviewPanel({
           {cases.length > 0 && <strong className='reviewed-status-badge'>Przypadek {pageOffset + index + 1} z {totalRemaining}</strong>}
           {caseTimeRange && <span>{caseTimeRange}</span>}
           {reviewCase && <span>{reviewCase.unit.detected_observation_count || card?.detected_frames || 0} obserwacji</span>}
+          {activeQueue === 'optional_audit' && reviewCase && <span className='identity-optional-max-impact'>
+            <strong>Opcjonalny MAX{optionalMaxSlot ? ` · ${optionalMaxSlot}` : ''}</strong>
+            <span>
+              {caseTimeRange && `${caseTimeRange} · `}
+              {optionalMaxDuration != null && `${optionalMaxDuration.toFixed(1)} s · `}
+              {optionalMaxMarginalObservations} obserwacji · {optionalMaxMarginalCoverage != null
+                ? formatReviewedIdentityPercentagePoints(optionalMaxMarginalCoverage)
+                : '+0 pp'}
+            </span>
+            <span className='sr-only'>Potencjalny wzrost pokrycia wynosi {optionalMaxMarginalCoverage != null
+              ? formatReviewedIdentityPercentagePoints(optionalMaxMarginalCoverage)
+              : '+0 punktów procentowych'}.</span>
+          </span>}
           {activeTeamFilter !== 'all' && <span>Łącznie: {globalRemaining}</span>}
           <span>{activeQueue === 'required'
             ? requiredCasesLabel(workflow.issues.normal_blocking ?? workflow.issues.blocking)

@@ -2183,12 +2183,13 @@ def post_match_reviewed_identity_correction(
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(
-                "reviewed_correction_perf mode=deferred match=%s "
+                "reviewed_correction_perf mode=deferred authorization_source=%s match=%s "
                 "workflow_validation_ms=0.0 deferred_gate_ms=%.1f "
                 "persist_decision_ms=%.1f "
                 "seeded_candidate_rebuild_ms=0.0 finalize_reviewed_identity_ms=0.0 "
                 "segment_evidence_ms=0.0 progress_build_ms=0.0 final_workflow_ms=0.0 "
                 "total_ms=%.1f",
+                deferred_gate.get("authorization_source", "batch_baseline"),
                 match_document.get("id") or path.name,
                 deferred_gate_ms,
                 persist_ms,

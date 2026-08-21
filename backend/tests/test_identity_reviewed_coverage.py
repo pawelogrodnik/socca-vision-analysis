@@ -212,6 +212,29 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["optional_audit_cases"][0]["marginal_named_observation_gain"], 10)
         self.assertEqual(policy["optional_audit"]["safe_max_named_coverage"], 1.0)
 
+    def test_deferring_broad_optional_case_exposes_overlapping_narrow_case(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(90)
+        ] + [
+            _observation("overlap", frame, "A", "unresolved", None)
+            for frame in range(90, 100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        broad = _unit("broad", [("overlap", frame) for frame in range(90, 100)], visual=True)
+        narrow = _unit("narrow", [("overlap", frame) for frame in range(95, 100)], visual=True)
+
+        initial = apply_coverage_policy([broad, narrow], coverage, pair_index, _scoped_match())
+        self.assertEqual([row["candidate_subject_id"] for row in initial["optional_audit_cases"]], ["broad"])
+        self.assertNotIn("narrow", [row["candidate_subject_id"] for row in initial["optional_audit_cases"]])
+
+        broad["current_decision"] = {"action": "unresolved"}
+        broad["current_resolution_status"] = "reviewed_by_operator"
+        refreshed = apply_coverage_policy([broad, narrow], coverage, pair_index, _scoped_match())
+
+        self.assertEqual([row["candidate_subject_id"] for row in refreshed["optional_audit_cases"]], ["narrow"])
+        self.assertEqual(refreshed["optional_audit_cases"][0]["marginal_named_observation_gain"], 5)
+
     def test_explicit_unresolved_removes_optional_max_case_and_lowers_safe_maximum(self) -> None:
         rows = [
             _observation("named", frame, "A", "confirmed", "p1")
@@ -281,6 +304,75 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(optional["projected_named_coverage"], 0.95)
         self.assertEqual(optional["safe_max_named_coverage"], 1.0)
         self.assertEqual([row["candidate_subject_id"] for row in policy["optional_audit_cases"]], ["next"])
+        self.assertEqual(
+            optional["projected_named_observations"]
+            + optional["remaining_actionable_named_gain"]
+            + optional["unavailable_residual_observations"],
+            optional["reliable_observations"],
+        )
+
+    def test_cross_team_deferred_roster_assignment_has_no_team_a_projected_gain(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(90)
+        ] + [
+            _observation("saved", frame, "A", "unresolved", None)
+            for frame in range(90, 95)
+        ]
+        match_doc = _scoped_match()
+        match_doc["teams"][1]["players"] = [{"id": "b1", "name": "Opponent"}]
+        coverage, pair_index = summarize_effective_observations(rows, match_doc)
+        saved = _unit("saved", [("saved", frame) for frame in range(90, 95)], visual=True)
+        saved.update({
+            "current_decision": {
+                "action": "assign_roster_player",
+                "player_id": "b1",
+                # This deliberately misleading field must not override the roster.
+                "team_label": "A",
+            },
+            "current_resolution_status": "reviewed_by_operator",
+        })
+
+        optional = apply_coverage_policy([saved], coverage, pair_index, match_doc)["optional_audit"]
+
+        self.assertEqual(optional["pending_named_gain"], 0)
+        self.assertEqual(optional["current_named_observations"], 90)
+        self.assertEqual(optional["projected_named_observations"], 90)
+        self.assertEqual(
+            optional["projected_named_observations"]
+            + optional["remaining_actionable_named_gain"]
+            + optional["unavailable_residual_observations"],
+            optional["reliable_observations"],
+        )
+
+    def test_cross_team_deferred_assignment_does_not_double_count_overlapping_max_case(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(90)
+        ] + [
+            _observation("overlap", frame, "A", "unresolved", None)
+            for frame in range(90, 100)
+        ]
+        match_doc = _scoped_match()
+        match_doc["teams"][1]["players"] = [{"id": "b1", "name": "Opponent"}]
+        coverage, pair_index = summarize_effective_observations(rows, match_doc)
+        cross_team = _unit("cross-team", [("overlap", frame) for frame in range(90, 95)], visual=True)
+        cross_team.update({
+            "current_decision": {"action": "assign_roster_player", "player_id": "b1"},
+            "current_resolution_status": "reviewed_by_operator",
+        })
+        remaining = _unit("remaining", [("overlap", frame) for frame in range(90, 100)], visual=True)
+
+        optional = apply_coverage_policy([cross_team, remaining], coverage, pair_index, match_doc)["optional_audit"]
+
+        self.assertEqual(optional["pending_named_gain"], 0)
+        self.assertEqual(optional["remaining_actionable_named_gain"], 10)
+        self.assertEqual(
+            optional["projected_named_observations"]
+            + optional["remaining_actionable_named_gain"]
+            + optional["unavailable_residual_observations"],
+            optional["reliable_observations"],
+        )
 
     def test_numeric_minimum_is_distinct_from_required_readiness(self) -> None:
         members = _continuity_members(team="A")

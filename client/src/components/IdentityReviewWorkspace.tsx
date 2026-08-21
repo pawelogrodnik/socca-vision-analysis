@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
   finalizeReviewWorkflow,
   getReviewWorkflow,
+  getReviewedIdentityReviewProgress,
   retryReviewRecompute,
   retryReviewRender,
   getReviewedOutputStatus,
@@ -62,10 +63,13 @@ export function IdentityReviewWorkspace({
   const [showOptionalAudit, setShowOptionalAudit] = useState(false);
   const [showOptionalFinishConfirmation, setShowOptionalFinishConfirmation] = useState(false);
   const [liveOptionalAuditSummary, setLiveOptionalAuditSummary] = useState<ReviewedIdentityOptionalAudit | null>(null);
+  const [optionalSummaryRefreshError, setOptionalSummaryRefreshError] = useState(false);
+  const [optionalSummaryRefreshAttempt, setOptionalSummaryRefreshAttempt] = useState(0);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
     setLiveOptionalAuditSummary(null);
+    setOptionalSummaryRefreshError(false);
     setProcessingJob(next.processing || null);
     onWorkflowChanged(next);
   }
@@ -82,6 +86,10 @@ export function IdentityReviewWorkspace({
     setWorkflow(initialWorkflow);
     setProcessingJob(initialWorkflow?.processing || null);
     setLiveOptionalAuditSummary(null);
+    setOptionalSummaryRefreshError(false);
+    setOptionalSummaryRefreshAttempt(0);
+    setShowOptionalAudit(false);
+    setShowOptionalFinishConfirmation(false);
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -93,6 +101,35 @@ export function IdentityReviewWorkspace({
   }, [workflow?.phase]);
 
   const stage = identityReviewStage(workflow);
+  const optionalSummaryFingerprint = workflow?.issues.optional_audit_summary
+    ? [
+      workflow.issues.optional_audit_summary.current_named_observations,
+      workflow.issues.optional_audit_summary.pending_named_gain,
+      workflow.issues.optional_audit_summary.remaining_cases,
+      workflow.issues.optional_audit_summary.policy_version,
+    ].join(':')
+    : '';
+
+  useEffect(() => {
+    if (stage !== 'prepare_result' || !workflow?.issues.optional_audit_summary) return undefined;
+    let disposed = false;
+    void getReviewedIdentityReviewProgress(match.id, 0, 1, undefined, 'optional_audit')
+      .then((progress) => {
+        if (disposed) return;
+        if (progress.optional_audit) setLiveOptionalAuditSummary(progress.optional_audit);
+        setOptionalSummaryRefreshError(false);
+      })
+      .catch(() => {
+        if (!disposed) setOptionalSummaryRefreshError(true);
+      });
+    return () => { disposed = true; };
+  }, [match.id, optionalSummaryFingerprint, optionalSummaryRefreshAttempt, stage, workflow?.issues.optional_audit_summary]);
+
+  function retryOptionalSummaryRefresh() {
+    setOptionalSummaryRefreshError(false);
+    setOptionalSummaryRefreshAttempt((attempt) => attempt + 1);
+  }
+
   useEffect(() => {
     if (!['remaining_issues', 'mixed_players'].includes(stage)) return undefined;
     document.body.classList.add('identity-exception-workspace-active');
@@ -219,6 +256,9 @@ export function IdentityReviewWorkspace({
         <h2>Wymagany przegląd zakończony</h2>
         <p>{teamAName}</p>
         {optionalAudit && <ReviewedIdentityMaxSummary teamName={teamAName} summary={optionalAudit} />}
+        {optionalSummaryRefreshError && <p className='identity-optional-summary-refresh-error' role='status'>
+          Nie udało się odświeżyć podsumowania MAX. <button type='button' className='link-button' onClick={retryOptionalSummaryRefresh}>Spróbuj ponownie</button>
+        </p>}
         {optionalAudit?.status === 'available' && <p>Wymagany poziom jakości został osiągnięty. Możesz zakończyć Review teraz albo opcjonalnie zwiększyć dokładność indywidualnych statystyk.</p>}
         {optionalAudit?.status === 'safe_max_reached' && <p>✓ Bezpieczne maksimum osiągnięte. Nie ma więcej obserwacji, które można bezpiecznie przypisać przy obecnym materiale.</p>}
       </div>
@@ -243,6 +283,9 @@ export function IdentityReviewWorkspace({
           <h2>Pełny audyt tożsamości — {teamAName}</h2>
           <p>Sprawdzaj wyłącznie bezpieczne, pozostałe fragmenty. Nie musisz dojść do 100% i możesz zakończyć Review w każdej chwili.</p>
           {optionalAudit && <ReviewedIdentityMaxSummary teamName={teamAName} summary={optionalAudit} compact />}
+          {optionalSummaryRefreshError && <p className='identity-optional-summary-refresh-error' role='status'>
+            Nie udało się odświeżyć podsumowania MAX. <button type='button' className='link-button' onClick={retryOptionalSummaryRefresh}>Spróbuj ponownie</button>
+          </p>}
         </div>
         <div className='row'>
           <button type='button' className='secondary' onClick={() => {

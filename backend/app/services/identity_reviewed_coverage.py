@@ -31,7 +31,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
 COVERAGE_POLICY_VERSION = "coverage-driven-review:v8-optional-max"
-OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v2-exact-residual-accounting"
+OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -403,7 +403,7 @@ def apply_coverage_policy(
         non_actionable_team_uncertainty=non_actionable_team_uncertainty,
     )
     required_keys = {_unit_key(unit) for unit in [*semantic_sorted, *material_sorted, *coverage_sorted]}
-    deferred_named_pairs = _deferred_named_gain_pairs(units, pair_index)
+    deferred_named_pairs = _deferred_named_gain_pairs(units, pair_index, match_doc)
     for unit in units:
         enriched = _coverage_impact(unit, pair_index, coverage)
         if _optional_max_ineligible(enriched, match_doc, required_keys):
@@ -707,11 +707,22 @@ def _optional_max_ineligible(
 def _deferred_named_gain_pairs(
     units: list[dict[str, Any]],
     pair_index: dict[tuple[str, int], dict[str, Any]],
+    match_doc: dict[str, Any],
 ) -> set[tuple[str, int]]:
-    """Named deferred saves are real projected coverage before the batch rebuild."""
+    """Project only authoritative Team-A roster decisions before final rebuild.
+
+    The denominator deliberately remains the current reliable Team-A set until
+    final recomputation.  A cross-team correction can change that denominator
+    later, but it must never be presented as a positive Team-A naming gain.
+    """
+    roster_teams = _authoritative_roster_teams(match_doc)
     pairs: set[tuple[str, int]] = set()
     for unit in units:
-        if str((unit.get("current_decision") or {}).get("action") or "") != "assign_roster_player":
+        decision = unit.get("current_decision") or {}
+        if str(decision.get("action") or "") != "assign_roster_player":
+            continue
+        player_id = str(decision.get("player_id") or "")
+        if roster_teams.get(player_id) != "A":
             continue
         for pair in unit.get("detected_pairs") or []:
             if not isinstance(pair, (tuple, list)) or len(pair) < 2:
@@ -725,6 +736,15 @@ def _deferred_named_gain_pairs(
             ):
                 pairs.add(normalized)
     return pairs
+
+
+def _authoritative_roster_teams(match_doc: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(player.get("id")): str(team.get("team_label") or chr(ord("A") + index)).upper()
+        for index, team in enumerate(match_doc.get("teams") or [])
+        for player in team.get("players") or []
+        if player.get("id")
+    }
 
 
 def _rank_optional_max_cases(
