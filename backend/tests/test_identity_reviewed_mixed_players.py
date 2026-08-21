@@ -49,6 +49,154 @@ from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_staged_mixed_marker_is_exact_source_and_resolves_through_shared_split_engine(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            before = build_reviewed_identity_progress(root, match)
+            from app.services.identity_reviewed_review_source import resolve_review_source
+
+            source = resolve_review_source(
+                root,
+                match,
+                candidate_subject_id="subject-mixed",
+                source_ownership_digest=current_mixed_subject_digest(root, "subject-mixed"),
+            )
+            unit = {
+                **before["next_cases"][0],
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": source["source_ownership_digest"],
+                "detected_pairs": [
+                    (row["tracklet_id"], row["frame"])
+                    for row in source["owned_observations"]
+                ],
+            }
+            result = persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "action": "mixed_players",
+                    "mixed_hint": "unknown",
+                    "source_ownership_digest": source["source_ownership_digest"],
+                },
+                authorized_review_unit=unit,
+            )
+
+            marker = result["saved_decision"]
+            self.assertTrue(str(marker["case_id"]).startswith("inline-temporal-split:v1:"))
+            self.assertEqual(marker["source"]["owned_observations"], [
+                {"tracklet_id": "t1", "frame": frame} for frame in range(1, 10)
+            ])
+            self.assertEqual(build_reviewed_identity_progress(root, match)["next_cases"], [])
+
+            resolved = save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "case_id": marker["case_id"],
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            self.assertEqual(resolved["saved_case"]["original_issue"], "inline_temporal_split")
+            self.assertEqual(resolved["saved_case"]["resolution_status"], "resolved")
+            self.assertEqual(
+                {row["target_origin"] for row in load_segment_review(root)["targets"]},
+                {"operator_temporal_split"},
+            )
+
+    def test_staged_material_continuity_keeps_exact_source_until_later_split(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            unit = {
+                "scope_kind": "material_continuity",
+                "candidate_subject_id": "continuity:mixed",
+                "continuity_group_id": "continuity:mixed",
+                "source_ownership_digest": "material-source-digest",
+                "detected_observation_count": 3,
+                "detected_pairs": [("t1", 1), ("t1", 2), ("t1", 3)],
+                "effective_team_label": "A",
+            }
+            staged = persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "continuity:mixed",
+                    "continuity_group_id": "continuity:mixed",
+                    "source_ownership_digest": "material-source-digest",
+                    "action": "mixed_players",
+                },
+                authorized_review_unit=unit,
+            )["saved_decision"]
+
+            self.assertEqual(staged["source"]["scope_kind"], "material_continuity")
+            self.assertEqual(
+                staged["source"]["owned_observations"],
+                [{"tracklet_id": "t1", "frame": frame} for frame in (1, 2, 3)],
+            )
+
+            resolved = save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "continuity:mixed",
+                    "case_id": staged["case_id"],
+                    "source_subject_digest": staged["source_subject_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [2],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+
+            self.assertEqual(resolved["saved_case"]["original_issue"], "inline_temporal_split")
+            self.assertEqual(resolved["saved_case"]["source"]["scope_kind"], "material_continuity")
+
+    def test_staged_canonical_segments_do_not_collapse_by_raw_subject(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+
+            def stage(target_id: str, frames: list[int]) -> dict:
+                unit = {
+                    "scope_kind": "canonical_segment",
+                    "candidate_subject_id": "subject-mixed",
+                    "review_target_id": target_id,
+                    "source_ownership_digest": f"digest-{target_id}",
+                    "detected_observation_count": len(frames),
+                    "detected_pairs": [("t1", frame) for frame in frames],
+                    "effective_team_label": "A",
+                }
+                return persist_reviewed_identity_correction(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "review_target_id": target_id,
+                        "source_ownership_digest": f"digest-{target_id}",
+                        "action": "mixed_players",
+                    },
+                    authorized_review_unit=unit,
+                )["saved_decision"]
+
+            first = stage("canonical-a", [1, 2, 3])
+            second = stage("canonical-b", [4, 5, 6])
+            cases = load_mixed_player_cases(root)["cases"]
+
+            self.assertNotEqual(first["case_id"], second["case_id"])
+            self.assertEqual(len(cases), 2)
+            self.assertEqual(
+                {row["source"]["review_target_id"] for row in cases},
+                {"canonical-a", "canonical-b"},
+            )
+
     def test_optional_max_complex_inline_split_becomes_required_blocker_and_rejects_finalization(self) -> None:
         with _workspace() as root:
             match = _fixture(root)

@@ -13,7 +13,7 @@ export type ReviewedIdentityActionCard = {
 export const REVIEWED_IDENTITY_PRIMARY_ACTIONS: readonly ReviewedIdentityActionCard[] = [
   { action: 'assign_roster_player', label: 'Zawodnik z kadry' },
   { action: 'assign_team', label: 'Tylko drużyna / zawodnik nieznany' },
-  { action: 'split', label: 'To kilku zawodników — podziel' },
+  { action: 'mixed_players', label: 'Kilku zawodników' },
   { action: 'referee', label: 'Sędzia' },
   { action: 'false_detection', label: 'Fałszywa detekcja' },
   { action: 'team_unknown', label: 'Nieznana drużyna' },
@@ -28,7 +28,7 @@ export const REVIEWED_IDENTITY_ADVANCED_ACTIONS: readonly ReviewedIdentityAction
 export function isReviewedIdentityChildAction(
   action: ReviewedCorrectionPrimaryAction,
 ): action is MixedSegmentAssignment['action'] {
-  return action !== 'split';
+  return action !== 'split' && action !== 'mixed_players';
 }
 
 export function reviewedIdentityChildActions(): ReadonlyArray<

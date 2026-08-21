@@ -2463,6 +2463,7 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
     candidate_subject_id: str = Query(..., min_length=1),
     after_frame: int = Query(..., ge=0),
     before_frame: int = Query(..., ge=1),
+    case_id: str | None = Query(None),
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
@@ -2472,6 +2473,7 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
             candidate_subject_id,
             after_frame,
             before_frame,
+            case_id=case_id if isinstance(case_id, str) else None,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2489,7 +2491,12 @@ def post_match_reviewed_identity_mixed_resolution(
     try:
         state = get_review_workflow_state(path, read_match_meta(path))
         assert_workflow_action_allowed(state, "review_mixed_players")
-        return save_mixed_player_resolution(path, read_match_meta(path), payload)
+        result = save_mixed_player_resolution(path, read_match_meta(path), payload)
+        # Resolving a staged marker creates/removes exact child targets.  Do
+        # not let a browser retain a queue projected before that topology
+        # change; the following progress read materializes it once.
+        invalidate_review_hot_state(path)
+        return {**result, "review_state_rebuild_required": True}
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:

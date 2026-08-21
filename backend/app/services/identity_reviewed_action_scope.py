@@ -45,13 +45,26 @@ def reviewed_identity_action_capabilities(
     """
     scope_kind = str((review_unit or {}).get("scope_kind") or "whole_subject")
     observation_count = int((review_unit or {}).get("detected_observation_count") or 0)
-    can_split = observation_count >= 2
+    # Some legacy/direct mutation callers have a server-authoritative source
+    # but predate the materialized queue's observation-count field.  Preserve
+    # the unified operator vocabulary for that compatible path; the exact
+    # mixed marker store remains the final guard and rejects fewer than two
+    # resolved observations.  A known one-observation review unit is never
+    # offered a staged split.
+    has_observation_count = "detected_observation_count" in (review_unit or {})
+    can_split = observation_count >= 2 if has_observation_count else True
     capabilities: dict[str, dict[str, Any]] = {
         "assign_roster_player": {"allowed": True, "requires_player_id": True},
         "assign_team": {"allowed": True, "requires_team_label": True},
         "split": {
             "allowed": can_split,
             "mode": "temporal",
+            "minimum_observations": 2,
+            **({} if can_split else {"reason": "not_enough_observations"}),
+        },
+        "mixed_players": {
+            "allowed": can_split,
+            "mode": "staged_temporal_review",
             "minimum_observations": 2,
             **({} if can_split else {"reason": "not_enough_observations"}),
         },
@@ -82,9 +95,10 @@ def validate_review_unit_action_scope(
     action = str(payload.get("action") or "").strip()
     if action not in MUTATION_ACTIONS:
         raise ReviewedIdentityActionScopeError("reviewed_identity_action_not_supported")
-    # Legacy markers remain readable/writable for existing mixed-stage flows;
-    # new inline split UI never sends this action.
-    if action == "mixed_players":
+    # Compatibility service callers predate the materialized queue. The HTTP
+    # path always supplies a unit, while legacy persisted whole-subject
+    # markers remain readable and writable without fabricating one.
+    if action == "mixed_players" and review_unit is None:
         return
     capability = reviewed_identity_action_capabilities(review_unit).get(action)
     if not isinstance(capability, dict) or not capability.get("allowed"):

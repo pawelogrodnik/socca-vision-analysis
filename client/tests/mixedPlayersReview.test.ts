@@ -150,13 +150,18 @@ test('refinement evidence is displayed in temporal order and keeps real observat
   assert.equal(replaceMixedBoundaryInInterval([], 22, 30, crops[2].frame)[0], 27);
 });
 
-test('new correction flow opens the shared inline split editor while legacy workspace remains compatible', () => {
+test('normal correction stages mixed players while split editing remains a full-width modal', () => {
   const form = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentityCorrectionForm.tsx'), 'utf8');
   const mixed = readFileSync(resolve(import.meta.dirname, '../src/components/MixedPlayersReviewPanel.tsx'), 'utf8');
   const editor = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentitySplitEditor.tsx'), 'utf8');
+  const modal = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentitySplitModal.tsx'), 'utf8');
   const actions = readFileSync(resolve(import.meta.dirname, '../src/utils/reviewedIdentityActions.ts'), 'utf8');
-  assert.match(actions, /To kilku zawodników — podziel/);
-  assert.match(form, /ReviewedIdentitySplitEditor/);
+  assert.match(actions, /Kilku zawodników/);
+  assert.match(actions, /mixed_players/);
+  assert.match(form, /ReviewedIdentitySplitModal/);
+  assert.doesNotMatch(form, /ReviewedIdentitySplitEditor/);
+  assert.match(modal, /createPortal/);
+  assert.match(modal, /reviewed-identity-split-modal/);
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.match(editor, /Doprecyzuj moment przejścia/);
   assert.match(editor, /window\.confirm/);
@@ -167,8 +172,8 @@ test('new correction flow opens the shared inline split editor while legacy work
   assert.match(form, /Nie udało się bezpiecznie podzielić tego fragmentu czasowo/);
   assert.match(form, /zastąpi wcześniejsze oznaczenie złożonej mieszanki/);
   assert.match(form, /zastąpi zapisany podział oraz decyzje jego fragmentów/);
-  assert.match(form, /navigation && action && !splitOpen/);
-  assert.match(form, /splitOpen \? null : navigation/);
+  assert.doesNotMatch(form, /splitOpen/);
+  assert.match(form, /mixedHint: action === 'mixed_players' \? 'unknown'/);
   assert.match(mixed, /Materiał w kolejności czasu/);
   assert.match(mixed, /Doprecyzuj moment przejścia/);
   assert.match(mixed, /observation_count <= 12/);
@@ -193,6 +198,16 @@ test('only a successful save removes the current case and advances safely', () =
   assert.deepEqual(before.map((item) => item.candidate_subject_id), ['mixed-1', 'mixed-2']);
   const after = mixedQueueAfterSuccessfulSave(before, 'mixed-1', 0);
   assert.deepEqual(after.cases.map((item) => item.candidate_subject_id), ['mixed-2']);
+  assert.equal(after.index, 0);
+});
+
+test('saving an exact staged source never removes a sibling with the same raw subject', () => {
+  const first = { ...reviewCase, case_id: 'source-a' };
+  const second = { ...reviewCase, case_id: 'source-b' };
+
+  const after = mixedQueueAfterSuccessfulSave([first, second], 'source-a', 0);
+
+  assert.deepEqual(after.cases.map((item) => item.case_id), ['source-b']);
   assert.equal(after.index, 0);
 });
 

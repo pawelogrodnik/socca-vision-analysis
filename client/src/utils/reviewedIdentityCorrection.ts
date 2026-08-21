@@ -59,6 +59,7 @@ export function buildReviewedCorrectionPayload(
       throw new Error('Ten fragment wymaga odświeżenia przed zapisem.');
     }
   }
+  if (context?.continuity_group_id) payload.continuity_group_id = context.continuity_group_id;
   // Every server-materialized scope, including a normal whole subject, may
   // carry exact ownership. Echo it back so the server can reject stale cards.
   if (context?.source_ownership_digest) {
