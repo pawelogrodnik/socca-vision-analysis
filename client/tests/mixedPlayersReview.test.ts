@@ -105,12 +105,17 @@ test('refinement evidence is displayed in temporal order and keeps real observat
   assert.equal(replaceMixedBoundaryInInterval([], 22, 30, crops[2].frame)[0], 27);
 });
 
-test('normal classification stays compact while dedicated workspace owns splitting', () => {
+test('new correction flow opens the shared inline split editor while legacy workspace remains compatible', () => {
   const form = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentityCorrectionForm.tsx'), 'utf8');
   const mixed = readFileSync(resolve(import.meta.dirname, '../src/components/MixedPlayersReviewPanel.tsx'), 'utf8');
-  assert.match(form, /Zmieszani gracze/);
-  assert.match(form, /osobnego kroku/);
+  const editor = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentitySplitEditor.tsx'), 'utf8');
+  const actions = readFileSync(resolve(import.meta.dirname, '../src/utils/reviewedIdentityActions.ts'), 'utf8');
+  assert.match(actions, /To kilku zawodników — podziel/);
+  assert.match(form, /ReviewedIdentitySplitEditor/);
   assert.doesNotMatch(form, /Podziel tutaj/);
+  assert.match(editor, /Doprecyzuj moment przejścia/);
+  assert.match(editor, /window\.confirm/);
+  assert.match(editor, /Zapisz podział \+ następny/);
   assert.match(mixed, /Materiał w kolejności czasu/);
   assert.match(mixed, /Doprecyzuj moment przejścia/);
   assert.match(mixed, /observation_count <= 12/);

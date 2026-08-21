@@ -29,6 +29,8 @@ from app.services.identity_reviewed_correction_context import (
     reviewed_decisions_semantic_digest,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_mixed_resolution import save_inline_temporal_split
+from app.services.identity_reviewed_segments import build_segment_review_document
 from app.services.review_workflow_state import get_review_workflow_state
 
 
@@ -332,6 +334,48 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 for row in stored["owned_observations"]
             }
             self.assertNotIn(("material-tracklet", 900), stored_pairs)
+
+    def test_inline_split_can_divide_material_continuity_without_expanding_ownership(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            public_case = _materialize_natural_material_deferred_case(root)
+            expected_pairs = {
+                ("material-tracklet", frame)
+                for frame in range(100, 600)
+            }
+            with patch(
+                "app.services.identity_reviewed_review_source.render_mixed_review_evidence",
+                return_value=set(),
+            ):
+                result = save_inline_temporal_split(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": public_case["candidate_subject_id"],
+                        "continuity_group_id": public_case["continuity_group_id"],
+                        "source_ownership_digest": public_case["source_ownership_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [349],
+                        "segment_assignments": [
+                            {"action": "assign_roster_player", "player_id": "p1"},
+                            {"action": "assign_team", "team_label": "A"},
+                        ],
+                    },
+                )
+            targets = [
+                row for row in build_segment_review_document(root, _match())["targets"]
+                if row.get("target_origin") == "operator_temporal_split"
+            ]
+            target_pairs = {
+                (str(pair["tracklet_id"]), int(pair["frame"]))
+                for target in targets
+                for pair in target["owned_observations"]
+            }
+
+            self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
+            self.assertEqual(target_pairs, expected_pairs)
+            self.assertNotIn(("material-tracklet", 900), target_pairs)
 
     def test_deferred_material_identical_retry_uses_material_decision_store(self) -> None:
         with _workspace() as root:
@@ -940,7 +984,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 self.assertEqual(result["saved_decision"]["action"], action)
                 self.assertTrue(result["recompute_deferred"])
 
-    def test_team_attribution_actions_are_enforced_at_persistence_boundary(self) -> None:
+    def test_team_attribution_persistence_keeps_manual_roster_override_available(self) -> None:
         allowed = (
             {"action": "assign_team", "team_label": "A"},
             {"action": "assign_team", "team_label": "B"},
@@ -948,8 +992,6 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             {"action": "false_detection"},
             {"action": "team_unknown"},
             {"action": "unresolved"},
-        )
-        forbidden = (
             {"action": "assign_roster_player", "player_id": "p1"},
             {"action": "assign_existing_slot", "stable_slot_id": "A03"},
             {"action": "create_new_stable_player", "team_label": "A"},
@@ -966,49 +1008,22 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                     {"candidate_subject_id": "s1", **action_payload},
                     authorized_review_unit=contract,
                 )
-                self.assertEqual(saved["saved_decision"]["action"], action_payload["action"])
-        for action_payload in forbidden:
-            with self.subTest(forbidden=action_payload), _workspace() as root:
-                _fixture(root)
-                before = _decision_files(root)
-                with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
-                    persist_reviewed_identity_correction(
-                        root,
-                        _match(),
-                        {"candidate_subject_id": "s1", **action_payload},
-                        authorized_review_unit=contract,
-                    )
-                self.assertEqual(raised.exception.code, "team_attribution_action_not_allowed")
-                self.assertEqual(_decision_files(root), before)
-
-    def test_synchronous_correction_cannot_bypass_team_attribution_contract(self) -> None:
+                self.assertEqual(
+                    saved["saved_decision"].get("action")
+                    or ("mixed_players" if saved["saved_decision"].get("original_issue") == "mixed_players" else None),
+                    action_payload["action"],
+                )
+    def test_synchronous_correction_honors_team_attribution_roster_override(self) -> None:
         with _workspace() as root:
             _fixture(root)
-            progress = {
-                "next_cases": [
-                    {
-                        "candidate_subject_id": "s1",
-                        "visual_evidence": {"kind": "team_attribution"},
-                    }
-                ],
-                "optional_audit_cases": [],
-            }
-            before = _decision_files(root)
-            with patch(
-                "app.services.identity_reviewed_corrections.build_reviewed_identity_progress",
-                return_value=progress,
-            ), self.assertRaises(ReviewedIdentityActionScopeError) as raised:
-                save_reviewed_identity_correction(
-                    root,
-                    _match(),
-                    {
-                        "candidate_subject_id": "s1",
-                        "action": "assign_roster_player",
-                        "player_id": "p1",
-                    },
-                )
-            self.assertEqual(raised.exception.code, "team_attribution_action_not_allowed")
-            self.assertEqual(_decision_files(root), before)
+            _enable_materialized_candidate_context(root)
+            result = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {"candidate_subject_id": "s1", "action": "assign_roster_player", "player_id": "p1"},
+                authorized_review_unit={"visual_evidence": {"kind": "team_attribution"}},
+            )
+            self.assertEqual(result["saved_decision"]["action"], "assign_roster_player")
 
     def test_normal_review_unit_retains_roster_assignment_action(self) -> None:
         with _workspace() as root:

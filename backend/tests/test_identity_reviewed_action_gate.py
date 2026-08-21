@@ -152,7 +152,7 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 )
             self.assertEqual(result["authorization_source"], "batch_baseline")
 
-    def test_deferred_team_attribution_unit_allows_only_team_or_disposition_actions(self) -> None:
+    def test_deferred_team_attribution_unit_keeps_the_unified_action_vocabulary(self) -> None:
         allowed = (
             {"action": "assign_team", "team_label": "A"},
             {"action": "assign_team", "team_label": "B"},
@@ -160,8 +160,6 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
             {"action": "false_detection"},
             {"action": "team_unknown"},
             {"action": "unresolved"},
-        )
-        forbidden = (
             {"action": "assign_roster_player", "player_id": "team-a-player"},
             {"action": "assign_existing_slot", "stable_slot_id": "A01"},
             {"action": "create_new_stable_player", "team_label": "A"},
@@ -176,17 +174,6 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                     {"candidate_subject_id": "team-u", **payload},
                 )
                 self.assertEqual(result["review_unit"]["visual_evidence"]["kind"], "team_attribution")
-        for payload in forbidden:
-            with self.subTest(forbidden=payload), _workspace() as root:
-                _baseline(root, [_team_attribution("team-u")])
-                with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
-                    validate_deferred_review_action(
-                        root,
-                        {"id": "m1"},
-                        {"candidate_subject_id": "team-u", **payload},
-                    )
-                self.assertEqual(raised.exception.code, "team_attribution_action_not_allowed")
-
     def test_deferred_team_attribution_assign_team_requires_canonical_a_or_b(self) -> None:
         with _workspace() as root:
             _baseline(root, [_team_attribution("team-u")])
@@ -200,7 +187,7 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                         "team_label": "Corgi",
                     },
                 )
-            self.assertEqual(raised.exception.code, "team_attribution_team_label_invalid")
+            self.assertEqual(raised.exception.code, "reviewed_identity_team_label_invalid")
 
     def test_absent_and_malformed_optional_units_are_rejected(self) -> None:
         malformed = (

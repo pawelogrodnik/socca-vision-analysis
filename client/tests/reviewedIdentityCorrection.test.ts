@@ -273,6 +273,7 @@ test('video QA stays in the unified workspace and report has no interactive revi
   const output = readFileSync(new URL('ReviewedVideoQaPanel.tsx', root), 'utf8');
   const atTime = readFileSync(new URL('ReviewedIdentityAtTimePanel.tsx', root), 'utf8');
   const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', root), 'utf8');
+  const actions = readFileSync(new URL('../src/utils/reviewedIdentityActions.ts', import.meta.url), 'utf8');
   const reportPage = readFileSync(new URL('MatchReportPage.tsx', root), 'utf8');
 
   assert.match(workspace, /Przygotuj wideo do sprawdzenia/);
@@ -299,17 +300,16 @@ test('video QA stays in the unified workspace and report has no interactive revi
   assert.match(form, /allocated_stable_slot_id|onSaved/);
   assert.match(form, /setError\(errorMessage\(reason\)\)/);
   assert.match(form, /context\?\.source_team_label/);
-  assert.match(form, /Zawodnik z kadry/);
-  assert.match(form, /Do której drużyny należy ta osoba/);
-  assert.match(form, /Tylko \$\{teamName\} — pozostaw \$\{teamLabel\}\?/);
+  assert.match(actions, /Zawodnik z kadry/);
+  assert.match(actions, /Tylko drużyna \/ zawodnik nieznany/);
+  assert.match(actions, /To kilku zawodników — podziel/);
+  assert.match(form, /Automatyka potwierdziła jedynie drużynę/);
   assert.match(form, /assign_team/);
-  assert.match(form, /Co wiesz o tym zawodniku/);
-  assert.match(form, /sourceTeamUnknown/);
+  assert.match(form, /Zaawansowane/);
   assert.match(form, /!action/);
   assert.match(form, /defaultCorrectionTeam\(value\)/);
   assert.doesNotMatch(form, /setSelectedTeamLabel\(\(current\)/);
-  assert.match(form, /current effective team: \{context\?\.effective_team_label/);
-  assert.match(form, /selected correction team: \{selectedTeamLabel/);
+  assert.match(form, /effective_team_label/);
   assert.doesNotMatch(reportPage, /ReviewedMatchOutputPanel|ReviewedVideoQaPanel|ReviewedIdentityCorrectionForm/);
   assert.match(reportPage, /Review meczu nie jest jeszcze zakończony/);
 });

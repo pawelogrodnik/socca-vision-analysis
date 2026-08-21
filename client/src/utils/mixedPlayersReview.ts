@@ -139,12 +139,17 @@ export function validMixedResolution(
     && assignments.every(Boolean);
 }
 
-export function assignmentLabel(assignment: MixedSegmentAssignment | null, rosterName?: string): string {
+export function assignmentLabel(
+  assignment: MixedSegmentAssignment | null,
+  rosterName?: string,
+  teamName?: string,
+): string {
   if (!assignment) return 'Nie przypisano';
   if (assignment.action === 'assign_roster_player') return rosterName || 'Zawodnik z kadry';
   if (assignment.action === 'assign_existing_slot') return assignment.stable_slot_id || 'Istniejący zawodnik';
-  if (assignment.action === 'create_new_stable_player') return `Nowy zawodnik Team ${assignment.team_label}`;
-  if (assignment.action === 'assign_team') return `Team ${assignment.team_label} — zawodnik nieznany`;
+  const namedTeam = teamName || (assignment.team_label ? `Team ${assignment.team_label}` : 'Drużyna');
+  if (assignment.action === 'create_new_stable_player') return `Nowy zawodnik ${namedTeam}`;
+  if (assignment.action === 'assign_team') return `${namedTeam} — zawodnik nieznany`;
   const labels = { referee: 'Sędzia', false_detection: 'Fałszywa detekcja', team_unknown: 'Nieznana drużyna', unresolved: 'Nie wiem' };
   return labels[assignment.action as keyof typeof labels] || assignment.action;
 }

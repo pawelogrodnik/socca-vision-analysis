@@ -52,6 +52,9 @@ import type {
   ReviewedCorrectionFinalizeResponse,
   ReviewedCorrectionRequest,
   ReviewedCorrectionResponse,
+  ReviewedTemporalSplitRequest,
+  ReviewedTemporalSplitRefinement,
+  ReviewedTemporalSplitResponse,
   ReviewWorkflow,
 } from './types';
 import type {
@@ -301,6 +304,44 @@ export async function saveReviewedIdentityCorrection(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function saveReviewedIdentityTemporalSplit(
+  matchId: string,
+  payload: ReviewedTemporalSplitRequest,
+): Promise<ReviewedTemporalSplitResponse> {
+  return request<ReviewedTemporalSplitResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/temporal-split`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function getReviewedIdentityTemporalSplitRefinement(
+  matchId: string,
+  payload: {
+    candidate_subject_id: string;
+    source_ownership_digest: string;
+    after_frame: number;
+    before_frame: number;
+    review_target_id?: string;
+    continuity_group_id?: string;
+  },
+): Promise<ReviewedTemporalSplitRefinement> {
+  const query = new URLSearchParams({
+    candidate_subject_id: payload.candidate_subject_id,
+    source_ownership_digest: payload.source_ownership_digest,
+    after_frame: String(payload.after_frame),
+    before_frame: String(payload.before_frame),
+  });
+  if (payload.review_target_id) query.set('review_target_id', payload.review_target_id);
+  if (payload.continuity_group_id) query.set('continuity_group_id', payload.continuity_group_id);
+  return request<ReviewedTemporalSplitRefinement>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/temporal-split/refine?${query}`,
   );
 }
 

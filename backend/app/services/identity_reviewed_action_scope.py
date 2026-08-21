@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-"""Fail-closed action contracts for specialized Reviewed Identity evidence."""
+"""Server-authoritative Reviewed Identity action capabilities.
+
+The review scope controls *where* a decision is applied. It must not make the
+operator learn a different correction vocabulary for each internal source.
+This module deliberately owns both the context contract and mutation gate so
+the two cannot drift.
+"""
 
 from typing import Any
 
 
-TEAM_ATTRIBUTION_ACTIONS = frozenset(
-    {
-        "assign_team",
-        "referee",
-        "false_detection",
-        "team_unknown",
-        "unresolved",
-    }
+PRIMARY_ACTIONS = (
+    "assign_roster_player",
+    "assign_team",
+    "split",
+    "referee",
+    "false_detection",
+    "team_unknown",
+    "unresolved",
+)
+ADVANCED_ACTIONS = ("assign_existing_slot", "create_new_stable_player")
+MUTATION_ACTIONS = frozenset(
+    set(PRIMARY_ACTIONS) - {"split"} | set(ADVANCED_ACTIONS) | {"mixed_players"}
 )
 
 
@@ -24,30 +34,72 @@ class ReviewedIdentityActionScopeError(ValueError):
         self.code = code
 
 
+def reviewed_identity_action_capabilities(
+    review_unit: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Return the only action policy exposed to clients and accepted on save.
+
+    Team-attribution imagery remains weak automatic evidence, but it does not
+    prohibit an explicit human roster selection. Roster membership is checked
+    later by the persistence layer and is therefore the authoritative team.
+    """
+    scope_kind = str((review_unit or {}).get("scope_kind") or "whole_subject")
+    observation_count = int((review_unit or {}).get("detected_observation_count") or 0)
+    can_split = observation_count >= 2
+    capabilities: dict[str, dict[str, Any]] = {
+        "assign_roster_player": {"allowed": True, "requires_player_id": True},
+        "assign_team": {"allowed": True, "requires_team_label": True},
+        "split": {
+            "allowed": can_split,
+            "mode": "temporal",
+            "minimum_observations": 2,
+            **({} if can_split else {"reason": "not_enough_observations"}),
+        },
+        "referee": {"allowed": True},
+        "false_detection": {"allowed": True},
+        "team_unknown": {"allowed": True},
+        "unresolved": {"allowed": True},
+        "assign_existing_slot": {
+            "allowed": scope_kind != "material_continuity",
+            "requires_slot_id": True,
+        },
+        "create_new_stable_player": {
+            "allowed": scope_kind != "material_continuity",
+            "requires_team_label": True,
+        },
+    }
+    for action in ADVANCED_ACTIONS:
+        if not capabilities[action]["allowed"]:
+            capabilities[action]["reason"] = "scope_does_not_support_advanced_identity"
+    return capabilities
+
+
 def validate_review_unit_action_scope(
     payload: dict[str, Any],
     review_unit: dict[str, Any] | None,
 ) -> None:
-    """Reject actions that are unsafe for the materialized evidence contract.
-
-    Team-attribution crops show enough to resolve a team or a detection type,
-    never enough to safely identify a named player or a canonical slot.  The
-    check belongs at the service boundary so deferred, synchronous, and
-    programmatic callers share exactly the same rule.
-    """
-    if not isinstance(review_unit, dict):
-        return
-    evidence = review_unit.get("visual_evidence") or {}
-    if not isinstance(evidence, dict) or evidence.get("kind") != "team_attribution":
-        return
+    """Fail closed using :func:`reviewed_identity_action_capabilities`."""
     action = str(payload.get("action") or "").strip()
-    if action not in TEAM_ATTRIBUTION_ACTIONS:
-        raise ReviewedIdentityActionScopeError("team_attribution_action_not_allowed")
-    if action == "assign_team" and str(payload.get("team_label") or "").upper() not in {
-        "A",
-        "B",
-    }:
-        raise ReviewedIdentityActionScopeError("team_attribution_team_label_invalid")
+    if action not in MUTATION_ACTIONS:
+        raise ReviewedIdentityActionScopeError("reviewed_identity_action_not_supported")
+    # Legacy markers remain readable/writable for existing mixed-stage flows;
+    # new inline split UI never sends this action.
+    if action == "mixed_players":
+        return
+    capability = reviewed_identity_action_capabilities(review_unit).get(action)
+    if not isinstance(capability, dict) or not capability.get("allowed"):
+        raise ReviewedIdentityActionScopeError("reviewed_identity_action_not_allowed")
+    if capability.get("requires_team_label") and action == "assign_team":
+        if str(payload.get("team_label") or "").upper() not in {"A", "B"}:
+            raise ReviewedIdentityActionScopeError("reviewed_identity_team_label_invalid")
+
+
+def scope_copy(scope_kind: str) -> str:
+    return {
+        "canonical_segment": "Decyzja obejmie tylko pokazany fragment.",
+        "material_continuity": "Decyzja obejmie tylko pokazane fragmenty tego ciągu.",
+        "split_child": "Decyzja obejmie tylko ten fragment po podziale.",
+    }.get(scope_kind, "Decyzja obejmie cały pokazany fragment zawodnika.")
 
 
 def review_unit_for_payload(

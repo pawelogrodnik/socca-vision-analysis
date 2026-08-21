@@ -12,9 +12,18 @@ from fastapi.responses import FileResponse
 from app.main import (
     get_artifact,
     get_match_reviewed_identity_mixed_boundary_refinement,
+    get_match_reviewed_identity_temporal_split_refinement,
+    post_match_reviewed_identity_temporal_split,
 )
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
-from app.services.identity_reviewed_mixed_resolution import save_mixed_player_resolution
+from app.services.identity_reviewed_mixed_resolution import (
+    MixedPlayerTargetError,
+    save_inline_temporal_split,
+    save_mixed_player_resolution,
+)
+from app.services.identity_reviewed_mixed_store import current_mixed_subject_digest
+from app.services.identity_reviewed_correction_context import reviewed_correction_context
+from app.services.identity_reviewed_review_source import build_review_source_boundary_refinement
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
@@ -23,6 +32,7 @@ from app.services.identity_reviewed_progress import build_reviewed_identity_prog
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_decisions,
+    load_segment_review,
     segment_observation_assignments,
 )
 from app.services.review_workflow_state import derive_review_workflow_state
@@ -301,6 +311,206 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
         legacy = derive_review_workflow_state(_workflow_evidence(normal=0, mixed=0))
         self.assertEqual(legacy["phase"], "ready_to_finalize")
         self.assertEqual(next(row for row in legacy["steps"] if row["id"] == "mixed_players")["status"], "completed")
+
+    def test_inline_split_uses_exact_whole_subject_source_and_is_idempotent(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            raw_before = (root / "tracklets.json").read_bytes()
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": digest,
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_roster_player", "player_id": "player-a"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+
+            first = save_inline_temporal_split(root, match, payload)
+            second = save_inline_temporal_split(root, match, payload)
+            persisted_targets = [
+                row for row in load_segment_review(root)["targets"]
+                if row.get("target_origin") == "operator_temporal_split"
+            ]
+            targets = [
+                row for row in build_segment_review_document(root, match)["targets"]
+                if row.get("target_origin") == "operator_temporal_split"
+            ]
+            rows = segment_observation_assignments(
+                build_segment_review_document(root, match),
+                load_segment_decisions(root),
+                _roster(match),
+            )
+
+            self.assertEqual(first["saved_case"]["resolution_status"], "resolved")
+            self.assertTrue(second["idempotent"])
+            self.assertTrue(persisted_targets)
+            self.assertEqual(
+                {row["decision_status"] for row in persisted_targets},
+                {"reviewed"},
+            )
+            self.assertEqual([(row["frame_start"], row["frame_end"]) for row in targets], [(1, 4), (5, 9)])
+            self.assertEqual(
+                {(row["tracklet_id"], row["frame"]) for row in rows},
+                {("t1", frame) for frame in range(1, 10)},
+            )
+            self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
+
+    def test_inline_split_rejects_stale_source_and_conflicting_replay(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": digest,
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            save_inline_temporal_split(root, match, payload)
+            with self.assertRaisesRegex(MixedPlayerTargetError, "temporal_split_conflict"):
+                save_inline_temporal_split(
+                    root,
+                    match,
+                    {**payload, "split_after_frames": [5]},
+                )
+
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["positions_m"].pop()
+            _write(root / "tracklets.json", tracklets)
+            with self.assertRaisesRegex(ValueError, "review_target_stale"):
+                save_inline_temporal_split(root, match, payload)
+
+    def test_inline_split_reopens_and_controlled_edit_replaces_old_children(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            initial = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_roster_player", "player_id": "player-a"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            old_ids = set(initial["saved_case"]["segment_target_ids"])
+            restored = reviewed_correction_context(root, match, "subject-mixed")
+
+            self.assertEqual(restored["temporal_split"]["split_after_frames"], [4])
+            self.assertEqual(
+                [row["action"] for row in restored["temporal_split"]["segment_assignments"]],
+                ["assign_roster_player", "assign_team"],
+            )
+
+            updated_payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": digest,
+                "existing_split_semantic_digest": initial["saved_case"]["split_semantic_digest"],
+                "resolution": "split",
+                "split_after_frames": [5],
+                "segment_assignments": [
+                    {"action": "assign_roster_player", "player_id": "player-a"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            # After the first save the source is no longer an active queue
+            # item. The public endpoint must nevertheless permit a controlled
+            # reopen/edit when the exact persisted split is supplied.
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+            ):
+                updated = post_match_reviewed_identity_temporal_split("m1", updated_payload)
+            current_ids = set(updated["saved_case"]["segment_target_ids"])
+            decision_ids = {
+                row["review_target_id"]
+                for row in load_segment_decisions(root)["decisions"]
+            }
+
+            self.assertNotEqual(old_ids, current_ids)
+            self.assertTrue(current_ids <= decision_ids)
+            self.assertFalse(old_ids & decision_ids)
+
+    def test_inline_split_rolls_back_partial_child_decisions(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            before = (root / "tracklets.json").read_bytes()
+            with self.assertRaisesRegex(ValueError, "Invalid player_id"):
+                save_inline_temporal_split(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_ownership_digest": digest,
+                        "resolution": "split",
+                        "split_after_frames": [4],
+                        "segment_assignments": [
+                            {"action": "assign_team", "team_label": "A"},
+                            {"action": "assign_roster_player", "player_id": "missing-player"},
+                        ],
+                    },
+                )
+
+            self.assertEqual((root / "tracklets.json").read_bytes(), before)
+            self.assertFalse((root / "reviewed_identity_mixed_players.json").exists())
+            self.assertFalse((root / "reviewed_identity_segment_decisions.json").exists())
+
+    def test_inline_split_refinement_is_dense_and_bound_to_source_digest(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["positions_m"] = [
+                {"frame": frame, "time_sec": float(frame), "x_m": float(frame), "y_m": 1.0, "detected": True, "play_area_status": "inside_play", "bbox_xyxy": [10, 10, 20, 30]}
+                for frame in range(1, 122)
+            ]
+            _write(root / "tracklets.json", tracklets)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            from app.services.identity_reviewed_mixed_store import temporal_evidence_for_observations
+            from app.services.identity_reviewed_review_source import resolve_review_source
+            source = resolve_review_source(root, match, candidate_subject_id="subject-mixed", source_ownership_digest=digest)
+            crops = temporal_evidence_for_observations("subject-mixed", source["observations"], limit=12)
+            after_frame, before_frame = crops[4]["frame"], crops[5]["frame"]
+            with patch("app.services.identity_reviewed_review_source.render_mixed_review_evidence", return_value=set()):
+                refinement = build_review_source_boundary_refinement(
+                    root,
+                    match,
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                    continuity_group_id=None,
+                    source_ownership_digest=digest,
+                    after_frame=after_frame,
+                    before_frame=before_frame,
+                )
+            self.assertEqual(len(refinement["anchor_crops"]), 10)
+            self.assertTrue(all(after_frame < crop["frame"] <= before_frame for crop in refinement["anchor_crops"]))
+
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch("app.services.identity_reviewed_review_source.render_mixed_review_evidence", return_value=set()),
+            ):
+                route = get_match_reviewed_identity_temporal_split_refinement(
+                    "m1",
+                    "subject-mixed",
+                    digest,
+                    after_frame,
+                    before_frame,
+                    review_target_id=None,
+                    continuity_group_id=None,
+                )
+            self.assertEqual(route["source_ownership_digest"], digest)
 
 
 def _classify(root: Path, match: dict) -> dict:

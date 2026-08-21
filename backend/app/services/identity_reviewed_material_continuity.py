@@ -30,7 +30,16 @@ MATERIAL_CONTINUITY_MAX_JOIN_GAP_SEC = 1.0
 MATERIAL_CONTINUITY_MAX_EVIDENCE_CROPS = 5
 DECISIONS_FILENAME = "reviewed_identity_material_continuity_decisions.json"
 DECISIONS_SCHEMA_VERSION = "1.0.0"
-ALLOWED_ACTIONS = frozenset({"assign_roster_player", "unresolved"})
+ALLOWED_ACTIONS = frozenset(
+    {
+        "assign_roster_player",
+        "assign_team",
+        "referee",
+        "false_detection",
+        "team_unknown",
+        "unresolved",
+    }
+)
 
 
 def coalesce_material_continuity_units(
@@ -369,14 +378,22 @@ def save_material_continuity_decision(
         from app.services.identity_reviewed_segments import SegmentTargetError
 
         raise SegmentTargetError("material_continuity_target_stale")
-    team_label = str(fresh_unit.get("effective_team_label") or "").upper()
-    if team_label != "A":
-        raise ValueError("material_continuity_team_not_supported")
+    source_team_label = str(fresh_unit.get("effective_team_label") or "U").upper()
+    team_label = source_team_label
     roster = _roster(match_doc)
     if action == "assign_roster_player":
         player = roster.get(player_id or "")
-        if player is None or str(player.get("team_label") or "").upper() != team_label:
-            raise ValueError("player_id must be one of the same-team operator roster options")
+        if player is None:
+            raise ValueError("Invalid player_id")
+        team_label = str(player.get("team_label") or "U").upper()
+    elif action == "assign_team":
+        team_label = str(payload.get("team_label") or "").upper()
+        if team_label not in {"A", "B"}:
+            raise ValueError("assign_team requires team_label A or B")
+        player_id = None
+    elif action == "team_unknown":
+        team_label = "U"
+        player_id = None
     else:
         player_id = None
 
@@ -391,7 +408,7 @@ def save_material_continuity_decision(
         "candidate_subject_id": group_id,
         "scope_kind": "material_continuity",
         "source_ownership_digest": expected_digest,
-        "source_team_label": team_label,
+        "source_team_label": source_team_label,
         "team_label": team_label,
         "continuity_subject_ids": list(fresh_unit.get("continuity_subject_ids") or []),
         "continuity_members": list(fresh_unit.get("continuity_members") or []),
@@ -439,9 +456,7 @@ def material_continuity_observation_assignments(
             continue
         action = str(decision.get("action") or "")
         player = roster.get(str(decision.get("player_id") or ""))
-        if action == "assign_roster_player" and (
-            player is None or str(player.get("team_label") or "").upper() != "A"
-        ):
+        if action == "assign_roster_player" and player is None:
             continue
         for tracklet_id, frame in owned:
             output.append(_assignment_row(unit, decision, player, tracklet_id, frame))
@@ -472,8 +487,8 @@ def _assignment_row(
             **common,
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
-            "team_label": "A",
-            "fallback_label": slot_id or "A?",
+            "team_label": str(player.get("team_label") or "U").upper(),
+            "fallback_label": slot_id or f"{str(player.get('team_label') or 'U').upper()}?",
             "identity_status": "confirmed",
             "canonical_player_id": str(decision.get("player_id")),
             "player_name": name,
@@ -481,16 +496,23 @@ def _assignment_row(
             "display_label": name,
             "eligible_for_player_stats": True,
         }
+    team_label = str(decision.get("team_label") or unit.get("effective_team_label") or "U").upper()
+    if action == "false_detection":
+        return None
+    if action == "referee":
+        return {**common, "stable_anonymous_slot_id": None, "stable_anonymous_entity_id": None,
+                "team_label": "U", "fallback_label": "REF", "identity_status": "referee",
+                "canonical_player_id": None, "player_name": None, "display_label": "Sędzia"}
     return {
         **common,
         "stable_anonymous_slot_id": slot_id,
         "stable_anonymous_entity_id": slot_id,
-        "team_label": "A",
-        "fallback_label": slot_id or "A?",
+        "team_label": team_label,
+        "fallback_label": slot_id or f"{team_label}?",
         "identity_status": "unresolved",
         "canonical_player_id": None,
         "player_name": None,
-        "display_label": slot_id or "A?",
+        "display_label": slot_id or f"{team_label}?",
     }
 
 

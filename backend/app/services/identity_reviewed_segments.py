@@ -191,6 +191,10 @@ def build_segment_review_document(
                     # This exact list is authoritative. Presentation ranges must
                     # never be used to synthesize an unowned observation.
                     "owned_frames": frames,
+                    "owned_observations": [
+                        {"tracklet_id": tracklet_id, "frame": frame}
+                        for frame in frames
+                    ],
                     "detected_observation_count": len(frames),
                     "source_ownership_digest": ownership_digest,
                     "reason_codes": ["mixed_tracklet_canonical_owners"],
@@ -261,7 +265,8 @@ def build_segment_review_document(
         "summary": {
             "mixed_tracklets": len({key[1] for key in groups}),
             "operator_mixed_targets": sum(
-                row.get("target_origin") == "operator_mixed_players" for row in targets
+                row.get("target_origin") in {"operator_mixed_players", "operator_temporal_split"}
+                for row in targets
             ),
             "targets_total": len(targets),
             "targets_reviewed": sum(

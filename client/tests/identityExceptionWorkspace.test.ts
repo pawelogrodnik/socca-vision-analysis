@@ -83,7 +83,8 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(panel, /onNext: \(\) => navigate\('next'\)/);
   assert.match(form, /returnToCategories/);
   assert.match(form, /← Wróć/);
-  assert.match(form, /showActionCategories && segmentScope/);
+  assert.match(form, /showActionCategories/);
+  assert.match(form, /ReviewedIdentitySplitEditor/);
   assert.match(form, /action === 'assign_roster_player'/);
   assert.match(form, /Zapisz \+ następny|navigation\.saveLabel/);
   assert.match(form, /persistReviewDecision/);
