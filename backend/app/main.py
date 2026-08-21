@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -84,30 +84,34 @@ from app.services.identity_reviewed_action_gate import (
 )
 from app.services.identity_reviewed_action_scope import (
     ReviewedIdentityActionScopeError,
-    review_unit_for_payload,
     reviewed_identity_action_capabilities,
 )
 from app.services.identity_reviewed_corrections import (
     persist_reviewed_identity_correction,
-    reviewed_correction_context,
     save_reviewed_identity_correction,
 )
 from app.services.identity_reviewed_coverage import (
-    COVERAGE_POLICY_VERSION,
     paginate_progress,
 )
 from app.services.identity_reviewed_progress import (
-    PROGRESS_SCHEMA_VERSION,
     build_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
 )
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
-    review_scope_dependency_matches,
     validate_identity_review_scope,
 )
 from app.services.identity_reviewed_recompute_state import (
     reviewed_identity_recompute_required,
+)
+from app.services.identity_reviewed_hot_state import (
+    ReviewedIdentityHotStateError,
+    hot_context,
+    hot_progress,
+    hot_review_unit,
+    invalidate_review_hot_state,
+    load_or_rebuild_review_hot_state,
+    update_hot_state_after_deferred_save,
 )
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
@@ -2037,46 +2041,45 @@ def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
 @app.get("/api/matches/{match_id}/reviewed-identity/review-progress")
 def get_match_reviewed_identity_progress(
     match_id: str,
+    response: Response,
     offset: int = 0,
     limit: int = 20,
     team_label: Literal["A", "B"] | None = None,
     queue: Literal["required", "optional_audit"] = "required",
 ) -> dict[str, Any]:
     path = match_dir(match_id)
+    started = time.perf_counter()
     try:
-        snapshot_file = reviewed_snapshot_file_fingerprint(path)
-        if snapshot_file is None:
+        match_document = read_match_meta(path)
+        if reviewed_snapshot_file_fingerprint(path) is None:
             raise FileNotFoundError(path / "reviewed_identity_snapshot.json")
-        cached_path = path / "reviewed_identity_progress.json"
-        try:
-            cached = json.loads(cached_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, ValueError):
-            cached = None
         recompute_required = reviewed_identity_recompute_required(path)
-        progress = (
-            cached
-            if isinstance(cached, dict)
-            and cached.get("schema_version") == PROGRESS_SCHEMA_VERSION
-            and (cached.get("policy") or {}).get("version")
-            == COVERAGE_POLICY_VERSION
-            and cached.get("source_snapshot_file") == snapshot_file
-            and review_scope_dependency_matches(read_match_meta(path), cached)
-            # Deferred corrections intentionally avoid an expensive snapshot
-            # rebuild. Their decision store must nevertheless be reflected
-            # immediately when the optional MAX queue is resumed.
-            and not recompute_required
-            else build_reviewed_identity_progress(path, read_match_meta(path))
-        )
-        return {
+        state_started = time.perf_counter()
+        state = load_or_rebuild_review_hot_state(path, match_document)
+        state_ms = round((time.perf_counter() - state_started) * 1000, 1)
+        paginate_started = time.perf_counter()
+        payload = {
             **paginate_progress(
-                progress,
+                hot_progress(state),
                 offset=offset,
                 limit=limit,
                 team_label=team_label,
                 queue=queue,
             ),
             "recompute_required": recompute_required,
+            "review_state_version": state.get("state_version"),
         }
+        paginate_ms = round((time.perf_counter() - paginate_started) * 1000, 1)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        response.headers["Server-Timing"] = (
+            f"review_hot_state;dur={state_ms}, review_queue_page;dur={paginate_ms}, total;dur={elapsed_ms}"
+        )
+        payload["server_timing"] = {
+            "review_hot_state_ms": state_ms,
+            "review_queue_page_ms": paginate_ms,
+            "total_ms": elapsed_ms,
+        }
+        return payload
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -2147,17 +2150,29 @@ def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
 @app.get("/api/matches/{match_id}/reviewed-identity/corrections/context")
 def get_match_reviewed_correction_context(
     match_id: str,
+    response: Response,
     candidate_subject_id: str = Query(...),
     review_target_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     path = match_dir(match_id)
+    started = time.perf_counter()
     try:
-        return reviewed_correction_context(
-            path,
-            read_match_meta(path),
-            candidate_subject_id,
-            review_target_id,
+        state_started = time.perf_counter()
+        state = load_or_rebuild_review_hot_state(path, read_match_meta(path))
+        state_ms = round((time.perf_counter() - state_started) * 1000, 1)
+        context_started = time.perf_counter()
+        result = hot_context(state, candidate_subject_id, review_target_id)
+        context_ms = round((time.perf_counter() - context_started) * 1000, 1)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        response.headers["Server-Timing"] = (
+            f"review_hot_state;dur={state_ms}, review_context;dur={context_ms}, total;dur={elapsed_ms}"
         )
+        result["server_timing"] = {
+            "review_hot_state_ms": state_ms,
+            "review_context_ms": context_ms,
+            "total_ms": elapsed_ms,
+        }
+        return result
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2191,6 +2206,33 @@ def post_match_reviewed_identity_correction(
                 authorized_review_unit=deferred_gate.get("review_unit"),
             )
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
+            hot_started = time.perf_counter()
+            hot_state = deferred_gate.get("hot_state")
+            if isinstance(hot_state, dict):
+                if result.get("review_topology_changed") is True:
+                    # Splits, child cleanup and manual-slot creation alter
+                    # exact source topology. A new read must materialize from
+                    # canonical artifacts rather than patch the old queue.
+                    invalidate_review_hot_state(path)
+                    result["review_state_rebuild_required"] = True
+                else:
+                    try:
+                        hot_state = update_hot_state_after_deferred_save(
+                            path,
+                            match_document,
+                            hot_state,
+                            deferred_gate["review_unit"],
+                            result.get("saved_decision"),
+                            str(result.get("semantic_decision_digest") or ""),
+                        )
+                        result["review_state_version"] = hot_state.get("state_version")
+                    except (OSError, ValueError):
+                        # Canonical persistence already succeeded. Never keep a
+                        # potentially contradictory cache: the next read will
+                        # rebuild from canonical artifacts.
+                        invalidate_review_hot_state(path)
+                        result["review_state_rebuild_required"] = True
+            hot_state_ms = round((time.perf_counter() - hot_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(
                 "reviewed_correction_perf mode=deferred authorization_source=%s match=%s "
@@ -2211,6 +2253,7 @@ def post_match_reviewed_identity_correction(
                     "workflow_validation_ms": 0.0,
                     "deferred_gate_ms": deferred_gate_ms,
                     "persist_decision_ms": persist_ms,
+                    "hot_state_update_ms": hot_state_ms,
                     "seeded_candidate_rebuild_ms": 0.0,
                     "finalize_reviewed_identity_ms": 0.0,
                     "segment_evidence_ms": 0.0,
@@ -2255,6 +2298,11 @@ def post_match_reviewed_identity_correction(
             status_code=409,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": "Stan Review zmienił się. Odśwież kartę przed zapisem."},
+        ) from exc
     except ReviewedIdentityActionScopeError as exc:
         raise HTTPException(
             status_code=400,
@@ -2278,15 +2326,19 @@ def post_match_reviewed_identity_temporal_split(
         state_before = get_review_workflow_state(path, match_document)
         if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
             assert_workflow_action_allowed(state_before, "review_identity_issue")
-        progress = build_reviewed_identity_progress(
-            path,
-            match_document,
-            include_internal_units=True,
+        hot_state = load_or_rebuild_review_hot_state(path, match_document)
+        from app.services.identity_reviewed_hot_state import assert_hot_state_version
+
+        assert_hot_state_version(hot_state, payload.get("review_state_version"))
+        review_unit = hot_review_unit(
+            hot_state,
+            str(payload.get("candidate_subject_id") or ""),
+            str(payload.get("review_target_id") or "") or None,
         )
-        review_unit = review_unit_for_payload(progress, payload)
         # A completed inline split correctly leaves the active queue. It may
         # still be reopened from the reviewed-video inspector before final
         # output, provided that its exact source and semantic version match.
+        materialized_review_unit = review_unit if isinstance(review_unit, dict) else None
         if not isinstance(review_unit, dict):
             source = resolve_review_source(
                 path,
@@ -2306,8 +2358,17 @@ def post_match_reviewed_identity_temporal_split(
         capabilities = reviewed_identity_action_capabilities(review_unit)
         if not isinstance(review_unit, dict) or not capabilities["split"].get("allowed"):
             raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
-        result = save_inline_temporal_split(path, match_document, payload)
-        return result
+        result = save_inline_temporal_split(
+            path,
+            match_document,
+            payload,
+            materialized_review_unit=materialized_review_unit,
+        )
+        # A split changes the number and exact ownership of review units, so
+        # this is deliberately a cache invalidation, not a guessed incremental
+        # queue mutation. The next request safely materializes canonical state.
+        invalidate_review_hot_state(path)
+        return {**result, "review_state_rebuild_required": True}
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:
@@ -2316,6 +2377,11 @@ def post_match_reviewed_identity_temporal_split(
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
     except SegmentTargetError as exc:
         raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": "Stan Review zmienił się. Odśwież kartę przed zapisem."},
+        ) from exc
     except ValueError as exc:
         code = str(exc)
         status = 409 if code in {"review_target_stale", "material_continuity_target_stale"} else 400

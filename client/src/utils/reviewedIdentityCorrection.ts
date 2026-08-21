@@ -58,6 +58,10 @@ export function buildReviewedCorrectionPayload(
     if (!context.source_ownership_digest) {
       throw new Error('Ten fragment wymaga odświeżenia przed zapisem.');
     }
+  }
+  // Every server-materialized scope, including a normal whole subject, may
+  // carry exact ownership. Echo it back so the server can reject stale cards.
+  if (context?.source_ownership_digest) {
     payload.source_ownership_digest = context.source_ownership_digest;
   }
   if (values.action === 'assign_roster_player') {

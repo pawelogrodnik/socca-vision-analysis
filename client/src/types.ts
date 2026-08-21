@@ -1985,6 +1985,7 @@ export type ReviewedCorrectionContext = {
   } | null;
   action_capabilities: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
   scope_copy?: string;
+  review_state_version?: number;
 };
 
 export type ReviewedCorrectionRequest = {
@@ -1998,6 +1999,7 @@ export type ReviewedCorrectionRequest = {
   comment?: string;
   mixed_hint?: 'cross_team' | 'same_team_a' | 'same_team_b' | 'player_referee' | 'unknown';
   defer_recompute?: boolean;
+  review_state_version?: number;
 };
 
 export type ReviewedCorrectionResponse = {
@@ -2007,6 +2009,8 @@ export type ReviewedCorrectionResponse = {
   snapshot?: { status: string; stale: boolean };
   semantic_decision_digest: string;
   recompute_deferred: boolean;
+  review_state_version?: number;
+  review_state_rebuild_required?: boolean;
   persistence?: {
     status: 'saved';
     downstream_recompute_triggered: boolean;
@@ -2269,6 +2273,7 @@ export type ReviewedTemporalSplitRequest = {
   split_after_frames?: number[];
   segment_assignments?: MixedSegmentAssignment[];
   comment?: string;
+  review_state_version?: number;
 };
 
 export type ReviewedTemporalSplitRefinement = MixedBoundaryRefinement & {

@@ -26,6 +26,11 @@ from app.services.identity_reviewed_recompute_state import (
     reviewed_identity_recompute_required,
 )
 from app.services.identity_review_scope import review_scope_dependency_matches
+from app.services.identity_reviewed_hot_state import (
+    assert_hot_state_version,
+    hot_review_unit,
+    load_existing_fresh_hot_state,
+)
 
 
 PROGRESS_FILENAME = "reviewed_identity_progress.json"
@@ -49,13 +54,28 @@ def validate_deferred_review_action(
     invalidate it, so decisions two and three can still be saved before the one
     authoritative final recompute.
     """
-    progress = _load_batch_baseline(match_path, match_doc)
+    hot_state = load_existing_fresh_hot_state(match_path, match_doc)
+    if hot_state is not None:
+        assert_hot_state_version(hot_state, payload.get("review_state_version"))
+        progress = dict(hot_state.get("progress") or {})
+        progress["_internal_review_units"] = list(hot_state.get("internal_review_units") or [])
+    else:
+        # A versioned browser context is a promise that its exact materialized
+        # topology still exists. After a structural mutation the cache is
+        # deliberately absent until the next GET rebuilds it; never fall back
+        # to a legacy batch baseline and accidentally accept that stale card.
+        if payload.get("review_state_version") is not None:
+            raise DeferredReviewActionError(
+                "review_state_stale",
+                "Stan Review zmienił się. Odśwież kartę przed zapisem.",
+            )
+        progress = _load_batch_baseline(match_path, match_doc)
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     target_id = str(payload.get("review_target_id") or "").strip() or None
     unit = _actionable_unit(progress, subject_id, target_id)
     authorization_source = "batch_baseline"
     dynamic_progress: dict[str, Any] | None = None
-    if unit is None:
+    if unit is None and hot_state is None:
         unit, dynamic_progress = _dynamically_authorized_optional_unit(
             match_path,
             match_doc,
@@ -69,6 +89,26 @@ def validate_deferred_review_action(
             "review_unit_not_actionable",
             "Ten przypadek nie znajduje się już w aktualnej kolejce Review. "
             "Odśwież Review i spróbuj ponownie.",
+        )
+
+    if hot_state is not None:
+        # The public queue intentionally omits exact ownership. Restore the
+        # matching server-only materialized unit before persistence, rather
+        # than reconstructing match-wide progress to recover it.
+        materialized_unit = hot_review_unit(hot_state, subject_id, target_id)
+        if not isinstance(materialized_unit, dict):
+            raise DeferredReviewActionError(
+                "review_queue_stale",
+                "Nie można odnaleźć aktualnego źródła tej decyzji. Odśwież Review.",
+            )
+        unit = {**materialized_unit, "_hot_state_authorized": True}
+
+    expected_source_digest = str(unit.get("source_ownership_digest") or "")
+    supplied_source_digest = str(payload.get("source_ownership_digest") or "")
+    if expected_source_digest and supplied_source_digest != expected_source_digest:
+        raise DeferredReviewActionError(
+            "review_target_stale",
+            "Zakres tego przypadku zmienił się. Odśwież Review przed zapisem.",
         )
 
     validate_review_unit_action_scope(payload, unit)
@@ -99,6 +139,7 @@ def validate_deferred_review_action(
         "batch_source_snapshot_digest": progress["source_snapshot_digest"],
         "detected_team_labels_by_subject": detected_team_labels_by_subject,
         "authorization_source": authorization_source,
+        "hot_state": hot_state,
     }
 
 

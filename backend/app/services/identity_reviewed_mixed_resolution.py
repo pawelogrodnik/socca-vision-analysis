@@ -172,6 +172,8 @@ def save_inline_temporal_split(
     match_path: Path,
     match_doc: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    materialized_review_unit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Atomically create/update an exact-source temporal split from a card.
 
@@ -187,6 +189,7 @@ def save_inline_temporal_split(
         review_target_id=str(payload.get("review_target_id") or "").strip() or None,
         continuity_group_id=str(payload.get("continuity_group_id") or "").strip() or None,
         source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
+        materialized_review_unit=materialized_review_unit,
     )
     resolution = str(payload.get("resolution") or "split")
     document = load_mixed_player_cases(match_path)

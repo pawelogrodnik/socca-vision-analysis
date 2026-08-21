@@ -47,6 +47,7 @@ import {
   formatReviewedIdentityPercentagePoints,
 } from '../utils/reviewedIdentityMaxPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
+import { prefetchReviewedCorrectionContext } from '../utils/reviewedCorrectionContextClientCache';
 
 type Props = {
   match: Match;
@@ -263,6 +264,13 @@ export function IdentityExceptionReviewPanel({
     + Number(reviewCase?.unit.priority === 'coverage')
     + Number(unitEvidence?.kind === 'team_attribution');
 
+  useEffect(() => {
+    const next = cases[index + 1]?.unit;
+    if (next?.candidate_subject_id) {
+      prefetchReviewedCorrectionContext(match.id, next.candidate_subject_id, next.review_target_id);
+    }
+  }, [cases, index, match.id]);
+
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;
     setActiveTeamFilter(nextFilter);
@@ -317,6 +325,21 @@ export function IdentityExceptionReviewPanel({
   function saved(result: ReviewedCorrectionResponse) {
     if (!reviewCase || !result.recompute_deferred) {
       if (result.workflow) onWorkflowChanged(result.workflow);
+      return;
+    }
+    if (result.review_state_rebuild_required) {
+      // Do not derive a new queue from stale local cards after a topology
+      // change. The next GET performs one authoritative materialization.
+      setFinalizeFailed(false);
+      setMessage('Zapisano decyzję. Odświeżam przypadki po zmianie struktury…');
+      void loadCases(
+        undefined,
+        true,
+        0,
+        0,
+        activeTeamFilter,
+        activeQueue,
+      );
       return;
     }
     const next = removeResolvedReviewCase(

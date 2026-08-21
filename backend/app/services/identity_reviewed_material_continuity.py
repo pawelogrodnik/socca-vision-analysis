@@ -453,26 +453,27 @@ def save_material_continuity_decision(
         raise ValueError("material_continuity_action_not_allowed")
     player_id = str(payload.get("player_id") or "") or None
 
-    # A delayed request can carry old candidate ownership. Rebuild the queue
-    # and require the exact group/digest before modifying any reviewed data.
-    # The normal operator contract deliberately omits raw tracklet/frame pairs,
-    # so every persisted ownership field below must come from this fresh
-    # server-side unit rather than the browser-visible review unit.
-    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+    # ``review_unit`` comes from the versioned, server-only hot state for the
+    # deferred endpoint. It contains exact ownership but is never exposed to
+    # the browser. Legacy callers retain the old fresh-rebuild guard.
+    if review_unit.get("_hot_state_authorized") is True:
+        fresh_unit = review_unit
+    else:
+        from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 
-    fresh_unit = next(
-        (
-            row
-            for row in build_reviewed_identity_progress(
-                match_path,
-                match_doc,
-                include_internal_units=True,
-            ).get("_internal_review_units") or []
-            if str(row.get("continuity_group_id") or "") == group_id
-            and row.get("scope_kind") == "material_continuity"
-        ),
-        None,
-    )
+        fresh_unit = next(
+            (
+                row
+                for row in build_reviewed_identity_progress(
+                    match_path,
+                    match_doc,
+                    include_internal_units=True,
+                ).get("_internal_review_units") or []
+                if str(row.get("continuity_group_id") or "") == group_id
+                and row.get("scope_kind") == "material_continuity"
+            ),
+            None,
+        )
     if not isinstance(fresh_unit, dict) or str(fresh_unit.get("source_ownership_digest") or "") != expected_digest:
         from app.services.identity_reviewed_segments import SegmentTargetError
 

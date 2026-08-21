@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
-  getReviewedCorrectionContext,
   saveReviewedIdentityCorrection,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
@@ -26,6 +25,11 @@ import {
 import { persistReviewDecision } from '../utils/identityExceptionWorkspace';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
+import {
+  invalidateReviewedCorrectionContext,
+  invalidateReviewedCorrectionContextsBeforeVersion,
+  loadReviewedCorrectionContext,
+} from '../utils/reviewedCorrectionContextClientCache';
 
 type Props = {
   matchId: string;
@@ -65,7 +69,7 @@ export function ReviewedIdentityCorrectionForm({
   navigation,
 }: Props) {
   const subjectId = entity.candidate_subject_id;
-  const [context, setContext] = useState<Awaited<ReturnType<typeof getReviewedCorrectionContext>> | null>(null);
+  const [context, setContext] = useState<Awaited<ReturnType<typeof loadReviewedCorrectionContext>> | null>(null);
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
   const [splitOpen, setSplitOpen] = useState(false);
   const [selectedTeamLabel, setSelectedTeamLabel] = useState('');
@@ -95,7 +99,7 @@ export function ReviewedIdentityCorrectionForm({
     }
 
     setBusy(true);
-    getReviewedCorrectionContext(matchId, subjectId, entity.review_target_id)
+    loadReviewedCorrectionContext(matchId, subjectId, entity.review_target_id)
       .then((value) => {
         if (cancelled) return;
         setContext(value);
@@ -193,9 +197,22 @@ export function ReviewedIdentityCorrectionForm({
         mixedHint: undefined,
       }, context);
       if (deferRecompute) payload.defer_recompute = true;
+      if (context?.review_state_version != null) payload.review_state_version = context.review_state_version;
       await persistReviewDecision(
         () => saveReviewedIdentityCorrection(matchId, payload),
-        onSaved,
+        (result) => {
+          if (result.review_state_rebuild_required) {
+            // A split, supersede, or slot allocation changes the topology of
+            // the entire queue, including prefetched neighbouring cards.
+            invalidateReviewedCorrectionContext(matchId);
+          } else {
+            // The saved source is certainly obsolete. Other prefetched contexts
+            // are retained only when their server state revision still matches.
+            invalidateReviewedCorrectionContext(matchId, subjectId, entity.review_target_id);
+            invalidateReviewedCorrectionContextsBeforeVersion(matchId, result.review_state_version);
+          }
+          onSaved(result);
+        },
       );
     } catch (reason) {
       setError(errorMessage(reason));
@@ -264,7 +281,12 @@ export function ReviewedIdentityCorrectionForm({
         context={context}
         teams={teams}
         onCancel={returnToCategories}
-        onSaved={(result) => onSaved(result as unknown as ReviewedCorrectionResponse)}
+        onSaved={(result) => {
+          // A temporal split changes child topology and ownership. Unlike a
+          // normal decision, no prefetched correction context is safe to keep.
+          invalidateReviewedCorrectionContext(matchId);
+          onSaved(result as unknown as ReviewedCorrectionResponse);
+        }}
       />}
 
       {action && <section className='reviewed-correction-detail' aria-label={`Wybrana decyzja: ${actionLabel}`}>
