@@ -100,7 +100,7 @@ export function ReviewedIdentityCorrectionForm({
         if (cancelled) return;
         setContext(value);
         setSelectedTeamLabel(defaultCorrectionTeam(value));
-        if (value.legacy_suggestion?.requires_confirmation && value.visual_evidence?.kind !== 'team_attribution') {
+        if (value.legacy_suggestion?.requires_confirmation && value.source_evidence_kind !== 'team_attribution') {
           setAction('assign_roster_player');
           setPlayerId(value.legacy_suggestion.player_id);
           setSelectedTeamLabel(value.legacy_suggestion.team_label);
@@ -147,6 +147,9 @@ export function ReviewedIdentityCorrectionForm({
       setSplitOpen(true);
       setAction(null);
       return;
+    }
+    if (nextAction === 'assign_team' && !['A', 'B'].includes(selectedTeamLabel)) {
+      setSelectedTeamLabel('A');
     }
     setAction(nextAction);
     setSplitOpen(false);
@@ -225,10 +228,10 @@ export function ReviewedIdentityCorrectionForm({
     </header>
 
     <div className='reviewed-correction-body'>
-      {context?.visual_evidence?.kind === 'team_attribution' && <p className='reviewed-correction-suggestion'>
+      {context?.source_evidence_kind === 'team_attribution' && <p className='reviewed-correction-suggestion'>
         Automatyka potwierdziła jedynie drużynę. Wybór konkretnego zawodnika jest ręczną decyzją operatora.
       </p>}
-      {context?.legacy_suggestion && context.visual_evidence?.kind !== 'team_attribution' && <p className='reviewed-correction-suggestion'>
+      {context?.legacy_suggestion && context.source_evidence_kind !== 'team_attribution' && <p className='reviewed-correction-suggestion'>
         Poprzednia decyzja sugeruje: <strong>{context.legacy_suggestion.player_name}</strong>.
         Sprawdź pokazany fragment i zapisz, aby potwierdzić zakres.
       </p>}
@@ -258,6 +261,17 @@ export function ReviewedIdentityCorrectionForm({
 
       {action && <section className='reviewed-correction-detail' aria-label={`Wybrana decyzja: ${actionLabel}`}>
         {action === 'assign_team' && <p className='reviewed-correction-range'>Przypiszę tylko {operatorTeamName(selectedTeamLabel)}. Nie powstanie nowy slot ani indywidualne statystyki zawodnika.</p>}
+        {action === 'assign_team' && <div className='reviewed-action-cards' role='radiogroup' aria-label='Wybierz drużynę'>
+          {(['A', 'B'] as const).map((teamLabel) => <button
+            type='button'
+            key={teamLabel}
+            role='radio'
+            aria-checked={selectedTeamLabel === teamLabel}
+            className={selectedTeamLabel === teamLabel ? 'reviewed-action-card selected' : 'reviewed-action-card'}
+            onClick={() => setSelectedTeamLabel(teamLabel)}
+            disabled={busy}
+          >{operatorTeamName(teamLabel)} — zawodnik nieznany</button>)}
+        </div>}
         {action === 'assign_roster_player' && <label>Zawodnik z kadry
           <select value={playerId} onChange={(event) => chooseRosterPlayer(event.target.value)} disabled={busy}>
             <option value=''>Wybierz zawodnika</option>

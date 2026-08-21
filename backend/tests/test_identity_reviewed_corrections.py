@@ -239,6 +239,94 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(player["confirmed_detected_observations"], len(owned_observations))
             self.assertEqual(player["heatmap_samples"], len(owned_observations))
 
+    def test_material_continuity_false_detection_is_excluded_during_authoritative_recompute(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            case = _materialize_natural_material_deferred_case(root)
+            saved = save_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": case["candidate_subject_id"],
+                    "action": "false_detection",
+                    "source_ownership_digest": case["source_ownership_digest"],
+                },
+            )
+            snapshot = finalize_reviewed_identity(root, _match())
+
+            self.assertEqual(saved["effective_action"], "false_detection")
+            material_pairs = {
+                (row["tracklet_id"], row["frame"])
+                for row in snapshot["segment_observation_assignments"]
+            }
+            self.assertNotIn(("material-tracklet", 100), material_pairs)
+            # Unrelated source observations remain in raw/effective resolution.
+            self.assertTrue(any(
+                row.get("tracklet_id") == "t1"
+                for row in reviewed_assignment_at(snapshot, _tracklets(root), 0.3, 10.0)
+            ))
+
+    def test_material_continuity_terminal_and_team_actions_materialize_exact_owned_pairs(self) -> None:
+        expectations = {
+            "assign_team": {"payload": {"team_label": "B"}, "team_label": "B", "status": "unresolved"},
+            "team_unknown": {"payload": {}, "team_label": "U", "status": "unresolved"},
+            "referee": {"payload": {}, "team_label": "U", "status": "referee"},
+        }
+        for action, expected in expectations.items():
+            with self.subTest(action=action), _workspace() as root:
+                _fixture(root)
+                _add_natural_material_continuity_case(root)
+                case = _materialize_natural_material_deferred_case(root)
+                save_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": case["candidate_subject_id"],
+                        "action": action,
+                        "source_ownership_digest": case["source_ownership_digest"],
+                        **expected["payload"],
+                    },
+                )
+                snapshot = finalize_reviewed_identity(root, _match())
+                rows = [
+                    row
+                    for row in snapshot["segment_observation_assignments"]
+                    if row.get("tracklet_id") == "material-tracklet"
+                    and int(row.get("frame") or -1) == 100
+                ]
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["team_label"], expected["team_label"])
+                self.assertEqual(rows[0]["identity_status"], expected["status"])
+
+    def test_team_attribution_context_preserves_semantic_origin_separately_from_crop_kind(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            with patch(
+                "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
+                return_value={
+                    "next_cases": [
+                        {
+                            "candidate_subject_id": "s1",
+                            "visual_evidence": {"kind": "team_attribution"},
+                        }
+                    ]
+                },
+            ):
+                context = reviewed_correction_context(root, _match(), "s1")
+
+            self.assertEqual(context["source_evidence_kind"], "team_attribution")
+            self.assertEqual(context["visual_evidence"]["kind"], "identity_continuity")
+            self.assertIsNone(context["legacy_suggestion"])
+
+    def test_whole_subject_context_uses_authoritative_source_frame_bounds(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            context = reviewed_correction_context(root, _match(), "s1")
+
+            self.assertEqual(context["frame_start"], 3)
+            self.assertEqual(context["frame_end"], 9)
+
     def test_material_continuity_rejects_stale_exact_ownership_before_writing(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -677,7 +765,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             )
             self.assertEqual(result["fragmentation_diagnostics"]["automatic_permanent_allocations"], 0)
 
-    def test_unknown_subject_can_use_team_b_slot_or_roster_without_cross_team_escape(self) -> None:
+    def test_manual_team_corrections_allow_cross_team_assignment_but_slots_remain_scoped(self) -> None:
         with _workspace() as root:
             _fixture(root)
             saved = save_reviewed_identity_correction(
@@ -700,10 +788,10 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 save_reviewed_identity_correction(
                     root, _match(), {"candidate_subject_id": "s2", "action": "assign_existing_slot", "stable_slot_id": "A03"}
                 )
-            with self.assertRaisesRegex(ValueError, "team mismatch"):
-                save_reviewed_identity_correction(
-                    root, _match(), {"candidate_subject_id": "s1", "action": "assign_team", "team_label": "B"}
-                )
+            cross_team = save_reviewed_identity_correction(
+                root, _match(), {"candidate_subject_id": "s1", "action": "assign_team", "team_label": "B"}
+            )
+            self.assertEqual(cross_team["saved_decision"]["team_label"], "B")
 
         with _workspace() as root:
             _fixture(root)
@@ -1142,12 +1230,12 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                     )
                 self.assertEqual(_decision_files(root), before)
 
-    def test_materialized_single_and_unknown_team_semantics_match_exact_path(self) -> None:
+    def test_materialized_single_and_unknown_team_semantics_allow_explicit_team_corrections(self) -> None:
         cases = (
             ({"A"}, "A", True),
-            ({"A"}, "B", False),
+            ({"A"}, "B", True),
             ({"B"}, "B", True),
-            ({"B"}, "A", False),
+            ({"B"}, "A", True),
             (set(), "A", True),
             (set(), "B", True),
         )
@@ -1179,13 +1267,6 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                         result["saved_decision"]["team_label"],
                         requested_team,
                     )
-                else:
-                    with self.assertRaisesRegex(ValueError, "team mismatch"):
-                        persist_reviewed_identity_correction(
-                            root,
-                            _match(),
-                            payload,
-                        )
 
     def test_materialized_named_player_can_correct_single_wrong_detected_team(self) -> None:
         with _workspace() as root:

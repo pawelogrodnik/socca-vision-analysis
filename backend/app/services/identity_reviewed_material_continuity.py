@@ -459,7 +459,9 @@ def material_continuity_observation_assignments(
         if action == "assign_roster_player" and player is None:
             continue
         for tracklet_id, frame in owned:
-            output.append(_assignment_row(unit, decision, player, tracklet_id, frame))
+            assignment = _assignment_row(unit, decision, player, tracklet_id, frame)
+            if assignment is not None:
+                output.append(assignment)
     return sorted(output, key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
 
 
@@ -469,7 +471,7 @@ def _assignment_row(
     player: dict[str, Any] | None,
     tracklet_id: str,
     frame: int,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     action = str(decision.get("action") or "")
     slot_id = str(unit.get("stable_slot_id") or "") or None
     common = {

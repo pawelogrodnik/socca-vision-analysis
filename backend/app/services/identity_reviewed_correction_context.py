@@ -97,6 +97,11 @@ def reviewed_correction_context(
         "detected_observation_count": source["detected_observation_count"],
     }
     temporal_evidence = _source_temporal_evidence(match_path, match_doc, source)
+    source_evidence_kind = _review_source_evidence_kind(
+        match_path,
+        match_doc,
+        candidate_subject_id,
+    )
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": None,
@@ -116,11 +121,14 @@ def reviewed_correction_context(
         "current_decision": current,
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
         "source_ownership_digest": source["source_ownership_digest"],
+        "frame_start": source["frame_start"],
+        "frame_end": source["frame_end"],
         "detected_observation_count": source["detected_observation_count"],
         "action_capabilities": reviewed_identity_action_capabilities(scope_unit),
         "scope_copy": scope_copy("whole_subject"),
         "frame_ranges": [],
         "visual_evidence": temporal_evidence,
+        "source_evidence_kind": source_evidence_kind,
         "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": None,
     }
@@ -193,6 +201,7 @@ def _material_continuity_correction_context(
         "frame_end": unit.get("frame_end"),
         "detected_observation_count": unit.get("detected_observation_count"),
         "visual_evidence": temporal_evidence,
+        "source_evidence_kind": str((unit.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
         "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": None,
         "action_capabilities": reviewed_identity_action_capabilities(unit),
@@ -253,6 +262,7 @@ def _segment_correction_context(
         "frame_end": target.get("frame_end"),
         "detected_observation_count": target.get("detected_observation_count"),
         "visual_evidence": temporal_evidence,
+        "source_evidence_kind": str((target.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
         "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": target.get("legacy_suggestion"),
         "action_capabilities": reviewed_identity_action_capabilities(target),
@@ -287,6 +297,30 @@ def _source_temporal_evidence(
         "selected_crop_count": len(crops),
         "anchor_crops": crops,
     }
+
+
+def _review_source_evidence_kind(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    candidate_subject_id: str,
+) -> str:
+    """Keep the original review semantics when generic crops are rendered."""
+    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+
+    progress = build_reviewed_identity_progress(
+        match_path,
+        match_doc,
+        include_internal_units=True,
+    )
+    units = [
+        *(progress.get("next_cases") or []),
+        *(progress.get("optional_audit_cases") or []),
+        *(progress.get("_internal_review_units") or []),
+    ]
+    for unit in units:
+        if str(unit.get("candidate_subject_id") or "") == candidate_subject_id:
+            return str((unit.get("visual_evidence") or {}).get("kind") or "identity_continuity")
+    return "identity_continuity"
 
 
 def _inline_temporal_split_context(

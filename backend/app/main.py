@@ -2275,6 +2275,9 @@ def post_match_reviewed_identity_temporal_split(
     path = match_dir(match_id)
     try:
         match_document = read_match_meta(path)
+        state_before = get_review_workflow_state(path, match_document)
+        if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
+            assert_workflow_action_allowed(state_before, "review_identity_issue")
         progress = build_reviewed_identity_progress(
             path,
             match_document,
@@ -2305,6 +2308,8 @@ def post_match_reviewed_identity_temporal_split(
             raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
         result = save_inline_temporal_split(path, match_document, payload)
         return result
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:
         raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
     except ReviewedIdentityActionScopeError as exc:

@@ -1968,6 +1968,7 @@ export type ReviewedCorrectionContext = {
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
+  source_evidence_kind?: string;
   legacy_suggestion?: {
     action: 'assign_roster_player';
     player_id: string;

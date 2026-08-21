@@ -102,7 +102,7 @@ def prepare_reviewed_slot_assignments(
     *,
     use_materialized_candidate_context: bool = False,
     materialized_detected_team_labels: dict[str, set[str]] | None = None,
-    allow_roster_team_correction: bool = False,
+    allow_detected_team_override: bool = False,
 ) -> dict[str, Any]:
     existing = load_reviewed_slot_assignments(match_path)
     decisions = {
@@ -222,7 +222,7 @@ def prepare_reviewed_slot_assignments(
                 team_label,
                 ambiguous_subjects,
                 subject_teams,
-                allow_detected_team_override=allow_roster_team_correction,
+                allow_detected_team_override=allow_detected_team_override,
             )
             stable_slot_id = normalize_reviewed_slot_id(raw.get("stable_slot_id"))
             if stable_slot_id:
@@ -241,6 +241,7 @@ def prepare_reviewed_slot_assignments(
                 team_label,
                 ambiguous_subjects,
                 subject_teams,
+                allow_detected_team_override=allow_detected_team_override,
             )
             stable_slot_id = None
         elif action == "create_new_stable_player":

@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.responses import FileResponse
+from fastapi import HTTPException
 
 from app.main import (
     get_artifact,
@@ -36,9 +37,153 @@ from app.services.identity_reviewed_segments import (
     segment_observation_assignments,
 )
 from app.services.review_workflow_state import derive_review_workflow_state
+from app.services.review_workflow_orchestrator import finalize_review_for_qa
+from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_optional_max_complex_inline_split_becomes_required_blocker_and_rejects_finalization(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            result = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                    "resolution": "unresolved_complex_mix",
+                },
+            )
+
+            queue = build_mixed_review_queue(root, match)
+            state = derive_review_workflow_state(
+                _workflow_evidence(normal=0, mixed=queue["summary"]["unresolved"])
+            )
+
+            self.assertTrue(result["complex_mix"])
+            self.assertEqual(queue["summary"]["complex_unresolved"], 1)
+            self.assertEqual(state["phase"], "mixed_players")
+            self.assertIn("review_mixed_players", state["allowed_actions"])
+            with (
+                patch(
+                    "app.services.review_workflow_orchestrator.get_review_workflow_state",
+                    side_effect=[
+                        {"issues": {"blocking": 0}, "allowed_actions": ["finalize_identity"], "phase": "ready_to_finalize"},
+                    ],
+                ),
+                patch(
+                    "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+                    return_value={"workflow": state, "snapshot": {}},
+                ),
+                patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats,
+                patch("app.services.review_workflow_orchestrator.generate_reviewed_output") as render,
+            ):
+                with self.assertRaises(WorkflowActionError) as raised:
+                    finalize_review_for_qa(root, match)
+
+            self.assertEqual(raised.exception.code, "identity_issues_remaining")
+            stats.assert_not_called()
+            render.assert_not_called()
+
+    def test_temporal_split_requires_the_same_workflow_authorization_as_corrections(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={"phase": "initial_audit", "allowed_actions": [], "blockers": [{"code": "initial_audit_incomplete"}]},
+                ),
+                patch("app.main.save_inline_temporal_split") as save,
+            ):
+                with self.assertRaises(HTTPException) as raised:
+                    post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(raised.exception.detail["code"], "initial_audit_incomplete")
+            save.assert_not_called()
+            self.assertFalse((root / "reviewed_identity_mixed_players.json").exists())
+
+    def test_temporal_split_allows_normal_review_and_video_qa_correction_phases(self) -> None:
+        for state in (
+            {"phase": "exceptions", "allowed_actions": ["review_identity_issue"]},
+            {"phase": "video_qa", "allowed_actions": ["correct_video_identity"]},
+        ):
+            with self.subTest(state=state), _workspace() as root:
+                match = _fixture(root)
+                payload = {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                }
+                with (
+                    patch("app.main.match_dir", return_value=root),
+                    patch("app.main.read_match_meta", return_value=match),
+                    patch("app.main.get_review_workflow_state", return_value=state),
+                ):
+                    result = post_match_reviewed_identity_temporal_split("m1", payload)
+
+                self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
+
+    def test_persisted_temporal_split_cannot_be_edited_from_a_forbidden_workflow_phase(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            initial = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            before = (root / "reviewed_identity_mixed_players.json").read_bytes()
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": digest,
+                "existing_split_semantic_digest": initial["saved_case"]["split_semantic_digest"],
+                "resolution": "split",
+                "split_after_frames": [5],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={"phase": "initial_audit", "allowed_actions": [], "blockers": [{"code": "initial_audit_incomplete"}]},
+                ),
+            ):
+                with self.assertRaises(HTTPException) as raised:
+                    post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual((root / "reviewed_identity_mixed_players.json").read_bytes(), before)
     def test_generated_mixed_crop_is_available_through_match_artifact_route(self) -> None:
         with _workspace() as root:
             relative = Path("reviewed_identity_mixed") / ("a" * 16) / "01_f000001.jpg"
@@ -430,6 +575,13 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             with (
                 patch("app.main.match_dir", return_value=root),
                 patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={
+                        "phase": "ready_to_finalize",
+                        "allowed_actions": ["review_identity_issue"],
+                    },
+                ),
             ):
                 updated = post_match_reviewed_identity_temporal_split("m1", updated_payload)
             current_ids = set(updated["saved_case"]["segment_target_ids"])

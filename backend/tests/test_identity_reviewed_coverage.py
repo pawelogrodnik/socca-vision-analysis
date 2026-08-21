@@ -181,6 +181,71 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(optional["remaining_actionable_named_gain"], 5)
         self.assertEqual(policy["optional_audit_cases"][0]["optional_max_marginal_coverage_gain_pp"], 5.0)
 
+    def test_optional_max_split_children_are_recomputed_as_server_owned_named_gain(self) -> None:
+        """A completed optional split must leave required readiness untouched.
+
+        The split editor sends only child decisions.  Coverage therefore has to
+        be recalculated from those exact child ownership pairs rather than from
+        any client-side projected coverage value.
+        """
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(90)
+        ] + [
+            _observation("optional-raw", frame, "A", "unresolved", None)
+            for frame in range(90, 100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        children = [
+            _unit("optional-split:a", [("optional-raw", frame) for frame in range(90, 95)], visual=True),
+            _unit("optional-split:b", [("optional-raw", frame) for frame in range(95, 100)], visual=True),
+        ]
+        for child in children:
+            child.update({
+                "current_decision": {"action": "assign_roster_player", "player_id": "p1"},
+                "current_resolution_status": "reviewed_by_operator",
+            })
+
+        policy = apply_coverage_policy(children, coverage, pair_index, _scoped_match())
+
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(policy["optional_audit_cases"], [])
+        self.assertEqual(policy["optional_audit"]["pending_named_gain"], 10)
+        self.assertEqual(policy["optional_audit"]["projected_named_observations"], 100)
+
+    def test_optional_max_team_b_split_child_never_increases_team_a_named_gain(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(90)
+        ] + [
+            _observation("optional-raw", frame, "A", "unresolved", None)
+            for frame in range(90, 100)
+        ]
+        match_doc = _scoped_match()
+        match_doc["teams"][1]["players"] = [{"id": "b1", "name": "Opponent"}]
+        coverage, pair_index = summarize_effective_observations(rows, match_doc)
+        child_a = _unit("optional-split:a", [("optional-raw", frame) for frame in range(90, 95)], visual=True)
+        child_a.update({
+            "current_decision": {"action": "assign_roster_player", "player_id": "p1"},
+            "current_resolution_status": "reviewed_by_operator",
+        })
+        child_b = _unit("optional-split:b", [("optional-raw", frame) for frame in range(95, 100)], visual=True)
+        child_b.update({
+            "current_decision": {
+                "action": "assign_roster_player",
+                "player_id": "b1",
+                # Payload fields cannot override the authoritative roster team.
+                "team_label": "A",
+            },
+            "current_resolution_status": "reviewed_by_operator",
+        })
+
+        optional = apply_coverage_policy([child_a, child_b], coverage, pair_index, match_doc)["optional_audit"]
+
+        self.assertEqual(optional["pending_named_gain"], 5)
+        self.assertEqual(optional["projected_named_observations"], 95)
+
     def test_safe_maximum_at_one_hundred_percent_has_no_negative_residual(self) -> None:
         rows = [
             _observation("named", frame, "A", "confirmed", "p1")

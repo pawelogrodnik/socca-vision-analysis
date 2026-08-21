@@ -288,7 +288,7 @@ def persist_reviewed_identity_correction(
                 materialized_detected_team_labels=(
                     detected_team_labels if use_exact_materialized_context else None
                 ),
-                allow_roster_team_correction=corrects_detected_team,
+                allow_detected_team_override=corrects_detected_team,
             )
             # The legacy card store intentionally exposes same-team choices only.
             # A cross-team named correction is fully represented by the reviewed
@@ -322,6 +322,14 @@ def persist_reviewed_identity_correction(
                 update["team_label"] = str(
                     payload.get("team_label") or context["team_label"]
                 ).upper()
+            # Team-only is an explicit operator correction, just like a named
+            # cross-team roster choice. Source detection must not lock it.
+            corrects_detected_team = bool(
+                action == "assign_team"
+                and str(context["team_label"]).upper() in {"A", "B"}
+                and str(update.get("team_label") or "").upper()
+                != str(context["team_label"]).upper()
+            )
             prepared = prepare_reviewed_slot_assignments(
                 match_path,
                 candidate_document,
@@ -330,6 +338,7 @@ def persist_reviewed_identity_correction(
                 materialized_detected_team_labels=(
                     detected_team_labels if use_exact_materialized_context else None
                 ),
+                allow_detected_team_override=corrects_detected_team,
             )
             if action == "create_new_stable_player":
                 _validate_new_player_active_cap(

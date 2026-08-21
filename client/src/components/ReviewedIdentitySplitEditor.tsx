@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { artifactUrl, getReviewedIdentityTemporalSplitRefinement, saveReviewedIdentityTemporalSplit } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type {
-  MixedPlayerCase,
   MixedBoundaryRefinement,
   MixedSegmentAssignment,
   ReviewedCorrectionContext,
@@ -24,6 +23,7 @@ import {
 } from '../utils/reviewedIdentityActions';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { teamLabelForOperator } from '../utils/reviewedOutputPresentation';
+import { correctionContextAsSplitCase } from '../utils/reviewedIdentitySplitCase';
 
 type Props = {
   matchId: string;
@@ -35,24 +35,8 @@ type Props = {
 
 const CHILD_ACTIONS = reviewedIdentityChildActions();
 
-function asSplitCase(context: ReviewedCorrectionContext): MixedPlayerCase {
-  const crops = context.visual_evidence?.anchor_crops || [];
-  return {
-    candidate_subject_id: context.candidate_subject_id,
-    original_issue: 'mixed_players',
-    mixed_hint: 'unknown',
-    resolution_status: 'unresolved',
-    source_subject_digest: context.source_ownership_digest || '',
-    source_tracklet_ids: context.tracklet_ids,
-    observation_count: context.detected_observation_count || 0,
-    frame_start: context.frame_start ?? Math.min(...crops.map((crop) => crop.frame), 0),
-    frame_end: context.frame_end ?? Math.max(...crops.map((crop) => crop.frame), 0),
-    temporal_evidence: { status: context.visual_evidence?.status || 'missing', anchor_crops: crops },
-  };
-}
-
 export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel, onSaved }: Props) {
-  const reviewCase = useMemo(() => asSplitCase(context), [context]);
+  const reviewCase = useMemo(() => correctionContextAsSplitCase(context), [context]);
   const [boundaries, setBoundaries] = useState<number[]>([]);
   const [assignments, setAssignments] = useState<Array<MixedSegmentAssignment | null>>([null]);
   const [selectedSegment, setSelectedSegment] = useState(0);
@@ -73,6 +57,10 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
       ? matchTeamName(teams || [], teamLabel)
       : teamLabelForOperator(teamLabel)
   );
+  const rosterOptionsByTeam = useMemo(() => ({
+    A: context.roster_options.filter((player) => player.team_label === 'A'),
+    B: context.roster_options.filter((player) => player.team_label === 'B'),
+  }), [context.roster_options]);
 
   useEffect(() => {
     if (!persistedSplit) {
@@ -269,9 +257,14 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
         <select value={assignments[selectedSegment]?.player_id || ''} disabled={busy}
           onChange={(event) => setAssignment({ action: 'assign_roster_player', player_id: event.target.value })}>
           <option value=''>Wybierz zawodnika</option>
-          {context.roster_options.map((player) => <option key={player.player_id} value={player.player_id}>
-            {player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''} · {operatorTeamName(player.team_label)}
-          </option>)}
+          {(['A', 'B'] as const).map((teamLabel) => rosterOptionsByTeam[teamLabel].length > 0 && <optgroup
+            key={teamLabel}
+            label={operatorTeamName(teamLabel)}
+          >
+            {rosterOptionsByTeam[teamLabel].map((player) => <option key={player.player_id} value={player.player_id}>
+              {player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}
+            </option>)}
+          </optgroup>)}
         </select>
       </label> : null}
       {assignments[selectedSegment]?.action === 'assign_team' && <label>Drużyna

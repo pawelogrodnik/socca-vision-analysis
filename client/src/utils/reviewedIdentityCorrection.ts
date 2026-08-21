@@ -34,11 +34,10 @@ export function correctionOptionsForSubject(
   context: ReviewedCorrectionContext,
   selectedTeamLabel = context.effective_team_label,
 ) {
-  const roster = context.source_team_label === 'U' || context.scope_kind === 'material_continuity'
-    ? context.roster_options.filter((option) => option.team_label === selectedTeamLabel)
-    : context.roster_options;
   return {
-    roster,
+    // A named operator decision is authoritative.  Never hide the opposing
+    // roster merely because the detector/source currently says Team A or B.
+    roster: context.roster_options,
     slots: context.slot_options.filter(
       (option) => option.team_label === selectedTeamLabel,
     ),
