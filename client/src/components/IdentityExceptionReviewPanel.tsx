@@ -327,6 +327,21 @@ export function IdentityExceptionReviewPanel({
       if (result.workflow) onWorkflowChanged(result.workflow);
       return;
     }
+    if (result.review_state_rebuild_required) {
+      // Do not derive a new queue from stale local cards after a topology
+      // change. The next GET performs one authoritative materialization.
+      setFinalizeFailed(false);
+      setMessage('Zapisano decyzję. Odświeżam przypadki po zmianie struktury…');
+      void loadCases(
+        undefined,
+        true,
+        0,
+        0,
+        activeTeamFilter,
+        activeQueue,
+      );
+      return;
+    }
     const next = removeResolvedReviewCase(
       cases,
       index,

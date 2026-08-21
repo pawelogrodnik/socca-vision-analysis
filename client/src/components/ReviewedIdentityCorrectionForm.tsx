@@ -201,10 +201,16 @@ export function ReviewedIdentityCorrectionForm({
       await persistReviewDecision(
         () => saveReviewedIdentityCorrection(matchId, payload),
         (result) => {
-          // The saved source is certainly obsolete. Other prefetched contexts
-          // are retained only when their server state revision still matches.
-          invalidateReviewedCorrectionContext(matchId, subjectId, entity.review_target_id);
-          invalidateReviewedCorrectionContextsBeforeVersion(matchId, result.review_state_version);
+          if (result.review_state_rebuild_required) {
+            // A split, supersede, or slot allocation changes the topology of
+            // the entire queue, including prefetched neighbouring cards.
+            invalidateReviewedCorrectionContext(matchId);
+          } else {
+            // The saved source is certainly obsolete. Other prefetched contexts
+            // are retained only when their server state revision still matches.
+            invalidateReviewedCorrectionContext(matchId, subjectId, entity.review_target_id);
+            invalidateReviewedCorrectionContextsBeforeVersion(matchId, result.review_state_version);
+          }
           onSaved(result);
         },
       );

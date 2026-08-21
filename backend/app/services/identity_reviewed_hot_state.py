@@ -29,14 +29,19 @@ from app.services.identity_reviewed_slot_registry import (
     build_reviewed_slot_registry,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
+from app.services.identity_reviewed_mixed_store import (
+    render_mixed_review_evidence,
+    temporal_evidence_for_observations,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-SCHEMA_VERSION = "1.3.0"
+SCHEMA_VERSION = "1.4.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -84,9 +89,18 @@ def rebuild_review_hot_state(
             match_path,
             load_reviewed_slot_assignments(match_path),
         )
+    # Canonical segments intentionally retain the legacy segment registry
+    # semantics. Whole subjects and material continuity use the materialized
+    # registry because their source can cross automatic subject boundaries.
+    canonical_segment_registry = build_reviewed_slot_registry(
+        match_path,
+        load_reviewed_slot_assignments(match_path),
+    )
     internal = list(progress.pop("_internal_review_units", []) or [])
     projection_inputs = dict(progress.pop("_projection_inputs", {}) or {})
     _attach_exact_whole_subject_digests(match_path, internal)
+    _attach_legacy_context_fields(match_path, internal)
+    _attach_correction_temporal_evidence(match_path, match_doc, internal)
     _attach_temporal_split_context(match_path, internal)
     state = _json_safe({
         "schema_version": SCHEMA_VERSION,
@@ -99,6 +113,10 @@ def rebuild_review_hot_state(
         "projection_inputs": projection_inputs,
         "roster_options": match_roster(match_doc),
         "slot_options": [registry[key] for key in sorted(registry)],
+        "canonical_segment_slot_options": [
+            canonical_segment_registry[key]
+            for key in sorted(canonical_segment_registry)
+        ],
         "freshness": _freshness(match_path, match_doc),
     })
     write_identity_json_atomic(match_path / FILENAME, state)
@@ -232,8 +250,19 @@ def hot_context(
         else [source_team]
     )
     decision = unit.get("current_decision")
-    effective_team = str((decision or {}).get("team_label") or unit.get("effective_team_label") or source_team).upper()
-    visual = dict(unit.get("visual_evidence") or {})
+    # Segment targets preserve their baseline effective team in the legacy
+    # context even after a saved cross-team correction; that decision remains
+    # visible separately in current_decision. Keep the hot contract identical.
+    effective_team = str(
+        (unit.get("context_effective_team_label") if scope_kind == "canonical_segment" else (decision or {}).get("team_label"))
+        or unit.get("effective_team_label")
+        or source_team
+    ).upper()
+    visual = dict(
+        unit.get("correction_temporal_evidence")
+        or unit.get("visual_evidence")
+        or {}
+    )
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": review_target_id,
@@ -248,7 +277,11 @@ def hot_context(
         "review_card_key": unit.get("review_card_key"),
         "roster_options": list(state.get("roster_options") or []),
         "slot_options": [
-            option for option in state.get("slot_options") or []
+            option for option in (
+                state.get("canonical_segment_slot_options")
+                if scope_kind == "canonical_segment"
+                else state.get("slot_options")
+            ) or []
             if isinstance(option, dict) and option.get("team_label") in available
         ],
         "current_decision": decision,
@@ -259,7 +292,11 @@ def hot_context(
         "frame_end": unit.get("frame_end"),
         "detected_observation_count": unit.get("detected_observation_count"),
         "visual_evidence": visual,
-        "source_evidence_kind": str(visual.get("kind") or "identity_continuity"),
+        "source_evidence_kind": str(
+            unit.get("source_evidence_kind")
+            or visual.get("kind")
+            or "identity_continuity"
+        ),
         "legacy_suggestion": unit.get("legacy_suggestion"),
         "temporal_split": unit.get("temporal_split"),
         "action_capabilities": _capabilities(unit),
@@ -404,6 +441,105 @@ def _attach_exact_whole_subject_digests(
             "tracklet_ids": tracklet_ids,
             "observations": observations,
         })
+
+
+def _attach_legacy_context_fields(
+    match_path: Path,
+    units: list[dict[str, Any]],
+) -> None:
+    """Preserve segment-context fields whose legacy source is the target doc."""
+    targets = {
+        str(target.get("review_target_id") or ""): target
+        for target in (load_segment_review(match_path).get("targets") or [])
+        if isinstance(target, dict) and target.get("review_target_id")
+    }
+    for unit in units:
+        if not isinstance(unit, dict) or unit.get("scope_kind") != "canonical_segment":
+            continue
+        target = targets.get(str(unit.get("review_target_id") or ""))
+        if isinstance(target, dict):
+            unit["context_effective_team_label"] = str(
+                target.get("effective_team_label")
+                or target.get("source_team_label")
+                or "U"
+            ).upper()
+
+
+def _attach_correction_temporal_evidence(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    units: list[dict[str, Any]],
+) -> None:
+    """Cache legacy-equivalent correction crops during cold materialization.
+
+    Hot context reads must not reconstruct raw match-wide sources.  The exact
+    pairs are already server-owned by each materialized unit, so create the
+    same representative crop payload once here and reuse it until ownership
+    changes.  Rendering is best-effort just as it is for the legacy context.
+    """
+    tracklet_document = _load(match_path / "tracklets.json") or {}
+    observations_by_pair: dict[tuple[str, int], dict[str, Any]] = {}
+    for tracklet in tracklet_document.get("tracklets") or []:
+        if not isinstance(tracklet, dict):
+            continue
+        tracklet_id = str(tracklet.get("tracklet_id") or "")
+        team_label = str(tracklet.get("team_label") or "U")
+        for position in tracklet.get("positions_m") or []:
+            if not isinstance(position, dict):
+                continue
+            if not is_real_detected_position(position) or not is_on_pitch_product_observation(position):
+                continue
+            observations_by_pair[(tracklet_id, int(position.get("frame") or 0))] = {
+                **position,
+                "tracklet_id": tracklet_id,
+                "team_label": team_label,
+            }
+    review_document = _load(match_path / "identity_roster_subject_review_shadow.json") or {}
+    evidence_kind_by_subject = {
+        str(card.get("candidate_subject_id") or ""): str(
+            (card.get("visual_evidence") or {}).get("kind") or "identity_continuity"
+        )
+        for card in review_document.get("cards") or []
+        if isinstance(card, dict)
+    }
+    render_cases: list[dict[str, Any]] = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        pairs = {
+            (str(pair[0]), int(pair[1]))
+            for pair in unit.get("detected_pairs") or []
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2
+        }
+        observations = sorted(
+            (observations_by_pair[pair] for pair in pairs if pair in observations_by_pair),
+            key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
+        )
+        if not observations:
+            continue
+        subject_id = str(unit.get("candidate_subject_id") or "")
+        crops = temporal_evidence_for_observations(subject_id, observations, limit=12)
+        temporal_evidence = {
+            "kind": "identity_continuity",
+            "status": "ready" if crops else "missing",
+            "selected_crop_count": len(crops),
+            "anchor_crops": crops,
+        }
+        unit["correction_temporal_evidence"] = temporal_evidence
+        unit["source_evidence_kind"] = str(
+            (unit.get("visual_evidence") or {}).get("kind")
+            or evidence_kind_by_subject.get(subject_id)
+            or "identity_continuity"
+        )
+        if crops:
+            render_cases.append({"temporal_evidence": {"anchor_crops": crops}})
+    if render_cases:
+        try:
+            render_mixed_review_evidence(match_path, match_doc, {"cases": render_cases})
+        except FileNotFoundError:
+            # Matches retained without a local source video can still serve
+            # their cached artifact references and normal image failure UI.
+            pass
 
 
 def _attach_temporal_split_context(match_path: Path, units: list[dict[str, Any]]) -> None:

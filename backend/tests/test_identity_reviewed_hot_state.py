@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from copy import deepcopy
 
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_hot_state import (
@@ -181,13 +182,8 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             persisted = json.loads((root / FILENAME).read_text(encoding="utf-8"))
             self.assertEqual(persisted["internal_review_units"][0]["detected_team_labels"], ["A", "B"])
 
-    def test_hot_projection_exposes_next_required_case_after_non_naming_decision(self) -> None:
-        """Coverage/MAX ranking is re-projected, rather than removing a card.
-
-        Two overlapping candidates initially make only A required. Once the
-        operator explicitly declines to name A, B must become the required
-        safe alternative for the same unresolved observations.
-        """
+    def test_hot_projection_matches_canonical_policy_after_non_naming_decision(self) -> None:
+        """Hot re-projection follows the existing coverage policy exactly."""
         with _workspace() as root:
             match = _complete_roster_match()
             units = [_coverage_unit("a"), _coverage_unit("b")]
@@ -195,7 +191,6 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             initial = project_reviewed_identity_progress(
                 units, match, inputs, include_internal_units=True,
             )
-            self.assertEqual([row["candidate_subject_id"] for row in initial["next_cases"]], ["a"])
             state = {
                 "state_version": 4,
                 "progress": {key: value for key, value in initial.items() if key != "_internal_review_units"},
@@ -225,7 +220,78 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
                 {key: updated["progress"][key] for key in semantic_fields},
                 {key: reference[key] for key in semantic_fields},
             )
-            self.assertEqual([row["candidate_subject_id"] for row in updated["progress"]["next_cases"]], ["b"])
+
+    def test_hot_optional_max_projection_matches_reference_for_named_cross_team_and_unresolved(self) -> None:
+        """Deferred MAX saves retain the canonical optional-queue semantics."""
+        scenarios = (
+            ("assign_roster_player", "p1", "A"),
+            ("assign_roster_player", "p2", "B"),
+            ("unresolved", None, "A"),
+        )
+        semantic_fields = (
+            "optional_audit_cases",
+            "optional_audit",
+            "summary",
+            "coverage_readiness",
+            "coverage_residuals",
+        )
+        for action, player_id, effective_team in scenarios:
+            with self.subTest(action=action, player_id=player_id), _workspace() as root:
+                match, inputs, units = _optional_max_inputs()
+                initial = project_reviewed_identity_progress(
+                    units,
+                    match,
+                    inputs,
+                    include_internal_units=True,
+                )
+                state = {
+                    "state_version": 8,
+                    "progress": {
+                        key: value for key, value in initial.items()
+                        if key not in {"_internal_review_units", "_projection_inputs"}
+                    },
+                    "internal_review_units": deepcopy(initial["_internal_review_units"]),
+                    "unit_lookup": {"broad\u001f": 0, "narrow\u001f": 1},
+                    "source_index": {},
+                    "projection_inputs": inputs,
+                    "roster_options": [
+                        {"player_id": "p1", "team_label": "A"},
+                        {"player_id": "p2", "team_label": "B"},
+                    ],
+                }
+                saved_decision = {"action": action}
+                if player_id:
+                    saved_decision["player_id"] = player_id
+                updated = update_hot_state_after_deferred_save(
+                    root,
+                    match,
+                    state,
+                    state["internal_review_units"][0],
+                    saved_decision,
+                    f"after-{action}-{player_id or 'none'}",
+                )
+
+                reference_units = deepcopy(initial["_internal_review_units"])
+                reference_units[0]["current_decision"] = saved_decision
+                reference_units[0]["current_resolution_status"] = "reviewed_by_operator"
+                reference_units[0]["priority"] = None
+                reference_units[0]["canonical_player_id"] = player_id
+                reference_units[0]["effective_team_label"] = effective_team
+                reference = project_reviewed_identity_progress(
+                    reference_units,
+                    match,
+                    inputs,
+                )
+
+                self.assertEqual(
+                    {key: updated["progress"][key] for key in semantic_fields},
+                    {key: reference[key] for key in semantic_fields},
+                )
+                if player_id == "p2":
+                    self.assertEqual(
+                        updated["progress"]["optional_audit"]["pending_named_gain"],
+                        0,
+                    )
 
     def test_rebuild_revision_is_never_reused_after_hot_state_invalidation(self) -> None:
         with _workspace() as root, patch(
@@ -298,6 +364,82 @@ def _projection_inputs(match: dict, units: list[dict]) -> dict:
         "mixed_players": {},
         "deferred_correction_context": {},
     }
+
+
+def _optional_max_inputs() -> tuple[dict, dict, list[dict]]:
+    match = {
+        "id": "hot-optional-max",
+        "identity_review_scope": {
+            "teams": {"A": "complete_roster", "B": "team_stats_only"},
+        },
+        "teams": [
+            {"team_label": "A", "players": [{"id": "p1", "name": "Player A"}]},
+            {"team_label": "B", "players": [{"id": "p2", "name": "Player B"}]},
+        ],
+    }
+    rows = [
+        {
+            "tracklet_id": "named",
+            "frame": frame,
+            "team_label": "A",
+            "identity_status": "confirmed",
+            "canonical_player_id": "p1",
+            "play_area_status": "inside_play",
+        }
+        for frame in range(90)
+    ] + [
+        {
+            "tracklet_id": "unresolved",
+            "frame": frame,
+            "team_label": "A",
+            "identity_status": "unresolved",
+            "canonical_player_id": None,
+            "play_area_status": "inside_play",
+        }
+        for frame in range(90, 100)
+    ]
+    coverage, pair_index = summarize_effective_observations(rows, match)
+    broad_pairs = [("unresolved", frame) for frame in range(90, 100)]
+    narrow_pairs = [("unresolved", frame) for frame in range(95, 100)]
+
+    def unit(subject_id: str, pairs: list[tuple[str, int]]) -> dict:
+        return {
+            "candidate_subject_id": subject_id,
+            "scope_kind": "whole_subject",
+            "source_team_label": "A",
+            "effective_team_label": "A",
+            "tracklet_ids": ["unresolved"],
+            "detected_pairs": pairs,
+            "detected_observation_count": len(pairs),
+            "detected_frame_count": len(pairs),
+            "detected_time_sec": len(pairs) / 25,
+            "frame_start": pairs[0][1],
+            "frame_end": pairs[-1][1],
+            "current_decision": None,
+            "current_resolution_status": "pending_optional",
+            "priority": "optional",
+            "operator_actionable": True,
+            "has_operator_visual_evidence": True,
+            "visual_evidence": {"kind": "identity_continuity", "anchor_crops": [{"artifact": "crop.jpg"}]},
+            "reason_codes": ["long_unresolved_safe_anonymous"],
+        }
+
+    inputs = {
+        "match_id": match["id"],
+        "coverage": coverage,
+        "pair_index": [
+            {"tracklet_id": tracklet_id, "frame": frame, "value": value}
+            for (tracklet_id, frame), value in pair_index.items()
+        ],
+        "observed_pairs": [
+            (str(row["tracklet_id"]), int(row["frame"]))
+            for row in rows
+        ],
+        "technical_diagnostics": {},
+        "mixed_players": {},
+        "deferred_correction_context": {},
+    }
+    return match, inputs, [unit("broad", broad_pairs), unit("narrow", narrow_pairs)]
 
 
 def _write_json(path: Path, value: dict) -> None:

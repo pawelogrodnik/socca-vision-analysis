@@ -89,6 +89,37 @@ test('segment payload carries the exact target and ownership digest', () => {
   );
 });
 
+test('whole-subject payload carries server-owned ownership digest when supplied', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'whole-subject',
+    scope_kind: 'whole_subject',
+    source_ownership_digest: 'whole-digest',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
+    tracklet_ids: ['tracklet-1'],
+    review_card_key: 'card-1',
+    current_decision: null,
+    semantic_decision_digest: 'semantic-digest',
+    roster_options: [],
+    slot_options: [],
+  };
+
+  assert.deepEqual(
+    buildReviewedCorrectionPayload(
+      context.candidate_subject_id,
+      { ...base, action: 'unresolved' },
+      context,
+    ),
+    {
+      candidate_subject_id: 'whole-subject',
+      action: 'unresolved',
+      source_ownership_digest: 'whole-digest',
+    },
+  );
+});
+
 test('material continuity payload carries its exact ownership digest without a segment target', () => {
   const context: ReviewedCorrectionContext = {
     candidate_subject_id: 'continuity:A12:100-400',
@@ -354,7 +385,10 @@ test('exception review uses deferred saves and one explicit batch finalize', () 
   assert.match(panel, /deferRecompute/);
   assert.match(panel, /finalizeReviewedIdentityCorrections/);
   assert.match(panel, /removeResolvedReviewCase/);
+  assert.match(panel, /result\.review_state_rebuild_required/);
+  assert.match(panel, /void loadCases\(/);
   assert.doesNotMatch(panel, /result\.workflow\?\.phase === 'exceptions'\) void loadCases/);
   assert.match(form, /payload\.defer_recompute = true/);
+  assert.match(form, /invalidateReviewedCorrectionContext\(matchId\);/);
   assert.match(api, /reviewed-identity\/corrections\/finalize/);
 });

@@ -173,12 +173,6 @@ def apply_coverage_policy(
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
     non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for unit in units:
-        is_replaceable_complete_roster_disposition = (
-            _is_non_naming_complete_roster_disposition(unit, match_doc)
-            and _has_safe_alternative_named_evidence(unit, units)
-        )
-        if is_replaceable_complete_roster_disposition:
-            continue
         if unit in semantic or _has_explicit_disposition(unit, match_doc):
             continue
         # A raw subject may have a diagnostic card while every observation is
@@ -913,53 +907,6 @@ def _has_explicit_disposition(unit: dict[str, Any], match_doc: dict[str, Any]) -
         return True
     team = _team_label(unit.get("effective_team_label"))
     return roster_scope(match_doc, team) != "complete_roster"
-
-
-def _is_non_naming_complete_roster_disposition(
-    unit: dict[str, Any],
-    match_doc: dict[str, Any],
-) -> bool:
-    action = str((unit.get("current_decision") or {}).get("action") or "")
-    return (
-        action in {"assign_team", "team_unknown", "unresolved", "mixed_players"}
-        and roster_scope(match_doc, _team_label(unit.get("effective_team_label")))
-        == "complete_roster"
-    )
-
-
-def _has_safe_alternative_named_evidence(
-    unit: dict[str, Any],
-    units: Iterable[dict[str, Any]],
-) -> bool:
-    """Allow a declined card to yield to another safe, overlapping source.
-
-    If no alternative exists we preserve the prior complete-roster semantics:
-    the card remains visible as the only available route to coverage.  This
-    avoids silently downgrading a hard coverage gap after a team-only answer.
-    """
-    owned = {
-        (str(pair[0]), int(pair[1]))
-        for pair in unit.get("detected_pairs") or []
-        if isinstance(pair, (list, tuple)) and len(pair) >= 2
-    }
-    if not owned:
-        return False
-    team = _team_label(unit.get("effective_team_label"))
-    for other in units:
-        if other is unit or (other.get("current_decision") or {}).get("action"):
-            continue
-        if other.get("operator_actionable") is False or not other.get("has_operator_visual_evidence"):
-            continue
-        if _team_label(other.get("effective_team_label")) != team:
-            continue
-        other_pairs = {
-            (str(pair[0]), int(pair[1]))
-            for pair in other.get("detected_pairs") or []
-            if isinstance(pair, (list, tuple)) and len(pair) >= 2
-        }
-        if owned & other_pairs:
-            return True
-    return False
 
 
 def _readiness(

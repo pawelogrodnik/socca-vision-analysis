@@ -29,6 +29,10 @@ from app.services.identity_reviewed_correction_context import (
     reviewed_decisions_semantic_digest,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_hot_state import (
+    hot_context,
+    load_or_rebuild_review_hot_state,
+)
 from app.services.identity_reviewed_mixed_resolution import save_inline_temporal_split
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
@@ -45,6 +49,157 @@ from app.services.review_workflow_state import get_review_workflow_state
 
 
 class ReviewedIdentityCorrectionTests(unittest.TestCase):
+    def test_whole_subject_hot_context_digest_authorizes_exact_save_and_rejects_stale(self) -> None:
+        """A materialized whole subject has the same stale contract as segments.
+
+        Exercise the public correction-context GET followed by the public
+        deferred-save route.  The warm save must use the server-owned unit,
+        rather than rebuild progress, and a browser-supplied wrong digest must
+        fail before it reaches persistence.
+        """
+        from fastapi import HTTPException, Response
+        from app.main import (
+            get_match_reviewed_correction_context,
+            post_match_reviewed_identity_correction,
+        )
+
+        with _workspace() as root:
+            _fixture(root)
+            candidate = _load(root / "identity_candidate_shadow.json")
+            candidate["subjects"] = [
+                row for row in candidate["subjects"]
+                if row.get("candidate_subject_id") != "su"
+            ]
+            _write(root / "identity_candidate_shadow.json", candidate)
+            progress = _whole_subject_hot_progress()
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                return_value=progress,
+            ) as build_progress:
+                context = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="s1",
+                    review_target_id=None,
+                )
+                self.assertEqual(context["scope_kind"], "whole_subject")
+                self.assertTrue(context["source_ownership_digest"])
+
+                saved = post_match_reviewed_identity_correction(
+                    "m1",
+                    {
+                        "candidate_subject_id": "s1",
+                        "action": "assign_roster_player",
+                        "player_id": "p1",
+                        "source_ownership_digest": context["source_ownership_digest"],
+                        "review_state_version": context["review_state_version"],
+                        "defer_recompute": True,
+                    },
+                )
+
+            self.assertTrue(saved["recompute_deferred"])
+            # One cold GET built the state; the ordinary save projected it in
+            # memory and did not re-run match-wide progress materialization.
+            self.assertEqual(build_progress.call_count, 1)
+
+        with _workspace() as root:
+            _fixture(root)
+            candidate = _load(root / "identity_candidate_shadow.json")
+            candidate["subjects"] = [
+                row for row in candidate["subjects"]
+                if row.get("candidate_subject_id") != "su"
+            ]
+            _write(root / "identity_candidate_shadow.json", candidate)
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                return_value=_whole_subject_hot_progress(),
+            ):
+                context = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="s1",
+                    review_target_id=None,
+                )
+                with self.assertRaises(HTTPException) as raised:
+                    post_match_reviewed_identity_correction(
+                        "m1",
+                        {
+                            "candidate_subject_id": "s1",
+                            "action": "assign_roster_player",
+                            "player_id": "p1",
+                            "source_ownership_digest": "wrong-digest",
+                            "review_state_version": context["review_state_version"],
+                            "defer_recompute": True,
+                        },
+                    )
+
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(raised.exception.detail["code"], "review_target_stale")
+            self.assertFalse((root / "identity_roster_subject_review_decisions_shadow.json").exists())
+
+    def test_hot_context_preserves_legacy_operator_evidence_for_every_scope(self) -> None:
+        """The hot read model must not make split evidence poorer than legacy.
+
+        This exercises the actual legacy context builder for a whole subject,
+        its team-attribution provenance, a material continuity parent, and
+        canonical child targets created by a persisted temporal split.
+        """
+        with _workspace() as root:
+            _fixture(root)
+            cards = _load(root / "identity_roster_subject_review_shadow.json")
+            cards["cards"][0]["visual_evidence"] = {
+                "kind": "team_attribution",
+                "anchor_crops": [],
+            }
+            _write(root / "identity_roster_subject_review_shadow.json", cards)
+            _add_natural_material_continuity_case(root)
+            match = _match()
+
+            state = load_or_rebuild_review_hot_state(root, match)
+            _assert_hot_context_equivalent(
+                self,
+                reviewed_correction_context(root, match, "s1"),
+                hot_context(state, "s1"),
+            )
+
+            material = next(
+                unit for unit in state["internal_review_units"]
+                if unit.get("scope_kind") == "material_continuity"
+            )
+            _assert_hot_context_equivalent(
+                self,
+                reviewed_correction_context(root, match, material["candidate_subject_id"]),
+                hot_context(state, material["candidate_subject_id"]),
+            )
+
+            split = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": material["candidate_subject_id"],
+                    "continuity_group_id": material["continuity_group_id"],
+                    "source_ownership_digest": material["source_ownership_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [349],
+                    "segment_assignments": [
+                        {"action": "assign_roster_player", "player_id": "p1"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            state = load_or_rebuild_review_hot_state(root, match)
+            for target_id in split["saved_case"]["segment_target_ids"]:
+                _assert_hot_context_equivalent(
+                    self,
+                    reviewed_correction_context(
+                        root,
+                        match,
+                        material["candidate_subject_id"],
+                        target_id,
+                    ),
+                    hot_context(state, material["candidate_subject_id"], target_id),
+                )
+
     def test_structural_and_action_validation_are_order_independent(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -2161,6 +2316,62 @@ def _workflow_evidence(*, normal: int, mixed: int) -> dict:
     }
 
 
+def _whole_subject_hot_progress() -> dict:
+    """Minimal authoritative progress input for the public hot-state route."""
+    unit = {
+        "candidate_subject_id": "s1",
+        "scope_kind": "whole_subject",
+        "source_team_label": "A",
+        "effective_team_label": "A",
+        "tracklet_ids": ["t1", "t1b"],
+        "detected_pairs": [("t1", 3), ("t1", 4), ("t1b", 8), ("t1b", 9)],
+        "detected_observation_count": 4,
+        "detected_frame_count": 4,
+        "detected_time_sec": 0.16,
+        "frame_start": 3,
+        "frame_end": 9,
+        "current_resolution_status": "pending_high_priority",
+        "priority": "high",
+        "operator_actionable": True,
+        "has_operator_visual_evidence": True,
+        "visual_evidence": {"kind": "identity_continuity", "anchor_crops": []},
+    }
+    return {
+        "schema_version": "2.8.0",
+        "status": "ready",
+        "source_snapshot_digest": "fixture-snapshot",
+        "next_cases": [dict(unit)],
+        "optional_audit_cases": [],
+        "summary": {},
+        "deferred_correction_context": {
+            "schema_version": "1.0.0",
+            "status": "ready",
+            "detected_team_evidence_status": "ready",
+            "subjects": [{
+                "candidate_subject_id": "s1",
+                "source_team_label": "A",
+                "detected_team_labels": ["A"],
+                "detected_frames": [3, 4, 8, 9],
+            }, {
+                "candidate_subject_id": "s2",
+                "source_team_label": "B",
+                "detected_team_labels": ["B"],
+                "detected_frames": [20],
+            }],
+        },
+        "_internal_review_units": [unit],
+        "_projection_inputs": {
+            "match_id": "m1",
+            "coverage": {},
+            "pair_index": [],
+            "observed_pairs": [],
+            "technical_diagnostics": {},
+            "mixed_players": {},
+            "deferred_correction_context": {},
+        },
+    }
+
+
 def _tracklets(root: Path) -> dict[str, dict]:
     return {
         row["tracklet_id"]: row
@@ -2170,6 +2381,35 @@ def _tracklets(root: Path) -> dict[str, dict]:
 
 def _subject_row(snapshot: dict, subject_id: str) -> dict:
     return next(row for row in snapshot["tracklet_assignments"] if row["candidate_subject_id"] == subject_id)
+
+
+def _assert_hot_context_equivalent(
+    test: unittest.TestCase,
+    legacy: dict,
+    hot: dict,
+) -> None:
+    """Compare the complete operator contract, not implementation internals."""
+    fields = (
+        "scope_kind",
+        "source_team_label",
+        "effective_team_label",
+        "roster_options",
+        "slot_options",
+        "current_decision",
+        "source_ownership_digest",
+        "frame_ranges",
+        "frame_start",
+        "frame_end",
+        "detected_observation_count",
+        "action_capabilities",
+        "source_evidence_kind",
+        "temporal_split",
+        "legacy_suggestion",
+        "visual_evidence",
+    )
+    for field in fields:
+        with test.subTest(field=field, scope=legacy.get("scope_kind")):
+            test.assertEqual(hot.get(field), legacy.get(field))
 
 
 def _immutable_identity_files(root: Path) -> dict[str, bytes]:
