@@ -26,6 +26,8 @@ from app.services.identity_reviewed_mixed_store import (
     current_mixed_subject_digest,
     load_mixed_player_cases,
 )
+from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
+from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
 from app.services.identity_reviewed_correction_context import reviewed_correction_context
 from app.services.identity_reviewed_review_source import build_review_source_boundary_refinement
 from app.services.identity_reviewed_mixed_store import (
@@ -653,6 +655,264 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertFalse(child_ids & decision_ids)
             self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
 
+    def test_direct_supersede_removes_orphan_manual_slot_created_by_split_child(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 7)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            raw_before = (root / "tracklets.json").read_bytes()
+            split = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "create_new_stable_player", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            self.assertIn("A08", build_reviewed_slot_registry(root))
+
+            persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "action": "assign_team",
+                    "team_label": "A",
+                    "source_ownership_digest": digest,
+                },
+                use_materialized_context=False,
+            )
+
+            self.assertFalse(any(
+                row.get("case_id") == split["saved_case"]["case_id"]
+                for row in load_mixed_player_cases(root)["cases"]
+            ))
+            self.assertNotIn("A08", build_reviewed_slot_registry(root))
+            self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
+
+    def test_split_edit_removes_orphan_manual_slot_from_replaced_child(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 7)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            initial = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "create_new_stable_player", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            self.assertIn("A08", build_reviewed_slot_registry(root))
+
+            save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "existing_split_semantic_digest": initial["saved_case"]["split_semantic_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [5],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+
+            self.assertNotIn("A08", build_reviewed_slot_registry(root))
+
+    def test_superseding_child_keeps_manual_slot_with_surviving_reference(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 7)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "create_new_stable_player", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            document = load_reviewed_slot_assignments(root)
+            document["decisions"] = [{
+                "candidate_subject_id": "surviving-subject",
+                "action": "assign_existing_slot",
+                "stable_slot_id": "A08",
+            }]
+            _write(root / "reviewed_identity_slot_assignments.json", document)
+
+            persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "action": "assign_team",
+                    "team_label": "A",
+                    "source_ownership_digest": digest,
+                },
+                use_materialized_context=False,
+            )
+
+            self.assertIn("A08", build_reviewed_slot_registry(root))
+
+    def test_canonical_slot_is_never_collected_when_split_is_replaced(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 8)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            initial = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_existing_slot", "stable_slot_id": "A08"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "existing_split_semantic_digest": initial["saved_case"]["split_semantic_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [5],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+
+            self.assertEqual(build_reviewed_slot_registry(root)["A08"]["status"], "canonical")
+
+    def test_direct_supersede_cleanup_failure_restores_split_children_and_manual_slot(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 7)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            split = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "create_new_stable_player", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            artifacts = {
+                name: (root / name).read_bytes()
+                for name in (
+                    "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_decisions.json",
+                    "reviewed_identity_slot_assignments.json",
+                )
+            }
+            with patch(
+                "app.services.identity_reviewed_corrections.cleanup_unreferenced_manual_reviewed_slots",
+                side_effect=RuntimeError("cleanup failed"),
+            ), self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                persist_reviewed_identity_correction(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "action": "assign_team",
+                        "team_label": "A",
+                        "source_ownership_digest": digest,
+                    },
+                    use_materialized_context=False,
+                )
+
+            self.assertTrue(any(
+                row.get("case_id") == split["saved_case"]["case_id"]
+                for row in load_mixed_player_cases(root)["cases"]
+            ))
+            for name, before in artifacts.items():
+                self.assertEqual((root / name).read_bytes(), before)
+
+    def test_split_edit_cleanup_failure_restores_old_children_and_manual_slot(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 7)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            initial = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "create_new_stable_player", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            artifacts = {
+                name: (root / name).read_bytes()
+                for name in (
+                    "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_decisions.json",
+                    "reviewed_identity_slot_assignments.json",
+                )
+            }
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.cleanup_unreferenced_manual_reviewed_slots",
+                side_effect=RuntimeError("cleanup failed"),
+            ), self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                save_inline_temporal_split(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_ownership_digest": digest,
+                        "existing_split_semantic_digest": initial["saved_case"]["split_semantic_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [5],
+                        "segment_assignments": [
+                            {"action": "assign_team", "team_label": "A"},
+                            {"action": "assign_team", "team_label": "B"},
+                        ],
+                    },
+                )
+
+            for name, before in artifacts.items():
+                self.assertEqual((root / name).read_bytes(), before)
+
     def test_invalid_direct_parent_decision_keeps_saved_inline_split_intact(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -687,6 +947,37 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertEqual((root / "reviewed_identity_mixed_players.json").read_bytes(), before)
             restored = reviewed_correction_context(root, match, "subject-mixed")["temporal_split"]
             self.assertEqual(restored["split_semantic_digest"], split["saved_case"]["split_semantic_digest"])
+
+    def test_direct_parent_decision_retires_exact_complex_mix_blocker(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            complex_case = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "unresolved_complex_mix",
+                },
+            )
+
+            persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "action": "assign_team",
+                    "team_label": "A",
+                    "source_ownership_digest": digest,
+                },
+                use_materialized_context=False,
+            )
+
+            self.assertFalse(any(
+                row.get("case_id") == complex_case["saved_case"]["case_id"]
+                for row in load_mixed_player_cases(root)["cases"]
+            ))
 
     def test_inline_split_rolls_back_partial_child_decisions(self) -> None:
         with _workspace() as root:
@@ -800,6 +1091,13 @@ def _fixture(root: Path) -> dict:
     }]})
     _write(root / "global_identity.json", {"slots": []})
     return match
+
+
+def _reserve_canonical_slots(root: Path, count: int) -> None:
+    _write(
+        root / "global_identity.json",
+        {"slots": [{"slot_id": f"A{index:02d}"} for index in range(1, count + 1)]},
+    )
 
 
 def _workflow_evidence(*, normal: int, mixed: int) -> dict:

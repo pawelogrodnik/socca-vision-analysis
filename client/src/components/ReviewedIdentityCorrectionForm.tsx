@@ -222,7 +222,7 @@ export function ReviewedIdentityCorrectionForm({
         <h4>{splitOpen ? 'Podziel fragment' : action ? actionLabel : 'Popraw przypisanie'}</h4>
         <p>{context?.scope_copy || 'Decyzja obejmie pokazany fragment zawodnika.'}</p>
       </div>
-      {navigation && (action || splitOpen) && <button type='button' className='secondary compact-button' onClick={returnToCategories} disabled={busy}>
+      {navigation && action && !splitOpen && <button type='button' className='secondary compact-button' onClick={returnToCategories} disabled={busy}>
         ← Wróć
       </button>}
     </header>
@@ -238,6 +238,10 @@ export function ReviewedIdentityCorrectionForm({
       {context?.temporal_split?.resolution_status === 'resolved' && !splitOpen && <div className='reviewed-correction-suggestion'>
         <strong>Aktualna decyzja: Podział na {context.temporal_split.segment_assignments.length} fragmentów.</strong>
         <button type='button' className='secondary compact-button' onClick={() => selectAction('split')} disabled={busy}>Edytuj podział</button>
+      </div>}
+      {context?.temporal_split?.resolution_status === 'unresolved_complex_mix' && !splitOpen && <div className='reviewed-correction-suggestion'>
+        <strong>Aktualna decyzja: Nie udało się bezpiecznie podzielić tego fragmentu czasowo.</strong>
+        <button type='button' className='secondary compact-button' onClick={() => selectAction('split')} disabled={busy}>Rozstrzygnij ponownie</button>
       </div>}
       {range && <p className='reviewed-correction-range'>Zakres: {range}<br />{entity.detected_evidence_count} wykryte obserwacje</p>}
 
@@ -266,6 +270,9 @@ export function ReviewedIdentityCorrectionForm({
       {action && <section className='reviewed-correction-detail' aria-label={`Wybrana decyzja: ${actionLabel}`}>
         {context?.temporal_split?.resolution_status === 'resolved' && <p className='reviewed-correction-suggestion'>
           Ta decyzja zastąpi zapisany podział oraz decyzje jego fragmentów.
+        </p>}
+        {context?.temporal_split?.resolution_status === 'unresolved_complex_mix' && <p className='reviewed-correction-suggestion'>
+          Ta decyzja zastąpi wcześniejsze oznaczenie złożonej mieszanki.
         </p>}
         {action === 'assign_team' && <p className='reviewed-correction-range'>Przypiszę tylko {operatorTeamName(selectedTeamLabel)}. Nie powstanie nowy slot ani indywidualne statystyki zawodnika.</p>}
         {action === 'assign_team' && <div className='reviewed-action-cards' role='radiogroup' aria-label='Wybierz drużynę'>

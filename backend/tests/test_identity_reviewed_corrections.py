@@ -239,6 +239,45 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(player["confirmed_detected_observations"], len(owned_observations))
             self.assertEqual(player["heatmap_samples"], len(owned_observations))
 
+    def test_material_direct_save_without_split_skips_superseding_source_resolve(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            unit = {
+                "candidate_subject_id": "continuity:A12:100-101",
+                "continuity_group_id": "continuity:A12:100-101",
+                "scope_kind": "material_continuity",
+                "effective_team_label": "A",
+                "source_ownership_digest": "material-digest",
+                "continuity_subject_ids": ["mc1"],
+                "continuity_members": [{"candidate_subject_id": "mc1", "detected_pairs": [["tm1", 100]]}],
+                "owned_observations": [{"tracklet_id": "tm1", "frame": 100}],
+            }
+            progress = {"_internal_review_units": [unit]}
+            with (
+                patch(
+                    "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
+                    return_value=progress,
+                ) as progress_builder,
+                patch(
+                    "app.services.identity_reviewed_corrections._direct_correction_source",
+                    side_effect=AssertionError("superseding resolve must be skipped"),
+                ) as direct_source,
+            ):
+                persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": unit["candidate_subject_id"],
+                        "action": "assign_team",
+                        "team_label": "A",
+                        "source_ownership_digest": unit["source_ownership_digest"],
+                    },
+                    authorized_review_unit=unit,
+                )
+
+            direct_source.assert_not_called()
+            self.assertEqual(progress_builder.call_count, 1)
+
     def test_material_continuity_false_detection_is_excluded_during_authoritative_recompute(self) -> None:
         with _workspace() as root:
             _fixture(root)

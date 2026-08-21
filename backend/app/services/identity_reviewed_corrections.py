@@ -63,6 +63,9 @@ from app.services.identity_reviewed_material_continuity import (
     DECISIONS_FILENAME as MATERIAL_CONTINUITY_DECISIONS_FILENAME,
     save_material_continuity_decision,
 )
+from app.services.identity_reviewed_slot_cleanup import (
+    cleanup_unreferenced_manual_reviewed_slots,
+)
 from app.services.identity_roster_subject_review_store import (
     REVIEW_DECISIONS_FILENAME,
     save_identity_roster_subject_review,
@@ -183,6 +186,22 @@ def persist_reviewed_identity_correction(
     """
     action = str(payload.get("action") or "").strip()
     if action == "mixed_players":
+        return _persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
+    if (
+        isinstance(authorized_review_unit, dict)
+        and authorized_review_unit.get("scope_kind") == "material_continuity"
+        and not _has_potential_inline_split(match_path, payload)
+    ):
+        # The regular material save will perform its own authoritative stale
+        # check.  Avoid resolving the parent solely to learn that no split
+        # exists to supersede.
         return _persist_reviewed_identity_correction(
             match_path,
             match_doc,
@@ -534,6 +553,29 @@ def _direct_correction_source(
     )
 
 
+def _has_potential_inline_split(match_path: Path, payload: dict[str, Any]) -> bool:
+    """Cheap non-authoritative gate before resolving a material parent.
+
+    Browser data can only make this return true; deletion still requires the
+    authoritative exact source and digest resolution below.
+    """
+    wanted = {
+        "candidate_subject_id": str(payload.get("candidate_subject_id") or ""),
+        "review_target_id": str(payload.get("review_target_id") or "") or None,
+        "continuity_group_id": str(payload.get("continuity_group_id") or "") or None,
+        "source_ownership_digest": str(payload.get("source_ownership_digest") or "") or None,
+    }
+    return any(
+        str(case.get("original_issue") or "") == "inline_temporal_split"
+        and isinstance(case.get("source"), dict)
+        and all(
+            value is None or case["source"].get(key) == value
+            for key, value in wanted.items()
+        )
+        for case in load_mixed_player_cases(match_path).get("cases") or []
+    )
+
+
 def _direct_correction_rollback_paths(match_path: Path) -> dict[Path, bytes | None]:
     """Snapshot every reviewed decision artifact a direct save can change."""
     names = (
@@ -597,13 +639,16 @@ def _retire_exact_inline_split(match_path: Path, source: dict[str, Any]) -> None
     if target_ids:
         from app.services.identity_reviewed_mixed_resolution import _remove_superseded_segment_decisions
 
-        _remove_superseded_segment_decisions(match_path, target_ids)
+        removed = _remove_superseded_segment_decisions(match_path, target_ids)
+    else:
+        removed = []
     retained = [
         row
         for row in document.get("cases") or []
         if not (isinstance(row, dict) and str(row.get("case_id") or "") == case_id)
     ]
     save_mixed_case_document(match_path, {**document, "cases": retained})
+    cleanup_unreferenced_manual_reviewed_slots(match_path, removed)
 
 
 def _validate_new_player_active_cap(

@@ -33,6 +33,9 @@ from app.services.identity_reviewed_segments import (
 )
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_slot_review import FILENAME as SLOT_REVIEW_FILENAME
+from app.services.identity_reviewed_slot_cleanup import (
+    cleanup_unreferenced_manual_reviewed_slots,
+)
 
 
 def save_mixed_player_resolution(
@@ -227,12 +230,14 @@ def save_inline_temporal_split(
             for path in (
                 match_path / "reviewed_identity_mixed_players.json",
                 match_path / DECISIONS_FILENAME,
+                match_path / SLOT_REVIEW_FILENAME,
             )
         }
         try:
             _replace_case(match_path, document, cases, case)
             if old_target_ids:
-                _remove_superseded_segment_decisions(match_path, old_target_ids)
+                removed = _remove_superseded_segment_decisions(match_path, old_target_ids)
+                cleanup_unreferenced_manual_reviewed_slots(match_path, removed)
         except Exception:
             for path, previous in rollback_paths.items():
                 if previous is None:
@@ -312,8 +317,11 @@ def save_inline_temporal_split(
     }
     try:
         save_mixed_case_document(match_path, pending_document)
-        if old_target_ids:
+        removed = (
             _remove_superseded_segment_decisions(match_path, old_target_ids)
+            if old_target_ids
+            else []
+        )
         review = build_segment_review_document(match_path, match_doc)
         saved = [
             save_segment_decision(
@@ -340,6 +348,7 @@ def save_inline_temporal_split(
             }
         )
         _replace_case(match_path, document, pending_cases, case)
+        cleanup_unreferenced_manual_reviewed_slots(match_path, removed)
         # Refresh the persisted target snapshot after the complete atomic
         # batch. The source cards are then marked reviewed on the next workflow
         # refresh instead of reappearing as stale pending work.
@@ -412,10 +421,19 @@ def _normalized_assignments(assignments: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _remove_superseded_segment_decisions(match_path: Path, target_ids: set[str]) -> None:
+def _remove_superseded_segment_decisions(
+    match_path: Path,
+    target_ids: set[str],
+) -> list[dict[str, Any]]:
     document = load_segment_decisions(match_path)
+    removed = [
+        dict(row)
+        for row in document.get("decisions") or []
+        if str(row.get("review_target_id") or "") in target_ids
+    ]
     retained = [
         row for row in document.get("decisions") or []
         if str(row.get("review_target_id") or "") not in target_ids
     ]
     write_identity_json_atomic(match_path / DECISIONS_FILENAME, {**document, "decisions": retained})
+    return removed

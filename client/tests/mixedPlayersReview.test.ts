@@ -160,10 +160,14 @@ test('new correction flow opens the shared inline split editor while legacy work
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.match(editor, /Doprecyzuj moment przejścia/);
   assert.match(editor, /window\.confirm/);
+  assert.match(editor, /Wróć bez zapisu/);
   assert.match(editor, /action_capabilities\[card\.action\]\?\.allowed === true/);
   assert.match(editor, /Zapisz podział \+ następny/);
   assert.match(form, /Aktualna decyzja: Podział na/);
+  assert.match(form, /Nie udało się bezpiecznie podzielić tego fragmentu czasowo/);
+  assert.match(form, /zastąpi wcześniejsze oznaczenie złożonej mieszanki/);
   assert.match(form, /zastąpi zapisany podział oraz decyzje jego fragmentów/);
+  assert.match(form, /navigation && action && !splitOpen/);
   assert.match(form, /splitOpen \? null : navigation/);
   assert.match(mixed, /Materiał w kolejności czasu/);
   assert.match(mixed, /Doprecyzuj moment przejścia/);
