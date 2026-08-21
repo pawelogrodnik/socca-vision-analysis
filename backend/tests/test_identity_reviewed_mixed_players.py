@@ -8,11 +8,12 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.responses import FileResponse
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 
 from app.main import (
     get_artifact,
     get_match_reviewed_identity_mixed_boundary_refinement,
+    get_match_reviewed_identity_progress,
     get_match_reviewed_identity_temporal_split_refinement,
     post_match_reviewed_identity_temporal_split,
 )
@@ -35,6 +36,7 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_hot_state import FILENAME, load_or_rebuild_review_hot_state
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_decisions,
@@ -145,6 +147,79 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                     result = post_match_reviewed_identity_temporal_split("m1", payload)
 
                 self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
+                self.assertTrue(result["recompute_deferred"])
+                self.assertTrue(result["review_state_rebuild_required"])
+
+    def test_temporal_split_response_invalidates_hot_state_and_next_progress_rebuilds_once(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {})
+            hot_state = load_or_rebuild_review_hot_state(root, match)
+            self.assertTrue((root / FILENAME).exists())
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "review_state_version": hot_state["state_version"],
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            workflow = {"phase": "exceptions", "allowed_actions": ["review_identity_issue"]}
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch("app.main.get_review_workflow_state", return_value=workflow),
+            ):
+                result = post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertTrue(result["recompute_deferred"])
+            self.assertTrue(result["review_state_rebuild_required"])
+            self.assertFalse((root / FILENAME).exists())
+
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                    wraps=build_reviewed_identity_progress,
+                ) as rebuild,
+            ):
+                get_match_reviewed_identity_progress("m1", Response())
+
+            self.assertEqual(rebuild.call_count, 1)
+            self.assertTrue((root / FILENAME).exists())
+
+    def test_unresolved_complex_temporal_split_requires_reload_and_preserves_blocker(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {})
+            hot_state = load_or_rebuild_review_hot_state(root, match)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "review_state_version": hot_state["state_version"],
+                "resolution": "unresolved_complex_mix",
+            }
+            workflow = {"phase": "exceptions", "allowed_actions": ["review_identity_issue"]}
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch("app.main.get_review_workflow_state", return_value=workflow),
+            ):
+                result = post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertTrue(result["recompute_deferred"])
+            self.assertTrue(result["review_state_rebuild_required"])
+            self.assertFalse((root / FILENAME).exists())
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+            ):
+                progress = get_match_reviewed_identity_progress("m1", Response())
+            self.assertEqual(progress["mixed_players"]["summary"]["complex_unresolved"], 1)
 
     def test_persisted_temporal_split_cannot_be_edited_from_a_forbidden_workflow_phase(self) -> None:
         with _workspace() as root:

@@ -392,3 +392,17 @@ test('exception review uses deferred saves and one explicit batch finalize', () 
   assert.match(form, /invalidateReviewedCorrectionContext\(matchId\);/);
   assert.match(api, /reviewed-identity\/corrections\/finalize/);
 });
+
+test('temporal split result follows the structural queue reload path', () => {
+  const panel = readFileSync(new URL('../src/components/IdentityExceptionReviewPanel.tsx', import.meta.url), 'utf8');
+  const form = readFileSync(new URL('../src/components/ReviewedIdentityCorrectionForm.tsx', import.meta.url), 'utf8');
+  const structuralBranch = panel.indexOf('if (result.review_state_rebuild_required)');
+  const localRemoval = panel.indexOf('const next = removeResolvedReviewCase');
+
+  assert.ok(structuralBranch >= 0);
+  assert.ok(localRemoval >= 0);
+  assert.ok(structuralBranch < localRemoval);
+  assert.match(panel.slice(structuralBranch, localRemoval), /void loadCases\(/);
+  assert.doesNotMatch(panel.slice(structuralBranch, localRemoval), /removeResolvedReviewCase/);
+  assert.match(form, /invalidateReviewedCorrectionContext\(matchId\);/);
+});

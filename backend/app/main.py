@@ -2368,7 +2368,7 @@ def post_match_reviewed_identity_temporal_split(
         # this is deliberately a cache invalidation, not a guessed incremental
         # queue mutation. The next request safely materializes canonical state.
         invalidate_review_hot_state(path)
-        return result
+        return {**result, "review_state_rebuild_required": True}
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:
