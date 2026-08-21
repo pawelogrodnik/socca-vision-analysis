@@ -15,6 +15,8 @@ from app.services.identity_reviewed_hot_state import (
     load_or_rebuild_review_hot_state,
     update_hot_state_after_deferred_save,
 )
+from app.services.identity_reviewed_coverage import summarize_effective_observations
+from app.services.identity_reviewed_progress import project_reviewed_identity_progress
 
 
 def _progress() -> dict:
@@ -179,9 +181,123 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             persisted = json.loads((root / FILENAME).read_text(encoding="utf-8"))
             self.assertEqual(persisted["internal_review_units"][0]["detected_team_labels"], ["A", "B"])
 
+    def test_hot_projection_exposes_next_required_case_after_non_naming_decision(self) -> None:
+        """Coverage/MAX ranking is re-projected, rather than removing a card.
+
+        Two overlapping candidates initially make only A required. Once the
+        operator explicitly declines to name A, B must become the required
+        safe alternative for the same unresolved observations.
+        """
+        with _workspace() as root:
+            match = _complete_roster_match()
+            units = [_coverage_unit("a"), _coverage_unit("b")]
+            inputs = _projection_inputs(match, units)
+            initial = project_reviewed_identity_progress(
+                units, match, inputs, include_internal_units=True,
+            )
+            self.assertEqual([row["candidate_subject_id"] for row in initial["next_cases"]], ["a"])
+            state = {
+                "state_version": 4,
+                "progress": {key: value for key, value in initial.items() if key != "_internal_review_units"},
+                "internal_review_units": initial["_internal_review_units"],
+                "unit_lookup": {"a\u001f": 0, "b\u001f": 1},
+                "source_index": {},
+                "projection_inputs": inputs,
+                "roster_options": [{"player_id": "p1", "team_label": "A"}],
+            }
+            updated = update_hot_state_after_deferred_save(
+                root,
+                match,
+                state,
+                state["internal_review_units"][0],
+                {"action": "unresolved"},
+                "after-unresolved",
+            )
+            reference_units = [dict(unit) for unit in initial["_internal_review_units"]]
+            reference_units[0]["current_decision"] = {"action": "unresolved"}
+            reference_units[0]["current_resolution_status"] = "reviewed_by_operator"
+            reference = project_reviewed_identity_progress(reference_units, match, inputs)
+            semantic_fields = (
+                "next_cases", "optional_audit_cases", "summary", "coverage_readiness",
+                "coverage_residuals", "workload", "optional_audit", "observations",
+            )
+            self.assertEqual(
+                {key: updated["progress"][key] for key in semantic_fields},
+                {key: reference[key] for key in semantic_fields},
+            )
+            self.assertEqual([row["candidate_subject_id"] for row in updated["progress"]["next_cases"]], ["b"])
+
+    def test_rebuild_revision_is_never_reused_after_hot_state_invalidation(self) -> None:
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            return_value=_progress(),
+        ):
+            first = load_or_rebuild_review_hot_state(root, _match())
+            (root / FILENAME).unlink()
+            second = load_or_rebuild_review_hot_state(root, _match())
+        self.assertGreater(second["state_version"], first["state_version"])
+
+    def test_roster_change_invalidates_an_otherwise_fresh_materialization(self) -> None:
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            return_value=_progress(),
+        ) as build:
+            load_or_rebuild_review_hot_state(root, _match())
+            changed = _match()
+            changed["teams"][0]["players"].append({"id": "p2", "name": "Second"})
+            load_or_rebuild_review_hot_state(root, changed)
+        self.assertEqual(build.call_count, 2)
+
 
 def _match() -> dict:
     return {"id": "hot-state", "teams": [{"team_label": "A", "players": [{"id": "p1", "name": "Player"}]}]}
+
+
+def _complete_roster_match() -> dict:
+    return {
+        "id": "hot-coverage",
+        "identity_review_scope": {"teams": {"A": "complete_roster", "B": "team_stats_only"}},
+        "teams": [{"team_label": "A", "players": [{"id": "p1", "name": "Player"}]}],
+    }
+
+
+def _coverage_unit(subject_id: str) -> dict:
+    return {
+        "candidate_subject_id": subject_id,
+        "scope_kind": "whole_subject",
+        "source_team_label": "A",
+        "effective_team_label": "A",
+        "tracklet_ids": ["t-1"],
+        "detected_pairs": [("t-1", 10), ("t-1", 11)],
+        "detected_observation_count": 2,
+        "detected_frame_count": 2,
+        "detected_time_sec": 0.08,
+        "current_resolution_status": "pending_optional",
+        "operator_actionable": True,
+        "has_operator_visual_evidence": True,
+        "visual_evidence": {"anchor_crops": [{"artifact": "crop.jpg"}]},
+        "reason_codes": ["long_unresolved_safe_anonymous"],
+    }
+
+
+def _projection_inputs(match: dict, units: list[dict]) -> dict:
+    rows = [
+        {"tracklet_id": "t-1", "frame": frame, "identity_status": "unresolved", "team_label": "A"}
+        for frame in (10, 11)
+    ]
+    coverage, pair_index = summarize_effective_observations(rows, match)
+    return {
+        "match_id": match["id"],
+        "coverage": coverage,
+        "pair_index": [
+            {"tracklet_id": tracklet_id, "frame": frame, "value": value}
+            for (tracklet_id, frame), value in pair_index.items()
+        ],
+        "observed_pairs": [("t-1", 10), ("t-1", 11)],
+        "technical_diagnostics": {},
+        "mixed_players": {},
+        "deferred_correction_context": {},
+    }
 
 
 def _write_json(path: Path, value: dict) -> None:

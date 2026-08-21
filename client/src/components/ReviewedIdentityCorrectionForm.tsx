@@ -275,7 +275,12 @@ export function ReviewedIdentityCorrectionForm({
         context={context}
         teams={teams}
         onCancel={returnToCategories}
-        onSaved={(result) => onSaved(result as unknown as ReviewedCorrectionResponse)}
+        onSaved={(result) => {
+          // A temporal split changes child topology and ownership. Unlike a
+          // normal decision, no prefetched correction context is safe to keep.
+          invalidateReviewedCorrectionContext(matchId);
+          onSaved(result as unknown as ReviewedCorrectionResponse);
+        }}
       />}
 
       {action && <section className='reviewed-correction-detail' aria-label={`Wybrana decyzja: ${actionLabel}`}>

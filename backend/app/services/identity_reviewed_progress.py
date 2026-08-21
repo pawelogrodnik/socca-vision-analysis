@@ -3,6 +3,7 @@ from __future__ import annotations
 """Read-only, operator-oriented progress for reviewed player identity."""
 
 from collections import Counter, defaultdict
+from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
@@ -165,10 +166,69 @@ def build_reviewed_identity_progress(
         excluded_observation_pairs=resolved_material_pairs,
     )
     coverage_context = load_effective_coverage_context(match_path, match_doc)
+    projection_inputs = {
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "source_snapshot_digest": coverage_context["source_snapshot_digest"],
+        "source_snapshot_file": reviewed_snapshot_file_fingerprint(match_path),
+        "source_review_scope_digest": identity_review_scope_digest(match_doc),
+        "identity_review_scope": identity_review_scope_read_model(match_doc),
+        "coverage": coverage_context["coverage"],
+        # The index is intentionally a compact, derived input. It allows a
+        # normal deferred save to re-project coverage without reopening the
+        # match-wide tracklets artifact.
+        "pair_index": _serialize_pair_index(coverage_context["pair_index"]),
+        "observed_pairs": sorted(_all_detected_pairs(tracklets)),
+        "mixed_players": build_mixed_review_queue(match_path, match_doc),
+        "technical_diagnostics": {
+            "candidate_subjects": len(subjects),
+            "tracklets": len(tracklets),
+            "unresolved_tracklet_assignments": _technical_unresolved(match_path, len(tracklets)),
+        },
+        "deferred_correction_context": build_reviewed_active_cap_context(
+            match_path,
+            whole_subject_units,
+        ),
+    }
+    result = project_reviewed_identity_progress(
+        units,
+        match_doc,
+        projection_inputs,
+        include_internal_units=include_internal_units,
+    )
+    if include_internal_units:
+        result["_projection_inputs"] = projection_inputs
+    return result
+
+
+def project_reviewed_identity_progress(
+    units: list[dict[str, Any]],
+    match_doc: dict[str, Any],
+    projection_inputs: dict[str, Any],
+    *,
+    include_internal_units: bool = False,
+) -> dict[str, Any]:
+    """Project the public queue from materialized reviewed-identity inputs.
+
+    This is the single authoritative queue projection used by both a cold
+    artifact build and an in-memory deferred correction.  It deliberately
+    consumes exact unit ownership plus compact coverage inputs only; callers
+    never need to emulate the coverage/MAX policy by patching counters.
+    """
+    units = deepcopy(units)
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        unit["detected_pairs"] = [
+            (str(pair[0]), int(pair[1]))
+            for pair in unit.get("detected_pairs") or []
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2
+        ]
+    coverage = dict(projection_inputs.get("coverage") or {})
+    pair_index = _deserialize_pair_index(projection_inputs.get("pair_index") or [])
     coverage_policy = apply_coverage_policy(
         units,
-        coverage_context["coverage"],
-        coverage_context["pair_index"],
+        coverage,
+        pair_index,
         match_doc,
     )
     queue_by_key = {
@@ -185,7 +245,11 @@ def build_reviewed_identity_progress(
         for unit in units
         if unit.get("operator_actionable") is False
     )
-    observed_pairs = _all_detected_pairs(tracklets)
+    observed_pairs = {
+        (str(pair[0]), int(pair[1]))
+        for pair in projection_inputs.get("observed_pairs") or []
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2
+    }
     operator_pairs = {
         pair
         for unit in units
@@ -201,7 +265,7 @@ def build_reviewed_identity_progress(
     confirmed_pairs = {
         pair
         for unit in units
-        if unit["canonical_player_id"]
+        if unit.get("canonical_player_id")
         for pair in unit["detected_pairs"]
     }
     # Coverage policy is authoritative and deliberately uncapped. Pagination
@@ -218,15 +282,14 @@ def build_reviewed_identity_progress(
         + int(coverage_policy["material_continuity_blockers"])
     )
     queue_total = completed + important_remaining
-    mixed_queue = build_mixed_review_queue(match_path, match_doc)
     result = {
         "schema_version": PROGRESS_SCHEMA_VERSION,
         "status": "ready",
-        "match_id": str(match_doc.get("id") or match_path.name),
-        "source_snapshot_digest": coverage_context["source_snapshot_digest"],
-        "source_snapshot_file": reviewed_snapshot_file_fingerprint(match_path),
-        "source_review_scope_digest": identity_review_scope_digest(match_doc),
-        "identity_review_scope": identity_review_scope_read_model(match_doc),
+        "match_id": str(projection_inputs.get("match_id") or match_doc.get("id") or ""),
+        "source_snapshot_digest": projection_inputs.get("source_snapshot_digest"),
+        "source_snapshot_file": projection_inputs.get("source_snapshot_file"),
+        "source_review_scope_digest": projection_inputs.get("source_review_scope_digest"),
+        "identity_review_scope": projection_inputs.get("identity_review_scope") or identity_review_scope_read_model(match_doc),
         "summary": {
             "review_units_total": len(units),
             "review_units_completed": completed,
@@ -262,7 +325,7 @@ def build_reviewed_identity_progress(
             "confirmed_player_observations": len(confirmed_pairs),
             "confirmed_player_observation_ratio": _ratio(len(confirmed_pairs), len(observed_pairs)),
         },
-        "identity_coverage": coverage_context["coverage"],
+        "identity_coverage": coverage,
         "coverage_readiness": coverage_policy["readiness"],
         "coverage_residuals": coverage_policy["residual_by_team"],
         "workload": coverage_policy["workload"],
@@ -271,12 +334,8 @@ def build_reviewed_identity_progress(
         "optional_audit_cases": [
             _public_unit(unit) for unit in coverage_policy["optional_audit_cases"]
         ],
-        "mixed_players": mixed_queue,
-        "technical_diagnostics": {
-            "candidate_subjects": len(subjects),
-            "tracklets": len(tracklets),
-            "unresolved_tracklet_assignments": _technical_unresolved(match_path, len(tracklets)),
-        },
+        "mixed_players": projection_inputs.get("mixed_players") or {},
+        "technical_diagnostics": projection_inputs.get("technical_diagnostics") or {},
         "policy": {
             "version": COVERAGE_POLICY_VERSION,
             "optional_max_version": OPTIONAL_MAX_POLICY_VERSION,
@@ -288,10 +347,7 @@ def build_reviewed_identity_progress(
             "queue_has_hard_case_cap": False,
         },
         "review_units": [_public_unit(unit, include_pairs=False) for unit in units],
-        "deferred_correction_context": build_reviewed_active_cap_context(
-            match_path,
-            whole_subject_units,
-        ),
+        "deferred_correction_context": projection_inputs.get("deferred_correction_context") or {},
     }
     if include_internal_units:
         # Server-only correction paths need the original exact ownership for
@@ -628,6 +684,40 @@ def _unit_key(unit: dict[str, Any]) -> tuple[str, str | None]:
         str(unit.get("candidate_subject_id") or ""),
         str(unit.get("review_target_id") or "") or None,
     )
+
+
+def _serialize_pair_index(
+    pair_index: dict[tuple[str, int], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Make the coverage read model durable without JSON tuple keys."""
+    return [
+        {
+            "tracklet_id": tracklet_id,
+            "frame": frame,
+            "value": dict(value),
+        }
+        for (tracklet_id, frame), value in sorted(pair_index.items())
+    ]
+
+
+def _deserialize_pair_index(
+    rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    output: dict[tuple[str, int], dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        tracklet_id = str(row.get("tracklet_id") or "")
+        if not tracklet_id:
+            continue
+        try:
+            frame = int(row.get("frame"))
+        except (TypeError, ValueError):
+            continue
+        value = row.get("value")
+        if isinstance(value, dict):
+            output[(tracklet_id, frame)] = dict(value)
+    return output
 
 
 def _tracklets(path: Path) -> dict[str, dict[str, Any]]:

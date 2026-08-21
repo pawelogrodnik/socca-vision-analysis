@@ -186,7 +186,7 @@ def persist_reviewed_identity_correction(
     """
     action = str(payload.get("action") or "").strip()
     if action == "mixed_players":
-        return _persist_reviewed_identity_correction(
+        result = _persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
@@ -194,6 +194,7 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
+        return {**result, "review_topology_changed": True}
     if (
         isinstance(authorized_review_unit, dict)
         and authorized_review_unit.get("scope_kind") == "material_continuity"
@@ -202,7 +203,7 @@ def persist_reviewed_identity_correction(
         # The regular material save will perform its own authoritative stale
         # check.  Avoid resolving the parent solely to learn that no split
         # exists to supersede.
-        return _persist_reviewed_identity_correction(
+        result = _persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
@@ -210,6 +211,7 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
+        return {**result, "review_topology_changed": action == "create_new_stable_player"}
     if (
         isinstance(authorized_review_unit, dict)
         and authorized_review_unit.get("_hot_state_authorized") is True
@@ -219,7 +221,7 @@ def persist_reviewed_identity_correction(
         # validated against the exact versioned source in the hot state. Do
         # not rescan raw observations merely to prove that there is no inline
         # split to retire.
-        return _persist_reviewed_identity_correction(
+        result = _persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
@@ -227,12 +229,13 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
+        return {**result, "review_topology_changed": action == "create_new_stable_player"}
     try:
         source = _direct_correction_source(match_path, match_doc, payload)
     except ReviewedIdentityReviewSourceError:
         # Preserve the existing, scope-specific stale-target validation and
         # error contract in the direct persistence path.
-        return _persist_reviewed_identity_correction(
+        result = _persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
@@ -240,9 +243,10 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
+        return {**result, "review_topology_changed": action == "create_new_stable_player"}
     saved_split = inline_temporal_split_for_source(match_path, source) if source else None
     if saved_split is None:
-        return _persist_reviewed_identity_correction(
+        result = _persist_reviewed_identity_correction(
             match_path,
             match_doc,
             payload,
@@ -250,6 +254,7 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
+        return {**result, "review_topology_changed": action == "create_new_stable_player"}
 
     rollback_paths = _direct_correction_rollback_paths(match_path)
     try:
@@ -270,7 +275,13 @@ def persist_reviewed_identity_correction(
             match_path,
             semantic_decision_digest=semantic_digest,
         )
-        return {**result, "semantic_decision_digest": semantic_digest}
+        return {
+            **result,
+            "semantic_decision_digest": semantic_digest,
+            # Retiring a parent split can remove child targets and orphaned
+            # manual slots, so an incremental card mutation is unsafe.
+            "review_topology_changed": True,
+        }
     except Exception:
         _restore_paths(rollback_paths)
         raise

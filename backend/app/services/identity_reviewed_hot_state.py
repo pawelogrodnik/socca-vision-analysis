@@ -21,6 +21,7 @@ from app.services.identity_reviewed_correction_context import (
 )
 from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
+    project_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
 )
 from app.services.identity_reviewed_slot_registry import (
@@ -34,7 +35,8 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 FILENAME = "reviewed_identity_hot_state.json"
-SCHEMA_VERSION = "1.2.0"
+REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
+SCHEMA_VERSION = "1.3.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -83,16 +85,18 @@ def rebuild_review_hot_state(
             load_reviewed_slot_assignments(match_path),
         )
     internal = list(progress.pop("_internal_review_units", []) or [])
+    projection_inputs = dict(progress.pop("_projection_inputs", {}) or {})
     _attach_exact_whole_subject_digests(match_path, internal)
     _attach_temporal_split_context(match_path, internal)
     state = _json_safe({
         "schema_version": SCHEMA_VERSION,
-        "state_version": 1,
+        "state_version": _next_state_version(match_path),
         "match_id": str(match_doc.get("id") or match_path.name),
         "progress": progress,
         "internal_review_units": internal,
         "unit_lookup": _unit_lookup(internal),
         "source_index": _source_index(internal),
+        "projection_inputs": projection_inputs,
         "roster_options": match_roster(match_doc),
         "slot_options": [registry[key] for key in sorted(registry)],
         "freshness": _freshness(match_path, match_doc),
@@ -151,12 +155,12 @@ def update_hot_state_after_deferred_save(
     saved_decision: dict[str, Any] | None,
     semantic_decision_digest: str,
 ) -> dict[str, Any]:
-    """Apply one saved operator disposition to the derived queue.
+    """Apply a save then use the canonical queue projection, never patches.
 
-    Finalization will reconstruct all coverage from canonical artifacts.  Until
-    then this is intentionally conservative: the exact reviewed card is
-    removed, its internal state is marked resolved, and no new work is guessed
-    into the queue.
+    The compact coverage pair index and every exact internal unit were captured
+    when the hot state was built.  Updating one unit therefore has the same
+    coverage/MAX consequences as a cold progress build without rereading the
+    match-wide tracklets file.
     """
     subject = str(review_unit.get("candidate_subject_id") or "")
     target = str(review_unit.get("review_target_id") or "") or None
@@ -166,6 +170,7 @@ def update_hot_state_after_deferred_save(
         for row in state.get("roster_options") or []
         if isinstance(row, dict)
     }
+    updated_unit = False
     for unit in state.get("internal_review_units") or []:
         if not isinstance(unit, dict):
             continue
@@ -183,26 +188,27 @@ def update_hot_state_after_deferred_save(
             unit["effective_team_label"] = roster_teams.get(player_id, unit.get("effective_team_label"))
         elif decision.get("team_label"):
             unit["effective_team_label"] = str(decision["team_label"]).upper()
-
-    progress = state.get("progress") or {}
-    for key in ("next_cases", "optional_audit_cases"):
-        progress[key] = [
-            row for row in progress.get(key) or []
-            if not (
-                str((row or {}).get("candidate_subject_id") or "") == subject
-                and (str((row or {}).get("review_target_id") or "") or None) == target
-            )
-        ]
-    summary = progress.get("summary")
-    if isinstance(summary, dict):
-        remaining = len(progress.get("next_cases") or [])
-        summary["important_decisions_remaining"] = remaining
-        summary["semantic_decisions_remaining"] = min(int(summary.get("semantic_decisions_remaining") or 0), remaining)
-        summary["coverage_decisions_remaining"] = min(int(summary.get("coverage_decisions_remaining") or 0), remaining)
-        summary["material_continuity_decisions_remaining"] = min(int(summary.get("material_continuity_decisions_remaining") or 0), remaining)
-        summary["optional_audit_cases_remaining"] = len(progress.get("optional_audit_cases") or [])
-    state["state_version"] = int(state.get("state_version") or 0) + 1
+        updated_unit = True
+        break
+    if not updated_unit:
+        raise ReviewedIdentityHotStateError("review_queue_stale")
+    projected = project_reviewed_identity_progress(
+        list(state.get("internal_review_units") or []),
+        match_doc,
+        dict(state.get("projection_inputs") or {}),
+        include_internal_units=True,
+    )
+    state["progress"] = {
+        key: value
+        for key, value in projected.items()
+        if key not in {"_internal_review_units", "_projection_inputs"}
+    }
+    state["internal_review_units"] = list(projected.get("_internal_review_units") or [])
+    state["unit_lookup"] = _unit_lookup(state["internal_review_units"])
+    state["source_index"] = _source_index(state["internal_review_units"])
+    state["state_version"] = _next_state_version(match_path)
     state["freshness"] = _freshness(match_path, match_doc, semantic_digest=semantic_decision_digest)
+    state = _json_safe(state)
     write_identity_json_atomic(match_path / FILENAME, state)
     return state
 
@@ -266,6 +272,7 @@ def _freshness(match_path: Path, match_doc: dict[str, Any], *, semantic_digest: 
     return {
         "source_snapshot_file": reviewed_snapshot_file_fingerprint(match_path),
         "source_review_scope_digest": identity_review_scope_digest(match_doc),
+        "roster_semantic_digest": _roster_semantic_digest(match_doc),
         "semantic_decision_digest": semantic_digest or reviewed_decisions_semantic_digest(match_path),
         "dependencies": {name: _file_fingerprint(match_path / name) for name in (
             "tracklets.json", "identity_candidate_shadow.json", "reviewed_identity_segment_review.json",
@@ -327,6 +334,23 @@ def invalidate_review_hot_state(match_path: Path) -> None:
         # fails freshness validation because canonical decision fingerprints
         # changed, so it can never continue serving as current state.
         pass
+
+
+def _next_state_version(match_path: Path) -> int:
+    """Allocate a durable monotonic revision even after cache invalidation."""
+    revision_path = match_path / REVISION_FILENAME
+    previous = _load(revision_path) or {}
+    version = max(0, int(previous.get("state_version") or 0)) + 1
+    write_identity_json_atomic(revision_path, {"state_version": version})
+    return version
+
+
+def _roster_semantic_digest(match_doc: dict[str, Any]) -> str:
+    """Freshness must cover all operator-visible roster choices and labels."""
+    return canonical_digest({
+        "identity_review_scope": identity_review_scope_digest(match_doc),
+        "roster": match_roster(match_doc),
+    })
 
 
 def _attach_exact_whole_subject_digests(

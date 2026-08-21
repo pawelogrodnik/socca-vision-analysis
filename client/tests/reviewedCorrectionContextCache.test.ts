@@ -67,3 +67,27 @@ test('does not restore an invalidated in-flight context after a newer request st
   assert.equal(latest.review_state_version, 2);
   assert.equal(cached.review_state_version, 2);
 });
+
+test('structural split invalidation removes current and prefetched match contexts', async () => {
+  let calls = 0;
+  const cache = createReviewedCorrectionContextCache(async (_matchId, subjectId) => {
+    calls += 1;
+    return {
+      candidate_subject_id: subjectId,
+      team_label: 'A', source_team_label: 'A', effective_team_label: 'A',
+      available_team_labels: ['A'], tracklet_ids: [], review_card_key: null,
+      roster_options: [], slot_options: [], current_decision: null,
+      semantic_decision_digest: `state-${calls}`, action_capabilities: {}, review_state_version: calls,
+    };
+  });
+  await Promise.all([
+    cache.load('m1', 'current'),
+    cache.load('m1', 'prefetched-next'),
+  ]);
+  cache.invalidate('m1');
+  const next = await cache.load('m1', 'prefetched-next');
+  const current = await cache.load('m1', 'current');
+  assert.equal(calls, 4);
+  assert.equal(next.review_state_version, 3);
+  assert.equal(current.review_state_version, 4);
+});

@@ -2209,22 +2209,29 @@ def post_match_reviewed_identity_correction(
             hot_started = time.perf_counter()
             hot_state = deferred_gate.get("hot_state")
             if isinstance(hot_state, dict):
-                try:
-                    hot_state = update_hot_state_after_deferred_save(
-                        path,
-                        match_document,
-                        hot_state,
-                        deferred_gate["review_unit"],
-                        result.get("saved_decision"),
-                        str(result.get("semantic_decision_digest") or ""),
-                    )
-                    result["review_state_version"] = hot_state.get("state_version")
-                except (OSError, ValueError):
-                    # Canonical persistence already succeeded. Never keep a
-                    # potentially contradictory cache: the next read will
-                    # rebuild from canonical artifacts.
+                if result.get("review_topology_changed") is True:
+                    # Splits, child cleanup and manual-slot creation alter
+                    # exact source topology. A new read must materialize from
+                    # canonical artifacts rather than patch the old queue.
                     invalidate_review_hot_state(path)
                     result["review_state_rebuild_required"] = True
+                else:
+                    try:
+                        hot_state = update_hot_state_after_deferred_save(
+                            path,
+                            match_document,
+                            hot_state,
+                            deferred_gate["review_unit"],
+                            result.get("saved_decision"),
+                            str(result.get("semantic_decision_digest") or ""),
+                        )
+                        result["review_state_version"] = hot_state.get("state_version")
+                    except (OSError, ValueError):
+                        # Canonical persistence already succeeded. Never keep a
+                        # potentially contradictory cache: the next read will
+                        # rebuild from canonical artifacts.
+                        invalidate_review_hot_state(path)
+                        result["review_state_rebuild_required"] = True
             hot_state_ms = round((time.perf_counter() - hot_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(

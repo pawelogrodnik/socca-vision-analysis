@@ -213,6 +213,25 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, "review_target_stale")
 
+    def test_versioned_browser_context_cannot_fall_back_after_structural_invalidation(self) -> None:
+        with _workspace() as root:
+            _baseline(root, [_whole("structural-parent")])
+            with patch(
+                "app.services.identity_reviewed_action_gate.load_existing_fresh_hot_state",
+                return_value=None,
+            ), self.assertRaises(DeferredReviewActionError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {
+                        "candidate_subject_id": "structural-parent",
+                        "review_state_version": 4,
+                        "action": "assign_roster_player",
+                        "player_id": "team-a-player",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "review_state_stale")
+
     def test_deferred_team_attribution_unit_keeps_the_unified_action_vocabulary(self) -> None:
         allowed = (
             {"action": "assign_team", "team_label": "A"},

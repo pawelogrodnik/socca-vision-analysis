@@ -60,6 +60,15 @@ def validate_deferred_review_action(
         progress = dict(hot_state.get("progress") or {})
         progress["_internal_review_units"] = list(hot_state.get("internal_review_units") or [])
     else:
+        # A versioned browser context is a promise that its exact materialized
+        # topology still exists. After a structural mutation the cache is
+        # deliberately absent until the next GET rebuilds it; never fall back
+        # to a legacy batch baseline and accidentally accept that stale card.
+        if payload.get("review_state_version") is not None:
+            raise DeferredReviewActionError(
+                "review_state_stale",
+                "Stan Review zmienił się. Odśwież kartę przed zapisem.",
+            )
         progress = _load_batch_baseline(match_path, match_doc)
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     target_id = str(payload.get("review_target_id") or "").strip() or None
