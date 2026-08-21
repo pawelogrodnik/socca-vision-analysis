@@ -146,7 +146,7 @@ test('known-team correction exposes both rosters while slots remain team-scoped'
   assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['A03', 'A11']);
 });
 
-test('unknown-team context exposes both teams but filters options after the operator selects one', () => {
+test('unknown-team context keeps both named rosters while stable slots remain team-scoped', () => {
   const context: ReviewedCorrectionContext = {
     candidate_subject_id: 'subject-u',
     team_label: 'U',
@@ -167,12 +167,39 @@ test('unknown-team context exposes both teams but filters options after the oper
     ],
   };
   const options = correctionOptionsForSubject(context, 'B');
-  assert.deepEqual(options.roster.map((row) => row.player_id), ['b']);
+  assert.deepEqual(options.roster.map((row) => row.player_id), ['a', 'b']);
   assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['B03']);
   assert.deepEqual(
     buildReviewedCorrectionPayload('subject-u', { ...base, action: 'assign_team', teamLabel: 'B' }),
     { candidate_subject_id: 'subject-u', action: 'assign_team', team_label: 'B' },
   );
+});
+
+test('material-continuity named roster choices stay cross-team while anonymous slots stay scoped', () => {
+  const context: ReviewedCorrectionContext = {
+    candidate_subject_id: 'continuity:A01:100-400',
+    scope_kind: 'material_continuity',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A', 'B'],
+    tracklet_ids: ['tracklet-1'],
+    review_card_key: null,
+    current_decision: null,
+    semantic_decision_digest: 'digest',
+    roster_options: [
+      { player_id: 'corgi-player', player_name: 'Krzysiek', team_label: 'A' },
+      { player_id: 'verisk-player', player_name: 'Opponent', team_label: 'B' },
+    ],
+    slot_options: [
+      { stable_slot_id: 'A03', team_label: 'A', source: 'global_identity', status: 'canonical' },
+      { stable_slot_id: 'B03', team_label: 'B', source: 'global_identity', status: 'canonical' },
+    ],
+  };
+
+  const options = correctionOptionsForSubject(context, 'A');
+  assert.deepEqual(options.roster.map((row) => row.player_id), ['corgi-player', 'verisk-player']);
+  assert.deepEqual(options.slots.map((row) => row.stable_slot_id), ['A03']);
 });
 
 test('defaults a stale effective team to the valid source-team correction domain', () => {
@@ -273,6 +300,7 @@ test('video QA stays in the unified workspace and report has no interactive revi
   const output = readFileSync(new URL('ReviewedVideoQaPanel.tsx', root), 'utf8');
   const atTime = readFileSync(new URL('ReviewedIdentityAtTimePanel.tsx', root), 'utf8');
   const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', root), 'utf8');
+  const actions = readFileSync(new URL('../src/utils/reviewedIdentityActions.ts', import.meta.url), 'utf8');
   const reportPage = readFileSync(new URL('MatchReportPage.tsx', root), 'utf8');
 
   assert.match(workspace, /Przygotuj wideo do sprawdzenia/);
@@ -299,17 +327,20 @@ test('video QA stays in the unified workspace and report has no interactive revi
   assert.match(form, /allocated_stable_slot_id|onSaved/);
   assert.match(form, /setError\(errorMessage\(reason\)\)/);
   assert.match(form, /context\?\.source_team_label/);
-  assert.match(form, /Zawodnik z kadry/);
-  assert.match(form, /Do której drużyny należy ta osoba/);
-  assert.match(form, /Tylko \$\{teamName\} — pozostaw \$\{teamLabel\}\?/);
+  assert.match(actions, /Zawodnik z kadry/);
+  assert.match(actions, /Tylko drużyna \/ zawodnik nieznany/);
+  assert.match(actions, /To kilku zawodników — podziel/);
+  assert.match(form, /Automatyka potwierdziła jedynie drużynę/);
   assert.match(form, /assign_team/);
-  assert.match(form, /Co wiesz o tym zawodniku/);
-  assert.match(form, /sourceTeamUnknown/);
+  assert.match(form, /Wybierz drużynę/);
+  assert.match(form, /\(\['A', 'B'\] as const\)/);
+  assert.match(form, /operatorTeamName\(teamLabel\).*zawodnik nieznany/);
+  assert.match(form, /source_evidence_kind/);
+  assert.match(form, /Zaawansowane/);
   assert.match(form, /!action/);
   assert.match(form, /defaultCorrectionTeam\(value\)/);
   assert.doesNotMatch(form, /setSelectedTeamLabel\(\(current\)/);
-  assert.match(form, /current effective team: \{context\?\.effective_team_label/);
-  assert.match(form, /selected correction team: \{selectedTeamLabel/);
+  assert.match(form, /effective_team_label/);
   assert.doesNotMatch(reportPage, /ReviewedMatchOutputPanel|ReviewedVideoQaPanel|ReviewedIdentityCorrectionForm/);
   assert.match(reportPage, /Review meczu nie jest jeszcze zakończony/);
 });

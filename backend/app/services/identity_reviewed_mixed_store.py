@@ -16,7 +16,7 @@ from app.services.video import resolve_match_video_path
 
 
 FILENAME = "reviewed_identity_mixed_players.json"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 MIXED_HINTS = frozenset(
     {"cross_team", "same_team_a", "same_team_b", "player_referee", "unknown"}
 )
@@ -84,14 +84,114 @@ def save_mixed_case_document(match_path: Path, document: dict[str, Any]) -> None
 
 
 def mixed_case_for_subject(match_path: Path, subject_id: str) -> dict[str, Any] | None:
+    """Return only the legacy whole-subject marker for a correction card.
+
+    Inline temporal splits also live in this file for durable provenance, but
+    they must not turn the original whole-subject card into a legacy
+    ``mixed_players`` decision. Their child targets are surfaced separately.
+    """
     return next(
         (
             dict(row)
             for row in load_mixed_player_cases(match_path).get("cases") or []
             if str(row.get("candidate_subject_id") or "") == subject_id
+            and str(row.get("original_issue") or "") == "mixed_players"
         ),
         None,
     )
+
+
+def inline_temporal_split_for_source(
+    match_path: Path,
+    source: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the durable inline split for one exact server-resolved source.
+
+    The comparison deliberately includes the ownership digest.  A split is
+    never resurrected after its underlying observation ownership changed.
+    """
+    wanted = {
+        key: source.get(key)
+        for key in (
+            "scope_kind",
+            "candidate_subject_id",
+            "review_target_id",
+            "continuity_group_id",
+            "source_ownership_digest",
+        )
+    }
+    for row in load_mixed_player_cases(match_path).get("cases") or []:
+        if str(row.get("original_issue") or "") != "inline_temporal_split":
+            continue
+        stored = row.get("source")
+        if not isinstance(stored, dict):
+            continue
+        if all(stored.get(key) == value for key, value in wanted.items()):
+            return dict(row)
+    return None
+
+
+def resolved_material_continuity_observation_pairs(
+    match_path: Path,
+) -> set[tuple[str, int]]:
+    """Return exact ownership retired by active resolved material splits.
+
+    A temporal split has no one parent-level identity decision: its children
+    are the authoritative resolution.  Material-continuity coalescing must
+    therefore not recreate the same parent from those exact observations.
+    Keep this deliberately narrow: unresolved complex mixes stay visible as
+    blockers, and a stale/incomplete child set is never trusted to suppress a
+    newly actionable continuity case.
+    """
+    from app.services.identity_reviewed_segments import load_segment_decisions
+
+    decisions = {
+        str(row.get("review_target_id") or ""): row
+        for row in load_segment_decisions(match_path).get("decisions") or []
+        if row.get("review_target_id")
+    }
+    active_pairs: set[tuple[str, int]] = set()
+    for case in load_mixed_player_cases(match_path).get("cases") or []:
+        source = case.get("source")
+        if (
+            str(case.get("original_issue") or "") != "inline_temporal_split"
+            or str(case.get("resolution_status") or "") != "resolved"
+            or not isinstance(source, dict)
+            or str(source.get("scope_kind") or "") != "material_continuity"
+        ):
+            continue
+        source_pairs = _owned_observation_pairs(source.get("owned_observations"))
+        target_ids = {
+            str(value)
+            for value in case.get("segment_target_ids") or []
+            if str(value)
+        }
+        if not source_pairs or not target_ids:
+            continue
+        targets = {
+            str(row.get("review_target_id") or ""): row
+            for row in operator_mixed_targets(match_path)
+            if str(row.get("split_parent_case_id") or "")
+            == str(case.get("case_id") or "")
+        }
+        if set(targets) != target_ids:
+            continue
+        child_pairs: set[tuple[str, int]] = set()
+        valid = True
+        for target_id in target_ids:
+            target = targets[target_id]
+            decision = decisions.get(target_id)
+            if (
+                not isinstance(decision, dict)
+                or str(decision.get("source_ownership_digest") or "")
+                != str(target.get("source_ownership_digest") or "")
+            ):
+                valid = False
+                break
+            child_pairs.update(_owned_observation_pairs(target.get("owned_observations")))
+        if valid and child_pairs == source_pairs:
+            active_pairs.update(source_pairs)
+    return active_pairs
 
 
 def mixed_case_summary(match_path: Path) -> dict[str, int]:
@@ -128,9 +228,11 @@ def build_mixed_review_queue(
             continue
         subject_id = str(marker.get("candidate_subject_id") or "")
         subject = subjects.get(subject_id)
-        if not subject:
+        if not subject and not isinstance(marker.get("source"), dict):
             continue
-        observations = _subject_observations(match_path, subject)
+        observations = _observations_for_marker(match_path, marker, subject)
+        if not observations:
+            continue
         crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
         cases.append(
             {
@@ -239,6 +341,16 @@ def render_mixed_review_evidence(
     )
 
 
+def temporal_evidence_for_observations(
+    subject_id: str,
+    observations: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Shared evidence selection for legacy and inline temporal split UI."""
+    return _temporal_evidence(subject_id, observations, None, limit=limit)
+
+
 def operator_mixed_targets(
     match_path: Path,
     cases_document: dict[str, Any] | None = None,
@@ -261,9 +373,11 @@ def operator_mixed_targets(
             continue
         subject_id = str(marker.get("candidate_subject_id") or "")
         subject = subjects.get(subject_id)
-        if not subject:
+        if not subject and not isinstance(marker.get("source"), dict):
             continue
-        observations = _subject_observations(match_path, subject)
+        observations = _observations_for_marker(match_path, marker, subject)
+        if not observations:
+            continue
         groups = _split_observations(observations, split_frames)
         for index, group in enumerate(groups):
             teams = {str(row.get("team_label") or "U") for row in group}
@@ -274,6 +388,7 @@ def operator_mixed_targets(
             ]
             digest = canonical_digest(
                 {
+                    "source_case_id": marker.get("case_id") or subject_id,
                     "source_subject_digest": marker.get("source_subject_digest"),
                     "segment_index": index,
                     "owned_observations": ownership_payload,
@@ -286,7 +401,11 @@ def operator_mixed_targets(
                 {
                     "review_target_id": target_id,
                     "scope_kind": "canonical_segment",
-                    "target_origin": "operator_mixed_players",
+                    "target_origin": (
+                        "operator_temporal_split"
+                        if isinstance(marker.get("source"), dict)
+                        else "operator_mixed_players"
+                    ),
                     "candidate_subject_id": subject_id,
                     "tracklet_ids": sorted({str(row["tracklet_id"]) for row in group}),
                     "stable_slot_id": None,
@@ -299,7 +418,7 @@ def operator_mixed_targets(
                     "owned_observations": ownership_payload,
                     "detected_observation_count": len(group),
                     "source_ownership_digest": digest,
-                    "reason_codes": ["operator_classified_mixed_players"],
+                    "reason_codes": ["operator_temporal_split"],
                     "visual_evidence": {
                         "status": "ready" if crops else "missing",
                         "selected_crop_count": len(crops),
@@ -310,6 +429,7 @@ def operator_mixed_targets(
                     "stale_decision": False,
                     "legacy_suggestion": None,
                     "mixed_segment_index": index,
+                    "split_parent_case_id": marker.get("case_id") or subject_id,
                 }
             )
     return targets
@@ -330,7 +450,65 @@ def validate_split_frames(observations: list[dict[str, Any]], split_frames: list
 
 
 def observations_for_case(match_path: Path, case: dict[str, Any]) -> list[dict[str, Any]]:
-    return _subject_observations(match_path, _subject(match_path, str(case.get("candidate_subject_id") or "")))
+    subject = _subject(match_path, str(case.get("candidate_subject_id") or ""))
+    return _observations_for_marker(match_path, case, subject)
+
+
+def _observations_for_marker(
+    match_path: Path,
+    marker: dict[str, Any],
+    subject: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Read legacy whole-subject ownership or v2 exact parent ownership."""
+    source = marker.get("source")
+    if not isinstance(source, dict):
+        if subject is None:
+            return []
+        return _subject_observations(match_path, subject)
+    wanted = {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+        for row in source.get("owned_observations") or []
+        if isinstance(row, dict) and row.get("tracklet_id") is not None and row.get("frame") is not None
+    }
+    if not wanted:
+        return []
+    all_rows = _subject_observations_from_pairs(match_path, wanted)
+    found = {(str(row["tracklet_id"]), int(row["frame"])) for row in all_rows}
+    return all_rows if found == wanted else []
+
+
+def _owned_observation_pairs(rows: Any) -> set[tuple[str, int]]:
+    return {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+        for row in rows or []
+        if isinstance(row, dict)
+        and row.get("tracklet_id") is not None
+        and row.get("frame") is not None
+    }
+
+
+def _subject_observations_from_pairs(
+    match_path: Path,
+    wanted: set[tuple[str, int]],
+) -> list[dict[str, Any]]:
+    tracklets = {
+        str(row.get("tracklet_id")): row
+        for row in _load(match_path / "tracklets.json").get("tracklets") or []
+    }
+    rows: list[dict[str, Any]] = []
+    for tracklet_id, tracklet in tracklets.items():
+        for position in tracklet.get("positions_m") or []:
+            if not is_real_detected_position(position) or not is_on_pitch_product_observation(position):
+                continue
+            pair = (tracklet_id, int(position.get("frame") or 0))
+            if pair in wanted:
+                rows.append({
+                    **position,
+                    "frame": pair[1],
+                    "tracklet_id": tracklet_id,
+                    "team_label": str(tracklet.get("team_label") or "U"),
+                })
+    return sorted(rows, key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
 
 
 def current_mixed_subject_digest(match_path: Path, subject_id: str) -> str:

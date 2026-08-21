@@ -82,7 +82,11 @@ from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
 )
-from app.services.identity_reviewed_action_scope import ReviewedIdentityActionScopeError
+from app.services.identity_reviewed_action_scope import (
+    ReviewedIdentityActionScopeError,
+    review_unit_for_payload,
+    reviewed_identity_action_capabilities,
+)
 from app.services.identity_reviewed_corrections import (
     persist_reviewed_identity_correction,
     reviewed_correction_context,
@@ -119,10 +123,16 @@ from app.services.identity_reviewed_segments import SegmentTargetError
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
+    inline_temporal_split_for_source,
 )
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
+    save_inline_temporal_split,
     save_mixed_player_resolution,
+)
+from app.services.identity_reviewed_review_source import (
+    build_review_source_boundary_refinement,
+    resolve_review_source,
 )
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
@@ -2254,6 +2264,92 @@ def post_match_reviewed_identity_correction(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/matches/{match_id}/reviewed-identity/temporal-split")
+def post_match_reviewed_identity_temporal_split(
+    match_id: str,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """One atomic temporal split for the exact currently reviewed source."""
+    path = match_dir(match_id)
+    try:
+        match_document = read_match_meta(path)
+        state_before = get_review_workflow_state(path, match_document)
+        if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
+            assert_workflow_action_allowed(state_before, "review_identity_issue")
+        progress = build_reviewed_identity_progress(
+            path,
+            match_document,
+            include_internal_units=True,
+        )
+        review_unit = review_unit_for_payload(progress, payload)
+        # A completed inline split correctly leaves the active queue. It may
+        # still be reopened from the reviewed-video inspector before final
+        # output, provided that its exact source and semantic version match.
+        if not isinstance(review_unit, dict):
+            source = resolve_review_source(
+                path,
+                match_document,
+                candidate_subject_id=str(payload.get("candidate_subject_id") or ""),
+                review_target_id=str(payload.get("review_target_id") or "") or None,
+                continuity_group_id=str(payload.get("continuity_group_id") or "") or None,
+                source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
+            )
+            existing_split = inline_temporal_split_for_source(path, source)
+            if not isinstance(existing_split, dict) or str(existing_split.get("resolution_status") or "") != "resolved":
+                raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
+            review_unit = {
+                "scope_kind": source["scope_kind"],
+                "detected_observation_count": source["detected_observation_count"],
+            }
+        capabilities = reviewed_identity_action_capabilities(review_unit)
+        if not isinstance(review_unit, dict) or not capabilities["split"].get("allowed"):
+            raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
+        result = save_inline_temporal_split(path, match_document, payload)
+        return result
+    except WorkflowActionError as exc:
+        raise _workflow_http_error(exc) from exc
+    except MixedPlayerTargetError as exc:
+        raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
+    except ReviewedIdentityActionScopeError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
+    except SegmentTargetError as exc:
+        raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
+    except ValueError as exc:
+        code = str(exc)
+        status = 409 if code in {"review_target_stale", "material_continuity_target_stale"} else 400
+        raise HTTPException(status_code=status, detail={"code": code, "message": code}) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/temporal-split/refine")
+def get_match_reviewed_identity_temporal_split_refinement(
+    match_id: str,
+    candidate_subject_id: str = Query(..., min_length=1),
+    source_ownership_digest: str = Query(..., min_length=1),
+    after_frame: int = Query(..., ge=0),
+    before_frame: int = Query(..., ge=1),
+    review_target_id: str | None = Query(default=None),
+    continuity_group_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_review_source_boundary_refinement(
+            path,
+            read_match_meta(path),
+            candidate_subject_id=candidate_subject_id,
+            review_target_id=review_target_id,
+            continuity_group_id=continuity_group_id,
+            source_ownership_digest=source_ownership_digest,
+            after_frame=after_frame,
+            before_frame=before_frame,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        code = str(exc)
+        status = 409 if code in {"review_target_stale", "material_continuity_target_stale"} else 400
+        raise HTTPException(status_code=status, detail={"code": code, "message": code}) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/corrections/finalize")

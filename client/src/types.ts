@@ -1914,6 +1914,18 @@ export type ReviewedCorrectionAction =
   | 'unresolved'
   | 'mixed_players';
 
+export type ReviewedCorrectionPrimaryAction = Exclude<ReviewedCorrectionAction, 'mixed_players'> | 'split';
+
+export type ReviewedCorrectionActionCapability = {
+  allowed: boolean;
+  reason?: string;
+  mode?: 'temporal';
+  minimum_observations?: number;
+  requires_player_id?: boolean;
+  requires_team_label?: boolean;
+  requires_slot_id?: boolean;
+};
+
 export type ReviewedCorrectionRosterOption = {
   player_id: string;
   player_name: string;
@@ -1956,6 +1968,7 @@ export type ReviewedCorrectionContext = {
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
+  source_evidence_kind?: string;
   legacy_suggestion?: {
     action: 'assign_roster_player';
     player_id: string;
@@ -1964,6 +1977,14 @@ export type ReviewedCorrectionContext = {
     team_label: string;
     requires_confirmation: boolean;
   } | null;
+  temporal_split?: {
+    resolution_status?: string;
+    split_after_frames: number[];
+    split_semantic_digest?: string | null;
+    segment_assignments: MixedSegmentAssignment[];
+  } | null;
+  action_capabilities: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
+  scope_copy?: string;
 };
 
 export type ReviewedCorrectionRequest = {
@@ -2236,6 +2257,31 @@ export type MixedSegmentAssignment = {
   player_id?: string;
   stable_slot_id?: string;
   team_label?: string;
+};
+
+export type ReviewedTemporalSplitRequest = {
+  candidate_subject_id: string;
+  review_target_id?: string;
+  continuity_group_id?: string;
+  source_ownership_digest: string;
+  existing_split_semantic_digest?: string;
+  resolution: 'split' | 'unresolved_complex_mix';
+  split_after_frames?: number[];
+  segment_assignments?: MixedSegmentAssignment[];
+  comment?: string;
+};
+
+export type ReviewedTemporalSplitRefinement = MixedBoundaryRefinement & {
+  review_target_id?: string | null;
+  continuity_group_id?: string | null;
+};
+
+export type ReviewedTemporalSplitResponse = {
+  saved_case: Record<string, unknown>;
+  semantic_decision_digest: string;
+  recompute_deferred: true;
+  idempotent?: boolean;
+  complex_mix?: boolean;
 };
 
 export type MixedPlayerResolutionRequest = {

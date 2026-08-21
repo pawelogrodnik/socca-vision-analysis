@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
-import type { MixedPlayerCase, MixedSegmentAssignment } from '../src/types.ts';
+import type { MixedPlayerCase, MixedSegmentAssignment, ReviewedCorrectionContext } from '../src/types.ts';
+import { correctionContextAsSplitCase } from '../src/utils/reviewedIdentitySplitCase.ts';
+import { reviewedIdentityChildActions } from '../src/utils/reviewedIdentityActions.ts';
 import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
 
 const reviewCase: MixedPlayerCase = {
@@ -43,6 +45,49 @@ test('valid split requires a decision for every segment and stays inside range',
   assert.equal(validMixedResolution(reviewCase, [25], assignments), true);
   assert.equal(validMixedResolution(reviewCase, [25], [assignments[0]]), false);
   assert.equal(validMixedResolution(reviewCase, [50], assignments), false);
+});
+
+test('split children retain the unified safe correction vocabulary without recursive splitting', () => {
+  const actions = reviewedIdentityChildActions().map((card) => card.action);
+  assert.deepEqual(actions, [
+    'assign_roster_player',
+    'assign_team',
+    'referee',
+    'false_detection',
+    'team_unknown',
+    'unresolved',
+    'assign_existing_slot',
+    'create_new_stable_player',
+  ]);
+  assert.equal(actions.includes('split'), false);
+});
+
+test('whole-subject split uses authoritative context bounds instead of a fake zero crop fallback', () => {
+  const context = {
+    candidate_subject_id: 'whole-subject',
+    scope_kind: 'whole_subject',
+    tracklet_ids: ['t1'],
+    source_ownership_digest: 'digest',
+    frame_start: 1200,
+    frame_end: 3700,
+    detected_observation_count: 4,
+    visual_evidence: {
+      status: 'ready',
+      anchor_crops: [1200, 2500, 3700].map((frame) => ({
+        anchor_crop_id: `crop-${frame}`,
+        artifact: `crop-${frame}.jpg`,
+        frame,
+      })),
+    },
+  } as ReviewedCorrectionContext;
+
+  assert.deepEqual(
+    [
+      correctionContextAsSplitCase(context).frame_start,
+      correctionContextAsSplitCase(context).frame_end,
+    ],
+    [1200, 3700],
+  );
 });
 
 test('adding or moving a boundary preserves unambiguous segment assignments', () => {
@@ -105,12 +150,25 @@ test('refinement evidence is displayed in temporal order and keeps real observat
   assert.equal(replaceMixedBoundaryInInterval([], 22, 30, crops[2].frame)[0], 27);
 });
 
-test('normal classification stays compact while dedicated workspace owns splitting', () => {
+test('new correction flow opens the shared inline split editor while legacy workspace remains compatible', () => {
   const form = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentityCorrectionForm.tsx'), 'utf8');
   const mixed = readFileSync(resolve(import.meta.dirname, '../src/components/MixedPlayersReviewPanel.tsx'), 'utf8');
-  assert.match(form, /Zmieszani gracze/);
-  assert.match(form, /osobnego kroku/);
+  const editor = readFileSync(resolve(import.meta.dirname, '../src/components/ReviewedIdentitySplitEditor.tsx'), 'utf8');
+  const actions = readFileSync(resolve(import.meta.dirname, '../src/utils/reviewedIdentityActions.ts'), 'utf8');
+  assert.match(actions, /To kilku zawodników — podziel/);
+  assert.match(form, /ReviewedIdentitySplitEditor/);
   assert.doesNotMatch(form, /Podziel tutaj/);
+  assert.match(editor, /Doprecyzuj moment przejścia/);
+  assert.match(editor, /window\.confirm/);
+  assert.match(editor, /Wróć bez zapisu/);
+  assert.match(editor, /action_capabilities\[card\.action\]\?\.allowed === true/);
+  assert.match(editor, /Zapisz podział \+ następny/);
+  assert.match(form, /Aktualna decyzja: Podział na/);
+  assert.match(form, /Nie udało się bezpiecznie podzielić tego fragmentu czasowo/);
+  assert.match(form, /zastąpi wcześniejsze oznaczenie złożonej mieszanki/);
+  assert.match(form, /zastąpi zapisany podział oraz decyzje jego fragmentów/);
+  assert.match(form, /navigation && action && !splitOpen/);
+  assert.match(form, /splitOpen \? null : navigation/);
   assert.match(mixed, /Materiał w kolejności czasu/);
   assert.match(mixed, /Doprecyzuj moment przejścia/);
   assert.match(mixed, /observation_count <= 12/);

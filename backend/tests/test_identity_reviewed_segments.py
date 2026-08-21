@@ -25,6 +25,7 @@ from app.services.identity_reviewed_effective_observation import (
 from app.services.identity_reviewed_corrections import (
     persist_reviewed_identity_correction,
 )
+from app.services.identity_reviewed_mixed_resolution import save_inline_temporal_split
 
 
 class ReviewedIdentitySegmentTests(unittest.TestCase):
@@ -114,6 +115,48 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
 
             self.assertEqual(review["summary"]["mixed_tracklets"], 0)
             self.assertEqual(review["summary"]["targets_total"], 0)
+
+    def test_inline_split_uses_only_the_selected_canonical_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _fixture(root)
+            review = build_segment_review_document(root, match)
+            target = next(
+                row for row in review["targets"]
+                if row["stable_slot_id"] == "A03" and row["frame_start"] == 1
+            )
+            with patch(
+                "app.services.identity_reviewed_review_source.render_mixed_review_evidence",
+                return_value=set(),
+            ):
+                result = save_inline_temporal_split(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "s1",
+                        "review_target_id": target["review_target_id"],
+                        "source_ownership_digest": target["source_ownership_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [1],
+                        "segment_assignments": [
+                            {"action": "assign_roster_player", "player_id": "p1"},
+                            {"action": "assign_team", "team_label": "A"},
+                        ],
+                    },
+                )
+            split_targets = [
+                row for row in build_segment_review_document(root, match)["targets"]
+                if row.get("target_origin") == "operator_temporal_split"
+            ]
+            self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
+            self.assertEqual(
+                {
+                    (pair["tracklet_id"], pair["frame"])
+                    for row in split_targets
+                    for pair in row["owned_observations"]
+                },
+                {("t1", 1), ("t1", 2)},
+            )
 
     def test_segment_decisions_do_not_bleed_and_stale_target_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

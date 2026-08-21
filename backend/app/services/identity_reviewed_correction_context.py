@@ -15,7 +15,10 @@ from app.services.identity_reviewed_slot_registry import (
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_mixed_store import (
     FILENAME as MIXED_PLAYERS_FILENAME,
+    inline_temporal_split_for_source,
     mixed_case_for_subject,
+    render_mixed_review_evidence,
+    temporal_evidence_for_observations,
 )
 from app.services.identity_reviewed_material_continuity import (
     load_material_continuity_decisions,
@@ -26,6 +29,11 @@ from app.services.identity_reviewed_segments import (
     load_segment_decisions,
     target_for_id,
 )
+from app.services.identity_reviewed_action_scope import (
+    reviewed_identity_action_capabilities,
+    scope_copy,
+)
+from app.services.identity_reviewed_review_source import resolve_review_source
 from app.services.identity_roster_subject_review_store import (
     REVIEW_ARTIFACT_FILENAME,
     REVIEW_DECISIONS_FILENAME,
@@ -79,6 +87,20 @@ def reviewed_correction_context(
     )
     if not registry:
         registry = build_reviewed_slot_registry(match_path, slot_document)
+    source = resolve_review_source(
+        match_path,
+        match_doc,
+        candidate_subject_id=candidate_subject_id,
+    )
+    scope_unit = {
+        "scope_kind": "whole_subject",
+        "detected_observation_count": source["detected_observation_count"],
+    }
+    temporal_evidence = _source_temporal_evidence(match_path, match_doc, source)
+    source_evidence_kind = _review_source_evidence_kind(
+        match_path,
+        candidate_subject_id,
+    )
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": None,
@@ -97,9 +119,16 @@ def reviewed_correction_context(
         ],
         "current_decision": current,
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
-        "source_ownership_digest": None,
+        "source_ownership_digest": source["source_ownership_digest"],
+        "frame_start": source["frame_start"],
+        "frame_end": source["frame_end"],
+        "detected_observation_count": source["detected_observation_count"],
+        "action_capabilities": reviewed_identity_action_capabilities(scope_unit),
+        "scope_copy": scope_copy("whole_subject"),
         "frame_ranges": [],
-        "visual_evidence": None,
+        "visual_evidence": temporal_evidence,
+        "source_evidence_kind": source_evidence_kind,
+        "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": None,
     }
 
@@ -133,6 +162,18 @@ def _material_continuity_correction_context(
     registry = build_materialized_reviewed_slot_registry(candidate_document, slot_document)
     if not registry:
         registry = build_reviewed_slot_registry(match_path, slot_document)
+    source = resolve_review_source(
+        match_path,
+        match_doc,
+        candidate_subject_id=continuity_group_id,
+        continuity_group_id=continuity_group_id,
+        source_ownership_digest=str(unit.get("source_ownership_digest") or ""),
+    )
+    temporal_evidence = _source_temporal_evidence(
+        match_path,
+        match_doc,
+        source,
+    )
     return {
         "candidate_subject_id": continuity_group_id,
         "review_target_id": None,
@@ -140,7 +181,7 @@ def _material_continuity_correction_context(
         "team_label": team_label,
         "source_team_label": team_label,
         "effective_team_label": team_label,
-        "available_team_labels": [team_label],
+        "available_team_labels": ["A", "B"],
         "tracklet_ids": list(unit.get("tracklet_ids") or []),
         "continuity_subject_ids": list(unit.get("continuity_subject_ids") or []),
         "continuity_group_id": continuity_group_id,
@@ -149,7 +190,7 @@ def _material_continuity_correction_context(
         "slot_options": [
             registry[key]
             for key in sorted(registry)
-            if registry[key].get("team_label") == team_label
+            if registry[key].get("team_label") in {"A", "B"}
         ],
         "current_decision": unit.get("current_decision"),
         "semantic_decision_digest": reviewed_decisions_semantic_digest(match_path),
@@ -158,8 +199,12 @@ def _material_continuity_correction_context(
         "frame_start": unit.get("frame_start"),
         "frame_end": unit.get("frame_end"),
         "detected_observation_count": unit.get("detected_observation_count"),
-        "visual_evidence": unit.get("visual_evidence") or {},
+        "visual_evidence": temporal_evidence,
+        "source_evidence_kind": str((unit.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
+        "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": None,
+        "action_capabilities": reviewed_identity_action_capabilities(unit),
+        "scope_copy": scope_copy("material_continuity"),
     }
 
 
@@ -180,6 +225,18 @@ def _segment_correction_context(
     roster_options = match_roster(match_doc)
     slot_document = load_reviewed_slot_assignments(match_path)
     registry = build_reviewed_slot_registry(match_path, slot_document)
+    source = resolve_review_source(
+        match_path,
+        match_doc,
+        candidate_subject_id=candidate_subject_id,
+        review_target_id=review_target_id,
+        source_ownership_digest=str(target.get("source_ownership_digest") or ""),
+    )
+    temporal_evidence = _source_temporal_evidence(
+        match_path,
+        match_doc,
+        source,
+    )
     return {
         "candidate_subject_id": candidate_subject_id,
         "review_target_id": review_target_id,
@@ -203,8 +260,81 @@ def _segment_correction_context(
         "frame_start": target.get("frame_start"),
         "frame_end": target.get("frame_end"),
         "detected_observation_count": target.get("detected_observation_count"),
-        "visual_evidence": target.get("visual_evidence") or {},
+        "visual_evidence": temporal_evidence,
+        "source_evidence_kind": str((target.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
+        "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": target.get("legacy_suggestion"),
+        "action_capabilities": reviewed_identity_action_capabilities(target),
+        "scope_copy": scope_copy("canonical_segment"),
+    }
+
+
+def _source_temporal_evidence(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    source: dict[str, Any],
+) -> dict[str, Any]:
+    crops = temporal_evidence_for_observations(
+        str(source["candidate_subject_id"]),
+        list(source["observations"]),
+        limit=12,
+    )
+    try:
+        render_mixed_review_evidence(
+            match_path,
+            match_doc,
+            {"cases": [{"temporal_evidence": {"anchor_crops": crops}}]},
+        )
+    except FileNotFoundError:
+        # Context remains useful to an API consumer even if an old local match
+        # no longer has its source video. The UI will show its normal image
+        # failure state instead of failing the whole correction card.
+        pass
+    return {
+        "kind": "identity_continuity",
+        "status": "ready" if crops else "missing",
+        "selected_crop_count": len(crops),
+        "anchor_crops": crops,
+    }
+
+
+def _review_source_evidence_kind(
+    match_path: Path,
+    candidate_subject_id: str,
+) -> str:
+    """Read the persisted card provenance without rebuilding full progress."""
+    artifact = load_optional(match_path / REVIEW_ARTIFACT_FILENAME)
+    for card in artifact.get("cards") or []:
+        if str(card.get("candidate_subject_id") or "") == candidate_subject_id:
+            return str(
+                (card.get("visual_evidence") or {}).get("kind")
+                or "identity_continuity"
+            )
+    return "identity_continuity"
+
+
+def _inline_temporal_split_context(
+    match_path: Path,
+    source: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Expose a saved split as editable operator state, not technical JSON."""
+    case = inline_temporal_split_for_source(match_path, source)
+    if case is None:
+        return None
+    assignments = [
+        {
+            key: row.get(key)
+            for key in ("action", "player_id", "stable_slot_id", "team_label")
+            if row.get(key) is not None
+        }
+        for row in case.get("segment_assignments") or []
+        if isinstance(row, dict)
+    ]
+    return {
+        "resolution_status": case.get("resolution_status"),
+        "split_after_frames": list(case.get("split_after_frames") or []),
+        "split_semantic_digest": case.get("split_semantic_digest"),
+        "segment_assignments": assignments,
     }
 
 
@@ -269,6 +399,7 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
             "mixed_players": sorted(
                 (
                     {
+                        "case_id": row.get("case_id"),
                         "candidate_subject_id": row.get("candidate_subject_id"),
                         "original_issue": row.get("original_issue"),
                         "mixed_hint": row.get("mixed_hint"),
@@ -276,10 +407,12 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                         "source_subject_digest": row.get("source_subject_digest"),
                         "split_after_frames": row.get("split_after_frames") or [],
                         "segment_target_ids": row.get("segment_target_ids") or [],
+                        "split_semantic_digest": row.get("split_semantic_digest"),
+                        "source": row.get("source") or {},
                     }
                     for row in mixed.get("cases") or []
                 ),
-                key=lambda row: str(row.get("candidate_subject_id") or ""),
+                key=lambda row: (str(row.get("case_id") or ""), str(row.get("candidate_subject_id") or "")),
             ),
         }
     )

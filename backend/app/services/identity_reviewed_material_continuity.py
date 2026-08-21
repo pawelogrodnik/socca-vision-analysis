@@ -30,13 +30,24 @@ MATERIAL_CONTINUITY_MAX_JOIN_GAP_SEC = 1.0
 MATERIAL_CONTINUITY_MAX_EVIDENCE_CROPS = 5
 DECISIONS_FILENAME = "reviewed_identity_material_continuity_decisions.json"
 DECISIONS_SCHEMA_VERSION = "1.0.0"
-ALLOWED_ACTIONS = frozenset({"assign_roster_player", "unresolved"})
+ALLOWED_ACTIONS = frozenset(
+    {
+        "assign_roster_player",
+        "assign_team",
+        "referee",
+        "false_detection",
+        "team_unknown",
+        "unresolved",
+    }
+)
 
 
 def coalesce_material_continuity_units(
     units: list[dict[str, Any]],
     fps: float,
     decisions: dict[str, Any] | None = None,
+    *,
+    excluded_observation_pairs: set[tuple[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Replace safe, adjacent anonymous Team-A fragments with one case.
 
@@ -45,12 +56,15 @@ def coalesce_material_continuity_units(
     decision is limited to this group's exact tracklet/frame ownership.
     """
     safe_fps = fps if fps > 0 else 30.0
+    excluded_pairs = excluded_observation_pairs or set()
     by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     max_frame_gap = max(1, int(ceil(MATERIAL_CONTINUITY_MAX_JOIN_GAP_SEC * safe_fps)))
     for unit in units:
         slot = str(unit.get("stable_slot_id") or "")
         if _eligible(unit, slot):
-            by_slot[slot].extend(_continuous_member_runs(unit, max_frame_gap))
+            by_slot[slot].extend(
+                _continuous_member_runs(unit, max_frame_gap, excluded_pairs)
+            )
 
     grouped_pairs: set[tuple[str, int]] = set()
     continuity_units: list[dict[str, Any]] = []
@@ -89,6 +103,78 @@ def coalesce_material_continuity_units(
     # happen to be far apart.
     retained = _retain_non_grouped_observations(units, grouped_pairs, safe_fps)
     return [*retained, *continuity_units]
+
+
+def trim_resolved_material_pairs_from_whole_subject_units(
+    units: list[dict[str, Any]],
+    resolved_pairs: set[tuple[str, int]],
+    fps: float,
+    *,
+    tracklet_team_labels: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Remove resolved material-split ownership from competing parents only.
+
+    A resolved inline temporal split delegates its exact source observations to
+    canonical-segment children.  The raw whole-subject presentation unit can
+    still contain those same observations, so it must be reduced before
+    coverage and optional-audit policy see it.  This never receives segment
+    children and never applies to unresolved complex mixes: callers pass only
+    the fail-closed, verified resolved-pair set.
+    """
+    if not resolved_pairs:
+        return units
+    safe_fps = fps if fps > 0 else 30.0
+    retained: list[dict[str, Any]] = []
+    for unit in units:
+        if str(unit.get("correction_scope") or "whole_subject") != "whole_subject":
+            retained.append(unit)
+            continue
+        pairs = _unit_pairs(unit)
+        remaining = pairs - resolved_pairs
+        if remaining == pairs:
+            retained.append(unit)
+            continue
+        if not remaining:
+            continue
+        frames = sorted({frame for _, frame in remaining})
+        clone = dict(unit)
+        clone["detected_pairs"] = sorted(remaining)
+        clone["tracklet_ids"] = sorted({tracklet_id for tracklet_id, _ in remaining})
+        clone["tracklet_count"] = len(clone["tracklet_ids"])
+        clone["frame_start"] = frames[0]
+        clone["frame_end"] = frames[-1]
+        clone["detected_frame_count"] = len(frames)
+        clone["detected_observation_count"] = len(remaining)
+        clone["detected_time_sec"] = round(len(frames) / safe_fps, 3)
+        if tracklet_team_labels is not None:
+            detected_teams = {
+                str(tracklet_team_labels.get(tracklet_id) or "U").upper()
+                for tracklet_id, _ in remaining
+            }
+            clone["detected_team_labels"] = sorted(detected_teams & {"A", "B"})
+            source_team = (
+                next(iter(detected_teams)) if len(detected_teams) == 1 else "U"
+            )
+            clone["source_team_label"] = source_team
+            if not (clone.get("current_decision") or {}).get("action"):
+                clone["effective_team_label"] = source_team
+        clone["visual_evidence"] = _evidence_within_pairs(
+            unit.get("visual_evidence") or {}, remaining
+        )
+        clone["has_operator_visual_evidence"] = bool(
+            (clone["visual_evidence"] or {}).get("anchor_crops")
+        )
+        if "owned_observations" in clone:
+            clone["owned_observations"] = [
+                {"tracklet_id": tracklet_id, "frame": frame}
+                for tracklet_id, frame in sorted(remaining)
+            ]
+        clone["reason_codes"] = sorted(
+            set(clone.get("reason_codes") or [])
+            | {"resolved_material_split_owned_by_child"}
+        )
+        retained.append(clone)
+    return retained
 
 
 def is_material_continuity_case(unit: dict[str, Any]) -> bool:
@@ -199,12 +285,15 @@ def _continuity_case(
 def _continuous_member_runs(
     unit: dict[str, Any],
     max_frame_gap: int,
+    excluded_pairs: set[tuple[str, int]],
 ) -> list[dict[str, Any]]:
     pairs_by_frame: dict[int, list[tuple[str, int]]] = defaultdict(list)
     for raw_pair in unit.get("detected_pairs") or []:
         if not isinstance(raw_pair, (tuple, list)) or len(raw_pair) < 2:
             continue
         pair = (str(raw_pair[0]), int(raw_pair[1]))
+        if pair in excluded_pairs:
+            continue
         pairs_by_frame[pair[1]].append(pair)
     runs: list[list[tuple[str, int]]] = []
     current: list[tuple[str, int]] = []
@@ -242,11 +331,7 @@ def _retain_non_grouped_observations(
 ) -> list[dict[str, Any]]:
     retained: list[dict[str, Any]] = []
     for unit in units:
-        pairs = {
-            (str(raw_pair[0]), int(raw_pair[1]))
-            for raw_pair in unit.get("detected_pairs") or []
-            if isinstance(raw_pair, (tuple, list)) and len(raw_pair) >= 2
-        }
+        pairs = _unit_pairs(unit)
         remaining = pairs - grouped_pairs
         if not pairs or remaining == pairs:
             retained.append(unit)
@@ -283,6 +368,29 @@ def _evidence_within_frames(
         if crop.get("frame") is not None and int(crop["frame"]) in frames
     ]
     return value
+
+
+def _evidence_within_pairs(
+    evidence: dict[str, Any],
+    pairs: set[tuple[str, int]],
+) -> dict[str, Any]:
+    value = dict(evidence)
+    value["anchor_crops"] = [
+        dict(crop)
+        for crop in evidence.get("anchor_crops") or []
+        if crop.get("tracklet_id") is not None
+        and crop.get("frame") is not None
+        and (str(crop["tracklet_id"]), int(crop["frame"])) in pairs
+    ]
+    return value
+
+
+def _unit_pairs(unit: dict[str, Any]) -> set[tuple[str, int]]:
+    return {
+        (str(raw_pair[0]), int(raw_pair[1]))
+        for raw_pair in unit.get("detected_pairs") or []
+        if isinstance(raw_pair, (tuple, list)) and len(raw_pair) >= 2
+    }
 
 
 def _balanced_anchor_crops(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -369,14 +477,22 @@ def save_material_continuity_decision(
         from app.services.identity_reviewed_segments import SegmentTargetError
 
         raise SegmentTargetError("material_continuity_target_stale")
-    team_label = str(fresh_unit.get("effective_team_label") or "").upper()
-    if team_label != "A":
-        raise ValueError("material_continuity_team_not_supported")
+    source_team_label = str(fresh_unit.get("effective_team_label") or "U").upper()
+    team_label = source_team_label
     roster = _roster(match_doc)
     if action == "assign_roster_player":
         player = roster.get(player_id or "")
-        if player is None or str(player.get("team_label") or "").upper() != team_label:
-            raise ValueError("player_id must be one of the same-team operator roster options")
+        if player is None:
+            raise ValueError("Invalid player_id")
+        team_label = str(player.get("team_label") or "U").upper()
+    elif action == "assign_team":
+        team_label = str(payload.get("team_label") or "").upper()
+        if team_label not in {"A", "B"}:
+            raise ValueError("assign_team requires team_label A or B")
+        player_id = None
+    elif action == "team_unknown":
+        team_label = "U"
+        player_id = None
     else:
         player_id = None
 
@@ -391,7 +507,7 @@ def save_material_continuity_decision(
         "candidate_subject_id": group_id,
         "scope_kind": "material_continuity",
         "source_ownership_digest": expected_digest,
-        "source_team_label": team_label,
+        "source_team_label": source_team_label,
         "team_label": team_label,
         "continuity_subject_ids": list(fresh_unit.get("continuity_subject_ids") or []),
         "continuity_members": list(fresh_unit.get("continuity_members") or []),
@@ -439,12 +555,12 @@ def material_continuity_observation_assignments(
             continue
         action = str(decision.get("action") or "")
         player = roster.get(str(decision.get("player_id") or ""))
-        if action == "assign_roster_player" and (
-            player is None or str(player.get("team_label") or "").upper() != "A"
-        ):
+        if action == "assign_roster_player" and player is None:
             continue
         for tracklet_id, frame in owned:
-            output.append(_assignment_row(unit, decision, player, tracklet_id, frame))
+            assignment = _assignment_row(unit, decision, player, tracklet_id, frame)
+            if assignment is not None:
+                output.append(assignment)
     return sorted(output, key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
 
 
@@ -454,9 +570,9 @@ def _assignment_row(
     player: dict[str, Any] | None,
     tracklet_id: str,
     frame: int,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     action = str(decision.get("action") or "")
-    slot_id = str(unit.get("stable_slot_id") or "") or None
+    source_slot_id = str(unit.get("stable_slot_id") or "") or None
     common = {
         "continuity_group_id": unit.get("continuity_group_id"),
         "tracklet_id": tracklet_id,
@@ -468,12 +584,16 @@ def _assignment_row(
     }
     if action == "assign_roster_player" and player is not None:
         name = str(player.get("player_name") or player.get("name") or decision.get("player_id"))
+        player_team = str(player.get("team_label") or "U").upper()
+        # A safe continuity slot is only a hypothesis.  Do not carry an A-slot
+        # into a named Team-B correction (or vice versa).
+        slot_id = source_slot_id if source_slot_id and source_slot_id.startswith(player_team) else None
         return {
             **common,
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
-            "team_label": "A",
-            "fallback_label": slot_id or "A?",
+            "team_label": player_team,
+            "fallback_label": slot_id or f"{player_team}?",
             "identity_status": "confirmed",
             "canonical_player_id": str(decision.get("player_id")),
             "player_name": name,
@@ -481,16 +601,60 @@ def _assignment_row(
             "display_label": name,
             "eligible_for_player_stats": True,
         }
+    if action == "false_detection":
+        return {
+            **common,
+            "stable_anonymous_slot_id": None,
+            "stable_anonymous_entity_id": None,
+            "team_label": "U",
+            "fallback_label": "Fałszywa detekcja",
+            "identity_status": "false_detection",
+            "canonical_player_id": None,
+            "player_name": None,
+            "display_label": "Fałszywa detekcja",
+        }
+    if action == "referee":
+        return {**common, "stable_anonymous_slot_id": None, "stable_anonymous_entity_id": None,
+                "team_label": "U", "fallback_label": "REF", "identity_status": "referee",
+                "canonical_player_id": None, "player_name": None, "display_label": "Sędzia"}
+    if action == "team_unknown":
+        return {
+            **common,
+            "stable_anonymous_slot_id": None,
+            "stable_anonymous_entity_id": None,
+            "team_label": "U",
+            "fallback_label": "U?",
+            "identity_status": "team_unknown",
+            "canonical_player_id": None,
+            "player_name": None,
+            "display_label": "U?",
+        }
+    team_label = str(decision.get("team_label") or unit.get("effective_team_label") or "U").upper()
+    if action == "assign_team":
+        return {
+            **common,
+            "stable_anonymous_slot_id": None,
+            "stable_anonymous_entity_id": None,
+            "team_label": team_label,
+            "fallback_label": f"{team_label}?",
+            "identity_status": "unresolved",
+            "canonical_player_id": None,
+            "player_name": None,
+            "display_label": f"{team_label}?",
+        }
+    # Only an explicit unresolved choice is allowed to preserve the safe
+    # anonymous continuity hypothesis.  It remains ineligible for stats.
+    slot_id = source_slot_id
     return {
         **common,
         "stable_anonymous_slot_id": slot_id,
         "stable_anonymous_entity_id": slot_id,
-        "team_label": "A",
-        "fallback_label": slot_id or "A?",
+        "team_label": team_label,
+        "fallback_label": slot_id or f"{team_label}?",
         "identity_status": "unresolved",
         "canonical_player_id": None,
         "player_name": None,
-        "display_label": slot_id or "A?",
+        "display_label": slot_id or f"{team_label}?",
     }
 
 

@@ -24,11 +24,13 @@ from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     load_mixed_player_cases,
+    resolved_material_continuity_observation_pairs,
 )
 from app.services.identity_reviewed_material_continuity import (
     MATERIAL_CONTINUITY_POLICY_VERSION,
     coalesce_material_continuity_units,
     load_material_continuity_decisions,
+    trim_resolved_material_pairs_from_whole_subject_units,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
     evidence_status_for_unit,
@@ -134,6 +136,21 @@ def build_reviewed_identity_progress(
         whole_subject_units,
         load_team_attribution_evidence(match_path),
     )
+    resolved_material_pairs = resolved_material_continuity_observation_pairs(
+        match_path
+    )
+    # A resolved material split is represented only by its canonical-segment
+    # children. Trim those exact observations from raw whole-subject units
+    # before coverage and optional MAX can schedule the same work again.
+    whole_subject_units = trim_resolved_material_pairs_from_whole_subject_units(
+        whole_subject_units,
+        resolved_material_pairs,
+        fps,
+        tracklet_team_labels={
+            tracklet_id: str(tracklet.get("team_label") or "U")
+            for tracklet_id, tracklet in tracklets.items()
+        },
+    )
     units = [
         unit
         for unit in whole_subject_units
@@ -145,6 +162,7 @@ def build_reviewed_identity_progress(
         units,
         fps,
         load_material_continuity_decisions(match_path),
+        excluded_observation_pairs=resolved_material_pairs,
     )
     coverage_context = load_effective_coverage_context(match_path, match_doc)
     coverage_policy = apply_coverage_policy(
