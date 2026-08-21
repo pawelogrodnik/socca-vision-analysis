@@ -24,6 +24,7 @@ from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     load_mixed_player_cases,
+    resolved_material_continuity_observation_pairs,
 )
 from app.services.identity_reviewed_material_continuity import (
     MATERIAL_CONTINUITY_POLICY_VERSION,
@@ -145,6 +146,9 @@ def build_reviewed_identity_progress(
         units,
         fps,
         load_material_continuity_decisions(match_path),
+        excluded_observation_pairs=resolved_material_continuity_observation_pairs(
+            match_path
+        ),
     )
     coverage_context = load_effective_coverage_context(match_path, match_doc)
     coverage_policy = apply_coverage_policy(

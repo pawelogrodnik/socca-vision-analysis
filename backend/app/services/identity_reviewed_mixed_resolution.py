@@ -229,6 +229,7 @@ def save_inline_temporal_split(
             path: path.read_bytes() if path.exists() else None
             for path in (
                 match_path / "reviewed_identity_mixed_players.json",
+                match_path / "reviewed_identity_segment_review.json",
                 match_path / DECISIONS_FILENAME,
                 match_path / SLOT_REVIEW_FILENAME,
             )
@@ -238,6 +239,10 @@ def save_inline_temporal_split(
             if old_target_ids:
                 removed = _remove_superseded_segment_decisions(match_path, old_target_ids)
                 cleanup_unreferenced_manual_reviewed_slots(match_path, removed)
+            # A resolved split has persisted child targets. Once it becomes a
+            # complex blocker, refresh the review snapshot in the same atomic
+            # operation so those now-retired targets cannot remain displayed.
+            build_segment_review_document(match_path, match_doc)
         except Exception:
             for path, previous in rollback_paths.items():
                 if previous is None:

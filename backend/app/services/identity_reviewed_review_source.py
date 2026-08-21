@@ -65,7 +65,41 @@ def resolve_review_source(
             None,
         )
         digest = str((unit or {}).get("source_ownership_digest") or "")
-        if not isinstance(unit, dict) or not digest or source_ownership_digest != digest:
+        if not isinstance(unit, dict):
+            # A resolved inline split intentionally suppresses recreation of
+            # its material parent. Its persisted exact source is still the
+            # server-owned authority required to edit it or mark it complex.
+            from app.services.identity_reviewed_mixed_store import load_mixed_player_cases
+
+            stored_source = next(
+                (
+                    row.get("source")
+                    for row in load_mixed_player_cases(match_path).get("cases") or []
+                    if str(row.get("original_issue") or "") == "inline_temporal_split"
+                    and isinstance(row.get("source"), dict)
+                    and str((row.get("source") or {}).get("scope_kind") or "")
+                    == "material_continuity"
+                    and str((row.get("source") or {}).get("candidate_subject_id") or "")
+                    == candidate_subject_id
+                    and str((row.get("source") or {}).get("continuity_group_id") or "")
+                    == group_id
+                    and str((row.get("source") or {}).get("source_ownership_digest") or "")
+                    == str(source_ownership_digest or "")
+                ),
+                None,
+            )
+            if not isinstance(stored_source, dict):
+                raise ReviewedIdentityReviewSourceError("material_continuity_target_stale")
+            return _from_owned_observations(
+                match_path,
+                candidate_subject_id=candidate_subject_id,
+                scope_kind="material_continuity",
+                digest=str(stored_source["source_ownership_digest"]),
+                continuity_group_id=group_id,
+                owned_observations=list(stored_source.get("owned_observations") or []),
+                source_team_label=str(stored_source.get("source_team_label") or "U"),
+            )
+        if not digest or source_ownership_digest != digest:
             raise ReviewedIdentityReviewSourceError("material_continuity_target_stale")
         return _from_owned_observations(
             match_path,

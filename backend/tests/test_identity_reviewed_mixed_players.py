@@ -836,6 +836,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 name: (root / name).read_bytes()
                 for name in (
                     "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_review.json",
                     "reviewed_identity_segment_decisions.json",
                     "reviewed_identity_slot_assignments.json",
                 )
@@ -886,6 +887,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 name: (root / name).read_bytes()
                 for name in (
                     "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_review.json",
                     "reviewed_identity_segment_decisions.json",
                     "reviewed_identity_slot_assignments.json",
                 )
@@ -907,6 +909,52 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                             {"action": "assign_team", "team_label": "A"},
                             {"action": "assign_team", "team_label": "B"},
                         ],
+                    },
+                )
+
+            for name, before in artifacts.items():
+                self.assertEqual((root / name).read_bytes(), before)
+
+    def test_resolved_split_to_complex_cleanup_failure_restores_child_review_snapshot(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 7)
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            initial = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": digest,
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "create_new_stable_player", "team_label": "A"},
+                        {"action": "assign_team", "team_label": "B"},
+                    ],
+                },
+            )
+            artifacts = {
+                name: (root / name).read_bytes()
+                for name in (
+                    "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_review.json",
+                    "reviewed_identity_segment_decisions.json",
+                    "reviewed_identity_slot_assignments.json",
+                )
+            }
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.cleanup_unreferenced_manual_reviewed_slots",
+                side_effect=RuntimeError("cleanup failed"),
+            ), self.assertRaisesRegex(RuntimeError, "cleanup failed"):
+                save_inline_temporal_split(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_ownership_digest": digest,
+                        "existing_split_semantic_digest": initial["saved_case"]["split_semantic_digest"],
+                        "resolution": "unresolved_complex_mix",
                     },
                 )
 

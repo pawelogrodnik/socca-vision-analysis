@@ -131,6 +131,69 @@ def inline_temporal_split_for_source(
     return None
 
 
+def resolved_material_continuity_observation_pairs(
+    match_path: Path,
+) -> set[tuple[str, int]]:
+    """Return exact ownership retired by active resolved material splits.
+
+    A temporal split has no one parent-level identity decision: its children
+    are the authoritative resolution.  Material-continuity coalescing must
+    therefore not recreate the same parent from those exact observations.
+    Keep this deliberately narrow: unresolved complex mixes stay visible as
+    blockers, and a stale/incomplete child set is never trusted to suppress a
+    newly actionable continuity case.
+    """
+    from app.services.identity_reviewed_segments import load_segment_decisions
+
+    decisions = {
+        str(row.get("review_target_id") or ""): row
+        for row in load_segment_decisions(match_path).get("decisions") or []
+        if row.get("review_target_id")
+    }
+    active_pairs: set[tuple[str, int]] = set()
+    for case in load_mixed_player_cases(match_path).get("cases") or []:
+        source = case.get("source")
+        if (
+            str(case.get("original_issue") or "") != "inline_temporal_split"
+            or str(case.get("resolution_status") or "") != "resolved"
+            or not isinstance(source, dict)
+            or str(source.get("scope_kind") or "") != "material_continuity"
+        ):
+            continue
+        source_pairs = _owned_observation_pairs(source.get("owned_observations"))
+        target_ids = {
+            str(value)
+            for value in case.get("segment_target_ids") or []
+            if str(value)
+        }
+        if not source_pairs or not target_ids:
+            continue
+        targets = {
+            str(row.get("review_target_id") or ""): row
+            for row in operator_mixed_targets(match_path)
+            if str(row.get("split_parent_case_id") or "")
+            == str(case.get("case_id") or "")
+        }
+        if set(targets) != target_ids:
+            continue
+        child_pairs: set[tuple[str, int]] = set()
+        valid = True
+        for target_id in target_ids:
+            target = targets[target_id]
+            decision = decisions.get(target_id)
+            if (
+                not isinstance(decision, dict)
+                or str(decision.get("source_ownership_digest") or "")
+                != str(target.get("source_ownership_digest") or "")
+            ):
+                valid = False
+                break
+            child_pairs.update(_owned_observation_pairs(target.get("owned_observations")))
+        if valid and child_pairs == source_pairs:
+            active_pairs.update(source_pairs)
+    return active_pairs
+
+
 def mixed_case_summary(match_path: Path) -> dict[str, int]:
     rows = load_mixed_player_cases(match_path).get("cases") or []
     unresolved = sum(str(row.get("resolution_status")) in UNRESOLVED_STATUSES for row in rows)
@@ -412,6 +475,16 @@ def _observations_for_marker(
     all_rows = _subject_observations_from_pairs(match_path, wanted)
     found = {(str(row["tracklet_id"]), int(row["frame"])) for row in all_rows}
     return all_rows if found == wanted else []
+
+
+def _owned_observation_pairs(rows: Any) -> set[tuple[str, int]]:
+    return {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+        for row in rows or []
+        if isinstance(row, dict)
+        and row.get("tracklet_id") is not None
+        and row.get("frame") is not None
+    }
 
 
 def _subject_observations_from_pairs(

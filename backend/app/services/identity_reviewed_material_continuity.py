@@ -46,6 +46,8 @@ def coalesce_material_continuity_units(
     units: list[dict[str, Any]],
     fps: float,
     decisions: dict[str, Any] | None = None,
+    *,
+    excluded_observation_pairs: set[tuple[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Replace safe, adjacent anonymous Team-A fragments with one case.
 
@@ -54,12 +56,15 @@ def coalesce_material_continuity_units(
     decision is limited to this group's exact tracklet/frame ownership.
     """
     safe_fps = fps if fps > 0 else 30.0
+    excluded_pairs = excluded_observation_pairs or set()
     by_slot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     max_frame_gap = max(1, int(ceil(MATERIAL_CONTINUITY_MAX_JOIN_GAP_SEC * safe_fps)))
     for unit in units:
         slot = str(unit.get("stable_slot_id") or "")
         if _eligible(unit, slot):
-            by_slot[slot].extend(_continuous_member_runs(unit, max_frame_gap))
+            by_slot[slot].extend(
+                _continuous_member_runs(unit, max_frame_gap, excluded_pairs)
+            )
 
     grouped_pairs: set[tuple[str, int]] = set()
     continuity_units: list[dict[str, Any]] = []
@@ -208,12 +213,15 @@ def _continuity_case(
 def _continuous_member_runs(
     unit: dict[str, Any],
     max_frame_gap: int,
+    excluded_pairs: set[tuple[str, int]],
 ) -> list[dict[str, Any]]:
     pairs_by_frame: dict[int, list[tuple[str, int]]] = defaultdict(list)
     for raw_pair in unit.get("detected_pairs") or []:
         if not isinstance(raw_pair, (tuple, list)) or len(raw_pair) < 2:
             continue
         pair = (str(raw_pair[0]), int(raw_pair[1]))
+        if pair in excluded_pairs:
+            continue
         pairs_by_frame[pair[1]].append(pair)
     runs: list[list[tuple[str, int]]] = []
     current: list[tuple[str, int]] = []
