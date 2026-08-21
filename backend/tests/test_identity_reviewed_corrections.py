@@ -38,6 +38,7 @@ from app.services.identity_reviewed_segments import (
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
     load_mixed_player_cases,
+    resolved_material_continuity_observation_pairs,
 )
 from app.services.review_workflow_state import derive_review_workflow_state
 from app.services.review_workflow_state import get_review_workflow_state
@@ -576,6 +577,55 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 progress_after["summary"]["material_continuity_decisions_remaining"], 0
             )
 
+            split_target_ids = set(split["saved_case"]["segment_target_ids"])
+            split_units = [
+                row
+                for row in progress_after["_internal_review_units"]
+                if str(row.get("review_target_id") or "") in split_target_ids
+            ]
+            non_child_units = [
+                row
+                for row in progress_after["_internal_review_units"]
+                if str(row.get("review_target_id") or "") not in split_target_ids
+            ]
+            self.assertFalse(any(
+                {
+                    (str(pair[0]), int(pair[1]))
+                    for pair in row.get("detected_pairs") or []
+                }
+                & parent_pairs
+                for row in non_child_units
+            ))
+            self.assertEqual(
+                {
+                    (str(pair[0]), int(pair[1]))
+                    for row in split_units
+                    for pair in row.get("detected_pairs") or []
+                },
+                parent_pairs,
+            )
+            underlying = next(
+                (
+                    row
+                    for row in progress_after["_internal_review_units"]
+                    if row.get("candidate_subject_id") == "material-subject"
+                    and row.get("correction_scope") == "whole_subject"
+                ),
+                None,
+            )
+            self.assertIsNotNone(underlying)
+            self.assertEqual(
+                set(underlying["detected_pairs"]),
+                {("material-tracklet", 900)},
+            )
+            self.assertFalse(any(
+                row.get("candidate_subject_id") == "material-subject"
+                for row in [
+                    *progress_after["next_cases"],
+                    *progress_after["optional_audit_cases"],
+                ]
+            ))
+
             children = [
                 row for row in load_segment_review(root)["targets"]
                 if row.get("review_target_id") in split["saved_case"]["segment_target_ids"]
@@ -635,6 +685,60 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(progress["mixed_players"]["summary"]["complex_unresolved"], 1)
             self.assertEqual(state["phase"], "mixed_players")
             self.assertIn("review_mixed_players", state["allowed_actions"])
+            self.assertEqual(resolved_material_continuity_observation_pairs(root), set())
+            self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
+
+    def test_incomplete_resolved_material_split_fails_closed_without_trimming_parent(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _add_natural_material_continuity_case(root)
+            raw_before = (root / "tracklets.json").read_bytes()
+            parent = _materialize_natural_material_deferred_case(root)
+            with patch(
+                "app.services.identity_reviewed_review_source.render_mixed_review_evidence",
+                return_value=set(),
+            ):
+                split = save_inline_temporal_split(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": parent["candidate_subject_id"],
+                        "continuity_group_id": parent["continuity_group_id"],
+                        "source_ownership_digest": parent["source_ownership_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [349],
+                        "segment_assignments": [
+                            {"action": "assign_roster_player", "player_id": "p1"},
+                            {"action": "assign_team", "team_label": "B"},
+                        ],
+                    },
+                )
+            decisions = load_segment_decisions(root)
+            missing_target_id = split["saved_case"]["segment_target_ids"][0]
+            decisions["decisions"] = [
+                row
+                for row in decisions["decisions"]
+                if row.get("review_target_id") != missing_target_id
+            ]
+            _write(root / "reviewed_identity_segment_decisions.json", decisions)
+
+            self.assertEqual(resolved_material_continuity_observation_pairs(root), set())
+            progress = build_reviewed_identity_progress(
+                root, _match(), include_internal_units=True
+            )
+            reappeared = next(
+                row
+                for row in progress["_internal_review_units"]
+                if row.get("scope_kind") == "material_continuity"
+                and row.get("continuity_group_id") == parent["continuity_group_id"]
+            )
+            self.assertEqual(
+                set(reappeared["detected_pairs"]),
+                {
+                    ("material-tracklet", frame)
+                    for frame in range(100, 600)
+                },
+            )
             self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
 
     def test_resolved_material_split_to_complex_retires_old_child_targets(self) -> None:

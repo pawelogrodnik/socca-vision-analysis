@@ -105,6 +105,78 @@ def coalesce_material_continuity_units(
     return [*retained, *continuity_units]
 
 
+def trim_resolved_material_pairs_from_whole_subject_units(
+    units: list[dict[str, Any]],
+    resolved_pairs: set[tuple[str, int]],
+    fps: float,
+    *,
+    tracklet_team_labels: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Remove resolved material-split ownership from competing parents only.
+
+    A resolved inline temporal split delegates its exact source observations to
+    canonical-segment children.  The raw whole-subject presentation unit can
+    still contain those same observations, so it must be reduced before
+    coverage and optional-audit policy see it.  This never receives segment
+    children and never applies to unresolved complex mixes: callers pass only
+    the fail-closed, verified resolved-pair set.
+    """
+    if not resolved_pairs:
+        return units
+    safe_fps = fps if fps > 0 else 30.0
+    retained: list[dict[str, Any]] = []
+    for unit in units:
+        if str(unit.get("correction_scope") or "whole_subject") != "whole_subject":
+            retained.append(unit)
+            continue
+        pairs = _unit_pairs(unit)
+        remaining = pairs - resolved_pairs
+        if remaining == pairs:
+            retained.append(unit)
+            continue
+        if not remaining:
+            continue
+        frames = sorted({frame for _, frame in remaining})
+        clone = dict(unit)
+        clone["detected_pairs"] = sorted(remaining)
+        clone["tracklet_ids"] = sorted({tracklet_id for tracklet_id, _ in remaining})
+        clone["tracklet_count"] = len(clone["tracklet_ids"])
+        clone["frame_start"] = frames[0]
+        clone["frame_end"] = frames[-1]
+        clone["detected_frame_count"] = len(frames)
+        clone["detected_observation_count"] = len(remaining)
+        clone["detected_time_sec"] = round(len(frames) / safe_fps, 3)
+        if tracklet_team_labels is not None:
+            detected_teams = {
+                str(tracklet_team_labels.get(tracklet_id) or "U").upper()
+                for tracklet_id, _ in remaining
+            }
+            clone["detected_team_labels"] = sorted(detected_teams & {"A", "B"})
+            source_team = (
+                next(iter(detected_teams)) if len(detected_teams) == 1 else "U"
+            )
+            clone["source_team_label"] = source_team
+            if not (clone.get("current_decision") or {}).get("action"):
+                clone["effective_team_label"] = source_team
+        clone["visual_evidence"] = _evidence_within_pairs(
+            unit.get("visual_evidence") or {}, remaining
+        )
+        clone["has_operator_visual_evidence"] = bool(
+            (clone["visual_evidence"] or {}).get("anchor_crops")
+        )
+        if "owned_observations" in clone:
+            clone["owned_observations"] = [
+                {"tracklet_id": tracklet_id, "frame": frame}
+                for tracklet_id, frame in sorted(remaining)
+            ]
+        clone["reason_codes"] = sorted(
+            set(clone.get("reason_codes") or [])
+            | {"resolved_material_split_owned_by_child"}
+        )
+        retained.append(clone)
+    return retained
+
+
 def is_material_continuity_case(unit: dict[str, Any]) -> bool:
     return unit.get("scope_kind") == "material_continuity" and bool(
         unit.get("material_continuity_required")
@@ -259,11 +331,7 @@ def _retain_non_grouped_observations(
 ) -> list[dict[str, Any]]:
     retained: list[dict[str, Any]] = []
     for unit in units:
-        pairs = {
-            (str(raw_pair[0]), int(raw_pair[1]))
-            for raw_pair in unit.get("detected_pairs") or []
-            if isinstance(raw_pair, (tuple, list)) and len(raw_pair) >= 2
-        }
+        pairs = _unit_pairs(unit)
         remaining = pairs - grouped_pairs
         if not pairs or remaining == pairs:
             retained.append(unit)
@@ -300,6 +368,29 @@ def _evidence_within_frames(
         if crop.get("frame") is not None and int(crop["frame"]) in frames
     ]
     return value
+
+
+def _evidence_within_pairs(
+    evidence: dict[str, Any],
+    pairs: set[tuple[str, int]],
+) -> dict[str, Any]:
+    value = dict(evidence)
+    value["anchor_crops"] = [
+        dict(crop)
+        for crop in evidence.get("anchor_crops") or []
+        if crop.get("tracklet_id") is not None
+        and crop.get("frame") is not None
+        and (str(crop["tracklet_id"]), int(crop["frame"])) in pairs
+    ]
+    return value
+
+
+def _unit_pairs(unit: dict[str, Any]) -> set[tuple[str, int]]:
+    return {
+        (str(raw_pair[0]), int(raw_pair[1]))
+        for raw_pair in unit.get("detected_pairs") or []
+        if isinstance(raw_pair, (tuple, list)) and len(raw_pair) >= 2
+    }
 
 
 def _balanced_anchor_crops(members: list[dict[str, Any]]) -> list[dict[str, Any]]:
