@@ -1827,7 +1827,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null };
+  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -2032,8 +2032,11 @@ export type ReviewedIdentityReviewUnit = {
   material_continuity_required?: boolean;
   coverage_team_label?: string | null;
   potential_named_observation_gain?: number | null;
+  marginal_named_observation_gain?: number | null;
   potential_team_unnamed_share?: number | null;
   potential_named_coverage_gain_pp?: number | null;
+  optional_max_rank?: number | null;
+  optional_max_marginal_coverage_gain_pp?: number | null;
   named_coverage_before?: number | null;
   named_coverage_after_max?: number | null;
   filter_team_label?: 'A' | 'B' | 'U';
@@ -2092,6 +2095,38 @@ export type ReviewedIdentityWorkload = {
   queue_truncated: boolean;
 };
 
+export type ReviewedIdentityOptionalAudit = {
+  policy_version: string;
+  queue: 'optional_audit';
+  team_label: 'A';
+  scope: IdentityReviewTeamScope;
+  blocking: false;
+  status: 'not_ready' | 'available' | 'safe_max_reached';
+  eligible_to_start: boolean;
+  minimum_target_ratio: number;
+  minimum_target_met: boolean;
+  current_minimum_target_met: boolean;
+  projected_minimum_target_met: boolean;
+  required_readiness_met: boolean;
+  remaining_cases: number;
+  actionable_cases_remaining: number;
+  current_named_observations: number;
+  reliable_observations: number;
+  current_named_coverage: number | null;
+  pending_named_gain: number;
+  projected_named_observations: number;
+  projected_named_coverage: number | null;
+  safe_max_named_observations: number;
+  safe_max_named_coverage: number | null;
+  remaining_actionable_named_gain: number;
+  actionable_unique_observations_remaining: number;
+  unavailable_residual_observations: number;
+  unavailable_residual_ratio: number | null;
+  unavailable_actionable_observations: number;
+  unavailable_reason_counts: Record<string, number>;
+  per_team: Record<string, number>;
+};
+
 export type ReviewedIdentityReviewProgress = {
   schema_version: string;
   status: 'ready';
@@ -2129,6 +2164,7 @@ export type ReviewedIdentityReviewProgress = {
   coverage_readiness: ReviewedIdentityCoverageReadiness;
   coverage_residuals: Record<string, Record<string, unknown>>;
   workload: ReviewedIdentityWorkload;
+  optional_audit: ReviewedIdentityOptionalAudit;
   pagination: {
     offset: number;
     limit: number;

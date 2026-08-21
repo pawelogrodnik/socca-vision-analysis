@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import {
   finalizeReviewWorkflow,
   getReviewWorkflow,
+  getReviewedIdentityReviewProgress,
   retryReviewRecompute,
   retryReviewRender,
   getReviewedOutputStatus,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { Match, ReviewedOutputJob, ReviewWorkflow } from '../types';
+import type { Match, ReviewedIdentityOptionalAudit, ReviewedOutputJob, ReviewWorkflow } from '../types';
 import {
   identityReviewProgress,
   identityReviewStage,
@@ -24,6 +25,9 @@ import { IdentityReviewScopeSummary } from './IdentityReviewScopeSummary';
 import { MixedPlayersReviewPanel } from './MixedPlayersReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { ReviewedVideoQaPanel } from './ReviewedVideoQaPanel';
+import { ReviewedIdentityMaxSummary } from './ReviewedIdentityMaxSummary';
+import { matchTeamName } from '../utils/identityExceptionTeamFilter';
+import { formatReviewedIdentityPercent } from '../utils/reviewedIdentityMaxPresentation';
 
 type Props = {
   match: Match;
@@ -57,9 +61,15 @@ export function IdentityReviewWorkspace({
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [showOptionalAudit, setShowOptionalAudit] = useState(false);
+  const [showOptionalFinishConfirmation, setShowOptionalFinishConfirmation] = useState(false);
+  const [liveOptionalAuditSummary, setLiveOptionalAuditSummary] = useState<ReviewedIdentityOptionalAudit | null>(null);
+  const [optionalSummaryRefreshError, setOptionalSummaryRefreshError] = useState(false);
+  const [optionalSummaryRefreshAttempt, setOptionalSummaryRefreshAttempt] = useState(0);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
+    setLiveOptionalAuditSummary(null);
+    setOptionalSummaryRefreshError(false);
     setProcessingJob(next.processing || null);
     onWorkflowChanged(next);
   }
@@ -75,6 +85,11 @@ export function IdentityReviewWorkspace({
   useEffect(() => {
     setWorkflow(initialWorkflow);
     setProcessingJob(initialWorkflow?.processing || null);
+    setLiveOptionalAuditSummary(null);
+    setOptionalSummaryRefreshError(false);
+    setOptionalSummaryRefreshAttempt(0);
+    setShowOptionalAudit(false);
+    setShowOptionalFinishConfirmation(false);
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -86,6 +101,35 @@ export function IdentityReviewWorkspace({
   }, [workflow?.phase]);
 
   const stage = identityReviewStage(workflow);
+  const optionalSummaryFingerprint = workflow?.issues.optional_audit_summary
+    ? [
+      workflow.issues.optional_audit_summary.current_named_observations,
+      workflow.issues.optional_audit_summary.pending_named_gain,
+      workflow.issues.optional_audit_summary.remaining_cases,
+      workflow.issues.optional_audit_summary.policy_version,
+    ].join(':')
+    : '';
+
+  useEffect(() => {
+    if (stage !== 'prepare_result' || !workflow?.issues.optional_audit_summary) return undefined;
+    let disposed = false;
+    void getReviewedIdentityReviewProgress(match.id, 0, 1, undefined, 'optional_audit')
+      .then((progress) => {
+        if (disposed) return;
+        if (progress.optional_audit) setLiveOptionalAuditSummary(progress.optional_audit);
+        setOptionalSummaryRefreshError(false);
+      })
+      .catch(() => {
+        if (!disposed) setOptionalSummaryRefreshError(true);
+      });
+    return () => { disposed = true; };
+  }, [match.id, optionalSummaryFingerprint, optionalSummaryRefreshAttempt, stage, workflow?.issues.optional_audit_summary]);
+
+  function retryOptionalSummaryRefresh() {
+    setOptionalSummaryRefreshError(false);
+    setOptionalSummaryRefreshAttempt((attempt) => attempt + 1);
+  }
+
   useEffect(() => {
     if (!['remaining_issues', 'mixed_players'].includes(stage)) return undefined;
     document.body.classList.add('identity-exception-workspace-active');
@@ -118,6 +162,19 @@ export function IdentityReviewWorkspace({
       setBusy(false);
     }
   }
+
+  function requestFinalize() {
+    const optional = liveOptionalAuditSummary || workflow?.issues.optional_audit_summary;
+    const remaining = optional?.remaining_cases ?? 0;
+    if (showOptionalAudit && remaining > 0) {
+      setShowOptionalFinishConfirmation(true);
+      return;
+    }
+    void finalize();
+  }
+
+  const optionalAudit = liveOptionalAuditSummary || workflow?.issues.optional_audit_summary;
+  const teamAName = matchTeamName(match.teams || [], 'A');
 
   async function retry(action: 'retry_render' | 'retry_review_recompute') {
     if (!workflowAllows(workflow, action)) return;
@@ -196,13 +253,19 @@ export function IdentityReviewWorkspace({
     {stage === 'prepare_result' && workflow && !showOptionalAudit && <section className='reviewed-next-step'>
       <div>
         <p className='eyebrow'>Krok 3</p>
-        <h2>Tożsamości są gotowe</h2>
-        <p>System może teraz przygotować statystyki i wideo do końcowego sprawdzenia.</p>
+        <h2>Wymagany przegląd zakończony</h2>
+        <p>{teamAName}</p>
+        {optionalAudit && <ReviewedIdentityMaxSummary teamName={teamAName} summary={optionalAudit} />}
+        {optionalSummaryRefreshError && <p className='identity-optional-summary-refresh-error' role='status'>
+          Nie udało się odświeżyć podsumowania MAX. <button type='button' className='link-button' onClick={retryOptionalSummaryRefresh}>Spróbuj ponownie</button>
+        </p>}
+        {optionalAudit?.status === 'available' && <p>Wymagany poziom jakości został osiągnięty. Możesz zakończyć Review teraz albo opcjonalnie zwiększyć dokładność indywidualnych statystyk.</p>}
+        {optionalAudit?.status === 'safe_max_reached' && <p>✓ Bezpieczne maksimum osiągnięte. Nie ma więcej obserwacji, które można bezpiecznie przypisać przy obecnym materiale.</p>}
       </div>
-      <button type='button' onClick={() => void finalize()} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Przygotuj wideo do sprawdzenia</button>
-      {(workflow.issues.optional_audit || 0) > 0 && <button type='button' className='secondary' onClick={() => setShowOptionalAudit(true)}>
-        Przejrzyj opcjonalnie przeciwnika ({workflow.issues.optional_audit})
+      {optionalAudit?.status === 'available' && <button type='button' onClick={() => setShowOptionalAudit(true)}>
+        Kontynuuj do MAX
       </button>}
+      <button type='button' className='secondary' onClick={requestFinalize} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Zakończ przegląd — Przygotuj wideo do sprawdzenia</button>
       <details className='reviewed-video-settings'>
         <summary>Ustawienia wideo</summary>
         <div className='reviewed-checkboxes'>
@@ -214,16 +277,45 @@ export function IdentityReviewWorkspace({
     </section>}
 
     {stage === 'prepare_result' && workflow && showOptionalAudit && <>
-      <button type='button' className='secondary' onClick={() => setShowOptionalAudit(false)}>Wróć do przygotowania wyniku</button>
-      <IdentityExceptionReviewPanel
+      <section className='reviewed-next-step identity-optional-audit-summary'>
+        <div>
+          <p className='eyebrow'>Dobrowolny audyt</p>
+          <h2>Pełny audyt tożsamości — {teamAName}</h2>
+          <p>Sprawdzaj wyłącznie bezpieczne, pozostałe fragmenty. Nie musisz dojść do 100% i możesz zakończyć Review w każdej chwili.</p>
+          {optionalAudit && <ReviewedIdentityMaxSummary teamName={teamAName} summary={optionalAudit} compact />}
+          {optionalSummaryRefreshError && <p className='identity-optional-summary-refresh-error' role='status'>
+            Nie udało się odświeżyć podsumowania MAX. <button type='button' className='link-button' onClick={retryOptionalSummaryRefresh}>Spróbuj ponownie</button>
+          </p>}
+        </div>
+        <div className='row'>
+          <button type='button' className='secondary' onClick={() => {
+            setShowOptionalFinishConfirmation(false);
+            setShowOptionalAudit(false);
+          }}>Wróć</button>
+          <button type='button' onClick={requestFinalize} disabled={busy || !workflowAllows(workflow, 'finalize_identity')}>Zakończ przegląd</button>
+        </div>
+      </section>
+      {showOptionalFinishConfirmation && <div className='status identity-optional-finish-confirmation' role='alert'>
+        <strong>Pozostało {optionalAudit?.remaining_cases ?? 0} opcjonalnych przypadków.</strong>
+        <p>Wymagane minimum oraz wszystkie obowiązkowe kontrole są zakończone. Możesz zakończyć teraz; pozostałe fragmenty pozostaną anonimowe w tym raporcie.</p>
+        <div className='row'>
+          <button type='button' className='secondary' onClick={() => setShowOptionalFinishConfirmation(false)}>Kontynuuj audyt</button>
+          <button type='button' onClick={() => { setShowOptionalFinishConfirmation(false); void finalize(); }} disabled={busy}>Zakończ mimo to</button>
+        </div>
+      </div>}
+      {optionalAudit?.status === 'safe_max_reached' ? <section className='status' aria-live='polite'>
+        <strong>✓ Bezpieczne maksimum osiągnięte</strong>
+        <p>{teamAName}: pokrycie po zapisanych decyzjach wynosi {formatReviewedIdentityPercent(optionalAudit.projected_named_coverage)}. Pozostałe bezpieczne przypadki: 0.</p>
+      </section> : <IdentityExceptionReviewPanel
         match={match}
         workflow={workflow}
         initialQueue='optional_audit'
+        onOptionalAuditSummaryChanged={setLiveOptionalAuditSummary}
         onWorkflowChanged={(next) => {
           if (next) applyWorkflow(next);
           else void refreshWorkflow();
         }}
-      />
+      />}
     </>}
 
     {stage === 'rendering' && <div className='reviewed-rendering-card' role='status'>

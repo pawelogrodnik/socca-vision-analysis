@@ -18,7 +18,13 @@ from app.services.identity_reviewed_material_continuity import (
     load_material_continuity_decisions,
 )
 from app.services.identity_reviewed_segments import load_segment_decisions
-from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    build_reviewed_identity_progress,
+)
+from app.services.identity_reviewed_recompute_state import (
+    reviewed_identity_recompute_required,
+)
 from app.services.identity_review_scope import review_scope_dependency_matches
 
 
@@ -47,6 +53,17 @@ def validate_deferred_review_action(
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     target_id = str(payload.get("review_target_id") or "").strip() or None
     unit = _actionable_unit(progress, subject_id, target_id)
+    authorization_source = "batch_baseline"
+    dynamic_progress: dict[str, Any] | None = None
+    if unit is None:
+        unit, dynamic_progress = _dynamically_authorized_optional_unit(
+            match_path,
+            match_doc,
+            subject_id,
+            target_id,
+            expected_source_snapshot_digest=str(progress["source_snapshot_digest"]),
+        )
+        authorization_source = "dynamic_optional"
     if unit is None:
         raise DeferredReviewActionError(
             "review_unit_not_actionable",
@@ -64,7 +81,9 @@ def validate_deferred_review_action(
         )
     detected_team_labels_by_subject = None
     if target_id is None and unit.get("scope_kind") != "material_continuity":
-        detected_team_labels_by_subject = detected_team_labels_from_progress(progress)
+        detected_team_labels_by_subject = detected_team_labels_from_progress(
+            dynamic_progress or progress
+        )
         if (
             detected_team_labels_by_subject is None
             or subject_id not in detected_team_labels_by_subject
@@ -79,7 +98,121 @@ def validate_deferred_review_action(
         "idempotent_replay": saved is not None,
         "batch_source_snapshot_digest": progress["source_snapshot_digest"],
         "detected_team_labels_by_subject": detected_team_labels_by_subject,
+        "authorization_source": authorization_source,
     }
+
+
+def _dynamically_authorized_optional_unit(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    subject_id: str,
+    target_id: str | None,
+    *,
+    expected_source_snapshot_digest: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Find a newly exposed MAX unit without changing the batch baseline.
+
+    The expensive reconstruction is intentionally reserved for a dirty deferred
+    batch and only authorizes exact entries in the fresh optional queue.  The
+    internal-unit lookup below exists solely for idempotent retries of a
+    previously authorized dynamic decision; it never authorizes a new action.
+    """
+    if not reviewed_identity_recompute_required(match_path):
+        return None, None
+    try:
+        current = build_reviewed_identity_progress(
+            match_path,
+            match_doc,
+            include_internal_units=True,
+        )
+    except (FileNotFoundError, OSError, ValueError, KeyError) as exc:
+        raise DeferredReviewActionError(
+            "review_queue_stale",
+            "Nie można odczytać aktualnej kolejki Review. Odśwież Review.",
+        ) from exc
+    if (
+        current.get("schema_version") != PROGRESS_SCHEMA_VERSION
+        or current.get("status") != "ready"
+        or str(current.get("source_snapshot_digest") or "")
+        != expected_source_snapshot_digest
+        or not review_scope_dependency_matches(match_doc, current)
+    ):
+        raise DeferredReviewActionError(
+            "review_queue_stale",
+            "Nie można potwierdzić aktualnego zakresu Review. Odśwież Review.",
+        )
+
+    optional = _actionable_optional_unit(current, subject_id, target_id)
+    if optional is not None:
+        return optional, current
+
+    replay = _current_saved_replay_unit(current, subject_id, target_id)
+    if replay is None:
+        return None, current
+    _require_replay_ownership_compatibility(match_path, target_id, replay)
+    if _saved_decision(match_path, subject_id, target_id, replay) is None:
+        return None, current
+    return replay, current
+
+
+def _actionable_optional_unit(
+    progress: dict[str, Any],
+    subject_id: str,
+    target_id: str | None,
+) -> dict[str, Any] | None:
+    return _actionable_unit(
+        {"next_cases": [], "optional_audit_cases": progress.get("optional_audit_cases") or []},
+        subject_id,
+        target_id,
+    )
+
+
+def _current_saved_replay_unit(
+    progress: dict[str, Any],
+    subject_id: str,
+    target_id: str | None,
+) -> dict[str, Any] | None:
+    """Return an exact current unit only after it is known to have a save."""
+    for raw in progress.get("_internal_review_units") or []:
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("candidate_subject_id") or "") != subject_id:
+            continue
+        raw_target_id = str(raw.get("review_target_id") or "").strip() or None
+        if raw_target_id != target_id:
+            continue
+        if target_id is None:
+            if raw.get("scope_kind") in {None, "whole_subject"}:
+                return raw
+        elif raw.get("scope_kind") == "canonical_segment":
+            return raw
+    return None
+
+
+def _require_replay_ownership_compatibility(
+    match_path: Path,
+    target_id: str | None,
+    unit: dict[str, Any],
+) -> None:
+    if target_id is None:
+        return
+    saved = next(
+        (
+            row
+            for row in load_segment_decisions(match_path).get("decisions") or []
+            if str(row.get("review_target_id") or "") == target_id
+        ),
+        None,
+    )
+    if saved is None:
+        return
+    if str(saved.get("source_ownership_digest") or "") != str(
+        unit.get("source_ownership_digest") or ""
+    ):
+        raise DeferredReviewActionError(
+            "review_target_stale",
+            "Zakres tego fragmentu zmienił się. Odśwież Review przed ponownym zapisem.",
+        )
 
 
 def _load_batch_baseline(
@@ -159,7 +292,7 @@ def _authorized_queue_semantics(queue: str, unit: dict[str, Any]) -> bool:
         }
     return unit.get("priority") == "optional" and unit.get(
         "current_resolution_status"
-    ) == "optional_team_audit"
+    ) in {"optional_team_audit", "pending_optional_max_audit"}
 
 
 def _saved_decision(

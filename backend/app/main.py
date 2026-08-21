@@ -2042,6 +2042,7 @@ def get_match_reviewed_identity_progress(
             cached = json.loads(cached_path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, ValueError):
             cached = None
+        recompute_required = reviewed_identity_recompute_required(path)
         progress = (
             cached
             if isinstance(cached, dict)
@@ -2050,6 +2051,10 @@ def get_match_reviewed_identity_progress(
             == COVERAGE_POLICY_VERSION
             and cached.get("source_snapshot_file") == snapshot_file
             and review_scope_dependency_matches(read_match_meta(path), cached)
+            # Deferred corrections intentionally avoid an expensive snapshot
+            # rebuild. Their decision store must nevertheless be reflected
+            # immediately when the optional MAX queue is resumed.
+            and not recompute_required
             else build_reviewed_identity_progress(path, read_match_meta(path))
         )
         return {
@@ -2060,7 +2065,7 @@ def get_match_reviewed_identity_progress(
                 team_label=team_label,
                 queue=queue,
             ),
-            "recompute_required": reviewed_identity_recompute_required(path),
+            "recompute_required": recompute_required,
         }
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -2178,12 +2183,13 @@ def post_match_reviewed_identity_correction(
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(
-                "reviewed_correction_perf mode=deferred match=%s "
+                "reviewed_correction_perf mode=deferred authorization_source=%s match=%s "
                 "workflow_validation_ms=0.0 deferred_gate_ms=%.1f "
                 "persist_decision_ms=%.1f "
                 "seeded_candidate_rebuild_ms=0.0 finalize_reviewed_identity_ms=0.0 "
                 "segment_evidence_ms=0.0 progress_build_ms=0.0 final_workflow_ms=0.0 "
                 "total_ms=%.1f",
+                deferred_gate.get("authorization_source", "batch_baseline"),
                 match_document.get("id") or path.name,
                 deferred_gate_ms,
                 persist_ms,

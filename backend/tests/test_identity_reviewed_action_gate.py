@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
@@ -135,6 +136,21 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                     result["review_unit"]["current_resolution_status"],
                     "optional_team_audit",
                 )
+
+    def test_baseline_present_optional_save_does_not_rebuild_current_progress(self) -> None:
+        with _workspace() as root:
+            match_doc = _scoped_match()
+            _baseline(root, [], [_optional("optional")], match_doc)
+            with patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                side_effect=AssertionError("unexpected dynamic rebuild"),
+            ):
+                result = validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {"candidate_subject_id": "optional", "action": "unresolved"},
+                )
+            self.assertEqual(result["authorization_source"], "batch_baseline")
 
     def test_deferred_team_attribution_unit_allows_only_team_or_disposition_actions(self) -> None:
         allowed = (
@@ -406,6 +422,185 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, "review_unit_already_decided")
 
+    def test_dynamic_optional_rerank_authorizes_exact_new_case_and_replays_safely(self) -> None:
+        """A deferred broad disposition may expose a narrower MAX unit."""
+        with _workspace() as root:
+            match_doc = _scoped_match()
+            broad = _optional("broad")
+            narrow = _optional("narrow")
+            narrow["current_resolution_status"] = "pending_optional_max_audit"
+            _baseline(root, [], [broad], match_doc)
+            _write(
+                root / "reviewed_identity_slot_assignments.json",
+                {"decisions": [{"candidate_subject_id": "broad", "action": "unresolved"}]},
+            )
+            _write(root / "reviewed_identity_recompute_required.json", {"status": "required"})
+            fresh = _fresh_dynamic_progress(match_doc, [narrow])
+
+            with patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                return_value=fresh,
+            ):
+                first = validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {
+                        "candidate_subject_id": "narrow",
+                        "action": "assign_roster_player",
+                        "player_id": "team-a-player",
+                    },
+                )
+
+            self.assertEqual(first["authorization_source"], "dynamic_optional")
+            self.assertFalse(first["idempotent_replay"])
+
+            _write(
+                root / "reviewed_identity_slot_assignments.json",
+                {
+                    "decisions": [
+                        {"candidate_subject_id": "broad", "action": "unresolved"},
+                        {
+                            "candidate_subject_id": "narrow",
+                            "action": "assign_roster_player",
+                            "player_id": "team-a-player",
+                        },
+                    ]
+                },
+            )
+            completed = _fresh_dynamic_progress(match_doc, [])
+            completed["_internal_review_units"] = [narrow]
+            completed["deferred_correction_context"]["subjects"] = [
+                {
+                    "candidate_subject_id": "narrow",
+                    "source_team_label": "A",
+                    "detected_team_labels": ["A"],
+                    "detected_frames": [],
+                }
+            ]
+            with patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                return_value=completed,
+            ):
+                replay = validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {
+                        "candidate_subject_id": "narrow",
+                        "action": "assign_roster_player",
+                        "player_id": "team-a-player",
+                    },
+                )
+                self.assertTrue(replay["idempotent_replay"])
+                with self.assertRaises(DeferredReviewActionError) as raised:
+                    validate_deferred_review_action(
+                        root,
+                        match_doc,
+                        {"candidate_subject_id": "narrow", "action": "unresolved"},
+                    )
+            self.assertEqual(raised.exception.code, "review_unit_already_decided")
+
+    def test_dynamic_optional_replay_rejects_stale_segment_ownership(self) -> None:
+        with _workspace() as root:
+            match_doc = _scoped_match()
+            _baseline(root, [], [_optional("broad")], match_doc)
+            _write(root / "reviewed_identity_recompute_required.json", {"status": "required"})
+            target = _segment("narrow", "target-1")
+            target.update({
+                "priority": "optional",
+                "current_resolution_status": "pending_optional_max_audit",
+            })
+            _write(
+                root / "reviewed_identity_segment_decisions.json",
+                {
+                    "decisions": [
+                        {
+                            "review_target_id": "target-1",
+                            "action": "assign_roster_player",
+                            "player_id": "team-a-player",
+                            "source_ownership_digest": "stale-owner",
+                        }
+                    ]
+                },
+            )
+            fresh = _fresh_dynamic_progress(match_doc, [])
+            fresh["_internal_review_units"] = [target]
+            with patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                return_value=fresh,
+            ), self.assertRaises(DeferredReviewActionError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {
+                        "candidate_subject_id": "narrow",
+                        "review_target_id": "target-1",
+                        "source_ownership_digest": "owner-1",
+                        "action": "assign_roster_player",
+                        "player_id": "team-a-player",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "review_target_stale")
+
+    def test_dynamic_optional_replay_rejects_reverse_conflicting_decision(self) -> None:
+        """A dynamically exposed MAX unit cannot be changed after "Nie wiem"."""
+        with _workspace() as root:
+            match_doc = _scoped_match()
+            broad = _optional("broad")
+            narrow = _optional("narrow")
+            narrow["current_resolution_status"] = "pending_optional_max_audit"
+            _baseline(root, [], [broad], match_doc)
+            _write(
+                root / "reviewed_identity_slot_assignments.json",
+                {"decisions": [{"candidate_subject_id": "broad", "action": "unresolved"}]},
+            )
+            _write(root / "reviewed_identity_recompute_required.json", {"status": "required"})
+            fresh = _fresh_dynamic_progress(match_doc, [narrow])
+
+            with patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                return_value=fresh,
+            ):
+                first = validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {"candidate_subject_id": "narrow", "action": "unresolved"},
+                )
+            self.assertEqual(first["authorization_source"], "dynamic_optional")
+
+            _write(
+                root / "reviewed_identity_slot_assignments.json",
+                {
+                    "decisions": [
+                        {"candidate_subject_id": "broad", "action": "unresolved"},
+                        {"candidate_subject_id": "narrow", "action": "unresolved"},
+                    ]
+                },
+            )
+            completed = _fresh_dynamic_progress(match_doc, [])
+            completed["_internal_review_units"] = [narrow]
+            completed["deferred_correction_context"]["subjects"] = [
+                {
+                    "candidate_subject_id": "narrow",
+                    "source_team_label": "A",
+                    "detected_team_labels": ["A"],
+                    "detected_frames": [],
+                }
+            ]
+            with patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                return_value=completed,
+            ), self.assertRaises(DeferredReviewActionError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {
+                        "candidate_subject_id": "narrow",
+                        "action": "assign_roster_player",
+                        "player_id": "team-a-player",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "review_unit_already_decided")
+
 
 def _baseline(
     root: Path,
@@ -490,6 +685,39 @@ def _optional(subject_id: str) -> dict:
         "priority": "optional",
         "current_resolution_status": "optional_team_audit",
         "operator_actionable": True,
+    }
+
+
+def _fresh_dynamic_progress(match_doc: dict, optional_cases: list[dict]) -> dict:
+    subjects = sorted(
+        {
+            str(case["candidate_subject_id"])
+            for case in optional_cases
+            if case.get("review_target_id") is None
+        }
+    )
+    return {
+        "schema_version": PROGRESS_SCHEMA_VERSION,
+        "status": "ready",
+        "match_id": "m1",
+        "source_snapshot_digest": "snapshot-1",
+        "source_review_scope_digest": identity_review_scope_digest(match_doc),
+        "optional_audit_cases": optional_cases,
+        "_internal_review_units": list(optional_cases),
+        "deferred_correction_context": {
+            "schema_version": "1.0.0",
+            "status": "unavailable",
+            "detected_team_evidence_status": "ready",
+            "subjects": [
+                {
+                    "candidate_subject_id": subject_id,
+                    "source_team_label": "A",
+                    "detected_team_labels": ["A"],
+                    "detected_frames": [],
+                }
+                for subject_id in subjects
+            ],
+        },
     }
 
 
