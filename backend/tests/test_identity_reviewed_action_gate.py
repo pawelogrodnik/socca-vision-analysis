@@ -152,6 +152,67 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 )
             self.assertEqual(result["authorization_source"], "batch_baseline")
 
+    def test_hot_state_authorizes_exact_whole_subject_without_progress_rebuild(self) -> None:
+        with _workspace() as root:
+            whole = {**_whole("hot-subject"), "source_ownership_digest": "owner-hot"}
+            _baseline(root, [whole])
+            baseline = json.loads(
+                (root / "reviewed_identity_progress.json").read_text(encoding="utf-8")
+            )
+            hot_state = {
+                "state_version": 7,
+                "progress": baseline,
+                "internal_review_units": [whole],
+                "unit_lookup": {"hot-subject\u001f": 0},
+            }
+            with patch(
+                "app.services.identity_reviewed_action_gate.load_existing_fresh_hot_state",
+                return_value=hot_state,
+            ), patch(
+                "app.services.identity_reviewed_action_gate.build_reviewed_identity_progress",
+                side_effect=AssertionError("hot save must not rebuild progress"),
+            ):
+                result = validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {
+                        "candidate_subject_id": "hot-subject",
+                        "source_ownership_digest": "owner-hot",
+                        "review_state_version": 7,
+                        "action": "unresolved",
+                    },
+                )
+            self.assertEqual(result["authorization_source"], "batch_baseline")
+            self.assertTrue(result["review_unit"]["_hot_state_authorized"])
+
+    def test_hot_state_rejects_stale_source_before_persistence(self) -> None:
+        with _workspace() as root:
+            whole = {**_whole("hot-subject"), "source_ownership_digest": "owner-hot"}
+            _baseline(root, [whole])
+            baseline = json.loads(
+                (root / "reviewed_identity_progress.json").read_text(encoding="utf-8")
+            )
+            with patch(
+                "app.services.identity_reviewed_action_gate.load_existing_fresh_hot_state",
+                return_value={
+                    "state_version": 7,
+                    "progress": baseline,
+                    "internal_review_units": [whole],
+                    "unit_lookup": {"hot-subject\u001f": 0},
+                },
+            ), self.assertRaises(DeferredReviewActionError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {
+                        "candidate_subject_id": "hot-subject",
+                        "source_ownership_digest": "wrong-owner",
+                        "review_state_version": 7,
+                        "action": "unresolved",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "review_target_stale")
+
     def test_deferred_team_attribution_unit_keeps_the_unified_action_vocabulary(self) -> None:
         allowed = (
             {"action": "assign_team", "team_label": "A"},

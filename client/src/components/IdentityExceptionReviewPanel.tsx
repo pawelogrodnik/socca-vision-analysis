@@ -47,6 +47,7 @@ import {
   formatReviewedIdentityPercentagePoints,
 } from '../utils/reviewedIdentityMaxPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
+import { prefetchReviewedCorrectionContext } from '../utils/reviewedCorrectionContextClientCache';
 
 type Props = {
   match: Match;
@@ -262,6 +263,13 @@ export function IdentityExceptionReviewPanel({
     + Number(activeQueue === 'optional_audit')
     + Number(reviewCase?.unit.priority === 'coverage')
     + Number(unitEvidence?.kind === 'team_attribution');
+
+  useEffect(() => {
+    const next = cases[index + 1]?.unit;
+    if (next?.candidate_subject_id) {
+      prefetchReviewedCorrectionContext(match.id, next.candidate_subject_id, next.review_target_id);
+    }
+  }, [cases, index, match.id]);
 
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;

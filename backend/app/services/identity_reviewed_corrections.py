@@ -210,6 +210,23 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
+    if (
+        isinstance(authorized_review_unit, dict)
+        and authorized_review_unit.get("_hot_state_authorized") is True
+        and not _has_potential_inline_split(match_path, payload)
+    ):
+        # A normal whole-subject or canonical-segment save has already been
+        # validated against the exact versioned source in the hot state. Do
+        # not rescan raw observations merely to prove that there is no inline
+        # split to retire.
+        return _persist_reviewed_identity_correction(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
     try:
         source = _direct_correction_source(match_path, match_doc, payload)
     except ReviewedIdentityReviewSourceError:

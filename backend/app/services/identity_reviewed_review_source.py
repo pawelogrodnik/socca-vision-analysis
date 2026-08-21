@@ -31,8 +31,18 @@ def resolve_review_source(
     review_target_id: str | None = None,
     source_ownership_digest: str | None = None,
     continuity_group_id: str | None = None,
+    materialized_review_unit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rebuild the exact parent set; callers never supply observation pairs."""
+    if isinstance(materialized_review_unit, dict):
+        return _from_materialized_unit(
+            match_path,
+            candidate_subject_id=candidate_subject_id,
+            review_target_id=review_target_id,
+            continuity_group_id=continuity_group_id,
+            source_ownership_digest=source_ownership_digest,
+            unit=materialized_review_unit,
+        )
     if review_target_id:
         review = load_segment_review(match_path) or build_segment_review_document(match_path, match_doc)
         target = target_for_id(review, review_target_id)
@@ -124,6 +134,55 @@ def resolve_review_source(
         scope_kind="whole_subject",
         digest=current_digest,
         observations=observations,
+    )
+
+
+def _from_materialized_unit(
+    match_path: Path,
+    *,
+    candidate_subject_id: str,
+    review_target_id: str | None,
+    continuity_group_id: str | None,
+    source_ownership_digest: str | None,
+    unit: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve an exact active source from the server-only hot state.
+
+    The browser cannot provide `detected_pairs`; it merely supplies a versioned
+    source key. The materialized unit is built from canonical artifacts and
+    still has to agree with every part of that key before its pairs are used.
+    """
+    unit_scope = str(unit.get("scope_kind") or "whole_subject")
+    unit_subject = str(unit.get("candidate_subject_id") or "")
+    unit_target = str(unit.get("review_target_id") or "") or None
+    unit_group = str(unit.get("continuity_group_id") or "") or None
+    unit_digest = str(unit.get("source_ownership_digest") or "")
+    if (
+        unit_subject != candidate_subject_id
+        or unit_target != review_target_id
+        or unit_group != continuity_group_id
+        or not unit_digest
+        or unit_digest != str(source_ownership_digest or "")
+    ):
+        raise ReviewedIdentityReviewSourceError("review_target_stale")
+    pairs = [
+        {"tracklet_id": str(pair[0]), "frame": int(pair[1])}
+        for pair in unit.get("detected_pairs") or []
+        if isinstance(pair, (list, tuple)) and len(pair) == 2
+    ]
+    return _from_owned_observations(
+        match_path,
+        candidate_subject_id=candidate_subject_id,
+        scope_kind=unit_scope,
+        digest=unit_digest,
+        owned_observations=pairs,
+        source_team_label=str(
+            unit.get("effective_team_label")
+            or unit.get("source_team_label")
+            or "U"
+        ),
+        review_target_id=review_target_id,
+        continuity_group_id=continuity_group_id,
     )
 
 

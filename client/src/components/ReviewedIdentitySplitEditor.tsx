@@ -158,6 +158,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
         resolution: 'split',
         split_after_frames: boundaries,
         segment_assignments: assignments.filter((value): value is MixedSegmentAssignment => value !== null),
+        review_state_version: context.review_state_version,
       });
       onSaved(result);
     } catch (reason) {
@@ -179,6 +180,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
         source_ownership_digest: context.source_ownership_digest,
         existing_split_semantic_digest: persistedSplit?.split_semantic_digest || undefined,
         resolution: 'unresolved_complex_mix',
+        review_state_version: context.review_state_version,
       });
       onSaved(result);
     } catch (reason) {
