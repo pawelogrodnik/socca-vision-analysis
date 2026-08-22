@@ -20,6 +20,7 @@ import {
 import {
   REVIEWED_IDENTITY_ADVANCED_ACTIONS,
   REVIEWED_IDENTITY_PRIMARY_ACTIONS,
+  reviewedIdentityPrimaryActionCards,
   type ReviewedIdentityActionCard,
 } from '../utils/reviewedIdentityActions';
 import { persistReviewDecision } from '../utils/identityExceptionWorkspace';
@@ -39,7 +40,7 @@ type Props = {
   teams?: Team[];
   teamAttributionOnly?: boolean;
   deferRecompute?: boolean;
-  allowStagedMixed?: boolean;
+  mixedHandling?: 'stage' | 'direct';
   navigation?: {
     onPrevious: () => void;
     onNext: () => void;
@@ -67,7 +68,7 @@ export function ReviewedIdentityCorrectionForm({
   onSaved,
   teams,
   deferRecompute = false,
-  allowStagedMixed = true,
+  mixedHandling = 'stage',
   navigation,
 }: Props) {
   const subjectId = entity.candidate_subject_id;
@@ -140,10 +141,7 @@ export function ReviewedIdentityCorrectionForm({
   }), [options.roster]);
   const selectedRosterPlayer = options.roster.find((player) => player.player_id === playerId);
   const range = correctionRange(entity);
-  const actionCards = REVIEWED_IDENTITY_PRIMARY_ACTIONS.filter((card) => (
-    context?.action_capabilities[card.action]?.allowed
-    && (card.action !== 'mixed_players' || allowStagedMixed)
-  ));
+  const actionCards = reviewedIdentityPrimaryActionCards(context?.action_capabilities, mixedHandling);
   const advancedActionCards = REVIEWED_IDENTITY_ADVANCED_ACTIONS.filter((card) => context?.action_capabilities[card.action]?.allowed);
   const choiceComplete = Boolean(action)
     && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))

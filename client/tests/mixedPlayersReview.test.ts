@@ -158,11 +158,15 @@ test('normal correction stages mixed players while split editing remains a full-
   const actions = readFileSync(resolve(import.meta.dirname, '../src/utils/reviewedIdentityActions.ts'), 'utf8');
   assert.match(actions, /Kilku zawodników/);
   assert.match(actions, /mixed_players/);
+  assert.match(form, /reviewedIdentityPrimaryActionCards\(/);
+  assert.match(form, /mixedHandling = 'stage'/);
   assert.match(form, /ReviewedIdentitySplitModal/);
   assert.doesNotMatch(form, /ReviewedIdentitySplitEditor/);
   assert.match(modal, /createPortal/);
   assert.match(modal, /reviewed-identity-split-modal/);
   assert.doesNotMatch(form, /Podziel tutaj/);
+  assert.doesNotMatch(mixed, /Team A — nieznany/);
+  assert.match(mixed, /matchTeamName\(match\.teams \|\| \[\], 'A'\)/);
   assert.match(editor, /Doprecyzuj moment przejścia/);
   assert.match(editor, /window\.confirm/);
   assert.match(editor, /Wróć bez zapisu/);

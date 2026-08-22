@@ -17,6 +17,11 @@ from app.main import (
     get_match_reviewed_identity_temporal_split_refinement,
     post_match_reviewed_identity_temporal_split,
 )
+from app.services.identity_reviewed_action_scope import (
+    ReviewedIdentityActionScopeError,
+    reviewed_identity_action_capabilities,
+    validate_review_unit_action_scope,
+)
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
@@ -196,6 +201,58 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {row["source"]["review_target_id"] for row in cases},
                 {"canonical-a", "canonical-b"},
             )
+
+    def test_optional_max_capabilities_hide_staged_mixed_but_keep_direct_split(self) -> None:
+        optional = reviewed_identity_action_capabilities({
+            "scope_kind": "whole_subject",
+            "detected_observation_count": 5,
+            "priority": "optional",
+        })
+        self.assertFalse(optional["mixed_players"]["allowed"])
+        self.assertEqual(optional["mixed_players"]["reason"], "optional_max_direct_split_only")
+        self.assertTrue(optional["split"]["allowed"])
+
+        required = reviewed_identity_action_capabilities({
+            "scope_kind": "whole_subject",
+            "detected_observation_count": 5,
+            "priority": "high",
+        })
+        self.assertTrue(required["mixed_players"]["allowed"])
+        self.assertTrue(required["split"]["allowed"])
+
+    def test_optional_max_staged_mixed_save_is_rejected_with_stable_code(self) -> None:
+        unit = {
+            "scope_kind": "whole_subject",
+            "detected_observation_count": 5,
+            "priority": "optional",
+        }
+        with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+            validate_review_unit_action_scope(
+                {"action": "mixed_players", "candidate_subject_id": "subject-mixed"},
+                unit,
+            )
+        self.assertEqual(raised.exception.code, "optional_max_staged_mixed_not_allowed")
+
+    def test_optional_max_source_cannot_persist_staged_marker(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            queued_unit = build_reviewed_identity_progress(root, match)["next_cases"][0]
+            subject_id = str(queued_unit["candidate_subject_id"])
+            unit = {**queued_unit, "priority": "optional"}
+            with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+                persist_reviewed_identity_correction(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": subject_id,
+                        "action": "mixed_players",
+                        "mixed_hint": "unknown",
+                        "source_ownership_digest": current_mixed_subject_digest(root, subject_id),
+                    },
+                    authorized_review_unit=unit,
+                )
+            self.assertEqual(raised.exception.code, "optional_max_staged_mixed_not_allowed")
+            self.assertFalse((root / "reviewed_identity_mixed_players.json").exists())
 
     def test_optional_max_complex_inline_split_becomes_required_blocker_and_rejects_finalization(self) -> None:
         with _workspace() as root:

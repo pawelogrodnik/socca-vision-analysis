@@ -4,7 +4,8 @@ import { artifactUrl, finalizeReviewedIdentityCorrections, getMixedBoundaryRefin
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
-import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
+import { matchTeamName } from '../utils/identityExceptionTeamFilter';
+import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 
 type Props = {
   match: Match;
@@ -300,7 +301,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
           <label>Zawodnik z kadry
             <select value={selectedAssignment?.action === 'assign_roster_player' ? selectedAssignment.player_id : ''} onChange={(event) => event.target.value && assign({ action: 'assign_roster_player', player_id: event.target.value })}>
               <option value=''>Wybierz zawodnika</option>
-              {['A', 'B'].map((team) => <optgroup key={team} label={teamLabelForOperator(team)}>{queue.assignment_options.roster.filter((player) => player.team_label === team).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}</option>)}</optgroup>)}
+              {(['A', 'B'] as const).map((team) => <optgroup key={team} label={matchTeamName(match.teams || [], team)}>{queue.assignment_options.roster.filter((player) => player.team_label === team).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}</option>)}</optgroup>)}
             </select>
           </label>
           <label>Ten sam gracz co Axx/Bxx
@@ -310,10 +311,10 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
             </select>
           </label>
           <div className='reviewed-action-cards'>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'A' })}>Team A — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'B' })}>Team B — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik A</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik B</button>
+            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'A' })}>{matchTeamName(match.teams || [], 'A')} — nieznany</button>
+            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'B' })}>{matchTeamName(match.teams || [], 'B')} — nieznany</button>
+            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'A')})</button>
+            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'B')})</button>
             <button type='button' onClick={() => assign({ action: 'referee' })}>Sędzia</button>
             <button type='button' onClick={() => assign({ action: 'false_detection' })}>Fałszywa detekcja</button>
             <button type='button' onClick={() => assign({ action: 'team_unknown' })}>Nieznana drużyna</button>
