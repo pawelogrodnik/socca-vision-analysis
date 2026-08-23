@@ -15,7 +15,9 @@ type Props = {
 export function ReviewedIdentitySplitModal({ matchId, context, teams, onCancel, onSaved }: Props) {
   return createPortal(
     <div className='reviewed-identity-split-modal' role='dialog' aria-modal='true' aria-label='Edytuj podział fragmentu'>
-      <div className='reviewed-identity-split-modal-backdrop' onClick={onCancel} />
+      {/* Backdrop is visual only and blocks the page behind the modal. The
+          editor owns guarded dirty-state cancellation ("Wróć bez zapisu"). */}
+      <div className='reviewed-identity-split-modal-backdrop' />
       <section className='reviewed-identity-split-modal-content'>
         <ReviewedIdentitySplitEditor
           matchId={matchId}

@@ -164,6 +164,12 @@ test('normal correction stages mixed players while split editing remains a full-
   assert.doesNotMatch(form, /ReviewedIdentitySplitEditor/);
   assert.match(modal, /createPortal/);
   assert.match(modal, /reviewed-identity-split-modal/);
+  // Backdrop clicks must never discard unsaved split work: the backdrop is
+  // visual-only and the editor owns guarded dirty-state cancellation.
+  assert.match(modal, /<div className='reviewed-identity-split-modal-backdrop' \/>/);
+  assert.doesNotMatch(modal, /backdrop' onClick/);
+  assert.match(editor, /function cancel\(\) \{\s*\n\s*if \(hasUnsavedChanges && !window\.confirm\(/);
+  assert.match(editor, /onClick=\{cancel\} disabled=\{busy\}>Wróć bez zapisu</);
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.doesNotMatch(mixed, /Team A — nieznany/);
   assert.match(mixed, /matchTeamName\(match\.teams \|\| \[\], 'A'\)/);
