@@ -8,6 +8,7 @@ without turning it into named-player data.
 """
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from decimal import Decimal, ROUND_CEILING
 import json
 from pathlib import Path
@@ -153,7 +154,7 @@ def empty_coverage(match_doc: dict[str, Any]) -> dict[str, Any]:
 def apply_coverage_policy(
     units: list[dict[str, Any]],
     coverage: dict[str, Any],
-    pair_index: dict[tuple[str, int], dict[str, Any]],
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
     match_doc: dict[str, Any],
 ) -> dict[str, Any]:
     """Rank every meaningful unreviewed identity unit without a case cap."""
@@ -560,7 +561,7 @@ def workload_level(case_count: int) -> str:
 
 def _coverage_impact(
     unit: dict[str, Any],
-    pair_index: dict[tuple[str, int], dict[str, Any]],
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
     coverage: dict[str, Any],
 ) -> dict[str, Any]:
     pairs = {
@@ -568,8 +569,8 @@ def _coverage_impact(
         for pair in unit.get("detected_pairs") or []
         if isinstance(pair, (list, tuple)) and len(pair) >= 2
     }
-    rows = [pair_index[pair] for pair in pairs if pair in pair_index]
-    team_counts = Counter(_team_label(row.get("team_label")) for row in rows)
+    present_rows = [(pair, pair_index[pair]) for pair in pairs if pair in pair_index]
+    team_counts = Counter(_team_label(row.get("team_label")) for _pair, row in present_rows)
     team = (
         team_counts.most_common(1)[0][0]
         if team_counts
@@ -577,12 +578,11 @@ def _coverage_impact(
     )
     named_gain_pairs = {
         pair
-        for pair in pairs
-        if pair in pair_index
-        and _team_label(pair_index[pair].get("team_label")) == team
-        and str(pair_index[pair].get("identity_status") or "unresolved")
+        for pair, observation in present_rows
+        if _team_label(observation.get("team_label")) == team
+        and str(observation.get("identity_status") or "unresolved")
         in RELIABLE_STATUSES
-        and not pair_index[pair].get("canonical_player_id")
+        and not observation.get("canonical_player_id")
     }
     unnamed = len(named_gain_pairs)
     reliable = int(
@@ -706,7 +706,7 @@ def _optional_max_ineligible(
 
 def _deferred_named_gain_pairs(
     units: list[dict[str, Any]],
-    pair_index: dict[tuple[str, int], dict[str, Any]],
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
     match_doc: dict[str, Any],
 ) -> set[tuple[str, int]]:
     """Project only authoritative Team-A roster decisions before final rebuild.
@@ -799,7 +799,7 @@ def _optional_max_summary(
     readiness: dict[str, Any],
     match_doc: dict[str, Any],
     deferred_named_pairs: set[tuple[str, int]],
-    pair_index: dict[tuple[str, int], dict[str, Any]],
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
 ) -> dict[str, Any]:
     team = "A"
     row = (coverage.get("per_team") or {}).get(team) or {}

@@ -8,11 +8,17 @@ from unittest.mock import patch
 from copy import deepcopy
 
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_ownership_compact import (
+    encode_index_rows,
+    encode_pair_runs,
+)
 from app.services.identity_reviewed_hot_state import (
     FILENAME,
+    SCHEMA_VERSION,
     ReviewedIdentityHotStateError,
     assert_hot_state_version,
     hot_context,
+    hot_review_unit,
     load_or_rebuild_review_hot_state,
     update_hot_state_after_deferred_save,
 )
@@ -62,7 +68,13 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             self.assertEqual(context["review_state_version"], 1)
             self.assertNotIn("detected_pairs", context)
             self.assertEqual(context["visual_evidence"]["anchor_crops"][0]["artifact"], "crop.jpg")
-            self.assertEqual(reused["internal_review_units"][0]["detected_pairs"], [["t-1", 10], ["t-1", 11]])
+            served = hot_review_unit(reused, "subject-1")
+            assert served is not None
+            self.assertEqual(served["detected_pairs"], [("t-1", 10), ("t-1", 11)])
+            persisted = json.loads((root / FILENAME).read_text(encoding="utf-8"))
+            stored_unit = persisted["internal_review_units"][0]
+            self.assertNotIn("detected_pairs", stored_unit)
+            self.assertEqual(stored_unit["detected_pair_runs"], {"t-1": [[10, 11]]})
 
     def test_corrupt_hot_state_recovers_with_one_cold_rebuild(self) -> None:
         with _workspace() as root:
@@ -178,9 +190,11 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
                 return_value=progress,
             ):
                 state = load_or_rebuild_review_hot_state(root, _match())
-            self.assertEqual(state["internal_review_units"][0]["detected_team_labels"], ["A", "B"])
+            # The durable document and the operator-facing projection are pure
+            # JSON; native server-only sets may remain on in-memory units only.
             persisted = json.loads((root / FILENAME).read_text(encoding="utf-8"))
             self.assertEqual(persisted["internal_review_units"][0]["detected_team_labels"], ["A", "B"])
+            json.dumps(state["progress"])
 
     def test_hot_projection_matches_canonical_policy_after_non_naming_decision(self) -> None:
         """Hot re-projection follows the existing coverage policy exactly."""
@@ -313,6 +327,170 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             changed["teams"][0]["players"].append({"id": "p2", "name": "Second"})
             load_or_rebuild_review_hot_state(root, changed)
         self.assertEqual(build.call_count, 2)
+
+    def test_legacy_schema_materialization_is_rebuilt_into_compact_form(self) -> None:
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            return_value=_progress(),
+        ) as build:
+            legacy = {
+                "schema_version": "1.4.0",
+                "state_version": 9,
+                "progress": {},
+                "internal_review_units": [],
+                "unit_lookup": {},
+                "source_index": {},
+                "projection_inputs": {},
+                "roster_options": [],
+                "slot_options": [],
+                "canonical_segment_slot_options": [],
+                "freshness": {},
+            }
+            _write_json(root / FILENAME, legacy)
+            state = load_or_rebuild_review_hot_state(root, _match())
+        self.assertEqual(build.call_count, 1)
+        self.assertEqual(state.get("schema_version"), SCHEMA_VERSION)
+        self.assertEqual(state["state_version"], 1)
+
+    def test_restart_preserves_saved_decision_and_monotonic_version_on_compact_cache(self) -> None:
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            side_effect=lambda *args, **kwargs: _progress(),
+        ), patch(
+            # The canonical decision artifact reflects this save on disk,
+            # exactly as the real persistence step does before recompute.
+            "app.services.identity_reviewed_hot_state.reviewed_decisions_semantic_digest",
+            return_value="restart-digest",
+        ):
+            first = load_or_rebuild_review_hot_state(root, _match())
+            updated = update_hot_state_after_deferred_save(
+                root,
+                _match(),
+                first,
+                first["internal_review_units"][0],
+                {"action": "assign_roster_player", "player_id": "p1", "team_label": "A"},
+                "restart-digest",
+            )
+            # Simulate a full process restart: only durable files remain.
+            restarted = load_or_rebuild_review_hot_state(root, _match())
+            self.assertGreaterEqual(restarted["state_version"], updated["state_version"])
+            with self.assertRaises(ReviewedIdentityHotStateError):
+                assert_hot_state_version(restarted, restarted["state_version"] - 1)
+            served = hot_review_unit(restarted, "subject-1")
+            assert served is not None
+            self.assertEqual(served["current_resolution_status"], "reviewed_by_operator")
+            self.assertEqual(served["canonical_player_id"], "p1")
+            self.assertEqual(served["detected_pairs"], [("t-1", 10), ("t-1", 11)])
+            followup = update_hot_state_after_deferred_save(
+                root,
+                _match(),
+                restarted,
+                served,
+                {"action": "assign_team", "team_label": "B"},
+                "restart-digest-2",
+            )
+            self.assertGreater(followup["state_version"], updated["state_version"])
+
+    def test_large_sparse_material_projection_matches_authoritative_rebuild(self) -> None:
+        """Compact-run projection equals cold authoritative projection."""
+        match = _complete_roster_match()
+        pairs = (
+            [("t-long", frame) for frame in range(18836, 19836)]
+            + [("t-mid", frame) for frame in list(range(20000, 20600)) + [20700] + list(range(21000, 21200))]
+            + [("t-short", frame) for frame in range(22000, 22700)]
+        )
+        big_unit = {
+            **_coverage_unit("material-big"),
+            "scope_kind": "material_continuity",
+            "continuity_group_id": "continuity:A07:18836-22699",
+            "tracklet_ids": ["t-long", "t-mid", "t-short"],
+            "detected_pairs": sorted(pairs),
+            "detected_observation_count": len(pairs),
+            "detected_frame_count": len(pairs),
+            "detected_time_sec": len(pairs) / 25,
+            "frame_start": min(frame for _tracklet, frame in pairs),
+            "frame_end": max(frame for _tracklet, frame in pairs),
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+        }
+        done_unit = {
+            **_coverage_unit("already-named"),
+            "current_resolution_status": "reviewed_by_operator",
+            "priority": None,
+            "canonical_player_id": "p1",
+        }
+        units = [big_unit, done_unit]
+        rows = [
+            {
+                "tracklet_id": tracklet_id,
+                "frame": frame,
+                "identity_status": "unresolved",
+                "team_label": "A",
+                "canonical_player_id": None,
+            }
+            for tracklet_id, frame in sorted(pairs)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        legacy_inputs = {
+            "match_id": match["id"],
+            "coverage": coverage,
+            "pair_index": [
+                {"tracklet_id": tracklet_id, "frame": frame, "value": value}
+                for (tracklet_id, frame), value in pair_index.items()
+            ],
+            "observed_pairs": sorted(pair_index.keys()),
+            "technical_diagnostics": {},
+            "mixed_players": {},
+            "deferred_correction_context": {},
+        }
+        compact_inputs = {
+            **legacy_inputs,
+            "pair_index": None,
+            "observed_pairs": None,
+            "pair_index_runs": encode_index_rows(legacy_inputs["pair_index"]),
+            "observed_pair_runs": encode_pair_runs(sorted(pair_index.keys())),
+        }
+        reference_units = deepcopy(units)
+        saved_decision = {"action": "assign_roster_player", "player_id": "p1"}
+        reference_units[0]["current_decision"] = saved_decision
+        reference_units[0]["current_resolution_status"] = "reviewed_by_operator"
+        reference_units[0]["priority"] = None
+        reference_units[0]["canonical_player_id"] = "p1"
+        reference = project_reviewed_identity_progress(
+            reference_units, match, legacy_inputs, include_internal_units=True,
+        )
+        semantic_fields = (
+            "next_cases", "optional_audit_cases", "summary", "observations",
+            "coverage_readiness", "coverage_residuals", "workload", "optional_audit",
+        )
+        with _workspace() as root:
+            initial = project_reviewed_identity_progress(
+                deepcopy(units), match, compact_inputs, include_internal_units=True,
+            )
+            state = {
+                "state_version": 12,
+                "progress": {
+                    key: value for key, value in initial.items()
+                    if key not in {"_internal_review_units", "_projection_inputs"}
+                },
+                "internal_review_units": initial["_internal_review_units"],
+                "unit_lookup": {"material-big\u001f": 0},
+                "source_index": {},
+                "projection_inputs": compact_inputs,
+                "roster_options": [{"player_id": "p1", "team_label": "A"}],
+            }
+            updated = update_hot_state_after_deferred_save(
+                root, match, state, state["internal_review_units"][0],
+                saved_decision, "large-material-digest",
+            )
+        self.assertEqual(
+            {key: updated["progress"][key] for key in semantic_fields},
+            {key: reference[key] for key in semantic_fields},
+        )
+        self.assertEqual(
+            updated["progress"]["observations"]["total_detected_observations"],
+            len(pair_index),
+        )
 
 
 def _match() -> dict:

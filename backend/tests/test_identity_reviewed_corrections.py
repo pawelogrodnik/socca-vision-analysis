@@ -367,7 +367,10 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 )
                 snapshot = finalize_reviewed_identity(root, _match())
 
-            self.assertEqual(saved["saved_decision"]["owned_observations"], owned_observations)
+            self.assertNotIn("owned_observations", saved["saved_decision"])
+            self.assertEqual(
+                saved["saved_decision"]["owned_observations_count"], len(owned_observations)
+            )
             self.assertFalse((root / "reviewed_identity_slot_assignments.json").exists())
             material = snapshot["segment_observation_assignments"]
             self.assertEqual(
@@ -631,7 +634,10 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             stored = _load(root / "reviewed_identity_material_continuity_decisions.json")[
                 "decisions"
             ][0]
-            self.assertEqual(result["saved_decision"]["owned_observations"], expected_owned)
+            self.assertNotIn("owned_observations", result["saved_decision"])
+            self.assertEqual(
+                result["saved_decision"]["owned_observations_count"], len(expected_owned)
+            )
             self.assertEqual(stored["owned_observations"], expected_owned)
             stored_pairs = {
                 (row["tracklet_id"], row["frame"])

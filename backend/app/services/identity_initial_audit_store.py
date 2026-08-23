@@ -994,10 +994,13 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_atomic(path: Path, document: dict[str, Any]) -> None:
+def _write_atomic(path: Path, document: dict[str, Any], *, indent: int | None = 2) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    payload = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
+    if indent is None:
+        payload = json.dumps(document, separators=(",", ":"), ensure_ascii=False) + "\n"
+    else:
+        payload = json.dumps(document, indent=indent, ensure_ascii=False) + "\n"
     try:
         with temporary.open("w", encoding="utf-8") as target:
             target.write(payload)
@@ -1040,9 +1043,11 @@ def production_identity_snapshot(
 def write_identity_json_atomic(
     path: Path,
     document: dict[str, Any],
+    *,
+    compact: bool = False,
 ) -> None:
     """Persist a derived identity document without exposing partial JSON."""
-    _write_atomic(path, document)
+    _write_atomic(path, document, indent=None if compact else 2)
 
 
 def load_identity_json(path: Path) -> dict[str, Any]:

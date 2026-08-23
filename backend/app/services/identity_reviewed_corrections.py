@@ -65,6 +65,9 @@ from app.services.identity_reviewed_material_continuity import (
     DECISIONS_FILENAME as MATERIAL_CONTINUITY_DECISIONS_FILENAME,
     save_material_continuity_decision,
 )
+from app.services.identity_reviewed_response_shaping import (
+    correction_response_decision,
+)
 from app.services.identity_reviewed_slot_cleanup import (
     cleanup_unreferenced_manual_reviewed_slots,
 )
@@ -568,13 +571,13 @@ def _persist_material_continuity_correction(
         semantic_decision_digest=semantic_digest,
     )
     return {
-        "saved_decision": {
+        "saved_decision": correction_response_decision({
             "scope_kind": "material_continuity",
             "continuity_group_id": saved.get("continuity_group_id"),
             "continuity_subject_ids": saved.get("continuity_subject_ids"),
             "owned_observations": saved.get("owned_observations"),
             "decision": saved,
-        },
+        }),
         "effective_action": action,
         "allocated_stable_slot_id": None,
         "semantic_decision_digest": semantic_digest,

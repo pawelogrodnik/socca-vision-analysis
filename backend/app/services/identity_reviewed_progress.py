@@ -3,11 +3,16 @@ from __future__ import annotations
 """Read-only, operator-oriented progress for reviewed player identity."""
 
 from collections import Counter, defaultdict
-from copy import deepcopy
+from collections.abc import Mapping
 import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_ownership_compact import (
+    CompactPairIndexView,
+    count_pair_runs,
+    encode_pair_runs,
+)
 from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_context
 from app.services.identity_reviewed_coverage import (
     COVERAGE_POLICY_VERSION,
@@ -192,7 +197,7 @@ def build_reviewed_identity_progress(
         # normal deferred save to re-project coverage without reopening the
         # match-wide tracklets artifact.
         "pair_index": _serialize_pair_index(coverage_context["pair_index"]),
-        "observed_pairs": sorted(_all_detected_pairs(tracklets)),
+        "observed_pair_runs": encode_pair_runs(_all_detected_pairs(tracklets)),
         "mixed_players": build_mixed_review_queue(match_path, match_doc),
         "technical_diagnostics": {
             "candidate_subjects": len(subjects),
@@ -215,6 +220,37 @@ def build_reviewed_identity_progress(
     return result
 
 
+def _normalized_projection_units(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Coerce durable pair lists into tuples without copying whole units.
+
+    The coverage policy never mutates its input units (it enriches copies), so
+    replacing the previous full deepcopy keeps caller-owned unit dicts intact
+    while still guaranteeing the exact tuple shape downstream code relies on.
+    """
+    normalized: list[dict[str, Any]] = []
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        raw_pairs = unit.get("detected_pairs")
+        needs_copy = any(
+            not isinstance(pair, tuple)
+            for pair in raw_pairs or []
+            if isinstance(pair, (list, tuple))
+        ) or any(not isinstance(pair, (list, tuple)) for pair in raw_pairs or [])
+        if raw_pairs is None or not needs_copy:
+            normalized.append(unit)
+            continue
+        normalized.append({
+            **unit,
+            "detected_pairs": [
+                (str(pair[0]), int(pair[1]))
+                for pair in raw_pairs
+                if isinstance(pair, (list, tuple)) and len(pair) >= 2
+            ],
+        })
+    return normalized
+
+
 def project_reviewed_identity_progress(
     units: list[dict[str, Any]],
     match_doc: dict[str, Any],
@@ -229,17 +265,19 @@ def project_reviewed_identity_progress(
     consumes exact unit ownership plus compact coverage inputs only; callers
     never need to emulate the coverage/MAX policy by patching counters.
     """
-    units = deepcopy(units)
-    for unit in units:
-        if not isinstance(unit, dict):
-            continue
-        unit["detected_pairs"] = [
-            (str(pair[0]), int(pair[1]))
-            for pair in unit.get("detected_pairs") or []
-            if isinstance(pair, (list, tuple)) and len(pair) >= 2
-        ]
+    units = _normalized_projection_units(units)
     coverage = dict(projection_inputs.get("coverage") or {})
-    pair_index = _deserialize_pair_index(projection_inputs.get("pair_index") or [])
+    pair_index_runs = projection_inputs.get("pair_index_runs")
+    if isinstance(pair_index_runs, dict):
+        pair_index: Mapping[tuple[str, int], dict[str, Any]] = CompactPairIndexView(
+            pair_index_runs
+        )
+    else:
+        serialized_rows = projection_inputs.get("pair_index") or []
+        if isinstance(serialized_rows, Mapping):
+            pair_index = serialized_rows
+        else:
+            pair_index = _deserialize_pair_index(serialized_rows)
     coverage_policy = apply_coverage_policy(
         units,
         coverage,
@@ -260,11 +298,19 @@ def project_reviewed_identity_progress(
         for unit in units
         if unit.get("operator_actionable") is False
     )
-    observed_pairs = {
-        (str(pair[0]), int(pair[1]))
-        for pair in projection_inputs.get("observed_pairs") or []
-        if isinstance(pair, (list, tuple)) and len(pair) >= 2
-    }
+    observed_runs = projection_inputs.get("observed_pair_runs")
+    if isinstance(observed_runs, dict):
+        # Runs are already exact distinct (tracklet_id, frame) pairs, so the
+        # arithmetic total equals the legacy set cardinality without building
+        # a match-sized set on every ordinary save.
+        observed_total = count_pair_runs(observed_runs)
+    else:
+        observed_pairs = {
+            (str(pair[0]), int(pair[1]))
+            for pair in projection_inputs.get("observed_pairs") or []
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2
+        }
+        observed_total = len(observed_pairs)
     operator_pairs = {
         pair
         for unit in units
@@ -332,13 +378,13 @@ def project_reviewed_identity_progress(
             "operator_queue_completion_ratio": _ratio(completed, queue_total),
         },
         "observations": {
-            "total_detected_observations": len(observed_pairs),
+            "total_detected_observations": observed_total,
             "operator_reviewed_observations": len(operator_pairs),
-            "operator_reviewed_observation_ratio": _ratio(len(operator_pairs), len(observed_pairs)),
+            "operator_reviewed_observation_ratio": _ratio(len(operator_pairs), observed_total),
             "team_known_observations": len(team_known_pairs),
-            "team_known_observation_ratio": _ratio(len(team_known_pairs), len(observed_pairs)),
+            "team_known_observation_ratio": _ratio(len(team_known_pairs), observed_total),
             "confirmed_player_observations": len(confirmed_pairs),
-            "confirmed_player_observation_ratio": _ratio(len(confirmed_pairs), len(observed_pairs)),
+            "confirmed_player_observation_ratio": _ratio(len(confirmed_pairs), observed_total),
         },
         "identity_coverage": coverage,
         "coverage_readiness": coverage_policy["readiness"],
