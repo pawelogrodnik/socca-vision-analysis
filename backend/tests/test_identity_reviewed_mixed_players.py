@@ -31,6 +31,7 @@ from app.services.identity_reviewed_mixed_resolution import (
 from app.services.identity_reviewed_mixed_store import (
     current_mixed_subject_digest,
     load_mixed_player_cases,
+    unresolved_mixed_observation_assignments,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
@@ -164,6 +165,39 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             self.assertEqual(resolved["saved_case"]["original_issue"], "inline_temporal_split")
             self.assertEqual(resolved["saved_case"]["source"]["scope_kind"], "material_continuity")
+
+    def test_unresolved_material_continuity_marker_does_not_block_recompute(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            unit = {
+                "scope_kind": "material_continuity",
+                "candidate_subject_id": "continuity:mixed",
+                "continuity_group_id": "continuity:mixed",
+                "source_ownership_digest": "material-source-digest",
+                "detected_observation_count": 3,
+                "detected_pairs": [("t1", 1), ("t1", 2), ("t1", 3)],
+                "effective_team_label": "A",
+            }
+            persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "continuity:mixed",
+                    "continuity_group_id": "continuity:mixed",
+                    "source_ownership_digest": "material-source-digest",
+                    "action": "mixed_players",
+                },
+                authorized_review_unit=unit,
+            )
+
+            rows = unresolved_mixed_observation_assignments(root)
+
+            self.assertEqual(
+                [(row["tracklet_id"], row["frame"]) for row in rows],
+                [("t1", frame) for frame in (1, 2, 3)],
+            )
+            self.assertTrue(all(row["team_label"] == "A" for row in rows))
+            self.assertTrue(all(row["identity_status"] == "unresolved" for row in rows))
 
     def test_staged_canonical_segments_do_not_collapse_by_raw_subject(self) -> None:
         with _workspace() as root:

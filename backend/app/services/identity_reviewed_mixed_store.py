@@ -73,7 +73,7 @@ def save_mixed_player_classification(
         "mixed_hint": hint,
         "resolution_status": "unresolved",
         "source_tracklet_ids": sorted({str(row["tracklet_id"]) for row in observations}),
-        "source_subject_digest": str(source.get("source_ownership_digest") if isinstance(source, dict) else _subject_digest(subject, observations)),
+        "source_subject_digest": str(source.get("source_ownership_digest") if isinstance(source, dict) else _subject_digest(subject or {}, observations)),
         "observation_count": len(observations),
         "frame_start": int(observations[0]["frame"]),
         "frame_end": int(observations[-1]["frame"]),
@@ -515,7 +515,16 @@ def validate_split_frames(observations: list[dict[str, Any]], split_frames: list
 
 
 def observations_for_case(match_path: Path, case: dict[str, Any]) -> list[dict[str, Any]]:
-    subject = _subject(match_path, str(case.get("candidate_subject_id") or ""))
+    marker_source = case.get("source")
+    if isinstance(marker_source, dict) and _owned_observation_pairs(
+        marker_source.get("owned_observations")
+    ):
+        # V2 exact-source cases carry their own observation ownership. The
+        # candidate id may be a material-continuity group that never exists in
+        # identity_candidate_shadow.json, so only legacy markers require it.
+        subject = None
+    else:
+        subject = _subject(match_path, str(case.get("candidate_subject_id") or ""))
     return _observations_for_marker(match_path, case, subject)
 
 
