@@ -156,10 +156,12 @@ export function assignmentLabel(
 
 export function mixedQueueAfterSuccessfulSave(
   cases: MixedPlayerCase[],
-  savedSubjectId: string,
+  savedCaseId: string,
   currentIndex: number,
 ): { cases: MixedPlayerCase[]; index: number } {
-  const remaining = cases.filter((item) => item.candidate_subject_id !== savedSubjectId);
+  const remaining = cases.filter(
+    (item) => (item.case_id || item.candidate_subject_id) !== savedCaseId,
+  );
   return {
     cases: remaining,
     index: Math.min(currentIndex, Math.max(0, remaining.length - 1)),

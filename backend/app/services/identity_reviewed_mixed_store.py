@@ -41,30 +41,39 @@ def save_mixed_player_classification(
     subject_id: str,
     mixed_hint: str | None,
     comment: str | None,
+    *,
+    source: dict[str, Any] | None = None,
+    case_id: str | None = None,
+    source_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     hint = str(mixed_hint or "unknown").strip()
     if hint not in MIXED_HINTS:
         raise ValueError(f"Unsupported mixed_hint: {hint}")
-    subject = _subject(match_path, subject_id)
-    observations = _subject_observations(match_path, subject)
+    # A material-continuity source may not have a raw candidate subject at
+    # all.  Its exact ownership is already resolved by the caller, so never
+    # fall back to (and accidentally widen to) a subject lookup here.
+    subject = _subject(match_path, subject_id) if source is None else None
+    observations = (
+        list(source.get("observations") or [])
+        if isinstance(source, dict)
+        else _subject_observations(match_path, subject or {})
+    )
     if len(observations) < 2:
         raise ValueError("mixed_players requires at least two detected observations")
     document = load_mixed_player_cases(match_path)
-    cases = {
-        str(row.get("candidate_subject_id")): dict(row)
-        for row in document.get("cases") or []
-        if row.get("candidate_subject_id")
-    }
-    previous = cases.get(subject_id) or {}
+    marker_id = str(case_id or subject_id)
+    cases = [dict(row) for row in document.get("cases") or [] if isinstance(row, dict)]
+    previous = next((row for row in cases if str(row.get("case_id") or row.get("candidate_subject_id") or "") == marker_id), {})
     now = datetime.now(timezone.utc).isoformat()
     case = {
         **previous,
         "candidate_subject_id": subject_id,
+        **({"case_id": marker_id, "source": dict(source_payload or {})} if source_payload else {}),
         "original_issue": "mixed_players",
         "mixed_hint": hint,
         "resolution_status": "unresolved",
-        "source_tracklet_ids": sorted(str(value) for value in subject.get("tracklet_ids") or []),
-        "source_subject_digest": _subject_digest(subject, observations),
+        "source_tracklet_ids": sorted({str(row["tracklet_id"]) for row in observations}),
+        "source_subject_digest": str(source.get("source_ownership_digest") if isinstance(source, dict) else _subject_digest(subject, observations)),
         "observation_count": len(observations),
         "frame_start": int(observations[0]["frame"]),
         "frame_end": int(observations[-1]["frame"]),
@@ -74,8 +83,9 @@ def save_mixed_player_classification(
         "split_after_frames": [],
         "segment_target_ids": [],
     }
-    cases[subject_id] = case
-    write_identity_json_atomic(match_path / FILENAME, _document(list(cases.values())))
+    cases = [row for row in cases if str(row.get("case_id") or row.get("candidate_subject_id") or "") != marker_id]
+    cases.append(case)
+    write_identity_json_atomic(match_path / FILENAME, _document(cases))
     return case
 
 
@@ -96,6 +106,7 @@ def mixed_case_for_subject(match_path: Path, subject_id: str) -> dict[str, Any] 
             for row in load_mixed_player_cases(match_path).get("cases") or []
             if str(row.get("candidate_subject_id") or "") == subject_id
             and str(row.get("original_issue") or "") == "mixed_players"
+            and not isinstance(row.get("source"), dict)
         ),
         None,
     )
@@ -129,6 +140,27 @@ def inline_temporal_split_for_source(
         if all(stored.get(key) == value for key, value in wanted.items()):
             return dict(row)
     return None
+
+
+def staged_mixed_case_for_source(match_path: Path, source: dict[str, Any]) -> dict[str, Any] | None:
+    """Find an unresolved staged marker for one exact source only."""
+    wanted = {
+        key: source.get(key)
+        for key in (
+            "scope_kind", "candidate_subject_id", "review_target_id",
+            "continuity_group_id", "source_ownership_digest",
+        )
+    }
+    return next(
+        (
+            dict(row)
+            for row in load_mixed_player_cases(match_path).get("cases") or []
+            if str(row.get("original_issue") or "") == "mixed_players"
+            and isinstance(row.get("source"), dict)
+            and all((row.get("source") or {}).get(key) == value for key, value in wanted.items())
+        ),
+        None,
+    )
 
 
 def resolved_material_continuity_observation_pairs(
@@ -256,7 +288,7 @@ def build_mixed_review_queue(
             "roster": _match_roster(match_doc),
             "slots": list(build_reviewed_slot_registry(match_path).values()),
         },
-        "cases": sorted(cases, key=lambda row: (int(row.get("frame_start") or 0), str(row.get("candidate_subject_id")))),
+        "cases": sorted(cases, key=lambda row: (int(row.get("frame_start") or 0), str(row.get("case_id") or row.get("candidate_subject_id")))),
     }
 
 
@@ -267,18 +299,45 @@ def build_mixed_boundary_refinement(
     after_frame: int,
     before_frame: int,
     *,
+    case_id: str | None = None,
     limit: int = 10,
 ) -> dict[str, Any]:
-    case = mixed_case_for_subject(match_path, subject_id)
+    marker_id = str(case_id or subject_id)
+    case = next(
+        (
+            dict(row)
+            for row in load_mixed_player_cases(match_path).get("cases") or []
+            if str(row.get("case_id") or row.get("candidate_subject_id") or "") == marker_id
+        ),
+        None,
+    )
     if case is None or str(case.get("resolution_status")) not in UNRESOLVED_STATUSES:
         raise ValueError(f"Unknown unresolved mixed-player case: {subject_id or '<missing>'}")
     if after_frame >= before_frame:
         raise ValueError("Refinement interval must have increasing frame boundaries")
-    if str(case.get("source_subject_digest") or "") != current_mixed_subject_digest(match_path, subject_id):
+    source = case.get("source") if isinstance(case.get("source"), dict) else None
+    if source and str(case.get("source_subject_digest") or "") != str(source.get("source_ownership_digest") or ""):
+        raise ValueError("mixed_player_case_stale")
+    if not source and str(case.get("source_subject_digest") or "") != current_mixed_subject_digest(match_path, subject_id):
         raise ValueError("mixed_player_case_stale")
 
-    subject = _subject(match_path, subject_id)
-    observations = _subject_observations(match_path, subject)
+    subject = _subject(match_path, subject_id) if source is None else {}
+    if source:
+        # Stored sources intentionally persist pairs/digest, not mutable raw
+        # detections. Re-resolve those exact pairs for refinement evidence.
+        from app.services.identity_reviewed_review_source import resolve_review_source
+
+        resolved_source = resolve_review_source(
+            match_path,
+            match_doc,
+            candidate_subject_id=str(source.get("candidate_subject_id") or subject_id),
+            review_target_id=str(source.get("review_target_id") or "") or None,
+            continuity_group_id=str(source.get("continuity_group_id") or "") or None,
+            source_ownership_digest=str(source.get("source_ownership_digest") or ""),
+        )
+        observations = list(resolved_source.get("observations") or [])
+    else:
+        observations = _subject_observations(match_path, subject)
     card = next(
         (
             row
@@ -302,11 +361,17 @@ def build_mixed_boundary_refinement(
         "mode": "reviewed_identity_mixed_boundary_refinement",
         "match_id": str(match_doc.get("id") or match_path.name),
         "candidate_subject_id": subject_id,
+        "case_id": str(case.get("case_id") or subject_id),
         "source_subject_digest": case.get("source_subject_digest"),
         "after_frame": after_frame,
         "before_frame": before_frame,
         "anchor_crops": crops,
     }
+    if source:
+        payload.update({
+            "review_target_id": source.get("review_target_id"),
+            "continuity_group_id": source.get("continuity_group_id"),
+        })
     render_mixed_review_evidence(
         match_path,
         match_doc,

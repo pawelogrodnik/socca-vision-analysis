@@ -84,10 +84,14 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(form, /returnToCategories/);
   assert.match(form, /← Wróć/);
   assert.match(form, /showActionCategories/);
-  assert.match(form, /ReviewedIdentitySplitEditor/);
+  assert.match(form, /ReviewedIdentitySplitModal/);
+  assert.match(form, /splitEditorOpen/);
+  assert.match(form, /mixed_players/);
   assert.match(form, /action === 'assign_roster_player'/);
   assert.match(form, /Zapisz \+ następny|navigation\.saveLabel/);
   assert.match(form, /persistReviewDecision/);
+  // Required queue stages mixed players; optional MAX splits directly.
+  assert.match(panel, /mixedHandling=\{activeQueue === 'optional_audit' \? 'direct' : 'stage'\}/);
 });
 
 

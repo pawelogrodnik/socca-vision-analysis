@@ -550,6 +550,7 @@ export function IdentityExceptionReviewPanel({
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}
             deferRecompute
+            mixedHandling={activeQueue === 'optional_audit' ? 'direct' : 'stage'}
             navigation={{
               onPrevious: () => navigate('previous'),
               onNext: () => navigate('next'),

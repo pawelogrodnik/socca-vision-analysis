@@ -132,8 +132,11 @@ export function IdentityReviewWorkspace({
 
   useEffect(() => {
     if (!['remaining_issues', 'mixed_players'].includes(stage)) return undefined;
-    document.body.classList.add('identity-exception-workspace-active');
-    return () => document.body.classList.remove('identity-exception-workspace-active');
+    const className = stage === 'mixed_players'
+      ? 'identity-mixed-workspace-active'
+      : 'identity-exception-workspace-active';
+    document.body.classList.add(className);
+    return () => document.body.classList.remove(className);
   }, [stage]);
 
   useEffect(() => {

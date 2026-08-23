@@ -53,11 +53,13 @@ from app.services.identity_reviewed_mixed_store import (
     load_mixed_player_cases,
     save_mixed_case_document,
     save_mixed_player_classification,
+    staged_mixed_case_for_source,
 )
 from app.services.identity_reviewed_review_source import (
     ReviewedIdentityReviewSourceError,
     resolve_review_source,
     source_case_id,
+    source_storage_payload,
 )
 from app.services.identity_reviewed_material_continuity import (
     DECISIONS_FILENAME as MATERIAL_CONTINUITY_DECISIONS_FILENAME,
@@ -244,7 +246,12 @@ def persist_reviewed_identity_correction(
             authorized_review_unit=authorized_review_unit,
         )
         return {**result, "review_topology_changed": action == "create_new_stable_player"}
-    saved_split = inline_temporal_split_for_source(match_path, source) if source else None
+    saved_split = (
+        inline_temporal_split_for_source(match_path, source)
+        or staged_mixed_case_for_source(match_path, source)
+        if source
+        else None
+    )
     if saved_split is None:
         result = _persist_reviewed_identity_correction(
             match_path,
@@ -303,27 +310,32 @@ def _persist_reviewed_identity_correction(
         raise ValueError(f"Unsupported reviewed identity correction action: {action}")
     validate_review_unit_action_scope(payload, authorized_review_unit)
     review_target_id = str(payload.get("review_target_id") or "").strip() or None
-    if (
-        isinstance(authorized_review_unit, dict)
-        and authorized_review_unit.get("scope_kind") == "material_continuity"
-    ):
-        if review_target_id:
-            raise ValueError("material_continuity_review_target_not_supported")
-        return _persist_material_continuity_correction(
+    if action == "mixed_players":
+        has_exact_source = (
+            isinstance(authorized_review_unit, dict)
+            and bool(authorized_review_unit.get("source_ownership_digest"))
+        ) or any(
+            payload.get(key)
+            for key in ("review_target_id", "continuity_group_id", "source_ownership_digest")
+        )
+        source = resolve_review_source(
             match_path,
             match_doc,
-            payload,
-            authorized_review_unit,
-        )
-    if action == "mixed_players":
-        if review_target_id:
-            raise ValueError("mixed_players is a whole-subject classification")
+            candidate_subject_id=subject_id,
+            review_target_id=review_target_id,
+            continuity_group_id=str(payload.get("continuity_group_id") or "").strip() or None,
+            source_ownership_digest=str(payload.get("source_ownership_digest") or "") or None,
+            materialized_review_unit=authorized_review_unit,
+        ) if has_exact_source else None
         saved = save_mixed_player_classification(
             match_path,
             match_doc,
             subject_id,
             payload.get("mixed_hint"),
             payload.get("comment"),
+            source=source,
+            case_id=source_case_id(source) if source else None,
+            source_payload=source_storage_payload(source) if source else None,
         )
         semantic_digest = reviewed_decisions_semantic_digest(match_path)
         mark_reviewed_identity_recompute_required(
@@ -341,6 +353,18 @@ def _persist_reviewed_identity_correction(
                 "downstream_recompute_triggered": False,
             },
         }
+    if (
+        isinstance(authorized_review_unit, dict)
+        and authorized_review_unit.get("scope_kind") == "material_continuity"
+    ):
+        if review_target_id:
+            raise ValueError("material_continuity_review_target_not_supported")
+        return _persist_material_continuity_correction(
+            match_path,
+            match_doc,
+            payload,
+            authorized_review_unit,
+        )
     if review_target_id:
         materialized_review = load_segment_review(match_path)
         saved = save_segment_decision(
@@ -594,7 +618,7 @@ def _has_potential_inline_split(match_path: Path, payload: dict[str, Any]) -> bo
         "source_ownership_digest": str(payload.get("source_ownership_digest") or "") or None,
     }
     return any(
-        str(case.get("original_issue") or "") == "inline_temporal_split"
+        str(case.get("original_issue") or "") in {"inline_temporal_split", "mixed_players"}
         and isinstance(case.get("source"), dict)
         and all(
             value is None or case["source"].get(key) == value

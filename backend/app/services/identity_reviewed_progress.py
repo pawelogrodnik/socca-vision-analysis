@@ -23,6 +23,7 @@ from app.services.identity_reviewed_slot_review import (
 from app.services.identity_reviewed_slot_registry import normalize_reviewed_slot_id
 from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_reviewed_mixed_store import (
+    UNRESOLVED_STATUSES as UNRESOLVED_MIXED_STATUSES,
     build_mixed_review_queue,
     load_mixed_player_cases,
     resolved_material_continuity_observation_pairs,
@@ -109,11 +110,21 @@ def build_reviewed_identity_progress(
     fps = _fps(match_path, match_doc)
     segment_review = load_segment_review(match_path)
     mixed_document = load_mixed_player_cases(match_path)
+    # Legacy whole-subject markers still suppress their parent.  New staged
+    # markers carry an exact source key and must never hide sibling segments
+    # that happen to share the same raw tracker subject.
     mixed_by_subject = {
         str(row.get("candidate_subject_id")): row
         for row in mixed_document.get("cases") or []
-        if row.get("candidate_subject_id")
+        if row.get("candidate_subject_id") and not isinstance(row.get("source"), dict)
     }
+    staged_sources = [
+        dict(row["source"])
+        for row in mixed_document.get("cases") or []
+        if str(row.get("original_issue") or "") == "mixed_players"
+        and str(row.get("resolution_status") or "") in UNRESOLVED_MIXED_STATUSES
+        and isinstance(row.get("source"), dict)
+    ]
     segmented_subjects = {
         str(row.get("candidate_subject_id") or "")
         for row in segment_review.get("targets") or []
@@ -165,6 +176,10 @@ def build_reviewed_identity_progress(
         load_material_continuity_decisions(match_path),
         excluded_observation_pairs=resolved_material_pairs,
     )
+    units = [
+        unit for unit in units
+        if not any(_unit_matches_staged_source(unit, source) for source in staged_sources)
+    ]
     coverage_context = load_effective_coverage_context(match_path, match_doc)
     projection_inputs = {
         "match_id": str(match_doc.get("id") or match_path.name),
@@ -788,9 +803,52 @@ def _manual_decisions(path: Path) -> dict[str, dict[str, Any]]:
             "resolution_status": row.get("resolution_status"),
         }
         for row in load_mixed_player_cases(path).get("cases") or []
-        if row.get("candidate_subject_id")
+        if row.get("candidate_subject_id") and not isinstance(row.get("source"), dict)
     }
     return {**roster, **slots, **mixed}
+
+
+def _source_key(source: dict[str, Any] | None) -> tuple[str, str, str, str, str]:
+    source = source or {}
+    return tuple(
+        str(source.get(key) or "")
+        for key in (
+            "scope_kind",
+            "candidate_subject_id",
+            "review_target_id",
+            "continuity_group_id",
+            "source_ownership_digest",
+        )
+    )
+
+
+def _unit_matches_staged_source(unit: dict[str, Any], source: dict[str, Any]) -> bool:
+    """Compare exact source ownership without treating a raw subject as a key.
+
+    Whole-subject units intentionally do not expose a digest in the public
+    progress shape. Their detected pairs are still canonical server data, so
+    compare them directly with the durable source pairs instead of widening a
+    staged marker to every unit with the same candidate id.
+    """
+    if _source_key(unit) == _source_key(source):
+        return bool(str(source.get("source_ownership_digest") or ""))
+    if str(source.get("scope_kind") or "") != "whole_subject":
+        return False
+    if str(unit.get("candidate_subject_id") or "") != str(source.get("candidate_subject_id") or ""):
+        return False
+    if unit.get("review_target_id") or unit.get("continuity_group_id"):
+        return False
+    source_pairs = {
+        (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+        for row in source.get("owned_observations") or []
+        if isinstance(row, dict)
+    }
+    unit_pairs = {
+        (str(pair[0]), int(pair[1]))
+        for pair in unit.get("detected_pairs") or []
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2
+    }
+    return bool(source_pairs) and source_pairs == unit_pairs
 
 
 def _roster_teams(match_doc: dict[str, Any]) -> dict[str, str]:

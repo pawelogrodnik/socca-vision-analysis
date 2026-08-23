@@ -11,7 +11,7 @@ import type {
   ReviewedIdentityAtEntity,
   Team,
 } from '../types';
-import { ReviewedIdentitySplitEditor } from './ReviewedIdentitySplitEditor';
+import { ReviewedIdentitySplitModal } from './ReviewedIdentitySplitModal';
 import {
   buildReviewedCorrectionPayload,
   correctionOptionsForSubject,
@@ -20,6 +20,7 @@ import {
 import {
   REVIEWED_IDENTITY_ADVANCED_ACTIONS,
   REVIEWED_IDENTITY_PRIMARY_ACTIONS,
+  reviewedIdentityPrimaryActionCards,
   type ReviewedIdentityActionCard,
 } from '../utils/reviewedIdentityActions';
 import { persistReviewDecision } from '../utils/identityExceptionWorkspace';
@@ -39,6 +40,7 @@ type Props = {
   teams?: Team[];
   teamAttributionOnly?: boolean;
   deferRecompute?: boolean;
+  mixedHandling?: 'stage' | 'direct';
   navigation?: {
     onPrevious: () => void;
     onNext: () => void;
@@ -66,12 +68,13 @@ export function ReviewedIdentityCorrectionForm({
   onSaved,
   teams,
   deferRecompute = false,
+  mixedHandling = 'stage',
   navigation,
 }: Props) {
   const subjectId = entity.candidate_subject_id;
   const [context, setContext] = useState<Awaited<ReturnType<typeof loadReviewedCorrectionContext>> | null>(null);
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
-  const [splitOpen, setSplitOpen] = useState(false);
+  const [splitEditorOpen, setSplitEditorOpen] = useState(false);
   const [selectedTeamLabel, setSelectedTeamLabel] = useState('');
   const [playerId, setPlayerId] = useState('');
   const [stableSlotId, setStableSlotId] = useState('');
@@ -84,7 +87,7 @@ export function ReviewedIdentityCorrectionForm({
 
     setContext(null);
     setAction(null);
-    setSplitOpen(false);
+    setSplitEditorOpen(false);
     setSelectedTeamLabel('');
     setPlayerId('');
     setStableSlotId('');
@@ -138,7 +141,7 @@ export function ReviewedIdentityCorrectionForm({
   }), [options.roster]);
   const selectedRosterPlayer = options.roster.find((player) => player.player_id === playerId);
   const range = correctionRange(entity);
-  const actionCards = REVIEWED_IDENTITY_PRIMARY_ACTIONS.filter((card) => context?.action_capabilities[card.action]?.allowed);
+  const actionCards = reviewedIdentityPrimaryActionCards(context?.action_capabilities, mixedHandling);
   const advancedActionCards = REVIEWED_IDENTITY_ADVANCED_ACTIONS.filter((card) => context?.action_capabilities[card.action]?.allowed);
   const choiceComplete = Boolean(action)
     && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))
@@ -148,7 +151,7 @@ export function ReviewedIdentityCorrectionForm({
 
   function selectAction(nextAction: UiAction) {
     if (nextAction === 'split') {
-      setSplitOpen(true);
+      setSplitEditorOpen(true);
       setAction(null);
       return;
     }
@@ -156,7 +159,6 @@ export function ReviewedIdentityCorrectionForm({
       setSelectedTeamLabel('A');
     }
     setAction(nextAction);
-    setSplitOpen(false);
     setError('');
   }
 
@@ -173,7 +175,7 @@ export function ReviewedIdentityCorrectionForm({
     setStableSlotId('');
     setSelectedTeamLabel(context ? defaultCorrectionTeam(context) : '');
     setError('');
-    setSplitOpen(false);
+    setSplitEditorOpen(false);
   }
 
   function actionIsAvailable(card: ReviewedIdentityActionCard): boolean {
@@ -194,7 +196,7 @@ export function ReviewedIdentityCorrectionForm({
         stableSlotId,
         teamLabel: selectedTeamLabel,
         comment,
-        mixedHint: undefined,
+        mixedHint: action === 'mixed_players' ? 'unknown' : undefined,
       }, context);
       if (deferRecompute) payload.defer_recompute = true;
       if (context?.review_state_version != null) payload.review_state_version = context.review_state_version;
@@ -231,15 +233,15 @@ export function ReviewedIdentityCorrectionForm({
   const actionLabel = action === 'assign_team'
     ? `${operatorTeamName(selectedTeamLabel)} — zawodnik nieznany`
     : [...REVIEWED_IDENTITY_PRIMARY_ACTIONS, ...REVIEWED_IDENTITY_ADVANCED_ACTIONS].find((card) => card.action === action)?.label;
-  const showActionCategories = !navigation || (!action && !splitOpen);
+  const showActionCategories = !navigation || !action;
 
   return <div className={`reviewed-correction-form${navigation ? ' workstation-form' : ''}`}>
     <header className='reviewed-correction-heading'>
       <div>
-        <h4>{splitOpen ? 'Podziel fragment' : action ? actionLabel : 'Popraw przypisanie'}</h4>
+        <h4>{action ? actionLabel : 'Popraw przypisanie'}</h4>
         <p>{context?.scope_copy || 'Decyzja obejmie pokazany fragment zawodnika.'}</p>
       </div>
-      {navigation && action && !splitOpen && <button type='button' className='secondary compact-button' onClick={returnToCategories} disabled={busy}>
+      {navigation && action && <button type='button' className='secondary compact-button' onClick={returnToCategories} disabled={busy}>
         ← Wróć
       </button>}
     </header>
@@ -252,11 +254,11 @@ export function ReviewedIdentityCorrectionForm({
         Poprzednia decyzja sugeruje: <strong>{context.legacy_suggestion.player_name}</strong>.
         Sprawdź pokazany fragment i zapisz, aby potwierdzić zakres.
       </p>}
-      {context?.temporal_split?.resolution_status === 'resolved' && !splitOpen && <div className='reviewed-correction-suggestion'>
+      {context?.temporal_split?.resolution_status === 'resolved' && <div className='reviewed-correction-suggestion'>
         <strong>Aktualna decyzja: Podział na {context.temporal_split.segment_assignments.length} fragmentów.</strong>
         <button type='button' className='secondary compact-button' onClick={() => selectAction('split')} disabled={busy}>Edytuj podział</button>
       </div>}
-      {context?.temporal_split?.resolution_status === 'unresolved_complex_mix' && !splitOpen && <div className='reviewed-correction-suggestion'>
+      {context?.temporal_split?.resolution_status === 'unresolved_complex_mix' && <div className='reviewed-correction-suggestion'>
         <strong>Aktualna decyzja: Nie udało się bezpiecznie podzielić tego fragmentu czasowo.</strong>
         <button type='button' className='secondary compact-button' onClick={() => selectAction('split')} disabled={busy}>Rozstrzygnij ponownie</button>
       </div>}
@@ -276,7 +278,7 @@ export function ReviewedIdentityCorrectionForm({
           </div>
         </details>}
       </>}
-      {splitOpen && context && <ReviewedIdentitySplitEditor
+      {splitEditorOpen && context && <ReviewedIdentitySplitModal
         matchId={matchId}
         context={context}
         teams={teams}
@@ -357,7 +359,7 @@ export function ReviewedIdentityCorrectionForm({
       {error && <p className='status error' role='alert'>{error}</p>}
     </div>
 
-    {splitOpen ? null : navigation ? <footer className='reviewed-correction-navigation'>
+    {navigation ? <footer className='reviewed-correction-navigation'>
       <button type='button' className='secondary' onClick={navigation.onPrevious} disabled={busy || navigation.previousDisabled}>Poprzedni</button>
       <button type='button' onClick={() => void save()} disabled={busy || !context || !choiceComplete}>{navigation.saveLabel}</button>
       <button type='button' className='secondary' onClick={navigation.onNext} disabled={busy || navigation.nextDisabled} title='Przejdź bez zapisywania'>{navigation.nextLabel || 'Następny'}</button>

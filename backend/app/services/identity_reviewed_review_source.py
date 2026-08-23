@@ -85,7 +85,8 @@ def resolve_review_source(
                 (
                     row.get("source")
                     for row in load_mixed_player_cases(match_path).get("cases") or []
-                    if str(row.get("original_issue") or "") == "inline_temporal_split"
+                    if str(row.get("original_issue") or "")
+                    in {"inline_temporal_split", "mixed_players"}
                     and isinstance(row.get("source"), dict)
                     and str((row.get("source") or {}).get("scope_kind") or "")
                     == "material_continuity"
@@ -197,6 +198,28 @@ def source_case_id(source: dict[str, Any]) -> str:
             "source_ownership_digest": source["source_ownership_digest"],
         }
     )
+
+
+def source_storage_payload(source: dict[str, Any]) -> dict[str, Any]:
+    """Return the durable, lossless ownership representation for a source.
+
+    The operator never supplies these fields.  Both staged mixed markers and
+    resolved inline splits retain the same exact source tuple, so a later
+    mutation can neither widen a canonical segment nor recreate a material
+    continuity parent from a neighbouring observation.
+    """
+    return {
+        key: source.get(key)
+        for key in (
+            "scope_kind",
+            "candidate_subject_id",
+            "review_target_id",
+            "continuity_group_id",
+            "source_ownership_digest",
+            "source_team_label",
+            "owned_observations",
+        )
+    }
 
 
 def build_review_source_boundary_refinement(

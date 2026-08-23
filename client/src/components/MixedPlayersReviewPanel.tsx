@@ -4,7 +4,8 @@ import { artifactUrl, finalizeReviewedIdentityCorrections, getMixedBoundaryRefin
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
-import { formatReviewTime, teamLabelForOperator } from '../utils/reviewedOutputPresentation';
+import { matchTeamName } from '../utils/identityExceptionTeamFilter';
+import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 
 type Props = {
   match: Match;
@@ -19,6 +20,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   const [boundaries, setBoundaries] = useState<number[]>([]);
   const [assignments, setAssignments] = useState<Array<MixedSegmentAssignment | null>>([]);
   const [selectedSegment, setSelectedSegment] = useState(0);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [refinement, setRefinement] = useState<MixedBoundaryRefinement | null>(null);
   const [refinementBusy, setRefinementBusy] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -41,9 +43,10 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setBoundaries(nextBoundaries);
     setAssignments(Array(nextBoundaries.length + 1).fill(null));
     setSelectedSegment(0);
+    setHasUnsavedChanges(false);
     setRefinement(null);
     setMessage('');
-  }, [reviewCase?.candidate_subject_id]);
+  }, [reviewCase?.case_id, reviewCase?.candidate_subject_id]);
 
   const segments = useMemo(
     () => reviewCase ? mixedSegments(reviewCase, boundaries) : [],
@@ -58,6 +61,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     )) return false;
     setBoundaries(next);
     setAssignments(remapped.assignments);
+    setHasUnsavedChanges(true);
     setSelectedSegment(Math.min(selectedSegment, next.length));
     if (remapped.requiresConfirmation) {
       setMessage('Zmieniono granicę. Niejednoznaczne przypisania zmienionych fragmentów zostały wyczyszczone — przypisz je ponownie.');
@@ -77,6 +81,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
         reviewCase.candidate_subject_id,
         afterFrame,
         beforeFrame,
+        reviewCase.case_id,
       );
       if (value.anchor_crops.length < 2) {
         if (applyBoundaries(replaceMixedBoundaryInInterval(boundaries, afterFrame, beforeFrame, afterFrame))) {
@@ -118,7 +123,13 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   }
 
   function assign(assignment: MixedSegmentAssignment) {
-    setAssignments((current) => current.map((value, segmentIndex) => segmentIndex === selectedSegment ? assignment : value));
+    setHasUnsavedChanges(true);
+    setAssignments((current) => {
+      const next = current.map((value, segmentIndex) => segmentIndex === selectedSegment ? assignment : value);
+      const nextUnassigned = next.findIndex((value, segmentIndex) => segmentIndex > selectedSegment && value === null);
+      if (nextUnassigned >= 0) setSelectedSegment(nextUnassigned);
+      return next;
+    });
   }
 
   async function saveSplit() {
@@ -128,6 +139,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     try {
       await saveMixedPlayerResolution(match.id, {
         candidate_subject_id: reviewCase.candidate_subject_id,
+        case_id: reviewCase.case_id,
         source_subject_digest: reviewCase.source_subject_digest,
         resolution: 'split',
         split_after_frames: boundaries,
@@ -148,9 +160,11 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     try {
       await saveMixedPlayerResolution(match.id, {
         candidate_subject_id: reviewCase.candidate_subject_id,
+        case_id: reviewCase.case_id,
         source_subject_digest: reviewCase.source_subject_digest,
         resolution: 'unresolved_complex_mix',
       });
+      setHasUnsavedChanges(false);
       setMessage('Zapisano jako przypadek bez prostego podziału czasowego. Tożsamość nie została zgadnięta.');
       if (queue && index < queue.cases.length - 1) setIndex(index + 1);
     } catch (error) {
@@ -162,7 +176,12 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
 
   async function advanceAfterSave() {
     if (!queue || !reviewCase) return;
-    const next = mixedQueueAfterSuccessfulSave(queue.cases, reviewCase.candidate_subject_id, index);
+    const next = mixedQueueAfterSuccessfulSave(
+      queue.cases,
+      reviewCase.case_id || reviewCase.candidate_subject_id,
+      index,
+    );
+    setHasUnsavedChanges(false);
     setQueue({ ...queue, cases: next.cases });
     setIndex(next.index);
     if (next.cases.length === 0) {
@@ -172,21 +191,29 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     }
   }
 
+  function navigateTo(nextIndex: number) {
+    if (!queue || nextIndex === index) return;
+    if (hasUnsavedChanges && !window.confirm(
+      'Masz niezapisany podział lub przypisania. Przejście do innego przypadku je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
+    )) return;
+    setIndex(Math.max(0, Math.min(queue.cases.length - 1, nextIndex)));
+  }
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
       if (event.key === 'ArrowLeft' && index > 0) {
         event.preventDefault();
-        setIndex(index - 1);
+        navigateTo(index - 1);
       } else if (event.key === 'ArrowRight' && queue && index < queue.cases.length - 1) {
         event.preventDefault();
-        setIndex(index + 1);
+        navigateTo(index + 1);
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [index, queue]);
+  }, [hasUnsavedChanges, index, queue]);
 
   if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
   if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className='status'>{message}</p>}</section>;
@@ -274,7 +301,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
           <label>Zawodnik z kadry
             <select value={selectedAssignment?.action === 'assign_roster_player' ? selectedAssignment.player_id : ''} onChange={(event) => event.target.value && assign({ action: 'assign_roster_player', player_id: event.target.value })}>
               <option value=''>Wybierz zawodnika</option>
-              {['A', 'B'].map((team) => <optgroup key={team} label={teamLabelForOperator(team)}>{queue.assignment_options.roster.filter((player) => player.team_label === team).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}</option>)}</optgroup>)}
+              {(['A', 'B'] as const).map((team) => <optgroup key={team} label={matchTeamName(match.teams || [], team)}>{queue.assignment_options.roster.filter((player) => player.team_label === team).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}</option>)}</optgroup>)}
             </select>
           </label>
           <label>Ten sam gracz co Axx/Bxx
@@ -284,10 +311,10 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
             </select>
           </label>
           <div className='reviewed-action-cards'>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'A' })}>Team A — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'B' })}>Team B — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik A</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik B</button>
+            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'A' })}>{matchTeamName(match.teams || [], 'A')} — nieznany</button>
+            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'B' })}>{matchTeamName(match.teams || [], 'B')} — nieznany</button>
+            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'A')})</button>
+            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'B')})</button>
             <button type='button' onClick={() => assign({ action: 'referee' })}>Sędzia</button>
             <button type='button' onClick={() => assign({ action: 'false_detection' })}>Fałszywa detekcja</button>
             <button type='button' onClick={() => assign({ action: 'team_unknown' })}>Nieznana drużyna</button>
@@ -297,10 +324,10 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
       </aside>
     </div>
     <footer className='mixed-review-footer'>
-      <button type='button' className='secondary' onClick={() => setIndex(Math.max(0, index - 1))} disabled={busy || index === 0}>Poprzedni</button>
+      <button type='button' className='secondary' onClick={() => navigateTo(index - 1)} disabled={busy || index === 0}>Poprzedni</button>
       <button type='button' onClick={() => void saveSplit()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>
       <button type='button' className='secondary' onClick={() => void deferComplex()} disabled={busy}>Nie ma prostego podziału czasowego</button>
-      <button type='button' className='secondary' onClick={() => setIndex(Math.min(queue.cases.length - 1, index + 1))} disabled={busy || index >= queue.cases.length - 1}>Następny</button>
+      <button type='button' className='secondary' onClick={() => navigateTo(index + 1)} disabled={busy || index >= queue.cases.length - 1}>Następny</button>
     </footer>
     {message && <p className='status' role='status'>{message}</p>}
   </section>;

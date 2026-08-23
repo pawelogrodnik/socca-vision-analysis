@@ -23,6 +23,7 @@ from app.services.identity_reviewed_review_source import (
     ReviewedIdentityReviewSourceError,
     resolve_review_source,
     source_case_id,
+    source_storage_payload,
 )
 from app.services.identity_reviewed_recompute_state import mark_reviewed_identity_recompute_required
 from app.services.identity_reviewed_segments import (
@@ -46,20 +47,38 @@ def save_mixed_player_resolution(
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     document = load_mixed_player_cases(match_path)
     cases = {
-        str(row.get("candidate_subject_id")): dict(row)
+        str(row.get("case_id") or row.get("candidate_subject_id")): dict(row)
         for row in document.get("cases") or []
         if row.get("candidate_subject_id")
     }
-    case = cases.get(subject_id)
+    case_id = str(payload.get("case_id") or subject_id)
+    case = cases.get(case_id)
     if case is None:
         raise ValueError(f"Unknown mixed-player case: {subject_id or '<missing>'}")
     supplied_digest = str(payload.get("source_subject_digest") or "")
     if supplied_digest != str(case.get("source_subject_digest") or ""):
         raise MixedPlayerTargetError("mixed_player_case_stale")
-    if supplied_digest != current_mixed_subject_digest(match_path, subject_id):
-        raise MixedPlayerTargetError("mixed_player_case_stale")
     if str(case.get("resolution_status")) not in UNRESOLVED_STATUSES:
         raise ValueError("Mixed-player case is already resolved")
+    if isinstance(case.get("source"), dict):
+        # Modern staged markers use the exact inline split engine.  It
+        # re-resolves ownership and rejects a stale source before persistence.
+        source = dict(case["source"])
+        if supplied_digest != str(source.get("source_ownership_digest") or ""):
+            raise MixedPlayerTargetError("mixed_player_case_stale")
+        return save_inline_temporal_split(
+            match_path,
+            match_doc,
+            {
+                **payload,
+                "candidate_subject_id": source.get("candidate_subject_id"),
+                "review_target_id": source.get("review_target_id"),
+                "continuity_group_id": source.get("continuity_group_id"),
+                "source_ownership_digest": source.get("source_ownership_digest"),
+            },
+        )
+    if supplied_digest != current_mixed_subject_digest(match_path, subject_id):
+        raise MixedPlayerTargetError("mixed_player_case_stale")
 
     resolution = str(payload.get("resolution") or "split")
     now = datetime.now(timezone.utc).isoformat()
@@ -72,7 +91,7 @@ def save_mixed_player_resolution(
                 "comment": str(payload.get("comment") or "").strip() or case.get("comment"),
             }
         )
-        cases[subject_id] = case
+        cases[case_id] = case
         save_mixed_case_document(match_path, {**document, "cases": list(cases.values())})
         # ``save_segment_decision`` deliberately accepts one materialized review
         # for an atomic batch. Rebuild it only after the batch so persisted
@@ -95,7 +114,7 @@ def save_mixed_player_resolution(
             "updated_at": now,
         }
     )
-    pending_document = {**document, "cases": [case if key == subject_id else row for key, row in cases.items()]}
+    pending_document = {**document, "cases": [case if key == case_id else row for key, row in cases.items()]}
     targets = [
         row
         for row in operator_mixed_targets(match_path, pending_document)
@@ -140,7 +159,7 @@ def save_mixed_player_resolution(
                 "comment": str(payload.get("comment") or "").strip() or case.get("comment"),
             }
         )
-        cases[subject_id] = case
+        cases[case_id] = case
         save_mixed_case_document(match_path, {**document, "cases": list(cases.values())})
     except Exception:
         for path, previous in rollback_paths.items():
@@ -374,18 +393,7 @@ def save_inline_temporal_split(
 
 
 def _source_payload(source: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: source.get(key)
-        for key in (
-            "scope_kind",
-            "candidate_subject_id",
-            "review_target_id",
-            "continuity_group_id",
-            "source_ownership_digest",
-            "source_team_label",
-            "owned_observations",
-        )
-    }
+    return source_storage_payload(source)
 
 
 def _replace_case(

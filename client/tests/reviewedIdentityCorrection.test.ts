@@ -360,7 +360,12 @@ test('video QA stays in the unified workspace and report has no interactive revi
   assert.match(form, /context\?\.source_team_label/);
   assert.match(actions, /Zawodnik z kadry/);
   assert.match(actions, /Tylko drużyna \/ zawodnik nieznany/);
-  assert.match(actions, /To kilku zawodników — podziel/);
+  assert.match(actions, /Kilku zawodników/);
+  assert.match(actions, /mixed_players/);
+  // Video QA corrections split directly; staged mixed stays required-queue-only.
+  assert.match(atTime, /mixedHandling='direct'/);
+  const exceptionPanel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', root), 'utf8');
+  assert.match(exceptionPanel, /mixedHandling=\{activeQueue === 'optional_audit' \? 'direct' : 'stage'\}/);
   assert.match(form, /Automatyka potwierdziła jedynie drużynę/);
   assert.match(form, /assign_team/);
   assert.match(form, /Wybierz drużynę/);

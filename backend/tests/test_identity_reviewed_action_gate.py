@@ -119,7 +119,6 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
             {"action": "assign_roster_player", "player_id": "team-a-player"},
             {"action": "referee"},
             {"action": "false_detection"},
-            {"action": "mixed_players", "mixed_hint": "unknown"},
             {"action": "unresolved"},
         )
         for action in actions:
@@ -136,6 +135,22 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                     result["review_unit"]["current_resolution_status"],
                     "optional_team_audit",
                 )
+
+    def test_optional_team_audit_cannot_stage_required_mixed_players(self) -> None:
+        with _workspace() as root:
+            match_doc = _scoped_match()
+            _baseline(root, [], [_optional("optional-b")], match_doc)
+            with self.assertRaises(ReviewedIdentityActionScopeError) as raised:
+                validate_deferred_review_action(
+                    root,
+                    match_doc,
+                    {
+                        "candidate_subject_id": "optional-b",
+                        "action": "mixed_players",
+                        "mixed_hint": "unknown",
+                    },
+                )
+            self.assertEqual(raised.exception.code, "optional_max_staged_mixed_not_allowed")
 
     def test_baseline_present_optional_save_does_not_rebuild_current_progress(self) -> None:
         with _workspace() as root:

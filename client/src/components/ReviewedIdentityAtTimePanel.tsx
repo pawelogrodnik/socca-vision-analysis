@@ -59,6 +59,7 @@ export function ReviewedIdentityAtTimePanel({
       {editingTrackletId === entity.tracklet_id && <ReviewedIdentityCorrectionForm
         matchId={matchId}
         entity={entity}
+        mixedHandling='direct'
         onCancel={() => setEditingTrackletId(null)}
         onSaved={(result) => {
           setEditingTrackletId(null);

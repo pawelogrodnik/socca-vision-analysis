@@ -825,6 +825,26 @@ a { color: #93c5fd; }
 .mixed-assignment-scroll .reviewed-action-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mixed-review-footer { display: grid; grid-template-columns: auto minmax(190px, 1fr) auto auto; gap: 8px; }
 
+.reviewed-identity-split-modal {
+  position: fixed;
+  z-index: 200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.reviewed-identity-split-modal-backdrop { position: absolute; inset: 0; background: rgba(2, 6, 23, 0.82); }
+.reviewed-identity-split-modal-content {
+  position: relative;
+  width: min(1360px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  border: 1px solid #38bdf8;
+  border-radius: 16px;
+  background: #0f172a;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -881,6 +901,28 @@ summary:focus-visible {
     padding: 10px;
   }
   .remaining-issues-active .identity-exception-review > .status { flex: 0 0 auto; margin: 0; }
+  /* The staged mixed-player review is a workspace, not a card inside the
+     narrow correction column. It intentionally remains page-scrollable. */
+  .identity-review-workspace.remaining-issues-active:has(.mixed-player-review) {
+    position: relative;
+    inset: auto;
+    display: grid;
+    width: auto;
+    max-width: 1360px;
+    height: auto;
+    min-height: 0;
+    margin: 0 auto 24px;
+    overflow: visible;
+  }
+  .remaining-issues-active:has(.mixed-player-review) .identity-exception-review {
+    display: grid;
+    height: auto;
+    overflow: visible;
+  }
+  .mixed-player-review .mixed-review-workstation,
+  .mixed-player-review .mixed-temporal-column,
+  .mixed-player-review .mixed-assignment-panel,
+  .mixed-player-review .mixed-assignment-scroll { overflow: visible; }
 }
 
 @media (max-width: 900px) {

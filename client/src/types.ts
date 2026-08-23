@@ -1914,12 +1914,12 @@ export type ReviewedCorrectionAction =
   | 'unresolved'
   | 'mixed_players';
 
-export type ReviewedCorrectionPrimaryAction = Exclude<ReviewedCorrectionAction, 'mixed_players'> | 'split';
+export type ReviewedCorrectionPrimaryAction = ReviewedCorrectionAction | 'split';
 
 export type ReviewedCorrectionActionCapability = {
   allowed: boolean;
   reason?: string;
-  mode?: 'temporal';
+  mode?: 'temporal' | 'staged_temporal_review';
   minimum_observations?: number;
   requires_player_id?: boolean;
   requires_team_label?: boolean;
@@ -1991,6 +1991,7 @@ export type ReviewedCorrectionContext = {
 export type ReviewedCorrectionRequest = {
   candidate_subject_id: string;
   review_target_id?: string;
+  continuity_group_id?: string;
   source_ownership_digest?: string;
   action: ReviewedCorrectionAction;
   player_id?: string;
@@ -2222,6 +2223,7 @@ export type ReviewedIdentityReviewProgress = {
 export type MixedPlayerHint = 'cross_team' | 'same_team_a' | 'same_team_b' | 'player_referee' | 'unknown';
 
 export type MixedPlayerCase = {
+  case_id?: string;
   candidate_subject_id: string;
   original_issue: 'mixed_players';
   mixed_hint: MixedPlayerHint;
@@ -2250,6 +2252,7 @@ export type MixedBoundaryRefinement = {
   mode: string;
   match_id: string;
   candidate_subject_id: string;
+  case_id?: string;
   source_subject_digest: string;
   after_frame: number;
   before_frame: number;
@@ -2291,6 +2294,7 @@ export type ReviewedTemporalSplitResponse = {
 
 export type MixedPlayerResolutionRequest = {
   candidate_subject_id: string;
+  case_id?: string;
   source_subject_digest: string;
   resolution: 'split' | 'unresolved_complex_mix';
   split_after_frames?: number[];

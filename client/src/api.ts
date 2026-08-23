@@ -365,12 +365,14 @@ export async function getMixedBoundaryRefinement(
   candidateSubjectId: string,
   afterFrame: number,
   beforeFrame: number,
+  caseId?: string,
 ): Promise<import('./types').MixedBoundaryRefinement> {
   const query = new URLSearchParams({
     candidate_subject_id: candidateSubjectId,
     after_frame: String(afterFrame),
     before_frame: String(beforeFrame),
   });
+  if (caseId) query.set('case_id', caseId);
   return request<import('./types').MixedBoundaryRefinement>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/refine?${query}`,
   );
