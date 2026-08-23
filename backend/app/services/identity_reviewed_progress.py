@@ -251,6 +251,69 @@ def _normalized_projection_units(units: list[dict[str, Any]]) -> list[dict[str, 
     return normalized
 
 
+def _exact_union_pair_count(
+    units: list[dict[str, Any]],
+    runs_key: str,
+    pairs_key: str,
+    include: Any,
+) -> int:
+    """Exact distinct-pair union size over selected units, without expansion.
+
+    Compact units contribute validated run intervals merged per tracklet;
+    legacy units fall back to explicit pair sets.  Both produce the identical
+    set-union cardinality the previous per-pair comprehension produced.
+    """
+    compact_by_tracklet: dict[str, list[list[int]]] = {}
+    legacy_pairs: set[tuple[str, int]] = set()
+    has_compact = False
+    has_legacy = False
+    for unit in units:
+        if not isinstance(unit, dict) or not include(unit):
+            continue
+        runs = unit.get(runs_key)
+        if isinstance(runs, dict):
+            has_compact = True
+            for tracklet_id, tracklet_runs in runs.items():
+                compact_by_tracklet.setdefault(tracklet_id, []).extend(
+                    [list(run) for run in tracklet_runs]
+                )
+            continue
+        has_legacy = True
+        for pair in unit.get(pairs_key) or []:
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2:
+                legacy_pairs.add((str(pair[0]), int(pair[1])))
+    total = 0
+    if has_compact:
+        from app.services.identity_ownership_compact import (
+            count_pair_runs,
+            runs_union,
+        )
+
+        compact_union = {
+            tracklet_id: _merge_unit_intervals(tracklet_runs)
+            for tracklet_id, tracklet_runs in compact_by_tracklet.items()
+        }
+        if has_legacy:
+            combined = runs_union(compact_union, encode_pair_runs(legacy_pairs))
+            total += count_pair_runs(combined)
+        else:
+            total += count_pair_runs(compact_union)
+    elif has_legacy:
+        total += len(legacy_pairs)
+    return total
+
+
+def _merge_unit_intervals(intervals: list[list[int]]) -> list[list[int]]:
+    intervals.sort()
+    merged: list[list[int]] = []
+    for start, end in intervals:
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
 def project_reviewed_identity_progress(
     units: list[dict[str, Any]],
     match_doc: dict[str, Any],
@@ -311,24 +374,24 @@ def project_reviewed_identity_progress(
             if isinstance(pair, (list, tuple)) and len(pair) >= 2
         }
         observed_total = len(observed_pairs)
-    operator_pairs = {
-        pair
-        for unit in units
-        if unit["current_resolution_status"] == "reviewed_by_operator"
-        for pair in unit["detected_pairs"]
-    }
-    team_known_pairs = {
-        pair
-        for unit in units
-        if unit["effective_team_label"] in {"A", "B"}
-        for pair in unit["detected_pairs"]
-    }
-    confirmed_pairs = {
-        pair
-        for unit in units
-        if unit.get("canonical_player_id")
-        for pair in unit["detected_pairs"]
-    }
+    operator_total = _exact_union_pair_count(
+        units,
+        "detected_pair_runs",
+        "detected_pairs",
+        lambda unit: unit["current_resolution_status"] == "reviewed_by_operator",
+    )
+    team_known_total = _exact_union_pair_count(
+        units,
+        "detected_pair_runs",
+        "detected_pairs",
+        lambda unit: unit["effective_team_label"] in {"A", "B"},
+    )
+    confirmed_total = _exact_union_pair_count(
+        units,
+        "detected_pair_runs",
+        "detected_pairs",
+        lambda unit: bool(unit.get("canonical_player_id")),
+    )
     # Coverage policy is authoritative and deliberately uncapped. Pagination
     # is applied only at the API presentation boundary.
     next_cases = coverage_policy["next_cases"]
@@ -379,12 +442,12 @@ def project_reviewed_identity_progress(
         },
         "observations": {
             "total_detected_observations": observed_total,
-            "operator_reviewed_observations": len(operator_pairs),
-            "operator_reviewed_observation_ratio": _ratio(len(operator_pairs), observed_total),
-            "team_known_observations": len(team_known_pairs),
-            "team_known_observation_ratio": _ratio(len(team_known_pairs), observed_total),
-            "confirmed_player_observations": len(confirmed_pairs),
-            "confirmed_player_observation_ratio": _ratio(len(confirmed_pairs), observed_total),
+            "operator_reviewed_observations": operator_total,
+            "operator_reviewed_observation_ratio": _ratio(operator_total, observed_total),
+            "team_known_observations": team_known_total,
+            "team_known_observation_ratio": _ratio(team_known_total, observed_total),
+            "confirmed_player_observations": confirmed_total,
+            "confirmed_player_observation_ratio": _ratio(confirmed_total, observed_total),
         },
         "identity_coverage": coverage,
         "coverage_readiness": coverage_policy["readiness"],

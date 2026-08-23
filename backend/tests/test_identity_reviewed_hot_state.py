@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from pathlib import Path
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ from app.services.identity_reviewed_hot_state import (
     assert_hot_state_version,
     hot_context,
     hot_review_unit,
+    load_existing_fresh_hot_state,
     load_or_rebuild_review_hot_state,
     update_hot_state_after_deferred_save,
 )
@@ -317,6 +319,139 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             second = load_or_rebuild_review_hot_state(root, _match())
         self.assertGreater(second["state_version"], first["state_version"])
 
+    def test_corrupt_compact_ownership_fails_closed_and_rebuilds_exactly_once(self) -> None:
+        corruptions = (
+            ("detected_pair_runs", {"t-1": [[10, 5]]}),
+            ("detected_pair_runs", {"t-1": [["bad", 20]]}),
+            ("detected_pair_runs", {"t-1": [[10, 20], [15, 25]]}),
+            ("detected_pair_runs", {"t-1": [[10]]}),
+            ("owned_observation_runs", {"t-1": [[30, 30], [31, 40], [41, 41]]}),
+        )
+        for key, bad_value in corruptions:
+            with self.subTest(key=key, value=bad_value):
+                with _workspace() as root:
+                    match = _match()
+                    with patch(
+                        "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                        side_effect=lambda *args, **kwargs: _progress(),
+                    ) as build:
+                        first = load_or_rebuild_review_hot_state(root, match)
+                        self.assertIsNotNone(first["internal_review_units"])
+                        document = json.loads((root / FILENAME).read_text(encoding="utf-8"))
+                        target = document["internal_review_units"][0]
+                        self.assertIn("detected_pair_runs", target)
+                        if key == "owned_observation_runs":
+                            target["continuity_members"] = [
+                                {"candidate_subject_id": "m1", key: bad_value},
+                            ]
+                        else:
+                            target[key] = bad_value
+                        (root / FILENAME).write_text(json.dumps(document), encoding="utf-8")
+                        # Malformed cache is treated as absent: no partial
+                        # ownership can be served from it.
+                        self.assertIsNone(load_existing_fresh_hot_state(root, match))
+                        rebuilt = load_or_rebuild_review_hot_state(root, match)
+                        self.assertEqual(build.call_count, 2)
+                    served = hot_review_unit(rebuilt, "subject-1")
+                    assert served is not None
+                    self.assertEqual(served["detected_pairs"], [("t-1", 10), ("t-1", 11)])
+
+    def test_ordinary_save_does_not_expand_match_wide_ownership(self) -> None:
+        """A non-structural save must not materialize every exact pair."""
+        from app.services.identity_ownership_compact import (
+            EXPANSION_STATS,
+            encode_index_rows,
+            encode_pair_runs,
+            reset_expansion_stats,
+        )
+
+        match = _complete_roster_match()
+        total_pairs = 0
+        units = []
+        index_rows = []
+        frame_cursor = 0
+        for index in range(1000):
+            tracklet_id = f"t{index}"
+            start = frame_cursor + 10
+            frames = list(range(start, start + 400))
+            frame_cursor = frames[-1] + 50
+            total_pairs += len(frames)
+            resolved = index != 0
+            units.append({
+                "candidate_subject_id": f"subject-{index}",
+                "scope_kind": "material_continuity" if index == 0 else "whole_subject",
+                "continuity_group_id": f"continuity:A07:{start}-{frames[-1]}" if index == 0 else None,
+                "source_team_label": "A",
+                "effective_team_label": "A",
+                "tracklet_ids": [tracklet_id],
+                "detected_pair_runs": {tracklet_id: [[start, frames[-1]]]},
+                "detected_observation_count": len(frames),
+                "detected_frame_count": len(frames),
+                "detected_time_sec": len(frames) / 25,
+                "frame_start": start,
+                "frame_end": frames[-1],
+                "current_resolution_status": (
+                    "pending_material_continuity_review" if index == 0 else "reviewed_by_operator"
+                ),
+                "priority": "continuity" if index == 0 else None,
+                "operator_actionable": True,
+                "has_operator_visual_evidence": True,
+                "visual_evidence": {"anchor_crops": [{"artifact": f"c{index}.jpg"}]},
+                "current_decision": {"action": "assign_roster_player", "player_id": "p1"} if resolved else None,
+                "canonical_player_id": "p1" if resolved else None,
+                "reason_codes": [],
+            })
+            for frame in frames:
+                index_rows.append({
+                    "tracklet_id": tracklet_id,
+                    "frame": frame,
+                    "identity_status": ("unresolved" if index == 0 and frame % 8 == 0 else "confirmed"),
+                    "team_label": "A",
+                    "canonical_player_id": (None if index == 0 and frame % 8 == 0 else "p1"),
+                })
+        self.assertGreaterEqual(total_pairs, 400_000)
+        coverage, pair_index = summarize_effective_observations(index_rows, match)
+        inputs = {
+            "match_id": match["id"],
+            "coverage": coverage,
+            "pair_index_runs": encode_index_rows([
+                {"tracklet_id": tid, "frame": frame, "value": value}
+                for (tid, frame), value in pair_index.items()
+            ]),
+            "observed_pair_runs": encode_pair_runs(sorted(pair_index.keys())),
+            "technical_diagnostics": {},
+            "mixed_players": {},
+            "deferred_correction_context": {},
+        }
+        with _workspace() as root:
+            initial = project_reviewed_identity_progress(
+                deepcopy(units), match, inputs, include_internal_units=True,
+            )
+            state = {
+                "state_version": 3,
+                "progress": {
+                    key: value for key, value in initial.items()
+                    if key not in {"_internal_review_units", "_projection_inputs"}
+                },
+                "internal_review_units": initial["_internal_review_units"],
+                "unit_lookup": {"subject-0\u001f": 0},
+                "source_index": {},
+                "projection_inputs": inputs,
+                "roster_options": [{"player_id": "p1", "team_label": "A"}],
+            }
+            saved_unit = state["internal_review_units"][0]
+            reset_expansion_stats()
+            update_hot_state_after_deferred_save(
+                root,
+                match,
+                state,
+                saved_unit,
+                {"action": "assign_roster_player", "player_id": "p1"},
+                "compact-save-digest",
+            )
+            expanded = EXPANSION_STATS["expanded_pairs"]
+        self.assertLess(expanded, total_pairs // 10)
+
     def test_roster_change_invalidates_an_otherwise_fresh_materialization(self) -> None:
         with _workspace() as root, patch(
             "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
@@ -393,6 +528,11 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
 
     def test_large_sparse_material_projection_matches_authoritative_rebuild(self) -> None:
         """Compact-run projection equals cold authoritative projection."""
+        for unit_form in ("legacy", "compact"):
+            with self.subTest(unit_form=unit_form):
+                self._assert_large_sparse_projection_equivalence(unit_form)
+
+    def _assert_large_sparse_projection_equivalence(self, unit_form: str) -> None:
         match = _complete_roster_match()
         pairs = (
             [("t-long", frame) for frame in range(18836, 19836)]
@@ -419,6 +559,11 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             "priority": None,
             "canonical_player_id": "p1",
         }
+        if unit_form == "compact":
+            big_unit.pop("detected_pairs")
+            big_unit["detected_pair_runs"] = encode_pair_runs(sorted(pairs))
+            done_unit.pop("detected_pairs")
+            done_unit["detected_pair_runs"] = {"t1": [[10, 11]]}
         units = [big_unit, done_unit]
         rows = [
             {
@@ -450,12 +595,21 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             "pair_index_runs": encode_index_rows(legacy_inputs["pair_index"]),
             "observed_pair_runs": encode_pair_runs(sorted(pair_index.keys())),
         }
-        reference_units = deepcopy(units)
         saved_decision = {"action": "assign_roster_player", "player_id": "p1"}
-        reference_units[0]["current_decision"] = saved_decision
-        reference_units[0]["current_resolution_status"] = "reviewed_by_operator"
-        reference_units[0]["priority"] = None
-        reference_units[0]["canonical_player_id"] = "p1"
+
+        def apply_save(target_units: list[dict[str, Any]]) -> None:
+            target_units[0]["current_decision"] = dict(saved_decision)
+            target_units[0]["current_resolution_status"] = "reviewed_by_operator"
+            target_units[0]["priority"] = None
+            target_units[0]["canonical_player_id"] = "p1"
+
+        reference_units = deepcopy(units)
+        apply_save(reference_units)
+        # The authoritative reference always evaluates the legacy expanded
+        # form against the serialized-row index.
+        if unit_form == "compact":
+            reference_units = deepcopy([_expand_test_unit(u) for u in units])
+        apply_save(reference_units)
         reference = project_reviewed_identity_progress(
             reference_units, match, legacy_inputs, include_internal_units=True,
         )
@@ -479,13 +633,15 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
                 "projection_inputs": compact_inputs,
                 "roster_options": [{"player_id": "p1", "team_label": "A"}],
             }
+            saved_target = hot_review_unit(state, "material-big")
+            assert saved_target is not None
             updated = update_hot_state_after_deferred_save(
-                root, match, state, state["internal_review_units"][0],
+                root, match, state, saved_target,
                 saved_decision, "large-material-digest",
             )
         self.assertEqual(
-            {key: updated["progress"][key] for key in semantic_fields},
-            {key: reference[key] for key in semantic_fields},
+            {key_: updated["progress"][key_] for key_ in semantic_fields},
+            {key_: reference[key_] for key_ in semantic_fields},
         )
         self.assertEqual(
             updated["progress"]["observations"]["total_detected_observations"],
@@ -635,3 +791,20 @@ class _workspace:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _expand_test_unit(unit: dict[str, Any]) -> dict[str, Any]:
+    from app.services.identity_ownership_compact import decode_pair_runs
+
+    expanded = {
+        key: value
+        for key, value in unit.items()
+        if key not in {"detected_pair_runs", "_potential_named_observation_runs"}
+    }
+    if "detected_pair_runs" in unit:
+        expanded["detected_pairs"] = decode_pair_runs(unit["detected_pair_runs"])
+    if "_potential_named_observation_runs" in unit:
+        expanded["_potential_named_observation_pairs"] = decode_pair_runs(
+            unit["_potential_named_observation_runs"]
+        )
+    return expanded

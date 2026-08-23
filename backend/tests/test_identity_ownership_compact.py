@@ -5,13 +5,24 @@ import unittest
 
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_ownership_compact import (
+    EXPANSION_STATS,
+    CompactOwnershipError,
     CompactPairIndexView,
     count_pair_runs,
     decode_index_rows,
+    decode_observation_runs,
     decode_pair_runs,
     encode_index_rows,
+    encode_observation_rows,
     encode_pair_runs,
     normalize_pairs,
+    reset_expansion_stats,
+    runs_difference,
+    runs_intersection_size,
+    runs_union,
+    validate_compact_document,
+    validate_index_runs,
+    validate_pair_runs,
 )
 
 
@@ -37,11 +48,68 @@ class OwnershipCompactCodecTests(unittest.TestCase):
         self.assertEqual(encode_pair_runs([("t9", 7)]), {"t9": [[7, 7]]})
         self.assertEqual(decode_pair_runs({"t9": [[7, 7]]}), [("t9", 7)])
 
-    def test_decode_rejects_malformed_runs_without_raising(self) -> None:
+    def test_decode_rejects_malformed_runs_instead_of_skipping_them(self) -> None:
+        malformed = [
+            {"t1": [[10, 5]]},                      # end < start
+            {"t1": [["bad", 20]]},                  # non-integer start
+            {"t1": [[12]]},                         # wrong arity
+            {"t1": [[10, True]]},                   # bool frame
+            {"t1": "nope"},                         # runs not a list
+            {"t1": [[10, 20], [15, 25]]},           # overlap
+            {"t1": [[10, 20], [21, 30]]},           # adjacent (non-canonical)
+            {"": [[1, 2]]},                          # empty tracklet id
+            {None: [[1, 2]]},                        # non-string tracklet id
+        ]
+        for runs in malformed:
+            with self.subTest(runs=runs):
+                with self.assertRaises(CompactOwnershipError):
+                    validate_pair_runs(runs)
+                with self.assertRaises(CompactOwnershipError):
+                    decode_pair_runs(runs)
+        with self.assertRaises(CompactOwnershipError):
+            decode_index_rows({"t1": [[5, "x", {}]]})
+
+    def test_validate_compact_document_covers_every_run_key(self) -> None:
+        document = {
+            "internal_review_units": [
+                {"detected_pair_runs": {"t1": [[0, 5]]}},
+                {"owned_observation_runs": {"t2": [[7, 9]]}},
+                {
+                    "_potential_named_observation_runs": {"t3": [[1, 2]]},
+                    "continuity_members": [{"detected_pair_runs": {"t4": [[3, 4]]}}],
+                },
+            ],
+            "projection_inputs": {
+                "observed_pair_runs": {"t1": [[0, 99]]},
+                "pair_index_runs": {"t1": [[0, 5, {"team_label": "A"}], [7, 8, {"team_label": "B"}]]},
+            },
+        }
+        validate_compact_document(document)
+        corrupt = json.loads(json.dumps(document))
+        corrupt["projection_inputs"]["observed_pair_runs"]["t1"] = [[50, 40]]
+        with self.assertRaises(CompactOwnershipError):
+            validate_compact_document(corrupt)
+
+    def test_interval_algebra_is_exact(self) -> None:
+        a = {"t1": [[0, 10], [20, 29]], "t2": [[100, 100]]}
+        b = {"t1": [[5, 24]], "t3": [[0, 999]]}
+        self.assertEqual(runs_union(a, b), {
+            "t1": [[0, 29]],
+            "t2": [[100, 100]],
+            "t3": [[0, 999]],
+        })
+        self.assertEqual(runs_difference(a, b), {"t1": [[0, 4], [25, 29]], "t2": [[100, 100]]})
+        self.assertEqual(runs_intersection_size(a, b), 6 + 5)
         self.assertEqual(
-            decode_pair_runs({"t1": [[10, 5], "bad", [12], ["x", 13], [14, 16]]}),
-            [("t1", 14), ("t1", 15), ("t1", 16)],
+            count_pair_runs(runs_union(a, b)),
+            count_pair_runs(a) + count_pair_runs(b) - runs_intersection_size(a, b),
         )
+
+    def test_expansion_stats_track_decoded_pairs(self) -> None:
+        reset_expansion_stats()
+        decode_pair_runs({"t1": [[0, 9]]})
+        self.assertEqual(EXPANSION_STATS["expanded_pairs"], 10)
+        reset_expansion_stats()
 
     def test_count_matches_decoded_cardinality(self) -> None:
         encoded = {"t1": [[10, 20]], "t2": [[100, 100], [300, 302]]}

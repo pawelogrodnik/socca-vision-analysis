@@ -8,13 +8,31 @@ avoid parsing, normalizing and serializing hundreds of thousands of pairs on
 every operator click.  Encoding is exact: a decode(encode(pairs)) round trip
 reproduces the identical pair set, including sparse gaps and tracklet identity,
 so digests computed over decoded pairs never change their meaning.
+
+Decoding is deliberately STRICT.  The compact document is an exact-source
+cache: malformed or non-canonical runs invalidate the whole cache instead of
+being silently skipped, because a partially decoded ownership set would be an
+invisible correctness lie.
 """
 
 from bisect import bisect_right
+from collections import Counter
 from collections.abc import Iterator, Mapping
 from typing import Any
 
 Pair = tuple[str, int]
+
+PAIR_RUN_KEYS = frozenset({
+    "detected_pair_runs",
+    "owned_observation_runs",
+    "_potential_named_observation_runs",
+    "observed_pair_runs",
+})
+INDEX_RUN_KEY = "pair_index_runs"
+
+
+class CompactOwnershipError(ValueError):
+    """Raised when durable compact ownership is malformed or non-canonical."""
 
 
 def normalize_pairs(raw: Any) -> list[Pair]:
@@ -40,36 +58,122 @@ def encode_pair_runs(raw: Any) -> dict[str, list[list[int]]]:
     return {tracklet_id: tracklet_runs for tracklet_id, tracklet_runs in sorted(runs.items())}
 
 
+def _checked_frame(value: Any, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise CompactOwnershipError(f"{where}: frame must be an integer")
+    return value
+
+
+def validate_pair_runs(runs: Any) -> None:
+    """Strictly validate ``{tracklet_id: [[start, end], ...]}``.
+
+    Runs must be sorted, non-overlapping and non-adjacent per tracklet; that
+    canonical form is what :func:`encode_pair_runs` produces and anything else
+    means the durable cache was corrupted or hand-edited.
+    """
+    if not isinstance(runs, dict):
+        raise CompactOwnershipError("ownership runs must be an object")
+    for tracklet_id, tracklet_runs in runs.items():
+        if not isinstance(tracklet_id, str) or not tracklet_id:
+            raise CompactOwnershipError("ownership runs tracklet id must be a non-empty string")
+        if not isinstance(tracklet_runs, list):
+            raise CompactOwnershipError(f"runs for {tracklet_id} must be a list")
+        previous_end: int | None = None
+        for run in tracklet_runs:
+            if not isinstance(run, list) or len(run) != 2:
+                raise CompactOwnershipError(f"run for {tracklet_id} must be [start, end]")
+            start = _checked_frame(run[0], f"run start for {tracklet_id}")
+            end = _checked_frame(run[1], f"run end for {tracklet_id}")
+            if end < start:
+                raise CompactOwnershipError(f"run for {tracklet_id} has end < start")
+            if previous_end is not None:
+                if start <= previous_end:
+                    raise CompactOwnershipError(f"runs for {tracklet_id} overlap or are unsorted")
+                if start == previous_end + 1:
+                    raise CompactOwnershipError(f"adjacent runs for {tracklet_id} must be merged")
+            previous_end = end
+
+
+def validate_index_runs(encoded: Any) -> None:
+    """Strictly validate run-length encoded coverage index rows."""
+    if not isinstance(encoded, dict):
+        raise CompactOwnershipError("index runs must be an object")
+    for tracklet_id, entries in encoded.items():
+        if not isinstance(tracklet_id, str) or not tracklet_id:
+            raise CompactOwnershipError("index runs tracklet id must be a non-empty string")
+        if not isinstance(entries, list):
+            raise CompactOwnershipError(f"index runs for {tracklet_id} must be a list")
+        previous_end: int | None = None
+        previous_value: Any = None
+        for entry in entries:
+            if not isinstance(entry, list) or len(entry) != 3:
+                raise CompactOwnershipError(f"index run for {tracklet_id} must be [start, end, value]")
+            start = _checked_frame(entry[0], f"index run start for {tracklet_id}")
+            end = _checked_frame(entry[1], f"index run end for {tracklet_id}")
+            if end < start:
+                raise CompactOwnershipError(f"index run for {tracklet_id} has end < start")
+            if previous_end is not None:
+                if start <= previous_end:
+                    raise CompactOwnershipError(f"index runs for {tracklet_id} overlap or are unsorted")
+                if start == previous_end + 1 and entry[2] == previous_value:
+                    raise CompactOwnershipError(
+                        f"adjacent index runs for {tracklet_id} with equal value must be merged"
+                    )
+            previous_end = end
+            previous_value = entry[2]
+
+
+def validate_compact_document(document: Mapping[str, Any]) -> None:
+    """Validate every durable compact structure found in a hot-state document."""
+    stack: list[Any] = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in PAIR_RUN_KEYS:
+                    validate_pair_runs(value)
+                elif key == INDEX_RUN_KEY:
+                    validate_index_runs(value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(item for item in node if isinstance(item, (dict, list)))
+
+
+EXPANSION_STATS: Counter[str] = Counter()
+
+
+def reset_expansion_stats() -> Counter[str]:
+    EXPANSION_STATS.clear()
+    return EXPANSION_STATS
+
+
 def decode_pair_runs(runs: Any) -> list[Pair]:
     """Expand encoded runs back to the exact sorted distinct pair list."""
+    validate_pair_runs(runs)
     output: list[Pair] = []
-    if not isinstance(runs, dict):
-        return output
     for tracklet_id, tracklet_runs in runs.items():
-        if not isinstance(tracklet_runs, list):
-            continue
-        for run in tracklet_runs:
-            if not isinstance(run, (list, tuple)) or len(run) != 2:
-                continue
-            try:
-                start, end = int(run[0]), int(run[1])
-            except (TypeError, ValueError):
-                continue
-            if end < start:
-                continue
-            output.extend((str(tracklet_id), frame) for frame in range(start, end + 1))
+        for start, end in tracklet_runs:
+            output.extend((tracklet_id, frame) for frame in range(start, end + 1))
     output.sort()
+    EXPANSION_STATS["expanded_pairs"] += len(output)
     return output
 
 
 def count_pair_runs(runs: Any) -> int:
     """Total exact pair count represented by encoded runs."""
     total = 0
-    if isinstance(runs, dict):
-        for tracklet_runs in runs.values():
-            for run in tracklet_runs or []:
-                if isinstance(run, (list, tuple)) and len(run) == 2:
-                    total += max(0, int(run[1]) - int(run[0]) + 1)
+    if not isinstance(runs, dict):
+        return 0
+    for tracklet_runs in runs.values():
+        for run in tracklet_runs or []:
+            if not isinstance(run, list) or len(run) != 2:
+                raise CompactOwnershipError("count encountered a malformed run")
+            start = _checked_frame(run[0], "counted run start")
+            end = _checked_frame(run[1], "counted run end")
+            if end < start:
+                raise CompactOwnershipError("counted run has end < start")
+            total += end - start + 1
     return total
 
 
@@ -109,22 +213,10 @@ def encode_index_rows(rows: Any) -> dict[str, list[list[Any]]]:
 
 def decode_index_rows(encoded: Any) -> list[dict[str, Any]]:
     """Expand run-length encoded coverage rows back to the legacy row shape."""
+    validate_index_runs(encoded)
     rows: list[dict[str, Any]] = []
-    if not isinstance(encoded, dict):
-        return rows
     for tracklet_id, entries in encoded.items():
-        if not isinstance(entries, list):
-            continue
-        for entry in entries:
-            if not isinstance(entry, (list, tuple)) or len(entry) != 3:
-                continue
-            raw_start, raw_end = entry[0], entry[1]
-            if isinstance(raw_start, bool) or isinstance(raw_end, bool):
-                continue
-            if not isinstance(raw_start, int) or not isinstance(raw_end, int):
-                continue
-            start, end = raw_start, raw_end
-            value = entry[2]
+        for start, end, value in entries:
             for frame in range(start, end + 1):
                 rows.append({
                     "tracklet_id": str(tracklet_id),
@@ -132,6 +224,7 @@ def decode_index_rows(encoded: Any) -> list[dict[str, Any]]:
                     "value": dict(value) if isinstance(value, dict) else value,
                 })
     rows.sort(key=lambda row: (row["tracklet_id"], row["frame"]))
+    EXPANSION_STATS["expanded_pairs"] += len(rows)
     return rows
 
 
@@ -160,6 +253,76 @@ def decode_observation_runs(runs: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _merge_intervals(intervals: list[list[int]]) -> list[list[int]]:
+    intervals.sort()
+    merged: list[list[int]] = []
+    for start, end in intervals:
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
+def runs_union(*run_dicts: dict[str, list[list[int]]]) -> dict[str, list[list[int]]]:
+    """Exact interval union of validated run dictionaries."""
+    collected: dict[str, list[list[int]]] = {}
+    for run_dict in run_dicts:
+        for tracklet_id, tracklet_runs in (run_dict or {}).items():
+            collected.setdefault(tracklet_id, []).extend([list(run) for run in tracklet_runs])
+    return {
+        tracklet_id: _merge_intervals(tracklet_runs)
+        for tracklet_id, tracklet_runs in sorted(collected.items())
+    }
+
+
+def runs_difference(minuend: dict[str, list[list[int]]], subtrahend: dict[str, list[list[int]]]) -> dict[str, list[list[int]]]:
+    """Exact interval difference ``minuend - subtrahend`` of validated runs."""
+    output: dict[str, list[list[int]]] = {}
+    for tracklet_id, tracklet_runs in minuend.items():
+        cuts = sorted(
+            (run[0], run[1]) for run in (subtrahend.get(tracklet_id) or [])
+        )
+        remaining: list[list[int]] = []
+        for start, end in tracklet_runs:
+            cursor = start
+            for cut_start, cut_end in cuts:
+                if cut_end < cursor:
+                    continue
+                if cut_start > end:
+                    break
+                if cut_start > cursor:
+                    remaining.append([cursor, cut_start - 1])
+                cursor = max(cursor, cut_end + 1)
+                if cursor > end:
+                    break
+            if cursor <= end:
+                remaining.append([cursor, end])
+        if remaining:
+            output[tracklet_id] = remaining
+    return output
+
+
+def runs_intersection_size(left: dict[str, list[list[int]]], right: dict[str, list[list[int]]]) -> int:
+    """Exact cardinality of ``left ∩ right`` without materializing pairs."""
+    total = 0
+    for tracklet_id, tracklet_runs in left.items():
+        other = right.get(tracklet_id)
+        if not other:
+            continue
+        cursor = 0
+        for start, end in tracklet_runs:
+            index = cursor
+            while index < len(other) and other[index][1] < start:
+                index += 1
+            cursor = index
+            walk = index
+            while walk < len(other) and other[walk][0] <= end:
+                total += min(end, other[walk][1]) - max(start, other[walk][0]) + 1
+                walk += 1
+    return total
+
+
 class CompactPairIndexView(Mapping):
     """Read-only lazy mapping over run-length encoded coverage index rows.
 
@@ -180,6 +343,10 @@ class CompactPairIndexView(Mapping):
         # Consecutive frame lookups hit the same run, so a one-entry-per-
         # tracklet hint turns repeated bisects into constant-time checks.
         self._hint: dict[str, int] = {}
+
+    def tracklets(self) -> Mapping[str, list[list[Any]]]:
+        """Expose the underlying validated per-tracklet value segments."""
+        return self._encoded
 
     def _find(self, key: Pair) -> dict[str, Any] | None:
         tracklet_id, frame = key

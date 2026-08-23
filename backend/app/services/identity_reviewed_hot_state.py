@@ -16,11 +16,13 @@ from typing import Any
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_ownership_compact import (
+    CompactOwnershipError,
     decode_observation_runs,
     decode_pair_runs,
     encode_index_rows,
     encode_observation_rows,
     encode_pair_runs,
+    validate_compact_document,
 )
 from app.services.identity_reviewed_correction_context import (
     match_roster,
@@ -204,20 +206,9 @@ def update_hot_state_after_deferred_save(
         for row in state.get("roster_options") or []
         if isinstance(row, dict)
     }
-    # The durable cache stores compact runs. Projection and the exact unit
-    # mutation below need the expanded legacy shapes, so restore them once.
-    compact_originals = {
-        _lookup_key(
-            str(unit.get("candidate_subject_id") or ""),
-            unit.get("review_target_id"),
-        ): unit
-        for unit in state.get("internal_review_units") or []
-        if isinstance(unit, dict)
-    }
-    state["internal_review_units"] = [
-        _expand_unit(unit) if isinstance(unit, dict) else unit
-        for unit in state.get("internal_review_units") or []
-    ]
+    # Compact units stay compact through the whole save. Projection evaluates
+    # ownership from validated runs directly, so an ordinary correction never
+    # materializes match-wide (tracklet_id, frame) pairs.
     updated_unit = False
     for unit in state.get("internal_review_units") or []:
         if not isinstance(unit, dict):
@@ -251,67 +242,13 @@ def update_hot_state_after_deferred_save(
         for key, value in projected.items()
         if key not in {"_internal_review_units", "_projection_inputs"}
     }
-    state["internal_review_units"] = _merge_reusable_compact_units(
-        compact_originals,
-        list(projected.get("_internal_review_units") or []),
-    )
+    state["internal_review_units"] = list(projected.get("_internal_review_units") or [])
     state["unit_lookup"] = _unit_lookup(state["internal_review_units"])
     state["source_index"] = _source_index(state["internal_review_units"])
     state["state_version"] = _next_state_version(match_path)
     state["freshness"] = _freshness(match_path, match_doc, semantic_digest=semantic_decision_digest)
     write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
     return state
-
-
-def _merge_reusable_compact_units(
-    compact_originals: dict[str, dict[str, Any]],
-    projected_units: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Reuse the previous compact unit when projection changed nothing in it.
-
-    A queued unit is enriched and must be fully re-encoded.  Every other unit
-    passes through the policy untouched; its exact pair content is therefore
-    provably identical, so the already-compact representation stays valid
-    without another decode/encode round trip.
-    """
-    merged: list[dict[str, Any]] = []
-    for unit in projected_units:
-        if not isinstance(unit, dict):
-            merged.append(unit)
-            continue
-        base = compact_originals.get(
-            _lookup_key(
-                str(unit.get("candidate_subject_id") or ""),
-                unit.get("review_target_id"),
-            )
-        )
-        if isinstance(base, dict) and _unit_matches_compact_base(base, unit):
-            merged.append(base)
-            continue
-        merged.append(unit)
-    return merged
-
-
-_EXPANDED_PAIR_KEYS = frozenset({"detected_pairs", "_potential_named_observation_pairs"})
-_COMPACT_PAIR_KEYS = frozenset({"detected_pair_runs", "_potential_named_observation_runs"})
-
-
-def _unit_matches_compact_base(base: dict[str, Any], projected: dict[str, Any]) -> bool:
-    """True when projection left every non-pair field byte-identical.
-
-    The coverage policy enriches copies and never writes back into its input
-    units, so identical remaining fields imply identical exact pair content;
-    the already-compact representation therefore stays losslessly valid.
-    """
-    projected_rest = {
-        key: value for key, value in projected.items()
-        if key not in _EXPANDED_PAIR_KEYS
-    }
-    base_rest = {
-        key: value for key, value in base.items()
-        if key not in _COMPACT_PAIR_KEYS
-    }
-    return projected_rest == base_rest
 
 
 def hot_context(
@@ -424,9 +361,18 @@ def _load(path: Path) -> dict[str, Any] | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if isinstance(value, dict) and value.get("schema_version") == SCHEMA_VERSION:
+    if not isinstance(value, dict):
+        return None
+    if value.get("schema_version") == SCHEMA_VERSION:
+        try:
+            validate_compact_document(value)
+        except CompactOwnershipError:
+            # A malformed exact-source cache must never be partially decoded.
+            # Treat it as absent; the caller cold-rebuilds from canonical
+            # artifacts, which remain the only source of truth.
+            return None
         _rehydrate_projection_twins(value)
-    return value if isinstance(value, dict) else None
+    return value
 
 
 def _rehydrate_projection_twins(state: dict[str, Any]) -> None:

@@ -14,6 +14,10 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.services.identity_ownership_compact import (
+    CompactPairIndexView,
+    encode_pair_runs,
+)
 from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
 )
@@ -179,7 +183,7 @@ def apply_coverage_policy(
         # A raw subject may have a diagnostic card while every observation is
         # outside the product play area.  It cannot become a team-attribution
         # task because it contributes no player-facing observation at all.
-        if not unit.get("detected_pairs"):
+        if not unit.get("detected_pairs") and not unit.get("detected_pair_runs"):
             continue
         enriched = _coverage_impact(unit, pair_index, coverage)
         team = _team_label(enriched.get("coverage_team_label"))
@@ -564,27 +568,33 @@ def _coverage_impact(
     pair_index: Mapping[tuple[str, int], dict[str, Any]],
     coverage: dict[str, Any],
 ) -> dict[str, Any]:
-    pairs = {
-        (str(pair[0]), int(pair[1]))
-        for pair in unit.get("detected_pairs") or []
-        if isinstance(pair, (list, tuple)) and len(pair) >= 2
-    }
-    present_rows = [(pair, pair_index[pair]) for pair in pairs if pair in pair_index]
-    team_counts = Counter(_team_label(row.get("team_label")) for _pair, row in present_rows)
-    team = (
-        team_counts.most_common(1)[0][0]
-        if team_counts
-        else _team_label(unit.get("effective_team_label"))
-    )
-    named_gain_pairs = {
-        pair
-        for pair, observation in present_rows
-        if _team_label(observation.get("team_label")) == team
-        and str(observation.get("identity_status") or "unresolved")
-        in RELIABLE_STATUSES
-        and not observation.get("canonical_player_id")
-    }
-    unnamed = len(named_gain_pairs)
+    compact_runs = unit.get("detected_pair_runs")
+    if isinstance(compact_runs, dict):
+        team, named_gain_pairs, unnamed = _impact_from_compact_runs(
+            compact_runs, pair_index
+        )
+    else:
+        pairs = {
+            (str(pair[0]), int(pair[1]))
+            for pair in unit.get("detected_pairs") or []
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2
+        }
+        present_rows = [(pair, pair_index[pair]) for pair in pairs if pair in pair_index]
+        team_counts = Counter(_team_label(row.get("team_label")) for _pair, row in present_rows)
+        team = (
+            team_counts.most_common(1)[0][0]
+            if team_counts
+            else _team_label(unit.get("effective_team_label"))
+        )
+        named_gain_pairs = {
+            pair
+            for pair, observation in present_rows
+            if _team_label(observation.get("team_label")) == team
+            and str(observation.get("identity_status") or "unresolved")
+            in RELIABLE_STATUSES
+            and not observation.get("canonical_player_id")
+        }
+        unnamed = len(named_gain_pairs)
     reliable = int(
         ((coverage.get("per_team") or {}).get(team) or {}).get(
             "reliable_observations"
@@ -611,6 +621,90 @@ def _coverage_impact(
     }
 
 
+def _impact_from_compact_runs(
+    detected_runs: dict[str, list[list[int]]],
+    pair_index: "CompactPairIndexView | Mapping[tuple[str, int], dict[str, Any]]",
+) -> tuple[str, dict[str, list[list[int]]], int]:
+    """Evaluate unit impact via interval sweeps over validated index segments.
+
+    Never materializes per-frame pairs: team attribution and the exact
+    named-gain runs are computed from run intersections only.
+    """
+    segments: Mapping[str, list[list[Any]]] | None = (
+        pair_index.tracklets()
+        if isinstance(pair_index, CompactPairIndexView)
+        else None
+    )
+    team_counts: Counter[str] = Counter()
+    if segments is None:
+        # Legacy mapping input: fall back to per-pair joins for this unit.
+        pairs = {
+            (tracklet_id, frame)
+            for tracklet_id, tracklet_runs in detected_runs.items()
+            for start, end in tracklet_runs
+            for frame in range(start, end + 1)
+        }
+        present = [(pair, pair_index[pair]) for pair in pairs if pair in pair_index]
+        for _pair, row in present:
+            team_counts[_team_label(row.get("team_label"))] += 1
+        majority = _majority_or(team_counts)
+        gain_pairs = {
+            pair
+            for pair, row in present
+            if _team_label(row.get("team_label")) == majority
+            and str(row.get("identity_status") or "unresolved") in RELIABLE_STATUSES
+            and not row.get("canonical_player_id")
+        }
+        return majority, encode_pair_runs(gain_pairs), len(gain_pairs)
+    gain_intervals: dict[str, list[list[int]]] = {}
+    unnamed_total = 0
+    for tracklet_id, tracklet_runs in detected_runs.items():
+        entries = segments.get(tracklet_id) or []
+        entry_index = 0
+        for start, end in tracklet_runs:
+            while entry_index < len(entries) and entries[entry_index][1] < start:
+                entry_index += 1
+            walk = entry_index
+            while walk < len(entries) and entries[walk][0] <= end:
+                seg_start, seg_end, value = entries[walk]
+                overlap_start = max(start, seg_start)
+                overlap_end = min(end, seg_end)
+                if overlap_start <= overlap_end:
+                    team_counts[_team_label(value.get("team_label"))] += (
+                        overlap_end - overlap_start + 1
+                    )
+                walk += 1
+    majority = _majority_or(team_counts)
+    # Mirror the legacy semantics exactly: gains are bound to the attributed
+    # (majority) team, so collect them in a second filtered sweep.
+    for tracklet_id, tracklet_runs in detected_runs.items():
+        for start, end in tracklet_runs:
+            for seg_start, seg_end, value in segments.get(tracklet_id) or []:
+                if seg_end < start or seg_start > end:
+                    continue
+                if (
+                    _team_label(value.get("team_label")) != majority
+                    or str(value.get("identity_status") or "unresolved") not in RELIABLE_STATUSES
+                    or value.get("canonical_player_id")
+                ):
+                    continue
+                overlap_start = max(start, seg_start)
+                overlap_end = min(end, seg_end)
+                bucket = gain_intervals.setdefault(tracklet_id, [])
+                if bucket and bucket[-1][1] + 1 == overlap_start:
+                    bucket[-1][1] = overlap_end
+                else:
+                    bucket.append([overlap_start, overlap_end])
+                unnamed_total += overlap_end - overlap_start + 1
+    return majority, {tid: runs for tid, runs in sorted(gain_intervals.items())}, unnamed_total
+
+
+def _majority_or(counts: Counter[str], fallback: str | None = None) -> str:
+    if counts:
+        return counts.most_common(1)[0][0]
+    return fallback if fallback is not None else "U"
+
+
 def target_named_observations(reliable_observations: int, target_ratio: float) -> int:
     """Smallest integer count that satisfies ``named / reliable >= target``."""
     reliable = max(0, int(reliable_observations))
@@ -620,12 +714,28 @@ def target_named_observations(reliable_observations: int, target_ratio: float) -
     return int((Decimal(reliable) * ratio).to_integral_value(rounding=ROUND_CEILING))
 
 
+def _gain_pairs_set(value: Any) -> set[tuple[str, int]]:
+    """Materialize a gain payload as an explicit pair set.
+
+    Gain payloads are compact run dicts for compact-sourced units and pair
+    sets/lists for legacy ones.  Only accounting subsets touch this helper,
+    so full expansion stays bounded to selected rows instead of the match.
+    """
+    if isinstance(value, dict):
+        return {
+            (tracklet_id, frame)
+            for tracklet_id, tracklet_runs in value.items()
+            for start, end in tracklet_runs
+            for frame in range(start, end + 1)
+        }
+    return {(str(pair[0]), int(pair[1])) for pair in value or []}
+
+
 def _unique_named_gain_pairs(rows: Iterable[dict[str, Any]]) -> set[tuple[str, int]]:
-    return {
-        (str(pair[0]), int(pair[1]))
-        for row in rows
-        for pair in row.get("_potential_named_observation_pairs") or set()
-    }
+    pairs: set[tuple[str, int]] = set()
+    for row in rows:
+        pairs |= _gain_pairs_set(row.get("_potential_named_observation_pairs"))
+    return pairs
 
 
 def _select_required_coverage_cases(
@@ -640,7 +750,7 @@ def _select_required_coverage_cases(
     selected_pairs: set[tuple[str, int]] = set()
     accounted_pairs: set[tuple[str, int]] = set(existing_pairs or set())
     for row in rows:
-        gain_pairs = set(row.get("_potential_named_observation_pairs") or set())
+        gain_pairs = _gain_pairs_set(row.get("_potential_named_observation_pairs"))
         marginal_pairs = gain_pairs - accounted_pairs
         if not marginal_pairs:
             continue
@@ -724,10 +834,21 @@ def _deferred_named_gain_pairs(
         player_id = str(decision.get("player_id") or "")
         if roster_teams.get(player_id) != "A":
             continue
-        for pair in unit.get("detected_pairs") or []:
-            if not isinstance(pair, (tuple, list)) or len(pair) < 2:
-                continue
-            normalized = (str(pair[0]), int(pair[1]))
+        compact_runs = unit.get("detected_pair_runs")
+        if isinstance(compact_runs, dict):
+            candidates: Iterable[tuple[str, int]] = (
+                (tracklet_id, frame)
+                for tracklet_id, tracklet_runs in compact_runs.items()
+                for start, end in tracklet_runs
+                for frame in range(start, end + 1)
+            )
+        else:
+            candidates = (
+                (str(pair[0]), int(pair[1]))
+                for pair in unit.get("detected_pairs") or []
+                if isinstance(pair, (tuple, list)) and len(pair) >= 2
+            )
+        for normalized in candidates:
             row = pair_index.get(normalized) or {}
             if (
                 _team_label(row.get("team_label")) == "A"
@@ -763,17 +884,17 @@ def _rank_optional_max_cases(
         chosen = min(
             remaining,
             key=lambda row: (
-                -len(set(row.get("_potential_named_observation_pairs") or set()) - accounted),
+                -len(_gain_pairs_set(row.get("_potential_named_observation_pairs")) - accounted),
                 -float(row.get("detected_time_sec") or 0.0),
                 int(row.get("frame_start") or 0),
                 str(row.get("candidate_subject_id") or ""),
             ),
         )
-        gain = len(set(chosen.get("_potential_named_observation_pairs") or set()) - accounted)
+        gain = len(_gain_pairs_set(chosen.get("_potential_named_observation_pairs")) - accounted)
         remaining.remove(chosen)
         if gain <= 0:
             continue
-        pairs = set(chosen.get("_potential_named_observation_pairs") or set()) - accounted
+        pairs = _gain_pairs_set(chosen.get("_potential_named_observation_pairs")) - accounted
         accounted.update(pairs)
         chosen["current_resolution_status"] = "pending_optional_max_audit"
         chosen["priority"] = "optional"
@@ -842,7 +963,7 @@ def _optional_max_summary(
             reason = "insufficient_safe_evidence"
         else:
             reason = "safety_constraint"
-        for pair in set(value.get("_potential_named_observation_pairs") or set()):
+        for pair in _gain_pairs_set(value.get("_potential_named_observation_pairs")):
             if pair in unavailable_pairs:
                 unavailable_reason_by_pair[pair] = reason
     reason_counts = Counter(unavailable_reason_by_pair.values())
