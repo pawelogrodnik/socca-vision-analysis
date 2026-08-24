@@ -94,3 +94,21 @@ def scoped_memo_put(key: str, value: Any) -> None:
     scope = _SCOPE.get()
     if scope is not None:
         scope[key] = value
+
+
+def scoped_memo_invalidate(key_prefix: str) -> int:
+    """Drop derived memos whose key starts with ``key_prefix``.
+
+    Invalidating the file-content cache for a path does NOT invalidate derived
+    semantic memos built from it.  Authoritative flows that replace a semantic
+    dependency inside an active scope (for example finalize writing a new
+    Reviewed Identity snapshot) must call this explicitly so later readers can
+    never observe a derived artifact projected from the replaced generation.
+    """
+    scope = _SCOPE.get()
+    if scope is None:
+        return 0
+    stale = [key for key in scope if key.startswith(key_prefix)]
+    for key in stale:
+        del scope[key]
+    return len(stale)

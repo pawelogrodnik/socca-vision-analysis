@@ -101,10 +101,11 @@ def build_reviewed_identity_progress(
 ) -> dict[str, Any]:
     """Authoritative progress build; parses each canonical artifact once.
 
-    Inside an active review-build scope the result is memoized for the rest
-    of that request (nested callers such as material-continuity overlays
-    reuse the same authoritative materialization instead of a second full
-    pass).  Callers must treat the returned document as read-only.
+    Inside an active review-build scope the result is memoized per semantic
+    generation: the memo key contains the reviewed-snapshot file fingerprint,
+    so replacing the snapshot inside the same scope (authoritative finalize)
+    can never serve a projection built against the previous snapshot.
+    Callers must treat the returned document as read-only.
     """
     from app.services.identity_canonical_io import (
         scoped_memo_get,
@@ -112,7 +113,10 @@ def build_reviewed_identity_progress(
         has_active_scope,
     )
 
-    memo_key = f"__authoritative_progress__::{match_path}::{include_internal_units}"
+    memo_key = (
+        f"__authoritative_progress__::{match_path}::{include_internal_units}"
+        f"::{reviewed_snapshot_file_fingerprint(match_path)}"
+    )
     if has_active_scope():
         memoized = scoped_memo_get(memo_key)
         if memoized is not None:
@@ -132,13 +136,56 @@ def build_reviewed_identity_progress(
         )
 
 
-def _build_reviewed_identity_progress_uncached(
+def materialize_reviewed_identity_units(
     match_path: Path,
     match_doc: dict[str, Any],
-    *,
-    include_internal_units: bool = False,
+) -> list[dict[str, Any]]:
+    """Exact review units without any snapshot-dependent projection.
+
+    This is the snapshot-INDEPENDENT half of the progress build (tracklets,
+    subjects, segment topology, exact ownership, material-continuity unit
+    construction, decision/source ownership validation).  Snapshot
+    finalization uses it to validate material-continuity decisions before the
+    new snapshot exists; it must never need effective coverage, readiness or
+    queue projection from the previous snapshot.
+    """
+    context = _materialize_review_units_scoped(match_path, match_doc)
+    return context["units"]
+
+
+def _materialize_review_units_scoped(
+    match_path: Path,
+    match_doc: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build progress from frozen identity artifacts without writing anything."""
+    """Memoized unit materialization for one review-build scope.
+
+    Unit inputs (canonical sources and durable decisions) are never mutated by
+    snapshot finalization itself, so this memo is intentionally keyed without
+    the snapshot fingerprint - unlike the full progress memo, which is
+    generation-aware because the snapshot changes inside the finalize scope.
+    """
+    from app.services.identity_canonical_io import (
+        scoped_memo_get,
+        scoped_memo_put,
+        has_active_scope,
+    )
+
+    memo_key = f"__review_units__::{match_path}"
+    if has_active_scope():
+        memoized = scoped_memo_get(memo_key)
+        if memoized is not None:
+            return memoized
+        result = _materialize_review_units(match_path, match_doc)
+        scoped_memo_put(memo_key, result)
+        return result
+    return _materialize_review_units(match_path, match_doc)
+
+
+def _materialize_review_units(
+    match_path: Path,
+    match_doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Materialize exact review units from frozen identity artifacts."""
     tracklets = _tracklets(match_path)
     subjects = _subjects(match_path)
     stable_slots = _subject_stable_slots(match_path)
@@ -225,6 +272,28 @@ def _build_reviewed_identity_progress_uncached(
         unit for unit in units
         if not any(_unit_matches_staged_source(unit, source) for source in staged_sources)
     ]
+    return {
+        "units": units,
+        "whole_subject_units": whole_subject_units,
+        "tracklets": tracklets,
+        "subjects": subjects,
+    }
+
+
+def _build_reviewed_identity_progress_uncached(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    include_internal_units: bool = False,
+) -> dict[str, Any]:
+    """Build progress from frozen identity artifacts without writing anything."""
+    materialized = _materialize_review_units_scoped(match_path, match_doc)
+    units = materialized["units"]
+    tracklets = materialized["tracklets"]
+    subjects = materialized["subjects"]
+    # Snapshot-dependent projection half: effective coverage, pair index,
+    # readiness and queue policy are always derived from the CURRENT
+    # reviewed_identity_snapshot.json, never from a pre-finalize generation.
     coverage_context = load_effective_coverage_context(match_path, match_doc)
     projection_inputs = {
         "match_id": str(match_doc.get("id") or match_path.name),
@@ -246,7 +315,7 @@ def _build_reviewed_identity_progress_uncached(
         },
         "deferred_correction_context": build_reviewed_active_cap_context(
             match_path,
-            whole_subject_units,
+            materialized["whole_subject_units"],
         ),
     }
     result = project_reviewed_identity_progress(

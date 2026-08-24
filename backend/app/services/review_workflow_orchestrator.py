@@ -32,6 +32,7 @@ from app.services.identity_seeded_review_reduction import load_initial_audit_com
 from app.services.identity_seeded_candidate_assignments import (    rebuild_identity_seeded_candidate_assignments,
 )
 from app.services.review_workflow_state import (
+    RECOMPUTE_FAILURE_FILENAME,
     WorkflowActionError,
     assert_workflow_action_allowed,
     build_cheap_finalize_preflight_state,
@@ -46,7 +47,6 @@ from app.services.review_workflow_store import (
 
 logger = logging.getLogger(__name__)
 PROGRESS_FILENAME = "reviewed_identity_progress.json"
-RECOMPUTE_FAILURE_FILENAME = "review_workflow_recompute_failure.json"
 DEFAULT_RENDER_OPTIONS = {
     "include_minimap": True,
     "include_ball": True,

@@ -216,7 +216,31 @@ def build_initial_audit_completion_evidence(
 
 
 def load_initial_audit_completion_evidence(match_path: Path) -> dict[str, Any]:
-    """Load the current seeded-reduction evidence without mutating artifacts."""
+    """Load the current seeded-reduction evidence without mutating artifacts.
+
+    Inside an active review-build scope the derived completion document is
+    memoized per match: a finalize transaction reads it through the cheap
+    preflight, the refresh and the final workflow derivation, and its compact
+    durable inputs cannot change inside that single authoritative request.
+    """
+    from app.services.identity_canonical_io import (
+        has_active_scope,
+        scoped_memo_get,
+        scoped_memo_put,
+    )
+
+    memo_key = f"__initial_audit_evidence__::{match_path}"
+    if has_active_scope():
+        memoized = scoped_memo_get(memo_key)
+        if memoized is not None:
+            return memoized
+        result = _load_initial_audit_completion_evidence_uncached(match_path)
+        scoped_memo_put(memo_key, result)
+        return result
+    return _load_initial_audit_completion_evidence_uncached(match_path)
+
+
+def _load_initial_audit_completion_evidence_uncached(match_path: Path) -> dict[str, Any]:
     selection_path = (
         match_path
         / "identity_initial_audit"

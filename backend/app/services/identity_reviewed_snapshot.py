@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.services.identity_canonical_io import invalidate_cached_json, load_json_cached
+from app.services.identity_canonical_io import (
+    invalidate_cached_json,
+    load_json_cached,
+    scoped_memo_invalidate,
+)
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_snapshot_observations import (
@@ -387,6 +391,12 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
     # later same-scope read must observe the new document.
     invalidate_cached_json(match_path / SNAPSHOT_FILENAME)
     invalidate_cached_json(match_path / REPORT_FILENAME)
+    # File-content invalidation alone does not drop derived semantic memos.
+    # Any authoritative progress projected inside this scope before the write
+    # belonged to the previous snapshot generation and must never be served
+    # after it (the progress memo key also carries the snapshot fingerprint,
+    # so this is defense in depth, not the only guard).
+    scoped_memo_invalidate("__authoritative_progress__")
     _LAST_BUILD_PHASES.clear()
     _LAST_BUILD_PHASES.update(phases.finish())
     logger.info(

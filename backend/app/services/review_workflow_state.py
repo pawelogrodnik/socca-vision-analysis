@@ -27,6 +27,7 @@ from app.services.review_workflow_store import (
 WORKFLOW_SCHEMA_VERSION = "1.0.0"
 STEP_IDS = ("initial_audit", "exceptions", "mixed_players", "finalize", "video_qa")
 PROCESSING_RENDER_STATUSES = {"queued", "running"}
+RECOMPUTE_FAILURE_FILENAME = "review_workflow_recompute_failure.json"
 
 
 class WorkflowActionError(ValueError):
@@ -296,53 +297,85 @@ def build_cheap_finalize_preflight_state(
     match_path: Path,
     match_doc: dict[str, Any],
 ) -> dict[str, Any]:
-    """Durable-only finalize eligibility probe.
+    """Durable-only finalize eligibility probe built from REAL evidence.
 
-    Reads compact persisted artifacts (snapshot descriptor + durable progress)
-    and never parses large canonical sources.  This is a coarse eligibility
-    gate only: the authoritative `finalize_reviewed_identity` recomputation
-    remains the final safety authority and can still reject finalize when
-    canonical sources changed since the last refresh.
+    Reads compact persisted artifacts only: the small reviewed identity
+    report (which carries the authoritative snapshot digest), the durable
+    progress, analysis/audit/recompute/render/QA evidence files.  It never
+    parses large canonical sources and never loads the multi-hundred-MB
+    snapshot document.
+
+    Every workflow gate that is derivable from these compact artifacts is
+    checked here with its real value: analysis completion, initial audit
+    completion, previous recompute failure, required/mixed blockers,
+    coverage readiness, render queued/running/failed, video-QA stage and
+    already-complete states.  The ONE intentional relaxation is canonical
+    source freshness: deciding whether the snapshot still matches every
+    canonical input requires re-digesting all large sources, so it is
+    deferred to the authoritative finalize recomputation, which remains the
+    final safety gate and can still reject finalize.
     """
-    snapshot_document = load_json_object(match_path / "reviewed_identity_snapshot.json")
-    if not snapshot_document or not snapshot_document.get("semantic_digest"):
+    # Compact authoritative descriptor; deliberately NOT the full snapshot.
+    report = load_json_object(match_path / "reviewed_identity_report.json")
+    snapshot_digest = str((report or {}).get("snapshot_digest") or "")
+    if not snapshot_digest:
         return _preflight_blocked("reviewed_identity_missing", "finalize")
 
-    progress, progress_reason = _current_cached_progress(
+    progress, progress_reason = _current_cached_progress_for_snapshot_digest(
         match_path,
-        snapshot_document,
+        snapshot_digest,
         match_doc,
     )
-    if progress is None:
-        return _preflight_blocked(progress_reason or "review_progress_missing", "exceptions")
 
-    issues = _issue_evidence(snapshot_document, progress)
-    if issues.get("coverage_readiness_blocked") and not (
-        issues.get("blocking") or 0
-    ):
-        return _preflight_blocked(
-            "identity_coverage_unresolved_without_reviewable_evidence",
-            "exceptions",
-            issues,
+    stats = load_json_object(match_path / "reviewed_player_stats.json")
+    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
+    output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
+    job = reviewed_output_status_read_only(
+        match_path,
+        snapshot_digest=snapshot_digest,
+    )
+    approval = load_video_qa_approval(match_path)
+    fingerprints = current_approval_fingerprint(snapshot_digest, stats, job, output_manifest)
+    stats_current = bool(
+        stats
+        and stats.get("source_snapshot_digest") == snapshot_digest
+        and review_scope_dependency_matches(match_doc, stats)
+        and (
+            not stats_readiness
+            or stats_readiness.get("status") == "completed"
         )
-    if issues.get("blocking") or issues.get("overall_identity_blocked"):
-        return _preflight_blocked("identity_issues_remaining", "exceptions", issues)
-
+    )
+    output_current = bool(
+        job.get("status") == "completed"
+        and job.get("source_snapshot_digest") == snapshot_digest
+        and review_scope_dependency_matches(match_doc, job)
+        and output_manifest
+        and output_manifest.get("stale") is not True
+    )
     state = derive_review_workflow_state({
         "match_id": str(match_doc.get("id") or match_path.name),
-        "analysis_completed": True,
-        "initial_audit": {"prepared": True, "complete": True},
-        "issues": issues,
+        "analysis_completed": _analysis_completed(match_path, match_doc),
+        "initial_audit": load_initial_audit_completion_evidence(match_path),
+        "issues": _issue_evidence({}, progress),
         "freshness": {
+            # Canonical freshness versus the current sources is exactly the
+            # expensive check this preflight defers to the authoritative
+            # pass; a present report digest is treated as current here.
             "reviewed_identity_current": True,
-            "reviewed_stats_current": False,
-            "reviewed_output_current": False,
-            "qa_approval_current": False,
-            "review_progress_current": True,
-            "review_progress_reason": None,
+            "reviewed_stats_current": stats_current,
+            "reviewed_output_current": output_current,
+            "qa_approval_current": (
+                approval_is_current(approval, fingerprints)
+                and output_current
+                and stats_current
+            ),
+            "review_progress_current": progress is not None,
+            "review_progress_reason": progress_reason,
         },
-        "render": {"status": "missing"},
-        "recompute_failed": False,
+        "render": _public_render(job),
+        "recompute_failed": bool(
+            load_json_object(match_path / RECOMPUTE_FAILURE_FILENAME)
+        ),
     })
     state["cheap_preflight"] = True
     return state
@@ -396,10 +429,27 @@ def _current_cached_progress(
     snapshot: dict[str, Any],
     match_doc: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str | None]:
+    return _current_cached_progress_for_snapshot_digest(
+        match_path,
+        str(snapshot.get("semantic_digest") or ""),
+        match_doc,
+    )
+
+
+def _current_cached_progress_for_snapshot_digest(
+    match_path: Path,
+    snapshot_digest: str,
+    match_doc: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Validate the durable progress against an explicit snapshot digest.
+
+    Compact callers (cheap finalize preflight) hold only the authoritative
+    digest from ``reviewed_identity_report.json``; loading the multi-MB
+    snapshot document just to read one string would defeat the purpose.
+    """
     progress = load_json_object(match_path / "reviewed_identity_progress.json")
     if not progress:
         return None, "review_progress_missing"
-    snapshot_digest = str(snapshot.get("semantic_digest") or "")
     if not snapshot_digest or progress.get("source_snapshot_digest") != snapshot_digest:
         return None, "review_progress_stale"
     if progress.get("schema_version") != PROGRESS_SCHEMA_VERSION:

@@ -27,13 +27,24 @@ def load_video_qa_approval(match_path: Path) -> dict[str, Any] | None:
 
 
 def current_approval_fingerprint(
-    snapshot: dict[str, Any],
+    snapshot: dict[str, Any] | str,
     stats: dict[str, Any] | None,
     output_job: dict[str, Any] | None,
     output_manifest: dict[str, Any] | None,
 ) -> dict[str, str | None]:
+    """Fingerprints binding a QA approval to exact reviewed artifacts.
+
+    ``snapshot`` may be the full snapshot document or just its semantic
+    digest string; compact preflight paths must not load the multi-MB
+    snapshot only to read one digest field.
+    """
+    identity_digest = (
+        _text(snapshot.get("semantic_digest"))
+        if isinstance(snapshot, dict)
+        else _text(snapshot)
+    )
     return {
-        "reviewed_identity_fingerprint": _text(snapshot.get("semantic_digest")),
+        "reviewed_identity_fingerprint": identity_digest,
         "reviewed_stats_fingerprint": _digest(stats),
         "reviewed_output_fingerprint": _text((output_job or {}).get("video_digest")),
         "reviewed_output_manifest_fingerprint": _digest(output_manifest),

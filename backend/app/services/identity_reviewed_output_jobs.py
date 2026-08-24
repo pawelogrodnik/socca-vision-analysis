@@ -161,14 +161,28 @@ def reviewed_output_status(
 def reviewed_output_status_read_only(
     match_path: Path,
     snapshot: dict[str, Any] | None = None,
+    *,
+    snapshot_digest: str | None = None,
 ) -> dict[str, Any]:
-    """Return render state for polling without recovering or writing a job file."""
+    """Return render state for polling without recovering or writing a job file.
+
+    Compact callers that only hold the authoritative snapshot digest (cheap
+    finalize preflight) pass ``snapshot_digest`` instead of loading the
+    multi-MB snapshot document. Canonical snapshot staleness is intentionally
+    not detectable from a digest alone and remains the authoritative pass's
+    responsibility.
+    """
+    effective_digest = (
+        str(snapshot.get("semantic_digest") or "")
+        if snapshot is not None
+        else (str(snapshot_digest) if snapshot_digest else None)
+    )
     job = _load(match_path / JOB_FILENAME)
     if not job:
         return {"status": "missing"}
     if snapshot and snapshot.get("status") == "stale":
         return {**job, "status": "stale", "stale_reason": "reviewed_identity_changed"}
-    if snapshot and job.get("source_snapshot_digest") != snapshot.get("semantic_digest") and job.get("status") == "completed":
+    if effective_digest and job.get("source_snapshot_digest") != effective_digest and job.get("status") == "completed":
         return {**job, "status": "stale", "stale_reason": "reviewed_identity_changed"}
     if job.get("status") in {"queued", "running"}:
         lock = _load(match_path / LOCK_FILENAME)

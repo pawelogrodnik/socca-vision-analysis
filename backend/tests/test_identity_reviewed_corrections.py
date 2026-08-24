@@ -351,8 +351,8 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             }
             progress = {"_internal_review_units": [unit]}
             with patch(
-                "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
-                return_value=progress,
+                "app.services.identity_reviewed_progress.materialize_reviewed_identity_units",
+                return_value=[unit],
             ):
                 saved = persist_reviewed_identity_correction(
                     root,
@@ -423,8 +423,8 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             progress = {"_internal_review_units": [unit]}
             with (
                 patch(
-                    "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
-                    return_value=progress,
+                    "app.services.identity_reviewed_progress.materialize_reviewed_identity_units",
+                    return_value=[unit],
                 ) as progress_builder,
                 patch(
                     "app.services.identity_reviewed_corrections._direct_correction_source",
