@@ -14,6 +14,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached_or
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 
@@ -739,10 +740,7 @@ def _roster(match_doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        import json
-
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return {}
+    # Fully tolerant loader (missing/corrupt -> {}, non-object -> {});
+    # participates in the request-scoped source materialization.
+    value = load_json_cached_or(path)
     return value if isinstance(value, dict) else {}

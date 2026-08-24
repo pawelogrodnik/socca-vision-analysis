@@ -390,16 +390,16 @@ class SourceVideoDigestCacheTests(unittest.TestCase):
             match = {"id": "m1", "video_filename": "video.mp4"}
             with patch(
                 "app.services.identity_reviewed_video._sha",
-                return_value="sha-1",
+                return_value="a" * 64,
             ) as sha:
                 first = reviewed_source_video_digest(root, match)
                 second = reviewed_source_video_digest(root, match)
                 # A restart keeps no process state; the durable cache answers.
                 third = reviewed_source_video_digest(root, match)
-            self.assertEqual((first, second, third), ("sha-1", "sha-1", "sha-1"))
+            self.assertEqual((first, second, third), ("a" * 64,) * 3)
             self.assertEqual(sha.call_count, 1)
             cached = json.loads((root / DIGEST_CACHE_FILENAME).read_text(encoding="utf-8"))
-            self.assertEqual(cached["sha256"], "sha-1")
+            self.assertEqual(cached["sha256"], "a" * 64)
             self.assertEqual(cached["fingerprint"]["path"], str(video.resolve()))
             self.assertEqual(cached["fingerprint"]["size_bytes"], len(b"fake-video-bytes"))
 
@@ -410,11 +410,11 @@ class SourceVideoDigestCacheTests(unittest.TestCase):
             match = {"id": "m1", "video_filename": "video.mp4"}
             with patch(
                 "app.services.identity_reviewed_video._sha",
-                side_effect=["sha-1", "sha-2"],
+                side_effect=["a" * 64, "b" * 64],
             ) as sha:
-                self.assertEqual(reviewed_source_video_digest(root, match), "sha-1")
+                self.assertEqual(reviewed_source_video_digest(root, match), "a" * 64)
                 video.write_bytes(b"changed-content-with-different-length!!")
-                self.assertEqual(reviewed_source_video_digest(root, match), "sha-2")
+                self.assertEqual(reviewed_source_video_digest(root, match), "b" * 64)
             self.assertEqual(sha.call_count, 2)
 
     def test_corrupt_cache_file_falls_back_to_recompute(self) -> None:
@@ -424,10 +424,10 @@ class SourceVideoDigestCacheTests(unittest.TestCase):
             (root / DIGEST_CACHE_FILENAME).write_text("{not json", encoding="utf-8")
             with patch(
                 "app.services.identity_reviewed_video._sha",
-                return_value="sha-fresh",
+                return_value="c" * 64,
             ) as sha:
                 digest = reviewed_source_video_digest(root, {"id": "m1", "video_filename": "video.mp4"})
-            self.assertEqual(digest, "sha-fresh")
+            self.assertEqual(digest, "c" * 64)
             self.assertEqual(sha.call_count, 1)
 
 

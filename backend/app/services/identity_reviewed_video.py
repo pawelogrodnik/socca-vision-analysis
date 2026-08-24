@@ -304,13 +304,42 @@ def reviewed_source_video_path(match_path: Path, match_doc: dict[str, Any]) -> P
     return resolve_match_video_path(match_path, preferred)
 
 
+def _valid_digest_cache(cached: Any, fingerprint: dict[str, Any], video_path: Path) -> bool:
+    """Fail-closed acceptance: only a fully well-formed, matching entry reuses."""
+    if not isinstance(cached, dict):
+        return False
+    if cached.get("schema_version") != DIGEST_CACHE_SCHEMA_VERSION:
+        return False
+    stored = cached.get("fingerprint")
+    if not isinstance(stored, dict) or set(stored) != {"path", "size_bytes", "mtime_ns"}:
+        return False
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in (stored["size_bytes"], stored["mtime_ns"])):
+        return False
+    if not isinstance(stored["path"], str):
+        return False
+    # Canonical path identity must match exactly.
+    try:
+        same_file = Path(stored["path"]) == video_path.resolve()
+    except OSError:
+        same_file = False
+    if not same_file or stored != fingerprint:
+        return False
+    digest = cached.get("sha256")
+    if not isinstance(digest, str):
+        return False
+    normalized = digest.strip().lower()
+    if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+        return False
+    return True
+
+
 def reviewed_source_video_digest(match_path: Path, match_doc: dict[str, Any]) -> str:
     """SHA256 of the source video, memoized by durable file fingerprint.
 
-    Finalize used to synchronously read the whole multi-GB video on every
-    click.  The digest is content-addressed by ``size_bytes`` + ``mtime_ns``,
-    stored atomically next to the match, and survives process restarts; any
-    fingerprint change forces a recompute.
+    A warm cache removes the hash from the finalize click path; the first
+    call after any fingerprint change (or a missing/corrupt cache) still
+    hashes the file synchronously.  Malformed caches fail closed to a
+    recompute and are rewritten atomically — never an error surfaced.
     """
     video_path = reviewed_source_video_path(match_path, match_doc)
     stat = video_path.stat()
@@ -324,13 +353,9 @@ def reviewed_source_video_digest(match_path: Path, match_doc: dict[str, Any]) ->
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         cached = None
-    if (
-        isinstance(cached, dict)
-        and cached.get("fingerprint") == fingerprint
-        and isinstance(cached.get("sha256"), str)
-        and cached["sha256"]
-    ):
-        return str(cached["sha256"])
+    if _valid_digest_cache(cached, fingerprint, video_path):
+        assert isinstance(cached, dict)
+        return str(cached["sha256"]).strip().lower()
     digest = _sha(video_path)
     write_identity_json_atomic(
         cache_path,

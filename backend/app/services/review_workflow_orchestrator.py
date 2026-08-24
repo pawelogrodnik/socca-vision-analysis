@@ -7,8 +7,9 @@ from pathlib import Path
 import time
 from typing import Any
 
-from app.services.identity_canonical_io import review_build_context
+from app.services.identity_canonical_io import invalidate_cached_json, review_build_context
 from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_reviewed_coverage import compact_mixed_players_summary
 from app.services.identity_reviewed_output_jobs import generate_reviewed_output
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_recompute_state import (
@@ -33,6 +34,7 @@ from app.services.identity_seeded_candidate_assignments import (    rebuild_iden
 from app.services.review_workflow_state import (
     WorkflowActionError,
     assert_workflow_action_allowed,
+    build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
 from app.services.review_workflow_store import (
@@ -145,13 +147,14 @@ def _refresh_review_after_identity_mutation_scoped(
         )
         timings["progress_build_ms"] = _elapsed_ms(phase_started)
         durable_progress = (
-            public_review_progress(progress)
+            durable_review_progress(progress)
             | {
                 "source_snapshot_digest": snapshot.get("semantic_digest"),
                 "workflow_refresh_source": source,
             }
         )
-        write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress)
+        write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
+        invalidate_cached_json(match_path / PROGRESS_FILENAME)
         if leave_hot_state_warm:
             from app.services.identity_reviewed_hot_state import (
                 rebuild_review_hot_state,
@@ -248,46 +251,115 @@ def public_review_progress(progress: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+DURABLE_PROGRESS_QUEUE_KEYS = {"review_units"}
+
+
+def durable_review_progress(progress: dict[str, Any]) -> dict[str, Any]:
+    """Compact persisted progress contract.
+
+    Kept durably: workflow summaries/readiness, Optional MAX summary,
+    ``next_cases``/``optional_audit_cases`` (public-shaped queue consumed by
+    the deferred-save action gate) and the compact deferred-correction
+    context used for exact active-cap validation.
+    Dropped: the duplicated full ``review_units`` list (dead diagnostics
+    consumer only) and mixed-player exact sources/evidence (the operator
+    panel reads them from the dedicated endpoint; hot state keeps server
+    truth).
+    """
+    base = public_review_progress(progress)
+    return {
+        key: compact_mixed_players_summary(value) if key == "mixed_players" else value
+        for key, value in base.items()
+        if key not in DURABLE_PROGRESS_QUEUE_KEYS
+    }
+
+
+def _materialize_operator_evidence(match_path: Path, match_doc: dict[str, Any]) -> None:
+    """Best-effort operator crop rendering for newly actionable review cases."""
+    try:
+        render_segment_review_evidence(
+            match_path,
+            match_doc,
+            load_segment_review(match_path),
+        )
+        render_mixed_review_evidence(
+            match_path,
+            match_doc,
+            build_mixed_review_queue(match_path, match_doc),
+        )
+    except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning(
+            "review_workflow segment_evidence_render_failed match=%s error=%s",
+            match_doc.get("id") or match_path.name,
+            type(exc).__name__,
+        )
+    try:
+        materialize_team_attribution_evidence(match_path)
+    except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+        logger.warning(
+            "review_workflow team_attribution_evidence_render_failed match=%s error=%s",
+            match_doc.get("id") or match_path.name,
+            type(exc).__name__,
+        )
+
+
 def finalize_review_for_qa(
     match_path: Path,
     match_doc: dict[str, Any],
     options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    state = get_review_workflow_state(match_path, match_doc)
-    assert_workflow_action_allowed(state, "finalize_identity")
-    preflight_ms = _elapsed_ms(started)
-    refreshed = refresh_review_after_identity_mutation(
-        match_path,
-        match_doc,
-        source="finalize",
-        operator_evidence=False,
-        leave_hot_state_warm=True,
-    )
-    state = refreshed["workflow"]
-    if state["issues"].get("overall_identity_blocked") or state["issues"].get("blocking"):
-        code = (
-            "identity_coverage_unresolved_without_reviewable_evidence"
-            if state["issues"].get("coverage_readiness_blocked")
-            and not state["issues"].get("blocking")
-            else "identity_issues_remaining"
+    # One coherent authoritative materialization scope.  The cheap preflight
+    # reads only durable compact artifacts; the authoritative recomputation
+    # below remains the final safety gate and may still reject finalize when
+    # canonical sources changed since the last review refresh.
+    with review_build_context():
+        state = build_cheap_finalize_preflight_state(match_path, match_doc)
+        assert_workflow_action_allowed(state, "finalize_identity")
+        preflight_ms = _elapsed_ms(started)
+        refreshed = refresh_review_after_identity_mutation(
+            match_path,
+            match_doc,
+            source="finalize",
+            operator_evidence=False,
+            leave_hot_state_warm=True,
         )
-        raise WorkflowActionError(code, state, "finalize_identity")
-    # The freshly built snapshot IS the authoritative status of this request;
-    # re-deriving it from disk would re-parse every large source artifact.
-    snapshot = refreshed["snapshot"]
-    stats_started = time.perf_counter()
-    build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))
-    stats_ms = _elapsed_ms(stats_started)
-    job_started = time.perf_counter()
-    job = generate_reviewed_output(
-        match_path,
-        snapshot,
-        match_doc,
-        {**DEFAULT_RENDER_OPTIONS, **(options or {})},
-        stats_already_current=True,
-    )
-    render_submit_ms = _elapsed_ms(job_started)
+        state = refreshed["workflow"]
+        if state["issues"].get("overall_identity_blocked") or state["issues"].get("blocking"):
+            # The recompute discovered (possibly new) blockers: operators are
+            # returned to review and need evidence for those actionable cases.
+            evidence_started = time.perf_counter()
+            _materialize_operator_evidence(match_path, match_doc)
+            evidence_ms = _elapsed_ms(evidence_started)
+            code = (
+                "identity_coverage_unresolved_without_reviewable_evidence"
+                if state["issues"].get("coverage_readiness_blocked")
+                and not state["issues"].get("blocking")
+                else "identity_issues_remaining"
+            )
+            error = WorkflowActionError(code, state, "finalize_identity")
+            error.performance = {  # type: ignore[attr-defined]
+                **(refreshed.get("performance") or {}),
+                "preflight_workflow_ms": preflight_ms,
+                "operator_evidence_ms": evidence_ms,
+                "total_ms": round((time.perf_counter() - started) * 1000, 1),
+            }
+            raise error
+        # The freshly built snapshot IS the authoritative status of this request;
+        # re-deriving it from disk would re-parse every large source artifact.
+        snapshot = refreshed["snapshot"]
+        stats_started = time.perf_counter()
+        build_reviewed_stats(match_path, snapshot, match_doc, load_json_object(match_path / "pitch_config.json"))
+        stats_ms = _elapsed_ms(stats_started)
+        job_started = time.perf_counter()
+        job = generate_reviewed_output(
+            match_path,
+            snapshot,
+            match_doc,
+            {**DEFAULT_RENDER_OPTIONS, **(options or {})},
+            stats_already_current=True,
+        )
+        render_submit_ms = _elapsed_ms(job_started)
     workflow_started = time.perf_counter()
     # Same-transaction reuse: stats and the queued job are the only durable
     # changes since refresh; snapshot/progress/evidence stay authoritative.

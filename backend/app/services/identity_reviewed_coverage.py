@@ -511,7 +511,7 @@ def public_review_case(unit: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
-def _compact_mixed_players_summary(mixed_players: Any) -> Any:
+def compact_mixed_players_summary(mixed_players: Any) -> Any:
     """Strip exact ownership/evidence from the embedded mixed queue summary.
 
     The operator panel fetches full mixed cases from the dedicated endpoint;
@@ -541,6 +541,10 @@ def _compact_mixed_players_summary(mixed_players: Any) -> Any:
         })
     compact["cases"] = cases
     return compact
+
+
+# Backwards-compatible internal alias.
+_compact_mixed_players_summary = compact_mixed_players_summary
 
 
 def paginate_progress(

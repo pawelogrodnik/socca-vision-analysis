@@ -292,6 +292,92 @@ def get_review_workflow_state(
     return state
 
 
+def build_cheap_finalize_preflight_state(
+    match_path: Path,
+    match_doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Durable-only finalize eligibility probe.
+
+    Reads compact persisted artifacts (snapshot descriptor + durable progress)
+    and never parses large canonical sources.  This is a coarse eligibility
+    gate only: the authoritative `finalize_reviewed_identity` recomputation
+    remains the final safety authority and can still reject finalize when
+    canonical sources changed since the last refresh.
+    """
+    snapshot_document = load_json_object(match_path / "reviewed_identity_snapshot.json")
+    if not snapshot_document or not snapshot_document.get("semantic_digest"):
+        return _preflight_blocked("reviewed_identity_missing", "finalize")
+
+    progress, progress_reason = _current_cached_progress(
+        match_path,
+        snapshot_document,
+        match_doc,
+    )
+    if progress is None:
+        return _preflight_blocked(progress_reason or "review_progress_missing", "exceptions")
+
+    issues = _issue_evidence(snapshot_document, progress)
+    if issues.get("coverage_readiness_blocked") and not (
+        issues.get("blocking") or 0
+    ):
+        return _preflight_blocked(
+            "identity_coverage_unresolved_without_reviewable_evidence",
+            "exceptions",
+            issues,
+        )
+    if issues.get("blocking") or issues.get("overall_identity_blocked"):
+        return _preflight_blocked("identity_issues_remaining", "exceptions", issues)
+
+    state = derive_review_workflow_state({
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "analysis_completed": True,
+        "initial_audit": {"prepared": True, "complete": True},
+        "issues": issues,
+        "freshness": {
+            "reviewed_identity_current": True,
+            "reviewed_stats_current": False,
+            "reviewed_output_current": False,
+            "qa_approval_current": False,
+            "review_progress_current": True,
+            "review_progress_reason": None,
+        },
+        "render": {"status": "missing"},
+        "recompute_failed": False,
+    })
+    state["cheap_preflight"] = True
+    return state
+
+
+def _preflight_blocked(
+    code: str,
+    step_id: str,
+    issues: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0.0",
+        "match_id": "",
+        "available": True,
+        "phase": step_id,
+        "status": "action_required" if step_id != "finalize" else "ready",
+        "current_step_id": step_id,
+        "review_complete": False,
+        "can_enter_report": False,
+        "can_publish": False,
+        "steps": [],
+        "required_action": {"type": "review_identity_issue", "step_id": step_id},
+        "issues": issues
+        or {
+            "blocking": 1,
+            "actionable_blocking": 1,
+            "overall_identity_blocked": True,
+        },
+        "freshness": {},
+        "blockers": [{"code": code, "step_id": step_id}],
+        "allowed_actions": [],
+        "cheap_preflight": True,
+    }
+
+
 def assert_workflow_action_allowed(state: dict[str, Any], action: str) -> None:
     if action in set(state.get("allowed_actions") or []):
         return

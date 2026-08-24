@@ -73,6 +73,21 @@ def load_or_rebuild_review_hot_state(
     return rebuild_review_hot_state(match_path, match_doc)
 
 
+def load_or_rebuild_review_hot_state_with_source(
+    match_path: Path,
+    match_doc: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Single probe: exactly one load/validate pass per request.
+
+    Returns ``(state, "warm_hit" | "cold_rebuild")`` so callers never pay a
+    second parse/validation of a stale multi-MB hot document.
+    """
+    state = _load(match_path / FILENAME)
+    if state is not None and _is_fresh(state, match_path, match_doc):
+        return state, "warm_hit"
+    return rebuild_review_hot_state(match_path, match_doc), "cold_rebuild"
+
+
 def load_existing_fresh_hot_state(
     match_path: Path,
     match_doc: dict[str, Any],

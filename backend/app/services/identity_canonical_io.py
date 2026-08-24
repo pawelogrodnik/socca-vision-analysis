@@ -58,3 +58,39 @@ def load_json_cached_or(path: Path, default: Any = None) -> Any:
         return load_json_cached(path)
     except (OSError, ValueError):
         return default
+
+
+def invalidate_cached_json(path: Path) -> None:
+    """Drop a scope-cached document so a later read sees the written file.
+
+    Authoritative flows write derived artifacts inside an active scope
+    (snapshot, progress).  Any later same-scope read of those paths must
+    observe the new bytes, never the pre-write object.
+    """
+    scope = _SCOPE.get()
+    if scope is not None:
+        scope.pop(str(path), None)
+
+
+_SCOPE_MISS = object()
+
+
+def has_active_scope() -> bool:
+    """True when a review-build scope is active on this call context."""
+    return _SCOPE.get() is not None
+
+
+def scoped_memo_get(key: str) -> Any:
+    """Fetch a request-scoped derived artifact (None when absent/unused)."""
+    scope = _SCOPE.get()
+    if scope is None:
+        return None
+    value = scope.get(key, _SCOPE_MISS)
+    return None if value is _SCOPE_MISS else value
+
+
+def scoped_memo_put(key: str, value: Any) -> None:
+    """Store a request-scoped derived artifact for exact-request reuse."""
+    scope = _SCOPE.get()
+    if scope is not None:
+        scope[key] = value

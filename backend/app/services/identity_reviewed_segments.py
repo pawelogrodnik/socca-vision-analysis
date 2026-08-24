@@ -8,6 +8,7 @@ from math import isfinite
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached
 from app.services.identity_canonical_ownership import global_observation_ownership
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
@@ -852,7 +853,6 @@ def _decision_document(decisions: list[dict[str, Any]]) -> dict[str, Any]:
 def _load(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    import json
-
-    value = json.loads(path.read_text(encoding="utf-8"))
+    # Strict malformed-JSON semantics preserved (raises); non-dict tolerated.
+    value = load_json_cached(path)
     return value if isinstance(value, dict) else {}

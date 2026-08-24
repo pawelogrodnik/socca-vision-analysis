@@ -312,6 +312,10 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertIn("review_mixed_players", state["allowed_actions"])
             with (
                 patch(
+                    "app.services.review_workflow_orchestrator.build_cheap_finalize_preflight_state",
+                    return_value={"issues": {"blocking": 0}, "allowed_actions": ["finalize_identity"], "phase": "ready_to_finalize"},
+                ),
+                patch(
                     "app.services.review_workflow_orchestrator.get_review_workflow_state",
                     side_effect=[
                         {"issues": {"blocking": 0}, "allowed_actions": ["finalize_identity"], "phase": "ready_to_finalize"},

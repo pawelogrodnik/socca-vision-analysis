@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached
 from app.services.identity_reviewed_slot_registry import (
     build_reviewed_slot_registry,
 )
@@ -590,6 +591,6 @@ def _diagnostics(
 def _optional(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    import json
-
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Strict parse preserved; reuses the request-scoped materialization so
+    # global_identity/stable_players are parsed once per authoritative build.
+    return load_json_cached(path)

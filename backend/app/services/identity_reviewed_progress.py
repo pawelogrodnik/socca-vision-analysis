@@ -99,7 +99,31 @@ def build_reviewed_identity_progress(
     *,
     include_internal_units: bool = False,
 ) -> dict[str, Any]:
-    """Authoritative progress build; parses each canonical artifact once."""
+    """Authoritative progress build; parses each canonical artifact once.
+
+    Inside an active review-build scope the result is memoized for the rest
+    of that request (nested callers such as material-continuity overlays
+    reuse the same authoritative materialization instead of a second full
+    pass).  Callers must treat the returned document as read-only.
+    """
+    from app.services.identity_canonical_io import (
+        scoped_memo_get,
+        scoped_memo_put,
+        has_active_scope,
+    )
+
+    memo_key = f"__authoritative_progress__::{match_path}::{include_internal_units}"
+    if has_active_scope():
+        memoized = scoped_memo_get(memo_key)
+        if memoized is not None:
+            return memoized
+        result = _build_reviewed_identity_progress_uncached(
+            match_path,
+            match_doc,
+            include_internal_units=include_internal_units,
+        )
+        scoped_memo_put(memo_key, result)
+        return result
     with review_build_context():
         return _build_reviewed_identity_progress_uncached(
             match_path,

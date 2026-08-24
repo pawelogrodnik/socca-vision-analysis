@@ -83,6 +83,9 @@ class FinalizeEndpointContractTests(unittest.TestCase):
 
     def test_finalize_still_rejects_when_blockers_remain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.build_cheap_finalize_preflight_state",
+            return_value={"issues": {"blocking": 0}, "allowed_actions": ["finalize_identity"], "phase": "ready_to_finalize"},
+        ), patch(
             "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
             return_value={"semantic_digest": "fresh"},
         ), patch(

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 """Canonical reviewed identity snapshot built from operator-backed evidence."""
 
+import logging
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import invalidate_cached_json, load_json_cached
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_snapshot_observations import (
@@ -43,6 +46,34 @@ SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
 ALGORITHM_VERSION = "reviewed_identity_snapshot:v11-slot-scoped-propagation"
 
+logger = logging.getLogger(__name__)
+
+# Subphase timings (ms) of the most recent authoritative snapshot build.
+# Diagnostics only; never part of the persisted snapshot contract.
+_LAST_BUILD_PHASES: dict[str, float] = {}
+
+
+def last_snapshot_build_phases() -> dict[str, float]:
+    return dict(_LAST_BUILD_PHASES)
+
+
+class _Phases:
+    __slots__ = ("_data", "_started", "_mark")
+
+    def __init__(self) -> None:
+        self._data: dict[str, float] = {}
+        self._started = time.perf_counter()
+        self._mark = self._started
+
+    def phase(self, name: str) -> None:
+        now = time.perf_counter()
+        self._data[name] = round((now - self._mark) * 1000, 1)
+        self._mark = now
+
+    def finish(self) -> dict[str, float]:
+        self._data["total_ms"] = round((time.perf_counter() - self._started) * 1000, 1)
+        return self._data
+
 
 def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
     snapshot_path = match_path / SNAPSHOT_FILENAME
@@ -64,9 +95,12 @@ def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
 
 
 def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    phases = _Phases()
     documents = _source_documents(match_path)
+    phases.phase("source_document_load_ms")
     roster = _roster(match_doc)
     segment_review = build_segment_review_document(match_path, match_doc)
+    phases.phase("segment_review_ms")
     tracklets = {
         str(row.get("tracklet_id")): row
         for row in documents["tracklets"].get("tracklets") or []
@@ -78,6 +112,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         documents["subjects"],
         documents["slot_review"],
     )
+    phases.phase("stable_identity_resolution_ms")
     reviews = _review_decisions(documents["review_decisions"], documents["slot_review"])
     slot_roster_bindings, conflicting_slot_roster_bindings = _slot_roster_bindings(
         stable,
@@ -227,6 +262,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         conflicting_slot_roster_bindings,
         roster,
     )
+    phases.phase("canonical_observation_assignment_ms")
     segment_assignments = segment_observation_assignments(
         segment_review,
         documents["segment_decisions"],
@@ -248,6 +284,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         canonical_observation_assignments,
         segment_assignments,
     )
+    phases.phase("frame_uniqueness_ms")
     conflicts.extend(
         {
             "tracklet_id": row["tracklet_id"],
@@ -275,6 +312,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         segment_assignments,
     )
     source = _source_descriptor(documents, match_doc, seeded_freshness)
+    phases.phase("source_semantic_digest_ms")
     product_tracklets_total = int(summary["product_tracklets_total"])
     status = (
         "blocked"
@@ -330,6 +368,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         },
     }
     snapshot["semantic_digest"] = _semantic_digest(snapshot)
+    phases.phase("snapshot_semantic_digest_ms")
     report = {
         "schema_version": "3.1.0",
         "status": snapshot["status"],
@@ -343,6 +382,19 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
     }
     write_identity_json_atomic(match_path / SNAPSHOT_FILENAME, snapshot)
     write_identity_json_atomic(match_path / REPORT_FILENAME, report)
+    phases.phase("snapshot_write_ms")
+    # The snapshot was just replaced inside this authoritative scope; any
+    # later same-scope read must observe the new document.
+    invalidate_cached_json(match_path / SNAPSHOT_FILENAME)
+    invalidate_cached_json(match_path / REPORT_FILENAME)
+    _LAST_BUILD_PHASES.clear()
+    _LAST_BUILD_PHASES.update(phases.finish())
+    logger.info(
+        "reviewed_snapshot_perf match=%s status=%s %s",
+        match_doc.get("id") or match_path.name,
+        status,
+        " ".join(f"{key}={value}" for key, value in sorted(_LAST_BUILD_PHASES.items())),
+    )
     return snapshot
 
 
@@ -424,9 +476,13 @@ def _source_descriptor(
     match_doc: dict[str, Any],
     seeded_freshness: dict[str, Any],
 ) -> dict[str, Any]:
+    # Per-document semantic digests are computed exactly once and reused for
+    # both the named descriptor fields and semantic_input_digest.  The
+    # aggregate value is byte-identical to the former _source_digest() output.
     values = {key: canonical_digest(_semantic_input(value)) if value else None for key, value in documents.items()}
+    match_value = canonical_digest(_semantic_input(match_doc))
     return {
-        "match_digest": canonical_digest(_semantic_input(match_doc)),
+        "match_digest": match_value,
         "roster_digest": canonical_digest(_semantic_input(match_doc.get("teams") or [])),
         "tracklets_digest": values["tracklets"],
         "subjects_digest": values["subjects"],
@@ -434,20 +490,17 @@ def _source_descriptor(
         "whole_subject_review_decisions_digest": _decisions_digest(documents["review_decisions"]),
         "segment_review_decisions_digest": _decisions_digest(documents["segment_decisions"]),
         "material_continuity_decisions_digest": _decisions_digest(documents["material_continuity_decisions"]),
-        "mixed_players_digest": (
-            canonical_digest(_semantic_input(documents["mixed_players"]))
-            if documents["mixed_players"]
-            else None
-        ),
+        "mixed_players_digest": values["mixed_players"],
         "stable_identity_digests": {key: values[key] for key in ("gallery", "stable_players", "global_identity")},
         "seeded_assignment_freshness": seeded_freshness,
         "algorithm_version": ALGORITHM_VERSION,
         "optional_inputs": {key: "available" if value else "not_available" for key, value in documents.items()},
-        "semantic_input_digest": _source_digest(documents, match_doc),
+        "semantic_input_digest": canonical_digest({**values, "match": match_value}),
     }
 
 
 def _source_digest(documents: dict[str, dict[str, Any]], match_doc: dict[str, Any] | None = None) -> str:
+    """Reference implementation kept for digest-equivalence regression."""
     value = {key: canonical_digest(_semantic_input(document)) if document else None for key, document in documents.items()}
     if match_doc is not None:
         value["match"] = canonical_digest(_semantic_input(match_doc))
@@ -994,6 +1047,6 @@ def _optional(path: Path) -> dict[str, Any]:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    import json
-
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Request-scoped reuse; identical strict parse semantics (raises on
+    # malformed canonical JSON exactly as the raw loader did).
+    return load_json_cached(path)

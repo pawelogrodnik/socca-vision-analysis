@@ -112,6 +112,7 @@ from app.services.identity_reviewed_hot_state import (
     invalidate_review_hot_state,
     load_existing_fresh_hot_state,
     load_or_rebuild_review_hot_state,
+    load_or_rebuild_review_hot_state_with_source,
     update_hot_state_after_deferred_save,
 )
 from app.services.identity_reviewed_snapshot import (
@@ -2058,10 +2059,9 @@ def get_match_reviewed_identity_progress(
             raise FileNotFoundError(path / "reviewed_identity_snapshot.json")
         recompute_required = reviewed_identity_recompute_required(path)
         state_started = time.perf_counter()
-        state = load_existing_fresh_hot_state(path, match_document)
-        hot_state_fresh = state is not None
-        if state is None:
-            state = load_or_rebuild_review_hot_state(path, match_document)
+        # One probe: never parses/validates a stale hot document twice.
+        state, hot_state_source = load_or_rebuild_review_hot_state_with_source(path, match_document)
+        hot_state_fresh = hot_state_source == "warm_hit"
         state_ms = round((time.perf_counter() - state_started) * 1000, 1)
         paginate_started = time.perf_counter()
         payload = {

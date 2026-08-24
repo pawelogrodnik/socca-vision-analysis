@@ -2020,7 +2020,7 @@ export type ReviewedCorrectionResponse = {
   review_progress?: ReviewedIdentityReviewProgress;
   decision_impact?: ReviewedCorrectionDecisionImpact;
   workflow?: ReviewWorkflow;
-  reviewed_identity?: ReviewedIdentityDocument;
+  reviewed_identity?: ReviewedFinalizedIdentitySummary;
   render_job?: ReviewedOutputJob;
 };
 
