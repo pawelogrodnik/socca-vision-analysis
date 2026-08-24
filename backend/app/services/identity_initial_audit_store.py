@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 import uuid
 
+from app.services.identity_canonical_io import load_json_cached
+
 from app.services.identity_initial_audit import (
     AUDIT_DIRECTORY,
     SELECTION_FILENAME,
@@ -1017,7 +1019,7 @@ def _load_optional_json(path: Path) -> dict[str, Any] | None:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = load_json_cached(path)
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return value

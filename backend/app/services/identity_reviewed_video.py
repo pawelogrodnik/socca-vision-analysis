@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import time
@@ -223,7 +224,9 @@ def render_reviewed_video(
     raw.unlink(missing_ok=True)
     emitter.emit("validate_output", processed_frames=count, total_frames=total, force=True)
     stage_started = time.perf_counter()
-    source_digest = _sha(source)
+    # Fingerprint-gated reuse of the enqueue-time source SHA; re-hashes only
+    # when the file changed between job submission and render completion.
+    source_digest = reviewed_source_video_digest(match_path, match_doc)
     profile.hash_source_sec = time.perf_counter() - stage_started
     stage_started = time.perf_counter()
     output_digest = _sha(output)
@@ -292,13 +295,73 @@ def render_reviewed_video(
     return manifest
 
 
+DIGEST_CACHE_FILENAME = "reviewed_source_video_digest.json"
+DIGEST_CACHE_SCHEMA_VERSION = "1.0.0"
+
+
 def reviewed_source_video_path(match_path: Path, match_doc: dict[str, Any]) -> Path:
     preferred = str(match_doc.get("video_filename") or "") or None
     return resolve_match_video_path(match_path, preferred)
 
 
+def _valid_digest_cache(cached: Any, fingerprint: dict[str, Any], video_path: Path) -> bool:
+    """Fail-closed acceptance: only a fully well-formed, matching entry reuses."""
+    if not isinstance(cached, dict):
+        return False
+    if cached.get("schema_version") != DIGEST_CACHE_SCHEMA_VERSION:
+        return False
+    stored = cached.get("fingerprint")
+    if not isinstance(stored, dict) or set(stored) != {"path", "size_bytes", "mtime_ns"}:
+        return False
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in (stored["size_bytes"], stored["mtime_ns"])):
+        return False
+    if not isinstance(stored["path"], str):
+        return False
+    # Canonical path identity must match exactly.
+    try:
+        same_file = Path(stored["path"]) == video_path.resolve()
+    except OSError:
+        same_file = False
+    if not same_file or stored != fingerprint:
+        return False
+    digest = cached.get("sha256")
+    if not isinstance(digest, str):
+        return False
+    normalized = digest.strip().lower()
+    if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+        return False
+    return True
+
+
 def reviewed_source_video_digest(match_path: Path, match_doc: dict[str, Any]) -> str:
-    return _sha(reviewed_source_video_path(match_path, match_doc))
+    """SHA256 of the source video, memoized by durable file fingerprint.
+
+    A warm cache removes the hash from the finalize click path; the first
+    call after any fingerprint change (or a missing/corrupt cache) still
+    hashes the file synchronously.  Malformed caches fail closed to a
+    recompute and are rewritten atomically — never an error surfaced.
+    """
+    video_path = reviewed_source_video_path(match_path, match_doc)
+    stat = video_path.stat()
+    fingerprint = {
+        "path": str(video_path),
+        "size_bytes": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+    cache_path = match_path / DIGEST_CACHE_FILENAME
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached = None
+    if _valid_digest_cache(cached, fingerprint, video_path):
+        assert isinstance(cached, dict)
+        return str(cached["sha256"]).strip().lower()
+    digest = _sha(video_path)
+    write_identity_json_atomic(
+        cache_path,
+        {"schema_version": DIGEST_CACHE_SCHEMA_VERSION, "fingerprint": fingerprint, "sha256": digest},
+    )
+    return digest
 
 
 def _positions_by_frame(path: Path, snapshot: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:

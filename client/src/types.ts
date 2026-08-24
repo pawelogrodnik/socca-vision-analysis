@@ -2020,7 +2020,7 @@ export type ReviewedCorrectionResponse = {
   review_progress?: ReviewedIdentityReviewProgress;
   decision_impact?: ReviewedCorrectionDecisionImpact;
   workflow?: ReviewWorkflow;
-  reviewed_identity?: ReviewedIdentityDocument;
+  reviewed_identity?: ReviewedFinalizedIdentitySummary;
   render_job?: ReviewedOutputJob;
 };
 
@@ -2153,6 +2153,23 @@ export type ReviewedIdentityOptionalAudit = {
   per_team: Record<string, number>;
 };
 
+export type ReviewedIdentityMixedPlayersSummary = {
+  schema_version: string;
+  mode: string;
+  match_id: string;
+  summary: { total: number; unresolved: number; resolved: number; complex_unresolved: number };
+  cases: Array<{
+    case_id?: string;
+    candidate_subject_id: string;
+    original_issue: 'mixed_players';
+    mixed_hint: MixedPlayerHint;
+    resolution_status: 'unresolved' | 'resolved' | 'unresolved_complex_mix';
+    observation_count: number;
+    updated_at?: string | null;
+    has_exact_source: boolean;
+  }>;
+};
+
 export type ReviewedIdentityReviewProgress = {
   schema_version: string;
   status: 'ready';
@@ -2210,7 +2227,13 @@ export type ReviewedIdentityReviewProgress = {
     confirmed_player_observation_ratio: number;
   };
   next_cases: ReviewedIdentityReviewUnit[];
-  mixed_players: MixedPlayersReviewQueue;
+  mixed_players: ReviewedIdentityMixedPlayersSummary;
+  server_timing?: {
+    review_hot_state_ms: number;
+    review_queue_page_ms: number;
+    total_ms: number;
+    review_hot_state_source?: 'warm_hit' | 'cold_rebuild';
+  };
   technical_diagnostics: {
     candidate_subjects: number;
     tracklets: number;
@@ -2308,9 +2331,19 @@ export type MixedPlayerResolutionResponse = {
   recompute_deferred: true;
 };
 
+export type ReviewedFinalizedIdentitySummary = {
+  status: ReviewedIdentityDocument['status'];
+  semantic_digest: string | null;
+  summary: ReviewedIdentityDocument['summary'];
+  identity_coverage: Record<string, unknown> | null;
+  coverage_readiness: ReviewedIdentityCoverageReadiness | null;
+  source: Record<string, unknown> | null;
+  entities_total: number;
+};
+
 export type ReviewedCorrectionFinalizeResponse = {
   workflow: ReviewWorkflow;
-  reviewed_identity: ReviewedIdentityDocument;
+  reviewed_identity: ReviewedFinalizedIdentitySummary;
   review_progress: ReviewedIdentityReviewProgress;
   recompute_deferred: false;
   performance?: Record<string, number>;

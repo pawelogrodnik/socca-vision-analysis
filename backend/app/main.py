@@ -110,7 +110,9 @@ from app.services.identity_reviewed_hot_state import (
     hot_progress,
     hot_review_unit,
     invalidate_review_hot_state,
+    load_existing_fresh_hot_state,
     load_or_rebuild_review_hot_state,
+    load_or_rebuild_review_hot_state_with_source,
     update_hot_state_after_deferred_save,
 )
 from app.services.identity_reviewed_snapshot import (
@@ -143,6 +145,8 @@ from app.services.review_workflow_orchestrator import (
     after_video_qa_correction,
     approve_review_video_qa,
     finalize_review_for_qa,
+    public_finalized_identity,
+    public_review_progress,
     refresh_review_after_identity_mutation,
     retry_review_recompute,
     retry_review_render,
@@ -1710,7 +1714,7 @@ def update_initial_identity_audit_seeds(
             source="initial_audit_finish",
         )
         result["workflow"] = refreshed["workflow"]
-        result["reviewed_identity"] = refreshed["snapshot"]
+        result["reviewed_identity"] = public_finalized_identity(refreshed["snapshot"])
         return result
     except InitialIdentityAuditConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -2055,7 +2059,9 @@ def get_match_reviewed_identity_progress(
             raise FileNotFoundError(path / "reviewed_identity_snapshot.json")
         recompute_required = reviewed_identity_recompute_required(path)
         state_started = time.perf_counter()
-        state = load_or_rebuild_review_hot_state(path, match_document)
+        # One probe: never parses/validates a stale hot document twice.
+        state, hot_state_source = load_or_rebuild_review_hot_state_with_source(path, match_document)
+        hot_state_fresh = hot_state_source == "warm_hit"
         state_ms = round((time.perf_counter() - state_started) * 1000, 1)
         paginate_started = time.perf_counter()
         payload = {
@@ -2078,6 +2084,7 @@ def get_match_reviewed_identity_progress(
             "review_hot_state_ms": state_ms,
             "review_queue_page_ms": paginate_ms,
             "total_ms": elapsed_ms,
+            "review_hot_state_source": "warm_hit" if hot_state_fresh else "cold_rebuild",
         }
         return payload
     except FileNotFoundError as exc:
@@ -2136,7 +2143,7 @@ def finalize_match_reviewed_identity(match_id: str) -> dict[str, Any]:
             read_match_meta(path),
             source="legacy_reviewed_identity_finalize",
         )
-        return {**result["snapshot"], "workflow": result["workflow"]}
+        return {**public_finalized_identity(result["snapshot"]), "workflow": result["workflow"]}
     except ReviewWorkflowRecomputeError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
     except ReviewedOutputBusyError as exc:
@@ -2279,7 +2286,7 @@ def post_match_reviewed_identity_correction(
         response = {
             **result,
             "workflow": refreshed["workflow"],
-            "reviewed_identity": refreshed["snapshot"],
+            "reviewed_identity": public_finalized_identity(refreshed["snapshot"]),
         }
         if refreshed.get("render_job") is not None:
             response["render_job"] = refreshed["render_job"]
@@ -2430,8 +2437,8 @@ def finalize_match_reviewed_identity_corrections(match_id: str) -> dict[str, Any
         )
         return {
             "workflow": refreshed["workflow"],
-            "reviewed_identity": refreshed["snapshot"],
-            "review_progress": refreshed["review_progress"],
+            "reviewed_identity": public_finalized_identity(refreshed["snapshot"]),
+            "review_progress": paginate_progress(refreshed["review_progress"]),
             "recompute_deferred": False,
             "performance": refreshed.get("performance") or {},
         }

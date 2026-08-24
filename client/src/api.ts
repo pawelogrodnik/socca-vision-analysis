@@ -44,6 +44,7 @@ import type {
   TeamConfigReviewState,
   TrackletReviewState,
   ReviewedIdentityDocument,
+  ReviewedFinalizedIdentitySummary,
   ReviewedIdentityReviewProgress,
   ReviewedIdentityAt,
   ReviewedOutputJob,
@@ -264,8 +265,13 @@ export async function getReviewedIdentityReviewProgress(
   );
 }
 
-export async function finalizeReviewedIdentity(matchId: string): Promise<ReviewedIdentityDocument> {
-  return request<ReviewedIdentityDocument>(`/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/finalize`, { method: 'POST' });
+export async function finalizeReviewedIdentity(
+  matchId: string,
+): Promise<ReviewedFinalizedIdentitySummary & { workflow: ReviewWorkflow }> {
+  return request<ReviewedFinalizedIdentitySummary & { workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/finalize`,
+    { method: 'POST' },
+  );
 }
 
 export async function generateReviewedOutput(matchId: string, options: ReviewedRenderOptions): Promise<ReviewedOutputJob> {

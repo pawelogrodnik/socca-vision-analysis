@@ -13,6 +13,7 @@ from app.services.global_identity import (
     STATS_OBSERVED_GAP_FRAMES,
     calculate_movement_stats,
 )
+from app.services.identity_canonical_io import load_json_cached_or
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
@@ -321,9 +322,6 @@ def _expected_movement_segments(rows: list[dict[str, Any]], fps: float) -> int:
             expected += 1
     return expected
 def _load(path: Path) -> dict[str, Any]:
-    import json
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    # Tolerant loader; participates in the request-scoped source
+    # materialization so finalize does not re-parse 264MB tracklets.json.
+    return load_json_cached_or(path, {})

@@ -14,6 +14,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached_or
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 
@@ -459,16 +460,14 @@ def save_material_continuity_decision(
     if review_unit.get("_hot_state_authorized") is True:
         fresh_unit = review_unit
     else:
-        from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+        from app.services.identity_reviewed_progress import (
+            materialize_reviewed_identity_units,
+        )
 
         fresh_unit = next(
             (
                 row
-                for row in build_reviewed_identity_progress(
-                    match_path,
-                    match_doc,
-                    include_internal_units=True,
-                ).get("_internal_review_units") or []
+                for row in materialize_reviewed_identity_units(match_path, match_doc)
                 if str(row.get("continuity_group_id") or "") == group_id
                 and row.get("scope_kind") == "material_continuity"
             ),
@@ -533,15 +532,17 @@ def material_continuity_observation_assignments(
     decisions: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Return exact, fail-closed observation overlays for current decisions."""
-    from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+    # Snapshot finalization calls this BEFORE the new authoritative snapshot
+    # exists. Only the snapshot-independent review-unit materialization is
+    # needed to validate decision ownership; projecting coverage/readiness
+    # against the previous snapshot here would be stale work.
+    from app.services.identity_reviewed_progress import (
+        materialize_reviewed_identity_units,
+    )
 
     current_units = {
         str(unit.get("continuity_group_id") or ""): unit
-        for unit in build_reviewed_identity_progress(
-            match_path,
-            match_doc,
-            include_internal_units=True,
-        ).get("_internal_review_units") or []
+        for unit in materialize_reviewed_identity_units(match_path, match_doc)
         if unit.get("scope_kind") == "material_continuity"
     }
     roster = _roster(match_doc)
@@ -739,10 +740,7 @@ def _roster(match_doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        import json
-
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return {}
+    # Fully tolerant loader (missing/corrupt -> {}, non-object -> {});
+    # participates in the request-scoped source materialization.
+    value = load_json_cached_or(path)
     return value if isinstance(value, dict) else {}

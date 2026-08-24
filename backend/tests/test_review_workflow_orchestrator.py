@@ -126,6 +126,9 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
 
     def test_finalize_builds_stats_then_queues_one_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.build_cheap_finalize_preflight_state",
+            return_value=ready_state(),
+        ), patch(
             "app.services.review_workflow_orchestrator.get_review_workflow_state",
             side_effect=[ready_state(), ready_state(), {**ready_state(), "phase": "rendering_review_video"}],
         ), patch(
@@ -154,8 +157,11 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             "phase": "exceptions",
         }
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            "app.services.review_workflow_orchestrator.build_cheap_finalize_preflight_state",
             return_value=ready_state(),
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=blocked,
         ), patch(
             "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
             return_value={"workflow": blocked, "snapshot": {}},
@@ -169,6 +175,38 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
                 raised.exception.code,
                 "identity_coverage_unresolved_without_reviewable_evidence",
             )
+            stats.assert_not_called()
+            render.assert_not_called()
+
+    def test_finalize_regenerates_operator_evidence_when_recompute_discovers_blocker(self) -> None:
+        blocked = {
+            "issues": {
+                "blocking": 3,
+                "overall_identity_blocked": True,
+                "coverage_readiness_blocked": False,
+            },
+            "allowed_actions": [],
+            "phase": "exceptions",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.build_cheap_finalize_preflight_state",
+            return_value=ready_state(),
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value={"workflow": blocked, "snapshot": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.render_segment_review_evidence",
+            return_value=set(),
+        ) as segment_evidence, patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={"summary": {}},
+        ) as team_evidence, patch("app.services.review_workflow_orchestrator.build_reviewed_stats") as stats, patch(
+            "app.services.review_workflow_orchestrator.generate_reviewed_output"
+        ) as render:
+            with self.assertRaises(WorkflowActionError):
+                finalize_review_for_qa(Path(tmp), {"id": "m1"})
+            segment_evidence.assert_called_once()
+            team_evidence.assert_called_once()
             stats.assert_not_called()
             render.assert_not_called()
 
