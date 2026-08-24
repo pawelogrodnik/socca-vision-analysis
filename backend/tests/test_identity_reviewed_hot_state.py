@@ -53,6 +53,17 @@ def _progress() -> dict:
         "optional_audit_cases": [],
         "summary": {"important_decisions_remaining": 1, "semantic_decisions_remaining": 1, "coverage_decisions_remaining": 0, "material_continuity_decisions_remaining": 0, "optional_audit_cases_remaining": 0},
         "_internal_review_units": [unit],
+        "_projection_inputs": {
+            "match_id": "hot-state",
+            "coverage": {},
+            "technical_diagnostics": {},
+            "pair_index_runs": {
+                "t-1": [[10, 11, {"identity_status": "unresolved", "team_label": "A", "canonical_player_id": None}]],
+            },
+            "observed_pair_runs": {"t-1": [[10, 11]]},
+            "mixed_players": {},
+            "deferred_correction_context": {},
+        },
     }
 
 

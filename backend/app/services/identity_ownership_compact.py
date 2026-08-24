@@ -112,6 +112,7 @@ def validate_index_runs(encoded: Any) -> None:
             end = _checked_frame(entry[1], f"index run end for {tracklet_id}")
             if end < start:
                 raise CompactOwnershipError(f"index run for {tracklet_id} has end < start")
+            _validate_index_value(entry[2], tracklet_id)
             if previous_end is not None:
                 if start <= previous_end:
                     raise CompactOwnershipError(f"index runs for {tracklet_id} overlap or are unsorted")
@@ -121,6 +122,139 @@ def validate_index_runs(encoded: Any) -> None:
                     )
             previous_end = end
             previous_value = entry[2]
+
+
+INDEX_VALUE_KEYS = frozenset({"identity_status", "team_label", "canonical_player_id"})
+SUPPORTED_TEAM_LABELS = frozenset({"A", "B", "U"})
+
+
+def _validate_index_value(value: Any, where: str) -> None:
+    """Validate one coverage observation mapping against the canonical shape.
+
+    ``summarize_effective_observations`` builds exactly
+    ``{"identity_status": str, "team_label": "A"|"B"|"U",
+    "canonical_player_id": str | None}``; anything else cannot be projected.
+    """
+    if not isinstance(value, dict):
+        raise CompactOwnershipError(f"index run value for {where} must be an observation mapping")
+    if set(value.keys()) != INDEX_VALUE_KEYS:
+        raise CompactOwnershipError(f"index run value for {where} has unexpected keys")
+    if not isinstance(value["identity_status"], str) or not value["identity_status"]:
+        raise CompactOwnershipError(f"index run value for {where} has invalid identity_status")
+    if value["team_label"] not in SUPPORTED_TEAM_LABELS:
+        raise CompactOwnershipError(f"index run value for {where} has unsupported team_label")
+    player_id = value["canonical_player_id"]
+    if player_id is not None and not isinstance(player_id, str):
+        raise CompactOwnershipError(f"index run value for {where} has invalid canonical_player_id")
+
+
+# Semantic twin pairs: schema-v2 storage must contain exactly one durable
+# representation per ownership concept at the same node.
+AMBIGUOUS_TWINS: tuple[tuple[str, str], ...] = (
+    ("detected_pairs", "detected_pair_runs"),
+    ("owned_observations", "owned_observation_runs"),
+    ("_potential_named_observation_pairs", "_potential_named_observation_runs"),
+    ("observed_pairs", "observed_pair_runs"),
+    ("pair_index", "pair_index_runs"),
+)
+
+_V2_TOP_LEVEL_CONTRACT: dict[str, type | tuple[type, ...]] = {
+    "schema_version": str,
+    "state_version": int,
+    "match_id": str,
+    "progress": dict,
+    "internal_review_units": list,
+    "unit_lookup": dict,
+    "source_index": dict,
+    "projection_inputs": dict,
+    "roster_options": list,
+    "slot_options": list,
+    "canonical_segment_slot_options": list,
+    "freshness": dict,
+}
+
+
+def validate_v2_hot_state(
+    document: Mapping[str, Any],
+    *,
+    schema_version: str,
+) -> None:
+    """Validate a schema-v2 hot-state document as a complete cache contract.
+
+    Beyond individually valid runs this enforces structural completeness,
+    unambiguous representation (no expanded+compact twins at one node),
+    required exact ownership for non-empty review units and cardinality
+    consistency between runs and declared observation counts.
+    """
+    for field, expected in _V2_TOP_LEVEL_CONTRACT.items():
+        value = document.get(field)
+        if field == "state_version":
+            if isinstance(value, bool) or not isinstance(value, expected):
+                raise CompactOwnershipError(f"v2 state field {field} has invalid type")
+            continue
+        if not isinstance(value, expected):
+            raise CompactOwnershipError(f"v2 state field {field} has invalid type")
+    if document["schema_version"] != schema_version:
+        raise CompactOwnershipError("unexpected schema_version")
+    if not str(document["match_id"]):
+        raise CompactOwnershipError("v2 state match_id must be non-empty")
+
+    inputs = document["projection_inputs"]
+    for key in ("pair_index_runs", "observed_pair_runs"):
+        if key not in inputs:
+            raise CompactOwnershipError(f"v2 projection_inputs missing required {key}")
+    for key in ("coverage", "technical_diagnostics"):
+        if not isinstance(inputs.get(key), dict):
+            raise CompactOwnershipError(f"v2 projection_inputs.{key} must be an object")
+    for key in ("mixed_players", "deferred_correction_context"):
+        if key in inputs and not isinstance(inputs[key], dict):
+            raise CompactOwnershipError(f"v2 projection_inputs.{key} must be an object when stored")
+
+    units = document["internal_review_units"]
+    for unit in units:
+        if not isinstance(unit, dict):
+            raise CompactOwnershipError("internal_review_units entries must be objects")
+        detected_runs = unit.get("detected_pair_runs")
+        count = unit.get("detected_observation_count")
+        has_count = isinstance(count, int) and not isinstance(count, bool) and count > 0
+        if has_count:
+            if "detected_pair_runs" not in unit:
+                raise CompactOwnershipError(
+                    f"unit {unit.get('candidate_subject_id')} declares observations without compact ownership"
+                )
+            validate_pair_runs(detected_runs)
+            if count_pair_runs(detected_runs) != count:
+                raise CompactOwnershipError(
+                    f"unit {unit.get('candidate_subject_id')} ownership cardinality mismatch"
+                )
+        elif detected_runs is not None:
+            validate_pair_runs(detected_runs)
+        for member in unit.get("continuity_members") or []:
+            if not isinstance(member, dict):
+                raise CompactOwnershipError("continuity_members entries must be objects")
+            member_runs = member.get("detected_pair_runs")
+            if member_runs is not None:
+                validate_pair_runs(member_runs)
+
+    stack: list[Any] = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            keys = set(node.keys())
+            for left, right in AMBIGUOUS_TWINS:
+                if left in keys and right in keys:
+                    raise CompactOwnershipError(
+                        f"ambiguous durable representation: {left} and {right} coexist"
+                    )
+            for key, value in node.items():
+                if key in PAIR_RUN_KEYS:
+                    validate_pair_runs(value)
+                elif key == INDEX_RUN_KEY:
+                    validate_index_runs(value)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(node, list):
+            stack.extend(item for item in node if isinstance(item, (dict, list)))
 
 
 def validate_compact_document(document: Mapping[str, Any]) -> None:

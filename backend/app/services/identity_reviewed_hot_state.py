@@ -22,7 +22,7 @@ from app.services.identity_ownership_compact import (
     encode_index_rows,
     encode_observation_rows,
     encode_pair_runs,
-    validate_compact_document,
+    validate_v2_hot_state,
 )
 from app.services.identity_reviewed_correction_context import (
     match_roster,
@@ -365,7 +365,7 @@ def _load(path: Path) -> dict[str, Any] | None:
         return None
     if value.get("schema_version") == SCHEMA_VERSION:
         try:
-            validate_compact_document(value)
+            validate_v2_hot_state(value, schema_version=SCHEMA_VERSION)
         except CompactOwnershipError:
             # A malformed exact-source cache must never be partially decoded.
             # Treat it as absent; the caller cold-rebuilds from canonical
@@ -460,16 +460,26 @@ def _encode_node(node: Any) -> Any:
     document stays pure JSON without a second full-state walk.
     """
     if isinstance(node, dict):
-        encoded: dict[str, Any] = {}
+        collected: dict[str, Any] = {}
         for key, value in node.items():
-            spec = _PAIR_RUN_KEYS.get(str(key))
+            collected[str(key)] = value
+        # Policy enrichment attaches fresh named-gain runs under the legacy
+        # pairs name while the base unit still carries its own runs twin.
+        # The durable contract is exactly one representation, so canonize.
+        if isinstance(collected.get("_potential_named_observation_pairs"), dict):
+            collected["_potential_named_observation_runs"] = collected.pop(
+                "_potential_named_observation_pairs"
+            )
+        encoded: dict[str, Any] = {}
+        for key, value in collected.items():
+            spec = _PAIR_RUN_KEYS.get(key)
             if spec is not None and isinstance(value, (list, set, frozenset)):
                 runs_key, encoder, _decoder = spec
                 runs = encoder(value)
                 if runs is not None:
                     encoded[runs_key] = runs
                     continue
-            encoded[str(key)] = _encode_node(value)
+            encoded[key] = _encode_node(value)
         return encoded
     if isinstance(node, list):
         return [_encode_node(item) for item in node]
