@@ -18,6 +18,7 @@ from app.services.identity_ownership_compact import (
     CompactPairIndexView,
     encode_pair_runs,
 )
+from app.services.identity_canonical_io import load_json_cached
 from app.services.identity_reviewed_effective_observation import (
     iter_effective_reviewed_observations,
 )
@@ -463,6 +464,85 @@ def apply_coverage_policy(
     }
 
 
+PUBLIC_REVIEW_CASE_FIELDS = (
+    "candidate_subject_id",
+    "review_target_id",
+    "scope_kind",
+    "continuity_group_id",
+    "continuity_fragment_count",
+    "review_card_key",
+    "source_team_label",
+    "effective_team_label",
+    "coverage_team_label",
+    "frame_start",
+    "frame_end",
+    "frame_ranges",
+    "detected_frame_count",
+    "detected_observation_count",
+    "tracklet_ids",
+    "tracklet_count",
+    "detected_time_sec",
+    "priority",
+    "reason_codes",
+    "current_resolution_status",
+    "operator_actionable",
+    "non_actionable_reason",
+    "potential_named_observation_gain",
+    "marginal_named_observation_gain",
+    "potential_named_coverage_gain_pp",
+    "coverage_rank_within_team",
+    "optional_max_rank",
+    "optional_max_marginal_coverage_gain_pp",
+    "stable_slot_id",
+    "source_ownership_digest",
+    "visual_evidence",
+    "legacy_suggestion",
+)
+
+
+def public_review_case(unit: dict[str, Any]) -> dict[str, Any]:
+    """HTTP presentation of one queue card.
+
+    Exact per-frame ownership and server-only gain sets stay behind the
+    correction context endpoint; navigation needs none of them.
+    """
+    public = {key: unit.get(key) for key in PUBLIC_REVIEW_CASE_FIELDS}
+    public["filter_team_label"] = review_case_team_label(unit)
+    return public
+
+
+def _compact_mixed_players_summary(mixed_players: Any) -> Any:
+    """Strip exact ownership/evidence from the embedded mixed queue summary.
+
+    The operator panel fetches full mixed cases from the dedicated endpoint;
+    review-progress only needs counts and identity metadata for badges.
+    """
+    if not isinstance(mixed_players, dict):
+        return mixed_players
+    compact = {
+        key: value
+        for key, value in mixed_players.items()
+        if key != "cases"
+    }
+    cases: list[dict[str, Any]] = []
+    for case in mixed_players.get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        source = case.get("source")
+        cases.append({
+            "case_id": case.get("case_id"),
+            "candidate_subject_id": case.get("candidate_subject_id"),
+            "original_issue": case.get("original_issue"),
+            "mixed_hint": case.get("mixed_hint"),
+            "resolution_status": case.get("resolution_status"),
+            "observation_count": case.get("observation_count"),
+            "updated_at": case.get("updated_at"),
+            "has_exact_source": isinstance(source, dict),
+        })
+    compact["cases"] = cases
+    return compact
+
+
 def paginate_progress(
     progress: dict[str, Any],
     *,
@@ -487,10 +567,12 @@ def paginate_progress(
         if active_team_label is None or label == active_team_label
     ]
     public_progress = {
-        key: value
+        key: _compact_mixed_players_summary(value) if key == "mixed_players" else value
         for key, value in progress.items()
         if key not in {
             "review_units",
+            "_internal_review_units",
+            "_projection_inputs",
             "deferred_correction_context",
             "next_cases",
             "optional_audit_cases",
@@ -502,10 +584,7 @@ def paginate_progress(
     return {
         **public_progress,
         "queue": queue,
-        "next_cases": [
-            {**unit, "filter_team_label": review_case_team_label(unit)}
-            for unit in page
-        ],
+        "next_cases": [public_review_case(unit) for unit in page],
         "filters": {
             "queue": queue,
             "active_team_label": active_team_label,
@@ -1207,10 +1286,9 @@ def _ratio(numerator: int, denominator: int) -> float | None:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
+    if not path.exists():
         return {}
+    value = load_json_cached(path)
     return value if isinstance(value, dict) else {}
 
 

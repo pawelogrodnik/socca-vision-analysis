@@ -13,6 +13,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import (
+    load_json_cached_or,
+    review_build_context,
+)
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_ownership_compact import (
@@ -81,13 +85,34 @@ def load_existing_fresh_hot_state(
 def rebuild_review_hot_state(
     match_path: Path,
     match_doc: dict[str, Any],
+    *,
+    prebuilt_progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Cold/recovery path.  The only place that rebuilds full progress."""
-    progress = build_reviewed_identity_progress(
-        match_path,
-        match_doc,
-        include_internal_units=True,
-    )
+    with review_build_context():
+        return _rebuild_review_hot_state_scoped(
+            match_path,
+            match_doc,
+            prebuilt_progress=prebuilt_progress,
+        )
+
+
+def _rebuild_review_hot_state_scoped(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    prebuilt_progress: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if prebuilt_progress is not None:
+        # Authoritative caller already materialized progress in this request;
+        # reuse it instead of a second full canonical pass.
+        progress = dict(prebuilt_progress)
+    else:
+        progress = build_reviewed_identity_progress(
+            match_path,
+            match_doc,
+            include_internal_units=True,
+        )
     candidate = _load(match_path / "identity_candidate_shadow.json") or {}
     registry = build_materialized_reviewed_slot_registry(
         candidate,
@@ -565,7 +590,7 @@ def _attach_exact_whole_subject_digests(
     carry this digest from their authoritative artifacts.
     """
     candidate_document = _load(match_path / "identity_candidate_shadow.json") or {}
-    tracklet_document = _load(match_path / "tracklets.json") or {}
+    tracklet_document = load_json_cached_or(match_path / "tracklets.json", {}) or {}
     subjects = {
         str(row.get("candidate_subject_id") or ""): row
         for row in candidate_document.get("subjects") or []
@@ -641,7 +666,7 @@ def _attach_correction_temporal_evidence(
     same representative crop payload once here and reuse it until ownership
     changes.  Rendering is best-effort just as it is for the legacy context.
     """
-    tracklet_document = _load(match_path / "tracklets.json") or {}
+    tracklet_document = load_json_cached_or(match_path / "tracklets.json", {}) or {}
     observations_by_pair: dict[tuple[str, int], dict[str, Any]] = {}
     for tracklet in tracklet_document.get("tracklets") or []:
         if not isinstance(tracklet, dict):

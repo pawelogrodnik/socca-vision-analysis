@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached
+
 
 MAX_REVIEWED_SLOTS_PER_TEAM = 14
 _SLOT_ID = re.compile(r"^(?P<team>[AB])(?P<number>0[1-9]|1[0-4])$")
@@ -155,4 +157,4 @@ def next_free_reviewed_slot(
 def _optional(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return load_json_cached(path)

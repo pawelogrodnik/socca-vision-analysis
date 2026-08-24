@@ -213,9 +213,22 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     return _state(match_id, True, "action_required", "video_qa", steps, blockers, ["review_video", "approve_video_qa", "correct_video_identity"], initial, issues, freshness, render, {"type": "approve_video_qa", "step_id": "video_qa"})
 
 
-def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
-    """Read compact artifacts only; this function must remain mutation-free."""
-    snapshot = get_reviewed_identity_status(match_path)
+def get_review_workflow_state(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    snapshot: dict[str, Any] | None = None,
+    progress: dict[str, Any] | None = None,
+    completion_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read compact artifacts only; this function must remain mutation-free.
+
+    ``snapshot`` / ``progress`` / ``completion_evidence`` let the authoritative
+    finalize transaction reuse artifacts it produced moments earlier in the
+    same request instead of re-parsing and re-digesting every large source.
+    Independent GET calls never pass them and keep reading durable state.
+    """
+    snapshot = snapshot if snapshot is not None else get_reviewed_identity_status(match_path)
     stats = load_json_object(match_path / "reviewed_player_stats.json")
     stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
     output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
@@ -239,12 +252,19 @@ def get_review_workflow_state(match_path: Path, match_doc: dict[str, Any]) -> di
         and output_manifest
         and output_manifest.get("stale") is not True
     )
-    progress, progress_reason = _current_cached_progress(
-        match_path,
-        snapshot,
-        match_doc,
+    if progress is None:
+        progress, progress_reason = _current_cached_progress(
+            match_path,
+            snapshot,
+            match_doc,
+        )
+    else:
+        progress_reason = None
+    initial = (
+        completion_evidence
+        if completion_evidence is not None
+        else load_initial_audit_completion_evidence(match_path)
     )
-    initial = load_initial_audit_completion_evidence(match_path)
     issues = _issue_evidence(snapshot, progress)
     evidence = {
         "match_id": str(match_doc.get("id") or match_path.name),

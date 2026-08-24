@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached, review_build_context
 from app.services.identity_ownership_compact import (
     CompactPairIndexView,
     count_pair_runs,
@@ -93,6 +94,21 @@ def reviewed_snapshot_file_fingerprint(match_path: Path) -> dict[str, int] | Non
 
 
 def build_reviewed_identity_progress(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    include_internal_units: bool = False,
+) -> dict[str, Any]:
+    """Authoritative progress build; parses each canonical artifact once."""
+    with review_build_context():
+        return _build_reviewed_identity_progress_uncached(
+            match_path,
+            match_doc,
+            include_internal_units=include_internal_units,
+        )
+
+
+def _build_reviewed_identity_progress_uncached(
     match_path: Path,
     match_doc: dict[str, Any],
     *,
@@ -999,8 +1015,5 @@ def _ratio(numerator: int, denominator: int) -> float:
 def _load(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    value = load_json_cached(path)
+    return value if isinstance(value, dict) else {}

@@ -8,6 +8,7 @@ from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_canonical_io import load_json_cached_or
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.identity_roster_anchor_crop_renderer import render_identity_roster_anchor_crops
@@ -757,9 +758,6 @@ def _match_roster(match_doc: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    import json
-
-    value = json.loads(path.read_text(encoding="utf-8"))
+    """Parse once per review-build scope; tracklets.json dominates cold builds."""
+    value = load_json_cached_or(path, {})
     return value if isinstance(value, dict) else {}
