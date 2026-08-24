@@ -15,6 +15,15 @@ from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_ownership_compact import (
+    CompactOwnershipError,
+    decode_observation_runs,
+    decode_pair_runs,
+    encode_index_rows,
+    encode_observation_rows,
+    encode_pair_runs,
+    validate_v2_hot_state,
+)
 from app.services.identity_reviewed_correction_context import (
     match_roster,
     reviewed_decisions_semantic_digest,
@@ -41,7 +50,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-SCHEMA_VERSION = "1.4.0"
+SCHEMA_VERSION = "2.0.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -55,7 +64,7 @@ def load_or_rebuild_review_hot_state(
     match_doc: dict[str, Any],
 ) -> dict[str, Any]:
     state = _load(match_path / FILENAME)
-    if _is_fresh(state, match_path, match_doc):
+    if state is not None and _is_fresh(state, match_path, match_doc):
         return state
     return rebuild_review_hot_state(match_path, match_doc)
 
@@ -102,7 +111,7 @@ def rebuild_review_hot_state(
     _attach_legacy_context_fields(match_path, internal)
     _attach_correction_temporal_evidence(match_path, match_doc, internal)
     _attach_temporal_split_context(match_path, internal)
-    state = _json_safe({
+    state = {
         "schema_version": SCHEMA_VERSION,
         "state_version": _next_state_version(match_path),
         "match_id": str(match_doc.get("id") or match_path.name),
@@ -118,8 +127,9 @@ def rebuild_review_hot_state(
             for key in sorted(canonical_segment_registry)
         ],
         "freshness": _freshness(match_path, match_doc),
-    })
-    write_identity_json_atomic(match_path / FILENAME, state)
+    }
+    write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
+    state["progress"] = _json_safe(progress)
     return state
 
 
@@ -135,19 +145,27 @@ def hot_review_unit(
     key = _lookup_key(candidate_subject_id, review_target_id)
     index = (state.get("unit_lookup") or {}).get(key)
     units = state.get("internal_review_units") or []
+    unit: dict[str, Any] | None = None
     if isinstance(index, int) and 0 <= index < len(units):
-        unit = units[index]
-        if isinstance(unit, dict):
-            return unit
-    # Schema 1.0 materializations are never served because their schema is
-    # rejected above. This tiny defensive fallback keeps a manually repaired
-    # state document recoverable without exposing an incorrect context.
-    for unit in units:
-        if isinstance(unit, dict) and _lookup_key(
-            str(unit.get("candidate_subject_id") or ""), unit.get("review_target_id")
-        ) == key:
-            return unit
-    return None
+        found = units[index]
+        if isinstance(found, dict):
+            unit = found
+    if unit is None:
+        # Schema 1.0 materializations are never served because their schema is
+        # rejected above. This tiny defensive fallback keeps a manually repaired
+        # state document recoverable without exposing an incorrect context.
+        for candidate in units:
+            if (
+                isinstance(candidate, dict)
+                and _lookup_key(
+                    str(candidate.get("candidate_subject_id") or ""),
+                    candidate.get("review_target_id"),
+                )
+                == key
+            ):
+                unit = candidate
+                break
+    return _expand_unit(unit) if isinstance(unit, dict) else None
 
 
 def assert_hot_state_version(
@@ -188,6 +206,9 @@ def update_hot_state_after_deferred_save(
         for row in state.get("roster_options") or []
         if isinstance(row, dict)
     }
+    # Compact units stay compact through the whole save. Projection evaluates
+    # ownership from validated runs directly, so an ordinary correction never
+    # materializes match-wide (tracklet_id, frame) pairs.
     updated_unit = False
     for unit in state.get("internal_review_units") or []:
         if not isinstance(unit, dict):
@@ -226,8 +247,7 @@ def update_hot_state_after_deferred_save(
     state["source_index"] = _source_index(state["internal_review_units"])
     state["state_version"] = _next_state_version(match_path)
     state["freshness"] = _freshness(match_path, match_doc, semantic_digest=semantic_decision_digest)
-    state = _json_safe(state)
-    write_identity_json_atomic(match_path / FILENAME, state)
+    write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
     return state
 
 
@@ -341,7 +361,151 @@ def _load(path: Path) -> dict[str, Any] | None:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return value if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        return None
+    if value.get("schema_version") == SCHEMA_VERSION:
+        try:
+            validate_v2_hot_state(value, schema_version=SCHEMA_VERSION)
+        except CompactOwnershipError:
+            # A malformed exact-source cache must never be partially decoded.
+            # Treat it as absent; the caller cold-rebuilds from canonical
+            # artifacts, which remain the only source of truth.
+            return None
+        _rehydrate_projection_twins(value)
+    return value
+
+
+def _rehydrate_projection_twins(state: dict[str, Any]) -> None:
+    """Restore projection twins from the single durable progress copy.
+
+    ``mixed_players`` and ``deferred_correction_context`` are identical in
+    progress and projection inputs.  The cache stores them once (inside
+    progress) and reload restores the second view by reference, preserving
+    the exact contract project_reviewed_identity_progress expects.
+    """
+    progress = state.get("progress")
+    inputs = state.get("projection_inputs")
+    if not isinstance(progress, dict) or not isinstance(inputs, dict):
+        return
+    for twin in ("mixed_players", "deferred_correction_context"):
+        if twin not in inputs and twin in progress:
+            inputs[twin] = progress[twin]
+
+
+def _expand_unit(unit: dict[str, Any]) -> dict[str, Any]:
+    """Restore exact expanded pair structures from the compact durable form.
+
+    Compact runs are the storage representation only.  Review consumers always
+    receive units shaped like the canonical expanded ownership lists, so no
+    downstream module needs to know the cache encoding.
+    """
+    return _decode_node(unit)
+
+
+def _encode_for_write(state: dict[str, Any]) -> dict[str, Any]:
+    """Swap expanded pair structures for lossless runs at the disk boundary.
+
+    Only the durable representation changes.  The in-memory state handed to
+    callers keeps the exact expanded pair lists every review consumer relies
+    on, and decoding reproduces those lists exactly.
+    """
+    encoded = dict(state)
+    encoded["internal_review_units"] = [
+        _encode_node(unit) if isinstance(unit, dict) else unit
+        for unit in state.get("internal_review_units") or []
+    ]
+    projection_inputs = dict(state.get("projection_inputs") or {})
+    if "observed_pairs" in projection_inputs:
+        projection_inputs["observed_pair_runs"] = encode_pair_runs(
+            projection_inputs.pop("observed_pairs")
+        )
+    if "pair_index" in projection_inputs:
+        projection_inputs["pair_index_runs"] = encode_index_rows(
+            projection_inputs.pop("pair_index")
+        )
+    # These two payloads are byte-identical twins of the progress copies and
+    # are rehydrated by _rehydrate_projection_twins after a reload.
+    projection_inputs.pop("mixed_players", None)
+    projection_inputs.pop("deferred_correction_context", None)
+    encoded["projection_inputs"] = _encode_node(projection_inputs) if isinstance(projection_inputs, dict) else projection_inputs
+    return encoded
+
+
+def _encode_pair_set(value: Any) -> dict[str, list[list[int]]] | None:
+    return encode_pair_runs(sorted(tuple(pair) for pair in value or []))
+
+
+_PAIR_RUN_KEYS = {
+    "detected_pairs": ("detected_pair_runs", encode_pair_runs, decode_pair_runs),
+    "owned_observations": (
+        "owned_observation_runs",
+        encode_observation_rows,
+        decode_observation_runs,
+    ),
+    "_potential_named_observation_pairs": (
+        "_potential_named_observation_runs",
+        _encode_pair_set,
+        decode_pair_runs,
+    ),
+}
+
+
+def _encode_node(node: Any) -> Any:
+    """Recursively replace known exact pair lists with compact run twins.
+
+    Material continuity units embed ownership inside continuity members and
+    owned-observation rows, so the transform must reach nested payloads.  A
+    list is only replaced when its codec can represent it exactly.  Server-only
+    sets and tuples are normalized in the same single pass so the durable
+    document stays pure JSON without a second full-state walk.
+    """
+    if isinstance(node, dict):
+        collected: dict[str, Any] = {}
+        for key, value in node.items():
+            collected[str(key)] = value
+        # Policy enrichment attaches fresh named-gain runs under the legacy
+        # pairs name while the base unit still carries its own runs twin.
+        # The durable contract is exactly one representation, so canonize.
+        if isinstance(collected.get("_potential_named_observation_pairs"), dict):
+            collected["_potential_named_observation_runs"] = collected.pop(
+                "_potential_named_observation_pairs"
+            )
+        encoded: dict[str, Any] = {}
+        for key, value in collected.items():
+            spec = _PAIR_RUN_KEYS.get(key)
+            if spec is not None and isinstance(value, (list, set, frozenset)):
+                runs_key, encoder, _decoder = spec
+                runs = encoder(value)
+                if runs is not None:
+                    encoded[runs_key] = runs
+                    continue
+            encoded[key] = _encode_node(value)
+        return encoded
+    if isinstance(node, list):
+        return [_encode_node(item) for item in node]
+    if isinstance(node, (set, frozenset)):
+        return [_encode_node(item) for item in sorted(node, key=repr)]
+    if isinstance(node, tuple):
+        return [_encode_node(item) for item in node]
+    return node
+
+
+def _decode_node(node: Any) -> Any:
+    if isinstance(node, dict):
+        decoded: dict[str, Any] = {}
+        for key, value in node.items():
+            restored_key = str(key)
+            decoded_value = value
+            for pair_key, (runs_key, _encoder, decoder) in _PAIR_RUN_KEYS.items():
+                if restored_key == runs_key:
+                    restored_key = pair_key
+                    decoded_value = decoder(value)
+                    break
+            decoded[restored_key] = _decode_node(decoded_value)
+        return decoded
+    if isinstance(node, list):
+        return [_decode_node(item) for item in node]
+    return node
 
 
 def _json_safe(value: Any) -> Any:
