@@ -43,6 +43,10 @@ from app.services.identity_reviewed_material_continuity import (
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
+from app.services.review_source_fingerprints import (
+    FINGERPRINTS_FIELD,
+    build_canonical_source_fingerprints,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
@@ -382,6 +386,10 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         "frame_uniqueness_diagnostics": uniqueness,
         "conflicts": conflicts,
         "source": source,
+        # Captured AFTER the build: any canonical file rewritten while this
+        # snapshot was being produced must be observed at its final state, so
+        # the cheap preflight never sees an immediately-stale fingerprint.
+        FINGERPRINTS_FIELD: build_canonical_source_fingerprints(match_path),
         "safety": snapshot["safety"],
     }
     write_identity_json_atomic(match_path / SNAPSHOT_FILENAME, snapshot)

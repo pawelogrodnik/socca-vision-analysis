@@ -16,6 +16,10 @@ from app.services.identity_review_scope import (
 from app.services.identity_seeded_review_reduction import (
     load_initial_audit_completion_evidence,
 )
+from app.services.review_source_fingerprints import (
+    FINGERPRINTS_FIELD,
+    canonical_generation_maybe_current,
+)
 from app.services.review_workflow_store import (
     approval_is_current,
     current_approval_fingerprint,
@@ -309,17 +313,31 @@ def build_cheap_finalize_preflight_state(
     checked here with its real value: analysis completion, initial audit
     completion, previous recompute failure, required/mixed blockers,
     coverage readiness, render queued/running/failed, video-QA stage and
-    already-complete states.  The ONE intentional relaxation is canonical
-    source freshness: deciding whether the snapshot still matches every
-    canonical input requires re-digesting all large sources, so it is
-    deferred to the authoritative finalize recomputation, which remains the
-    final safety gate and can still reject finalize.
+    already-complete states.
+
+    Canonical source freshness is approximated with the compact
+    ``source_file_fingerprints`` generation map persisted in the report by
+    the authoritative build (``stat()`` size+mtime_ns only; no JSON parsing,
+    no semantic hashing).  When every fingerprint still matches, the check
+    that would require re-digesting all large sources stays deferred to the
+    authoritative finalize recomputation.  Any difference — or an old report
+    without fingerprint metadata — marks identity/stats/output/QA as not
+    current so the workflow derivation admits ``finalize_identity`` and the
+    authoritative pass can establish the actual semantic truth.
     """
     # Compact authoritative descriptor; deliberately NOT the full snapshot.
     report = load_json_object(match_path / "reviewed_identity_report.json")
     snapshot_digest = str((report or {}).get("snapshot_digest") or "")
     if not snapshot_digest:
         return _preflight_blocked("reviewed_identity_missing", "finalize")
+    # Cheap conservative gate: True = maybe current, False = changed,
+    # None = unknown (pre-fingerprint report) and handled as stale.
+    canonical_generation_current = bool(
+        canonical_generation_maybe_current(
+            (report or {}).get(FINGERPRINTS_FIELD),
+            match_path,
+        )
+    )
 
     progress, progress_reason = _current_cached_progress_for_snapshot_digest(
         match_path,
@@ -358,16 +376,18 @@ def build_cheap_finalize_preflight_state(
         "initial_audit": load_initial_audit_completion_evidence(match_path),
         "issues": _issue_evidence({}, progress),
         "freshness": {
-            # Canonical freshness versus the current sources is exactly the
-            # expensive check this preflight defers to the authoritative
-            # pass; a present report digest is treated as current here.
-            "reviewed_identity_current": True,
-            "reviewed_stats_current": stats_current,
-            "reviewed_output_current": output_current,
+            # Canonical freshness versus the current sources is approximated
+            # by the compact source-file generation fingerprints; only a
+            # matching generation keeps deferring the expensive semantic
+            # check to the authoritative pass.
+            "reviewed_identity_current": canonical_generation_current,
+            "reviewed_stats_current": stats_current and canonical_generation_current,
+            "reviewed_output_current": output_current and canonical_generation_current,
             "qa_approval_current": (
                 approval_is_current(approval, fingerprints)
                 and output_current
                 and stats_current
+                and canonical_generation_current
             ),
             "review_progress_current": progress is not None,
             "review_progress_reason": progress_reason,
