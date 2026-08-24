@@ -81,7 +81,7 @@ class OwnershipCompactCodecTests(unittest.TestCase):
             ],
             "projection_inputs": {
                 "observed_pair_runs": {"t1": [[0, 99]]},
-                "pair_index_runs": {"t1": [[0, 5, {"team_label": "A"}], [7, 8, {"team_label": "B"}]]},
+                "pair_index_runs": {"t1": [[0, 5, {"identity_status": "unresolved", "team_label": "A", "canonical_player_id": None}], [7, 8, {"identity_status": "confirmed", "team_label": "B", "canonical_player_id": "p9"}]]},
             },
         }
         validate_compact_document(document)
@@ -132,11 +132,9 @@ class OwnershipCompactCodecTests(unittest.TestCase):
             rows.append({"tracklet_id": "a", "frame": frame, "value": {
                 "identity_status": "confirmed", "team_label": "A", "canonical_player_id": "p1",
             }})
-        rows.append({"tracklet_id": "b", "frame": 55, "value": None})
 
         encoded = encode_index_rows(rows)
         self.assertEqual(encoded["a"], [[100, 139, rows[0]["value"]], [140, 159, rows[40]["value"]]])
-        self.assertEqual(encoded["b"], [[55, 55, None]])
 
         decoded = decode_index_rows(encoded)
         self.assertEqual(decoded, rows)
@@ -147,8 +145,23 @@ class OwnershipCompactCodecTests(unittest.TestCase):
         second = json.loads(json.dumps(first))
         self.assertEqual(first, second)
         self.assertEqual(json.loads(json.dumps(encode_index_rows(
-            [{"tracklet_id": "t1", "frame": frame, "value": {"team_label": "A"}} for frame in range(4)]
-        ))), {"t1": [[0, 3, {"team_label": "A"}]]})
+            [{"tracklet_id": "t1", "frame": frame, "value": {
+                "identity_status": "unresolved", "team_label": "A", "canonical_player_id": None,
+            }} for frame in range(4)]
+        ))), {"t1": [[0, 3, {"identity_status": "unresolved", "team_label": "A", "canonical_player_id": None}]]})
+
+    def test_index_value_contract_is_enforced(self) -> None:
+        good = {"identity_status": "unresolved", "team_label": "A", "canonical_player_id": None}
+        validate_index_runs({"t1": [[10, 20, good]]})
+        for bad_value in ("corrupt", 123, [], True, None, {"team_label": "A"}, {
+            "identity_status": "unresolved", "team_label": "Z",
+            "canonical_player_id": None,
+        }, {
+            "identity_status": "unresolved", "team_label": "A", "canonical_player_id": 5,
+        }):
+            with self.subTest(value=bad_value):
+                with self.assertRaises(CompactOwnershipError):
+                    validate_index_runs({"t1": [[10, 20, bad_value]]})
 
 
 class CompactPairIndexViewTests(unittest.TestCase):

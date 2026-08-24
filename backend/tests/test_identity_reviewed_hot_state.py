@@ -463,6 +463,87 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             expanded = EXPANSION_STATS["expanded_pairs"]
         self.assertLess(expanded, total_pairs // 10)
 
+    def test_v2_contract_violations_fail_closed_and_rebuild_exactly_once(self) -> None:
+        canonical_value = {"identity_status": "unresolved", "team_label": "A", "canonical_player_id": None}
+
+        def mutate(document: dict, scenario: str) -> None:
+            unit = document["internal_review_units"][0]
+            inputs = document["projection_inputs"]
+            if scenario == "missing_pair_index_runs":
+                del inputs["pair_index_runs"]
+            elif scenario == "missing_observed_pair_runs":
+                del inputs["observed_pair_runs"]
+            elif scenario == "malformed_index_value":
+                inputs["pair_index_runs"] = {"t-1": [[10, 20, "corrupt"]]}
+            elif scenario == "ambiguous_detected_twins":
+                unit["detected_pairs"] = [["t-1", 10], ["t-1", 11]]
+            elif scenario == "ambiguous_observed_twins":
+                inputs["observed_pairs"] = [["t-1", 10]]
+            elif scenario == "missing_ownership_for_nonempty_unit":
+                del unit["detected_pair_runs"]
+                unit["detected_observation_count"] = 2000
+            elif scenario == "cardinality_mismatch":
+                unit["detected_pair_runs"] = {"t-1": [[10, 19]]}
+                unit["detected_observation_count"] = 100
+            elif scenario == "nested_continuity_corruption":
+                document["internal_review_units"].append({
+                    "candidate_subject_id": "material-parent",
+                    "scope_kind": "material_continuity",
+                    "detected_observation_count": 0,
+                    "continuity_members": [
+                        {"candidate_subject_id": "member-1", "detected_pair_runs": {"t9": [[5, 2]]}},
+                    ],
+                })
+            else:
+                raise AssertionError(scenario)
+
+        scenarios = (
+            "missing_pair_index_runs",
+            "missing_observed_pair_runs",
+            "malformed_index_value",
+            "ambiguous_detected_twins",
+            "ambiguous_observed_twins",
+            "missing_ownership_for_nonempty_unit",
+            "cardinality_mismatch",
+            "nested_continuity_corruption",
+        )
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario):
+                with _workspace() as root:
+                    match = _match()
+                    with patch(
+                        "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                        side_effect=lambda *args, **kwargs: _progress(),
+                    ) as build:
+                        baseline = load_or_rebuild_review_hot_state(root, match)
+                        version_before = int(baseline["state_version"])
+                        document = json.loads((root / FILENAME).read_text(encoding="utf-8"))
+                        mutate(document, scenario)
+                        (root / FILENAME).write_text(json.dumps(document), encoding="utf-8")
+                        self.assertIsNone(load_existing_fresh_hot_state(root, match))
+                        rebuilt = load_or_rebuild_review_hot_state(root, match)
+                        self.assertEqual(build.call_count, 2)
+                    self.assertGreaterEqual(int(rebuilt["state_version"]), version_before)
+                    served = hot_review_unit(rebuilt, "subject-1")
+                    assert served is not None
+                    self.assertEqual(served["detected_pairs"], [("t-1", 10), ("t-1", 11)])
+                    with self.assertRaises(ReviewedIdentityHotStateError):
+                        assert_hot_state_version(rebuilt, version_before)
+
+    def test_valid_warm_cache_serves_without_any_rebuild(self) -> None:
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            side_effect=lambda *args, **kwargs: _progress(),
+        ) as build:
+            load_or_rebuild_review_hot_state(root, _match())
+            self.assertEqual(build.call_count, 1)
+            for _ in range(3):
+                state = load_existing_fresh_hot_state(root, _match())
+                assert state is not None
+                context = hot_context(state, "subject-1")
+                self.assertEqual(context["review_state_version"], 1)
+            self.assertEqual(build.call_count, 1)
+
     def test_roster_change_invalidates_an_otherwise_fresh_materialization(self) -> None:
         with _workspace() as root, patch(
             "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
