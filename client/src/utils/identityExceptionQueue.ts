@@ -32,6 +32,57 @@ export type RequiredReviewSaveTransition = {
 };
 
 
+export type RequiredReviewNavigationState = {
+  queueMutatedSinceSnapshot: boolean;
+};
+
+
+export type RequiredReviewPageRequest = {
+  offset: number;
+  index: number;
+  reanchoredToCurrentHead: boolean;
+};
+
+
+export function beginRequiredReviewNavigation(): RequiredReviewNavigationState {
+  return { queueMutatedSinceSnapshot: false };
+}
+
+
+export function recordRequiredReviewQueueMutation(): RequiredReviewNavigationState {
+  return { queueMutatedSinceSnapshot: true };
+}
+
+
+export function resolveRequiredReviewPageRequest(
+  queue: ReviewedIdentityReviewQueue,
+  destination: Extract<ReviewPageNavigation, { kind: 'page' }>,
+  navigation: RequiredReviewNavigationState,
+): RequiredReviewPageRequest {
+  if (queue === 'required' && navigation.queueMutatedSinceSnapshot) {
+    // A durable save can shrink or rerank the queue. Its old positive offsets
+    // no longer identify the same source page, so begin from the live head.
+    return { offset: 0, index: 0, reanchoredToCurrentHead: true };
+  }
+  return {
+    offset: destination.offset,
+    index: destination.index,
+    reanchoredToCurrentHead: false,
+  };
+}
+
+
+export function shouldVerifyMutatedRequiredQueueEmpty(
+  queue: ReviewedIdentityReviewQueue,
+  localCaseCount: number,
+  navigation: RequiredReviewNavigationState,
+): boolean {
+  return queue === 'required'
+    && localCaseCount === 0
+    && navigation.queueMutatedSinceSnapshot;
+}
+
+
 export function beginRequiredReviewLifecycle(knownRemaining: number): RequiredReviewLifecycle {
   return {
     knownRemaining: Math.max(0, knownRemaining),

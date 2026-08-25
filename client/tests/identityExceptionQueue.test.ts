@@ -8,15 +8,19 @@ import type {
 } from '../src/types.ts';
 import {
   REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
+  beginRequiredReviewNavigation,
   beginRequiredReviewLifecycle,
   finalizeDeferredReviewBatch,
+  recordRequiredReviewQueueMutation,
   recordDurableRequiredReviewSave,
   removeResolvedReviewCase,
+  resolveRequiredReviewPageRequest,
   resolveReviewPageNavigation,
   reviewUnitKey,
   shouldAutoFinalizeDeferredQueue,
   shouldFinalizeDeferredReview,
   shouldRecoverRequiredReviewCompletion,
+  shouldVerifyMutatedRequiredQueueEmpty,
 } from '../src/utils/identityExceptionQueue.ts';
 
 
@@ -328,4 +332,129 @@ test('head replenishment does not skip sources after a mutable queue shrinks', (
   assert.deepEqual(keys, original.slice(40).map((item) => reviewUnitKey(item.unit)));
   assert.equal(keys.some((key) => resolvedKeys.has(key)), false);
   assert.equal(new Set(keys).size, 40);
+});
+
+
+function requiredPageRequest(
+  direction: 'previous' | 'next',
+  currentIndex: number,
+  pageLength: number,
+  pageOffset: number,
+  hasMore: boolean,
+  mutated = false,
+) {
+  const destination = resolveReviewPageNavigation({
+    direction,
+    currentIndex,
+    pageLength,
+    pageOffset,
+    pageSize: REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
+    hasMore,
+  });
+  assert.equal(destination.kind, 'page');
+  if (destination.kind !== 'page') throw new Error('expected a server page request');
+  return resolveRequiredReviewPageRequest(
+    'required',
+    destination,
+    mutated ? recordRequiredReviewQueueMutation() : beginRequiredReviewNavigation(),
+  );
+}
+
+
+function serverPageSourceKeys(sourceKeys: string[], offset: number) {
+  return sourceKeys.slice(offset, offset + REQUIRED_REVIEW_WORKING_WINDOW_SIZE);
+}
+
+
+test('read-only all-filter browsing reaches every 95-case page without changing Required lifecycle', () => {
+  const sourceKeys = Array.from({ length: 95 }, (_, index) => reviewUnitKey(unit(`all-${index + 1}`)));
+  const lifecycle = beginRequiredReviewLifecycle(sourceKeys.length);
+  const requests = [0];
+  const firstNext = requiredPageRequest('next', 39, 40, 0, true);
+  requests.push(firstNext.offset);
+  const secondNext = requiredPageRequest('next', 39, 40, 40, true);
+  requests.push(secondNext.offset);
+
+  assert.deepEqual(requests, [0, 40, 80]);
+  const browsedKeys = requests.flatMap((offset) => serverPageSourceKeys(sourceKeys, offset));
+  assert.deepEqual(browsedKeys, sourceKeys);
+  assert.equal(new Set(browsedKeys).size, 95);
+  assert.deepEqual(lifecycle, beginRequiredReviewLifecycle(95));
+});
+
+
+test('read-only Verisk browsing reaches cases forty-one through fifty-eight', () => {
+  const sourceKeys = Array.from({ length: 58 }, (_, index) => reviewUnitKey(unit(`verisk-${index + 1}`)));
+  const request = requiredPageRequest('next', 39, 40, 0, true);
+  assert.deepEqual(request, { offset: 40, index: 0, reanchoredToCurrentHead: false });
+  assert.deepEqual(
+    [...serverPageSourceKeys(sourceKeys, 0), ...serverPageSourceKeys(sourceKeys, request.offset)],
+    sourceKeys,
+  );
+  assert.equal(serverPageSourceKeys(sourceKeys, request.offset).length, 18);
+});
+
+
+test('read-only forward and backward paging retains the same eighty source keys', () => {
+  const sourceKeys = Array.from({ length: 80 }, (_, index) => reviewUnitKey(unit(`source-${index + 1}`)));
+  const next = requiredPageRequest('next', 39, 40, 0, true);
+  const previous = requiredPageRequest('previous', 0, 40, next.offset, false);
+  assert.deepEqual(next, { offset: 40, index: 0, reanchoredToCurrentHead: false });
+  assert.deepEqual(previous, { offset: 0, index: 39, reanchoredToCurrentHead: false });
+  assert.deepEqual(sourceKeys.slice(next.offset, next.offset + 40), sourceKeys.slice(40));
+  assert.deepEqual(sourceKeys.slice(previous.offset, previous.offset + 40), sourceKeys.slice(0, 40));
+});
+
+
+test('a durable save invalidates positional continuation but not read-only browsing lifecycle', () => {
+  const staleNext = requiredPageRequest('next', 39, 40, 40, true, true);
+  assert.deepEqual(staleNext, { offset: 0, index: 0, reanchoredToCurrentHead: true });
+  const stalePrevious = requiredPageRequest('previous', 0, 40, 40, true, true);
+  assert.deepEqual(stalePrevious, { offset: 0, index: 0, reanchoredToCurrentHead: true });
+
+  const safeKeys = Array.from({ length: 100 }, (_, index) => reviewUnitKey(unit(`source-${index + 1}`)));
+  const resolved = new Set([safeKeys[54]]); // save on page two, case 55
+  const currentHead = safeKeys.filter((key) => !resolved.has(key));
+  const reanchoredBrowse = [0, 40, 80].flatMap((offset) => serverPageSourceKeys(currentHead, offset));
+  assert.deepEqual(reanchoredBrowse, currentHead);
+  assert.equal(reanchoredBrowse.includes(safeKeys[80]), true);
+  assert.equal(currentHead.includes(safeKeys[54]), false);
+});
+
+
+test('a locally empty mutated Corgi page requires one fresh filtered verification', () => {
+  const initialCorgi = Array.from({ length: 26 }, (_, index) => reviewUnitKey(unit(`corgi-${index + 1}`)));
+  const promotedCorgi = Array.from({ length: 5 }, (_, index) => reviewUnitKey(unit(`corgi-promoted-${index + 1}`)));
+  const resolved = new Set(initialCorgi);
+  const mutated = recordRequiredReviewQueueMutation();
+  assert.equal(shouldVerifyMutatedRequiredQueueEmpty('required', 0, mutated), true);
+  assert.equal(shouldVerifyMutatedRequiredQueueEmpty('optional_audit', 0, mutated), false);
+  // The fresh Corgi GET is authoritative and can expose newly promoted work
+  // even though its old page had `hasMore=false`.
+  const freshCorgi = promotedCorgi.filter((key) => !resolved.has(key));
+  assert.deepEqual(freshCorgi, promotedCorgi);
+  assert.equal(freshCorgi.length, 5);
+  // Accepting the verification response establishes a new authoritative page
+  // snapshot, so an already-verified empty filter does not loop its GET.
+  assert.equal(
+    shouldVerifyMutatedRequiredQueueEmpty('required', 0, beginRequiredReviewNavigation()),
+    false,
+  );
+});
+
+
+test('a fresh verified empty Corgi snapshot can show global work without finalizing', () => {
+  const verifiedEmptyCorgi = beginRequiredReviewNavigation();
+  const globalRequiredRemaining = 125;
+  assert.equal(shouldVerifyMutatedRequiredQueueEmpty('required', 0, verifiedEmptyCorgi), false);
+  assert.equal(globalRequiredRemaining > 0, true);
+  assert.equal(shouldRecoverRequiredReviewCompletion(true, globalRequiredRemaining, true), false);
+});
+
+
+test('exact Mixed staging invalidates positional pagination without changing its hot routing semantics', () => {
+  const pageTwoAfterMixed = requiredPageRequest('next', 39, 40, 40, true, true);
+  assert.deepEqual(pageTwoAfterMixed, { offset: 0, index: 0, reanchoredToCurrentHead: true });
+  const mixedSource = unit('subject-mixed', 'exact-segment');
+  assert.equal(reviewUnitKey(mixedSource), 'segment:exact-segment');
 });
