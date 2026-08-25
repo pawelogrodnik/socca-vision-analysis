@@ -55,9 +55,10 @@ test('exception panel resets filters to page one and preserves filters for navig
   assert.match(panel, /changeTeamFilter\(nextFilter: TeamReviewFilter\)/);
   assert.match(panel, /setPageOffset\(0\)/);
   assert.match(panel, /loadCases\(undefined, false, 0, 0, nextFilter, activeQueue\)/);
-  assert.match(panel, /destination\.index,[\s\S]*activeTeamFilter/);
+  assert.match(panel, /request\.index,[\s\S]*activeTeamFilter/);
   assert.match(panel, /REQUIRED_REVIEW_WORKING_WINDOW_SIZE/);
-  assert.match(panel, /destination\.offset > 0 && activeQueue === 'required' \? 0 : destination\.offset/);
+  assert.match(panel, /resolveRequiredReviewPageRequest\(/);
+  assert.match(panel, /requiredReviewNavigationRef\.current/);
   assert.doesNotMatch(panel, /pageOffset \+ REVIEW_PAGE_SIZE/);
   assert.match(panel, /finalizeCorrections\(activeTeamFilter, activeQueue\)/);
   assert.match(panel, /transition\.synchronization === 'replenish'/);

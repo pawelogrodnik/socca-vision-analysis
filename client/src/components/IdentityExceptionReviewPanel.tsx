@@ -24,13 +24,17 @@ import type {
 import { hasOperatorReviewableVisualEvidence } from '../utils/identityReviewWorkspace';
 import {
   REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
+  beginRequiredReviewNavigation,
   beginRequiredReviewLifecycle,
   finalizeDeferredReviewBatch,
+  recordRequiredReviewQueueMutation,
   recordDurableRequiredReviewSave,
   removeResolvedReviewCase,
+  resolveRequiredReviewPageRequest,
   resolveReviewPageNavigation,
   reviewUnitKey,
   shouldRecoverRequiredReviewCompletion,
+  shouldVerifyMutatedRequiredQueueEmpty,
 } from '../utils/identityExceptionQueue';
 import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
 import {
@@ -145,6 +149,7 @@ export function IdentityExceptionReviewPanel({
   const [optionalAuditRemaining, setOptionalAuditRemaining] = useState(0);
   const finalizeInFlight = useRef(false);
   const requiredReviewLifecycleRef = useRef(beginRequiredReviewLifecycle(0));
+  const requiredReviewNavigationRef = useRef(beginRequiredReviewNavigation());
   const committedReviewKeysRef = useRef(new Set<string>());
   const loadRequestIdRef = useRef(0);
   const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
@@ -192,6 +197,8 @@ export function IdentityExceptionReviewPanel({
         ?? actionable.length;
       if (queue === 'required') {
         requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(knownGlobalRequired);
+        // This accepted hot-progress response is a new positional snapshot.
+        requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
       }
       setPageOffset(progress.pagination?.offset ?? offset);
       setHasMore(progress.pagination?.has_more ?? false);
@@ -230,6 +237,7 @@ export function IdentityExceptionReviewPanel({
     setActiveTeamFilter('all');
     setActiveQueue(initialQueue);
     requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
+    requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
     void loadCases(() => disposed, false, 0, 0, 'all', initialQueue);
     return () => { disposed = true; };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
@@ -288,6 +296,7 @@ export function IdentityExceptionReviewPanel({
     setTotalRemaining(0);
     setMessage('');
     requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
+    requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
     void loadCases(undefined, false, 0, 0, nextFilter, activeQueue);
   }
 
@@ -301,6 +310,7 @@ export function IdentityExceptionReviewPanel({
     setTotalRemaining(0);
     setMessage('');
     requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
+    requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
     void loadCases(undefined, false, 0, 0, 'all', nextQueue);
   }
 
@@ -321,13 +331,16 @@ export function IdentityExceptionReviewPanel({
     if (destination.kind === 'local') {
       moveToCase(destination.index);
     } else if (destination.kind === 'page') {
+      const request = resolveRequiredReviewPageRequest(
+        activeQueue,
+        destination,
+        requiredReviewNavigationRef.current,
+      );
       void loadCases(
         undefined,
         true,
-        // Required Review is a shrinking queue. Never carry a numeric offset
-        // across persisted removals: start from its current head instead.
-        destination.offset > 0 && activeQueue === 'required' ? 0 : destination.offset,
-        destination.index,
+        request.offset,
+        request.index,
         activeTeamFilter,
         activeQueue,
       );
@@ -342,6 +355,9 @@ export function IdentityExceptionReviewPanel({
     const savedKey = reviewUnitKey(reviewCase.unit);
     if (committedReviewKeysRef.current.has(savedKey)) return;
     committedReviewKeysRef.current.add(savedKey);
+    if (activeQueue === 'required') {
+      requiredReviewNavigationRef.current = recordRequiredReviewQueueMutation();
+    }
     if (result.review_state_rebuild_required) {
       // Do not derive a new queue from stale local cards after a topology
       // change. The next GET performs one authoritative materialization.
@@ -390,6 +406,21 @@ export function IdentityExceptionReviewPanel({
           activeTeamFilter,
           activeQueue,
         );
+      } else if (shouldVerifyMutatedRequiredQueueEmpty(
+        activeQueue,
+        next.cases.length,
+        requiredReviewNavigationRef.current,
+      )) {
+        // `hasMore` belongs to the page before its durable mutations. Verify
+        // an empty local page once against the current hot filtered queue.
+        void loadCases(
+          undefined,
+          true,
+          0,
+          0,
+          activeTeamFilter,
+          activeQueue,
+        );
       } else if (next.cases.length === 0 && hasMore) {
         // Offset 0 is the head of the *current* shrinking queue. All local
         // entries were just persisted, so this cannot skip its next sources.
@@ -425,6 +456,7 @@ export function IdentityExceptionReviewPanel({
         setIndex(0);
       }
       requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
+      requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
       setMessage(reviewRecomputeMessage(
         refreshedCases.length,
         result.workflow.issues.coverage_readiness?.allows_finalize === false,
