@@ -141,6 +141,7 @@ def validate_deferred_review_action(
     return {
         "review_unit": unit,
         "idempotent_replay": idempotent_replay,
+        "saved_decision": saved,
         "supersedes_saved_decision": supersedes_saved_decision,
         "batch_source_snapshot_digest": progress["source_snapshot_digest"],
         "detected_team_labels_by_subject": detected_team_labels_by_subject,

@@ -122,7 +122,16 @@ export function ReviewedIdentityCorrectionForm({
         }
       })
       .catch((reason) => {
-        if (!cancelled) setError(errorMessage(reason));
+        if (cancelled) return;
+        if (onSaveConflict && isRecoverableReviewQueueConflict(reason)) {
+          // Context is intentionally read-only. A stale context means the
+          // queue changed while it was being prefetched, so let the parent
+          // recover from progress rather than showing a dead card.
+          invalidateReviewedCorrectionContext(matchId);
+          onSaveConflict();
+          return;
+        }
+        setError(errorMessage(reason));
       })
       .finally(() => {
         if (!cancelled) setBusy(false);

@@ -496,6 +496,7 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 },
             )
             self.assertTrue(replay["idempotent_replay"])
+            self.assertEqual(replay["saved_decision"]["action"], "assign_team")
             with self.assertRaises(DeferredReviewActionError) as raised:
                 validate_deferred_review_action(
                     root,

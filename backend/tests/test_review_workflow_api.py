@@ -252,6 +252,56 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         finalize_snapshot.assert_not_called()
         seeded_rebuild.assert_not_called()
 
+    def test_deferred_idempotent_replay_never_persists_or_advances_hot_state(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        hot_state = {
+            "state_version": 11,
+            "progress": {"coverage_debt": {"required_cases": 3}},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "idempotent_replay": True,
+                "saved_decision": {"candidate_subject_id": "subject-1", "action": "unresolved"},
+                "hot_state": hot_state,
+            },
+        ), patch("app.main.reviewed_decisions_semantic_digest", return_value="existing-decision"), patch(
+            "app.main.persist_reviewed_identity_correction"
+        ) as persist, patch("app.main.update_hot_state_after_deferred_save") as update_hot:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "unresolved", "defer_recompute": True},
+            )
+
+        self.assertTrue(response["idempotent_replay"])
+        self.assertEqual(response["review_state_version"], 11)
+        self.assertEqual(response["persistence"]["status"], "already_saved")
+        persist.assert_not_called()
+        update_hot.assert_not_called()
+
+    def test_correction_context_is_read_only_and_reports_a_stale_queue(self) -> None:
+        from fastapi import HTTPException, Response
+        from app.main import get_match_reviewed_correction_context
+
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.load_existing_fresh_hot_state", return_value=None), patch(
+            "app.main.load_or_rebuild_review_hot_state"
+        ) as rebuild:
+            with self.assertRaises(HTTPException) as raised:
+                get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-1",
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "review_state_stale")
+        rebuild.assert_not_called()
+
     def test_deferred_exact_mixed_stage_updates_hot_queue_without_structural_reload(self) -> None:
         from app.main import post_match_reviewed_identity_correction
 

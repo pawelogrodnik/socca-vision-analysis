@@ -2010,10 +2010,12 @@ export type ReviewedCorrectionResponse = {
   snapshot?: { status: string; stale: boolean };
   semantic_decision_digest: string;
   recompute_deferred: boolean;
+  /** The server accepted no new mutation: this exact decision already exists. */
+  idempotent_replay?: boolean;
   review_state_version?: number;
   review_state_rebuild_required?: boolean;
   persistence?: {
-    status: 'saved';
+    status: 'saved' | 'already_saved';
     downstream_recompute_triggered: boolean;
   };
   performance?: Record<string, number>;

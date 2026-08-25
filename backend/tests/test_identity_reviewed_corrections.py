@@ -60,11 +60,13 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
         from fastapi import HTTPException, Response
         from app.main import (
             get_match_reviewed_correction_context,
+            get_match_reviewed_identity_progress,
             post_match_reviewed_identity_correction,
         )
 
         with _workspace() as root:
             _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {"semantic_digest": "snapshot"})
             candidate = _load(root / "identity_candidate_shadow.json")
             candidate["subjects"] = [
                 row for row in candidate["subjects"]
@@ -76,6 +78,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
                 return_value=progress,
             ) as build_progress:
+                get_match_reviewed_identity_progress("m1", Response())
                 context = get_match_reviewed_correction_context(
                     "m1",
                     Response(),
@@ -104,6 +107,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
 
         with _workspace() as root:
             _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {"semantic_digest": "snapshot"})
             candidate = _load(root / "identity_candidate_shadow.json")
             candidate["subjects"] = [
                 row for row in candidate["subjects"]
@@ -114,6 +118,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
                 return_value=_whole_subject_hot_progress(),
             ):
+                get_match_reviewed_identity_progress("m1", Response())
                 context = get_match_reviewed_correction_context(
                     "m1",
                     Response(),

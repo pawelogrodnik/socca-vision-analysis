@@ -97,6 +97,9 @@ from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
 )
+from app.services.identity_reviewed_correction_context import (
+    reviewed_decisions_semantic_digest,
+)
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     validate_identity_review_scope,
@@ -2185,7 +2188,13 @@ def get_match_reviewed_correction_context(
     started = time.perf_counter()
     try:
         state_started = time.perf_counter()
-        state = load_or_rebuild_review_hot_state(path, read_match_meta(path))
+        # Context is a read for the card selected by progress. It must never
+        # cold-rebuild the shared queue: concurrent prefetches previously
+        # raced a save and changed the review-state version underneath the
+        # operator. Progress owns authoritative recovery materialization.
+        state = load_existing_fresh_hot_state(path, read_match_meta(path))
+        if state is None:
+            raise ReviewedIdentityHotStateError("review_state_stale")
         state_ms = round((time.perf_counter() - state_started) * 1000, 1)
         context_started = time.perf_counter()
         result = hot_context(state, candidate_subject_id, review_target_id)
@@ -2200,6 +2209,14 @@ def get_match_reviewed_correction_context(
             "total_ms": elapsed_ms,
         }
         return result
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": "Stan Review zmienił się. Synchronizuję kolejkę Review.",
+            },
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2222,6 +2239,46 @@ def post_match_reviewed_identity_correction(
                 payload,
             )
             deferred_gate_ms = round((time.perf_counter() - started) * 1000, 1)
+            if deferred_gate.get("idempotent_replay") is True:
+                # The mutation was already durably accepted. Do not touch
+                # canonical decisions or patch the hot projection again: the
+                # caller must obtain the current authoritative queue instead
+                # of treating this replay as a second successful decision.
+                hot_state = deferred_gate.get("hot_state")
+                return {
+                    "saved_decision": deferred_gate.get("saved_decision"),
+                    "effective_action": str(payload.get("action") or ""),
+                    "allocated_stable_slot_id": None,
+                    "semantic_decision_digest": reviewed_decisions_semantic_digest(path),
+                    "recompute_deferred": True,
+                    "idempotent_replay": True,
+                    "review_state_version": (
+                        hot_state.get("state_version")
+                        if isinstance(hot_state, dict)
+                        else None
+                    ),
+                    "coverage_debt": (
+                        dict((hot_state.get("progress") or {}).get("coverage_debt") or {})
+                        if isinstance(hot_state, dict)
+                        else None
+                    ),
+                    "persistence": {
+                        "status": "already_saved",
+                        "downstream_recompute_triggered": False,
+                    },
+                    "performance": {
+                        "workflow_validation_ms": 0.0,
+                        "deferred_gate_ms": deferred_gate_ms,
+                        "persist_decision_ms": 0.0,
+                        "hot_state_update_ms": 0.0,
+                        "seeded_candidate_rebuild_ms": 0.0,
+                        "finalize_reviewed_identity_ms": 0.0,
+                        "segment_evidence_ms": 0.0,
+                        "progress_build_ms": 0.0,
+                        "final_workflow_ms": 0.0,
+                        "total_ms": round((time.perf_counter() - started) * 1000, 1),
+                    },
+                }
             persist_started = time.perf_counter()
             result = persist_reviewed_identity_correction(
                 path,

@@ -370,6 +370,13 @@ export function IdentityExceptionReviewPanel({
     if (!reviewCase || !result.recompute_deferred) {
       return;
     }
+    if (result.idempotent_replay) {
+      // A request can arrive after a previous accepted save (for example from
+      // an old card kept by a pre-policy cache). It is not another decision:
+      // do not decrement, finalize, or locally advance the Required queue.
+      recoverFromReviewSaveConflict();
+      return;
+    }
     const savedKey = reviewUnitKey(reviewCase.unit);
     if (!committedReviewKeysRef.current.markIfNew(savedKey)) return;
     if (activeQueue === 'required') {
