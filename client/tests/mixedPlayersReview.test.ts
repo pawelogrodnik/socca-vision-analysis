@@ -7,7 +7,7 @@ import type { MixedPlayerCase, MixedSegmentAssignment, ReviewedCorrectionContext
 import { correctionContextAsSplitCase } from '../src/utils/reviewedIdentitySplitCase.ts';
 import { reviewedIdentityChildActions } from '../src/utils/reviewedIdentityActions.ts';
 import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
-import { exactMixedFocusIndex, mixedPostSaveDestination } from '../src/utils/mixedReviewNavigation.ts';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination } from '../src/utils/mixedReviewNavigation.ts';
 
 const reviewCase: MixedPlayerCase = {
   candidate_subject_id: 'mixed-1',
@@ -257,6 +257,48 @@ test('resolve-now exact focus never falls back to the first or same-subject Mixe
   assert.equal(exactMixedFocusIndex(['M-older', 'M-new'], 'M-new'), 1);
   assert.equal(exactMixedFocusIndex(['M-older', 'M-same-subject'], 'M-new'), null);
   assert.equal(exactMixedFocusIndex(['M-older'], null), 0);
+});
+
+test('manual Mixed materializes M1, then keeps it visible until exact M2 evidence is ready', async () => {
+  let release!: (queue: { cases: Array<{ case_id: string }> }) => void;
+  const requestedCaseIds: string[] = [];
+  let visibleCaseId: string | null = null;
+  const initiallyFocused = await loadExactMixedFocus(
+    async (caseId) => {
+      requestedCaseIds.push(caseId);
+      return { cases: [{ case_id: 'M1' }, { case_id: 'M2' }] };
+    },
+    'M1',
+  );
+  assert.ok(initiallyFocused);
+  visibleCaseId = initiallyFocused.queue.cases[initiallyFocused.index].case_id;
+
+  const pending = loadExactMixedFocus(
+    (caseId) => {
+      requestedCaseIds.push(caseId);
+      return new Promise((resolve) => { release = resolve; });
+    },
+    'M2',
+  ).then((focused) => {
+    if (focused) visibleCaseId = focused.queue.cases[focused.index].case_id;
+  });
+
+  assert.deepEqual(requestedCaseIds, ['M1', 'M2']);
+  assert.equal(visibleCaseId, 'M1');
+  release({ cases: [{ case_id: 'M1' }, { case_id: 'M2' }] });
+  await pending;
+  assert.equal(visibleCaseId, 'M2');
+});
+
+test('defer progression uses the same exact evidence gate and fails closed if M2 disappeared', async () => {
+  const focused = await loadExactMixedFocus(
+    async (caseId) => {
+      assert.equal(caseId, 'M2');
+      return { cases: [{ case_id: 'M1' }, { case_id: 'M3' }] };
+    },
+    'M2',
+  );
+  assert.equal(focused, null);
 });
 
 test('segment presentation derives operator time from temporal evidence', () => {

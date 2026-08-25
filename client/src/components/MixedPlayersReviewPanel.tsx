@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayersReview, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
 import { errorMessage } from '../lib/helpers';
@@ -6,7 +6,7 @@ import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegm
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
-import { exactMixedFocusIndex, mixedPostSaveDestination, type MixedEntryMode } from '../utils/mixedReviewNavigation';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, type MixedEntryMode } from '../utils/mixedReviewNavigation';
 
 type Props = {
   match: Match;
@@ -42,11 +42,15 @@ export function MixedPlayersReviewPanel({
   const [message, setMessage] = useState('');
   const [focusMissing, setFocusMissing] = useState(false);
   const [reprojectFailed, setReprojectFailed] = useState(false);
+  const caseNavigationRequestRef = useRef(0);
   void workflow;
 
   useEffect(() => {
     let cancelled = false;
+    caseNavigationRequestRef.current += 1;
     setBusy(true);
+    setQueue(null);
+    setIndex(0);
     setFocusMissing(false);
     setReprojectFailed(false);
     getMixedPlayersReview(match.id, focusCaseId)
@@ -209,7 +213,9 @@ export function MixedPlayersReviewPanel({
       });
       setHasUnsavedChanges(false);
       setMessage('Zapisano jako przypadek bez prostego podziału czasowego. Tożsamość nie została zgadnięta.');
-      if (queue && index < queue.cases.length - 1) setIndex(index + 1);
+      if (queue && index < queue.cases.length - 1) {
+        await materializeAndFocusCase(index + 1, true);
+      }
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
@@ -287,12 +293,55 @@ export function MixedPlayersReviewPanel({
     }
   }
 
+  async function materializeAndFocusCase(nextIndex: number, discardCurrent = false) {
+    if (!queue) return;
+    const boundedIndex = Math.max(0, Math.min(queue.cases.length - 1, nextIndex));
+    const targetCaseId = queue.cases[boundedIndex]?.case_id;
+    if (!targetCaseId) {
+      setFocusMissing(true);
+      setMessage('Nie można ustalić dokładnego przypadku Mixed do otwarcia.');
+      return;
+    }
+    const requestId = ++caseNavigationRequestRef.current;
+    setBusy(true);
+    if (discardCurrent) {
+      setQueue(null);
+      setIndex(0);
+    }
+    setMessage('Przygotowuję widoki wybranego przypadku…');
+    try {
+      const focused = await loadExactMixedFocus(
+        (caseId) => getMixedPlayersReview(match.id, caseId),
+        targetCaseId,
+      );
+      if (requestId !== caseNavigationRequestRef.current) return;
+      if (focused === null) {
+        setQueue(null);
+        setFocusMissing(true);
+        setMessage('Wybrany przypadek Mixed zniknął z aktualnej kolejki. Nie otwarto innego przypadku.');
+        return;
+      }
+      // The backend has now materialized this exact case's missing evidence.
+      // Only at this point may it become the visible review card.
+      setQueue(focused.queue);
+      setIndex(focused.index);
+      setMessage('');
+    } catch (error) {
+      if (requestId === caseNavigationRequestRef.current) {
+        if (discardCurrent) setFocusMissing(true);
+        setMessage(errorMessage(error));
+      }
+    } finally {
+      if (requestId === caseNavigationRequestRef.current) setBusy(false);
+    }
+  }
+
   function navigateTo(nextIndex: number) {
-    if (!queue || nextIndex === index) return;
+    if (!queue || busy || nextIndex === index) return;
     if (hasUnsavedChanges && !window.confirm(
       'Masz niezapisany podział lub przypisania. Przejście do innego przypadku je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
     )) return;
-    setIndex(Math.max(0, Math.min(queue.cases.length - 1, nextIndex)));
+    void materializeAndFocusCase(nextIndex);
   }
 
   useEffect(() => {
@@ -309,7 +358,7 @@ export function MixedPlayersReviewPanel({
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasUnsavedChanges, index, queue]);
+  }, [busy, hasUnsavedChanges, index, queue]);
 
   if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
   if (focusMissing) return <section className='identity-exception-review'><div className='status error'><strong>Nie można bezpiecznie otworzyć wskazanego przypadku Mixed.</strong><p>{message}</p></div></section>;

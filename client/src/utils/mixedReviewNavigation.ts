@@ -25,3 +25,15 @@ export function exactMixedFocusIndex(
   const index = caseIds.indexOf(focusCaseId);
   return index >= 0 ? index : null;
 }
+
+export async function loadExactMixedFocus<Queue extends { cases: Array<{ case_id?: string }> }>(
+  load: (caseId: string) => Promise<Queue>,
+  caseId: string,
+): Promise<{ queue: Queue; index: number } | null> {
+  const queue = await load(caseId);
+  const index = exactMixedFocusIndex(
+    queue.cases.map((item) => item.case_id || ''),
+    caseId,
+  );
+  return index === null ? null : { queue, index };
+}

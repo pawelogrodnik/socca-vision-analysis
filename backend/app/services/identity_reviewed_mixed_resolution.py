@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 from typing import Any
 
 from app.services.identity_reviewed_correction_context import reviewed_decisions_semantic_digest
@@ -30,6 +31,7 @@ from app.services.identity_reviewed_segments import (
     DECISIONS_FILENAME,
     build_segment_review_document,
     load_segment_decisions,
+    project_segment_decisions_onto_materialized_review,
     save_segment_decisions_batch,
 )
 from app.services.identity_initial_audit_store import write_identity_json_atomic
@@ -44,7 +46,10 @@ def save_mixed_player_resolution(
     match_doc: dict[str, Any],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
+    started = time.perf_counter()
+    performance = _mixed_split_performance()
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
+    phase_started = time.perf_counter()
     document = load_mixed_player_cases(match_path)
     cases = {
         str(row.get("case_id") or row.get("candidate_subject_id")): dict(row)
@@ -53,6 +58,7 @@ def save_mixed_player_resolution(
     }
     case_id = str(payload.get("case_id") or subject_id)
     case = cases.get(case_id)
+    performance["mixed_case_load_ms"] = _elapsed_ms(phase_started)
     if case is None:
         raise ValueError(f"Unknown mixed-player case: {subject_id or '<missing>'}")
     supplied_digest = str(payload.get("source_subject_digest") or "")
@@ -77,7 +83,10 @@ def save_mixed_player_resolution(
                 "source_ownership_digest": source.get("source_ownership_digest"),
             },
         )
-    if supplied_digest != current_mixed_subject_digest(match_path, subject_id):
+    phase_started = time.perf_counter()
+    current_digest = current_mixed_subject_digest(match_path, subject_id)
+    performance["source_resolution_ms"] = _elapsed_ms(phase_started)
+    if supplied_digest != current_digest:
         raise MixedPlayerTargetError("mixed_player_case_stale")
 
     resolution = str(payload.get("resolution") or "split")
@@ -92,21 +101,30 @@ def save_mixed_player_resolution(
             }
         )
         cases[case_id] = case
+        phase_started = time.perf_counter()
         save_mixed_case_document(match_path, {**document, "cases": list(cases.values())})
-        # ``save_segment_decision`` deliberately accepts one materialized review
-        # for an atomic batch. Rebuild it only after the batch so persisted
-        # target status reflects the decisions just saved; otherwise the next
-        # progress read can incorrectly surface those children as pending.
+        performance["mixed_case_persistence_ms"] = _elapsed_ms(phase_started)
+        # The classification changes which operator targets are materialized,
+        # so this branch still needs one canonical topology refresh.
+        phase_started = time.perf_counter()
         build_segment_review_document(match_path, match_doc)
+        performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         digest = reviewed_decisions_semantic_digest(match_path)
+        performance["semantic_digest_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         mark_reviewed_identity_recompute_required(match_path, semantic_decision_digest=digest)
-        return _response(case, digest)
+        performance["recompute_marker_ms"] = _elapsed_ms(phase_started)
+        performance["total_ms"] = _elapsed_ms(started)
+        return {**_response(case, digest), "performance": performance}
     if resolution != "split":
         raise ValueError(f"Unsupported mixed resolution: {resolution}")
 
+    phase_started = time.perf_counter()
     observations = observations_for_case(match_path, case)
     split_frames = sorted({int(value) for value in payload.get("split_after_frames") or []})
     validate_split_frames(observations, split_frames)
+    performance["split_validation_ms"] = _elapsed_ms(phase_started)
     case.update(
         {
             "resolution_status": "unresolved",
@@ -115,6 +133,7 @@ def save_mixed_player_resolution(
         }
     )
     pending_document = {**document, "cases": [case if key == case_id else row for key, row in cases.items()]}
+    phase_started = time.perf_counter()
     targets = [
         row
         for row in operator_mixed_targets(match_path, pending_document)
@@ -123,6 +142,7 @@ def save_mixed_player_resolution(
     assignments = payload.get("segment_assignments") or []
     if len(assignments) != len(targets):
         raise ValueError("Every mixed segment requires one assignment")
+    performance["target_derivation_ms"] = _elapsed_ms(phase_started)
 
     rollback_paths = {
         path: path.read_bytes() if path.exists() else None
@@ -134,8 +154,13 @@ def save_mixed_player_resolution(
         )
     }
     try:
+        phase_started = time.perf_counter()
         save_mixed_case_document(match_path, pending_document)
+        performance["mixed_case_persistence_ms"] += _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         review = build_segment_review_document(match_path, match_doc)
+        performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         saved = save_segment_decisions_batch(
             match_path,
             match_doc,
@@ -148,7 +173,9 @@ def save_mixed_player_resolution(
                 for target, assignment in zip(targets, assignments, strict=True)
             ],
             materialized_review=review,
+            performance=performance,
         )
+        performance["segment_decision_batch_ms"] = _elapsed_ms(phase_started)
         case.update(
             {
                 "resolution_status": "resolved",
@@ -159,7 +186,12 @@ def save_mixed_player_resolution(
             }
         )
         cases[case_id] = case
+        phase_started = time.perf_counter()
         save_mixed_case_document(match_path, {**document, "cases": list(cases.values())})
+        performance["mixed_case_persistence_ms"] += _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
+        project_segment_decisions_onto_materialized_review(match_path, review)
+        performance["segment_review_projection_ms"] = _elapsed_ms(phase_started)
     except Exception:
         for path, previous in rollback_paths.items():
             if previous is None:
@@ -168,9 +200,18 @@ def save_mixed_player_resolution(
                 path.write_bytes(previous)
         raise
 
+    phase_started = time.perf_counter()
     digest = reviewed_decisions_semantic_digest(match_path)
+    performance["semantic_digest_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     mark_reviewed_identity_recompute_required(match_path, semantic_decision_digest=digest)
-    return {**_response(case, digest), "saved_segment_decisions": saved}
+    performance["recompute_marker_ms"] = _elapsed_ms(phase_started)
+    performance["total_ms"] = _elapsed_ms(started)
+    return {
+        **_response(case, digest),
+        "saved_segment_decisions": saved,
+        "performance": performance,
+    }
 
 
 def _response(case: dict[str, Any], digest: str) -> dict[str, Any]:
@@ -186,6 +227,26 @@ class MixedPlayerTargetError(ValueError):
     pass
 
 
+def _mixed_split_performance() -> dict[str, float]:
+    return {
+        "source_resolution_ms": 0.0,
+        "mixed_case_load_ms": 0.0,
+        "split_validation_ms": 0.0,
+        "target_derivation_ms": 0.0,
+        "segment_review_build_ms": 0.0,
+        "segment_decision_batch_ms": 0.0,
+        "segment_assignment_validation_ms": 0.0,
+        "segment_decision_persistence_ms": 0.0,
+        "reviewed_slot_persistence_ms": 0.0,
+        "mixed_case_persistence_ms": 0.0,
+        "superseded_decision_cleanup_ms": 0.0,
+        "slot_cleanup_ms": 0.0,
+        "segment_review_projection_ms": 0.0,
+        "semantic_digest_ms": 0.0,
+        "recompute_marker_ms": 0.0,
+    }
+
+
 def save_inline_temporal_split(
     match_path: Path,
     match_doc: dict[str, Any],
@@ -199,7 +260,10 @@ def save_inline_temporal_split(
     entries add a generic source object while V1 markers remain readable by
     the compatibility endpoints above.
     """
+    started = time.perf_counter()
+    performance = _mixed_split_performance()
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
+    phase_started = time.perf_counter()
     source = resolve_review_source(
         match_path,
         match_doc,
@@ -209,11 +273,14 @@ def save_inline_temporal_split(
         source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
         materialized_review_unit=materialized_review_unit,
     )
+    performance["source_resolution_ms"] = _elapsed_ms(phase_started)
     resolution = str(payload.get("resolution") or "split")
+    phase_started = time.perf_counter()
     document = load_mixed_player_cases(match_path)
     case_id = source_case_id(source)
     cases = [dict(row) for row in document.get("cases") or [] if isinstance(row, dict)]
     existing = next((row for row in cases if str(row.get("case_id") or "") == case_id), None)
+    performance["mixed_case_load_ms"] = _elapsed_ms(phase_started)
     now = datetime.now(timezone.utc).isoformat()
 
     if resolution == "unresolved_complex_mix":
@@ -256,14 +323,22 @@ def save_inline_temporal_split(
             )
         }
         try:
+            phase_started = time.perf_counter()
             _replace_case(match_path, document, cases, case)
+            performance["mixed_case_persistence_ms"] = _elapsed_ms(phase_started)
             if old_target_ids:
+                phase_started = time.perf_counter()
                 removed = _remove_superseded_segment_decisions(match_path, old_target_ids)
+                performance["superseded_decision_cleanup_ms"] = _elapsed_ms(phase_started)
+                phase_started = time.perf_counter()
                 cleanup_unreferenced_manual_reviewed_slots(match_path, removed)
+                performance["slot_cleanup_ms"] = _elapsed_ms(phase_started)
             # A resolved split has persisted child targets. Once it becomes a
             # complex blocker, refresh the review snapshot in the same atomic
             # operation so those now-retired targets cannot remain displayed.
+            phase_started = time.perf_counter()
             build_segment_review_document(match_path, match_doc)
+            performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
         except Exception:
             for path, previous in rollback_paths.items():
                 if previous is None:
@@ -271,22 +346,32 @@ def save_inline_temporal_split(
                 else:
                     path.write_bytes(previous)
             raise
+        phase_started = time.perf_counter()
         digest = reviewed_decisions_semantic_digest(match_path)
+        performance["semantic_digest_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         mark_reviewed_identity_recompute_required(match_path, semantic_decision_digest=digest)
-        return {**_response(case, digest), "complex_mix": True}
+        performance["recompute_marker_ms"] = _elapsed_ms(phase_started)
+        performance["total_ms"] = _elapsed_ms(started)
+        return {**_response(case, digest), "complex_mix": True, "performance": performance}
     if resolution != "split":
         raise ValueError("Unsupported temporal split resolution")
 
     observations = list(source["observations"])
+    phase_started = time.perf_counter()
     split_frames = sorted({int(value) for value in payload.get("split_after_frames") or []})
     validate_split_frames(observations, split_frames)
     assignments = payload.get("segment_assignments") or []
     semantic = _split_semantic_digest(split_frames, assignments)
+    performance["split_validation_ms"] = _elapsed_ms(phase_started)
     old_target_ids: set[str] = set()
     if existing and str(existing.get("resolution_status") or "") == "resolved":
         if str(existing.get("split_semantic_digest") or "") == semantic:
+            phase_started = time.perf_counter()
             digest = reviewed_decisions_semantic_digest(match_path)
-            return {**_response(existing, digest), "idempotent": True}
+            performance["semantic_digest_ms"] = _elapsed_ms(phase_started)
+            performance["total_ms"] = _elapsed_ms(started)
+            return {**_response(existing, digest), "idempotent": True, "performance": performance}
         supplied_existing_digest = str(payload.get("existing_split_semantic_digest") or "")
         if supplied_existing_digest != str(existing.get("split_semantic_digest") or ""):
             raise MixedPlayerTargetError("temporal_split_conflict")
@@ -313,12 +398,14 @@ def save_inline_temporal_split(
     }
     pending_cases = [row for row in cases if str(row.get("case_id") or "") != case_id] + [case]
     pending_document = {**document, "cases": pending_cases}
+    phase_started = time.perf_counter()
     targets = [
         row for row in operator_mixed_targets(match_path, pending_document)
         if str(row.get("split_parent_case_id") or "") == case_id
     ]
     if len(assignments) != len(targets):
         raise ValueError("Every split segment requires one assignment")
+    performance["target_derivation_ms"] = _elapsed_ms(phase_started)
     # A child inherits the decision vocabulary of the parent source. This is
     # the mutation-side counterpart of the capability map sent to the inline
     # editor; a forged payload cannot restore an advanced action that the
@@ -342,13 +429,20 @@ def save_inline_temporal_split(
         )
     }
     try:
+        phase_started = time.perf_counter()
         save_mixed_case_document(match_path, pending_document)
+        performance["mixed_case_persistence_ms"] += _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         removed = (
             _remove_superseded_segment_decisions(match_path, old_target_ids)
             if old_target_ids
             else []
         )
+        performance["superseded_decision_cleanup_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         review = build_segment_review_document(match_path, match_doc)
+        performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         saved = save_segment_decisions_batch(
             match_path,
             match_doc,
@@ -361,7 +455,9 @@ def save_inline_temporal_split(
                 for target, assignment in zip(targets, assignments, strict=True)
             ],
             materialized_review=review,
+            performance=performance,
         )
+        performance["segment_decision_batch_ms"] = _elapsed_ms(phase_started)
         case.update(
             {
                 "resolution_status": "resolved",
@@ -373,12 +469,18 @@ def save_inline_temporal_split(
                 "comment": str(payload.get("comment") or "").strip() or case.get("comment"),
             }
         )
+        phase_started = time.perf_counter()
         _replace_case(match_path, document, pending_cases, case)
+        performance["mixed_case_persistence_ms"] += _elapsed_ms(phase_started)
+        phase_started = time.perf_counter()
         cleanup_unreferenced_manual_reviewed_slots(match_path, removed)
-        # Refresh the persisted target snapshot after the complete atomic
-        # batch. The source cards are then marked reviewed on the next workflow
-        # refresh instead of reappearing as stale pending work.
-        build_segment_review_document(match_path, match_doc)
+        performance["slot_cleanup_ms"] = _elapsed_ms(phase_started)
+        # Topology/ownership came from the canonical build above. Decisions do
+        # not alter it, so project only decision-derived fields instead of
+        # parsing and rebuilding the complete segment graph a second time.
+        phase_started = time.perf_counter()
+        project_segment_decisions_onto_materialized_review(match_path, review)
+        performance["segment_review_projection_ms"] = _elapsed_ms(phase_started)
     except Exception:
         for path, previous in rollback_paths.items():
             if previous is None:
@@ -386,9 +488,22 @@ def save_inline_temporal_split(
             else:
                 path.write_bytes(previous)
         raise
+    phase_started = time.perf_counter()
     digest = reviewed_decisions_semantic_digest(match_path)
+    performance["semantic_digest_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     mark_reviewed_identity_recompute_required(match_path, semantic_decision_digest=digest)
-    return {**_response(case, digest), "saved_segment_decisions": saved}
+    performance["recompute_marker_ms"] = _elapsed_ms(phase_started)
+    performance["total_ms"] = _elapsed_ms(started)
+    return {
+        **_response(case, digest),
+        "saved_segment_decisions": saved,
+        "performance": performance,
+    }
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)
 
 
 def _source_payload(source: dict[str, Any]) -> dict[str, Any]:

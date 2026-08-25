@@ -3,9 +3,11 @@ from __future__ import annotations
 """Reviewed-only targets and decisions for frame-owned mixed tracklets."""
 
 from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime, timezone
 from math import isfinite
 from pathlib import Path
+import time
 from typing import Any
 
 from app.services.identity_canonical_io import load_json_cached
@@ -306,6 +308,64 @@ def load_segment_review(match_path: Path) -> dict[str, Any]:
     return _load(match_path / REVIEW_FILENAME)
 
 
+def project_segment_decisions_onto_materialized_review(
+    match_path: Path,
+    materialized_review: dict[str, Any],
+) -> dict[str, Any]:
+    """Refresh decision-derived fields without rebuilding target topology.
+
+    A Mixed split's first canonical build establishes the exact child target
+    IDs, ownership, evidence and boundary relationships. Persisting decisions
+    cannot change that topology. A second full build previously recalculated
+    all large canonical ownership inputs only to update the fields below:
+    current/stale decisions, decision counts, orphan counts and the decisions
+    digest. In particular, operator-split ``effective_team_label`` remains a
+    topology field from the first build; the canonical second build does not
+    derive it from the newly saved decision. Keep that exact contract explicit
+    and differential-tested against a fresh canonical build.
+    """
+    document = deepcopy(materialized_review)
+    decisions_document = load_segment_decisions(match_path)
+    stored = {
+        str(row.get("review_target_id") or ""): row
+        for row in decisions_document.get("decisions") or []
+        if row.get("review_target_id")
+    }
+    matched: set[str] = set()
+    targets = [row for row in document.get("targets") or [] if isinstance(row, dict)]
+    for target in targets:
+        target_id = str(target.get("review_target_id") or "")
+        decision = stored.get(target_id)
+        current = bool(
+            decision
+            and str(decision.get("source_ownership_digest") or "")
+            == str(target.get("source_ownership_digest") or "")
+        )
+        if decision is not None:
+            matched.add(target_id)
+        target["current_decision"] = decision if current else None
+        target["decision_status"] = "reviewed" if current else "pending"
+        target["stale_decision"] = bool(decision and not current)
+
+    orphaned = len(set(stored) - matched)
+    summary = dict(document.get("summary") or {})
+    summary.update(
+        {
+            "targets_reviewed": sum(target.get("decision_status") == "reviewed" for target in targets),
+            "targets_pending": sum(target.get("decision_status") == "pending" for target in targets),
+            "stale_decisions": sum(bool(target.get("stale_decision")) for target in targets) + orphaned,
+            "orphaned_decisions_requiring_review": orphaned,
+        }
+    )
+    document["summary"] = summary
+    source = dict(document.get("source") or {})
+    source["decisions_digest"] = canonical_digest(decisions_document.get("decisions") or [])
+    document["source"] = source
+    document["generated_at"] = datetime.now(timezone.utc).isoformat()
+    write_identity_json_atomic(match_path / REVIEW_FILENAME, document)
+    return document
+
+
 def render_segment_review_evidence(
     match_path: Path,
     match_doc: dict[str, Any],
@@ -469,6 +529,7 @@ def save_segment_decisions_batch(
     payloads: list[dict[str, Any]],
     *,
     materialized_review: dict[str, Any] | None = None,
+    performance: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     """Validate and persist an exact segment-decision batch atomically.
 
@@ -499,6 +560,7 @@ def save_segment_decisions_batch(
     prepared: list[dict[str, Any]] = []
     now = datetime.now(timezone.utc).isoformat()
 
+    validation_started = time.perf_counter()
     for payload in payloads:
         target_id = str(payload.get("review_target_id") or "")
         target = targets.get(target_id)
@@ -576,16 +638,33 @@ def save_segment_decisions_batch(
             decision["stable_slot_id"] = stable_slot_id
         decisions[target_id] = decision
         prepared.append(decision)
+    if performance is not None:
+        performance["segment_assignment_validation_ms"] = round(
+            (time.perf_counter() - validation_started) * 1000,
+            1,
+        )
 
     if slots_changed:
+        slot_persistence_started = time.perf_counter()
         write_identity_json_atomic(
             match_path / SLOT_REVIEW_FILENAME,
             {**slot_document, "reviewed_slots": reviewed_slots},
         )
+        if performance is not None:
+            performance["reviewed_slot_persistence_ms"] = round(
+                (time.perf_counter() - slot_persistence_started) * 1000,
+                1,
+            )
+    decision_persistence_started = time.perf_counter()
     write_identity_json_atomic(
         match_path / DECISIONS_FILENAME,
         _decision_document(sorted(decisions.values(), key=lambda row: str(row["review_target_id"]))),
     )
+    if performance is not None:
+        performance["segment_decision_persistence_ms"] = round(
+            (time.perf_counter() - decision_persistence_started) * 1000,
+            1,
+        )
     return prepared
 
 
