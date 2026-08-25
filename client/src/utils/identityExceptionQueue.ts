@@ -41,15 +41,16 @@ export function removeResolvedReviewCase<T extends ReviewCaseWithUnit>(
 
 export function shouldFinalizeDeferredReview(
   cases: ReviewCaseWithUnit[],
-  recomputeRequired = false,
+  _recomputeRequired = false,
   globalRemaining = cases.length,
   coverageAllowsFinalize = true,
 ): boolean {
-  return recomputeRequired || (
-    cases.length === 0
+  // `recompute_required` means canonical propagation is pending; it is not a
+  // claim that a versioned hot queue is unsafe. Callers finalize only at a
+  // deliberate working-window or completion boundary.
+  return cases.length === 0
     && globalRemaining === 0
-    && coverageAllowsFinalize
-  );
+    && coverageAllowsFinalize;
 }
 
 

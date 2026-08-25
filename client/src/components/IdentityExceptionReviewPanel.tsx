@@ -63,7 +63,7 @@ type ReviewCase = {
   card: IdentityRosterSubjectReviewCard | null;
 };
 
-const REVIEW_PAGE_SIZE = 20;
+const REVIEW_WORKING_WINDOW_SIZE = 40;
 
 function toCorrectionEntity(reviewCase: ReviewCase): ReviewedIdentityAtEntity {
   const { card, unit } = reviewCase;
@@ -143,6 +143,7 @@ export function IdentityExceptionReviewPanel({
   const [activeQueue, setActiveQueue] = useState<ReviewedIdentityReviewQueue>(initialQueue);
   const [optionalAuditRemaining, setOptionalAuditRemaining] = useState(0);
   const finalizeInFlight = useRef(false);
+  const deferredRequiredSavesRef = useRef(0);
   const loadRequestIdRef = useRef(0);
   const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
 
@@ -165,7 +166,7 @@ export function IdentityExceptionReviewPanel({
         getReviewedIdentityReviewProgress(
           match.id,
           offset,
-          REVIEW_PAGE_SIZE,
+          REVIEW_WORKING_WINDOW_SIZE,
           apiTeamFilter(teamFilter),
           queue,
         ),
@@ -193,20 +194,9 @@ export function IdentityExceptionReviewPanel({
       const nextOptionalRemaining = progress.optional_audit?.remaining_cases || 0;
       setOptionalAuditRemaining(nextOptionalRemaining);
       if (progress.optional_audit) onOptionalAuditSummaryChanged?.(progress.optional_audit);
-      if (shouldAutoFinalizeDeferredQueue(
-        queue,
-        actionable,
-        progress.recompute_required,
-        progress.filters?.counts.all
-          ?? progress.pagination?.global_total_remaining
-          ?? actionable.length,
-        progress.coverage_readiness?.allows_finalize !== false,
-      )) {
-        setCases([]);
-        setIndex(0);
-        void finalizeCorrections(teamFilter, queue);
-        return [];
-      }
+      // A dirty canonical snapshot is expected while a versioned hot working
+      // window is being processed. It must not turn an ordinary reload into a
+      // blocking finalize cycle; only an explicit safe boundary does that.
       setCases(actionable);
       setIndex(actionable.length > 0
         ? Math.min(Math.max(0, preferredIndex), actionable.length - 1)
@@ -224,6 +214,7 @@ export function IdentityExceptionReviewPanel({
     let disposed = false;
     setActiveTeamFilter('all');
     setActiveQueue(initialQueue);
+    deferredRequiredSavesRef.current = 0;
     void loadCases(() => disposed, false, 0, 0, 'all', initialQueue);
     return () => { disposed = true; };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
@@ -279,6 +270,7 @@ export function IdentityExceptionReviewPanel({
     setPageOffset(0);
     setTotalRemaining(0);
     setMessage('');
+    deferredRequiredSavesRef.current = 0;
     void loadCases(undefined, false, 0, 0, nextFilter, activeQueue);
   }
 
@@ -291,6 +283,7 @@ export function IdentityExceptionReviewPanel({
     setPageOffset(0);
     setTotalRemaining(0);
     setMessage('');
+    deferredRequiredSavesRef.current = 0;
     void loadCases(undefined, false, 0, 0, 'all', nextQueue);
   }
 
@@ -305,7 +298,7 @@ export function IdentityExceptionReviewPanel({
       currentIndex: index,
       pageLength: cases.length,
       pageOffset,
-      pageSize: REVIEW_PAGE_SIZE,
+      pageSize: REVIEW_WORKING_WINDOW_SIZE,
       hasMore,
     });
     if (destination.kind === 'local') {
@@ -314,7 +307,9 @@ export function IdentityExceptionReviewPanel({
       void loadCases(
         undefined,
         true,
-        destination.offset,
+        // Required Review is a shrinking queue. Never carry a numeric offset
+        // across persisted removals: start from its current head instead.
+        destination.offset > 0 && activeQueue === 'required' ? 0 : destination.offset,
         destination.index,
         activeTeamFilter,
         activeQueue,
@@ -331,6 +326,7 @@ export function IdentityExceptionReviewPanel({
       // Do not derive a new queue from stale local cards after a topology
       // change. The next GET performs one authoritative materialization.
       setFinalizeFailed(false);
+      deferredRequiredSavesRef.current = 0;
       setMessage('Zapisano decyzję. Odświeżam przypadki po zmianie struktury…');
       void loadCases(
         undefined,
@@ -351,21 +347,42 @@ export function IdentityExceptionReviewPanel({
     setIndex(next.index);
     setFinalizeFailed(false);
     setMessage('Zapisano decyzję.');
+    setTotalRemaining((remaining) => Math.max(0, remaining - 1));
     if (activeQueue === 'optional_audit') {
       // Coverage is never inferred in the client. The new queue and complete
       // MAX summary come from the read-only progress endpoint after every save.
       void loadCases(undefined, true, 0, 0, 'all', 'optional_audit');
-    } else if (next.cases.length === 0 && hasMore) {
-      void loadCases(
-        undefined,
-        true,
-        pageOffset + REVIEW_PAGE_SIZE,
-        0,
-        activeTeamFilter,
+    } else {
+      deferredRequiredSavesRef.current += 1;
+      const savedInWindow = deferredRequiredSavesRef.current;
+      const remainingGlobally = Math.max(0, globalRemaining - 1);
+      if (savedInWindow >= REVIEW_WORKING_WINDOW_SIZE) {
+        // The synchronization boundary is deliberate and happens only after
+        // forty durable safe decisions, never because recompute_required is
+        // merely dirty.
+        deferredRequiredSavesRef.current = 0;
+        void finalizeCorrections(activeTeamFilter, activeQueue);
+      } else if (next.cases.length === 0 && hasMore) {
+        // Offset 0 is the head of the *current* shrinking queue. All local
+        // entries were just persisted, so this cannot skip its next sources.
+        void loadCases(
+          undefined,
+          true,
+          0,
+          0,
+          activeTeamFilter,
+          activeQueue,
+        );
+      } else if (shouldAutoFinalizeDeferredQueue(
         activeQueue,
-      );
-    } else if (shouldAutoFinalizeDeferredQueue(activeQueue, next.cases)) {
-      void finalizeCorrections(activeTeamFilter, activeQueue);
+        next.cases,
+        false,
+        remainingGlobally,
+        coverageReadiness?.allows_finalize !== false,
+      )) {
+        deferredRequiredSavesRef.current = 0;
+        void finalizeCorrections(activeTeamFilter, activeQueue);
+      }
     }
   }
 
@@ -388,6 +405,7 @@ export function IdentityExceptionReviewPanel({
         setCases([]);
         setIndex(0);
       }
+      deferredRequiredSavesRef.current = 0;
       setMessage(reviewRecomputeMessage(
         refreshedCases.length,
         result.workflow.issues.coverage_readiness?.allows_finalize === false,

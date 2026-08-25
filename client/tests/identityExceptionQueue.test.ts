@@ -159,10 +159,10 @@ test('failed finalize can retry without recreating saved local cases', async () 
 });
 
 
-test('reload with a dirty recompute marker finalizes before showing stale cases', () => {
-  const staleCases = [{ unit: unit('already-saved') }, { unit: unit('still-pending') }];
-  assert.equal(shouldFinalizeDeferredReview(staleCases, true), true);
-  assert.equal(shouldFinalizeDeferredReview(staleCases, false), false);
+test('a dirty recompute marker does not auto-finalize a safe hot queue', () => {
+  const safeCases = [{ unit: unit('already-saved') }, { unit: unit('still-pending') }];
+  assert.equal(shouldFinalizeDeferredReview(safeCases, true), false);
+  assert.equal(shouldFinalizeDeferredReview(safeCases, false), false);
 });
 
 
@@ -178,8 +178,8 @@ test('an empty global queue does not finalize when canonical coverage readiness 
 });
 
 
-test('a dirty deferred decision remains authoritative when switching filters', () => {
-  assert.equal(shouldFinalizeDeferredReview([], true, 180, false), true);
+test('a dirty deferred decision does not finalize while another filter has work', () => {
+  assert.equal(shouldFinalizeDeferredReview([], true, 180, false), false);
 });
 
 
@@ -208,4 +208,19 @@ test('review navigation crosses page boundaries without hiding remaining cases',
     pageSize: 20,
     hasMore: false,
   }), { kind: 'none' });
+});
+
+
+test('head replenishment does not skip sources after a mutable queue shrinks', () => {
+  const original = Array.from({ length: 80 }, (_, index) => ({ unit: unit(`source-${index + 1}`) }));
+  const firstWindow = original.slice(0, 40);
+  const resolvedKeys = new Set(firstWindow.map((item) => reviewUnitKey(item.unit)));
+  const currentRemaining = original.filter((item) => !resolvedKeys.has(reviewUnitKey(item.unit)));
+  // Required Review requests offset 0 after its local working window is
+  // consumed; using offset 40 here would incorrectly start at source 81.
+  const nextWindow = currentRemaining.slice(0, 40);
+  const keys = nextWindow.map((item) => reviewUnitKey(item.unit));
+  assert.deepEqual(keys, original.slice(40).map((item) => reviewUnitKey(item.unit)));
+  assert.equal(keys.some((key) => resolvedKeys.has(key)), false);
+  assert.equal(new Set(keys).size, 40);
 });

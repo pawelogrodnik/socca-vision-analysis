@@ -124,6 +124,47 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             self.assertEqual(updated["progress"]["next_cases"], [])
             self.assertEqual(updated["internal_review_units"][0]["current_resolution_status"], "reviewed_by_operator")
 
+    def test_exact_mixed_staging_routes_one_hot_source_without_rebuild(self) -> None:
+        """Staging is queue routing: Required loses one exact source, Mixed gains it."""
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            return_value=_progress(),
+        ):
+            state = load_or_rebuild_review_hot_state(root, _match())
+            unit = state["internal_review_units"][0]
+            unit["source_ownership_digest"] = "exact-source"
+            saved = {
+                "case_id": "mixed:exact-source",
+                "candidate_subject_id": "subject-1",
+                "action": "mixed_players",
+                "original_issue": "mixed_players",
+                "mixed_hint": "unknown",
+                "resolution_status": "unresolved",
+                "source": {
+                    "scope_kind": "whole_subject",
+                    "candidate_subject_id": "subject-1",
+                    "review_target_id": None,
+                    "continuity_group_id": None,
+                    "source_ownership_digest": "exact-source",
+                    "owned_observations": [
+                        {"tracklet_id": "t-1", "frame": 10},
+                        {"tracklet_id": "t-1", "frame": 11},
+                    ],
+                },
+                "observation_count": 2,
+                "frame_start": 10,
+                "frame_end": 11,
+            }
+            updated = update_hot_state_after_deferred_save(
+                root, _match(), state, unit, saved, "after-mixed-stage",
+            )
+
+        self.assertEqual(updated["progress"]["next_cases"], [])
+        self.assertEqual(updated["internal_review_units"], [])
+        self.assertEqual(updated["progress"]["mixed_players"]["summary"]["unresolved"], 1)
+        mixed_case = updated["progress"]["mixed_players"]["cases"][0]
+        self.assertEqual(mixed_case["source"]["source_ownership_digest"], "exact-source")
+
     def test_materialization_derives_exact_whole_source_digest_from_one_candidate_and_tracklet_read(self) -> None:
         with _workspace() as root:
             _write_json(root / "identity_candidate_shadow.json", {

@@ -199,7 +199,11 @@ def persist_reviewed_identity_correction(
             trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
             authorized_review_unit=authorized_review_unit,
         )
-        return {**result, "review_topology_changed": True}
+        # Exact staged mixed routing retires one already-materialized source
+        # from Required Review and adds that same source to the later Mixed
+        # Players queue.  It does not create, remove, or repartition source
+        # ownership, so the compact hot projection can apply it safely.
+        return {**result, "review_topology_changed": False}
     if (
         isinstance(authorized_review_unit, dict)
         and authorized_review_unit.get("scope_kind") == "material_continuity"
@@ -346,7 +350,10 @@ def _persist_reviewed_identity_correction(
             semantic_decision_digest=semantic_digest,
         )
         return {
-            "saved_decision": saved,
+            # The durable mixed marker uses ``original_issue`` for its later
+            # workstation contract. The hot projection also needs the normal
+            # correction action in this response to classify routing safely.
+            "saved_decision": {**saved, "action": action},
             "effective_action": action,
             "allocated_stable_slot_id": None,
             "semantic_decision_digest": semantic_digest,
