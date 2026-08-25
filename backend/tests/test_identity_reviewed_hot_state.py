@@ -124,6 +124,46 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             self.assertEqual(updated["progress"]["next_cases"], [])
             self.assertEqual(updated["internal_review_units"][0]["current_resolution_status"], "reviewed_by_operator")
 
+    def test_deferred_material_continuity_save_retires_the_saved_hot_unit(self) -> None:
+        """A compact HTTP response must not reopen its continuity card."""
+        with _workspace() as root, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            return_value=_progress(),
+        ):
+            state = load_or_rebuild_review_hot_state(root, _match())
+            unit = state["internal_review_units"][0]
+            unit.update({
+                "scope_kind": "material_continuity",
+                "continuity_group_id": "continuity:A08:10-11",
+                "current_resolution_status": "pending_material_continuity_review",
+                "priority": "continuity",
+            })
+            response_decision = {
+                "scope_kind": "material_continuity",
+                "continuity_group_id": "continuity:A08:10-11",
+                "owned_observations_count": 2,
+                "decision": {
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                    "team_label": "A",
+                },
+            }
+
+            updated = update_hot_state_after_deferred_save(
+                root,
+                _match(),
+                state,
+                unit,
+                response_decision,
+                "after-material-save",
+            )
+
+        self.assertEqual(updated["progress"]["next_cases"], [])
+        self.assertEqual(
+            updated["internal_review_units"][0]["current_decision"]["action"],
+            "assign_roster_player",
+        )
+
     def test_exact_mixed_staging_routes_one_hot_source_without_rebuild(self) -> None:
         """Staging is queue routing: Required loses one exact source, Mixed gains it."""
         with _workspace() as root, patch(
