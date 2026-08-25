@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   finalizeReviewWorkflow,
@@ -26,6 +26,10 @@ import { MixedPlayersReviewPanel } from './MixedPlayersReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { ReviewedVideoQaPanel } from './ReviewedVideoQaPanel';
 import { ReviewedIdentityMaxSummary } from './ReviewedIdentityMaxSummary';
+import {
+  ReviewedIdentityQueueTabs,
+  type ReviewedIdentityMandatoryQueue,
+} from './ReviewedIdentityQueueTabs';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewedIdentityPercent } from '../utils/reviewedIdentityMaxPresentation';
 
@@ -65,6 +69,9 @@ export function IdentityReviewWorkspace({
   const [liveOptionalAuditSummary, setLiveOptionalAuditSummary] = useState<ReviewedIdentityOptionalAudit | null>(null);
   const [optionalSummaryRefreshError, setOptionalSummaryRefreshError] = useState(false);
   const [optionalSummaryRefreshAttempt, setOptionalSummaryRefreshAttempt] = useState(0);
+  const [activeMandatoryQueue, setActiveMandatoryQueue] = useState<ReviewedIdentityMandatoryQueue>('required');
+  const [mixedFocusCaseId, setMixedFocusCaseId] = useState<string | null>(null);
+  const mixedLeaveGuardRef = useRef<() => boolean>(() => true);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
@@ -90,6 +97,8 @@ export function IdentityReviewWorkspace({
     setOptionalSummaryRefreshAttempt(0);
     setShowOptionalAudit(false);
     setShowOptionalFinishConfirmation(false);
+    setActiveMandatoryQueue('required');
+    setMixedFocusCaseId(null);
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -101,6 +110,12 @@ export function IdentityReviewWorkspace({
   }, [workflow?.phase]);
 
   const stage = identityReviewStage(workflow);
+  const mandatoryReviewActive = stage === 'remaining_issues' || stage === 'mixed_players';
+
+  useEffect(() => {
+    if (stage === 'mixed_players') setActiveMandatoryQueue('mixed');
+    if (!mandatoryReviewActive) setMixedFocusCaseId(null);
+  }, [mandatoryReviewActive, stage]);
   const optionalSummaryFingerprint = workflow?.issues.optional_audit_summary
     ? [
       workflow.issues.optional_audit_summary.current_named_observations,
@@ -131,13 +146,13 @@ export function IdentityReviewWorkspace({
   }
 
   useEffect(() => {
-    if (!['remaining_issues', 'mixed_players'].includes(stage)) return undefined;
-    const className = stage === 'mixed_players'
+    if (!mandatoryReviewActive) return undefined;
+    const className = activeMandatoryQueue === 'mixed'
       ? 'identity-mixed-workspace-active'
       : 'identity-exception-workspace-active';
     document.body.classList.add(className);
     return () => document.body.classList.remove(className);
-  }, [stage]);
+  }, [activeMandatoryQueue, mandatoryReviewActive]);
 
   useEffect(() => {
     if (stage !== 'rendering' || !isReviewedRenderInProgress(processingJob?.status)) return undefined;
@@ -235,23 +250,44 @@ export function IdentityReviewWorkspace({
       />
     </section>}
 
-    {stage === 'remaining_issues' && workflow && <IdentityExceptionReviewPanel
-      match={match}
-      workflow={workflow}
-      onWorkflowChanged={(next) => {
-        if (next) applyWorkflow(next);
-        else void refreshWorkflow();
-      }}
-      onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
-        ? () => retry('retry_review_recompute')
-        : undefined}
-    />}
-
-    {stage === 'mixed_players' && workflow && <MixedPlayersReviewPanel
-      match={match}
-      workflow={workflow}
-      onWorkflowChanged={applyWorkflow}
-    />}
+    {mandatoryReviewActive && workflow && <section className='identity-review-parallel-workspace'>
+      <ReviewedIdentityQueueTabs
+        workflow={workflow}
+        activeQueue={activeMandatoryQueue}
+        onSelect={(queue) => {
+          if (queue === 'required' && activeMandatoryQueue === 'mixed' && !mixedLeaveGuardRef.current()) return;
+          setMixedFocusCaseId(null);
+          setActiveMandatoryQueue(queue);
+        }}
+      />
+      {activeMandatoryQueue === 'required' && <IdentityExceptionReviewPanel
+        match={match}
+        workflow={workflow}
+        showPrimaryQueueSwitch={false}
+        onMixedResolveNow={(caseId) => {
+          setMixedFocusCaseId(caseId);
+          setActiveMandatoryQueue('mixed');
+        }}
+        onWorkflowChanged={(next) => {
+          if (next) applyWorkflow(next);
+          else void refreshWorkflow();
+        }}
+        onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
+          ? () => retry('retry_review_recompute')
+          : undefined}
+      />}
+      {activeMandatoryQueue === 'mixed' && <MixedPlayersReviewPanel
+        match={match}
+        workflow={workflow}
+        focusCaseId={mixedFocusCaseId}
+        onLeaveGuard={(guard) => { mixedLeaveGuardRef.current = guard; }}
+        onReturnToRequired={() => {
+          setMixedFocusCaseId(null);
+          setActiveMandatoryQueue('required');
+        }}
+        onWorkflowChanged={applyWorkflow}
+      />}
+    </section>}
 
     {stage === 'prepare_result' && workflow && !showOptionalAudit && <section className='reviewed-next-step'>
       <div>

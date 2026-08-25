@@ -254,6 +254,14 @@ export async function retryReviewRecompute(matchId: string): Promise<ReviewWorkf
   return response.workflow;
 }
 
+export async function reprojectReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/reproject`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
 export async function getReviewedIdentityReviewProgress(
   matchId: string,
   offset = 0,

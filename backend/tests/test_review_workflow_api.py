@@ -14,6 +14,26 @@ FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for workflow API tests")
 class ReviewWorkflowApiTests(unittest.TestCase):
+    def test_structural_mixed_reproject_is_not_a_finalize_request(self) -> None:
+        from app.main import reproject_match_review_workflow
+
+        refreshed = {
+            "workflow": {
+                "phase": "exceptions",
+                "issues": {"normal_blocking": 4, "mixed_blocking": 0},
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.refresh_review_after_identity_mutation", return_value=refreshed
+        ) as reproject, patch("app.main.finalize_review_for_qa") as finalize:
+            response = reproject_match_review_workflow("m1")
+
+        self.assertEqual(response["workflow"]["phase"], "exceptions")
+        self.assertEqual(reproject.call_args.kwargs["source"], "mixed_players_reproject")
+        finalize.assert_not_called()
+
     def test_scope_change_rebuilds_only_progress_and_preserves_identity_decisions(self) -> None:
         from app.main import update_match_metadata
         from app.models import MatchMetadataPayload

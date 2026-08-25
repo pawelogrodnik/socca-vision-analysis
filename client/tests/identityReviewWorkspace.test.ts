@@ -82,6 +82,20 @@ test('operator CTAs come solely from backend allowed_actions', () => {
   assert.equal(workflowAllows(workflow({ phase: 'video_qa', allowed_actions: ['approve_video_qa'] }), 'approve_video_qa'), true);
 });
 
+test('Required and mandatory Mixed are peer navigation queues', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const workspace = readFileSync(new URL('IdentityReviewWorkspace.tsx', components), 'utf8');
+  const tabs = readFileSync(new URL('ReviewedIdentityQueueTabs.tsx', components), 'utf8');
+
+  assert.match(workspace, /mandatoryReviewActive/);
+  assert.match(workspace, /<ReviewedIdentityQueueTabs/);
+  assert.match(workspace, /activeMandatoryQueue === 'mixed'/);
+  assert.match(tabs, /Pozostałe przypadki/);
+  assert.match(tabs, /Zmieszani gracze/);
+  assert.match(tabs, /workflowAllows\(workflow, 'review_mixed_players'\)/);
+  assert.doesNotMatch(tabs, /saveMixed|saveReviewed|finalize/);
+});
+
 test('progress labels stay friendly and follow workflow step status', () => {
   const steps = identityReviewProgress(workflow({
     steps: [{ id: 'initial_audit', status: 'completed', completed: 5, total: 5, remaining: 0, locked_reason_code: null }],

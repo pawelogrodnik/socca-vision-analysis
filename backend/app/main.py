@@ -2042,6 +2042,26 @@ def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
+@app.post("/api/matches/{match_id}/review-workflow/reproject")
+def reproject_match_review_workflow(match_id: str) -> dict[str, Any]:
+    """Refresh durable Review projections after a structural Review mutation.
+
+    This is deliberately separate from finalization and from the operator
+    retry action. A Mixed temporal split invalidates topology, coverage and
+    Required pagination; it therefore needs one authoritative projection even
+    while other Required work remains.
+    """
+    path = match_dir(match_id)
+    try:
+        return refresh_review_after_identity_mutation(
+            path,
+            read_match_meta(path),
+            source="mixed_players_reproject",
+        )
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
 @app.get("/api/matches/{match_id}/reviewed-identity/review-progress")
 def get_match_reviewed_identity_progress(
     match_id: str,
@@ -2242,6 +2262,16 @@ def post_match_reviewed_identity_correction(
                         # rebuild from canonical artifacts.
                         invalidate_review_hot_state(path)
                         result["review_state_rebuild_required"] = True
+            if isinstance(hot_state, dict) and result.get("review_state_rebuild_required") is not True:
+                # A versioned deferred save has an authoritative hot
+                # projection already. Return its workflow view so Required
+                # and Mixed badges do not display a stale durable snapshot
+                # while the later structural reprojection is still pending.
+                result["workflow"] = get_review_workflow_state(
+                    path,
+                    match_document,
+                    progress=hot_progress(hot_state),
+                )
             hot_state_ms = round((time.perf_counter() - hot_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(

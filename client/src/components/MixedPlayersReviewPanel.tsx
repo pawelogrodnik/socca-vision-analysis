@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { artifactUrl, finalizeReviewedIdentityCorrections, getMixedBoundaryRefinement, getMixedPlayersReview, saveMixedPlayerResolution } from '../api';
+import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayersReview, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
@@ -11,9 +11,19 @@ type Props = {
   match: Match;
   workflow: ReviewWorkflow;
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
+  focusCaseId?: string | null;
+  onReturnToRequired?: () => void;
+  onLeaveGuard?: (guard: () => boolean) => void;
 };
 
-export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: Props) {
+export function MixedPlayersReviewPanel({
+  match,
+  workflow,
+  onWorkflowChanged,
+  focusCaseId,
+  onReturnToRequired,
+  onLeaveGuard,
+}: Props) {
   const [queue, setQueue] = useState<MixedPlayersReviewQueue | null>(null);
   const [index, setIndex] = useState(0);
   const reviewCase = queue?.cases[index] || null;
@@ -36,6 +46,19 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
       .finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
   }, [match.id]);
+
+  useEffect(() => {
+    if (!focusCaseId || !queue) return;
+    const focusedIndex = queue.cases.findIndex((item) => item.case_id === focusCaseId);
+    if (focusedIndex >= 0) setIndex(focusedIndex);
+  }, [focusCaseId, queue]);
+
+  useEffect(() => {
+    onLeaveGuard?.(() => !hasUnsavedChanges || window.confirm(
+      'Masz niezapisany podział lub przypisania. Przejście do pozostałych przypadków je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
+    ));
+    return () => onLeaveGuard?.(() => true);
+  }, [hasUnsavedChanges, onLeaveGuard]);
 
   useEffect(() => {
     if (!reviewCase) return;
@@ -184,11 +207,22 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setHasUnsavedChanges(false);
     setQueue({ ...queue, cases: next.cases });
     setIndex(next.index);
-    if (next.cases.length === 0) {
-      setMessage('Przeliczam Review po zapisaniu podziałów…');
-      const result = await finalizeReviewedIdentityCorrections(match.id);
-      onWorkflowChanged(result.workflow);
+    // A temporal split can alter ownership, coverage and Required ordering.
+    // It is a structural Review reprojection, not a finalization shortcut.
+    setMessage('Odświeżam Review po zapisaniu podziału…');
+    const nextWorkflow = await reprojectReviewWorkflow(match.id);
+    onWorkflowChanged(nextWorkflow);
+    if ((nextWorkflow.issues.normal_blocking ?? 0) > 0) {
+      onReturnToRequired?.();
+      return;
     }
+    if ((nextWorkflow.issues.mixed_blocking ?? 0) === 0) return;
+    const refreshedQueue = await getMixedPlayersReview(match.id);
+    setQueue(refreshedQueue);
+    setIndex(0);
+    setMessage(refreshedQueue.cases.length === 0
+      ? 'Zapisano podział. Wymagane kolejki Review zostały odświeżone.'
+      : 'Zapisano podział. Kolejka Mixed została odświeżona.');
   }
 
   function navigateTo(nextIndex: number) {

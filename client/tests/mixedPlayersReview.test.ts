@@ -201,14 +201,27 @@ test('mixed workspace keeps temporal evidence explicitly sorted', () => {
   assert.deepEqual(sorted.map((crop) => crop.frame), [10, 20, 30, 40, 50]);
 });
 
-test('mandatory Mixed panel uses the authoritative blocking-only queue contract', () => {
+test('mandatory Mixed panel uses the authoritative blocking-only queue and reprojects instead of finalizing', () => {
   const components = new URL('../src/components/', import.meta.url);
   const panel = readFileSync(new URL('MixedPlayersReviewPanel.tsx', components), 'utf8');
 
   assert.match(panel, /Przypadek \{index \+ 1\} z \{queue\.cases\.length\}/);
-  assert.match(panel, /next\.cases\.length === 0/);
+  assert.match(panel, /reprojectReviewWorkflow\(match\.id\)/);
+  assert.match(panel, /onReturnToRequired/);
+  assert.doesNotMatch(panel, /finalizeReviewedIdentityCorrections/);
   assert.match(panel, /stale_or_unclassifiable_blocking/);
   assert.doesNotMatch(panel, /filter\(.*blocking/);
+});
+
+test('resolve-now targets the durable exact staged case instead of a raw subject', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('MixedPlayersReviewPanel.tsx', components), 'utf8');
+  const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', components), 'utf8');
+
+  assert.match(form, /Rozwiąż teraz/);
+  assert.match(form, /Odłóż do Mixed/);
+  assert.match(form, /result\.saved_decision\?\.case_id/);
+  assert.match(panel, /item\.case_id === focusCaseId/);
 });
 
 test('only a successful save removes the current case and advances safely', () => {

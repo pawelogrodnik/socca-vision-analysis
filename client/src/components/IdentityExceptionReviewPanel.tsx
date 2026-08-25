@@ -69,6 +69,8 @@ type Props = {
   onRetryReview?: () => Promise<void>;
   initialQueue?: ReviewedIdentityReviewQueue;
   onOptionalAuditSummaryChanged?: (summary: ReviewedIdentityOptionalAudit) => void;
+  showPrimaryQueueSwitch?: boolean;
+  onMixedResolveNow?: (caseId: string) => void;
 };
 
 type ReviewCase = {
@@ -136,6 +138,8 @@ export function IdentityExceptionReviewPanel({
   onRetryReview,
   initialQueue = 'required',
   onOptionalAuditSummaryChanged,
+  showPrimaryQueueSwitch = true,
+  onMixedResolveNow,
 }: Props) {
   const [coverageDetailsOpen, setCoverageDetailsOpen] = useState(false);
   const [cases, setCases] = useState<ReviewCase[]>([]);
@@ -362,8 +366,8 @@ export function IdentityExceptionReviewPanel({
 
   function saved(result: ReviewedCorrectionResponse) {
     if (result.coverage_debt) setCoverageDebt(result.coverage_debt);
+    if (result.workflow) onWorkflowChanged(result.workflow);
     if (!reviewCase || !result.recompute_deferred) {
-      if (result.workflow) onWorkflowChanged(result.workflow);
       return;
     }
     const savedKey = reviewUnitKey(reviewCase.unit);
@@ -518,10 +522,10 @@ export function IdentityExceptionReviewPanel({
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
         <div className='identity-exception-controls'>
-          <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
+          {showPrimaryQueueSwitch && <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
             <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
             <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Kontynuuj do MAX <span>{optionalAuditRemaining}</span></button>
-          </nav>
+          </nav>}
           {activeQueue === 'required' && <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
             {filterOptions.map((option) => <button
               type='button'
@@ -583,7 +587,6 @@ export function IdentityExceptionReviewPanel({
     {coverageDebt && coverageDetailsOpen && <ReviewedIdentityCoverageDebtDialog
       match={match}
       debt={coverageDebt}
-      mixedLocked={(workflow.issues.normal_blocking ?? workflow.issues.blocking) > 0}
       onClose={() => setCoverageDetailsOpen(false)}
     />}
     {workload && workload.level !== 'normal' && <details className='identity-exception-guidance identity-coverage-warning'>
@@ -662,6 +665,9 @@ export function IdentityExceptionReviewPanel({
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}
             onSaveConflict={recoverFromReviewSaveConflict}
+            onMixedStaged={(caseId, disposition) => {
+              if (disposition === 'resolve_now') onMixedResolveNow?.(caseId);
+            }}
             deferRecompute
             mixedHandling={activeQueue === 'optional_audit' ? 'direct' : 'stage'}
             navigation={{

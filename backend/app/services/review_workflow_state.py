@@ -130,11 +130,22 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
 
     if normal_blocking:
         steps["exceptions"] = _step("exceptions", "current", completed=issues.get("completed"), total=issues.get("total"), remaining=normal_blocking)
-        steps["mixed_players"] = _step("mixed_players", "locked", "identity_issues_remaining", {"count": normal_blocking})
+        # Required and scope-blocking Mixed are peer queues inside one Review
+        # stage.  They can be worked in either order; only finalization stays
+        # locked until both authoritative queues are empty.
+        steps["mixed_players"] = _step(
+            "mixed_players",
+            "current" if mixed_blocking else "completed",
+            remaining=mixed_blocking,
+            total=issues.get("mixed_total"),
+            completed=issues.get("mixed_resolved"),
+        )
         steps["finalize"] = _step("finalize", "locked", "identity_issues_remaining", {"count": blocking})
         steps["video_qa"] = _step("video_qa", "locked", "identity_issues_remaining", {"count": blocking})
         blockers.append(_blocker("identity_issues_remaining", "exceptions", {"count": normal_blocking}))
         allowed = ["review_identity_issue"]
+        if mixed_blocking:
+            allowed.append("review_mixed_players")
         return _state(match_id, True, "action_required", "exceptions", steps, blockers, allowed, initial, issues, freshness, render, {"type": "review_identity_issue", "step_id": "exceptions", "remaining": normal_blocking})
 
     steps["exceptions"] = _step("exceptions", "completed", completed=issues.get("completed"), total=issues.get("total"), remaining=0)

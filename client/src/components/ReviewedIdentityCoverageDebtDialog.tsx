@@ -6,11 +6,10 @@ import { ReviewedIdentityCoverageDebtSummary } from './ReviewedIdentityCoverageD
 type Props = {
   match: Match;
   debt: ReviewedIdentityCoverageDebt;
-  mixedLocked: boolean;
   onClose: () => void;
 };
 
-export function ReviewedIdentityCoverageDebtDialog({ match, debt, mixedLocked, onClose }: Props) {
+export function ReviewedIdentityCoverageDebtDialog({ match, debt, onClose }: Props) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -31,7 +30,7 @@ export function ReviewedIdentityCoverageDebtDialog({ match, debt, mixedLocked, o
         <button ref={closeButtonRef} type='button' onClick={onClose} aria-label='Zamknij szczegóły pokrycia'>Zamknij</button>
       </header>
       <div className='coverage-debt-dialog-content'>
-        <ReviewedIdentityCoverageDebtSummary match={match} debt={debt} mixedLocked={mixedLocked} />
+        <ReviewedIdentityCoverageDebtSummary match={match} debt={debt} />
       </div>
     </section>
   </div>;
