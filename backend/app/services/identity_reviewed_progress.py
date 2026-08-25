@@ -16,6 +16,7 @@ from app.services.identity_ownership_compact import (
 )
 from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_context
 from app.services.identity_reviewed_coverage import (
+    build_coverage_debt,
     COVERAGE_POLICY_VERSION,
     OPTIONAL_MAX_POLICY_VERSION,
     apply_coverage_policy,
@@ -56,7 +57,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.8.0"
+PROGRESS_SCHEMA_VERSION = "2.9.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -456,6 +457,14 @@ def project_reviewed_identity_progress(
         pair_index,
         match_doc,
     )
+    coverage_debt = build_coverage_debt(
+        units,
+        coverage,
+        pair_index,
+        match_doc,
+        coverage_policy,
+        projection_inputs.get("mixed_players") or {},
+    )
     queue_by_key = {
         _unit_key(unit): unit
         for unit in [
@@ -561,6 +570,7 @@ def project_reviewed_identity_progress(
         "identity_coverage": coverage,
         "coverage_readiness": coverage_policy["readiness"],
         "coverage_residuals": coverage_policy["residual_by_team"],
+        "coverage_debt": coverage_debt,
         "workload": coverage_policy["workload"],
         "optional_audit": coverage_policy["optional_audit"],
         "next_cases": [_public_unit(unit) for unit in next_cases],

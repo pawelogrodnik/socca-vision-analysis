@@ -2153,6 +2153,42 @@ export type ReviewedIdentityOptionalAudit = {
   per_team: Record<string, number>;
 };
 
+export type ReviewedIdentityCoverageDebtBucket = {
+  case_count: number;
+  unique_observations: number;
+  share_of_reliable: number | null;
+  coverage_pp: number;
+  reason_counts?: Record<string, number>;
+};
+
+export type ReviewedIdentityCoverageDebtTeam = {
+  scope: IdentityReviewTeamScope;
+  reliable_observations: number;
+  current_named_observations: number;
+  current_named_coverage: number | null;
+  target_named_coverage: number | null;
+  target_named_observations: number | null;
+  target_gap_observations: number | null;
+  target_gap_pp: number | null;
+  projected_named_coverage_after_committed: number | null;
+  unnamed_observations: number;
+  accounted_unnamed_observations: number;
+  unaccounted_unnamed_observations: number;
+  buckets: Record<'committed_pending' | 'required' | 'mixed' | 'optional_max' | 'unavailable', ReviewedIdentityCoverageDebtBucket>;
+};
+
+export type ReviewedIdentityCoverageDebt = {
+  policy_version: string;
+  coverage_unit: string;
+  accounting_precedence: string[];
+  per_team: Record<string, ReviewedIdentityCoverageDebtTeam>;
+  ambiguous: {
+    mixed_case_count: number;
+    mixed_observations: number;
+    note: string;
+  };
+};
+
 export type ReviewedIdentityMixedPlayersSummary = {
   schema_version: string;
   mode: string;
@@ -2206,6 +2242,7 @@ export type ReviewedIdentityReviewProgress = {
   identity_coverage: ReviewedIdentityCoverage;
   coverage_readiness: ReviewedIdentityCoverageReadiness;
   coverage_residuals: Record<string, Record<string, unknown>>;
+  coverage_debt: ReviewedIdentityCoverageDebt;
   workload: ReviewedIdentityWorkload;
   optional_audit: ReviewedIdentityOptionalAudit;
   pagination: {
