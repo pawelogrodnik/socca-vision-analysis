@@ -114,7 +114,12 @@ def validate_deferred_review_action(
     validate_review_unit_action_scope(payload, unit)
 
     saved = _saved_decision(match_path, subject_id, target_id, unit)
-    if saved is not None and _semantic_decision(saved) != _semantic_decision(payload):
+    idempotent_replay = saved is not None and _semantic_decision(saved) == _semantic_decision(payload)
+    supersedes_saved_decision = saved is not None and not idempotent_replay
+    if supersedes_saved_decision and not _may_supersede_saved_decision(
+        hot_state,
+        payload,
+    ):
         raise DeferredReviewActionError(
             "review_unit_already_decided",
             "Ten przypadek ma już zapisaną inną decyzję. Odśwież Review przed zmianą.",
@@ -135,12 +140,27 @@ def validate_deferred_review_action(
             )
     return {
         "review_unit": unit,
-        "idempotent_replay": saved is not None,
+        "idempotent_replay": idempotent_replay,
+        "supersedes_saved_decision": supersedes_saved_decision,
         "batch_source_snapshot_digest": progress["source_snapshot_digest"],
         "detected_team_labels_by_subject": detected_team_labels_by_subject,
         "authorization_source": authorization_source,
         "hot_state": hot_state,
     }
+
+
+def _may_supersede_saved_decision(
+    hot_state: dict[str, Any] | None,
+    payload: dict[str, Any],
+) -> bool:
+    """Permit a deliberate correction only from the current exact hot card.
+
+    An older team-only decision can leave a Team-A coverage card actionable.
+    The operator must be able to correct it to Team B (or a named player),
+    but only after the versioned hot-state and exact ownership checks above
+    have proven that this is the current card, not a delayed mutation.
+    """
+    return hot_state is not None and payload.get("review_state_version") is not None
 
 
 def _dynamically_authorized_optional_unit(
