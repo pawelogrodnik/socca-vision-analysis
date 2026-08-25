@@ -1,3 +1,10 @@
+import type { ReviewedIdentityReviewQueue } from '../types';
+import {
+  beginRequiredReviewLifecycle,
+  beginRequiredReviewNavigation,
+} from './identityExceptionQueue';
+import type { TeamReviewFilter } from './identityExceptionTeamFilter';
+
 export function moveReviewCaseIndex(
   requestedIndex: number,
   caseCount: number,
@@ -16,6 +23,26 @@ export function createReviewCommitGuard() {
     },
     resetForAuthoritativeQueue: () => {
       committedKeys.clear();
+    },
+  };
+}
+
+export function createReviewQueueConflictRecovery(
+  teamFilter: TeamReviewFilter,
+  queue: ReviewedIdentityReviewQueue,
+  totalRemaining: number,
+) {
+  return {
+    localCases: [],
+    index: 0,
+    totalRemaining,
+    lifecycle: beginRequiredReviewLifecycle(0),
+    navigation: beginRequiredReviewNavigation(),
+    progressRequest: {
+      offset: 0,
+      preferredIndex: 0,
+      teamFilter,
+      queue,
     },
   };
 }

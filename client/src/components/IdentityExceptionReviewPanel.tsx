@@ -39,6 +39,7 @@ import {
 } from '../utils/identityExceptionQueue';
 import {
   createReviewCommitGuard,
+  createReviewQueueConflictRecovery,
   moveReviewCaseIndex,
 } from '../utils/identityExceptionWorkspace';
 import {
@@ -449,17 +450,25 @@ export function IdentityExceptionReviewPanel({
   }
 
   function recoverFromReviewSaveConflict() {
+    const recovery = createReviewQueueConflictRecovery(
+      activeTeamFilter,
+      activeQueue,
+      totalRemaining,
+    );
     setFinalizeFailed(false);
-    requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
-    requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
+    setCases(recovery.localCases);
+    setIndex(recovery.index);
+    setTotalRemaining(recovery.totalRemaining);
+    requiredReviewLifecycleRef.current = recovery.lifecycle;
+    requiredReviewNavigationRef.current = recovery.navigation;
     setMessage('Review został zsynchronizowany z zapisaną decyzją.');
     void loadCases(
       undefined,
       true,
-      0,
-      0,
-      activeTeamFilter,
-      activeQueue,
+      recovery.progressRequest.offset,
+      recovery.progressRequest.preferredIndex,
+      recovery.progressRequest.teamFilter,
+      recovery.progressRequest.queue,
     );
   }
 

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   createReviewCommitGuard,
+  createReviewQueueConflictRecovery,
   moveReviewCaseIndex,
   persistReviewDecision,
 } from '../src/utils/identityExceptionWorkspace.ts';
@@ -72,6 +73,42 @@ test('authoritative queue reload permits a review target from an older projectio
 });
 
 
+test('recoverable save conflict discards the stale Required card without counting or retrying it', () => {
+  const recovery = createReviewQueueConflictRecovery('A', 'required', 1);
+
+  assert.deepEqual(recovery.localCases, []);
+  assert.equal(recovery.index, 0);
+  assert.equal(recovery.totalRemaining, 1);
+  assert.deepEqual(recovery.lifecycle, { knownRemaining: 0, durableSavesInWindow: 0 });
+  assert.deepEqual(recovery.navigation, { queueMutatedSinceSnapshot: false });
+  assert.deepEqual(recovery.progressRequest, {
+    offset: 0,
+    preferredIndex: 0,
+    teamFilter: 'A',
+    queue: 'required',
+  });
+});
+
+
+test('workstation recovery only reloads authoritative progress and never treats the conflict as saved', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
+  const recoveryStart = panel.indexOf('function recoverFromReviewSaveConflict()');
+  const recoveryEnd = panel.indexOf('async function finalizeCorrections(', recoveryStart);
+  const recovery = panel.slice(recoveryStart, recoveryEnd);
+
+  assert.ok(recoveryStart >= 0);
+  assert.ok(recoveryEnd > recoveryStart);
+  assert.match(recovery, /setCases\(recovery\.localCases\)/);
+  assert.match(recovery, /requiredReviewLifecycleRef\.current = recovery\.lifecycle/);
+  assert.match(recovery, /void loadCases\(/);
+  assert.doesNotMatch(recovery, /saved\(/);
+  assert.doesNotMatch(recovery, /finalizeCorrections\(/);
+  assert.doesNotMatch(recovery, /saveReviewedIdentityCorrection|persistReviewDecision/);
+  assert.doesNotMatch(recovery, /setTotalRemaining\(\(remaining\)/);
+});
+
+
 test('exception workstation keeps one active case and stateful correction subviews', () => {
   const components = new URL('../src/components/', import.meta.url);
   const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
@@ -104,9 +141,11 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(form, /Zapisz \+ następny|navigation\.saveLabel/);
   assert.match(form, /persistReviewDecision/);
   assert.match(form, /saveInFlightRef/);
-  assert.match(form, /onSaveConflict && isReviewQueueConflict\(reason\)/);
+  assert.match(form, /onSaveConflict && isRecoverableReviewQueueConflict\(reason\)/);
   assert.match(panel, /resetForAuthoritativeQueue\(\)/);
   assert.match(panel, /recoverFromReviewSaveConflict/);
+  assert.match(panel, /setCases\(recovery\.localCases\)/);
+  assert.match(panel, /recovery\.progressRequest\.offset/);
   // Required queue stages mixed players; optional MAX splits directly.
   assert.match(panel, /mixedHandling=\{activeQueue === 'optional_audit' \? 'direct' : 'stage'\}/);
 });

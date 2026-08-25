@@ -395,7 +395,7 @@ test('exception review uses deferred saves and one explicit batch finalize', () 
   assert.doesNotMatch(panel, /result\.workflow\?\.phase === 'exceptions'\) void loadCases/);
   assert.match(form, /payload\.defer_recompute = true/);
   assert.match(form, /invalidateReviewedCorrectionContext\(matchId\);/);
-  assert.match(form, /isReviewQueueConflict/);
+  assert.match(form, /isRecoverableReviewQueueConflict/);
   assert.match(panel, /onSaveConflict=\{recoverFromReviewSaveConflict\}/);
   assert.match(api, /reviewed-identity\/corrections\/finalize/);
 });

@@ -63,9 +63,9 @@ import type {
 } from './components/boundedH2ReIdTypes';
 import { ApiRequestError } from './lib/apiErrors';
 
-const API_BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE_URL || '');
+const API_BASE = import.meta.env?.DEV ? '' : (import.meta.env?.VITE_API_BASE_URL || '');
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, options);

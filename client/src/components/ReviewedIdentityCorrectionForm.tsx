@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   saveReviewedIdentityCorrection,
 } from '../api';
-import { isReviewQueueConflict } from '../lib/apiErrors';
+import { isRecoverableReviewQueueConflict } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type {
   ReviewedCorrectionAction,
@@ -222,7 +222,7 @@ export function ReviewedIdentityCorrectionForm({
         },
       );
     } catch (reason) {
-      if (onSaveConflict && isReviewQueueConflict(reason)) {
+      if (onSaveConflict && isRecoverableReviewQueueConflict(reason)) {
         // The server already has a durable decision for this stale card.
         // Replace it with the current queue instead of asking the operator
         // to reload Review or to submit another decision.
