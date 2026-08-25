@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -39,6 +40,7 @@ from app.services.review_workflow_orchestrator import (
     public_finalized_identity,
 )
 from app.services.review_workflow_state import build_cheap_finalize_preflight_state
+from bench_match_copy import ensure_bench_copy, remove_bench_copy
 
 
 def load_json(path: Path):
@@ -57,7 +59,14 @@ class Timer:
 
 
 def main() -> None:
-    root = Path("backend/storage/matches/perf-finalize-bench")
+    root = ensure_bench_copy("perf-finalize-bench", "9c7485e4")
+    try:
+        _run_benchmark(root)
+    finally:
+        remove_bench_copy("perf-finalize-bench")
+
+
+def _run_benchmark(root: Path) -> None:
     match_doc = load_json(root / "match.json")
     timer = Timer()
 

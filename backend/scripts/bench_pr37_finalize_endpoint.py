@@ -7,11 +7,14 @@ EXACT FastAPI endpoint POST /api/matches/{id}/review-workflow/finalize, so
 ``performance.total_ms`` covers cheap preflight + authoritative recompute +
 fresh progress + hot state + stats + render submission — one operator click.
 
-Benchmark copy: ``bench-finalize-endpoint`` (real match 23391dfb, ~21MB
-video).  The durable progress artifact in older copies predates the current
-progress schema, so the script first runs the production
-``retry_review_recompute`` path until cheap preflight admits finalize — the
-same recovery an operator gets in the UI.
+Benchmark copy: ``bench-finalize-endpoint`` is created automatically from
+real match ``ca16be45`` (~81MB video, fully resolved review state) and
+DELETED after the run so the operator match list stays clean.  Set
+``KEEP_BENCH_COPY=1`` to keep it for inspection.  The durable progress
+artifact in older matches predates the current progress schema, so the
+script first runs the production ``retry_review_recompute`` path until
+cheap preflight admits finalize — the same recovery an operator gets in
+the UI.
 
 Warm vs cold video digest: the durable SHA cache is deleted between runs to
 force a full source-video hash on the finalize click path.
@@ -24,6 +27,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -42,10 +46,11 @@ from app.services.review_workflow_orchestrator import (
     retry_review_recompute,
 )
 from app.services.review_workflow_state import build_cheap_finalize_preflight_state
+from bench_match_copy import ensure_bench_copy, remove_bench_copy
 
 
-MATCH_ID = "bench-finalize-endpoint"
-ROOT = Path("backend/storage/matches") / MATCH_ID
+SOURCE_MATCH_ID = "ca16be45"
+ROOT = Path("backend/storage/matches") / "bench-finalize-endpoint"
 DIGEST_CACHE = "reviewed_source_video_digest.json"
 
 PERFORMANCE_KEYS = (
@@ -173,7 +178,7 @@ def run_http() -> None:
     # copy), not match.json["id"], exactly like production routing.
     with TestClient(app) as client:
         started = time.perf_counter()
-        response = client.post(f"/api/matches/{MATCH_ID}/review-workflow/finalize", json={})
+        response = client.post(f"/api/matches/{ROOT.name}/review-workflow/finalize", json={})
         wall = ms(started)
     body = response.json() if response.status_code == 200 else {}
     performance = body.get("performance") or {}
@@ -248,9 +253,17 @@ def force_finalize_eligible(match_doc: dict) -> None:
 
 
 def main() -> None:
+    ensure_bench_copy(ROOT.name, SOURCE_MATCH_ID)
+    try:
+        _run_benchmark()
+    finally:
+        remove_bench_copy(ROOT.name)
+
+
+def _run_benchmark() -> None:
     match_doc = load_json(ROOT / "match.json")
     report = load_json(ROOT / "reviewed_identity_report.json")
-    print(f"match={MATCH_ID} pre_run_fingerprints="
+    print(f"match={ROOT.name} pre_run_fingerprints="
           f"{'source_file_fingerprints' in report}")
 
     prepare_eligibility(match_doc)
