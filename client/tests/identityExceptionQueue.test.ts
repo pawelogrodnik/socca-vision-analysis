@@ -7,12 +7,16 @@ import type {
   ReviewWorkflow,
 } from '../src/types.ts';
 import {
+  REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
+  beginRequiredReviewLifecycle,
   finalizeDeferredReviewBatch,
+  recordDurableRequiredReviewSave,
   removeResolvedReviewCase,
   resolveReviewPageNavigation,
   reviewUnitKey,
   shouldAutoFinalizeDeferredQueue,
   shouldFinalizeDeferredReview,
+  shouldRecoverRequiredReviewCompletion,
 } from '../src/utils/identityExceptionQueue.ts';
 
 
@@ -180,6 +184,132 @@ test('an empty global queue does not finalize when canonical coverage readiness 
 
 test('a dirty deferred decision does not finalize while another filter has work', () => {
   assert.equal(shouldFinalizeDeferredReview([], true, 180, false), false);
+});
+
+
+test('reproduces pre-hardening partial-window completion miss from a frozen filter count', () => {
+  const authoritativeGlobalAtLoad = 23;
+  let locallyDisplayedRemaining = authoritativeGlobalAtLoad;
+  let completionFinalizeCalls = 0;
+  for (let save = 1; save <= authoritativeGlobalAtLoad; save += 1) {
+    locallyDisplayedRemaining -= 1;
+    // This is the old component calculation: `reviewFilters.counts.all`
+    // remained 23 while only `totalRemaining` was decremented.
+    const staleGlobalRemaining = authoritativeGlobalAtLoad - 1;
+    if (shouldAutoFinalizeDeferredQueue('required', [], false, staleGlobalRemaining, true)) {
+      completionFinalizeCalls += 1;
+    }
+  }
+  assert.equal(locallyDisplayedRemaining, 0);
+  assert.equal(completionFinalizeCalls, 0);
+});
+
+
+test('Required lifecycle finalizes exactly once at every short final-window size', () => {
+  for (const initialRemaining of [1, 2, 23, 39]) {
+    let lifecycle = beginRequiredReviewLifecycle(initialRemaining);
+    let finalizeCalls = 0;
+    for (let save = 1; save <= initialRemaining; save += 1) {
+      const transition = recordDurableRequiredReviewSave(lifecycle);
+      lifecycle = transition.lifecycle;
+      if (transition.synchronization !== 'none') finalizeCalls += 1;
+      assert.equal(
+        transition.synchronization,
+        save === initialRemaining ? 'completion' : 'none',
+        `remaining=${initialRemaining}, save=${save}`,
+      );
+    }
+    assert.deepEqual(lifecycle, { knownRemaining: 0, durableSavesInWindow: initialRemaining });
+    assert.equal(finalizeCalls, 1, `remaining=${initialRemaining}`);
+  }
+});
+
+
+test('Required lifecycle uses one boundary finalize at exactly forty saves', () => {
+  let lifecycle = beginRequiredReviewLifecycle(REQUIRED_REVIEW_WORKING_WINDOW_SIZE);
+  let finalizeCalls = 0;
+  for (let save = 1; save <= REQUIRED_REVIEW_WORKING_WINDOW_SIZE; save += 1) {
+    const transition = recordDurableRequiredReviewSave(lifecycle);
+    lifecycle = transition.lifecycle;
+    if (transition.synchronization !== 'none') finalizeCalls += 1;
+    assert.equal(
+      transition.synchronization,
+      save === REQUIRED_REVIEW_WORKING_WINDOW_SIZE ? 'boundary' : 'none',
+    );
+  }
+  assert.deepEqual(lifecycle, { knownRemaining: 0, durableSavesInWindow: 0 });
+  assert.equal(finalizeCalls, 1);
+});
+
+
+test('Required lifecycle preserves case forty-one for an authoritative reload then finalizes once', () => {
+  let lifecycle = beginRequiredReviewLifecycle(41);
+  let boundaryFinalizeCalls = 0;
+  let completionFinalizeCalls = 0;
+  for (let save = 1; save <= REQUIRED_REVIEW_WORKING_WINDOW_SIZE; save += 1) {
+    const transition = recordDurableRequiredReviewSave(lifecycle);
+    lifecycle = transition.lifecycle;
+    if (transition.synchronization === 'boundary') boundaryFinalizeCalls += 1;
+    assert.equal(transition.synchronization, save === 40 ? 'boundary' : 'none');
+  }
+  assert.equal(lifecycle.knownRemaining, 1);
+  assert.equal(boundaryFinalizeCalls, 1);
+
+  // The boundary uses one authoritative reload. Its remaining source starts a
+  // new hot window and is still independently reviewable.
+  lifecycle = beginRequiredReviewLifecycle(1);
+  const finalTransition = recordDurableRequiredReviewSave(lifecycle);
+  if (finalTransition.synchronization === 'completion') completionFinalizeCalls += 1;
+  assert.equal(finalTransition.synchronization, 'completion');
+  assert.equal(finalTransition.lifecycle.knownRemaining, 0);
+  assert.equal(completionFinalizeCalls, 1);
+});
+
+
+test('forty durable saves keep Required hot until the deliberate boundary', () => {
+  const actions = Array.from({ length: REQUIRED_REVIEW_WORKING_WINDOW_SIZE }, (_, index) => (
+    index === 0
+      ? 'assign_roster_player'
+      : index === 1
+        ? 'unresolved'
+        : index === 2
+          ? 'mixed_players'
+          : 'assign_team'
+  ));
+  let lifecycle = beginRequiredReviewLifecycle(actions.length);
+  let correctionSaves = 0;
+  let finalizeCalls = 0;
+  let blockingProgressReloads = 0;
+
+  for (const action of actions) {
+    correctionSaves += 1; // POST /corrections completed durably before this transition.
+    const transition = recordDurableRequiredReviewSave(lifecycle);
+    lifecycle = transition.lifecycle;
+    if (transition.synchronization === 'boundary') finalizeCalls += 1;
+    if (transition.synchronization === 'none') blockingProgressReloads += 0;
+    assert.ok(['assign_roster_player', 'unresolved', 'mixed_players', 'assign_team'].includes(action));
+    if (correctionSaves < REQUIRED_REVIEW_WORKING_WINDOW_SIZE) {
+      assert.equal(finalizeCalls, 0);
+      assert.equal(blockingProgressReloads, 0);
+    }
+  }
+  assert.equal(correctionSaves, 40);
+  assert.equal(blockingProgressReloads, 0);
+  assert.equal(finalizeCalls, 1);
+});
+
+
+test('dirty progress recovers only after authoritative Required completion and readiness', () => {
+  let finalizeCalls = 0;
+  if (shouldRecoverRequiredReviewCompletion(true, 200, true)) finalizeCalls += 1;
+  assert.equal(shouldRecoverRequiredReviewCompletion(false, 0, true), false);
+  if (shouldRecoverRequiredReviewCompletion(true, 0, false)) finalizeCalls += 1;
+  assert.equal(finalizeCalls, 0);
+
+  // A remount only calls the recovery finalize once for a dirty, genuinely
+  // empty Required projection whose canonical readiness allows it.
+  if (shouldRecoverRequiredReviewCompletion(true, 0, true)) finalizeCalls += 1;
+  assert.equal(finalizeCalls, 1);
 });
 
 

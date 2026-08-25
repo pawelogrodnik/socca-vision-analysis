@@ -71,7 +71,7 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(panel, /teamReviewFilterOptions\(match\.teams \|\| \[\], reviewFilters\)/);
   assert.match(panel, /\['high', 'coverage', 'continuity', 'optional'\]\.includes/);
   assert.match(panel, /progress\.pagination\?\.total_remaining/);
-  assert.match(panel, /REVIEW_WORKING_WINDOW_SIZE = 40/);
+  assert.match(panel, /REQUIRED_REVIEW_WORKING_WINDOW_SIZE/);
   assert.match(panel, /Offset 0 is the head of the \*current\* shrinking queue/);
   assert.doesNotMatch(panel, /pageOffset \+ REVIEW_PAGE_SIZE/);
   assert.match(panel, /Pokrycie rozpoznania/);

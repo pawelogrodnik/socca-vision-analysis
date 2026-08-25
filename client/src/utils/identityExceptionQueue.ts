@@ -17,6 +17,58 @@ export type ReviewPageNavigation =
   | { kind: 'none' };
 
 
+export const REQUIRED_REVIEW_WORKING_WINDOW_SIZE = 40;
+
+
+export type RequiredReviewLifecycle = {
+  knownRemaining: number;
+  durableSavesInWindow: number;
+};
+
+
+export type RequiredReviewSaveTransition = {
+  lifecycle: RequiredReviewLifecycle;
+  synchronization: 'none' | 'boundary' | 'completion';
+};
+
+
+export function beginRequiredReviewLifecycle(knownRemaining: number): RequiredReviewLifecycle {
+  return {
+    knownRemaining: Math.max(0, knownRemaining),
+    durableSavesInWindow: 0,
+  };
+}
+
+
+export function recordDurableRequiredReviewSave(
+  lifecycle: RequiredReviewLifecycle,
+): RequiredReviewSaveTransition {
+  const knownRemaining = Math.max(0, lifecycle.knownRemaining - 1);
+  const durableSavesInWindow = lifecycle.durableSavesInWindow + 1;
+  if (durableSavesInWindow >= REQUIRED_REVIEW_WORKING_WINDOW_SIZE) {
+    return {
+      lifecycle: { knownRemaining, durableSavesInWindow: 0 },
+      synchronization: 'boundary',
+    };
+  }
+  return {
+    lifecycle: { knownRemaining, durableSavesInWindow },
+    synchronization: knownRemaining === 0 ? 'completion' : 'none',
+  };
+}
+
+
+export function shouldRecoverRequiredReviewCompletion(
+  recomputeRequired: boolean | undefined,
+  knownRemaining: number,
+  coverageAllowsFinalize: boolean,
+): boolean {
+  return recomputeRequired === true
+    && knownRemaining === 0
+    && coverageAllowsFinalize;
+}
+
+
 export function reviewUnitKey(unit: ReviewedIdentityReviewUnit): string {
   return unit.review_target_id
     ? `segment:${unit.review_target_id}`

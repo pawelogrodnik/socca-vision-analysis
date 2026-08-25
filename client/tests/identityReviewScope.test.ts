@@ -59,8 +59,8 @@ test('Remaining Cases UI separates required work from optional Team-A MAX audit'
   assert.match(source, /shouldAutoFinalizeDeferredQueue/);
   assert.match(queueUtils, /queue === 'required'/);
   assert.match(source, /loadCases\(undefined, false, 0, 0, 'all', nextQueue\)/);
-  assert.match(source, /REVIEW_WORKING_WINDOW_SIZE = 40/);
-  assert.match(source, /savedInWindow >= REVIEW_WORKING_WINDOW_SIZE/);
+  assert.match(source, /REQUIRED_REVIEW_WORKING_WINDOW_SIZE/);
+  assert.match(source, /recordDurableRequiredReviewSave/);
   assert.doesNotMatch(source, /pageOffset \+ REVIEW_PAGE_SIZE/);
   assert.match(source, /Zapisz \+ następny/);
   assert.match(correctionForm, /Zawodnik z kadry/);

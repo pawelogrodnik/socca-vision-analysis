@@ -56,7 +56,7 @@ test('exception panel resets filters to page one and preserves filters for navig
   assert.match(panel, /setPageOffset\(0\)/);
   assert.match(panel, /loadCases\(undefined, false, 0, 0, nextFilter, activeQueue\)/);
   assert.match(panel, /destination\.index,[\s\S]*activeTeamFilter/);
-  assert.match(panel, /REVIEW_WORKING_WINDOW_SIZE = 40/);
+  assert.match(panel, /REQUIRED_REVIEW_WORKING_WINDOW_SIZE/);
   assert.match(panel, /destination\.offset > 0 && activeQueue === 'required' \? 0 : destination\.offset/);
   assert.doesNotMatch(panel, /pageOffset \+ REVIEW_PAGE_SIZE/);
   assert.match(panel, /finalizeCorrections\(activeTeamFilter, activeQueue\)/);
