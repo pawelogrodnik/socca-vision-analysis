@@ -31,7 +31,6 @@ import {
   resolveReviewPageNavigation,
   reviewUnitKey,
   shouldRecoverRequiredReviewCompletion,
-  shouldAutoFinalizeDeferredQueue,
 } from '../utils/identityExceptionQueue';
 import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
 import {
@@ -376,11 +375,21 @@ export function IdentityExceptionReviewPanel({
     } else {
       const transition = recordDurableRequiredReviewSave(requiredReviewLifecycleRef.current);
       requiredReviewLifecycleRef.current = transition.lifecycle;
-      if (transition.synchronization === 'boundary' || transition.synchronization === 'completion') {
-        // A boundary is based on durable save transitions, never a stale
-        // filter/presentation count. At exactly 40, boundary wins over
-        // completion so there is one synchronization, not two.
+      if (transition.synchronization === 'completion') {
+        // Canonical synchronization is an authoritative completion/recovery
+        // operation, never periodic hot-queue batching.
         void finalizeCorrections(activeTeamFilter, activeQueue);
+      } else if (transition.synchronization === 'replenish') {
+        // Required Review is a shrinking queue. Refresh its current head from
+        // the valid hot projection; this does not call corrections/finalize.
+        void loadCases(
+          undefined,
+          true,
+          0,
+          0,
+          activeTeamFilter,
+          activeQueue,
+        );
       } else if (next.cases.length === 0 && hasMore) {
         // Offset 0 is the head of the *current* shrinking queue. All local
         // entries were just persisted, so this cannot skip its next sources.
@@ -392,14 +401,6 @@ export function IdentityExceptionReviewPanel({
           activeTeamFilter,
           activeQueue,
         );
-      } else if (shouldAutoFinalizeDeferredQueue(
-        activeQueue,
-        next.cases,
-        false,
-        requiredReviewLifecycleRef.current.knownRemaining,
-        coverageReadiness?.allows_finalize !== false,
-      )) {
-        void finalizeCorrections(activeTeamFilter, activeQueue);
       }
     }
   }

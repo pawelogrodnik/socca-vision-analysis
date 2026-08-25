@@ -28,7 +28,7 @@ export type RequiredReviewLifecycle = {
 
 export type RequiredReviewSaveTransition = {
   lifecycle: RequiredReviewLifecycle;
-  synchronization: 'none' | 'boundary' | 'completion';
+  synchronization: 'none' | 'replenish' | 'completion';
 };
 
 
@@ -45,15 +45,23 @@ export function recordDurableRequiredReviewSave(
 ): RequiredReviewSaveTransition {
   const knownRemaining = Math.max(0, lifecycle.knownRemaining - 1);
   const durableSavesInWindow = lifecycle.durableSavesInWindow + 1;
+  // Completion takes precedence over a working-window replenish: exactly 40
+  // total cases produce one canonical completion sync, never two actions.
+  if (knownRemaining === 0) {
+    return {
+      lifecycle: { knownRemaining, durableSavesInWindow: 0 },
+      synchronization: 'completion',
+    };
+  }
   if (durableSavesInWindow >= REQUIRED_REVIEW_WORKING_WINDOW_SIZE) {
     return {
       lifecycle: { knownRemaining, durableSavesInWindow: 0 },
-      synchronization: 'boundary',
+      synchronization: 'replenish',
     };
   }
   return {
     lifecycle: { knownRemaining, durableSavesInWindow },
-    synchronization: knownRemaining === 0 ? 'completion' : 'none',
+    synchronization: 'none',
   };
 }
 
@@ -99,7 +107,7 @@ export function shouldFinalizeDeferredReview(
 ): boolean {
   // `recompute_required` means canonical propagation is pending; it is not a
   // claim that a versioned hot queue is unsafe. Callers finalize only at a
-  // deliberate working-window or completion boundary.
+  // true completion or fail-closed recovery boundary.
   return cases.length === 0
     && globalRemaining === 0
     && coverageAllowsFinalize;

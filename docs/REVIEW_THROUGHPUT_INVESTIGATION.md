@@ -10,6 +10,10 @@ A normal deferred correction is authorized against a versioned hot unit, persist
 
 `recompute_required` means the canonical snapshot has not incorporated one or more durable decisions. It does not mean the versioned hot queue is unsafe. A temporal split, split retirement/supersede, manual-slot creation, stale ownership conflict or hot-state write failure genuinely invalidates exact queue topology and must fail closed to an authoritative rebuild.
 
+### Verified pre-correction call chain
+
+The prior lifecycle helper returned `boundary` on the 40th durable save with Required work still remaining. `IdentityExceptionReviewPanel.saved()` treated `boundary` the same as `completion` and called `finalizeCorrections()`, which called `finalizeDeferredReviewBatch()` and then `POST /reviewed-identity/corrections/finalize`. The focused lifecycle reproduction captured that chain before this correction.
+
 ## Queue and pagination finding
 
 The Required queue is an ordered, shrinking projection. After a local page of 20 cases is saved, the frontend currently requests `offset = pageOffset + 20`. Since the server has already removed those 20 sources, that offset skips the first 20 *remaining* sources. With 242 cases, resolving the first 20 leaves 222; `offset=20` therefore starts at original case 41, skipping original cases 21--40. This is a real skip bug, not merely a display-count issue.
@@ -18,4 +22,4 @@ The Required queue is an ordered, shrinking projection. After a local page of 20
 
 Normal corrections and exact mixed staging remain durable per click and patch the hot projection. Exact mixed routing removes just its source from Required, records it once in Mixed Players, and preserves unrelated sibling sources. A dirty canonical snapshot can coexist with a safe hot working window.
 
-Required Review keeps one local `knownRemaining` value from the authoritative Required projection and decrements it only after a successful durable correction. It does not derive completion from the immutable filter counts shown by that projection. The client replenishes Required Review from offset zero with stable-key dedupe rather than advancing a mutable offset; an authoritative finalize is reserved for a working-window boundary (40 decisions), true Required completion, a true structural mutation, hot-state recovery/conflict, or a workflow transition that requires canonical readiness. On remount, `recompute_required` remains non-blocking while Required work is nonzero; it recovers completion only when the authoritative Required count is zero and readiness permits finalization.
+Required Review keeps one local `knownRemaining` value from the authoritative Required projection and decrements it only after a successful durable correction. It does not derive completion from the immutable filter counts shown by that projection. A 40-decision boundary replenishes the current hot Required queue from offset zero; it does not canonical-finalize the match. Canonical recomputation is deferred until true Required completion or a fail-closed structural/recovery condition. On remount, `recompute_required` remains non-blocking while Required work is nonzero; it recovers completion only when the authoritative Required count is zero and readiness permits finalization.

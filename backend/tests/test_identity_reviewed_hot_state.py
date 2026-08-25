@@ -344,6 +344,130 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
         )
         self.assertEqual([unit["candidate_subject_id"] for unit in state["internal_review_units"]], ["named", "unresolved"])
 
+    def test_multiple_hot_replenishments_match_cold_completion_without_periodic_finalize(self) -> None:
+        """Two 40-save hot windows preserve the same final canonical inputs.
+
+        The reads after saves 40 and 80 model GET review-progress from the
+        compact state. No canonical finalize happens between those reads; the
+        cold projection after the last durable save remains the oracle.
+        """
+        match = _complete_roster_match()
+        units = [
+            _hot_required_unit(f"subject-{index}", f"track-{index}", index)
+            for index in range(1, 82)
+        ]
+        mixed_index = 17
+        mixed_unit = units[mixed_index - 1]
+        mixed_unit["source_ownership_digest"] = "mixed-window-source"
+        rows = [
+            {
+                "tracklet_id": f"track-{index}",
+                "frame": index,
+                "identity_status": "unresolved",
+                "team_label": "A",
+                "canonical_player_id": None,
+            }
+            for index in range(1, 82)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        inputs = {
+            "match_id": match["id"],
+            "coverage": coverage,
+            "pair_index": [
+                {"tracklet_id": tracklet_id, "frame": frame, "value": value}
+                for (tracklet_id, frame), value in pair_index.items()
+            ],
+            "observed_pairs": sorted(pair_index),
+            "technical_diagnostics": {},
+            "mixed_players": {},
+            "deferred_correction_context": {},
+        }
+        initial = project_reviewed_identity_progress(
+            deepcopy(units), match, deepcopy(inputs), include_internal_units=True,
+        )
+        state = {
+            "state_version": 10,
+            "progress": {
+                key: value for key, value in initial.items()
+                if key not in {"_internal_review_units", "_projection_inputs"}
+            },
+            "internal_review_units": deepcopy(initial["_internal_review_units"]),
+            "unit_lookup": {f"subject-{index}\u001f": index - 1 for index in range(1, 82)},
+            "source_index": {},
+            "projection_inputs": deepcopy(inputs),
+            "roster_options": [{"player_id": "p1", "team_label": "A"}],
+        }
+        mixed_marker = {
+            "case_id": "mixed:mixed-window-source",
+            "candidate_subject_id": "subject-17",
+            "action": "mixed_players",
+            "original_issue": "mixed_players",
+            "mixed_hint": "unknown",
+            "resolution_status": "unresolved",
+            "source": {
+                "scope_kind": "whole_subject",
+                "candidate_subject_id": "subject-17",
+                "review_target_id": None,
+                "continuity_group_id": None,
+                "source_ownership_digest": "mixed-window-source",
+                "owned_observations": [{"tracklet_id": "track-17", "frame": 17}],
+            },
+            "observation_count": 1,
+            "frame_start": 17,
+            "frame_end": 17,
+        }
+        with _workspace() as root:
+            for save in range(1, 82):
+                target = hot_review_unit(state, f"subject-{save}")
+                assert target is not None
+                decision = mixed_marker if save == mixed_index else {
+                    "action": "assign_roster_player", "player_id": "p1", "team_label": "A",
+                }
+                update_hot_state_after_deferred_save(
+                    root, match, state, target, decision, f"window-save-{save}",
+                )
+                if save in {40, 80}:
+                    # Hot queue replenish reads the current head; it neither
+                    # rebuilds canonical state nor skips the remaining source.
+                    self.assertEqual(
+                        [row["candidate_subject_id"] for row in state["progress"]["next_cases"]],
+                        [f"subject-{index}" for index in range(save + 1, 82)],
+                    )
+
+        cold_units = []
+        for unit in deepcopy(units):
+            if unit["candidate_subject_id"] == "subject-17":
+                continue
+            unit.update({
+                "current_decision": {
+                    "action": "assign_roster_player", "player_id": "p1", "team_label": "A",
+                },
+                "current_resolution_status": "reviewed_by_operator",
+                "priority": None,
+                "canonical_player_id": "p1",
+            })
+            cold_units.append(unit)
+        cold_inputs = deepcopy(inputs)
+        cold_inputs["mixed_players"] = {
+            "cases": [mixed_marker],
+            "summary": {"total": 1, "unresolved": 1, "resolved": 0, "complex_unresolved": 0},
+        }
+        cold = project_reviewed_identity_progress(
+            cold_units, match, cold_inputs, include_internal_units=True,
+        )
+        semantic_fields = (
+            "next_cases", "optional_audit_cases", "summary", "coverage_readiness",
+            "coverage_residuals", "workload", "optional_audit", "observations", "mixed_players",
+        )
+        self.assertEqual(
+            {key: state["progress"][key] for key in semantic_fields},
+            {key: cold[key] for key in semantic_fields},
+        )
+        self.assertEqual(
+            [(unit["candidate_subject_id"], unit.get("current_decision")) for unit in state["internal_review_units"]],
+            [(unit["candidate_subject_id"], unit.get("current_decision")) for unit in cold["_internal_review_units"]],
+        )
+
     def test_materialization_derives_exact_whole_source_digest_from_one_candidate_and_tracklet_read(self) -> None:
         with _workspace() as root:
             _write_json(root / "identity_candidate_shadow.json", {

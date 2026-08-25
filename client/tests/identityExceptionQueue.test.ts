@@ -205,97 +205,72 @@ test('reproduces pre-hardening partial-window completion miss from a frozen filt
 });
 
 
+function runRequiredSaveFlow(totalRequired: number, mixedSave?: number) {
+  let lifecycle = beginRequiredReviewLifecycle(totalRequired);
+  const transitions: string[] = [];
+  let correctionSaves = 0;
+  let replenishCalls = 0;
+  let finalizeCalls = 0;
+  for (let save = 1; save <= totalRequired; save += 1) {
+    // This is the same durable-save transition invoked by the panel after the
+    // POST /corrections response. A staged Mixed source is still a safe hot
+    // save, so it participates in the same Required working window.
+    const action = save === mixedSave ? 'mixed_players' : 'assign_roster_player';
+    assert.ok(['assign_roster_player', 'mixed_players'].includes(action));
+    correctionSaves += 1;
+    const transition = recordDurableRequiredReviewSave(lifecycle);
+    lifecycle = transition.lifecycle;
+    transitions.push(transition.synchronization);
+    if (transition.synchronization === 'replenish') replenishCalls += 1;
+    if (transition.synchronization === 'completion') finalizeCalls += 1;
+  }
+  return { correctionSaves, replenishCalls, finalizeCalls, transitions, lifecycle };
+}
+
+
 test('Required lifecycle finalizes exactly once at every short final-window size', () => {
   for (const initialRemaining of [1, 2, 23, 39]) {
-    let lifecycle = beginRequiredReviewLifecycle(initialRemaining);
-    let finalizeCalls = 0;
-    for (let save = 1; save <= initialRemaining; save += 1) {
-      const transition = recordDurableRequiredReviewSave(lifecycle);
-      lifecycle = transition.lifecycle;
-      if (transition.synchronization !== 'none') finalizeCalls += 1;
-      assert.equal(
-        transition.synchronization,
-        save === initialRemaining ? 'completion' : 'none',
-        `remaining=${initialRemaining}, save=${save}`,
-      );
-    }
-    assert.deepEqual(lifecycle, { knownRemaining: 0, durableSavesInWindow: initialRemaining });
-    assert.equal(finalizeCalls, 1, `remaining=${initialRemaining}`);
+    const flow = runRequiredSaveFlow(initialRemaining);
+    assert.equal(flow.transitions.at(-1), 'completion', `remaining=${initialRemaining}`);
+    assert.equal(flow.replenishCalls, 0, `remaining=${initialRemaining}`);
+    assert.equal(flow.finalizeCalls, 1, `remaining=${initialRemaining}`);
+    assert.deepEqual(flow.lifecycle, { knownRemaining: 0, durableSavesInWindow: 0 });
   }
 });
 
 
-test('Required lifecycle uses one boundary finalize at exactly forty saves', () => {
-  let lifecycle = beginRequiredReviewLifecycle(REQUIRED_REVIEW_WORKING_WINDOW_SIZE);
-  let finalizeCalls = 0;
-  for (let save = 1; save <= REQUIRED_REVIEW_WORKING_WINDOW_SIZE; save += 1) {
-    const transition = recordDurableRequiredReviewSave(lifecycle);
-    lifecycle = transition.lifecycle;
-    if (transition.synchronization !== 'none') finalizeCalls += 1;
-    assert.equal(
-      transition.synchronization,
-      save === REQUIRED_REVIEW_WORKING_WINDOW_SIZE ? 'boundary' : 'none',
-    );
-  }
-  assert.deepEqual(lifecycle, { knownRemaining: 0, durableSavesInWindow: 0 });
-  assert.equal(finalizeCalls, 1);
+test('exactly forty Required saves complete once without a replenish', () => {
+  const flow = runRequiredSaveFlow(REQUIRED_REVIEW_WORKING_WINDOW_SIZE);
+  assert.equal(flow.transitions.at(-1), 'completion');
+  assert.equal(flow.replenishCalls, 0);
+  assert.equal(flow.finalizeCalls, 1);
 });
 
 
-test('Required lifecycle preserves case forty-one for an authoritative reload then finalizes once', () => {
-  let lifecycle = beginRequiredReviewLifecycle(41);
-  let boundaryFinalizeCalls = 0;
-  let completionFinalizeCalls = 0;
-  for (let save = 1; save <= REQUIRED_REVIEW_WORKING_WINDOW_SIZE; save += 1) {
-    const transition = recordDurableRequiredReviewSave(lifecycle);
-    lifecycle = transition.lifecycle;
-    if (transition.synchronization === 'boundary') boundaryFinalizeCalls += 1;
-    assert.equal(transition.synchronization, save === 40 ? 'boundary' : 'none');
-  }
-  assert.equal(lifecycle.knownRemaining, 1);
-  assert.equal(boundaryFinalizeCalls, 1);
-
-  // The boundary uses one authoritative reload. Its remaining source starts a
-  // new hot window and is still independently reviewable.
-  lifecycle = beginRequiredReviewLifecycle(1);
-  const finalTransition = recordDurableRequiredReviewSave(lifecycle);
-  if (finalTransition.synchronization === 'completion') completionFinalizeCalls += 1;
-  assert.equal(finalTransition.synchronization, 'completion');
-  assert.equal(finalTransition.lifecycle.knownRemaining, 0);
-  assert.equal(completionFinalizeCalls, 1);
+test('forty-first Required case remains reviewable after one hot replenish', () => {
+  const flow = runRequiredSaveFlow(41);
+  assert.equal(flow.transitions[39], 'replenish');
+  assert.equal(flow.transitions[40], 'completion');
+  assert.equal(flow.replenishCalls, 1);
+  assert.equal(flow.finalizeCalls, 1);
 });
 
 
-test('forty durable saves keep Required hot until the deliberate boundary', () => {
-  const actions = Array.from({ length: REQUIRED_REVIEW_WORKING_WINDOW_SIZE }, (_, index) => (
-    index === 0
-      ? 'assign_roster_player'
-      : index === 1
-        ? 'unresolved'
-        : index === 2
-          ? 'mixed_players'
-          : 'assign_team'
-  ));
-  let lifecycle = beginRequiredReviewLifecycle(actions.length);
-  let correctionSaves = 0;
-  let finalizeCalls = 0;
-  let blockingProgressReloads = 0;
+test('hot Required windows replenish without periodic canonical finalize', () => {
+  const eighty = runRequiredSaveFlow(80, 17);
+  assert.equal(eighty.correctionSaves, 80);
+  assert.equal(eighty.transitions[39], 'replenish');
+  assert.equal(eighty.transitions[79], 'completion');
+  assert.equal(eighty.replenishCalls, 1);
+  assert.equal(eighty.finalizeCalls, 1);
 
-  for (const action of actions) {
-    correctionSaves += 1; // POST /corrections completed durably before this transition.
-    const transition = recordDurableRequiredReviewSave(lifecycle);
-    lifecycle = transition.lifecycle;
-    if (transition.synchronization === 'boundary') finalizeCalls += 1;
-    if (transition.synchronization === 'none') blockingProgressReloads += 0;
-    assert.ok(['assign_roster_player', 'unresolved', 'mixed_players', 'assign_team'].includes(action));
-    if (correctionSaves < REQUIRED_REVIEW_WORKING_WINDOW_SIZE) {
-      assert.equal(finalizeCalls, 0);
-      assert.equal(blockingProgressReloads, 0);
-    }
-  }
-  assert.equal(correctionSaves, 40);
-  assert.equal(blockingProgressReloads, 0);
-  assert.equal(finalizeCalls, 1);
+  const eightyOne = runRequiredSaveFlow(81, 17);
+  assert.equal(eightyOne.correctionSaves, 81);
+  assert.equal(eightyOne.transitions[39], 'replenish');
+  assert.equal(eightyOne.transitions[79], 'replenish');
+  assert.equal(eightyOne.transitions[80], 'completion');
+  assert.equal(eightyOne.replenishCalls, 2);
+  assert.equal(eightyOne.finalizeCalls, 1);
 });
 
 

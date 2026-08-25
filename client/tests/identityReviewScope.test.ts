@@ -56,7 +56,8 @@ test('Remaining Cases UI separates required work from optional Team-A MAX audit'
   assert.match(source, /Wymagane/);
   assert.match(source, /Kontynuuj do MAX/);
   assert.match(source, /nie blokuje zakończenia Review/);
-  assert.match(source, /shouldAutoFinalizeDeferredQueue/);
+  assert.match(source, /transition\.synchronization === 'completion'/);
+  assert.match(source, /transition\.synchronization === 'replenish'/);
   assert.match(queueUtils, /queue === 'required'/);
   assert.match(source, /loadCases\(undefined, false, 0, 0, 'all', nextQueue\)/);
   assert.match(source, /REQUIRED_REVIEW_WORKING_WINDOW_SIZE/);
