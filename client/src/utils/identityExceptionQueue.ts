@@ -17,6 +17,66 @@ export type ReviewPageNavigation =
   | { kind: 'none' };
 
 
+export const REQUIRED_REVIEW_WORKING_WINDOW_SIZE = 40;
+
+
+export type RequiredReviewLifecycle = {
+  knownRemaining: number;
+  durableSavesInWindow: number;
+};
+
+
+export type RequiredReviewSaveTransition = {
+  lifecycle: RequiredReviewLifecycle;
+  synchronization: 'none' | 'replenish' | 'completion';
+};
+
+
+export function beginRequiredReviewLifecycle(knownRemaining: number): RequiredReviewLifecycle {
+  return {
+    knownRemaining: Math.max(0, knownRemaining),
+    durableSavesInWindow: 0,
+  };
+}
+
+
+export function recordDurableRequiredReviewSave(
+  lifecycle: RequiredReviewLifecycle,
+): RequiredReviewSaveTransition {
+  const knownRemaining = Math.max(0, lifecycle.knownRemaining - 1);
+  const durableSavesInWindow = lifecycle.durableSavesInWindow + 1;
+  // Completion takes precedence over a working-window replenish: exactly 40
+  // total cases produce one canonical completion sync, never two actions.
+  if (knownRemaining === 0) {
+    return {
+      lifecycle: { knownRemaining, durableSavesInWindow: 0 },
+      synchronization: 'completion',
+    };
+  }
+  if (durableSavesInWindow >= REQUIRED_REVIEW_WORKING_WINDOW_SIZE) {
+    return {
+      lifecycle: { knownRemaining, durableSavesInWindow: 0 },
+      synchronization: 'replenish',
+    };
+  }
+  return {
+    lifecycle: { knownRemaining, durableSavesInWindow },
+    synchronization: 'none',
+  };
+}
+
+
+export function shouldRecoverRequiredReviewCompletion(
+  recomputeRequired: boolean | undefined,
+  knownRemaining: number,
+  coverageAllowsFinalize: boolean,
+): boolean {
+  return recomputeRequired === true
+    && knownRemaining === 0
+    && coverageAllowsFinalize;
+}
+
+
 export function reviewUnitKey(unit: ReviewedIdentityReviewUnit): string {
   return unit.review_target_id
     ? `segment:${unit.review_target_id}`
@@ -41,15 +101,16 @@ export function removeResolvedReviewCase<T extends ReviewCaseWithUnit>(
 
 export function shouldFinalizeDeferredReview(
   cases: ReviewCaseWithUnit[],
-  recomputeRequired = false,
+  _recomputeRequired = false,
   globalRemaining = cases.length,
   coverageAllowsFinalize = true,
 ): boolean {
-  return recomputeRequired || (
-    cases.length === 0
+  // `recompute_required` means canonical propagation is pending; it is not a
+  // claim that a versioned hot queue is unsafe. Callers finalize only at a
+  // true completion or fail-closed recovery boundary.
+  return cases.length === 0
     && globalRemaining === 0
-    && coverageAllowsFinalize
-  );
+    && coverageAllowsFinalize;
 }
 
 

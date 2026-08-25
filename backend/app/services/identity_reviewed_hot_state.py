@@ -10,6 +10,7 @@ the match-wide tracker artifact on each click.
 """
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -241,6 +242,7 @@ def update_hot_state_after_deferred_save(
     subject = str(review_unit.get("candidate_subject_id") or "")
     target = str(review_unit.get("review_target_id") or "") or None
     decision = dict(saved_decision or {})
+    source_digest = str(review_unit.get("source_ownership_digest") or "")
     roster_teams = {
         str(row.get("player_id") or ""): str(row.get("team_label") or "U").upper()
         for row in state.get("roster_options") or []
@@ -250,17 +252,29 @@ def update_hot_state_after_deferred_save(
     # ownership from validated runs directly, so an ordinary correction never
     # materializes match-wide (tracklet_id, frame) pairs.
     updated_unit = False
-    for unit in state.get("internal_review_units") or []:
+    units = list(state.get("internal_review_units") or [])
+    action = str(decision.get("action") or "")
+    for index, unit in enumerate(units):
         if not isinstance(unit, dict):
             continue
         if str(unit.get("candidate_subject_id") or "") != subject:
             continue
         if (str(unit.get("review_target_id") or "") or None) != target:
             continue
+        if source_digest and str(unit.get("source_ownership_digest") or "") != source_digest:
+            continue
+        if action == "mixed_players":
+            # Exact staging changes queue routing, not source topology.  The
+            # durable mixed marker owns the same source tuple, so retire this
+            # one materialized Required source while leaving all siblings
+            # (including ones with the same raw candidate id) available.
+            units.pop(index)
+            _update_hot_mixed_projection(state, decision)
+            updated_unit = True
+            break
         unit["current_decision"] = decision or unit.get("current_decision")
         unit["current_resolution_status"] = "reviewed_by_operator"
         unit["priority"] = None
-        action = str(decision.get("action") or "")
         player_id = str(decision.get("player_id") or "") or None
         unit["canonical_player_id"] = player_id if action == "assign_roster_player" else None
         if player_id:
@@ -272,7 +286,7 @@ def update_hot_state_after_deferred_save(
     if not updated_unit:
         raise ReviewedIdentityHotStateError("review_queue_stale")
     projected = project_reviewed_identity_progress(
-        list(state.get("internal_review_units") or []),
+        units,
         match_doc,
         dict(state.get("projection_inputs") or {}),
         include_internal_units=True,
@@ -289,6 +303,60 @@ def update_hot_state_after_deferred_save(
     state["freshness"] = _freshness(match_path, match_doc, semantic_digest=semantic_decision_digest)
     write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
     return state
+
+
+def _update_hot_mixed_projection(
+    state: dict[str, Any],
+    saved_decision: dict[str, Any],
+) -> None:
+    """Update the compact Mixed Players read model without a cold rebuild.
+
+    The dedicated Mixed Players endpoint will materialize crops on its later
+    workflow phase.  The Required hot path only exposes the compact summary,
+    so retaining the durable marker's exact source while replacing its one
+    matching case is sufficient and avoids reopening tracker artifacts.
+    """
+    inputs = state.get("projection_inputs")
+    if not isinstance(inputs, dict):
+        raise ReviewedIdentityHotStateError("review_queue_stale")
+    mixed = deepcopy(inputs.get("mixed_players") or {})
+    cases = [
+        dict(case)
+        for case in mixed.get("cases") or []
+        if isinstance(case, dict)
+    ]
+    marker_id = str(
+        saved_decision.get("case_id")
+        or saved_decision.get("candidate_subject_id")
+        or ""
+    )
+    if not marker_id:
+        raise ReviewedIdentityHotStateError("review_queue_stale")
+    cases = [
+        case for case in cases
+        if str(case.get("case_id") or case.get("candidate_subject_id") or "") != marker_id
+    ]
+    cases.append(dict(saved_decision))
+    cases.sort(key=lambda case: (
+        int(case.get("frame_start") or 0),
+        str(case.get("case_id") or case.get("candidate_subject_id") or ""),
+    ))
+    unresolved = sum(
+        str(case.get("resolution_status") or "")
+        in {"unresolved", "unresolved_complex_mix"}
+        for case in cases
+    )
+    mixed["cases"] = cases
+    mixed["summary"] = {
+        "total": len(cases),
+        "unresolved": unresolved,
+        "resolved": sum(str(case.get("resolution_status") or "") == "resolved" for case in cases),
+        "complex_unresolved": sum(
+            str(case.get("resolution_status") or "") == "unresolved_complex_mix"
+            for case in cases
+        ),
+    }
+    inputs["mixed_players"] = mixed
 
 
 def hot_context(

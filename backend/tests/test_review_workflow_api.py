@@ -232,6 +232,51 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         finalize_snapshot.assert_not_called()
         seeded_rebuild.assert_not_called()
 
+    def test_deferred_exact_mixed_stage_updates_hot_queue_without_structural_reload(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        persisted = {
+            "saved_decision": {
+                "case_id": "mixed:source-1",
+                "candidate_subject_id": "subject-1",
+                "action": "mixed_players",
+                "original_issue": "mixed_players",
+                "resolution_status": "unresolved",
+            },
+            "effective_action": "mixed_players",
+            "allocated_stable_slot_id": None,
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "review_topology_changed": False,
+            "persistence": {"status": "saved", "downstream_recompute_triggered": False},
+        }
+        unit = {"candidate_subject_id": "subject-1", "source_ownership_digest": "source-1"}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "review_unit": unit,
+                "hot_state": {"state_version": 4},
+                "detected_team_labels_by_subject": {"subject-1": {"A"}},
+                "authorization_source": "warm_hit",
+            },
+        ), patch(
+            "app.main.persist_reviewed_identity_correction", return_value=persisted
+        ), patch(
+            "app.main.update_hot_state_after_deferred_save",
+            return_value={"state_version": 5},
+        ) as update_hot, patch("app.main.invalidate_review_hot_state") as invalidate:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "mixed_players", "defer_recompute": True},
+            )
+
+        update_hot.assert_called_once()
+        invalidate.assert_not_called()
+        self.assertEqual(response["review_state_version"], 5)
+        self.assertNotIn("review_state_rebuild_required", response)
+
     def test_optional_team_audit_deferred_payload_passes_real_action_gate(self) -> None:
         from app.main import app
         from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION

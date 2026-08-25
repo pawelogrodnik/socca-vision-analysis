@@ -123,6 +123,24 @@ def prepare_reviewed_slot_assignments(
             candidate_document,
             tracklets,
         )
+    if materialized_detected_team_labels is not None:
+        # Strict, fail-closed: every UPDATED subject must exist in the
+        # materialized team-evidence map, exactly as before. Subjects that are
+        # only carried in the document may be absent from the map (they have
+        # no whole-subject review unit) and are handled leniently above.
+        missing_updated = sorted(
+            {
+                str(row.get("candidate_subject_id") or "")
+                for row in updates
+                if row.get("candidate_subject_id")
+            }
+            - set(materialized_detected_team_labels)
+        )
+        if missing_updated:
+            raise ValueError(
+                "materialized detected team context missing: "
+                + ", ".join(missing_updated)
+            )
     normalized_updates = _normalize_updates(updates, known_subjects)
     if len({row["candidate_subject_id"] for row in normalized_updates}) != len(
         normalized_updates
@@ -393,11 +411,15 @@ def _candidate_context_from_materialized_document(
             continue
         subjects.setdefault(subject_id, set())
         if detected_team_labels is not None:
-            if subject_id not in detected_team_labels:
-                raise ValueError(
-                    f"materialized detected team context missing: {subject_id}"
-                )
-            teams[subject_id].update(detected_team_labels[subject_id])
+            # Materialized evidence only. A subject absent from the
+            # materialized map (for example a candidate subject without a
+            # whole-subject review unit) carries NO detected-team evidence:
+            # never fall back to the candidate document team here, because
+            # mixing sources could authorize a cross-team correction from
+            # stale data. Unrelated subjects are carried unchanged instead of
+            # failing the whole save; every UPDATED subject below must still
+            # exist in the map (strict, fail-closed).
+            teams[subject_id].update(detected_team_labels.get(subject_id) or ())
         else:
             team_label = str(row.get("team_label") or "U").upper()
             if team_label in {"A", "B"}:

@@ -1501,6 +1501,125 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertTrue((root / "reviewed_identity_recompute_required.json").exists())
             self.assertFalse((root / "reviewed_identity_snapshot.json").exists())
 
+    def test_materialized_context_gap_for_unrelated_subject_does_not_block_save(
+        self,
+    ) -> None:
+        """Production regression: a candidate subject without a whole-subject
+        review unit is absent from the materialized team map and must not
+        fail a correction that targets a DIFFERENT, fully-evidenced
+        subject."""
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            progress = build_reviewed_identity_progress(root, _match())
+            target = next(
+                row
+                for row in progress["review_units"]
+                if row["candidate_subject_id"] == "s1"
+            )
+            target.update(
+                operator_actionable=True,
+                current_resolution_status="pending_high_priority",
+                priority="high",
+            )
+            progress.update(
+                status="ready",
+                source_snapshot_digest="snapshot-1",
+                next_cases=[
+                    *[
+                        row
+                        for row in progress["next_cases"]
+                        if row.get("candidate_subject_id") != "s1"
+                    ],
+                    {
+                        **target,
+                        "operator_actionable": True,
+                        "current_resolution_status": "pending_high_priority",
+                        "priority": "high",
+                    },
+                ],
+            )
+            _write(
+                root / "reviewed_identity_progress.json",
+                {
+                    **progress,
+                    "status": "ready",
+                    "source_snapshot_digest": "snapshot-1",
+                },
+            )
+            _write(
+                root / "reviewed_identity_report.json",
+                {"snapshot_digest": "snapshot-1"},
+            )
+            # Candidate shadow grew AFTER the materialized context was built:
+            # the new subject has no review unit, so the deferred-correction
+            # map cannot contain it.
+            candidate = _load(root / "identity_candidate_shadow.json")
+            candidate["subjects"].append(
+                {
+                    "candidate_subject_id": "shadow-late-addition",
+                    "team_label": "A",
+                    "tracklet_ids": [],
+                }
+            )
+            _write(root / "identity_candidate_shadow.json", candidate)
+
+            payload = {
+                "candidate_subject_id": "s1",
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "defer_recompute": True,
+            }
+            gate = validate_deferred_review_action(root, _match(), payload)
+            self.assertIn("s1", gate["detected_team_labels_by_subject"])
+            self.assertNotIn(
+                "shadow-late-addition",
+                gate["detected_team_labels_by_subject"],
+            )
+
+            result = persist_reviewed_identity_correction(
+                root,
+                _match(),
+                payload,
+                trusted_materialized_detected_team_labels=gate[
+                    "detected_team_labels_by_subject"
+                ],
+            )
+
+            self.assertTrue(result["recompute_deferred"])
+            self.assertEqual(result["saved_decision"]["player_id"], "p1")
+            self.assertEqual(
+                result["saved_decision"]["candidate_subject_id"], "s1"
+            )
+
+    def test_materialized_context_without_target_evidence_fails_closed(self) -> None:
+        """A correction whose TARGET subject lacks materialized team evidence
+        must not silently trust the candidate document team."""
+        from app.services.identity_reviewed_slot_review import (
+            prepare_reviewed_slot_assignments,
+        )
+
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            candidate = _load(root / "identity_candidate_shadow.json")
+
+            with self.assertRaises(ValueError) as raised:
+                prepare_reviewed_slot_assignments(
+                    root,
+                    candidate,
+                    [
+                        {
+                            "candidate_subject_id": "s1",
+                            "action": "assign_roster_player",
+                            "player_id": "p1",
+                        }
+                    ],
+                    use_materialized_candidate_context=True,
+                    materialized_detected_team_labels={"s2": {"B"}},
+                )
+            self.assertIn("s1", str(raised.exception))
+
     def test_optional_gate_context_persists_cross_team_roster_correction(self) -> None:
         with _workspace() as root:
             _fixture(root)

@@ -23,11 +23,14 @@ import type {
 } from '../types';
 import { hasOperatorReviewableVisualEvidence } from '../utils/identityReviewWorkspace';
 import {
+  REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
+  beginRequiredReviewLifecycle,
   finalizeDeferredReviewBatch,
+  recordDurableRequiredReviewSave,
   removeResolvedReviewCase,
   resolveReviewPageNavigation,
   reviewUnitKey,
-  shouldAutoFinalizeDeferredQueue,
+  shouldRecoverRequiredReviewCompletion,
 } from '../utils/identityExceptionQueue';
 import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
 import {
@@ -62,8 +65,6 @@ type ReviewCase = {
   unit: ReviewedIdentityReviewUnit;
   card: IdentityRosterSubjectReviewCard | null;
 };
-
-const REVIEW_PAGE_SIZE = 20;
 
 function toCorrectionEntity(reviewCase: ReviewCase): ReviewedIdentityAtEntity {
   const { card, unit } = reviewCase;
@@ -143,6 +144,8 @@ export function IdentityExceptionReviewPanel({
   const [activeQueue, setActiveQueue] = useState<ReviewedIdentityReviewQueue>(initialQueue);
   const [optionalAuditRemaining, setOptionalAuditRemaining] = useState(0);
   const finalizeInFlight = useRef(false);
+  const requiredReviewLifecycleRef = useRef(beginRequiredReviewLifecycle(0));
+  const committedReviewKeysRef = useRef(new Set<string>());
   const loadRequestIdRef = useRef(0);
   const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
 
@@ -165,7 +168,7 @@ export function IdentityExceptionReviewPanel({
         getReviewedIdentityReviewProgress(
           match.id,
           offset,
-          REVIEW_PAGE_SIZE,
+          REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
           apiTeamFilter(teamFilter),
           queue,
         ),
@@ -184,6 +187,12 @@ export function IdentityExceptionReviewPanel({
           card: cardsBySubject.get(unit.candidate_subject_id) || null,
         }));
       setTotalRemaining(progress.pagination?.total_remaining ?? actionable.length);
+      const knownGlobalRequired = progress.pagination?.global_total_remaining
+        ?? progress.filters?.counts.all
+        ?? actionable.length;
+      if (queue === 'required') {
+        requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(knownGlobalRequired);
+      }
       setPageOffset(progress.pagination?.offset ?? offset);
       setHasMore(progress.pagination?.has_more ?? false);
       setCoverage(progress.identity_coverage || null);
@@ -193,13 +202,9 @@ export function IdentityExceptionReviewPanel({
       const nextOptionalRemaining = progress.optional_audit?.remaining_cases || 0;
       setOptionalAuditRemaining(nextOptionalRemaining);
       if (progress.optional_audit) onOptionalAuditSummaryChanged?.(progress.optional_audit);
-      if (shouldAutoFinalizeDeferredQueue(
-        queue,
-        actionable,
+      if (queue === 'required' && shouldRecoverRequiredReviewCompletion(
         progress.recompute_required,
-        progress.filters?.counts.all
-          ?? progress.pagination?.global_total_remaining
-          ?? actionable.length,
+        requiredReviewLifecycleRef.current.knownRemaining,
         progress.coverage_readiness?.allows_finalize !== false,
       )) {
         setCases([]);
@@ -224,6 +229,7 @@ export function IdentityExceptionReviewPanel({
     let disposed = false;
     setActiveTeamFilter('all');
     setActiveQueue(initialQueue);
+    requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
     void loadCases(() => disposed, false, 0, 0, 'all', initialQueue);
     return () => { disposed = true; };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
@@ -254,7 +260,9 @@ export function IdentityExceptionReviewPanel({
   const activeTeamName = activeTeamFilter === 'all'
     ? 'Wszystkie'
     : matchTeamName(match.teams || [], activeTeamFilter);
-  const globalRemaining = reviewFilters?.counts.all ?? totalRemaining;
+  const globalRemaining = activeQueue === 'required'
+    ? requiredReviewLifecycleRef.current.knownRemaining
+    : reviewFilters?.counts.all ?? totalRemaining;
   const coverageBlockedWithoutCases = globalRemaining === 0
     && coverageReadiness?.allows_finalize === false;
   const teamAttributionBlocker = teamAttributionBlockerMessage(coverageReadiness);
@@ -279,6 +287,7 @@ export function IdentityExceptionReviewPanel({
     setPageOffset(0);
     setTotalRemaining(0);
     setMessage('');
+    requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
     void loadCases(undefined, false, 0, 0, nextFilter, activeQueue);
   }
 
@@ -291,6 +300,7 @@ export function IdentityExceptionReviewPanel({
     setPageOffset(0);
     setTotalRemaining(0);
     setMessage('');
+    requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
     void loadCases(undefined, false, 0, 0, 'all', nextQueue);
   }
 
@@ -305,7 +315,7 @@ export function IdentityExceptionReviewPanel({
       currentIndex: index,
       pageLength: cases.length,
       pageOffset,
-      pageSize: REVIEW_PAGE_SIZE,
+      pageSize: REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
       hasMore,
     });
     if (destination.kind === 'local') {
@@ -314,7 +324,9 @@ export function IdentityExceptionReviewPanel({
       void loadCases(
         undefined,
         true,
-        destination.offset,
+        // Required Review is a shrinking queue. Never carry a numeric offset
+        // across persisted removals: start from its current head instead.
+        destination.offset > 0 && activeQueue === 'required' ? 0 : destination.offset,
         destination.index,
         activeTeamFilter,
         activeQueue,
@@ -327,10 +339,14 @@ export function IdentityExceptionReviewPanel({
       if (result.workflow) onWorkflowChanged(result.workflow);
       return;
     }
+    const savedKey = reviewUnitKey(reviewCase.unit);
+    if (committedReviewKeysRef.current.has(savedKey)) return;
+    committedReviewKeysRef.current.add(savedKey);
     if (result.review_state_rebuild_required) {
       // Do not derive a new queue from stale local cards after a topology
       // change. The next GET performs one authoritative materialization.
       setFinalizeFailed(false);
+      requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
       setMessage('Zapisano decyzję. Odświeżam przypadki po zmianie struktury…');
       void loadCases(
         undefined,
@@ -351,21 +367,41 @@ export function IdentityExceptionReviewPanel({
     setIndex(next.index);
     setFinalizeFailed(false);
     setMessage('Zapisano decyzję.');
+    setTotalRemaining((remaining) => Math.max(0, remaining - 1));
     if (activeQueue === 'optional_audit') {
       // Coverage is never inferred in the client. The new queue and complete
       // MAX summary come from the read-only progress endpoint after every save.
       void loadCases(undefined, true, 0, 0, 'all', 'optional_audit');
-    } else if (next.cases.length === 0 && hasMore) {
-      void loadCases(
-        undefined,
-        true,
-        pageOffset + REVIEW_PAGE_SIZE,
-        0,
-        activeTeamFilter,
-        activeQueue,
-      );
-    } else if (shouldAutoFinalizeDeferredQueue(activeQueue, next.cases)) {
-      void finalizeCorrections(activeTeamFilter, activeQueue);
+    } else {
+      const transition = recordDurableRequiredReviewSave(requiredReviewLifecycleRef.current);
+      requiredReviewLifecycleRef.current = transition.lifecycle;
+      if (transition.synchronization === 'completion') {
+        // Canonical synchronization is an authoritative completion/recovery
+        // operation, never periodic hot-queue batching.
+        void finalizeCorrections(activeTeamFilter, activeQueue);
+      } else if (transition.synchronization === 'replenish') {
+        // Required Review is a shrinking queue. Refresh its current head from
+        // the valid hot projection; this does not call corrections/finalize.
+        void loadCases(
+          undefined,
+          true,
+          0,
+          0,
+          activeTeamFilter,
+          activeQueue,
+        );
+      } else if (next.cases.length === 0 && hasMore) {
+        // Offset 0 is the head of the *current* shrinking queue. All local
+        // entries were just persisted, so this cannot skip its next sources.
+        void loadCases(
+          undefined,
+          true,
+          0,
+          0,
+          activeTeamFilter,
+          activeQueue,
+        );
+      }
     }
   }
 
@@ -388,6 +424,7 @@ export function IdentityExceptionReviewPanel({
         setCases([]);
         setIndex(0);
       }
+      requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
       setMessage(reviewRecomputeMessage(
         refreshedCases.length,
         result.workflow.issues.coverage_readiness?.allows_finalize === false,
