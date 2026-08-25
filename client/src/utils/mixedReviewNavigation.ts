@@ -1,3 +1,5 @@
+import type { MixedPlayerFocusedCaseResponse, MixedPlayersReviewQueue } from '../types';
+
 export type MixedEntryMode = 'manual' | 'resolve_now';
 
 export type MixedPostSaveDestination = 'required' | 'mixed' | 'workflow';
@@ -26,14 +28,44 @@ export function exactMixedFocusIndex(
   return index >= 0 ? index : null;
 }
 
-export async function loadExactMixedFocus<Queue extends { cases: Array<{ case_id?: string }> }>(
-  load: (caseId: string) => Promise<Queue>,
+export async function loadExactMixedFocus<
+  Response extends {
+    requested_case_id: string;
+    status: string;
+    case: { case_id?: string } | null;
+  },
+>(
+  load: (caseId: string) => Promise<Response>,
   caseId: string,
-): Promise<{ queue: Queue; index: number } | null> {
-  const queue = await load(caseId);
-  const index = exactMixedFocusIndex(
-    queue.cases.map((item) => item.case_id || ''),
-    caseId,
-  );
-  return index === null ? null : { queue, index };
+): Promise<{ response: Response; case: NonNullable<Response['case']> } | null> {
+  const response = await load(caseId);
+  const visible = response.status === 'current_blocking'
+    || response.status === 'stale_or_unclassifiable_blocking';
+  if (
+    !visible
+    || response.requested_case_id !== caseId
+    || response.case?.case_id !== caseId
+  ) return null;
+  return { response, case: response.case as NonNullable<Response['case']> };
+}
+
+export function mixedQueueForFocusedCase(
+  response: MixedPlayerFocusedCaseResponse,
+): MixedPlayersReviewQueue | null {
+  if (!response.case) return null;
+  return {
+    schema_version: response.schema_version,
+    mode: response.mode,
+    match_id: response.match_id,
+    summary: {
+      total: 1,
+      unresolved: 1,
+      unresolved_total: 1,
+      nonblocking_by_scope: 0,
+      resolved: 0,
+      complex_unresolved: response.case.resolution_status === 'unresolved_complex_mix' ? 1 : 0,
+    },
+    assignment_options: response.assignment_options,
+    cases: [response.case],
+  };
 }

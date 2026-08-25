@@ -37,19 +37,27 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         finalize.assert_not_called()
 
     def test_focused_mixed_read_renders_only_the_exact_case_before_returning_urls(self) -> None:
-        from app.main import get_match_reviewed_identity_mixed_players
+        from app.main import get_match_reviewed_identity_mixed_player_case
 
-        older = {"case_id": "M-old", "temporal_evidence": {"anchor_crops": [{"artifact": "old.jpg"}]}}
         focused = {"case_id": "M-new", "temporal_evidence": {"anchor_crops": [{"artifact": "new.jpg"}]}}
-        queue = {"cases": [older, focused]}
+        response_document = {
+            "requested_case_id": "M-new",
+            "status": "current_blocking",
+            "case": focused,
+        }
         with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
             "app.main.read_match_meta", return_value={"id": "m1"}
-        ), patch("app.main.build_mixed_review_queue", return_value=queue), patch(
+        ), patch(
+            "app.main.build_focused_mixed_review_case",
+            return_value=response_document,
+        ) as build_focused, patch("app.main.build_mixed_review_queue") as build_queue, patch(
             "app.main.render_mixed_review_evidence"
         ) as render:
-            response = get_match_reviewed_identity_mixed_players("m1", focus_case_id="M-new")
+            response = get_match_reviewed_identity_mixed_player_case("m1", "M-new")
 
-        self.assertIs(response, queue)
+        self.assertIs(response, response_document)
+        build_focused.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"}, "M-new")
+        build_queue.assert_not_called()
         render.assert_called_once()
         self.assertEqual(render.call_args.args[2]["cases"], [focused])
 

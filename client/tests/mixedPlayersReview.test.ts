@@ -223,6 +223,8 @@ test('resolve-now targets the durable exact staged case instead of a raw subject
   assert.match(form, /Odłóż do Mixed/);
   assert.match(form, /result\.saved_decision\?\.case_id/);
   assert.match(panel, /exactMixedFocusIndex/);
+  assert.match(panel, /getMixedPlayerReviewCase\(match\.id, caseId\)/);
+  assert.doesNotMatch(panel, /getMixedPlayersReview\(match\.id, caseId\)/);
 });
 
 test('only a successful save removes the current case and advances safely', () => {
@@ -260,18 +262,23 @@ test('resolve-now exact focus never falls back to the first or same-subject Mixe
 });
 
 test('manual Mixed materializes M1, then keeps it visible until exact M2 evidence is ready', async () => {
-  let release!: (queue: { cases: Array<{ case_id: string }> }) => void;
+  type Focused = {
+    requested_case_id: string;
+    status: string;
+    case: { case_id: string } | null;
+  };
+  let release!: (response: Focused) => void;
   const requestedCaseIds: string[] = [];
   let visibleCaseId: string | null = null;
   const initiallyFocused = await loadExactMixedFocus(
     async (caseId) => {
       requestedCaseIds.push(caseId);
-      return { cases: [{ case_id: 'M1' }, { case_id: 'M2' }] };
+      return { requested_case_id: caseId, status: 'current_blocking', case: { case_id: 'M1' } };
     },
     'M1',
   );
   assert.ok(initiallyFocused);
-  visibleCaseId = initiallyFocused.queue.cases[initiallyFocused.index].case_id;
+  visibleCaseId = initiallyFocused.case.case_id;
 
   const pending = loadExactMixedFocus(
     (caseId) => {
@@ -280,12 +287,12 @@ test('manual Mixed materializes M1, then keeps it visible until exact M2 evidenc
     },
     'M2',
   ).then((focused) => {
-    if (focused) visibleCaseId = focused.queue.cases[focused.index].case_id;
+    if (focused) visibleCaseId = focused.case.case_id;
   });
 
   assert.deepEqual(requestedCaseIds, ['M1', 'M2']);
   assert.equal(visibleCaseId, 'M1');
-  release({ cases: [{ case_id: 'M1' }, { case_id: 'M2' }] });
+  release({ requested_case_id: 'M2', status: 'current_blocking', case: { case_id: 'M2' } });
   await pending;
   assert.equal(visibleCaseId, 'M2');
 });
@@ -294,11 +301,28 @@ test('defer progression uses the same exact evidence gate and fails closed if M2
   const focused = await loadExactMixedFocus(
     async (caseId) => {
       assert.equal(caseId, 'M2');
-      return { cases: [{ case_id: 'M1' }, { case_id: 'M3' }] };
+      return { requested_case_id: 'M2', status: 'missing', case: null };
     },
     'M2',
   );
   assert.equal(focused, null);
+});
+
+test('focused Mixed read fails closed for nonmandatory and wrong exact cases', async () => {
+  for (const status of ['no_longer_unresolved', 'not_in_mandatory_queue', 'missing']) {
+    assert.equal(await loadExactMixedFocus(
+      async () => ({ requested_case_id: 'M2', status, case: null }),
+      'M2',
+    ), null);
+  }
+  assert.equal(await loadExactMixedFocus(
+    async () => ({
+      requested_case_id: 'M2',
+      status: 'current_blocking',
+      case: { case_id: 'same-subject-but-different-case' },
+    }),
+    'M2',
+  ), null);
 });
 
 test('segment presentation derives operator time from temporal evidence', () => {

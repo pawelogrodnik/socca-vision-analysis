@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayersReview, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
+import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
-import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, type MixedEntryMode } from '../utils/mixedReviewNavigation';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mixedQueueForFocusedCase, type MixedEntryMode } from '../utils/mixedReviewNavigation';
 
 type Props = {
   match: Match;
@@ -53,10 +53,20 @@ export function MixedPlayersReviewPanel({
     setIndex(0);
     setFocusMissing(false);
     setReprojectFailed(false);
-    getMixedPlayersReview(match.id, focusCaseId)
-      .then((value) => {
+    async function loadInitialQueue() {
+      try {
+        let value: MixedPlayersReviewQueue | null;
+        if (focusCaseId) {
+          const focused = await loadExactMixedFocus(
+            (caseId) => getMixedPlayerReviewCase(match.id, caseId),
+            focusCaseId,
+          );
+          value = focused ? mixedQueueForFocusedCase(focused.response) : null;
+        } else {
+          value = await getMixedPlayersReview(match.id);
+        }
         if (cancelled) return;
-        if (exactMixedFocusIndex(value.cases.map((item) => item.case_id || ''), focusCaseId) === null) {
+        if (!value || exactMixedFocusIndex(value.cases.map((item) => item.case_id || ''), focusCaseId) === null) {
           // Resolve-now is exact-source handoff. Never silently fall through
           // to the first unrelated Mixed card if the durable case vanished.
           setQueue(null);
@@ -65,9 +75,13 @@ export function MixedPlayersReviewPanel({
           return;
         }
         setQueue(value);
-      })
-      .catch((error) => { if (!cancelled) setMessage(errorMessage(error)); })
-      .finally(() => { if (!cancelled) setBusy(false); });
+      } catch (error) {
+        if (!cancelled) setMessage(errorMessage(error));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }
+    void loadInitialQueue();
     return () => { cancelled = true; };
   }, [focusCaseId, match.id]);
 
@@ -311,7 +325,7 @@ export function MixedPlayersReviewPanel({
     setMessage('Przygotowuję widoki wybranego przypadku…');
     try {
       const focused = await loadExactMixedFocus(
-        (caseId) => getMixedPlayersReview(match.id, caseId),
+        (caseId) => getMixedPlayerReviewCase(match.id, caseId),
         targetCaseId,
       );
       if (requestId !== caseNavigationRequestRef.current) return;
@@ -323,8 +337,24 @@ export function MixedPlayersReviewPanel({
       }
       // The backend has now materialized this exact case's missing evidence.
       // Only at this point may it become the visible review card.
-      setQueue(focused.queue);
-      setIndex(focused.index);
+      const focusedIndex = exactMixedFocusIndex(
+        queue.cases.map((item) => item.case_id || ''),
+        targetCaseId,
+      );
+      if (focusedIndex === null) {
+        setQueue(null);
+        setFocusMissing(true);
+        setMessage('Wybrany przypadek Mixed nie należy już do lokalnej kolejki.');
+        return;
+      }
+      const nextCases = [...queue.cases];
+      nextCases[focusedIndex] = focused.case;
+      setQueue({
+        ...queue,
+        assignment_options: focused.response.assignment_options,
+        cases: nextCases,
+      });
+      setIndex(focusedIndex);
       setMessage('');
     } catch (error) {
       if (requestId === caseNavigationRequestRef.current) {

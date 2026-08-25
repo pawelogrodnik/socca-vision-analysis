@@ -377,13 +377,18 @@ export async function finalizeReviewedIdentityCorrections(
 
 export async function getMixedPlayersReview(
   matchId: string,
-  focusCaseId?: string | null,
 ): Promise<import('./types').MixedPlayersReviewQueue> {
-  const query = focusCaseId
-    ? `?focus_case_id=${encodeURIComponent(focusCaseId)}`
-    : '';
   return request<import('./types').MixedPlayersReviewQueue>(
-    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players${query}`,
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players`,
+  );
+}
+
+export async function getMixedPlayerReviewCase(
+  matchId: string,
+  caseId: string,
+): Promise<import('./types').MixedPlayerFocusedCaseResponse> {
+  return request<import('./types').MixedPlayerFocusedCaseResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/${encodeURIComponent(caseId)}`,
   );
 }
 

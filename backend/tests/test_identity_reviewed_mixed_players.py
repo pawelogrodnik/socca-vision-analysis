@@ -29,8 +29,11 @@ from app.services.identity_reviewed_mixed_resolution import (
     save_mixed_player_resolution,
 )
 from app.services.identity_reviewed_mixed_store import (
+    build_focused_mixed_review_case,
     current_mixed_subject_digest,
     load_mixed_player_cases,
+    _materialize_mixed_review_case,
+    save_mixed_case_document,
     unresolved_mixed_observation_assignments,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
@@ -55,6 +58,93 @@ from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_focused_case_materializes_only_the_exact_durable_marker(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            marker = _classify(root, match)
+            document = load_mixed_player_cases(root)
+            markers = [
+                {**marker, "case_id": f"M{index:02d}"}
+                for index in range(28)
+            ]
+            save_mixed_case_document(root, {**document, "cases": markers})
+
+            with patch(
+                "app.services.identity_reviewed_mixed_store._materialize_mixed_review_case",
+                wraps=_materialize_mixed_review_case,
+            ) as materialize:
+                focused = build_focused_mixed_review_case(root, match, "M17")
+
+            self.assertEqual(focused["status"], "current_blocking")
+            self.assertEqual(focused["case"]["case_id"], "M17")
+            self.assertEqual(materialize.call_count, 1)
+            self.assertEqual(materialize.call_args.args[2]["case_id"], "M17")
+
+    def test_focused_case_reports_resolved_stale_nonblocking_and_missing_exactly(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            marker = _classify(root, match)
+
+            resolved_document = load_mixed_player_cases(root)
+            resolved_document["cases"][0]["resolution_status"] = "resolved"
+            save_mixed_case_document(root, resolved_document)
+            resolved = build_focused_mixed_review_case(root, match, "subject-mixed")
+            self.assertEqual(resolved["status"], "no_longer_unresolved")
+            self.assertIsNone(resolved["case"])
+
+            resolved_document["cases"][0] = marker
+            save_mixed_case_document(root, resolved_document)
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["positions_m"].pop()
+            _write(root / "tracklets.json", tracklets)
+            stale = build_focused_mixed_review_case(root, match, "subject-mixed")
+            self.assertEqual(stale["status"], "stale_or_unclassifiable_blocking")
+            self.assertEqual(stale["case"]["scope_status"], "stale_or_unclassifiable_blocking")
+
+            missing = build_focused_mixed_review_case(root, match, "not-this-subject")
+            self.assertEqual(missing["status"], "missing")
+            self.assertIsNone(missing["case"])
+
+        with _workspace() as root:
+            match = _fixture(root)
+            match["identity_review_scope"] = {
+                "schema_version": "1.0.0",
+                "teams": {"A": "complete_roster", "B": "team_stats_only"},
+            }
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["team_label"] = "B"
+            _write(root / "tracklets.json", tracklets)
+            source_digest = current_mixed_subject_digest(root, "subject-mixed")
+            unit = {
+                "scope_kind": "whole_subject",
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": source_digest,
+                "detected_observation_count": 9,
+                "detected_pairs": [("t1", frame) for frame in range(1, 10)],
+                "effective_team_label": "B",
+            }
+            marker = persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": source_digest,
+                    "action": "mixed_players",
+                    "mixed_hint": "same_team_b",
+                },
+                authorized_review_unit=unit,
+            )["saved_decision"]
+            scoped_document = load_mixed_player_cases(root)
+            scoped_document["cases"][0]["source"]["effective_team_label"] = "B"
+            save_mixed_case_document(root, scoped_document)
+            nonblocking = build_focused_mixed_review_case(
+                root,
+                match,
+                str(marker.get("case_id") or marker["candidate_subject_id"]),
+            )
+            self.assertEqual(nonblocking["status"], "not_in_mandatory_queue")
+            self.assertIsNone(nonblocking["case"])
+
     def test_staged_mixed_marker_is_exact_source_and_resolves_through_shared_split_engine(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -235,6 +325,13 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {row["source"]["review_target_id"] for row in cases},
                 {"canonical-a", "canonical-b"},
             )
+            subject_fallback = build_focused_mixed_review_case(
+                root,
+                match,
+                "subject-mixed",
+            )
+            self.assertEqual(subject_fallback["status"], "missing")
+            self.assertIsNone(subject_fallback["case"])
 
     def test_optional_max_capabilities_hide_staged_mixed_but_keep_direct_split(self) -> None:
         optional = reviewed_identity_action_capabilities({

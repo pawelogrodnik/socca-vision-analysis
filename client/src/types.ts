@@ -2337,6 +2337,23 @@ export type MixedPlayersReviewQueue = {
   cases: MixedPlayerCase[];
 };
 
+export type MixedPlayerFocusedCaseStatus =
+  | 'current_blocking'
+  | 'stale_or_unclassifiable_blocking'
+  | 'no_longer_unresolved'
+  | 'not_in_mandatory_queue'
+  | 'missing';
+
+export type MixedPlayerFocusedCaseResponse = {
+  schema_version: string;
+  mode: 'reviewed_identity_mixed_focused_case';
+  match_id: string;
+  requested_case_id: string;
+  status: MixedPlayerFocusedCaseStatus;
+  case: MixedPlayerCase | null;
+  assignment_options: MixedPlayersReviewQueue['assignment_options'];
+};
+
 export type MixedBoundaryRefinement = {
   schema_version: string;
   mode: string;

@@ -130,6 +130,7 @@ from app.services.identity_reviewed_slot_review import (
 )
 from app.services.identity_reviewed_segments import SegmentTargetError
 from app.services.identity_reviewed_mixed_store import (
+    build_focused_mixed_review_case,
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
     inline_temporal_split_for_source,
@@ -2554,28 +2555,15 @@ def finalize_match_reviewed_identity_corrections(match_id: str) -> dict[str, Any
 @app.get("/api/matches/{match_id}/reviewed-identity/mixed-players")
 def get_match_reviewed_identity_mixed_players(
     match_id: str,
-    focus_case_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
         with review_build_context():
-            requested_focus = focus_case_id if isinstance(focus_case_id, str) and focus_case_id else None
             match_document = read_match_meta(path)
             queue = build_mixed_review_queue(path, match_document)
-            focused = next(
-                (
-                    case for case in queue.get("cases") or []
-                    if str(case.get("case_id") or "") == str(requested_focus or "")
-                ),
-                None,
-            )
-            # Manual entry displays only its first currently authoritative
-            # card; resolve-now displays only the exact durable case.  Missing
-            # artifacts are materialized before their URLs reach the browser.
-            evidence_case = focused if requested_focus else next(
-                iter(queue.get("cases") or []),
-                None,
-            )
+            # Manual entry needs authoritative membership and ordering, but
+            # still materializes evidence only for its first visible card.
+            evidence_case = next(iter(queue.get("cases") or []), None)
             if isinstance(evidence_case, dict):
                 render_mixed_review_evidence(
                     path,
@@ -2613,6 +2601,34 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
     except ValueError as exc:
         status = 409 if str(exc) == "mixed_player_case_stale" else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/mixed-players/{case_id}")
+def get_match_reviewed_identity_mixed_player_case(
+    match_id: str,
+    case_id: str,
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        with review_build_context():
+            match_document = read_match_meta(path)
+            focused = build_focused_mixed_review_case(
+                path,
+                match_document,
+                case_id,
+            )
+            exact_case = focused.get("case")
+            if isinstance(exact_case, dict):
+                render_mixed_review_evidence(
+                    path,
+                    match_document,
+                    {"cases": [exact_case]},
+                )
+            return focused
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/mixed-players/resolve")
