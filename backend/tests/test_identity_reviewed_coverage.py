@@ -96,27 +96,42 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
     def test_cross_team_mixed_is_unattributed_in_coverage_debt(self) -> None:
         pair_index = {
-            ("a", 1): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None},
-            ("b", 1): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None},
+            **{
+                ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
+                for frame in range(60)
+            },
+            **{
+                ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+                for frame in range(40)
+            },
         }
         debt = build_coverage_debt(
             [],
             {"per_team": {
-                "A": {"reliable_observations": 1, "confirmed_named_observations": 0},
-                "B": {"reliable_observations": 1, "confirmed_named_observations": 0},
+                "A": {"reliable_observations": 60, "confirmed_named_observations": 0},
+                "B": {"reliable_observations": 40, "confirmed_named_observations": 0},
             }},
             pair_index,
             _scoped_match(),
             {"next_cases": [], "optional_audit_cases": [], "optional_audit": {}},
             {"cases": [{
-                "case_id": "cross", "mixed_hint": "cross_team", "resolution_status": "unresolved", "observation_count": 2,
-                "source": {"owned_observations": [{"tracklet_id": "a", "frame": 1}, {"tracklet_id": "b", "frame": 1}]},
+                "case_id": "cross", "mixed_hint": "cross_team", "resolution_status": "unresolved", "observation_count": 100,
+                "source": {"owned_observations": [
+                    *[{"tracklet_id": "a", "frame": frame} for frame in range(60)],
+                    *[{"tracklet_id": "b", "frame": frame} for frame in range(40)],
+                ]},
             }]},
         )
 
         self.assertEqual(debt["per_team"]["A"]["buckets"]["mixed"]["unique_observations"], 0)
         self.assertEqual(debt["per_team"]["B"]["buckets"]["mixed"]["unique_observations"], 0)
         self.assertEqual(debt["ambiguous"]["mixed_case_count"], 1)
+        self.assertEqual(debt["ambiguous"]["unique_current_reliable_observations"], 100)
+        self.assertEqual(debt["ambiguous"]["currently_labeled"], {"A": 60, "B": 40})
+        self.assertEqual(debt["per_team"]["A"]["buckets"]["unavailable"]["unique_observations"], 0)
+        self.assertEqual(debt["per_team"]["B"]["not_required_by_scope"]["unique_observations"], 0)
+        self.assertEqual(debt["per_team"]["A"]["accounted_unnamed_observations"], 60)
+        self.assertEqual(debt["per_team"]["B"]["accounted_unnamed_observations"], 40)
 
     def test_team_stats_only_unnamed_observations_are_not_unavailable_identity_debt(self) -> None:
         pair_index = {
@@ -190,6 +205,100 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             "semantic": 2, "continuity": 2, "coverage": 2,
         })
         self.assertEqual(debt["per_team"]["A"]["buckets"]["optional_max"]["unique_observations"], 0)
+
+    def test_team_stats_only_actual_required_queue_exposes_scope_mismatch(self) -> None:
+        pair_index = {
+            ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(59)
+        }
+        def required(subject: str, frame: int, priority: str, *, uncertain: bool = False) -> dict:
+            pairs = [("b", frame)]
+            unit = _unit(subject, pairs, visual=True)
+            unit.update({
+                "source_team_label": "B",
+                "effective_team_label": "U" if uncertain else "B",
+                "priority": priority,
+                "reason_codes": ["team_attribution_uncertain"] if uncertain else ["test"],
+                "_potential_named_observation_pairs": set(pairs),
+            })
+            return unit
+        semantic = [required(f"semantic-{frame}", frame, "high", uncertain=True) for frame in range(4)]
+        continuity = [required(f"continuity-{frame}", frame, "continuity") for frame in range(4, 41)]
+        coverage = [required(f"coverage-{frame}", frame, "coverage") for frame in range(41, 59)]
+        required_cases = [*semantic, *continuity, *coverage]
+        debt = build_coverage_debt(
+            required_cases,
+            {"per_team": {"B": {"reliable_observations": 59, "confirmed_named_observations": 0}}},
+            pair_index,
+            _scoped_match(),
+            {"next_cases": required_cases, "optional_audit_cases": [], "optional_audit": {}},
+            {"cases": []},
+        )
+
+        actual = debt["actual_required_queue"]
+        self.assertEqual(actual["total_cases"], 59)
+        self.assertEqual(actual["normal_blocking_case_count"], 59)
+        self.assertEqual(actual["per_team"]["B"]["breakdown"], {
+            "semantic": {"case_count": 4}, "continuity": {"case_count": 37}, "coverage": {"case_count": 18},
+        })
+        self.assertEqual(actual["per_team"]["B"]["expected_by_scope"], 4)
+        self.assertEqual(actual["per_team"]["B"]["unexpected_by_scope"], 55)
+        self.assertEqual(debt["per_team"]["B"]["buckets"]["required"]["case_count"], 4)
+        self.assertEqual(debt["per_team"]["B"]["buckets"]["required"]["breakdown"]["semantic"]["case_count"], 4)
+
+    def test_actual_required_queue_counts_overlapping_sources_independently(self) -> None:
+        pair_index = {
+            ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(3)
+        }
+        first = _unit("same-subject", [("a", frame) for frame in range(3)], visual=True)
+        second = _unit("same-subject", [("a", frame) for frame in range(3)], visual=True)
+        for target, unit in (("first", first), ("second", second)):
+            unit.update({"review_target_id": target, "priority": "coverage", "_potential_named_observation_pairs": {("a", frame) for frame in range(3)}})
+        debt = build_coverage_debt(
+            [first, second],
+            {"per_team": {"A": {"reliable_observations": 3, "confirmed_named_observations": 0}}},
+            pair_index,
+            _scoped_match(),
+            {"next_cases": [first, second], "optional_audit_cases": [], "optional_audit": {}},
+            {"cases": []},
+        )
+
+        self.assertEqual(debt["actual_required_queue"]["total_cases"], 2)
+        self.assertEqual(debt["per_team"]["A"]["buckets"]["required"]["case_count"], 2)
+        self.assertEqual(debt["per_team"]["A"]["buckets"]["required"]["unique_observations"], 3)
+
+    def test_overlapping_cross_team_mixed_markers_keep_unique_current_labels(self) -> None:
+        pair_index = {
+            ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(2)
+        } | {
+            ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(2)
+        }
+        owned = [
+            *[{"tracklet_id": "a", "frame": frame} for frame in range(2)],
+            *[{"tracklet_id": "b", "frame": frame} for frame in range(2)],
+        ]
+        debt = build_coverage_debt(
+            [],
+            {"per_team": {
+                "A": {"reliable_observations": 2, "confirmed_named_observations": 0},
+                "B": {"reliable_observations": 2, "confirmed_named_observations": 0},
+            }},
+            pair_index,
+            _scoped_match(),
+            {"next_cases": [], "optional_audit_cases": [], "optional_audit": {}},
+            {"cases": [
+                {"case_id": "one", "mixed_hint": "cross_team", "resolution_status": "unresolved", "observation_count": 4, "source": {"owned_observations": owned}},
+                {"case_id": "two", "mixed_hint": "cross_team", "resolution_status": "unresolved", "observation_count": 4, "source": {"owned_observations": owned}},
+            ]},
+        )
+
+        self.assertEqual(debt["ambiguous"]["mixed_case_count"], 2)
+        self.assertEqual(debt["ambiguous"]["unique_current_reliable_observations"], 4)
+        self.assertEqual(debt["ambiguous"]["currently_labeled"], {"A": 2, "B": 2})
+        self.assertEqual(debt["ambiguous"]["raw_marker_observations"], 8)
     def test_complete_roster_selection_uses_named_target_shortfall(self) -> None:
         rows = [
             _observation("named", frame, "A", "confirmed", "p1")

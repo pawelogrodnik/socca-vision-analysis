@@ -57,7 +57,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.9.0"
+PROGRESS_SCHEMA_VERSION = "2.10.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -518,10 +518,15 @@ def project_reviewed_identity_progress(
         + counts["resolved_automatically"]
         + counts["safe_anonymous"]
     )
-    important_remaining = (
-        int(coverage_policy["semantic_blockers"])
-        + int(coverage_policy["coverage_blockers"])
-        + int(coverage_policy["material_continuity_blockers"])
+    # Queue-facing normal blocking and coverage-debt queue observability use
+    # the same stable-source deduplication in this generation. The category
+    # counters remain diagnostic, while this total cannot disagree with the
+    # Required queue displayed to the operator.
+    important_remaining = int(
+        (coverage_debt.get("actual_required_queue") or {}).get(
+            "normal_blocking_case_count",
+            len(coverage_policy["next_cases"]),
+        )
     )
     queue_total = completed + important_remaining
     result = {

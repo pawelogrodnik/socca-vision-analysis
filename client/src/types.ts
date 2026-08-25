@@ -2184,6 +2184,7 @@ export type ReviewedIdentityCoverageDebtTeam = {
     share_of_reliable: number | null;
     coverage_pp: number;
   };
+  ambiguous_mixed_currently_labeled_observations: number;
   accounted_unnamed_observations: number;
   unaccounted_unnamed_observations: number;
   buckets: Record<'committed_pending' | 'required' | 'mixed' | 'optional_max' | 'unavailable', ReviewedIdentityCoverageDebtBucket>;
@@ -2194,8 +2195,21 @@ export type ReviewedIdentityCoverageDebt = {
   coverage_unit: string;
   accounting_precedence: string[];
   per_team: Record<string, ReviewedIdentityCoverageDebtTeam>;
+  actual_required_queue: {
+    total_cases: number;
+    normal_blocking_case_count: number;
+    source: string;
+    per_team: Record<string, {
+      total_cases: number;
+      expected_by_scope: number;
+      unexpected_by_scope: number;
+      breakdown: Record<'semantic' | 'continuity' | 'coverage', { case_count: number }>;
+    }>;
+  };
   ambiguous: {
     mixed_case_count: number;
+    unique_current_reliable_observations: number;
+    currently_labeled: Record<string, number>;
     raw_marker_observations: number;
     note: string;
   };

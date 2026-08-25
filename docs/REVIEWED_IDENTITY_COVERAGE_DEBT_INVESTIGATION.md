@@ -30,8 +30,18 @@ Required debt has an authoritative queue-derived breakdown: semantic/team confli
 
 `ambiguous.raw_marker_observations` is intentionally named as a raw marker total. It is not presented as a unique reliable-observation accounting value because legacy or overlapping markers cannot prove that stronger fact.
 
+## Queue observability and exact Mixed reservation
+
+`operator_identity_debt_observations` is an ownership-accounting value, not a proxy for the number of cards in the Required queue. `actual_required_queue` therefore counts the current `coverage_policy.next_cases` independently, after stable source-key deduplication (`review_target_id`, subject, scope, continuity group and source ownership digest). Its total is also the generation's normal-blocking total, so the queue badge and the workflow gate reconcile without a second source of truth.
+
+For every team it reports the actual total, semantic/continuity/coverage categories, and whether each card is expected by the configured review scope. In `TEAM_STATS_ONLY`, only team-attribution safety semantics are expected identity work; continuity and player-name coverage cards are displayed as an explicit scope mismatch rather than silently folded into identity debt. The UI shows both values even when identity debt is zero, and continues to render diagnostics whenever unaccounted observations are non-zero.
+
+Exact cross-team or otherwise ambiguous Mixed sources now reserve their currently reliable A/B pairs before fallback accounting. They cannot fall through into Team A's unavailable residual or Team B's `not_required_by_scope`. Top-level diagnostics report deduplicated current reliable observations and their current A/B labels separately from raw marker telemetry, so overlapping marker sources cannot inflate the accounting value.
+
 ## Performance evidence
 
-Read-only benchmark on local match `23391dfb` (519 MB fixture, three cold and five warm runs) compared commit `accfcd7` with this update. Cold progress median was 938.6 ms before and 941.5 ms after. Warm review-progress median was 16.4 ms before and 16.5 ms after. The public page grew from 115,034 to 115,904 bytes and the hot-state file from 1,821,682 to 1,822,490 bytes.
+Read-only benchmark on local match `23391dfb` (519 MB fixture, three cold and five warm runs) compared commit `accfcd7` with the earlier scope/freshness update. Cold progress median was 938.6 ms before and 941.5 ms after. Warm review-progress median was 16.4 ms before and 16.5 ms after. The public page grew from 115,034 to 115,904 bytes and the hot-state file from 1,821,682 to 1,822,490 bytes.
 
-The sub-millisecond warm delta is within run variation and there is no material hot-read regression. The projection now maintains a shrinking `remaining_by_team` interval set while claiming buckets, rather than recomputing the full unnamed-minus-assigned difference for every unit.
+The queue-observability revision was rerun with the same method against its immediate PR parent (`9f371d9`): cold median was 1,753.9 ms before and 1,618.0 ms after; warm median was 26.5 ms before and 21.6 ms after. The public page changed from 115,904 to 116,807 bytes and the hot-state file from 1,822,490 to 1,823,323 bytes. The additional queue diagnostic is small, and this run shows no cold or warm regression.
+
+The initial sub-millisecond warm delta was within run variation, while the isolated rerun is faster on both measurements; neither comparison shows a material hot-read regression. The projection maintains a shrinking `remaining_by_team` interval set while claiming buckets, rather than recomputing the full unnamed-minus-assigned difference for every unit.
