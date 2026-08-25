@@ -504,6 +504,62 @@ class DeferredReviewedActionGateTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, "review_unit_already_decided")
 
+    def test_fresh_versioned_hot_card_can_correct_a_previous_team_decision(self) -> None:
+        """A still-required card may correct Team A to Team B without a race."""
+        with _workspace() as root:
+            unit = {
+                **_whole("verisk-goalkeeper"),
+                "priority": "coverage",
+                "current_resolution_status": "pending_coverage_review",
+                "source_ownership_digest": "current-owner",
+            }
+            _write(
+                root / "reviewed_identity_slot_assignments.json",
+                {
+                    "decisions": [{
+                        "candidate_subject_id": "verisk-goalkeeper",
+                        "action": "assign_team",
+                        "team_label": "A",
+                    }]
+                },
+            )
+            hot_state = {
+                "state_version": 470,
+                "progress": {
+                    "source_snapshot_digest": "snapshot-1",
+                    "next_cases": [unit],
+                    "deferred_correction_context": {
+                        "schema_version": "1.0.0",
+                        "detected_team_evidence_status": "ready",
+                        "subjects": [{
+                            "candidate_subject_id": "verisk-goalkeeper",
+                            "detected_team_labels": [],
+                        }],
+                    },
+                },
+                "internal_review_units": [unit],
+            }
+
+            with patch(
+                "app.services.identity_reviewed_action_gate.load_existing_fresh_hot_state",
+                return_value=hot_state,
+            ):
+                result = validate_deferred_review_action(
+                    root,
+                    {"id": "m1"},
+                    {
+                        "candidate_subject_id": "verisk-goalkeeper",
+                        "source_ownership_digest": "current-owner",
+                        "review_state_version": 470,
+                        "action": "assign_team",
+                        "team_label": "B",
+                    },
+                )
+
+        self.assertFalse(result["idempotent_replay"])
+        self.assertTrue(result["supersedes_saved_decision"])
+        self.assertEqual(result["review_unit"]["candidate_subject_id"], "verisk-goalkeeper")
+
     def test_dynamic_optional_rerank_authorizes_exact_new_case_and_replays_safely(self) -> None:
         """A deferred broad disposition may expose a narrower MAX unit."""
         with _workspace() as root:

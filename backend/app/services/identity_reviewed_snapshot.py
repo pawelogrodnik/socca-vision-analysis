@@ -283,7 +283,9 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             documents["material_continuity_decisions"],
         )
     )
-    segment_assignments.extend(unresolved_mixed_observation_assignments(match_path))
+    segment_assignments.extend(
+        unresolved_mixed_observation_assignments(match_path, match_doc)
+    )
     segment_assignments.sort(key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
     observation_demotions, uniqueness = build_frame_slot_demotions(
         tracklets,

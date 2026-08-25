@@ -217,6 +217,9 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
 
   if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
   if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className='status'>{message}</p>}</section>;
+  if (reviewCase.scope_status === 'stale_or_unclassifiable_blocking') return <section className='identity-exception-review mixed-player-review'>
+    <div className='status'><strong>Nie można bezpiecznie odtworzyć źródła Mixed.</strong><p>Przypadek nadal blokuje Review. Odśwież lub uruchom bezpieczne przeliczenie Review; nie przypisuj tej historycznej własności na podstawie niepełnych danych.</p></div>
+  </section>;
 
   const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
   const selectedAssignment = assignments[selectedSegment] || null;

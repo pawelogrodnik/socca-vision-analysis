@@ -13,6 +13,9 @@ from app.services.identity_reviewed_effective_observation import is_real_detecte
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.identity_roster_anchor_crop_renderer import render_identity_roster_anchor_crops
 from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
+from app.services.identity_reviewed_scope_eligibility import (
+    mixed_review_relevant_for_scope,
+)
 from app.services.video import resolve_match_video_path
 
 
@@ -227,12 +230,25 @@ def resolved_material_continuity_observation_pairs(
     return active_pairs
 
 
-def mixed_case_summary(match_path: Path) -> dict[str, int]:
-    rows = load_mixed_player_cases(match_path).get("cases") or []
-    unresolved = sum(str(row.get("resolution_status")) in UNRESOLVED_STATUSES for row in rows)
+def mixed_case_summary(
+    rows: list[dict[str, Any]],
+    blocking_case_ids: set[str],
+) -> dict[str, int]:
+    unresolved_rows = [
+        row for row in rows
+        if str(row.get("resolution_status")) in UNRESOLVED_STATUSES
+    ]
+    unresolved_total = len(unresolved_rows)
+    blocking = sum(
+        str(row.get("case_id") or row.get("candidate_subject_id") or "")
+        in blocking_case_ids
+        for row in unresolved_rows
+    )
     return {
         "total": len(rows),
-        "unresolved": unresolved,
+        "unresolved": blocking,
+        "unresolved_total": unresolved_total,
+        "nonblocking_by_scope": unresolved_total - blocking,
         "resolved": sum(str(row.get("resolution_status")) == "resolved" for row in rows),
         "complex_unresolved": sum(
             str(row.get("resolution_status")) == "unresolved_complex_mix" for row in rows
@@ -256,35 +272,62 @@ def build_mixed_review_queue(
         if row.get("candidate_subject_id")
     }
     cases = []
+    blocking_case_ids: set[str] = set()
     for marker in document.get("cases") or []:
         if str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
             continue
+        marker_id = str(marker.get("case_id") or marker.get("candidate_subject_id") or "")
         subject_id = str(marker.get("candidate_subject_id") or "")
         subject = subjects.get(subject_id)
-        if not subject and not isinstance(marker.get("source"), dict):
-            continue
-        observations = _observations_for_marker(match_path, marker, subject)
+        observations = (
+            _observations_for_marker(match_path, marker, subject)
+            if subject or isinstance(marker.get("source"), dict)
+            else []
+        )
         if not observations:
-            continue
-        crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
-        cases.append(
-            {
+            # Exact v2 ownership deliberately fails materialization when even
+            # one stored pair is absent. Never reinterpret that as a certain
+            # Team-B-only case: the workflow must stop safely and surface the
+            # stale source instead of silently finalizing.
+            blocking_case_ids.add(marker_id)
+            cases.append({
                 **marker,
+                "blocking": True,
+                "scope_status": "stale_or_unclassifiable_blocking",
                 "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
                 "reviewed_complex_at": marker.get("updated_at")
                 if str(marker.get("resolution_status")) == "unresolved_complex_mix"
                 else None,
-                "temporal_evidence": {
-                    "status": "ready" if crops else "missing",
-                    "anchor_crops": crops,
-                },
-            }
-        )
+                "temporal_evidence": {"status": "missing", "anchor_crops": []},
+            })
+            continue
+        crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
+        blocking = mixed_review_relevant_for_scope(marker, observations, match_doc)
+        if blocking:
+            blocking_case_ids.add(marker_id)
+            cases.append(
+                {
+                    **marker,
+                    "blocking": True,
+                    "scope_status": "blocking",
+                    "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
+                    "reviewed_complex_at": marker.get("updated_at")
+                    if str(marker.get("resolution_status")) == "unresolved_complex_mix"
+                    else None,
+                    "temporal_evidence": {
+                        "status": "ready" if crops else "missing",
+                        "anchor_crops": crops,
+                    },
+                }
+            )
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_queue",
         "match_id": str(match_doc.get("id") or match_path.name),
-        "summary": mixed_case_summary(match_path),
+        "summary": mixed_case_summary(
+            list(document.get("cases") or []),
+            blocking_case_ids,
+        ),
         "assignment_options": {
             "roster": _match_roster(match_doc),
             "slots": list(build_reviewed_slot_registry(match_path).values()),
@@ -591,12 +634,20 @@ def current_mixed_subject_digest(match_path: Path, subject_id: str) -> str:
     return _subject_digest(subject, _subject_observations(match_path, subject))
 
 
-def unresolved_mixed_observation_assignments(match_path: Path) -> list[dict[str, Any]]:
+def unresolved_mixed_observation_assignments(
+    match_path: Path,
+    match_doc: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for case in load_mixed_player_cases(match_path).get("cases") or []:
         if str(case.get("resolution_status")) not in UNRESOLVED_STATUSES:
             continue
-        for observation in observations_for_case(match_path, case):
+        observations = observations_for_case(match_path, case)
+        if match_doc is not None and not mixed_review_relevant_for_scope(
+            case, observations, match_doc,
+        ):
+            continue
+        for observation in observations:
             team = str(observation.get("team_label") or "U")
             output.append(
                 {

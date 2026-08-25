@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   saveReviewedIdentityCorrection,
 } from '../api';
+import { isRecoverableReviewQueueConflict } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type {
   ReviewedCorrectionAction,
@@ -37,6 +38,7 @@ type Props = {
   entity: ReviewedIdentityAtEntity;
   onCancel: () => void;
   onSaved: (result: ReviewedCorrectionResponse) => void;
+  onSaveConflict?: () => void;
   teams?: Team[];
   teamAttributionOnly?: boolean;
   deferRecompute?: boolean;
@@ -66,6 +68,7 @@ export function ReviewedIdentityCorrectionForm({
   entity,
   onCancel,
   onSaved,
+  onSaveConflict,
   teams,
   deferRecompute = false,
   mixedHandling = 'stage',
@@ -81,6 +84,7 @@ export function ReviewedIdentityCorrectionForm({
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const saveInFlightRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -186,7 +190,8 @@ export function ReviewedIdentityCorrectionForm({
   }
 
   async function save() {
-    if (!subjectId || !action || !choiceComplete) return;
+    if (!subjectId || !action || !choiceComplete || saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
     setError('');
     setBusy(true);
     try {
@@ -217,8 +222,17 @@ export function ReviewedIdentityCorrectionForm({
         },
       );
     } catch (reason) {
+      if (onSaveConflict && isRecoverableReviewQueueConflict(reason)) {
+        // The server already has a durable decision for this stale card.
+        // Replace it with the current queue instead of asking the operator
+        // to reload Review or to submit another decision.
+        invalidateReviewedCorrectionContext(matchId);
+        onSaveConflict();
+        return;
+      }
       setError(errorMessage(reason));
     } finally {
+      saveInFlightRef.current = false;
       setBusy(false);
     }
   }

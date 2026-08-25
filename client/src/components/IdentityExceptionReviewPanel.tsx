@@ -37,7 +37,11 @@ import {
   shouldRecoverRequiredReviewCompletion,
   shouldVerifyMutatedRequiredQueueEmpty,
 } from '../utils/identityExceptionQueue';
-import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
+import {
+  createReviewCommitGuard,
+  createReviewQueueConflictRecovery,
+  moveReviewCaseIndex,
+} from '../utils/identityExceptionWorkspace';
 import {
   apiTeamFilter,
   matchTeamName,
@@ -55,7 +59,7 @@ import {
   formatReviewedIdentityPercentagePoints,
 } from '../utils/reviewedIdentityMaxPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
-import { ReviewedIdentityCoverageDebtSummary } from './ReviewedIdentityCoverageDebtSummary';
+import { ReviewedIdentityCoverageDebtDialog } from './ReviewedIdentityCoverageDebtDialog';
 import { prefetchReviewedCorrectionContext } from '../utils/reviewedCorrectionContextClientCache';
 
 type Props = {
@@ -133,6 +137,7 @@ export function IdentityExceptionReviewPanel({
   initialQueue = 'required',
   onOptionalAuditSummaryChanged,
 }: Props) {
+  const [coverageDetailsOpen, setCoverageDetailsOpen] = useState(false);
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -153,7 +158,7 @@ export function IdentityExceptionReviewPanel({
   const finalizeInFlight = useRef(false);
   const requiredReviewLifecycleRef = useRef(beginRequiredReviewLifecycle(0));
   const requiredReviewNavigationRef = useRef(beginRequiredReviewNavigation());
-  const committedReviewKeysRef = useRef(new Set<string>());
+  const committedReviewKeysRef = useRef(createReviewCommitGuard());
   const loadRequestIdRef = useRef(0);
   const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
 
@@ -182,6 +187,10 @@ export function IdentityExceptionReviewPanel({
         ),
       ]);
       if (ignore?.() || requestId !== loadRequestIdRef.current) return [];
+      // A completed progress request is authoritative. A unit can reappear
+      // after a Review recompute and must not inherit an old duplicate-save
+      // marker from the prior queue projection.
+      committedReviewKeysRef.current.resetForAuthoritativeQueue();
       if (document) {
         cardsBySubjectRef.current = new Map(
           document.cards.map((nextCard) => [nextCard.candidate_subject_id, nextCard]),
@@ -358,8 +367,7 @@ export function IdentityExceptionReviewPanel({
       return;
     }
     const savedKey = reviewUnitKey(reviewCase.unit);
-    if (committedReviewKeysRef.current.has(savedKey)) return;
-    committedReviewKeysRef.current.add(savedKey);
+    if (!committedReviewKeysRef.current.markIfNew(savedKey)) return;
     if (activeQueue === 'required') {
       requiredReviewNavigationRef.current = recordRequiredReviewQueueMutation();
     }
@@ -439,6 +447,29 @@ export function IdentityExceptionReviewPanel({
         );
       }
     }
+  }
+
+  function recoverFromReviewSaveConflict() {
+    const recovery = createReviewQueueConflictRecovery(
+      activeTeamFilter,
+      activeQueue,
+      totalRemaining,
+    );
+    setFinalizeFailed(false);
+    setCases(recovery.localCases);
+    setIndex(recovery.index);
+    setTotalRemaining(recovery.totalRemaining);
+    requiredReviewLifecycleRef.current = recovery.lifecycle;
+    requiredReviewNavigationRef.current = recovery.navigation;
+    setMessage('Review został zsynchronizowany z zapisaną decyzją.');
+    void loadCases(
+      undefined,
+      true,
+      recovery.progressRequest.offset,
+      recovery.progressRequest.preferredIndex,
+      recovery.progressRequest.teamFilter,
+      recovery.progressRequest.queue,
+    );
   }
 
   async function finalizeCorrections(
@@ -547,11 +578,13 @@ export function IdentityExceptionReviewPanel({
           aria-label={`Pokrycie imienne ${matchTeamName(match.teams || [], team as 'A' | 'B')}`}
         />
       </div>)}
+      {coverageDebt && <button type='button' className='identity-coverage-details-trigger' onClick={() => setCoverageDetailsOpen(true)}>Szczegóły pokrycia</button>}
     </section>}
-    {coverageDebt && <ReviewedIdentityCoverageDebtSummary
+    {coverageDebt && coverageDetailsOpen && <ReviewedIdentityCoverageDebtDialog
       match={match}
       debt={coverageDebt}
       mixedLocked={(workflow.issues.normal_blocking ?? workflow.issues.blocking) > 0}
+      onClose={() => setCoverageDetailsOpen(false)}
     />}
     {workload && workload.level !== 'normal' && <details className='identity-exception-guidance identity-coverage-warning'>
       <summary>Duża kolejka: {workload.remaining_cases} fragmentów <span>Szczegóły</span></summary>
@@ -628,6 +661,7 @@ export function IdentityExceptionReviewPanel({
             teamAttributionOnly={unitEvidence?.kind === 'team_attribution'}
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}
+            onSaveConflict={recoverFromReviewSaveConflict}
             deferRecompute
             mixedHandling={activeQueue === 'optional_audit' ? 'direct' : 'stage'}
             navigation={{

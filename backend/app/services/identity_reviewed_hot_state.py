@@ -55,7 +55,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -241,7 +241,7 @@ def update_hot_state_after_deferred_save(
     """
     subject = str(review_unit.get("candidate_subject_id") or "")
     target = str(review_unit.get("review_target_id") or "") or None
-    decision = dict(saved_decision or {})
+    decision = _projection_decision(review_unit, saved_decision)
     source_digest = str(review_unit.get("source_ownership_digest") or "")
     roster_teams = {
         str(row.get("player_id") or ""): str(row.get("team_label") or "U").upper()
@@ -303,6 +303,27 @@ def update_hot_state_after_deferred_save(
     state["freshness"] = _freshness(match_path, match_doc, semantic_digest=semantic_decision_digest)
     write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
     return state
+
+
+def _projection_decision(
+    review_unit: dict[str, Any],
+    saved_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Normalize a transport-shaped save response for hot queue projection.
+
+    Material-continuity saves compact their exact ownership for HTTP and keep
+    the canonical correction below ``decision``. The hot queue needs that
+    canonical action at the top level to retire the just-resolved unit.
+    """
+    saved = dict(saved_decision or {})
+    nested = saved.get("decision")
+    if (
+        str(review_unit.get("scope_kind") or "") == "material_continuity"
+        and isinstance(nested, dict)
+        and nested.get("action")
+    ):
+        return dict(nested)
+    return saved
 
 
 def _update_hot_mixed_projection(

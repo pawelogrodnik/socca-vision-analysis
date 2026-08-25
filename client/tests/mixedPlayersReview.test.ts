@@ -201,6 +201,16 @@ test('mixed workspace keeps temporal evidence explicitly sorted', () => {
   assert.deepEqual(sorted.map((crop) => crop.frame), [10, 20, 30, 40, 50]);
 });
 
+test('mandatory Mixed panel uses the authoritative blocking-only queue contract', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('MixedPlayersReviewPanel.tsx', components), 'utf8');
+
+  assert.match(panel, /Przypadek \{index \+ 1\} z \{queue\.cases\.length\}/);
+  assert.match(panel, /next\.cases\.length === 0/);
+  assert.match(panel, /stale_or_unclassifiable_blocking/);
+  assert.doesNotMatch(panel, /filter\(.*blocking/);
+});
+
 test('only a successful save removes the current case and advances safely', () => {
   const second = { ...reviewCase, candidate_subject_id: 'mixed-2' };
   const before = [reviewCase, second];

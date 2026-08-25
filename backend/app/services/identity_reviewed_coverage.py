@@ -35,11 +35,16 @@ from app.services.identity_review_scope import (
 from app.services.identity_reviewed_material_continuity import (
     is_material_continuity_case,
 )
+from app.services.identity_reviewed_scope_eligibility import (
+    has_team_attribution_uncertainty,
+    required_review_relevant_for_scope,
+    unit_team_label,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v8-optional-max"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v9-scope-eligible-required"
 OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
 COVERAGE_DEBT_POLICY_VERSION = "reviewed-identity-coverage-debt:v2-queue-observability"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
@@ -168,11 +173,19 @@ def apply_coverage_policy(
     match_doc: dict[str, Any],
 ) -> dict[str, Any]:
     """Rank every meaningful unreviewed identity unit without a case cap."""
-    semantic = [
+    semantic_candidates = [
         unit
         for unit in units
         if unit.get("current_resolution_status") == "pending_high_priority"
         and unit.get("operator_actionable") is not False
+    ]
+    semantic = [
+        enriched
+        for unit in semantic_candidates
+        if required_review_relevant_for_scope(
+            enriched := _coverage_impact(unit, pair_index, coverage),
+            match_doc,
+        )
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
     material_continuity: list[dict[str, Any]] = []
@@ -184,7 +197,7 @@ def apply_coverage_policy(
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
     non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for unit in units:
-        if unit in semantic or _has_explicit_disposition(unit, match_doc):
+        if unit in semantic_candidates or _has_explicit_disposition(unit, match_doc):
             continue
         # A raw subject may have a diagnostic card while every observation is
         # outside the product play area.  It cannot become a team-attribution
@@ -197,7 +210,7 @@ def apply_coverage_policy(
         # A Team-U or cross-team fragment must be resolved before named-player
         # coverage is considered.  It is a team-attribution decision, not a
         # request to name a player for the wrong roster scope.
-        if _has_team_uncertainty(enriched):
+        if has_team_attribution_uncertainty(enriched):
             enriched["reason_codes"] = sorted(
                 set(enriched.get("reason_codes") or [])
                 | {"team_attribution_uncertain"}
@@ -213,6 +226,8 @@ def apply_coverage_policy(
         # safe, Team-A continuity break.  This is independent of the 90%
         # coverage target and only applies to pre-grouped material cases.
         if is_material_continuity_case(enriched):
+            if not required_review_relevant_for_scope(enriched, match_doc):
+                continue
             enriched["current_resolution_status"] = "pending_material_continuity_review"
             enriched["priority"] = "continuity"
             enriched["reason_codes"] = sorted(
@@ -221,7 +236,7 @@ def apply_coverage_policy(
             )
             material_continuity.append(enriched)
             continue
-        if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+        if not required_review_relevant_for_scope(enriched, match_doc):
             continue
         if int(enriched["potential_named_observation_gain"]) <= 0:
             continue
@@ -246,7 +261,7 @@ def apply_coverage_policy(
             and team_review_scope(match_doc, team) == COMPLETE_ROSTER
             and enriched.get("operator_actionable") is not False
             and enriched.get("has_operator_visual_evidence")
-            and not _has_team_uncertainty(enriched)
+            and not has_team_attribution_uncertainty(enriched)
             and int(enriched.get("potential_named_observation_gain") or 0) > 0
         ):
             independently_required[team].append(enriched)
@@ -826,11 +841,7 @@ def _actual_required_queue(
 
 
 def _required_debt_team(unit: dict[str, Any]) -> str:
-    for field in ("coverage_team_label", "effective_team_label", "source_team_label"):
-        team = _team_label(unit.get(field))
-        if team in {"A", "B"}:
-            return team
-    return "U"
+    return unit_team_label(unit)
 
 
 def _is_team_stats_required_safety_case(unit: dict[str, Any]) -> bool:
@@ -1704,16 +1715,5 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _has_team_uncertainty(unit: dict[str, Any]) -> bool:
-    if _team_label(unit.get("effective_team_label")) == "U":
-        return True
-    markers = (
-        "conflict",
-        "contradict",
-        "cross_team",
-        "team_mismatch",
-    )
-    return any(
-        marker in str(reason).lower()
-        for reason in unit.get("reason_codes") or []
-        for marker in markers
-    )
+    """Compatibility alias for callers/tests that predate the shared policy."""
+    return has_team_attribution_uncertainty(unit)

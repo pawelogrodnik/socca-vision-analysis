@@ -19,6 +19,97 @@ from app.services.identity_reviewed_progress import reviewed_snapshot_file_finge
 
 
 class ReviewedIdentityCoverageTests(unittest.TestCase):
+    def test_team_stats_only_filters_certain_identity_semantic_and_continuity_but_keeps_attribution_safety(self) -> None:
+        pair_index = {
+            ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(3)
+        } | {
+            ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(4)
+        }
+        a_semantic = _unit("a-semantic", [("a", 0)], visual=True)
+        a_semantic.update({"current_resolution_status": "pending_high_priority", "priority": "high"})
+        a_coverage = _unit("a-coverage", [("a", 1)], visual=True)
+        a_material = _material_case("a-material", range(2, 3))
+        b_semantic = _unit("b-semantic", [("b", 0)], visual=True)
+        b_semantic.update({"effective_team_label": "B", "source_team_label": "B", "current_resolution_status": "pending_high_priority", "priority": "high", "reason_codes": ["identity_conflict"]})
+        b_material = _material_case("b-material", range(1, 2))
+        b_material.update({"effective_team_label": "B", "source_team_label": "B", "detected_pairs": [("b", 1)]})
+        b_coverage = _unit("b-coverage", [("b", 2)], visual=True)
+        b_coverage.update({"effective_team_label": "B", "source_team_label": "B"})
+        b_uncertain = _unit("b-uncertain", [("b", 3)], visual=True)
+        b_uncertain.update({"effective_team_label": "U", "source_team_label": "B", "current_resolution_status": "pending_high_priority", "priority": "high", "reason_codes": ["team_attribution_uncertain"]})
+
+        policy = apply_coverage_policy(
+            [a_semantic, a_coverage, a_material, b_semantic, b_material, b_coverage, b_uncertain],
+            {"per_team": {
+                "A": {"reliable_observations": 3, "confirmed_named_observations": 0},
+                "B": {"reliable_observations": 4, "confirmed_named_observations": 0},
+            }},
+            pair_index,
+            _scoped_match(),
+        )
+
+        self.assertEqual(
+            {unit["candidate_subject_id"] for unit in policy["next_cases"]},
+            {"a-semantic", "a-coverage", "a-material", "b-uncertain"},
+        )
+        self.assertEqual(policy["material_continuity_blockers"], 1)
+        self.assertEqual(policy["semantic_blockers"], 2)
+
+    def test_real_shape_scope_regression_removes_41_certain_team_b_identity_cases(self) -> None:
+        pair_index = {
+            ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(6)
+        } | {
+            ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(43)
+        }
+        corgi = []
+        for frame in range(6):
+            unit = _unit(f"a-{frame}", [("a", frame)], visual=True)
+            unit.update({"current_resolution_status": "pending_high_priority", "priority": "high"})
+            corgi.append(unit)
+        safety = []
+        for frame in range(2):
+            unit = _unit(f"b-safety-{frame}", [("b", frame)], visual=True)
+            unit.update({"effective_team_label": "U", "source_team_label": "B", "current_resolution_status": "pending_high_priority", "priority": "high", "reason_codes": ["team_attribution_uncertain"]})
+            safety.append(unit)
+        opponent_identity = []
+        for frame in range(2, 23):
+            unit = _unit(f"b-identity-{frame}", [("b", frame)], visual=True)
+            unit.update({"effective_team_label": "B", "source_team_label": "B", "current_resolution_status": "pending_high_priority", "priority": "high"})
+            opponent_identity.append(unit)
+        opponent_continuity = []
+        for frame in range(23, 43):
+            unit = _material_case(f"b-continuity-{frame}", range(frame, frame + 1))
+            unit.update({"effective_team_label": "B", "source_team_label": "B", "detected_pairs": [("b", frame)]})
+            opponent_continuity.append(unit)
+        coverage = {"per_team": {
+            "A": {"reliable_observations": 6, "confirmed_named_observations": 0},
+            "B": {"reliable_observations": 43, "confirmed_named_observations": 0},
+        }}
+        policy = apply_coverage_policy(
+            [*corgi, *safety, *opponent_identity, *opponent_continuity],
+            coverage,
+            pair_index,
+            _scoped_match(),
+        )
+        debt = build_coverage_debt(
+            [*corgi, *safety, *opponent_identity, *opponent_continuity],
+            coverage,
+            pair_index,
+            _scoped_match(),
+            policy,
+            {"cases": []},
+        )
+
+        self.assertEqual(len(policy["next_cases"]), 8)
+        self.assertEqual(debt["actual_required_queue"]["total_cases"], 8)
+        self.assertEqual(debt["actual_required_queue"]["per_team"]["A"]["total_cases"], 6)
+        self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["total_cases"], 2)
+        self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["unexpected_by_scope"], 0)
+
     def test_coverage_debt_partitions_unnamed_pairs_with_exact_mixed_ownership(self) -> None:
         pair_index = {
             ("t", frame): {
