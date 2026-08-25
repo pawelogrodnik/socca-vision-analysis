@@ -2321,6 +2321,8 @@ export type MixedPlayerCase = {
   frame_end: number;
   reviewed_complex?: boolean;
   reviewed_complex_at?: string | null;
+  blocking?: boolean;
+  scope_status?: 'blocking' | 'not_required_by_scope' | 'stale_or_unclassifiable_blocking';
   temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
 };
 
@@ -2328,7 +2330,7 @@ export type MixedPlayersReviewQueue = {
   schema_version: string;
   mode: string;
   match_id: string;
-  summary: { total: number; unresolved: number; resolved: number; complex_unresolved: number };
+  summary: { total: number; unresolved: number; unresolved_total?: number; nonblocking_by_scope?: number; resolved: number; complex_unresolved: number };
   assignment_options: { roster: ReviewedCorrectionRosterOption[]; slots: ReviewedCorrectionSlotOption[] };
   cases: MixedPlayerCase[];
 };

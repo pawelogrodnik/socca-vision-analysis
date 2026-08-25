@@ -276,33 +276,50 @@ def build_mixed_review_queue(
     for marker in document.get("cases") or []:
         if str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
             continue
+        marker_id = str(marker.get("case_id") or marker.get("candidate_subject_id") or "")
         subject_id = str(marker.get("candidate_subject_id") or "")
         subject = subjects.get(subject_id)
-        if not subject and not isinstance(marker.get("source"), dict):
-            continue
-        observations = _observations_for_marker(match_path, marker, subject)
+        observations = (
+            _observations_for_marker(match_path, marker, subject)
+            if subject or isinstance(marker.get("source"), dict)
+            else []
+        )
         if not observations:
-            continue
-        crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
-        blocking = mixed_review_relevant_for_scope(marker, observations, match_doc)
-        marker_id = str(marker.get("case_id") or marker.get("candidate_subject_id") or "")
-        if blocking:
+            # Exact v2 ownership deliberately fails materialization when even
+            # one stored pair is absent. Never reinterpret that as a certain
+            # Team-B-only case: the workflow must stop safely and surface the
+            # stale source instead of silently finalizing.
             blocking_case_ids.add(marker_id)
-        cases.append(
-            {
+            cases.append({
                 **marker,
-                "blocking": blocking,
-                "scope_status": "blocking" if blocking else "not_required_by_scope",
+                "blocking": True,
+                "scope_status": "stale_or_unclassifiable_blocking",
                 "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
                 "reviewed_complex_at": marker.get("updated_at")
                 if str(marker.get("resolution_status")) == "unresolved_complex_mix"
                 else None,
-                "temporal_evidence": {
-                    "status": "ready" if crops else "missing",
-                    "anchor_crops": crops,
-                },
-            }
-        )
+                "temporal_evidence": {"status": "missing", "anchor_crops": []},
+            })
+            continue
+        crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
+        blocking = mixed_review_relevant_for_scope(marker, observations, match_doc)
+        if blocking:
+            blocking_case_ids.add(marker_id)
+            cases.append(
+                {
+                    **marker,
+                    "blocking": True,
+                    "scope_status": "blocking",
+                    "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
+                    "reviewed_complex_at": marker.get("updated_at")
+                    if str(marker.get("resolution_status")) == "unresolved_complex_mix"
+                    else None,
+                    "temporal_evidence": {
+                        "status": "ready" if crops else "missing",
+                        "anchor_crops": crops,
+                    },
+                }
+            )
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_queue",

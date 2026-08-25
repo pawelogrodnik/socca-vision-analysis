@@ -95,3 +95,14 @@ policy revision measured 1,160.5 ms versus 1,206.6 ms median cold progress and
 16.5 ms versus 17.0 ms median warm progress. The public page fell from 116,807
 to 116,130 bytes and temporary hot state from 1,823,323 to 1,785,584 bytes.
 The modal is local React state and makes no Review API call.
+
+## Mandatory Mixed queue follow-up
+
+The mandatory Mixed endpoint now returns only scope-blocking cases in `cases`.
+The summary retains every persisted unresolved marker as `unresolved_total`,
+partitioned into workflow-blocking `unresolved` and `nonblocking_by_scope`.
+An exact marker whose current ownership cannot be materialized is deliberately
+returned as `stale_or_unclassifiable_blocking`; it never falls into the
+Team-B-only nonblocking bucket. This keeps stale and partial exact ownership
+fail-closed while preserving all durable marker/source fields for a later scope
+change or recovery.
