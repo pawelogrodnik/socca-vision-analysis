@@ -90,6 +90,7 @@ def _refresh_review_after_identity_mutation_scoped(
         "finalize_reviewed_identity_ms": 0.0,
         "segment_evidence_ms": 0.0,
         "team_attribution_evidence_ms": 0.0,
+        "hot_state_warm_write_ms": 0.0,
         "progress_build_ms": 0.0,
         "final_workflow_ms": 0.0,
     }

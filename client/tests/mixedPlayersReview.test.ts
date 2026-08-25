@@ -7,6 +7,7 @@ import type { MixedPlayerCase, MixedSegmentAssignment, ReviewedCorrectionContext
 import { correctionContextAsSplitCase } from '../src/utils/reviewedIdentitySplitCase.ts';
 import { reviewedIdentityChildActions } from '../src/utils/reviewedIdentityActions.ts';
 import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
+import { exactMixedFocusIndex, mixedPostSaveDestination } from '../src/utils/mixedReviewNavigation.ts';
 
 const reviewCase: MixedPlayerCase = {
   candidate_subject_id: 'mixed-1',
@@ -221,7 +222,7 @@ test('resolve-now targets the durable exact staged case instead of a raw subject
   assert.match(form, /Rozwiąż teraz/);
   assert.match(form, /Odłóż do Mixed/);
   assert.match(form, /result\.saved_decision\?\.case_id/);
-  assert.match(panel, /item\.case_id === focusCaseId/);
+  assert.match(panel, /exactMixedFocusIndex/);
 });
 
 test('only a successful save removes the current case and advances safely', () => {
@@ -242,6 +243,20 @@ test('saving an exact staged source never removes a sibling with the same raw su
 
   assert.deepEqual(after.cases.map((item) => item.case_id), ['source-b']);
   assert.equal(after.index, 0);
+});
+
+test('manual Mixed batch stays in Mixed while resolve-now returns to Required only by explicit entry intent', () => {
+  assert.equal(mixedPostSaveDestination('manual', 6, 2), 'mixed');
+  assert.equal(mixedPostSaveDestination('manual', 5, 1), 'mixed');
+  assert.equal(mixedPostSaveDestination('resolve_now', 6, 2), 'required');
+  assert.equal(mixedPostSaveDestination('resolve_now', 0, 2), 'mixed');
+  assert.equal(mixedPostSaveDestination('manual', 0, 0), 'workflow');
+});
+
+test('resolve-now exact focus never falls back to the first or same-subject Mixed case', () => {
+  assert.equal(exactMixedFocusIndex(['M-older', 'M-new'], 'M-new'), 1);
+  assert.equal(exactMixedFocusIndex(['M-older', 'M-same-subject'], 'M-new'), null);
+  assert.equal(exactMixedFocusIndex(['M-older'], null), 0);
 });
 
 test('segment presentation derives operator time from temporal evidence', () => {

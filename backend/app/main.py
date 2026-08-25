@@ -133,7 +133,9 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
     inline_temporal_split_for_source,
+    render_mixed_review_evidence,
 )
+from app.services.identity_canonical_io import review_build_context
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
     save_inline_temporal_split,
@@ -2060,6 +2062,12 @@ def reproject_match_review_workflow(match_id: str) -> dict[str, Any]:
             path,
             read_match_meta(path),
             source="mixed_players_reproject",
+            # Structural Mixed saves already invalidate the old generation.
+            # Reproject exactly once, leave that authoritative generation warm
+            # for Required offset-0 navigation, and do not globally render
+            # every possible Review crop on this click path.
+            operator_evidence=False,
+            leave_hot_state_warm=True,
         )
     except ReviewWorkflowRecomputeError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
@@ -2544,10 +2552,37 @@ def finalize_match_reviewed_identity_corrections(match_id: str) -> dict[str, Any
 
 
 @app.get("/api/matches/{match_id}/reviewed-identity/mixed-players")
-def get_match_reviewed_identity_mixed_players(match_id: str) -> dict[str, Any]:
+def get_match_reviewed_identity_mixed_players(
+    match_id: str,
+    focus_case_id: str | None = Query(default=None),
+) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return build_mixed_review_queue(path, read_match_meta(path))
+        with review_build_context():
+            requested_focus = focus_case_id if isinstance(focus_case_id, str) and focus_case_id else None
+            match_document = read_match_meta(path)
+            queue = build_mixed_review_queue(path, match_document)
+            focused = next(
+                (
+                    case for case in queue.get("cases") or []
+                    if str(case.get("case_id") or "") == str(requested_focus or "")
+                ),
+                None,
+            )
+            # Manual entry displays only its first currently authoritative
+            # card; resolve-now displays only the exact durable case.  Missing
+            # artifacts are materialized before their URLs reach the browser.
+            evidence_case = focused if requested_focus else next(
+                iter(queue.get("cases") or []),
+                None,
+            )
+            if isinstance(evidence_case, dict):
+                render_mixed_review_evidence(
+                    path,
+                    match_document,
+                    {"cases": [evidence_case]},
+                )
+            return queue
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2564,14 +2599,15 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return build_mixed_boundary_refinement(
-            path,
-            read_match_meta(path),
-            candidate_subject_id,
-            after_frame,
-            before_frame,
-            case_id=case_id if isinstance(case_id, str) else None,
-        )
+        with review_build_context():
+            return build_mixed_boundary_refinement(
+                path,
+                read_match_meta(path),
+                candidate_subject_id,
+                after_frame,
+                before_frame,
+                case_id=case_id if isinstance(case_id, str) else None,
+            )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

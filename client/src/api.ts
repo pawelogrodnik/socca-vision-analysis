@@ -375,9 +375,15 @@ export async function finalizeReviewedIdentityCorrections(
   );
 }
 
-export async function getMixedPlayersReview(matchId: string): Promise<import('./types').MixedPlayersReviewQueue> {
+export async function getMixedPlayersReview(
+  matchId: string,
+  focusCaseId?: string | null,
+): Promise<import('./types').MixedPlayersReviewQueue> {
+  const query = focusCaseId
+    ? `?focus_case_id=${encodeURIComponent(focusCaseId)}`
+    : '';
   return request<import('./types').MixedPlayersReviewQueue>(
-    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players`,
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players${query}`,
   );
 }
 

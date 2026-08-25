@@ -71,6 +71,8 @@ type Props = {
   onOptionalAuditSummaryChanged?: (summary: ReviewedIdentityOptionalAudit) => void;
   showPrimaryQueueSwitch?: boolean;
   onMixedResolveNow?: (caseId: string) => void;
+  requiredTeamFilter?: TeamReviewFilter;
+  onRequiredTeamFilterChange?: (teamFilter: TeamReviewFilter) => void;
 };
 
 type ReviewCase = {
@@ -140,6 +142,8 @@ export function IdentityExceptionReviewPanel({
   onOptionalAuditSummaryChanged,
   showPrimaryQueueSwitch = true,
   onMixedResolveNow,
+  requiredTeamFilter = 'all',
+  onRequiredTeamFilterChange,
 }: Props) {
   const [coverageDetailsOpen, setCoverageDetailsOpen] = useState(false);
   const [cases, setCases] = useState<ReviewCase[]>([]);
@@ -155,7 +159,8 @@ export function IdentityExceptionReviewPanel({
   const [coverageDebt, setCoverageDebt] = useState<ReviewedIdentityCoverageDebt | null>(null);
   const [coverageReadiness, setCoverageReadiness] = useState<ReviewedIdentityCoverageReadiness | null>(null);
   const [workload, setWorkload] = useState<ReviewedIdentityWorkload | null>(null);
-  const [activeTeamFilter, setActiveTeamFilter] = useState<TeamReviewFilter>('all');
+  const [uncontrolledTeamFilter, setUncontrolledTeamFilter] = useState<TeamReviewFilter>('all');
+  const activeTeamFilter = onRequiredTeamFilterChange ? requiredTeamFilter : uncontrolledTeamFilter;
   const [reviewFilters, setReviewFilters] = useState<ReviewedIdentityReviewFilters | null>(null);
   const [activeQueue, setActiveQueue] = useState<ReviewedIdentityReviewQueue>(initialQueue);
   const [optionalAuditRemaining, setOptionalAuditRemaining] = useState(0);
@@ -251,11 +256,10 @@ export function IdentityExceptionReviewPanel({
 
   useEffect(() => {
     let disposed = false;
-    setActiveTeamFilter('all');
     setActiveQueue(initialQueue);
     requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
     requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
-    void loadCases(() => disposed, false, 0, 0, 'all', initialQueue);
+    void loadCases(() => disposed, false, 0, 0, activeTeamFilter, initialQueue);
     return () => { disposed = true; };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -306,7 +310,8 @@ export function IdentityExceptionReviewPanel({
 
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;
-    setActiveTeamFilter(nextFilter);
+    if (onRequiredTeamFilterChange) onRequiredTeamFilterChange(nextFilter);
+    else setUncontrolledTeamFilter(nextFilter);
     setCases([]);
     setIndex(0);
     setPageOffset(0);
@@ -320,7 +325,6 @@ export function IdentityExceptionReviewPanel({
   function changeQueue(nextQueue: ReviewedIdentityReviewQueue) {
     if (nextQueue === activeQueue || loading || finalizing) return;
     setActiveQueue(nextQueue);
-    setActiveTeamFilter('all');
     setCases([]);
     setIndex(0);
     setPageOffset(0);

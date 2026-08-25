@@ -30,7 +30,7 @@ from app.services.identity_reviewed_segments import (
     DECISIONS_FILENAME,
     build_segment_review_document,
     load_segment_decisions,
-    save_segment_decision,
+    save_segment_decisions_batch,
 )
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_slot_review import FILENAME as SLOT_REVIEW_FILENAME
@@ -136,20 +136,19 @@ def save_mixed_player_resolution(
     try:
         save_mixed_case_document(match_path, pending_document)
         review = build_segment_review_document(match_path, match_doc)
-        saved = []
-        for target, assignment in zip(targets, assignments, strict=True):
-            saved.append(
-                save_segment_decision(
-                    match_path,
-                    match_doc,
-                    {
-                        **dict(assignment),
-                        "review_target_id": target["review_target_id"],
-                        "source_ownership_digest": target["source_ownership_digest"],
-                    },
-                    materialized_review=review,
-                )
-            )
+        saved = save_segment_decisions_batch(
+            match_path,
+            match_doc,
+            [
+                {
+                    **dict(assignment),
+                    "review_target_id": target["review_target_id"],
+                    "source_ownership_digest": target["source_ownership_digest"],
+                }
+                for target, assignment in zip(targets, assignments, strict=True)
+            ],
+            materialized_review=review,
+        )
         case.update(
             {
                 "resolution_status": "resolved",
@@ -350,19 +349,19 @@ def save_inline_temporal_split(
             else []
         )
         review = build_segment_review_document(match_path, match_doc)
-        saved = [
-            save_segment_decision(
-                match_path,
-                match_doc,
+        saved = save_segment_decisions_batch(
+            match_path,
+            match_doc,
+            [
                 {
                     **dict(assignment),
                     "review_target_id": target["review_target_id"],
                     "source_ownership_digest": target["source_ownership_digest"],
-                },
-                materialized_review=review,
-            )
-            for target, assignment in zip(targets, assignments, strict=True)
-        ]
+                }
+                for target, assignment in zip(targets, assignments, strict=True)
+            ],
+            materialized_review=review,
+        )
         case.update(
             {
                 "resolution_status": "resolved",

@@ -32,7 +32,40 @@ class ReviewWorkflowApiTests(unittest.TestCase):
 
         self.assertEqual(response["workflow"]["phase"], "exceptions")
         self.assertEqual(reproject.call_args.kwargs["source"], "mixed_players_reproject")
+        self.assertFalse(reproject.call_args.kwargs["operator_evidence"])
+        self.assertTrue(reproject.call_args.kwargs["leave_hot_state_warm"])
         finalize.assert_not_called()
+
+    def test_focused_mixed_read_renders_only_the_exact_case_before_returning_urls(self) -> None:
+        from app.main import get_match_reviewed_identity_mixed_players
+
+        older = {"case_id": "M-old", "temporal_evidence": {"anchor_crops": [{"artifact": "old.jpg"}]}}
+        focused = {"case_id": "M-new", "temporal_evidence": {"anchor_crops": [{"artifact": "new.jpg"}]}}
+        queue = {"cases": [older, focused]}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.build_mixed_review_queue", return_value=queue), patch(
+            "app.main.render_mixed_review_evidence"
+        ) as render:
+            response = get_match_reviewed_identity_mixed_players("m1", focus_case_id="M-new")
+
+        self.assertIs(response, queue)
+        render.assert_called_once()
+        self.assertEqual(render.call_args.args[2]["cases"], [focused])
+
+    def test_manual_mixed_read_materializes_only_the_next_authoritative_case(self) -> None:
+        from app.main import get_match_reviewed_identity_mixed_players
+
+        first = {"case_id": "M-first", "temporal_evidence": {"anchor_crops": [{"artifact": "first.jpg"}]}}
+        later = {"case_id": "M-later", "temporal_evidence": {"anchor_crops": [{"artifact": "later.jpg"}]}}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.build_mixed_review_queue", return_value={"cases": [first, later]}), patch(
+            "app.main.render_mixed_review_evidence"
+        ) as render:
+            get_match_reviewed_identity_mixed_players("m1")
+
+        self.assertEqual(render.call_args.args[2]["cases"], [first])
 
     def test_scope_change_rebuilds_only_progress_and_preserves_identity_decisions(self) -> None:
         from app.main import update_match_metadata

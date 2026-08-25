@@ -31,6 +31,7 @@ import {
   type ReviewedIdentityMandatoryQueue,
 } from './ReviewedIdentityQueueTabs';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
+import type { TeamReviewFilter } from '../utils/identityExceptionTeamFilter';
 import { formatReviewedIdentityPercent } from '../utils/reviewedIdentityMaxPresentation';
 
 type Props = {
@@ -71,6 +72,8 @@ export function IdentityReviewWorkspace({
   const [optionalSummaryRefreshAttempt, setOptionalSummaryRefreshAttempt] = useState(0);
   const [activeMandatoryQueue, setActiveMandatoryQueue] = useState<ReviewedIdentityMandatoryQueue>('required');
   const [mixedFocusCaseId, setMixedFocusCaseId] = useState<string | null>(null);
+  const [mixedEntryMode, setMixedEntryMode] = useState<'manual' | 'resolve_now'>('manual');
+  const [requiredTeamFilter, setRequiredTeamFilter] = useState<TeamReviewFilter>('all');
   const mixedLeaveGuardRef = useRef<() => boolean>(() => true);
 
   function applyWorkflow(next: ReviewWorkflow) {
@@ -99,6 +102,8 @@ export function IdentityReviewWorkspace({
     setShowOptionalFinishConfirmation(false);
     setActiveMandatoryQueue('required');
     setMixedFocusCaseId(null);
+    setMixedEntryMode('manual');
+    setRequiredTeamFilter('all');
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -257,6 +262,7 @@ export function IdentityReviewWorkspace({
         onSelect={(queue) => {
           if (queue === 'required' && activeMandatoryQueue === 'mixed' && !mixedLeaveGuardRef.current()) return;
           setMixedFocusCaseId(null);
+          setMixedEntryMode('manual');
           setActiveMandatoryQueue(queue);
         }}
       />
@@ -266,8 +272,11 @@ export function IdentityReviewWorkspace({
         showPrimaryQueueSwitch={false}
         onMixedResolveNow={(caseId) => {
           setMixedFocusCaseId(caseId);
+          setMixedEntryMode('resolve_now');
           setActiveMandatoryQueue('mixed');
         }}
+        requiredTeamFilter={requiredTeamFilter}
+        onRequiredTeamFilterChange={setRequiredTeamFilter}
         onWorkflowChanged={(next) => {
           if (next) applyWorkflow(next);
           else void refreshWorkflow();
@@ -280,10 +289,16 @@ export function IdentityReviewWorkspace({
         match={match}
         workflow={workflow}
         focusCaseId={mixedFocusCaseId}
+        entryMode={mixedEntryMode}
         onLeaveGuard={(guard) => { mixedLeaveGuardRef.current = guard; }}
         onReturnToRequired={() => {
           setMixedFocusCaseId(null);
+          setMixedEntryMode('manual');
           setActiveMandatoryQueue('required');
+        }}
+        onResolveNowComplete={() => {
+          setMixedFocusCaseId(null);
+          setMixedEntryMode('manual');
         }}
         onWorkflowChanged={applyWorkflow}
       />}
