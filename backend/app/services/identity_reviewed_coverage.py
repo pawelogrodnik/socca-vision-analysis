@@ -16,7 +16,10 @@ from typing import Any, Iterable
 
 from app.services.identity_ownership_compact import (
     CompactPairIndexView,
+    count_pair_runs,
     encode_pair_runs,
+    runs_difference,
+    runs_union,
 )
 from app.services.identity_canonical_io import load_json_cached
 from app.services.identity_reviewed_effective_observation import (
@@ -38,6 +41,7 @@ from app.services.play_area import is_on_pitch_product_observation
 COVERAGE_SCHEMA_VERSION = "1.0.0"
 COVERAGE_POLICY_VERSION = "coverage-driven-review:v8-optional-max"
 OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
+COVERAGE_DEBT_POLICY_VERSION = "reviewed-identity-coverage-debt:v2-queue-observability"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
 REVIEWED_OBSERVATION_TARGET_RATIO = 0.90
 COMPLETE_ROSTER_NAMED_TARGET_RATIO = 0.90
@@ -55,6 +59,7 @@ RELIABLE_STATUSES = frozenset(
 IGNORED_STATUSES = frozenset(
     {"ignored", "referee", "false_detection"}
 )
+MIXED_UNRESOLVED_STATUSES = frozenset({"unresolved", "unresolved_complex_mix"})
 
 
 def load_effective_coverage_context(
@@ -462,6 +467,408 @@ def apply_coverage_policy(
         },
         "optional_audit": optional_audit,
     }
+
+
+def build_coverage_debt(
+    units: list[dict[str, Any]],
+    coverage: dict[str, Any],
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
+    match_doc: dict[str, Any],
+    coverage_policy: dict[str, Any],
+    mixed_players: dict[str, Any],
+) -> dict[str, Any]:
+    """Explain current unnamed coverage using one non-overlapping partition.
+
+    This is deliberately a read-model projection: Required and Optional/MAX
+    keep their existing policy authority. Compact pair-index inputs stay as
+    interval runs on the hot path; legacy mapping fixtures use the compatible
+    explicit-pair fallback.
+    """
+    unnamed_by_team = _unnamed_reliable_runs_by_team(pair_index)
+    debt_teams = set(coverage.get("per_team") or {}) | set(unnamed_by_team)
+    remaining_by_team: dict[str, dict[str, list[list[int]]]] = {
+        team: runs for team, runs in unnamed_by_team.items() if team in {"A", "B"}
+    }
+    assigned_by_team: dict[str, dict[str, list[list[int]]]] = {
+        team: {} for team in debt_teams if team in {"A", "B"}
+    }
+    bucket_cases: dict[str, dict[str, set[str]]] = {
+        team: defaultdict(set) for team in assigned_by_team
+    }
+    bucket_reasons: dict[str, Counter[str]] = {
+        team: Counter() for team in assigned_by_team
+    }
+    actual_required_queue = _actual_required_queue(
+        coverage_policy.get("next_cases") or [],
+        match_doc,
+    )
+
+    def claim(
+        team: str,
+        bucket: str,
+        runs: dict[str, list[list[int]]],
+        case_id: str | None = None,
+    ) -> dict[str, list[list[int]]]:
+        if team not in assigned_by_team:
+            return {}
+        claimed = _runs_intersection(remaining_by_team.get(team, {}), runs)
+        if not claimed:
+            return {}
+        remaining_by_team[team] = runs_difference(
+            remaining_by_team.get(team, {}), claimed,
+        )
+        assigned_by_team[team] = runs_union(assigned_by_team[team], claimed)
+        bucket_runs[team][bucket] = runs_union(bucket_runs[team][bucket], claimed)
+        if case_id:
+            bucket_cases[team][bucket].add(case_id)
+        return claimed
+
+    bucket_runs: dict[str, dict[str, dict[str, list[list[int]]]]] = {
+        team: {
+            name: {} for name in (
+                "committed_pending", "required", "mixed", "optional_max", "unavailable"
+            )
+        }
+        for team in assigned_by_team
+    }
+    required_breakdown_runs: dict[str, dict[str, dict[str, list[list[int]]]]] = {
+        team: {"semantic": {}, "continuity": {}, "coverage": {}}
+        for team in assigned_by_team
+    }
+    required_breakdown_cases: dict[str, dict[str, set[str]]] = {
+        team: {"semantic": set(), "continuity": set(), "coverage": set()}
+        for team in assigned_by_team
+    }
+    roster_teams = _authoritative_roster_teams(match_doc)
+    for unit in units:
+        decision = unit.get("current_decision") or {}
+        if str(decision.get("action") or "") != "assign_roster_player":
+            continue
+        team = roster_teams.get(str(decision.get("player_id") or ""))
+        if team not in {"A", "B"}:
+            continue
+        if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+            continue
+        claim(
+            team,
+            "committed_pending",
+            _unnamed_runs_for_unit(unit, unnamed_by_team.get(team, {})),
+            _unit_key(unit),
+        )
+
+    for unit in coverage_policy.get("next_cases") or []:
+        team = _required_debt_team(unit)
+        if team not in assigned_by_team:
+            continue
+        scope = team_review_scope(match_doc, team)
+        if scope == TEAM_STATS_ONLY and not _is_team_stats_required_safety_case(unit):
+            continue
+        kind = _required_debt_kind(unit)
+        case_key = _required_queue_key(unit)
+        # Required queue workload is a source-count fact, not a marginal
+        # observation-gain fact. A safety card with zero new pairs remains a
+        # real decision and must stay visible.
+        bucket_cases[team]["required"].add(case_key)
+        required_breakdown_cases[team][kind].add(case_key)
+        claimed = claim(team, "required", _unit_gain_runs(unit))
+        if claimed:
+            required_breakdown_runs[team][kind] = runs_union(
+                required_breakdown_runs[team][kind], claimed,
+            )
+
+    ambiguous_cases: set[str] = set()
+    ambiguous_raw_marker_observations = 0
+    ambiguous_runs_by_team: dict[str, dict[str, list[list[int]]]] = {"A": {}, "B": {}}
+
+    def reserve_ambiguous(team: str, runs: dict[str, list[list[int]]]) -> None:
+        reserved = _runs_intersection(remaining_by_team.get(team, {}), runs)
+        if not reserved:
+            return
+        remaining_by_team[team] = runs_difference(remaining_by_team[team], reserved)
+        ambiguous_runs_by_team[team] = runs_union(ambiguous_runs_by_team[team], reserved)
+
+    for marker in (mixed_players or {}).get("cases") or []:
+        if str(marker.get("resolution_status") or "") not in MIXED_UNRESOLVED_STATUSES:
+            continue
+        source = marker.get("source")
+        case_id = str(marker.get("case_id") or marker.get("candidate_subject_id") or "")
+        if not isinstance(source, dict):
+            ambiguous_cases.add(case_id)
+            ambiguous_raw_marker_observations += int(marker.get("observation_count") or 0)
+            continue
+        source_runs = encode_pair_runs(
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in source.get("owned_observations") or []
+            if isinstance(row, dict) and row.get("tracklet_id") is not None and row.get("frame") is not None
+        )
+        if not source_runs:
+            ambiguous_cases.add(case_id)
+            ambiguous_raw_marker_observations += int(marker.get("observation_count") or 0)
+            continue
+        by_team = {
+            team: _runs_intersection(source_runs, unnamed_by_team.get(team, {}))
+            for team in ("A", "B")
+        }
+        located_teams = [team for team, runs in by_team.items() if runs]
+        if str(marker.get("mixed_hint") or "") == "cross_team" or len(located_teams) != 1:
+            ambiguous_cases.add(case_id)
+            ambiguous_raw_marker_observations += int(marker.get("observation_count") or 0)
+            for team, exact in by_team.items():
+                reserve_ambiguous(team, exact)
+            continue
+        located = False
+        for team in ("A", "B"):
+            exact = by_team[team]
+            if exact:
+                if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+                    located = True
+                    continue
+                claim(team, "mixed", exact, case_id)
+                located = True
+        if not located:
+            ambiguous_cases.add(case_id)
+            ambiguous_raw_marker_observations += int(marker.get("observation_count") or 0)
+
+    # This is intentionally the same ranked list and marginal-gain semantics
+    # used by optional_audit; the partition merely removes earlier buckets.
+    for unit in coverage_policy.get("optional_audit_cases") or []:
+        if team_review_scope(match_doc, "A") != TEAM_STATS_ONLY:
+            claim("A", "optional_max", _unit_gain_runs(unit), _unit_key(unit))
+
+    optional = coverage_policy.get("optional_audit") or {}
+    for team, unnamed in unnamed_by_team.items():
+        if team not in bucket_runs:
+            # Team U has no safe per-team denominator. It stays outside the
+            # A/B debt partition rather than being silently attributed.
+            continue
+        remaining = remaining_by_team.get(team, {})
+        if remaining:
+            if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+                continue
+            bucket_runs[team]["unavailable"] = remaining
+            assigned_by_team[team] = runs_union(assigned_by_team[team], remaining)
+            if team == "A":
+                optional_reasons = {
+                    str(reason): int(count)
+                    for reason, count in (optional.get("unavailable_reason_counts") or {}).items()
+                }
+                if sum(optional_reasons.values()) == count_pair_runs(remaining):
+                    bucket_reasons[team].update(optional_reasons)
+            if not bucket_reasons[team]:
+                bucket_reasons[team]["other_no_safe_path"] = count_pair_runs(remaining)
+
+    per_team: dict[str, Any] = {}
+    for team in sorted(assigned_by_team):
+        row = (coverage.get("per_team") or {}).get(team) or {}
+        reliable = int(row.get("reliable_observations") or 0)
+        named = int(row.get("confirmed_named_observations") or 0)
+        unnamed = count_pair_runs(unnamed_by_team.get(team, {}))
+        buckets = {
+            name: {
+                "case_count": len(bucket_cases[team][name]),
+                "unique_observations": count_pair_runs(runs),
+                "share_of_reliable": _ratio(count_pair_runs(runs), reliable),
+                "coverage_pp": 100.0 * count_pair_runs(runs) / reliable if reliable else 0.0,
+                **(
+                    {"reason_counts": dict(sorted(bucket_reasons[team].items()))}
+                    if name == "unavailable" else {}
+                ),
+            }
+            for name, runs in bucket_runs[team].items()
+        }
+        scope = team_review_scope(match_doc, team)
+        not_required_runs = remaining_by_team.get(team, {}) if scope == TEAM_STATS_ONLY else {}
+        ambiguous_current = count_pair_runs(ambiguous_runs_by_team.get(team, {}))
+        not_required = {
+            "unique_observations": count_pair_runs(not_required_runs),
+            "share_of_reliable": _ratio(count_pair_runs(not_required_runs), reliable),
+            "coverage_pp": 100.0 * count_pair_runs(not_required_runs) / reliable if reliable else 0.0,
+        }
+        required_breakdown = {
+            kind: {
+                "case_count": len(required_breakdown_cases[team][kind]),
+                "unique_observations": count_pair_runs(runs),
+                "coverage_pp": 100.0 * count_pair_runs(runs) / reliable if reliable else 0.0,
+            }
+            for kind, runs in required_breakdown_runs[team].items()
+        }
+        buckets["required"]["breakdown"] = required_breakdown
+        accounted = sum(int(value["unique_observations"]) for value in buckets.values())
+        accounted_with_scope = (
+            accounted
+            + int(not_required["unique_observations"])
+            + ambiguous_current
+        )
+        target = (
+            COMPLETE_ROSTER_NAMED_TARGET_RATIO if scope == COMPLETE_ROSTER else None
+        )
+        target_count = target_named_observations(reliable, target) if target is not None else None
+        committed = buckets["committed_pending"]["unique_observations"]
+        per_team[team] = {
+            "scope": scope,
+            "reliable_observations": reliable,
+            "current_named_observations": named,
+            "current_named_coverage": _ratio(named, reliable),
+            "target_named_coverage": target,
+            "target_named_observations": target_count,
+            "target_gap_observations": max(0, target_count - named) if target_count is not None else None,
+            "target_gap_pp": (100.0 * max(0, target_count - named) / reliable) if target_count is not None and reliable else None,
+            "projected_named_coverage_after_committed": _ratio(named + committed, reliable),
+            "unnamed_observations": unnamed,
+            "operator_identity_debt_observations": accounted,
+            "not_required_by_scope": not_required,
+            "ambiguous_mixed_currently_labeled_observations": ambiguous_current,
+            "accounted_unnamed_observations": accounted_with_scope,
+            "unaccounted_unnamed_observations": unnamed - accounted_with_scope,
+            "buckets": buckets,
+        }
+    return {
+        "policy_version": COVERAGE_DEBT_POLICY_VERSION,
+        "coverage_unit": COVERAGE_UNIT,
+        "accounting_precedence": [
+            "committed_pending", "required", "mixed", "optional_max", "unavailable"
+        ],
+        "per_team": per_team,
+        "actual_required_queue": actual_required_queue,
+        "ambiguous": {
+            "mixed_case_count": len(ambiguous_cases),
+            "unique_current_reliable_observations": sum(
+                count_pair_runs(runs) for runs in ambiguous_runs_by_team.values()
+            ),
+            "currently_labeled": {
+                team: count_pair_runs(runs)
+                for team, runs in ambiguous_runs_by_team.items()
+            },
+            "raw_marker_observations": ambiguous_raw_marker_observations,
+            "note": "current labels are diagnostic only; unresolved Mixed ownership is not assigned to A or B",
+        },
+    }
+
+
+def _unit_gain_runs(unit: dict[str, Any]) -> dict[str, list[list[int]]]:
+    value = unit.get("_potential_named_observation_pairs")
+    if isinstance(value, dict):
+        return value
+    return encode_pair_runs(value or [])
+
+
+def _required_debt_kind(unit: dict[str, Any]) -> str:
+    """Use queue policy fields, never client-side reason-string inference."""
+    priority = str(unit.get("priority") or "")
+    if priority == "continuity" or is_material_continuity_case(unit):
+        return "continuity"
+    if priority == "coverage":
+        return "coverage"
+    return "semantic"
+
+
+def _required_queue_key(unit: dict[str, Any]) -> str:
+    """Stable Required source identity, including exact ownership when present."""
+    return "|".join(
+        (
+            str(unit.get("review_target_id") or ""),
+            str(unit.get("candidate_subject_id") or ""),
+            str(unit.get("scope_kind") or ""),
+            str(unit.get("continuity_group_id") or ""),
+            str(unit.get("source_ownership_digest") or ""),
+        )
+    )
+
+
+def _actual_required_queue(
+    units: list[dict[str, Any]],
+    match_doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Actual queue workload, intentionally independent of debt pair claims."""
+    per_team: dict[str, dict[str, Any]] = {
+        team: {
+            "total_cases": 0,
+            "expected_by_scope": 0,
+            "unexpected_by_scope": 0,
+            "breakdown": {
+                kind: {"case_count": 0}
+                for kind in ("semantic", "continuity", "coverage")
+            },
+        }
+        for team in ("A", "B", "U")
+    }
+    seen: set[str] = set()
+    for unit in units:
+        key = _required_queue_key(unit)
+        if key in seen:
+            continue
+        seen.add(key)
+        team = _required_debt_team(unit)
+        row = per_team[team]
+        kind = _required_debt_kind(unit)
+        row["total_cases"] += 1
+        row["breakdown"][kind]["case_count"] += 1
+        expected = (
+            team in {"A", "B"}
+            and (
+                team_review_scope(match_doc, team) != TEAM_STATS_ONLY
+                or _is_team_stats_required_safety_case(unit)
+            )
+        )
+        if expected:
+            row["expected_by_scope"] += 1
+        else:
+            row["unexpected_by_scope"] += 1
+    return {
+        "total_cases": len(seen),
+        # The same deduplicated source set is the normal blocking count for
+        # this projection generation. Keeping it here makes reconciliation
+        # explicit without inventing a second queue authority.
+        "normal_blocking_case_count": len(seen),
+        "per_team": per_team,
+        "source": "coverage_policy.next_cases",
+    }
+
+
+def _required_debt_team(unit: dict[str, Any]) -> str:
+    for field in ("coverage_team_label", "effective_team_label", "source_team_label"):
+        team = _team_label(unit.get(field))
+        if team in {"A", "B"}:
+            return team
+    return "U"
+
+
+def _is_team_stats_required_safety_case(unit: dict[str, Any]) -> bool:
+    """Only attribution/semantic safety work remains debt in team-only scope."""
+    return _required_debt_kind(unit) == "semantic" and _has_team_uncertainty(unit)
+
+
+def _unnamed_reliable_runs_by_team(
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
+) -> dict[str, dict[str, list[list[int]]]]:
+    rows: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    if isinstance(pair_index, CompactPairIndexView):
+        result: dict[str, dict[str, list[list[int]]]] = {"A": {}, "B": {}, "U": {}}
+        for tracklet_id, entries in pair_index.tracklets().items():
+            for start, end, value in entries:
+                team = _team_label(value.get("team_label"))
+                if str(value.get("identity_status") or "") in RELIABLE_STATUSES and not value.get("canonical_player_id"):
+                    result.setdefault(team, {}).setdefault(tracklet_id, []).append([start, end])
+        return result
+    for (tracklet_id, frame), value in pair_index.items():
+        if str(value.get("identity_status") or "") in RELIABLE_STATUSES and not value.get("canonical_player_id"):
+            rows[_team_label(value.get("team_label"))].append((tracklet_id, frame))
+    return {team: encode_pair_runs(pairs) for team, pairs in rows.items()}
+
+
+def _unnamed_runs_for_unit(
+    unit: dict[str, Any],
+    unnamed_team_runs: dict[str, list[list[int]]],
+) -> dict[str, list[list[int]]]:
+    source = unit.get("detected_pair_runs") if isinstance(unit.get("detected_pair_runs"), dict) else encode_pair_runs(unit.get("detected_pairs") or [])
+    return _runs_intersection(source, unnamed_team_runs)
+
+
+def _runs_intersection(
+    left: dict[str, list[list[int]]],
+    right: dict[str, list[list[int]]],
+) -> dict[str, list[list[int]]]:
+    return runs_difference(left, runs_difference(left, right))
 
 
 PUBLIC_REVIEW_CASE_FIELDS = (

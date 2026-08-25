@@ -13,6 +13,7 @@ import type {
   ReviewedCorrectionResponse,
   ReviewedIdentityAtEntity,
   ReviewedIdentityCoverage,
+  ReviewedIdentityCoverageDebt,
   ReviewedIdentityCoverageReadiness,
   ReviewedIdentityReviewFilters,
   ReviewedIdentityReviewQueue,
@@ -54,6 +55,7 @@ import {
   formatReviewedIdentityPercentagePoints,
 } from '../utils/reviewedIdentityMaxPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
+import { ReviewedIdentityCoverageDebtSummary } from './ReviewedIdentityCoverageDebtSummary';
 import { prefetchReviewedCorrectionContext } from '../utils/reviewedCorrectionContextClientCache';
 
 type Props = {
@@ -141,6 +143,7 @@ export function IdentityExceptionReviewPanel({
   const [pageOffset, setPageOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [coverage, setCoverage] = useState<ReviewedIdentityCoverage | null>(null);
+  const [coverageDebt, setCoverageDebt] = useState<ReviewedIdentityCoverageDebt | null>(null);
   const [coverageReadiness, setCoverageReadiness] = useState<ReviewedIdentityCoverageReadiness | null>(null);
   const [workload, setWorkload] = useState<ReviewedIdentityWorkload | null>(null);
   const [activeTeamFilter, setActiveTeamFilter] = useState<TeamReviewFilter>('all');
@@ -203,6 +206,7 @@ export function IdentityExceptionReviewPanel({
       setPageOffset(progress.pagination?.offset ?? offset);
       setHasMore(progress.pagination?.has_more ?? false);
       setCoverage(progress.identity_coverage || null);
+      setCoverageDebt(progress.coverage_debt || null);
       setCoverageReadiness(progress.coverage_readiness || null);
       setWorkload(progress.workload || null);
       setReviewFilters(progress.filters || null);
@@ -348,6 +352,7 @@ export function IdentityExceptionReviewPanel({
   }
 
   function saved(result: ReviewedCorrectionResponse) {
+    if (result.coverage_debt) setCoverageDebt(result.coverage_debt);
     if (!reviewCase || !result.recompute_deferred) {
       if (result.workflow) onWorkflowChanged(result.workflow);
       return;
@@ -543,6 +548,11 @@ export function IdentityExceptionReviewPanel({
         />
       </div>)}
     </section>}
+    {coverageDebt && <ReviewedIdentityCoverageDebtSummary
+      match={match}
+      debt={coverageDebt}
+      mixedLocked={(workflow.issues.normal_blocking ?? workflow.issues.blocking) > 0}
+    />}
     {workload && workload.level !== 'normal' && <details className='identity-exception-guidance identity-coverage-warning'>
       <summary>Duża kolejka: {workload.remaining_cases} fragmentów <span>Szczegóły</span></summary>
       <p>To sygnał słabej ciągłości trackingu. Decyzje są uporządkowane według wpływu, a nie ucięte limitem.</p>
