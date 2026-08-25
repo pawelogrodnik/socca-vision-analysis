@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  createReviewCommitGuard,
   moveReviewCaseIndex,
   persistReviewDecision,
 } from '../src/utils/identityExceptionWorkspace.ts';
@@ -61,6 +62,16 @@ test('failed save never advances the queue', async () => {
 });
 
 
+test('authoritative queue reload permits a review target from an older projection', () => {
+  const guard = createReviewCommitGuard();
+
+  assert.equal(guard.markIfNew('segment:review-target-1'), true);
+  assert.equal(guard.markIfNew('segment:review-target-1'), false);
+  guard.resetForAuthoritativeQueue();
+  assert.equal(guard.markIfNew('segment:review-target-1'), true);
+});
+
+
 test('exception workstation keeps one active case and stateful correction subviews', () => {
   const components = new URL('../src/components/', import.meta.url);
   const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
@@ -92,6 +103,10 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(form, /action === 'assign_roster_player'/);
   assert.match(form, /Zapisz \+ następny|navigation\.saveLabel/);
   assert.match(form, /persistReviewDecision/);
+  assert.match(form, /saveInFlightRef/);
+  assert.match(form, /onSaveConflict && isReviewQueueConflict\(reason\)/);
+  assert.match(panel, /resetForAuthoritativeQueue\(\)/);
+  assert.match(panel, /recoverFromReviewSaveConflict/);
   // Required queue stages mixed players; optional MAX splits directly.
   assert.match(panel, /mixedHandling=\{activeQueue === 'optional_audit' \? 'direct' : 'stage'\}/);
 });

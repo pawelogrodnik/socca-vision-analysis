@@ -61,6 +61,7 @@ import type {
 import type {
   BoundedH2Session,
 } from './components/boundedH2ReIdTypes';
+import { ApiRequestError } from './lib/apiErrors';
 
 const API_BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE_URL || '');
 
@@ -81,7 +82,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const detail = typeof rawDetail === 'string'
       ? rawDetail
       : JSON.stringify(rawDetail);
-    throw new Error(`${res.status}: ${detail}`);
+    const code = typeof rawDetail === 'object'
+      && rawDetail !== null
+      && 'code' in rawDetail
+      && typeof (rawDetail as { code?: unknown }).code === 'string'
+      ? (rawDetail as { code: string }).code
+      : null;
+    throw new ApiRequestError(res.status, detail, code);
   }
   return res.json() as Promise<T>;
 }

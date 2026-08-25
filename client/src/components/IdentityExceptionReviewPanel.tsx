@@ -37,7 +37,10 @@ import {
   shouldRecoverRequiredReviewCompletion,
   shouldVerifyMutatedRequiredQueueEmpty,
 } from '../utils/identityExceptionQueue';
-import { moveReviewCaseIndex } from '../utils/identityExceptionWorkspace';
+import {
+  createReviewCommitGuard,
+  moveReviewCaseIndex,
+} from '../utils/identityExceptionWorkspace';
 import {
   apiTeamFilter,
   matchTeamName,
@@ -154,7 +157,7 @@ export function IdentityExceptionReviewPanel({
   const finalizeInFlight = useRef(false);
   const requiredReviewLifecycleRef = useRef(beginRequiredReviewLifecycle(0));
   const requiredReviewNavigationRef = useRef(beginRequiredReviewNavigation());
-  const committedReviewKeysRef = useRef(new Set<string>());
+  const committedReviewKeysRef = useRef(createReviewCommitGuard());
   const loadRequestIdRef = useRef(0);
   const cardsBySubjectRef = useRef<Map<string, IdentityRosterSubjectReviewCard> | null>(null);
 
@@ -183,6 +186,10 @@ export function IdentityExceptionReviewPanel({
         ),
       ]);
       if (ignore?.() || requestId !== loadRequestIdRef.current) return [];
+      // A completed progress request is authoritative. A unit can reappear
+      // after a Review recompute and must not inherit an old duplicate-save
+      // marker from the prior queue projection.
+      committedReviewKeysRef.current.resetForAuthoritativeQueue();
       if (document) {
         cardsBySubjectRef.current = new Map(
           document.cards.map((nextCard) => [nextCard.candidate_subject_id, nextCard]),
@@ -359,8 +366,7 @@ export function IdentityExceptionReviewPanel({
       return;
     }
     const savedKey = reviewUnitKey(reviewCase.unit);
-    if (committedReviewKeysRef.current.has(savedKey)) return;
-    committedReviewKeysRef.current.add(savedKey);
+    if (!committedReviewKeysRef.current.markIfNew(savedKey)) return;
     if (activeQueue === 'required') {
       requiredReviewNavigationRef.current = recordRequiredReviewQueueMutation();
     }
@@ -440,6 +446,21 @@ export function IdentityExceptionReviewPanel({
         );
       }
     }
+  }
+
+  function recoverFromReviewSaveConflict() {
+    setFinalizeFailed(false);
+    requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
+    requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
+    setMessage('Review został zsynchronizowany z zapisaną decyzją.');
+    void loadCases(
+      undefined,
+      true,
+      0,
+      0,
+      activeTeamFilter,
+      activeQueue,
+    );
   }
 
   async function finalizeCorrections(
@@ -631,6 +652,7 @@ export function IdentityExceptionReviewPanel({
             teamAttributionOnly={unitEvidence?.kind === 'team_attribution'}
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}
+            onSaveConflict={recoverFromReviewSaveConflict}
             deferRecompute
             mixedHandling={activeQueue === 'optional_audit' ? 'direct' : 'stage'}
             navigation={{
