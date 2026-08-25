@@ -21,3 +21,17 @@ The hot state persists compact pair-index and ownership runs. A normal review-pr
 `coverage_debt` starts with current reliable unnamed pairs and assigns each pair to only one bucket. The precedence is: already named (outside debt), saved roster naming pending canonical synchronization, current Required ownership, exact staged Mixed ownership, authoritative Optional/MAX marginal ownership, then unavailable residual. This keeps saved names out of ordinary work, preserves the Required workflow, moves only exact staged sources to Mixed, and reuses MAX authority.
 
 Mixed means observations currently located in unresolved Mixed sources, never guaranteed future names. Cross-team, Team-U, legacy or malformed exact Mixed sources are never assigned to Team A or B; they are separate ambiguous/unattributed diagnostics. For every team, named plus unnamed equals reliable observations; the bucket union plus `unaccounted_unnamed_observations` equals unnamed. No number is clamped to hide a mismatch. All percentages use the current reliable team denominator, which a later team correction can change.
+
+## Scope and freshness refinement
+
+For `TEAM_STATS_ONLY`, unnamed player observations are explicitly represented as `not_required_by_scope`, not as unavailable identity debt. The only Required debt shown for that scope is a semantic team-attribution safety case; player-name coverage, Optional/MAX, saved roster naming and ordinary unavailable residual do not become operator work merely because the observations lack names.
+
+Required debt has an authoritative queue-derived breakdown: semantic/team conflict, material continuity and named coverage. The client only renders these backend categories. Deferred correction responses now include the just-projected compact `coverage_debt` from the validated hot state, so saved Required decisions and exact Mixed staging update the explanation immediately without a GET, canonical finalize or queue rebuild.
+
+`ambiguous.raw_marker_observations` is intentionally named as a raw marker total. It is not presented as a unique reliable-observation accounting value because legacy or overlapping markers cannot prove that stronger fact.
+
+## Performance evidence
+
+Read-only benchmark on local match `23391dfb` (519 MB fixture, three cold and five warm runs) compared commit `accfcd7` with this update. Cold progress median was 938.6 ms before and 941.5 ms after. Warm review-progress median was 16.4 ms before and 16.5 ms after. The public page grew from 115,034 to 115,904 bytes and the hot-state file from 1,821,682 to 1,822,490 bytes.
+
+The sub-millisecond warm delta is within run variation and there is no material hot-read regression. The projection now maintains a shrinking `remaining_by_team` interval set while claiming buckets, rather than recomputing the full unnamed-minus-assigned difference for every unit.

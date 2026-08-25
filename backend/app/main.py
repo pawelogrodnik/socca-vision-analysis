@@ -2233,6 +2233,9 @@ def post_match_reviewed_identity_correction(
                             str(result.get("semantic_decision_digest") or ""),
                         )
                         result["review_state_version"] = hot_state.get("state_version")
+                        result["coverage_debt"] = dict(
+                            (hot_state.get("progress") or {}).get("coverage_debt") or {}
+                        )
                     except (OSError, ValueError):
                         # Canonical persistence already succeeded. Never keep a
                         # potentially contradictory cache: the next read will

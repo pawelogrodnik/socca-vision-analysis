@@ -117,6 +117,79 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(debt["per_team"]["A"]["buckets"]["mixed"]["unique_observations"], 0)
         self.assertEqual(debt["per_team"]["B"]["buckets"]["mixed"]["unique_observations"], 0)
         self.assertEqual(debt["ambiguous"]["mixed_case_count"], 1)
+
+    def test_team_stats_only_unnamed_observations_are_not_unavailable_identity_debt(self) -> None:
+        pair_index = {
+            ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(1_000)
+        }
+        debt = build_coverage_debt(
+            [],
+            {"per_team": {"B": {"reliable_observations": 1_000, "confirmed_named_observations": 142}}},
+            pair_index,
+            _scoped_match(),
+            {"next_cases": [], "optional_audit_cases": [], "optional_audit": {}},
+            {"cases": []},
+        )
+
+        row = debt["per_team"]["B"]
+        self.assertIsNone(row["target_named_coverage"])
+        self.assertEqual(row["buckets"]["unavailable"]["unique_observations"], 0)
+        self.assertEqual(row["not_required_by_scope"]["unique_observations"], 1_000)
+        self.assertEqual(row["accounted_unnamed_observations"], 1_000)
+
+    def test_team_stats_only_retains_required_team_attribution_safety_breakdown(self) -> None:
+        pair_index = {
+            ("b", frame): {"team_label": "B", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(5)
+        }
+        safety = _unit("uncertain", [("b", frame) for frame in range(5)], visual=True)
+        safety.update({
+            "source_team_label": "B",
+            "effective_team_label": "U",
+            "priority": "high",
+            "reason_codes": ["team_attribution_uncertain"],
+            "_potential_named_observation_pairs": {("b", frame) for frame in range(5)},
+        })
+        debt = build_coverage_debt(
+            [safety],
+            {"per_team": {"B": {"reliable_observations": 5, "confirmed_named_observations": 0}}},
+            pair_index,
+            _scoped_match(),
+            {"next_cases": [safety], "optional_audit_cases": [], "optional_audit": {}},
+            {"cases": []},
+        )
+
+        required = debt["per_team"]["B"]["buckets"]["required"]
+        self.assertEqual(required["unique_observations"], 5)
+        self.assertEqual(required["breakdown"]["semantic"]["case_count"], 1)
+        self.assertEqual(debt["per_team"]["B"]["not_required_by_scope"]["unique_observations"], 0)
+
+    def test_required_debt_breakdown_uses_queue_categories_without_overlap(self) -> None:
+        pair_index = {
+            ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
+            for frame in range(6)
+        }
+        semantic = _unit("semantic", [("a", 0), ("a", 1)], visual=True)
+        semantic.update({"priority": "high", "_potential_named_observation_pairs": {("a", 0), ("a", 1)}})
+        continuity = _unit("continuity", [("a", 2), ("a", 3)], visual=True)
+        continuity.update({"priority": "continuity", "_potential_named_observation_pairs": {("a", 2), ("a", 3)}})
+        coverage = _unit("coverage", [("a", 4), ("a", 5)], visual=True)
+        coverage.update({"priority": "coverage", "_potential_named_observation_pairs": {("a", 4), ("a", 5)}})
+        debt = build_coverage_debt(
+            [semantic, continuity, coverage],
+            {"per_team": {"A": {"reliable_observations": 6, "confirmed_named_observations": 0}}},
+            pair_index,
+            _scoped_match(),
+            {"next_cases": [semantic, continuity, coverage], "optional_audit_cases": [coverage], "optional_audit": {}},
+            {"cases": []},
+        )
+
+        breakdown = debt["per_team"]["A"]["buckets"]["required"]["breakdown"]
+        self.assertEqual({key: row["unique_observations"] for key, row in breakdown.items()}, {
+            "semantic": 2, "continuity": 2, "coverage": 2,
+        })
+        self.assertEqual(debt["per_team"]["A"]["buckets"]["optional_max"]["unique_observations"], 0)
     def test_complete_roster_selection_uses_named_target_shortfall(self) -> None:
         rows = [
             _observation("named", frame, "A", "confirmed", "p1")

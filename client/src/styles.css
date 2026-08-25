@@ -541,6 +541,7 @@ a { color: #93c5fd; }
 .identity-coverage-debt-row strong { color: #bae6fd; font-variant-numeric: tabular-nums; }
 .identity-coverage-debt-diagnostic { color: #fbbf24 !important; }
 .identity-coverage-debt-ambiguous { padding-top: 4px; border-top: 1px solid rgba(71, 85, 105, 0.5); }
+.identity-coverage-debt-breakdown { display: grid; gap: 2px; padding-left: 8px; border-left: 2px solid rgba(56, 189, 248, 0.45); }
 .identity-exception-guidance {
   flex: 0 0 auto;
   border: 1px solid #334155;

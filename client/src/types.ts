@@ -2018,6 +2018,7 @@ export type ReviewedCorrectionResponse = {
   };
   performance?: Record<string, number>;
   review_progress?: ReviewedIdentityReviewProgress;
+  coverage_debt?: ReviewedIdentityCoverageDebt;
   decision_impact?: ReviewedCorrectionDecisionImpact;
   workflow?: ReviewWorkflow;
   reviewed_identity?: ReviewedFinalizedIdentitySummary;
@@ -2159,6 +2160,11 @@ export type ReviewedIdentityCoverageDebtBucket = {
   share_of_reliable: number | null;
   coverage_pp: number;
   reason_counts?: Record<string, number>;
+  breakdown?: Record<'semantic' | 'continuity' | 'coverage', {
+    case_count: number;
+    unique_observations: number;
+    coverage_pp: number;
+  }>;
 };
 
 export type ReviewedIdentityCoverageDebtTeam = {
@@ -2172,6 +2178,12 @@ export type ReviewedIdentityCoverageDebtTeam = {
   target_gap_pp: number | null;
   projected_named_coverage_after_committed: number | null;
   unnamed_observations: number;
+  operator_identity_debt_observations: number;
+  not_required_by_scope: {
+    unique_observations: number;
+    share_of_reliable: number | null;
+    coverage_pp: number;
+  };
   accounted_unnamed_observations: number;
   unaccounted_unnamed_observations: number;
   buckets: Record<'committed_pending' | 'required' | 'mixed' | 'optional_max' | 'unavailable', ReviewedIdentityCoverageDebtBucket>;
@@ -2184,7 +2196,7 @@ export type ReviewedIdentityCoverageDebt = {
   per_team: Record<string, ReviewedIdentityCoverageDebtTeam>;
   ambiguous: {
     mixed_case_count: number;
-    mixed_observations: number;
+    raw_marker_observations: number;
     note: string;
   };
 };

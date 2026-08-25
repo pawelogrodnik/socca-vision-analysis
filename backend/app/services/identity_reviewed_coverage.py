@@ -486,6 +486,9 @@ def build_coverage_debt(
     """
     unnamed_by_team = _unnamed_reliable_runs_by_team(pair_index)
     debt_teams = set(coverage.get("per_team") or {}) | set(unnamed_by_team)
+    remaining_by_team: dict[str, dict[str, list[list[int]]]] = {
+        team: runs for team, runs in unnamed_by_team.items() if team in {"A", "B"}
+    }
     assigned_by_team: dict[str, dict[str, list[list[int]]]] = {
         team: {} for team in debt_teams if team in {"A", "B"}
     }
@@ -496,20 +499,25 @@ def build_coverage_debt(
         team: Counter() for team in assigned_by_team
     }
 
-    def claim(team: str, bucket: str, runs: dict[str, list[list[int]]], case_id: str | None = None) -> None:
+    def claim(
+        team: str,
+        bucket: str,
+        runs: dict[str, list[list[int]]],
+        case_id: str | None = None,
+    ) -> dict[str, list[list[int]]]:
         if team not in assigned_by_team:
-            return
-        available = runs_difference(
-            unnamed_by_team.get(team, {}),
-            assigned_by_team[team],
-        )
-        claimed = _runs_intersection(available, runs)
+            return {}
+        claimed = _runs_intersection(remaining_by_team.get(team, {}), runs)
         if not claimed:
-            return
+            return {}
+        remaining_by_team[team] = runs_difference(
+            remaining_by_team.get(team, {}), claimed,
+        )
         assigned_by_team[team] = runs_union(assigned_by_team[team], claimed)
         bucket_runs[team][bucket] = runs_union(bucket_runs[team][bucket], claimed)
         if case_id:
             bucket_cases[team][bucket].add(case_id)
+        return claimed
 
     bucket_runs: dict[str, dict[str, dict[str, list[list[int]]]]] = {
         team: {
@@ -517,6 +525,14 @@ def build_coverage_debt(
                 "committed_pending", "required", "mixed", "optional_max", "unavailable"
             )
         }
+        for team in assigned_by_team
+    }
+    required_breakdown_runs: dict[str, dict[str, dict[str, list[list[int]]]]] = {
+        team: {"semantic": {}, "continuity": {}, "coverage": {}}
+        for team in assigned_by_team
+    }
+    required_breakdown_cases: dict[str, dict[str, set[str]]] = {
+        team: {"semantic": set(), "continuity": set(), "coverage": set()}
         for team in assigned_by_team
     }
     roster_teams = _authoritative_roster_teams(match_doc)
@@ -527,6 +543,8 @@ def build_coverage_debt(
         team = roster_teams.get(str(decision.get("player_id") or ""))
         if team not in {"A", "B"}:
             continue
+        if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+            continue
         claim(
             team,
             "committed_pending",
@@ -535,8 +553,19 @@ def build_coverage_debt(
         )
 
     for unit in coverage_policy.get("next_cases") or []:
-        team = _team_label(unit.get("coverage_team_label") or unit.get("effective_team_label"))
-        claim(team, "required", _unit_gain_runs(unit), _unit_key(unit))
+        team = _required_debt_team(unit)
+        if team not in assigned_by_team:
+            continue
+        scope = team_review_scope(match_doc, team)
+        if scope == TEAM_STATS_ONLY and not _is_team_stats_required_safety_case(unit):
+            continue
+        kind = _required_debt_kind(unit)
+        claimed = claim(team, "required", _unit_gain_runs(unit), _unit_key(unit))
+        if claimed:
+            required_breakdown_runs[team][kind] = runs_union(
+                required_breakdown_runs[team][kind], claimed,
+            )
+            required_breakdown_cases[team][kind].add(_unit_key(unit))
 
     ambiguous_cases = 0
     ambiguous_observations = 0
@@ -571,6 +600,9 @@ def build_coverage_debt(
         for team in ("A", "B"):
             exact = by_team[team]
             if exact:
+                if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+                    located = True
+                    continue
                 claim(team, "mixed", exact, case_id)
                 located = True
         if not located:
@@ -580,7 +612,8 @@ def build_coverage_debt(
     # This is intentionally the same ranked list and marginal-gain semantics
     # used by optional_audit; the partition merely removes earlier buckets.
     for unit in coverage_policy.get("optional_audit_cases") or []:
-        claim("A", "optional_max", _unit_gain_runs(unit), _unit_key(unit))
+        if team_review_scope(match_doc, "A") != TEAM_STATS_ONLY:
+            claim("A", "optional_max", _unit_gain_runs(unit), _unit_key(unit))
 
     optional = coverage_policy.get("optional_audit") or {}
     for team, unnamed in unnamed_by_team.items():
@@ -588,8 +621,10 @@ def build_coverage_debt(
             # Team U has no safe per-team denominator. It stays outside the
             # A/B debt partition rather than being silently attributed.
             continue
-        remaining = runs_difference(unnamed, assigned_by_team.get(team, {}))
+        remaining = remaining_by_team.get(team, {})
         if remaining:
+            if team_review_scope(match_doc, team) == TEAM_STATS_ONLY:
+                continue
             bucket_runs[team]["unavailable"] = remaining
             assigned_by_team[team] = runs_union(assigned_by_team[team], remaining)
             if team == "A":
@@ -621,8 +656,24 @@ def build_coverage_debt(
             }
             for name, runs in bucket_runs[team].items()
         }
-        accounted = sum(int(value["unique_observations"]) for value in buckets.values())
         scope = team_review_scope(match_doc, team)
+        not_required_runs = remaining_by_team.get(team, {}) if scope == TEAM_STATS_ONLY else {}
+        not_required = {
+            "unique_observations": count_pair_runs(not_required_runs),
+            "share_of_reliable": _ratio(count_pair_runs(not_required_runs), reliable),
+            "coverage_pp": 100.0 * count_pair_runs(not_required_runs) / reliable if reliable else 0.0,
+        }
+        required_breakdown = {
+            kind: {
+                "case_count": len(required_breakdown_cases[team][kind]),
+                "unique_observations": count_pair_runs(runs),
+                "coverage_pp": 100.0 * count_pair_runs(runs) / reliable if reliable else 0.0,
+            }
+            for kind, runs in required_breakdown_runs[team].items()
+        }
+        buckets["required"]["breakdown"] = required_breakdown
+        accounted = sum(int(value["unique_observations"]) for value in buckets.values())
+        accounted_with_scope = accounted + int(not_required["unique_observations"])
         target = (
             COMPLETE_ROSTER_NAMED_TARGET_RATIO if scope == COMPLETE_ROSTER else None
         )
@@ -639,8 +690,10 @@ def build_coverage_debt(
             "target_gap_pp": (100.0 * max(0, target_count - named) / reliable) if target_count is not None and reliable else None,
             "projected_named_coverage_after_committed": _ratio(named + committed, reliable),
             "unnamed_observations": unnamed,
-            "accounted_unnamed_observations": accounted,
-            "unaccounted_unnamed_observations": unnamed - accounted,
+            "operator_identity_debt_observations": accounted,
+            "not_required_by_scope": not_required,
+            "accounted_unnamed_observations": accounted_with_scope,
+            "unaccounted_unnamed_observations": unnamed - accounted_with_scope,
             "buckets": buckets,
         }
     return {
@@ -652,8 +705,8 @@ def build_coverage_debt(
         "per_team": per_team,
         "ambiguous": {
             "mixed_case_count": ambiguous_cases,
-            "mixed_observations": ambiguous_observations,
-            "note": "exact team attribution unavailable; not assigned to A or B",
+            "raw_marker_observations": ambiguous_observations,
+            "note": "raw marker observations; exact team attribution unavailable and not assigned to A or B",
         },
     }
 
@@ -663,6 +716,29 @@ def _unit_gain_runs(unit: dict[str, Any]) -> dict[str, list[list[int]]]:
     if isinstance(value, dict):
         return value
     return encode_pair_runs(value or [])
+
+
+def _required_debt_kind(unit: dict[str, Any]) -> str:
+    """Use queue policy fields, never client-side reason-string inference."""
+    priority = str(unit.get("priority") or "")
+    if priority == "continuity" or is_material_continuity_case(unit):
+        return "continuity"
+    if priority == "coverage":
+        return "coverage"
+    return "semantic"
+
+
+def _required_debt_team(unit: dict[str, Any]) -> str:
+    for field in ("coverage_team_label", "effective_team_label", "source_team_label"):
+        team = _team_label(unit.get(field))
+        if team in {"A", "B"}:
+            return team
+    return "U"
+
+
+def _is_team_stats_required_safety_case(unit: dict[str, Any]) -> bool:
+    """Only attribution/semantic safety work remains debt in team-only scope."""
+    return _required_debt_kind(unit) == "semantic" and _has_team_uncertainty(unit)
 
 
 def _unnamed_reliable_runs_by_team(

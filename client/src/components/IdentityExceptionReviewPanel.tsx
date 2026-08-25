@@ -352,6 +352,7 @@ export function IdentityExceptionReviewPanel({
   }
 
   function saved(result: ReviewedCorrectionResponse) {
+    if (result.coverage_debt) setCoverageDebt(result.coverage_debt);
     if (!reviewCase || !result.recompute_deferred) {
       if (result.workflow) onWorkflowChanged(result.workflow);
       return;
