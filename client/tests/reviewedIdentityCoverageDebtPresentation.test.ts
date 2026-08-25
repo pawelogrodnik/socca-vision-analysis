@@ -108,9 +108,15 @@ test('coverage debt presentation explains pending Mixed without changing workflo
 test('review panel consumes authoritative backend debt instead of recomputing buckets', () => {
   const components = new URL('../src/components/', import.meta.url);
   const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
+  const dialog = readFileSync(new URL('ReviewedIdentityCoverageDebtDialog.tsx', components), 'utf8');
 
   assert.match(panel, /setCoverageDebt\(progress\.coverage_debt \|\| null\)/);
   assert.match(panel, /result\.coverage_debt\) setCoverageDebt\(result\.coverage_debt\)/);
-  assert.match(panel, /<ReviewedIdentityCoverageDebtSummary/);
+  assert.match(panel, /Szczegóły pokrycia/);
+  assert.match(panel, /<ReviewedIdentityCoverageDebtDialog/);
+  assert.doesNotMatch(panel, /<ReviewedIdentityCoverageDebtSummary/);
+  assert.match(dialog, /role='dialog' aria-modal='true'/);
+  assert.match(dialog, /event\.key === 'Escape'/);
+  assert.match(dialog, /Zamknij szczegóły pokrycia/);
   assert.doesNotMatch(panel, /remaining_actionable_named_gain.*coverageDebt/);
 });

@@ -55,7 +55,7 @@ import {
   formatReviewedIdentityPercentagePoints,
 } from '../utils/reviewedIdentityMaxPresentation';
 import { ReviewedIdentityCorrectionForm } from './ReviewedIdentityCorrectionForm';
-import { ReviewedIdentityCoverageDebtSummary } from './ReviewedIdentityCoverageDebtSummary';
+import { ReviewedIdentityCoverageDebtDialog } from './ReviewedIdentityCoverageDebtDialog';
 import { prefetchReviewedCorrectionContext } from '../utils/reviewedCorrectionContextClientCache';
 
 type Props = {
@@ -133,6 +133,7 @@ export function IdentityExceptionReviewPanel({
   initialQueue = 'required',
   onOptionalAuditSummaryChanged,
 }: Props) {
+  const [coverageDetailsOpen, setCoverageDetailsOpen] = useState(false);
   const [cases, setCases] = useState<ReviewCase[]>([]);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -547,11 +548,13 @@ export function IdentityExceptionReviewPanel({
           aria-label={`Pokrycie imienne ${matchTeamName(match.teams || [], team as 'A' | 'B')}`}
         />
       </div>)}
+      {coverageDebt && <button type='button' className='identity-coverage-details-trigger' onClick={() => setCoverageDetailsOpen(true)}>Szczegóły pokrycia</button>}
     </section>}
-    {coverageDebt && <ReviewedIdentityCoverageDebtSummary
+    {coverageDebt && coverageDetailsOpen && <ReviewedIdentityCoverageDebtDialog
       match={match}
       debt={coverageDebt}
       mixedLocked={(workflow.issues.normal_blocking ?? workflow.issues.blocking) > 0}
+      onClose={() => setCoverageDetailsOpen(false)}
     />}
     {workload && workload.level !== 'normal' && <details className='identity-exception-guidance identity-coverage-warning'>
       <summary>Duża kolejka: {workload.remaining_cases} fragmentów <span>Szczegóły</span></summary>

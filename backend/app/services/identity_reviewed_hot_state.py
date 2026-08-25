@@ -55,7 +55,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):

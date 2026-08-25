@@ -57,7 +57,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.10.0"
+PROGRESS_SCHEMA_VERSION = "2.11.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
