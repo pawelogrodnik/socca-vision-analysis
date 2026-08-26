@@ -24,3 +24,9 @@ export function isRecoverableReviewQueueConflict(error: unknown): boolean {
     && error.code !== null
     && RECOVERABLE_REVIEW_QUEUE_CONFLICT_CODES.has(error.code);
 }
+
+export function isTemporalSplitNotSeparable(error: unknown): boolean {
+  return error instanceof ApiRequestError
+    && error.status === 409
+    && error.code === 'temporal_split_not_separable';
+}

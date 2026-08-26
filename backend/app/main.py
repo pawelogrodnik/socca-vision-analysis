@@ -142,6 +142,10 @@ from app.services.identity_reviewed_mixed_resolution import (
     save_inline_temporal_split,
     save_mixed_player_resolution,
 )
+from app.services.identity_reviewed_mixed_topology import (
+    MixedTemporalTopologyError,
+    require_simple_temporal_split,
+)
 from app.services.identity_reviewed_review_source import (
     build_review_source_boundary_refinement,
     resolve_review_source,
@@ -2432,6 +2436,19 @@ def post_match_reviewed_identity_temporal_split(
         state_before = get_review_workflow_state(path, match_document)
         if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
             assert_workflow_action_allowed(state_before, "review_identity_issue")
+        resolved_source = resolve_review_source(
+            path,
+            match_document,
+            candidate_subject_id=str(payload.get("candidate_subject_id") or ""),
+            review_target_id=str(payload.get("review_target_id") or "") or None,
+            continuity_group_id=str(payload.get("continuity_group_id") or "") or None,
+            source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
+        )
+        if str(payload.get("resolution") or "split") == "split":
+            # Reject a structurally impossible split before loading or
+            # generating a hot Review state. The same resolved source is
+            # reused by persistence to avoid a second exact-source parse.
+            require_simple_temporal_split(list(resolved_source["observations"]))
         hot_state = load_or_rebuild_review_hot_state(path, match_document)
         from app.services.identity_reviewed_hot_state import assert_hot_state_version
 
@@ -2446,20 +2463,12 @@ def post_match_reviewed_identity_temporal_split(
         # output, provided that its exact source and semantic version match.
         materialized_review_unit = review_unit if isinstance(review_unit, dict) else None
         if not isinstance(review_unit, dict):
-            source = resolve_review_source(
-                path,
-                match_document,
-                candidate_subject_id=str(payload.get("candidate_subject_id") or ""),
-                review_target_id=str(payload.get("review_target_id") or "") or None,
-                continuity_group_id=str(payload.get("continuity_group_id") or "") or None,
-                source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
-            )
-            existing_split = inline_temporal_split_for_source(path, source)
+            existing_split = inline_temporal_split_for_source(path, resolved_source)
             if not isinstance(existing_split, dict) or str(existing_split.get("resolution_status") or "") != "resolved":
                 raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
             review_unit = {
-                "scope_kind": source["scope_kind"],
-                "detected_observation_count": source["detected_observation_count"],
+                "scope_kind": resolved_source["scope_kind"],
+                "detected_observation_count": resolved_source["detected_observation_count"],
             }
         capabilities = reviewed_identity_action_capabilities(review_unit)
         if not isinstance(review_unit, dict) or not capabilities["split"].get("allowed"):
@@ -2469,6 +2478,7 @@ def post_match_reviewed_identity_temporal_split(
             match_document,
             payload,
             materialized_review_unit=materialized_review_unit,
+            resolved_source=resolved_source,
         )
         # A split changes the number and exact ownership of review units, so
         # this is deliberately a cache invalidation, not a guessed incremental
@@ -2479,6 +2489,8 @@ def post_match_reviewed_identity_temporal_split(
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:
         raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ReviewedIdentityActionScopeError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
     except SegmentTargetError as exc:
@@ -2518,6 +2530,8 @@ def get_match_reviewed_identity_temporal_split_refinement(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         code = str(exc)
         status = 409 if code in {"review_target_stale", "material_continuity_target_stale"} else 400
@@ -2598,6 +2612,8 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
             )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         status = 409 if str(exc) == "mixed_player_case_stale" else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
@@ -2653,6 +2669,8 @@ def post_match_reviewed_identity_mixed_resolution(
             status_code=409,
             detail={"code": str(exc), "message": str(exc)},
         ) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

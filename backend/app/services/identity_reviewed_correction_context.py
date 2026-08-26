@@ -20,6 +20,9 @@ from app.services.identity_reviewed_mixed_store import (
     render_mixed_review_evidence,
     temporal_evidence_for_observations,
 )
+from app.services.identity_reviewed_mixed_topology import (
+    analyze_temporal_split_topology,
+)
 from app.services.identity_reviewed_material_continuity import (
     load_material_continuity_decisions,
 )
@@ -127,6 +130,9 @@ def reviewed_correction_context(
         "scope_copy": scope_copy("whole_subject"),
         "frame_ranges": [],
         "visual_evidence": temporal_evidence,
+        "temporal_topology": analyze_temporal_split_topology(
+            list(source["observations"])
+        ),
         "source_evidence_kind": source_evidence_kind,
         "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": None,
@@ -200,6 +206,9 @@ def _material_continuity_correction_context(
         "frame_end": unit.get("frame_end"),
         "detected_observation_count": unit.get("detected_observation_count"),
         "visual_evidence": temporal_evidence,
+        "temporal_topology": analyze_temporal_split_topology(
+            list(source["observations"])
+        ),
         "source_evidence_kind": str((unit.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
         "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": None,
@@ -261,6 +270,9 @@ def _segment_correction_context(
         "frame_end": target.get("frame_end"),
         "detected_observation_count": target.get("detected_observation_count"),
         "visual_evidence": temporal_evidence,
+        "temporal_topology": analyze_temporal_split_topology(
+            list(source["observations"])
+        ),
         "source_evidence_kind": str((target.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
         "temporal_split": _inline_temporal_split_context(match_path, source),
         "legacy_suggestion": target.get("legacy_suggestion"),

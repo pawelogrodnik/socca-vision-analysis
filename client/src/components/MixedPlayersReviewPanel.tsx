@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, getReviewWorkflow, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
+import { isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mixedQueueForFocusedCase, reconciledMixedFocusCaseId, type ExactMixedFocusResult, type MixedEntryMode, type MixedNavigationDirection } from '../utils/mixedReviewNavigation';
+import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
 
 export type MixedPlayersReviewApi = {
   getBoundaryRefinement: typeof getMixedBoundaryRefinement;
@@ -154,7 +156,7 @@ export function MixedPlayersReviewPanel({
   }
 
   async function openRefinement(afterFrame: number, beforeFrame: number) {
-    if (!reviewCase) return;
+    if (!reviewCase?.temporal_topology?.simple_split_allowed) return;
     setRefinementBusy(true);
     setMessage('');
     try {
@@ -173,7 +175,11 @@ export function MixedPlayersReviewPanel({
         setRefinement(value);
       }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (isTemporalSplitNotSeparable(error)) {
+        await recoverAfterTopologyConflict();
+      } else {
+        setMessage(errorMessage(error));
+      }
     } finally {
       setRefinementBusy(false);
     }
@@ -199,6 +205,7 @@ export function MixedPlayersReviewPanel({
   }
 
   function directBoundary(afterFrame: number) {
+    if (!reviewCase?.temporal_topology?.simple_split_allowed) return;
     applyBoundaries(boundaries.includes(afterFrame)
       ? boundaries.filter((frame) => frame !== afterFrame)
       : [...boundaries, afterFrame].sort((left, right) => left - right));
@@ -229,7 +236,11 @@ export function MixedPlayersReviewPanel({
       });
       await advanceAfterSave();
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (isTemporalSplitNotSeparable(error)) {
+        await recoverAfterTopologyConflict();
+      } else {
+        setMessage(errorMessage(error));
+      }
     } finally {
       setBusy(false);
     }
@@ -256,6 +267,31 @@ export function MixedPlayersReviewPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function recoverAfterTopologyConflict() {
+    setBoundaries([]);
+    setAssignments([]);
+    setSelectedSegment(0);
+    setHasUnsavedChanges(false);
+    setRefinement(null);
+    const caseId = reviewCase?.case_id;
+    if (!queue || !caseId) {
+      setMessage('Ten materiał nie ma już prostego podziału czasowego. Otwórz przypadek ponownie przed dalszą pracą.');
+      return;
+    }
+    const focused = await loadExactMixedFocus(
+      (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+      caseId,
+    );
+    if (focused.kind === 'visible' && showFocusedCase(queue, caseId, focused)) {
+      setMessage('Ten materiał nie ma już prostego podziału czasowego, ponieważ tracklety nakładają się w czasie. Pokazano aktualny przypadek.');
+      return;
+    }
+    setQueue(null);
+    setIndex(0);
+    setFocusMissing(true);
+    setMessage('Ten materiał nie ma już prostego podziału czasowego, a dokładny przypadek zmienił się podczas odświeżenia. Odśwież Review.');
   }
 
   function completeResolveNowIntent() {
@@ -495,6 +531,7 @@ export function MixedPlayersReviewPanel({
   </section>;
 
   const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
+  const simpleSplitAllowed = reviewCase.temporal_topology?.simple_split_allowed === true;
   const selectedAssignment = assignments[selectedSegment] || null;
   const selected = segments[selectedSegment];
   const segmentTimeLabel = (frameStart: number, frameEnd: number) => {
@@ -521,10 +558,13 @@ export function MixedPlayersReviewPanel({
       <strong>⚠ Przejrzano: brak prostego podziału czasowego</strong>
       <span>Przypadek nadal wymaga rozwiązania. Możesz spróbować podziału ponownie albo pozostawić go jako złożony.</span>
     </div>}
-    <div className='mixed-review-workstation'>
+    <div className={simpleSplitAllowed ? 'mixed-review-workstation' : 'mixed-review-workstation concurrent'}>
       <section className='mixed-temporal-column'>
-        <div className='identity-exception-column-heading'><strong>Materiał w kolejności czasu</strong><span>Wybierz przedział i doprecyzuj moment przejścia</span></div>
-        <div className='mixed-temporal-strip'>
+        <div className='identity-exception-column-heading'><strong>{simpleSplitAllowed ? 'Materiał w kolejności czasu' : 'Równoległy materiał trackletów'}</strong><span>{simpleSplitAllowed ? 'Wybierz przedział i doprecyzuj moment przejścia' : 'Nakładające się fragmenty są pokazane w osobnych ścieżkach'}</span></div>
+        {!simpleSplitAllowed && reviewCase.temporal_topology?.kind === 'concurrent' && <MixedTemporalTopologyLanes matchId={match.id} reviewCase={reviewCase} />}
+        {!simpleSplitAllowed && reviewCase.temporal_topology?.kind !== 'concurrent' && <div className='mixed-topology-warning' role='alert'><strong>Nie można potwierdzić bezpiecznej topologii czasowej.</strong><span>Podział pozostaje zablokowany, dopóki dokładne źródło nie zostanie ponownie załadowane.</span></div>}
+        {simpleSplitAllowed && <>
+          <div className='mixed-temporal-strip'>
           {crops.map((crop, cropIndex) => <div className='mixed-crop-group' key={crop.anchor_crop_id}>
             <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
               <img src={artifactUrl(match.id, crop.artifact)} alt='Czasowy widok zmieszanego przypadku' />
@@ -541,7 +581,7 @@ export function MixedPlayersReviewPanel({
               ? 'Zmień podział'
               : reviewCase.observation_count <= 12 ? 'Podziel tutaj' : 'Doprecyzuj'}</button>}
           </div>)}
-        </div>
+          </div>
         {refinement && <section className='mixed-boundary-refinement' aria-label='Doprecyzowanie granicy podziału'>
           <header>
             <div><strong>Doprecyzuj moment przejścia</strong><span>Wybierz dokładniejszą granicę między sąsiednimi podglądami.</span></div>
@@ -559,7 +599,7 @@ export function MixedPlayersReviewPanel({
           </div>
           {boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={removeRefinedBoundary}>Usuń podział z tego przedziału</button>}
         </section>}
-        <div className='mixed-segment-list' aria-label='Fragmenty po podziale'>
+          <div className='mixed-segment-list' aria-label='Fragmenty po podziale'>
           {segments.map((segment) => {
             const assignment = assignments[segment.index];
             const rosterName = queue.assignment_options.roster.find((player) => player.player_id === assignment?.player_id)?.player_name;
@@ -569,9 +609,10 @@ export function MixedPlayersReviewPanel({
               <small>{assignment ? `✓ ${assignmentLabel(assignment, rosterName)}` : '! Nie przypisano'}</small>
             </button>;
           })}
-        </div>
+          </div>
+        </>}
       </section>
-      <aside className='mixed-assignment-panel'>
+      {simpleSplitAllowed && <aside className='mixed-assignment-panel'>
         <header><h3>Wybrany fragment {selectedSegment + 1}</h3><p>{selected ? segmentTimeLabel(selected.frameStart, selected.frameEnd) : ''}</p><strong>{assignmentLabel(selectedAssignment)}</strong></header>
         <div className='mixed-assignment-scroll'>
           <label>Zawodnik z kadry
@@ -597,11 +638,11 @@ export function MixedPlayersReviewPanel({
             <button type='button' onClick={() => assign({ action: 'unresolved' })}>Nie wiem</button>
           </div>
         </div>
-      </aside>
+      </aside>}
     </div>
-    <footer className='mixed-review-footer'>
+    <footer className={simpleSplitAllowed ? 'mixed-review-footer' : 'mixed-review-footer concurrent'}>
       <button type='button' className='secondary' onClick={() => navigateTo(index - 1)} disabled={busy || index === 0}>Poprzedni</button>
-      <button type='button' onClick={() => void saveSplit()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>
+      {simpleSplitAllowed && <button type='button' onClick={() => void saveSplit()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>}
       <button type='button' className='secondary' onClick={() => void deferComplex()} disabled={busy}>Nie ma prostego podziału czasowego</button>
       <button type='button' className='secondary' onClick={() => navigateTo(index + 1)} disabled={busy || index >= queue.cases.length - 1}>Następny</button>
     </footer>

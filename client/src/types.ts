@@ -1968,6 +1968,7 @@ export type ReviewedCorrectionContext = {
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
+  temporal_topology?: MixedTemporalTopology | null;
   source_evidence_kind?: string;
   legacy_suggestion?: {
     action: 'assign_roster_player';
@@ -2310,6 +2311,28 @@ export type ReviewedIdentityReviewProgress = {
 
 export type MixedPlayerHint = 'cross_team' | 'same_team_a' | 'same_team_b' | 'player_referee' | 'unknown';
 
+export type MixedTemporalTracklet = {
+  tracklet_id: string;
+  frame_start: number;
+  frame_end: number;
+  observation_count: number;
+};
+
+export type MixedTemporalOverlapRange = {
+  frame_start: number;
+  frame_end: number;
+  tracklet_ids: string[];
+};
+
+export type MixedTemporalTopology = {
+  kind: 'serial' | 'concurrent';
+  simple_split_allowed: boolean;
+  tracklet_count: number;
+  max_concurrent_tracklets: number;
+  overlap_ranges: MixedTemporalOverlapRange[];
+  tracklets: MixedTemporalTracklet[];
+};
+
 export type MixedPlayerCase = {
   case_id?: string;
   candidate_subject_id: string;
@@ -2325,6 +2348,7 @@ export type MixedPlayerCase = {
   reviewed_complex_at?: string | null;
   blocking?: boolean;
   scope_status?: 'blocking' | 'not_required_by_scope' | 'stale_or_unclassifiable_blocking';
+  temporal_topology?: MixedTemporalTopology | null;
   temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
 };
 

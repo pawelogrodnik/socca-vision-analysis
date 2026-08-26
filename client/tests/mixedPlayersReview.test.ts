@@ -19,6 +19,14 @@ const reviewCase: MixedPlayerCase = {
   observation_count: 50,
   frame_start: 10,
   frame_end: 50,
+  temporal_topology: {
+    kind: 'serial',
+    simple_split_allowed: true,
+    tracklet_count: 1,
+    max_concurrent_tracklets: 1,
+    overlap_ranges: [],
+    tracklets: [{ tracklet_id: 't1', frame_start: 10, frame_end: 50, observation_count: 50 }],
+  },
   temporal_evidence: {
     status: 'ready',
     anchor_crops: [40, 10, 20, 30, 50].map((frame) => ({

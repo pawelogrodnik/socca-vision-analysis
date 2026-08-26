@@ -16,6 +16,10 @@ from app.services.identity_reviewed_slot_registry import build_reviewed_slot_reg
 from app.services.identity_reviewed_scope_eligibility import (
     mixed_review_relevant_for_scope,
 )
+from app.services.identity_reviewed_mixed_topology import (
+    analyze_temporal_split_topology,
+    require_simple_temporal_split,
+)
 from app.services.video import resolve_match_video_path
 
 
@@ -405,6 +409,7 @@ def _materialize_mixed_review_case(
     if not mixed_review_relevant_for_scope(marker, observations, match_doc):
         return {"status": "not_in_mandatory_queue", "case": None}
     subject_id = str(marker.get("candidate_subject_id") or "")
+    temporal_topology = analyze_temporal_split_topology(observations)
     crops = _temporal_evidence(subject_id, observations, card, limit=12)
     complex_unresolved = (
         str(marker.get("resolution_status")) == "unresolved_complex_mix"
@@ -419,6 +424,7 @@ def _materialize_mixed_review_case(
             "reviewed_complex_at": marker.get("updated_at")
             if complex_unresolved
             else None,
+            "temporal_topology": temporal_topology,
             "temporal_evidence": {
                 "status": "ready" if crops else "missing",
                 "anchor_crops": crops,
@@ -495,6 +501,7 @@ def _stale_blocking_case(marker: dict[str, Any]) -> dict[str, Any]:
         "reviewed_complex_at": marker.get("updated_at")
         if complex_unresolved
         else None,
+        "temporal_topology": None,
         "temporal_evidence": {"status": "missing", "anchor_crops": []},
     }
 
@@ -545,6 +552,7 @@ def build_mixed_boundary_refinement(
         observations = list(resolved_source.get("observations") or [])
     else:
         observations = _subject_observations(match_path, subject)
+    require_simple_temporal_split(observations)
     card = next(
         (
             row
@@ -907,7 +915,12 @@ def _temporal_evidence(
         (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)): dict(row)
         for row in ((card or {}).get("visual_evidence") or {}).get("anchor_crops") or []
     }
-    selected = _representative_values(observations, limit)
+    topology = analyze_temporal_split_topology(observations)
+    selected = (
+        _representative_values(observations, limit)
+        if topology["simple_split_allowed"]
+        else _representative_temporal_lane_values(observations, topology, limit)
+    )
     crops = []
     safe_subject = canonical_digest(subject_id)[:16]
     for index, row in enumerate(selected, start=1):
@@ -935,6 +948,66 @@ def _representative_values(values: list[Any], limit: int) -> list[Any]:
         return values
     indexes = {round(index * (len(values) - 1) / (limit - 1)) for index in range(limit)}
     return [values[index] for index in sorted(indexes)]
+
+
+def _representative_temporal_lane_values(
+    observations: list[dict[str, Any]],
+    topology: dict[str, Any],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Keep concurrent evidence tracklet-aware within the existing crop budget."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for observation in observations:
+        groups.setdefault(str(observation["tracklet_id"]), []).append(observation)
+    for values in groups.values():
+        values.sort(key=lambda row: int(row["frame"]))
+
+    overlapping_ids = {
+        str(tracklet_id)
+        for overlap in topology.get("overlap_ranges") or []
+        for tracklet_id in overlap.get("tracklet_ids") or []
+    }
+    ranked_tracklets = sorted(
+        topology.get("tracklets") or [],
+        key=lambda row: (
+            0 if str(row["tracklet_id"]) in overlapping_ids else 1,
+            -int(row["observation_count"]),
+            int(row["frame_start"]),
+            str(row["tracklet_id"]),
+        ),
+    )[:limit]
+    lane_ids = [str(row["tracklet_id"]) for row in ranked_tracklets]
+
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[tuple[str, int]] = set()
+
+    def add(row: dict[str, Any]) -> None:
+        key = (str(row["tracklet_id"]), int(row["frame"]))
+        if key not in selected_keys and len(selected) < limit:
+            selected_keys.add(key)
+            selected.append(row)
+
+    for tracklet_id in lane_ids:
+        values = groups[tracklet_id]
+        add(values[len(values) // 2])
+
+    for sample_count in (2, 3, 5):
+        for tracklet_id in lane_ids:
+            for row in _representative_values(
+                groups[tracklet_id],
+                min(sample_count, len(groups[tracklet_id])),
+            ):
+                add(row)
+        if len(selected) >= limit:
+            break
+
+    if len(selected) < limit:
+        for row in _representative_values(observations, limit):
+            add(row)
+    return sorted(
+        selected,
+        key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
+    )
 
 
 def _exact_ranges(frames: list[int]) -> list[list[int]]:

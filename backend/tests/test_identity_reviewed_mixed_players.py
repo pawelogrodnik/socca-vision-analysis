@@ -28,6 +28,7 @@ from app.services.identity_reviewed_mixed_resolution import (
     save_inline_temporal_split,
     save_mixed_player_resolution,
 )
+from app.services.identity_reviewed_mixed_topology import MixedTemporalTopologyError
 from app.services.identity_reviewed_mixed_store import (
     build_focused_mixed_review_case,
     current_mixed_subject_digest,
@@ -58,6 +59,168 @@ from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_full_and_focused_reads_share_concurrent_topology_and_lane_evidence(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+
+            full_case = build_mixed_review_queue(root, match)["cases"][0]
+            focused = build_focused_mixed_review_case(
+                root,
+                match,
+                str(marker.get("case_id") or marker["candidate_subject_id"]),
+            )
+            correction_context = reviewed_correction_context(
+                root,
+                match,
+                "subject-mixed",
+            )
+
+            self.assertEqual(focused["status"], "current_blocking")
+            self.assertEqual(full_case["temporal_topology"], focused["case"]["temporal_topology"])
+            self.assertEqual(full_case["temporal_topology"]["kind"], "concurrent")
+            self.assertFalse(full_case["temporal_topology"]["simple_split_allowed"])
+            self.assertEqual(
+                correction_context["temporal_topology"],
+                full_case["temporal_topology"],
+            )
+            self.assertEqual(
+                full_case["temporal_topology"]["overlap_ranges"],
+                [{"frame_start": 4, "frame_end": 7, "tracklet_ids": ["t1", "t2"]}],
+            )
+            self.assertEqual(
+                {crop["tracklet_id"] for crop in full_case["temporal_evidence"]["anchor_crops"]},
+                {"t1", "t2"},
+            )
+
+    def test_concurrent_refinement_returns_structured_conflict(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+
+            digest = current_mixed_subject_digest(root, "subject-mixed")
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                self.assertRaises(HTTPException) as exact_raised,
+            ):
+                get_match_reviewed_identity_temporal_split_refinement(
+                    "m1",
+                    "subject-mixed",
+                    digest,
+                    1,
+                    2,
+                    None,
+                    None,
+                )
+            self.assertEqual(exact_raised.exception.status_code, 409)
+            self.assertEqual(
+                exact_raised.exception.detail["code"],
+                "temporal_split_not_separable",
+            )
+
+            _classify(root, match)
+
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                self.assertRaises(HTTPException) as raised,
+            ):
+                get_match_reviewed_identity_mixed_boundary_refinement(
+                    "m1",
+                    "subject-mixed",
+                    1,
+                    2,
+                )
+
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(
+                raised.exception.detail,
+                {
+                    "code": "temporal_split_not_separable",
+                    "message": "temporal_split_not_separable",
+                },
+            )
+
+    def test_concurrent_legacy_split_rejects_before_persistence_but_complex_is_allowed(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            guarded_paths = _split_state_paths(root)
+            before = _path_snapshots(guarded_paths)
+
+            with self.assertRaisesRegex(
+                MixedTemporalTopologyError,
+                "temporal_split_not_separable",
+            ):
+                save_mixed_player_resolution(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [3],
+                        "segment_assignments": [
+                            {"action": "assign_team", "team_label": "A"},
+                            {"action": "assign_team", "team_label": "B"},
+                        ],
+                    },
+                )
+
+            self.assertEqual(_path_snapshots(guarded_paths), before)
+            complex_result = save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "unresolved_complex_mix",
+                },
+            )
+            self.assertEqual(
+                complex_result["saved_case"]["resolution_status"],
+                "unresolved_complex_mix",
+            )
+
+    def test_concurrent_exact_source_split_rejects_before_any_structural_write(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            from app.services.identity_reviewed_review_source import resolve_review_source
+
+            source = resolve_review_source(
+                root,
+                match,
+                candidate_subject_id="subject-mixed",
+                source_ownership_digest=current_mixed_subject_digest(root, "subject-mixed"),
+            )
+            guarded_paths = _split_state_paths(root)
+            before = _path_snapshots(guarded_paths)
+
+            with self.assertRaisesRegex(
+                MixedTemporalTopologyError,
+                "temporal_split_not_separable",
+            ):
+                save_inline_temporal_split(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_ownership_digest": source["source_ownership_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [3],
+                        "segment_assignments": [
+                            {"action": "assign_team", "team_label": "A"},
+                            {"action": "assign_team", "team_label": "B"},
+                        ],
+                    },
+                )
+
+            self.assertEqual(_path_snapshots(guarded_paths), before)
+
     def test_focused_case_materializes_only_the_exact_durable_marker(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -489,6 +652,44 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
                 self.assertTrue(result["recompute_deferred"])
                 self.assertTrue(result["review_state_rebuild_required"])
+
+    def test_temporal_split_route_rejects_concurrency_before_hot_state_generation(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "resolution": "split",
+                "split_after_frames": [3],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            guarded_paths = _split_state_paths(root)
+            before = _path_snapshots(guarded_paths)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={"phase": "exceptions", "allowed_actions": ["review_identity_issue"]},
+                ),
+                patch("app.main.load_or_rebuild_review_hot_state") as hot_state,
+                patch("app.main.invalidate_review_hot_state") as invalidate,
+                self.assertRaises(HTTPException) as raised,
+            ):
+                post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(
+                raised.exception.detail["code"],
+                "temporal_split_not_separable",
+            )
+            hot_state.assert_not_called()
+            invalidate.assert_not_called()
+            self.assertEqual(_path_snapshots(guarded_paths), before)
 
     def test_temporal_split_response_invalidates_hot_state_and_next_progress_rebuilds_once(self) -> None:
         with _workspace() as root:
@@ -1631,6 +1832,49 @@ def _fixture(root: Path) -> dict:
     }]})
     _write(root / "global_identity.json", {"slots": []})
     return match
+
+
+def _make_concurrent(root: Path) -> None:
+    candidates = json.loads((root / "identity_candidate_shadow.json").read_text(encoding="utf-8"))
+    candidates["subjects"][0]["tracklet_ids"] = ["t1", "t2"]
+    _write(root / "identity_candidate_shadow.json", candidates)
+    tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+    tracklets["tracklets"].append({
+        "tracklet_id": "t2",
+        "team_label": "A",
+        "positions_m": [
+            {
+                "frame": frame,
+                "time_sec": float(frame),
+                "x_m": float(frame),
+                "y_m": 2.0,
+                "detected": True,
+                "play_area_status": "inside_play",
+                "bbox_xyxy": [30, 10, 40, 30],
+            }
+            for frame in range(4, 8)
+        ],
+    })
+    _write(root / "tracklets.json", tracklets)
+
+
+def _split_state_paths(root: Path) -> list[Path]:
+    return [
+        root / "reviewed_identity_mixed_players.json",
+        root / "reviewed_identity_segment_review.json",
+        root / "reviewed_identity_segment_decisions.json",
+        root / "reviewed_identity_slot_assignments.json",
+        root / "reviewed_identity_recompute_required.json",
+        root / "reviewed_identity_hot_state.json",
+        root / "reviewed_identity_hot_state_revision.json",
+    ]
+
+
+def _path_snapshots(paths: list[Path]) -> dict[str, bytes | None]:
+    return {
+        path.name: path.read_bytes() if path.exists() else None
+        for path in paths
+    }
 
 
 def _reserve_canonical_slots(root: Path, count: int) -> None:
