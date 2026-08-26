@@ -20,6 +20,7 @@ from app.services.identity_reviewed_mixed_store import (
     save_mixed_case_document,
     validate_split_frames,
 )
+from app.services.identity_reviewed_mixed_topology import require_simple_temporal_split
 from app.services.identity_reviewed_review_source import (
     ReviewedIdentityReviewSourceError,
     resolve_review_source,
@@ -122,6 +123,7 @@ def save_mixed_player_resolution(
 
     phase_started = time.perf_counter()
     observations = observations_for_case(match_path, case)
+    require_simple_temporal_split(observations)
     split_frames = sorted({int(value) for value in payload.get("split_after_frames") or []})
     validate_split_frames(observations, split_frames)
     performance["split_validation_ms"] = _elapsed_ms(phase_started)
@@ -253,6 +255,7 @@ def save_inline_temporal_split(
     payload: dict[str, Any],
     *,
     materialized_review_unit: dict[str, Any] | None = None,
+    resolved_source: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Atomically create/update an exact-source temporal split from a card.
 
@@ -264,7 +267,7 @@ def save_inline_temporal_split(
     performance = _mixed_split_performance()
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     phase_started = time.perf_counter()
-    source = resolve_review_source(
+    source = resolved_source or resolve_review_source(
         match_path,
         match_doc,
         candidate_subject_id=subject_id,
@@ -359,6 +362,7 @@ def save_inline_temporal_split(
 
     observations = list(source["observations"])
     phase_started = time.perf_counter()
+    require_simple_temporal_split(observations)
     split_frames = sorted({int(value) for value in payload.get("split_after_frames") or []})
     validate_split_frames(observations, split_frames)
     assignments = payload.get("segment_assignments") or []

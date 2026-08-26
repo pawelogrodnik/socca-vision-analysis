@@ -12,6 +12,7 @@ from app.services.identity_reviewed_mixed_store import (
     render_mixed_review_evidence,
     temporal_evidence_for_observations,
 )
+from app.services.identity_reviewed_mixed_topology import require_simple_temporal_split
 from app.services.identity_reviewed_segments import build_segment_review_document, load_segment_review, target_for_id
 
 
@@ -243,6 +244,7 @@ def build_review_source_boundary_refinement(
         continuity_group_id=continuity_group_id,
         source_ownership_digest=source_ownership_digest,
     )
+    require_simple_temporal_split(list(source["observations"]))
     if after_frame >= before_frame:
         raise ValueError("Refinement interval must have increasing frame boundaries")
     overview = temporal_evidence_for_observations(

@@ -776,6 +776,7 @@ a { color: #93c5fd; }
   min-height: 0;
   overflow: hidden;
 }
+.mixed-review-workstation.concurrent { grid-template-columns: minmax(0, 1fr); }
 .mixed-temporal-column,
 .mixed-assignment-panel {
   min-width: 0;
@@ -786,6 +787,49 @@ a { color: #93c5fd; }
   overflow: hidden;
 }
 .mixed-temporal-column { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.mixed-concurrent-topology {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+.mixed-topology-warning {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 10px;
+  background: rgba(120, 53, 15, 0.28);
+  color: #fef3c7;
+}
+.mixed-topology-warning span { color: #fde68a; }
+.mixed-topology-scale { display: flex; justify-content: space-between; color: #94a3b8; font-size: 12px; }
+.mixed-topology-lanes { display: grid; gap: 10px; }
+.mixed-topology-lane {
+  display: grid;
+  grid-template-columns: minmax(165px, 0.8fr) minmax(220px, 2fr) minmax(170px, 1.2fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+}
+.mixed-topology-lane > header { display: grid; gap: 2px; }
+.mixed-topology-lane > header span,
+.mixed-topology-lane > header small { color: #94a3b8; }
+.mixed-topology-track { position: relative; height: 24px; border-radius: 999px; background: #0f172a; overflow: hidden; }
+.mixed-topology-tracklet-range { position: absolute; top: 8px; height: 8px; border-radius: 999px; background: #38bdf8; }
+.mixed-topology-overlap { position: absolute; inset-block: 0; border-inline: 1px solid #f59e0b; background: rgba(245, 158, 11, 0.32); }
+.mixed-topology-crops { display: flex; gap: 6px; overflow-x: auto; }
+.mixed-topology-crops figure { width: 76px; min-width: 76px; margin: 0; padding: 3px; border: 1px solid #64748b; border-radius: 7px; }
+.mixed-topology-crops figure.team-a { border-color: #ef4444; }
+.mixed-topology-crops figure.team-b { border-color: #3b82f6; }
+.mixed-topology-crops img { width: 100%; height: 88px; object-fit: contain; border-radius: 4px; background: #020617; }
+.mixed-topology-crops figcaption { padding-top: 2px; text-align: center; color: #cbd5e1; font-size: 10px; }
+.mixed-topology-no-crop { color: #64748b; font-size: 11px; }
 .mixed-temporal-strip {
   display: flex;
   align-items: stretch;
@@ -846,6 +890,7 @@ a { color: #93c5fd; }
 .mixed-assignment-scroll label { display: grid; gap: 5px; }
 .mixed-assignment-scroll .reviewed-action-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .mixed-review-footer { display: grid; grid-template-columns: auto minmax(190px, 1fr) auto auto; gap: 8px; }
+.mixed-review-footer.concurrent { grid-template-columns: auto minmax(230px, 1fr) auto; }
 
 .reviewed-identity-split-modal {
   position: fixed;

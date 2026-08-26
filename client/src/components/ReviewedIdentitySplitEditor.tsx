@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { artifactUrl, getReviewedIdentityTemporalSplitRefinement, saveReviewedIdentityTemporalSplit } from '../api';
+import { isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type {
   MixedBoundaryRefinement,
@@ -24,6 +25,7 @@ import {
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { teamLabelForOperator } from '../utils/reviewedOutputPresentation';
 import { correctionContextAsSplitCase } from '../utils/reviewedIdentitySplitCase';
+import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
 
 type Props = {
   matchId: string;
@@ -44,11 +46,14 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   const [refinementBusy, setRefinementBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [topologyRejected, setTopologyRejected] = useState(false);
   const crops = useMemo(() => sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops), [reviewCase]);
   const segments = useMemo(() => mixedSegments(reviewCase, boundaries), [reviewCase, boundaries]);
   const persistedSplit = context.temporal_split?.resolution_status === 'resolved'
     ? context.temporal_split
     : null;
+  const simpleSplitAllowed = reviewCase.temporal_topology?.simple_split_allowed === true
+    && !topologyRejected;
   const persistedSplitSignature = JSON.stringify(persistedSplit || {
     split_after_frames: [], segment_assignments: [null],
   });
@@ -63,6 +68,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   }), [context.roster_options]);
 
   useEffect(() => {
+    setTopologyRejected(false);
     if (!persistedSplit) {
       setBoundaries([]);
       setAssignments([null]);
@@ -102,7 +108,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   }
 
   async function openRefinement(afterFrame: number, beforeFrame: number) {
-    if (!context.source_ownership_digest) return;
+    if (!context.source_ownership_digest || !simpleSplitAllowed) return;
     setRefinementBusy(true);
     setError('');
     try {
@@ -120,7 +126,11 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
         setRefinement(value);
       }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (isTemporalSplitNotSeparable(reason)) {
+        rejectStaleTemporalTopology();
+      } else {
+        setError(errorMessage(reason));
+      }
     } finally {
       setRefinementBusy(false);
     }
@@ -145,7 +155,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   }
 
   async function save() {
-    if (!validMixedResolution(reviewCase, boundaries, assignments) || !context.source_ownership_digest) return;
+    if (!simpleSplitAllowed || !validMixedResolution(reviewCase, boundaries, assignments) || !context.source_ownership_digest) return;
     setBusy(true);
     setError('');
     try {
@@ -162,7 +172,11 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
       });
       onSaved(result);
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (isTemporalSplitNotSeparable(reason)) {
+        rejectStaleTemporalTopology();
+      } else {
+        setError(errorMessage(reason));
+      }
     } finally {
       setBusy(false);
     }
@@ -190,10 +204,22 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
     }
   }
 
+  function rejectStaleTemporalTopology() {
+    setTopologyRejected(true);
+    setBoundaries([]);
+    setAssignments([]);
+    setSelectedSegment(0);
+    setRefinement(null);
+    setError('Ten materiał nie ma już prostego podziału czasowego, ponieważ tracklety nakładają się w czasie. Zamknij i otwórz przypadek ponownie albo oznacz go jako brak prostego podziału.');
+  }
+
   const selected = segments[selectedSegment];
   return <section className='reviewed-inline-split' aria-label='Podział kilku zawodników'>
-    <header><strong>To kilku zawodników — podziel</strong><p>Podział obejmie wyłącznie dokładnie pokazane obserwacje.</p></header>
-    <div className='mixed-temporal-strip'>
+    <header><strong>{simpleSplitAllowed ? 'To kilku zawodników — podziel' : 'Równoległe tracklety'}</strong><p>{simpleSplitAllowed ? 'Podział obejmie wyłącznie dokładnie pokazane obserwacje.' : 'Ten materiał nie może być bezpiecznie rozdzielony jedną granicą czasu.'}</p></header>
+    {!simpleSplitAllowed && reviewCase.temporal_topology?.kind === 'concurrent' && <MixedTemporalTopologyLanes matchId={matchId} reviewCase={reviewCase} />}
+    {!simpleSplitAllowed && reviewCase.temporal_topology?.kind !== 'concurrent' && <div className='mixed-topology-warning' role='alert'><strong>Nie można potwierdzić bezpiecznej topologii czasowej.</strong><span>Zamknij i otwórz przypadek ponownie albo pozostaw go jako brak prostego podziału.</span></div>}
+    {simpleSplitAllowed && <>
+      <div className='mixed-temporal-strip'>
       {crops.map((crop, index) => <div className='mixed-crop-group' key={crop.anchor_crop_id}>
         <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
           <img src={artifactUrl(matchId, crop.artifact)} alt='Widok fragmentu w kolejności czasu' />
@@ -213,7 +239,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
         >{hasBoundaryInInterval ? 'Zmień podział' : needsRefinement ? 'Doprecyzuj' : 'Podziel tutaj'}</button>;
         })()}
       </div>)}
-    </div>
+      </div>
     {refinement && <section className='mixed-boundary-refinement' aria-label='Doprecyzowanie granicy podziału'>
       <header><strong>Doprecyzuj moment przejścia</strong><button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button></header>
       <p>Wybierz dokładną granicę między sąsiednimi widokami. Nie jest ograniczona do 12 widoków głównych.</p>
@@ -242,7 +268,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
         )}</span>
       </button>)}
     </div>
-    {selected && <section className='reviewed-split-child-decision'>
+      {selected && <section className='reviewed-split-child-decision'>
       <h5>Przypisz fragment {selected.index + 1}</h5>
       <div className='reviewed-action-cards'>
         {CHILD_ACTIONS.filter((card) => context.action_capabilities[card.action]?.allowed === true).map((card) => <button type='button' key={card.action} disabled={busy}
@@ -292,10 +318,11 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
           <option value='B'>{operatorTeamName('B')}</option>
         </select>
       </label>}
-    </section>}
+      </section>}
+    </>}
     {error && <p className='status error'>{error}</p>}
     <footer className='row'>
-      <button type='button' onClick={() => void save()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>
+      {simpleSplitAllowed && <button type='button' onClick={() => void save()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>}
       <button type='button' className='secondary' onClick={() => void saveComplex()} disabled={busy}>Nie da się bezpiecznie podzielić czasowo</button>
       <button type='button' className='secondary' onClick={cancel} disabled={busy}>Wróć bez zapisu</button>
     </footer>

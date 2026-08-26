@@ -72,6 +72,23 @@ not force a player guess. Navigation to the next Mixed card still passes
 through the exact focused endpoint; drift on that next card uses the same
 single reconciliation described above and never retries the save.
 
+## Serial and concurrent Mixed topology
+
+The simple split editor is valid only for a serial exact source. The backend
+groups exact owned observations by tracklet, derives each inclusive lifetime,
+and classifies the source as concurrent when any two distinct lifetimes
+overlap. Sparse observations do not weaken this rule and there is no overlap
+tolerance.
+
+Full queue reads, exact focused reads and correction contexts expose the same
+computed topology. Serial sources retain the chronological boundary editor.
+Concurrent sources are shown as parallel tracklet lanes and cannot enter
+boundary refinement. Both refinement and split persistence revalidate the
+current exact source and fail closed with `temporal_split_not_separable`
+before any structural write. The operator may still explicitly save
+`unresolved_complex_mix`; a future lane-level identity resolver is outside
+the current architecture.
+
 ## Structural Mixed split lifecycle
 
 A temporal split changes canonical Review topology. Its implemented path is:

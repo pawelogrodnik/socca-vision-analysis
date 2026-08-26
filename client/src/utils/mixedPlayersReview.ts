@@ -131,6 +131,7 @@ export function validMixedResolution(
   boundaries: number[],
   assignments: Array<MixedSegmentAssignment | null>,
 ): boolean {
+  if (reviewCase.temporal_topology?.simple_split_allowed !== true) return false;
   const segments = mixedSegments(reviewCase, boundaries);
   return boundaries.length > 0
     && boundaries.every((frame) => frame >= reviewCase.frame_start && frame < reviewCase.frame_end)

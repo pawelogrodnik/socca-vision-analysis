@@ -5,7 +5,9 @@ import { JSDOM } from 'jsdom';
 import React from 'react';
 
 import { MixedPlayersReviewPanel, type MixedPlayersReviewApi } from '../src/components/MixedPlayersReviewPanel.tsx';
-import type { Match, MixedPlayerCase, MixedPlayerFocusedCaseResponse, MixedPlayersReviewQueue, ReviewWorkflow } from '../src/types.ts';
+import { ReviewedIdentitySplitEditor } from '../src/components/ReviewedIdentitySplitEditor.tsx';
+import { ApiRequestError } from '../src/lib/apiErrors.ts';
+import type { Match, MixedPlayerCase, MixedPlayerFocusedCaseResponse, MixedPlayersReviewQueue, ReviewedCorrectionContext, ReviewWorkflow } from '../src/types.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -66,6 +68,19 @@ function mixedCase(caseId: string, observationCount: number): MixedPlayerCase {
     observation_count: observationCount,
     frame_start: observationCount,
     frame_end: observationCount + 10,
+    temporal_topology: {
+      kind: 'serial',
+      simple_split_allowed: true,
+      tracklet_count: 1,
+      max_concurrent_tracklets: 1,
+      overlap_ranges: [],
+      tracklets: [{
+        tracklet_id: `track-${caseId}`,
+        frame_start: observationCount,
+        frame_end: observationCount + 10,
+        observation_count: observationCount,
+      }],
+    },
     blocking: true,
     scope_status: 'blocking',
     temporal_evidence: {
@@ -147,6 +162,36 @@ function splittableMixedCase(caseId: string): MixedPlayerCase {
   };
 }
 
+function concurrentMixedCase(caseId: string): MixedPlayerCase {
+  const reviewCase = mixedCase(caseId, 4);
+  return {
+    ...reviewCase,
+    frame_start: 10,
+    frame_end: 30,
+    source_tracklet_ids: ['track-A', 'track-B', 'track-C'],
+    temporal_topology: {
+      kind: 'concurrent',
+      simple_split_allowed: false,
+      tracklet_count: 3,
+      max_concurrent_tracklets: 2,
+      overlap_ranges: [{ frame_start: 15, frame_end: 20, tracklet_ids: ['track-A', 'track-B'] }],
+      tracklets: [
+        { tracklet_id: 'track-A', frame_start: 10, frame_end: 20, observation_count: 2 },
+        { tracklet_id: 'track-B', frame_start: 15, frame_end: 20, observation_count: 1 },
+        { tracklet_id: 'track-C', frame_start: 21, frame_end: 30, observation_count: 1 },
+      ],
+    },
+    temporal_evidence: {
+      status: 'ready',
+      anchor_crops: [
+        { anchor_crop_id: 'crop-A', artifact: 'A.jpg', frame: 15, time_sec: 15, tracklet_id: 'track-A' },
+        { anchor_crop_id: 'crop-B', artifact: 'B.jpg', frame: 17, time_sec: 17, tracklet_id: 'track-B' },
+        { anchor_crop_id: 'crop-C', artifact: 'C.jpg', frame: 25, time_sec: 25, tracklet_id: 'track-C' },
+      ],
+    },
+  };
+}
+
 function workflowWithBlocking(normalBlocking: number, mixedBlocking: number): ReviewWorkflow {
   return {
     ...workflow,
@@ -168,6 +213,209 @@ async function submitValidStructuralSplit(view: ReturnType<typeof render>) {
   await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
   await act(async () => { fireEvent.click(save); });
 }
+
+test('concurrent Mixed case shows parallel lanes and only the safe complex action', async () => {
+  const concurrent = concurrentMixedCase('M-concurrent');
+  const resolutions: string[] = [];
+  const view = renderPanel({
+    getQueue: async () => queue([concurrent]),
+    saveResolution: async (_matchId, payload) => {
+      resolutions.push(payload.resolution);
+      return { saved_case: concurrent, semantic_decision_digest: 'complex', recompute_deferred: true };
+    },
+  });
+
+  await waitFor(() => assert.ok(view.getByText('Ten przypadek zawiera tracklety występujące równocześnie.')));
+  assert.ok(view.getByText('track-A'));
+  assert.ok(view.getByText('track-B'));
+  assert.ok(view.getByText('track-C'));
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Nie ma prostego podziału czasowego' }));
+  });
+  assert.deepEqual(resolutions, ['unresolved_complex_mix']);
+});
+
+test('shared correction split editor also fails closed for concurrent topology', () => {
+  const concurrent = concurrentMixedCase('M-inline');
+  const context = {
+    candidate_subject_id: concurrent.candidate_subject_id,
+    scope_kind: 'whole_subject',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A', 'B'],
+    tracklet_ids: concurrent.source_tracklet_ids,
+    review_card_key: null,
+    roster_options: [],
+    slot_options: [],
+    current_decision: null,
+    semantic_decision_digest: 'semantic',
+    source_ownership_digest: concurrent.source_subject_digest,
+    frame_start: concurrent.frame_start,
+    frame_end: concurrent.frame_end,
+    detected_observation_count: concurrent.observation_count,
+    temporal_topology: concurrent.temporal_topology,
+    visual_evidence: concurrent.temporal_evidence,
+    action_capabilities: {},
+  } as ReviewedCorrectionContext;
+  const view = render(React.createElement(ReviewedIdentitySplitEditor, {
+    matchId: match.id,
+    context,
+    teams: match.teams,
+    onCancel: () => undefined,
+    onSaved: () => assert.fail('concurrent case must not report a split save'),
+  }));
+
+  assert.ok(view.getByText('Ten przypadek zawiera tracklety występujące równocześnie.'));
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
+  assert.ok(view.getByRole('button', { name: 'Nie da się bezpiecznie podzielić czasowo' }));
+});
+
+test('serial-to-concurrent save race refreshes exact case without retry or fake success', async () => {
+  const serial = splittableMixedCase('M-race');
+  const concurrent = concurrentMixedCase('M-race');
+  let saves = 0;
+  let focusedReads = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([serial]),
+    saveResolution: async () => {
+      saves += 1;
+      throw new ApiRequestError(
+        409,
+        'temporal_split_not_separable',
+        'temporal_split_not_separable',
+      );
+    },
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      return focusedResponse('M-race', 'current_blocking', concurrent);
+    },
+    reprojectWorkflow: async () => {
+      reprojects += 1;
+      return workflow;
+    },
+  });
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText('Ten przypadek zawiera tracklety występujące równocześnie.')));
+
+  assert.equal(saves, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(reprojects, 0);
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  assert.ok(view.getByText(/Pokazano aktualny przypadek/));
+});
+
+test('failed exact recovery after split rejection keeps stale serial case fail-closed', async () => {
+  const serial = splittableMixedCase('M-save-recovery-fails');
+  let saves = 0;
+  let focusedReads = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([serial]),
+    saveResolution: async () => {
+      saves += 1;
+      throw new ApiRequestError(409, 'topology changed', 'temporal_split_not_separable');
+    },
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      throw new Error('focused read unavailable');
+    },
+    reprojectWorkflow: async () => {
+      reprojects += 1;
+      return workflow;
+    },
+  });
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText(/Nie udało się odświeżyć aktualnego przypadku/)));
+
+  assert.equal(saves, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(reprojects, 0);
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
+  assert.ok(view.getByRole('button', { name: 'Nie ma prostego podziału czasowego' }));
+});
+
+test('failed exact recovery after refinement rejection keeps stale serial case fail-closed', async () => {
+  const serial = {
+    ...splittableMixedCase('M-refinement-recovery-fails'),
+    observation_count: 13,
+  };
+  let refinements = 0;
+  let focusedReads = 0;
+  let saves = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([serial]),
+    getBoundaryRefinement: async () => {
+      refinements += 1;
+      throw new ApiRequestError(409, 'topology changed', 'temporal_split_not_separable');
+    },
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      throw new Error('focused read unavailable');
+    },
+    saveResolution: async () => {
+      saves += 1;
+      throw new Error('save must not run');
+    },
+    reprojectWorkflow: async () => {
+      reprojects += 1;
+      return workflow;
+    },
+  });
+
+  await waitFor(() => assert.ok(view.getByText('13 wykrytych obserwacji')));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' })); });
+  await waitFor(() => assert.ok(view.getByText(/Nie udało się odświeżyć aktualnego przypadku/)));
+
+  assert.equal(refinements, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(saves, 0);
+  assert.equal(reprojects, 0);
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
+});
+
+test('topology rejection for one case resets after exact navigation to another case', async () => {
+  const m1 = splittableMixedCase('M1-rejected');
+  const m2 = {
+    ...splittableMixedCase('M2-authoritative'),
+    observation_count: 3,
+  };
+  const focusedIds: string[] = [];
+  const view = renderPanel({
+    getQueue: async () => queue([m1, m2]),
+    saveResolution: async () => {
+      throw new ApiRequestError(409, 'topology changed', 'temporal_split_not_separable');
+    },
+    getFocusedCase: async (_matchId, caseId) => {
+      focusedIds.push(caseId);
+      if (caseId === m1.case_id) throw new Error('focused read unavailable');
+      return focusedResponse(m2.case_id, 'current_blocking', m2);
+    },
+  });
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText(/Nie udało się odświeżyć aktualnego przypadku/)));
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+
+  fireEvent.click(view.getByRole('button', { name: 'Następny' }));
+  await waitFor(() => assert.ok(view.getByText('3 wykrytych obserwacji')));
+
+  assert.deepEqual(focusedIds, [m1.case_id, m2.case_id]);
+  assert.ok(view.getByRole('button', { name: 'Podziel tutaj' }));
+});
 
 test('M1 remains visible until the exact focused M2 evidence is ready', async () => {
   const m1 = mixedCase('M1', 11);
