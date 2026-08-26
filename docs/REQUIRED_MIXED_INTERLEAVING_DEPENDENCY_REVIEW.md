@@ -1,136 +1,127 @@
-# Required and Mixed interleaving — dependency review
+# Required and Mixed interleaving — implemented lifecycle
 
-This document records the pre-implementation dependency review for making
-Reviewed Identity's Required and mandatory Mixed work parallel operator queues.
-It was prepared from `main` after PR #42 was merged.
-
-## Current graph
+Reviewed Identity exposes two peer mandatory operator queues:
 
 ```text
-IdentityReviewWorkspace
-  -> identityReviewStage(workflow.phase)
-  -> IdentityExceptionReviewPanel       (phase: exceptions)
-     -> GET review-progress (Required / Optional MAX)
-     -> POST corrections (including staged `mixed_players`)
-  -> MixedPlayersReviewPanel             (phase: mixed_players)
-     -> GET mixed-players
-     -> POST mixed-players/resolve
-  -> finalizeReviewWorkflow              (only final readiness)
-
-review-progress
-  -> reviewed_identity_hot_state
-  -> project_reviewed_identity_progress
-  -> coverage policy + build_mixed_review_queue
-  -> workflow issues / ReviewWorkflow
-
-mixed_players correction action
-  -> action gate resolves one exact review unit
-  -> reviewed_identity_mixed_players durable marker
-  -> deferred hot projection removes its Required source
-
-saveMixedPlayerResolution
-  -> exact durable marker and source digest
-  -> split child targets / segment decisions
-  -> recompute_required + hot-state invalidation
-  -> authoritative review reprojection
+Review
+├── Required
+└── Mixed
 ```
 
-## State and mutation classification
+Both queues can contain current blocking work at the same time. Switching
+between them is navigation only: it does not persist a decision, decrement a
+count, reproject Review or finalize identity. The backend remains the final
+authority for completion, readiness and publication, so an empty client queue
+never bypasses the finalization gate.
 
-### Non-structural mutations
+## Queue and focused-read responsibilities
 
-An ordinary deferred correction is non-structural when it changes only one
-already materialized review unit. The correction action gate validates the hot
-state version, exact source ownership digest, current actionable unit and
-action scope. `update_hot_state_after_deferred_save()` then re-projects the
-queue from the compact hot inputs. The client may remove the saved local card,
-but re-anchors at offset 0 at its existing lifecycle boundaries.
+The full blocking-only Mixed queue is read only at lifecycle boundaries:
 
-Staging `mixed_players` from Required is a durable decision, but it does not
-split track topology. It creates an exact unresolved marker whose `source`
-contains `scope_kind`, `candidate_subject_id`, `review_target_id`, optional
-`continuity_group_id`, and `source_ownership_digest`. The source is removed
-from Required by the hot projection. It is nevertheless a queue mutation, so
-positive offsets from the previous Required snapshot are no longer valid.
+- initial entry into a manual Mixed session;
+- after a structural Mixed save, because topology and Required ordering may
+  have changed;
+- once during bounded drift reconciliation when a previously known focused
+  case is authoritatively reported as missing, resolved or nonmandatory.
 
-### Structural Mixed mutations
+The dedicated focused endpoint is used for:
 
-`saveMixedPlayerResolution()` is structural for a temporal split. It verifies
-the exact `case_id` and `source_subject_digest`, resolves the durable source,
-creates exact child segment targets and segment decisions, marks review
-recompute required, and invalidates the hot state. It is not a normal hot save.
-The next progress read must build an authoritative projection; it can change
-topology, current named coverage, Required coverage selection and ordering.
+- a Required `resolve-now` handoff to one exact durable Mixed `case_id`;
+- previous/next buttons and keyboard arrows in a manual Mixed session;
+- the next case after persisting `unresolved_complex_mix`.
 
-The `unresolved_complex_mix` operation also updates the durable marker and
-marks recompute required, although it does not create child assignments.
+Each focused read validates exact ownership and scope, materializes one case
+and returns that case's evidence. The client keeps the current card visible
+until the requested evidence is ready. Normal M1→M2 navigation therefore costs
+one focused read and no full queue rebuild.
 
-## Authority and lifecycle
+If a manual focused read reports `missing`, `no_longer_unresolved` or
+`not_in_mandatory_queue`, the client performs exactly one authoritative full
+queue reconciliation, preserves navigation direction, selects the logical
+current successor and validates that successor with another exact focused
+read. It never displays a stale local sibling without that validation and
+never loops reconciliation. Transport errors, malformed responses and a
+second membership change remain explicit recovery errors.
 
-- Hot state is invalidated after a Mixed resolution in
-  `post_match_reviewed_identity_mixed_resolution`. It must not be trusted
-  until a following `GET review-progress` materializes it again.
-- A cold/recovery read is required after any structural Mixed resolution and
-  after a recoverable stale-save conflict. It must start at offset 0 while
-  preserving the active Required team filter where applicable.
-- A pure Required/Mixed tab switch is navigation only: it must not call a
-  correction, create a marker, decrement a count, or finalize.
-- The durable truth survives a browser refresh: the staged marker lives in
-  `reviewed_identity_mixed_players.json`, and Required source filtering reads
-  it again when progress is projected.
+Resolve-now intentionally does not reconcile to a different case. If its
+exact staged source is stale or absent, it fails closed and returns an explicit
+recovery state rather than silently opening unrelated Mixed work.
 
-## Exact source identity
+## Exact durable source identity
 
-The unique staged Mixed key is `case_id`, generated from the exact review
-source (`source_case_id`). Its durable source payload additionally carries
-`review_target_id` and `source_ownership_digest`. `candidate_subject_id` is
-not enough: one subject can own several exact source intervals. Any
-resolve-now handoff must target by `case_id` and source digest, never by
-subject alone.
+`case_id` is generated from the exact staged Review source and is the durable
+Mixed identity. Its source records `scope_kind`, `candidate_subject_id`,
+`review_target_id`, optional `continuity_group_id`,
+`source_ownership_digest` and the exact ownership range. A raw subject ID is
+not sufficient because one subject can own multiple Review intervals.
 
-## Required pagination and PR #40
+Focused reads and saves use this exact source. If the source is completed, the
+backend reports that fact; the client does not guess a replacement source or
+requeue historical ownership.
 
-`IdentityExceptionReviewPanel` uses a 40-case window. Its
-`RequiredReviewNavigationState.queueMutatedSinceSnapshot` is set after a
-durable Required mutation. `resolveRequiredReviewPageRequest()` then converts
-any later positive-offset page request into an offset-0 re-anchor. This is the
-PR #40 invariant: `offset` and `has_more` only describe the generation that
-produced them. A Mixed structural save must trigger the same reset before
-returning to Required; retaining offset 40/80 could skip or resurrect work.
+## Non-structural decisions
 
-## Scope and coverage policy
+An ordinary deferred Required decision validates the hot state version, exact
+source ownership, actionable unit and action scope. The durable decision is
+then projected into the current hot queue. Staging `mixed_players` creates an
+exact unresolved durable marker and removes only its exact Required source.
 
-`build_mixed_review_queue()` uses `mixed_review_relevant_for_scope()`. PR #42
-therefore exposes only blocking Mixed cases: COMPLETE_ROSTER, cross-team,
-Team-U/attribution-uncertain and stale/unclassifiable sources. A certain
-TEAM_STATS_ONLY Verisk player-only Mixed marker remains durable but does not
-appear in the mandatory queue or count.
+Saving `unresolved_complex_mix` is also a durable operator decision: it records
+that the evidence does not support a safe temporal split. The application must
+not force a player guess. Navigation to the next Mixed card still passes
+through the exact focused endpoint; drift on that next card uses the same
+single reconciliation described above and never retries the save.
 
-Required units are selected by the current coverage policy after semantic and
-material-continuity blockers. Coverage candidates represent current named
-coverage debt, not a client-side counter. A structural Mixed save is followed
-by the canonical progress rebuild, so coverage policy runs over the real child
-decisions. It may remove old coverage-only Required cards once the target is
-met; it must retain semantic and safety Required blockers.
+## Structural Mixed split lifecycle
 
-## Existing sequential assumptions to remove
+A temporal split changes canonical Review topology. Its implemented path is:
 
-1. `derive_review_workflow_state()` marks `mixed_players` locked whenever
-   `normal_blocking > 0`, and `identityReviewStage()` renders one panel from
-   that phase.
-2. `post_match_reviewed_identity_mixed_resolution()` currently requires the
-   `review_mixed_players` workflow action, which is unavailable while Required
-   work remains.
-3. `MixedPlayersReviewPanel.advanceAfterSave()` calls canonical finalization
-   when its local Mixed queue becomes empty. Empty Mixed is not Review
-   completion when Required work or another readiness gate remains.
-4. The coverage dialog still describes Mixed as locked by Required work.
+```text
+save exact Mixed case
+→ validate case_id, digest, ownership and scope
+→ derive authoritative child segments
+→ build canonical segment topology exactly once
+→ persist all segment decisions atomically as one batch
+→ project the persisted decisions without rebuilding topology
+→ mark reviewed recompute required
+→ invalidate the old hot generation
+→ explicitly reproject Review exactly once
+→ build authoritative progress exactly once
+→ write that generation back as warm hot state
+→ route from authoritative Required/Mixed counts
+```
 
-## Implementation boundary
+The explicit reproject uses `operator_evidence=False`: it does not eagerly
+render all crops. It uses `leave_hot_state_warm=True`, so an immediate Required
+offset-0 progress read consumes the just-built warm generation and performs no
+second canonical progress build. The old model in which the next GET was
+expected to perform cold recovery is not part of the implemented lifecycle.
 
-The change should make workflow state report parallel review availability while
-preserving the strict final gate. The client chooses `required` or `mixed` as
-the visible subqueue; backend scope, exact ownership, coverage and readiness
-remain authoritative. A resolve-now handoff may be ephemeral UI state, but
-must refer to a durable exact `case_id`, and its correctness cannot depend on
-that ephemeral state surviving refresh.
+Returning to Required preserves the active queue and team filter but resets
+pagination to offset 0. This retains the PR #40 invariant that offsets and
+`has_more` belong only to the generation that produced them.
+
+## Evidence and performance contract
+
+Mixed evidence is lazy. Initial manual entry materializes the first relevant
+case; exact focused navigation materializes only the requested case. Normal
+M1→M2 movement never calls `build_mixed_review_queue()`. Structural saves are
+the deliberate exception: their single full authoritative reload is required
+because the queue topology may genuinely change.
+
+The split path builds one canonical segment topology, persists a batch, and
+projects those decisions. It does not build topology a second time for the
+same save and it does not trigger navigation-time finalization.
+
+## Safety and scope invariants
+
+- Required and blocking Mixed remain peer mandatory queues.
+- Mixed remains blocking-only under the PR #42 scope policy. A certain
+  TEAM_STATS_ONLY player-only marker can stay durable without entering the
+  mandatory queue.
+- Stale or unclassifiable Mixed ownership remains visible as a fail-closed
+  blocker and cannot be assigned from incomplete historical evidence.
+- A non-actionable coverage safety blocker remains intentional and blocks
+  finalization/publication even when it has no ordinary operator card.
+- Only structural mutations reproject the full Review lifecycle. Navigation
+  and focused evidence reads never finalize or rerun video analysis.

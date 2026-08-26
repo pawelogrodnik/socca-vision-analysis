@@ -7,7 +7,7 @@ import type { MixedPlayerCase, MixedSegmentAssignment, ReviewedCorrectionContext
 import { correctionContextAsSplitCase } from '../src/utils/reviewedIdentitySplitCase.ts';
 import { reviewedIdentityChildActions } from '../src/utils/reviewedIdentityActions.ts';
 import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
-import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination } from '../src/utils/mixedReviewNavigation.ts';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, reconciledMixedFocusCaseId } from '../src/utils/mixedReviewNavigation.ts';
 
 const reviewCase: MixedPlayerCase = {
   candidate_subject_id: 'mixed-1',
@@ -207,7 +207,7 @@ test('mandatory Mixed panel uses the authoritative blocking-only queue and repro
   const panel = readFileSync(new URL('MixedPlayersReviewPanel.tsx', components), 'utf8');
 
   assert.match(panel, /Przypadek \{index \+ 1\} z \{queue\.cases\.length\}/);
-  assert.match(panel, /reprojectReviewWorkflow\(match\.id\)/);
+  assert.match(panel, /api\.reprojectWorkflow\(match\.id\)/);
   assert.match(panel, /onReturnToRequired/);
   assert.doesNotMatch(panel, /finalizeReviewedIdentityCorrections/);
   assert.match(panel, /stale_or_unclassifiable_blocking/);
@@ -223,7 +223,7 @@ test('resolve-now targets the durable exact staged case instead of a raw subject
   assert.match(form, /Odłóż do Mixed/);
   assert.match(form, /result\.saved_decision\?\.case_id/);
   assert.match(panel, /exactMixedFocusIndex/);
-  assert.match(panel, /getMixedPlayerReviewCase\(match\.id, caseId\)/);
+  assert.match(panel, /api\.getFocusedCase\(match\.id, caseId\)/);
   assert.doesNotMatch(panel, /getMixedPlayersReview\(match\.id, caseId\)/);
 });
 
@@ -277,7 +277,8 @@ test('manual Mixed materializes M1, then keeps it visible until exact M2 evidenc
     },
     'M1',
   );
-  assert.ok(initiallyFocused);
+  assert.equal(initiallyFocused.kind, 'visible');
+  if (initiallyFocused.kind !== 'visible') throw new Error('expected visible M1');
   visibleCaseId = initiallyFocused.case.case_id;
 
   const pending = loadExactMixedFocus(
@@ -287,7 +288,7 @@ test('manual Mixed materializes M1, then keeps it visible until exact M2 evidenc
     },
     'M2',
   ).then((focused) => {
-    if (focused) visibleCaseId = focused.case.case_id;
+    if (focused.kind === 'visible') visibleCaseId = focused.case.case_id;
   });
 
   assert.deepEqual(requestedCaseIds, ['M1', 'M2']);
@@ -297,7 +298,7 @@ test('manual Mixed materializes M1, then keeps it visible until exact M2 evidenc
   assert.equal(visibleCaseId, 'M2');
 });
 
-test('defer progression uses the same exact evidence gate and fails closed if M2 disappeared', async () => {
+test('focused result distinguishes authoritative membership drift from a malformed response', async () => {
   const focused = await loadExactMixedFocus(
     async (caseId) => {
       assert.equal(caseId, 'M2');
@@ -305,24 +306,42 @@ test('defer progression uses the same exact evidence gate and fails closed if M2
     },
     'M2',
   );
-  assert.equal(focused, null);
+  assert.equal(focused.kind, 'membership_changed');
 });
 
 test('focused Mixed read fails closed for nonmandatory and wrong exact cases', async () => {
   for (const status of ['no_longer_unresolved', 'not_in_mandatory_queue', 'missing']) {
-    assert.equal(await loadExactMixedFocus(
+    assert.equal((await loadExactMixedFocus(
       async () => ({ requested_case_id: 'M2', status, case: null }),
       'M2',
-    ), null);
+    )).kind, 'membership_changed');
   }
-  assert.equal(await loadExactMixedFocus(
+  assert.equal((await loadExactMixedFocus(
     async () => ({
       requested_case_id: 'M2',
       status: 'current_blocking',
       case: { case_id: 'same-subject-but-different-case' },
     }),
     'M2',
-  ), null);
+  )).kind, 'invalid');
+});
+
+test('manual reconciliation preserves direction and never trusts the vanished local target', () => {
+  assert.equal(reconciledMixedFocusCaseId(
+    ['M1', 'M2', 'M3'],
+    'M1',
+    1,
+    ['M1', 'M3'],
+    'next',
+  ), 'M3');
+  assert.equal(reconciledMixedFocusCaseId(
+    ['M1', 'M2', 'M3'],
+    'M3',
+    1,
+    ['M1', 'M3'],
+    'previous',
+  ), 'M1');
+  assert.equal(reconciledMixedFocusCaseId(['M1'], 'M1', 0, [], 'next'), null);
 });
 
 test('segment presentation derives operator time from temporal evidence', () => {
