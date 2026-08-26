@@ -258,6 +258,10 @@ export function MixedPlayersReviewPanel({
     }
   }
 
+  function completeResolveNowIntent() {
+    if (entryMode === 'resolve_now') onResolveNowComplete?.();
+  }
+
   async function advanceAfterSave() {
     if (!queue || !reviewCase) return;
     const next = mixedQueueAfterSuccessfulSave(
@@ -292,11 +296,11 @@ export function MixedPlayersReviewPanel({
       onReturnToRequired?.();
       return;
     }
+    completeResolveNowIntent();
     if (destination === 'workflow') return;
     const refreshedQueue = await api.getQueue(match.id);
     setQueue(refreshedQueue);
     setIndex(0);
-    if (entryMode === 'resolve_now') onResolveNowComplete?.();
     setMessage(refreshedQueue.cases.length === 0
       ? 'Zapisano podział. Wymagane kolejki Review zostały odświeżone.'
       : 'Zapisano podział. Kolejka Mixed została odświeżona.');
@@ -316,6 +320,7 @@ export function MixedPlayersReviewPanel({
         onReturnToRequired?.();
         return;
       }
+      completeResolveNowIntent();
       if (destination === 'workflow') return;
       const refreshedQueue = await api.getQueue(match.id);
       setQueue(refreshedQueue);

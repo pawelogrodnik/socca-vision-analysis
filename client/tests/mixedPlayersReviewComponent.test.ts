@@ -129,6 +129,46 @@ function renderPanel(reviewApi: Partial<MixedPlayersReviewApi>) {
   }));
 }
 
+function splittableMixedCase(caseId: string): MixedPlayerCase {
+  const reviewCase = mixedCase(caseId, 2);
+  return {
+    ...reviewCase,
+    frame_start: 10,
+    frame_end: 20,
+    temporal_evidence: {
+      status: 'ready',
+      anchor_crops: [10, 20].map((frame) => ({
+        anchor_crop_id: `crop-${caseId}-${frame}`,
+        artifact: `${caseId}-${frame}.jpg`,
+        frame,
+        time_sec: frame,
+      })),
+    },
+  };
+}
+
+function workflowWithBlocking(normalBlocking: number, mixedBlocking: number): ReviewWorkflow {
+  return {
+    ...workflow,
+    issues: {
+      ...workflow.issues,
+      blocking: normalBlocking + mixedBlocking,
+      normal_blocking: normalBlocking,
+      mixed_blocking: mixedBlocking,
+    },
+  };
+}
+
+async function submitValidStructuralSplit(view: ReturnType<typeof render>) {
+  await waitFor(() => assert.ok(view.getByText('2 wykrytych obserwacji')));
+  fireEvent.click(view.getByRole('button', { name: 'Podziel tutaj' }));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — nieznany' }));
+  const save = view.getByRole('button', { name: 'Zapisz podział + następny' });
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
+  await act(async () => { fireEvent.click(save); });
+}
+
 test('M1 remains visible until the exact focused M2 evidence is ready', async () => {
   const m1 = mixedCase('M1', 11);
   const m2 = mixedCase('M2', 22);
@@ -308,4 +348,162 @@ test('resolve-now remains fail-closed and never reconciles to another Mixed case
   await waitFor(() => assert.ok(view.getByText('Nie można bezpiecznie otworzyć wskazanego przypadku Mixed.')));
   assert.equal(fullQueueReads, 0);
   assert.equal(view.queryByText('44 wykrytych obserwacji'), null);
+});
+
+test('successful structural retry that remains in Mixed completes resolve-now intent once', async () => {
+  const m1 = splittableMixedCase('M1');
+  const m2 = mixedCase('M2', 22);
+  let saves = 0;
+  let reprojects = 0;
+  let fullQueueReads = 0;
+  let resolveNowCompletions = 0;
+  let requiredReturns = 0;
+  const view = render(React.createElement(MixedPlayersReviewPanel, {
+    match,
+    workflow,
+    focusCaseId: 'M1',
+    entryMode: 'resolve_now',
+    onWorkflowChanged: () => undefined,
+    onResolveNowComplete: () => { resolveNowCompletions += 1; },
+    onReturnToRequired: () => { requiredReturns += 1; },
+    reviewApi: {
+      getFocusedCase: async () => focusedResponse('M1', 'current_blocking', m1),
+      saveResolution: async () => {
+        saves += 1;
+        return { saved_case: m1, semantic_decision_digest: 'saved-M1', recompute_deferred: true };
+      },
+      reprojectWorkflow: async () => {
+        reprojects += 1;
+        if (reprojects === 1) throw new Error('first reproject failed');
+        return workflowWithBlocking(0, 2);
+      },
+      getQueue: async () => { fullQueueReads += 1; return queue([m2]); },
+    },
+  }));
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText('Podział został zapisany, ale kolejka Review wymaga odświeżenia.')));
+  assert.equal(resolveNowCompletions, 0);
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Spróbuj odświeżyć Review' })); });
+  await waitFor(() => assert.ok(view.getByText('22 wykrytych obserwacji')));
+
+  assert.equal(saves, 1);
+  assert.equal(reprojects, 2);
+  assert.equal(resolveNowCompletions, 1);
+  assert.equal(requiredReturns, 0);
+  assert.equal(fullQueueReads, 1);
+});
+
+test('successful structural retry returns resolve-now to Required without reloading Mixed', async () => {
+  const m1 = splittableMixedCase('M1');
+  let saves = 0;
+  let reprojects = 0;
+  let fullQueueReads = 0;
+  let resolveNowCompletions = 0;
+  let requiredReturns = 0;
+  const view = render(React.createElement(MixedPlayersReviewPanel, {
+    match,
+    workflow,
+    focusCaseId: 'M1',
+    entryMode: 'resolve_now',
+    onWorkflowChanged: () => undefined,
+    onResolveNowComplete: () => { resolveNowCompletions += 1; },
+    onReturnToRequired: () => { requiredReturns += 1; },
+    reviewApi: {
+      getFocusedCase: async () => focusedResponse('M1', 'current_blocking', m1),
+      saveResolution: async () => {
+        saves += 1;
+        return { saved_case: m1, semantic_decision_digest: 'saved-M1', recompute_deferred: true };
+      },
+      reprojectWorkflow: async () => {
+        reprojects += 1;
+        if (reprojects === 1) throw new Error('first reproject failed');
+        return workflowWithBlocking(3, 2);
+      },
+      getQueue: async () => { fullQueueReads += 1; return queue([]); },
+    },
+  }));
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText('Podział został zapisany, ale kolejka Review wymaga odświeżenia.')));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Spróbuj odświeżyć Review' })); });
+  await waitFor(() => assert.equal(requiredReturns, 1));
+
+  assert.equal(saves, 1);
+  assert.equal(reprojects, 2);
+  assert.equal(resolveNowCompletions, 0);
+  assert.equal(fullQueueReads, 0);
+});
+
+test('successful structural retry to workflow completes resolve-now intent without replaying split', async () => {
+  const m1 = splittableMixedCase('M1');
+  let saves = 0;
+  let reprojects = 0;
+  let fullQueueReads = 0;
+  let resolveNowCompletions = 0;
+  let requiredReturns = 0;
+  const view = render(React.createElement(MixedPlayersReviewPanel, {
+    match,
+    workflow,
+    focusCaseId: 'M1',
+    entryMode: 'resolve_now',
+    onWorkflowChanged: () => undefined,
+    onResolveNowComplete: () => { resolveNowCompletions += 1; },
+    onReturnToRequired: () => { requiredReturns += 1; },
+    reviewApi: {
+      getFocusedCase: async () => focusedResponse('M1', 'current_blocking', m1),
+      saveResolution: async () => {
+        saves += 1;
+        return { saved_case: m1, semantic_decision_digest: 'saved-M1', recompute_deferred: true };
+      },
+      reprojectWorkflow: async () => {
+        reprojects += 1;
+        if (reprojects === 1) throw new Error('first reproject failed');
+        return workflowWithBlocking(0, 0);
+      },
+      getQueue: async () => { fullQueueReads += 1; return queue([]); },
+    },
+  }));
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText('Podział został zapisany, ale kolejka Review wymaga odświeżenia.')));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Spróbuj odświeżyć Review' })); });
+  await waitFor(() => assert.equal(resolveNowCompletions, 1));
+
+  assert.equal(saves, 1);
+  assert.equal(reprojects, 2);
+  assert.equal(requiredReturns, 0);
+  assert.equal(fullQueueReads, 0);
+});
+
+test('normal successful resolve-now reproject to workflow clears its one-shot intent', async () => {
+  const m1 = splittableMixedCase('M1');
+  let saves = 0;
+  let reprojects = 0;
+  let resolveNowCompletions = 0;
+  const view = render(React.createElement(MixedPlayersReviewPanel, {
+    match,
+    workflow,
+    focusCaseId: 'M1',
+    entryMode: 'resolve_now',
+    onWorkflowChanged: () => undefined,
+    onResolveNowComplete: () => { resolveNowCompletions += 1; },
+    reviewApi: {
+      getFocusedCase: async () => focusedResponse('M1', 'current_blocking', m1),
+      saveResolution: async () => {
+        saves += 1;
+        return { saved_case: m1, semantic_decision_digest: 'saved-M1', recompute_deferred: true };
+      },
+      reprojectWorkflow: async () => {
+        reprojects += 1;
+        return workflowWithBlocking(0, 0);
+      },
+    },
+  }));
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.equal(resolveNowCompletions, 1));
+
+  assert.equal(saves, 1);
+  assert.equal(reprojects, 1);
 });
