@@ -312,6 +312,111 @@ test('serial-to-concurrent save race refreshes exact case without retry or fake 
   assert.ok(view.getByText(/Pokazano aktualny przypadek/));
 });
 
+test('failed exact recovery after split rejection keeps stale serial case fail-closed', async () => {
+  const serial = splittableMixedCase('M-save-recovery-fails');
+  let saves = 0;
+  let focusedReads = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([serial]),
+    saveResolution: async () => {
+      saves += 1;
+      throw new ApiRequestError(409, 'topology changed', 'temporal_split_not_separable');
+    },
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      throw new Error('focused read unavailable');
+    },
+    reprojectWorkflow: async () => {
+      reprojects += 1;
+      return workflow;
+    },
+  });
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText(/Nie udało się odświeżyć aktualnego przypadku/)));
+
+  assert.equal(saves, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(reprojects, 0);
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
+  assert.ok(view.getByRole('button', { name: 'Nie ma prostego podziału czasowego' }));
+});
+
+test('failed exact recovery after refinement rejection keeps stale serial case fail-closed', async () => {
+  const serial = {
+    ...splittableMixedCase('M-refinement-recovery-fails'),
+    observation_count: 13,
+  };
+  let refinements = 0;
+  let focusedReads = 0;
+  let saves = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([serial]),
+    getBoundaryRefinement: async () => {
+      refinements += 1;
+      throw new ApiRequestError(409, 'topology changed', 'temporal_split_not_separable');
+    },
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      throw new Error('focused read unavailable');
+    },
+    saveResolution: async () => {
+      saves += 1;
+      throw new Error('save must not run');
+    },
+    reprojectWorkflow: async () => {
+      reprojects += 1;
+      return workflow;
+    },
+  });
+
+  await waitFor(() => assert.ok(view.getByText('13 wykrytych obserwacji')));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' })); });
+  await waitFor(() => assert.ok(view.getByText(/Nie udało się odświeżyć aktualnego przypadku/)));
+
+  assert.equal(refinements, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(saves, 0);
+  assert.equal(reprojects, 0);
+  assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
+});
+
+test('topology rejection for one case resets after exact navigation to another case', async () => {
+  const m1 = splittableMixedCase('M1-rejected');
+  const m2 = {
+    ...splittableMixedCase('M2-authoritative'),
+    observation_count: 3,
+  };
+  const focusedIds: string[] = [];
+  const view = renderPanel({
+    getQueue: async () => queue([m1, m2]),
+    saveResolution: async () => {
+      throw new ApiRequestError(409, 'topology changed', 'temporal_split_not_separable');
+    },
+    getFocusedCase: async (_matchId, caseId) => {
+      focusedIds.push(caseId);
+      if (caseId === m1.case_id) throw new Error('focused read unavailable');
+      return focusedResponse(m2.case_id, 'current_blocking', m2);
+    },
+  });
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText(/Nie udało się odświeżyć aktualnego przypadku/)));
+  assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
+
+  fireEvent.click(view.getByRole('button', { name: 'Następny' }));
+  await waitFor(() => assert.ok(view.getByText('3 wykrytych obserwacji')));
+
+  assert.deepEqual(focusedIds, [m1.case_id, m2.case_id]);
+  assert.ok(view.getByRole('button', { name: 'Podziel tutaj' }));
+});
+
 test('M1 remains visible until the exact focused M2 evidence is ready', async () => {
   const m1 = mixedCase('M1', 11);
   const m2 = mixedCase('M2', 22);

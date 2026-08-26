@@ -65,7 +65,10 @@ export function MixedPlayersReviewPanel({
   const [message, setMessage] = useState('');
   const [focusMissing, setFocusMissing] = useState(false);
   const [reprojectFailed, setReprojectFailed] = useState(false);
+  const [topologyRejected, setTopologyRejected] = useState(false);
   const caseNavigationRequestRef = useRef(0);
+  const simpleSplitAllowed = reviewCase?.temporal_topology?.simple_split_allowed === true
+    && !topologyRejected;
   void workflow;
 
   useEffect(() => {
@@ -122,6 +125,7 @@ export function MixedPlayersReviewPanel({
   }, [hasUnsavedChanges, onLeaveGuard]);
 
   useEffect(() => {
+    setTopologyRejected(false);
     if (!reviewCase) return;
     const nextBoundaries: number[] = [];
     setBoundaries(nextBoundaries);
@@ -156,7 +160,7 @@ export function MixedPlayersReviewPanel({
   }
 
   async function openRefinement(afterFrame: number, beforeFrame: number) {
-    if (!reviewCase?.temporal_topology?.simple_split_allowed) return;
+    if (!reviewCase || !simpleSplitAllowed) return;
     setRefinementBusy(true);
     setMessage('');
     try {
@@ -205,7 +209,7 @@ export function MixedPlayersReviewPanel({
   }
 
   function directBoundary(afterFrame: number) {
-    if (!reviewCase?.temporal_topology?.simple_split_allowed) return;
+    if (!reviewCase || !simpleSplitAllowed) return;
     applyBoundaries(boundaries.includes(afterFrame)
       ? boundaries.filter((frame) => frame !== afterFrame)
       : [...boundaries, afterFrame].sort((left, right) => left - right));
@@ -222,7 +226,7 @@ export function MixedPlayersReviewPanel({
   }
 
   async function saveSplit() {
-    if (!reviewCase || !validMixedResolution(reviewCase, boundaries, assignments)) return;
+    if (!reviewCase || !simpleSplitAllowed || !validMixedResolution(reviewCase, boundaries, assignments)) return;
     setBusy(true);
     setMessage('');
     try {
@@ -270,6 +274,7 @@ export function MixedPlayersReviewPanel({
   }
 
   async function recoverAfterTopologyConflict() {
+    setTopologyRejected(true);
     setBoundaries([]);
     setAssignments([]);
     setSelectedSegment(0);
@@ -280,18 +285,23 @@ export function MixedPlayersReviewPanel({
       setMessage('Ten materiał nie ma już prostego podziału czasowego. Otwórz przypadek ponownie przed dalszą pracą.');
       return;
     }
-    const focused = await loadExactMixedFocus(
-      (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
-      caseId,
-    );
-    if (focused.kind === 'visible' && showFocusedCase(queue, caseId, focused)) {
-      setMessage('Ten materiał nie ma już prostego podziału czasowego, ponieważ tracklety nakładają się w czasie. Pokazano aktualny przypadek.');
-      return;
+    try {
+      const focused = await loadExactMixedFocus(
+        (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+        caseId,
+      );
+      if (focused.kind === 'visible' && showFocusedCase(queue, caseId, focused)) {
+        setTopologyRejected(false);
+        setMessage('Ten materiał nie ma już prostego podziału czasowego, ponieważ tracklety nakładają się w czasie. Pokazano aktualny przypadek.');
+        return;
+      }
+      setQueue(null);
+      setIndex(0);
+      setFocusMissing(true);
+      setMessage('Ten materiał nie ma już prostego podziału czasowego, a dokładny przypadek zmienił się podczas odświeżenia. Odśwież Review.');
+    } catch {
+      setMessage('Ten materiał nie ma już potwierdzonego prostego podziału czasowego. Nie udało się odświeżyć aktualnego przypadku. Odśwież Review przed dalszą próbą podziału.');
     }
-    setQueue(null);
-    setIndex(0);
-    setFocusMissing(true);
-    setMessage('Ten materiał nie ma już prostego podziału czasowego, a dokładny przypadek zmienił się podczas odświeżenia. Odśwież Review.');
   }
 
   function completeResolveNowIntent() {
@@ -531,7 +541,6 @@ export function MixedPlayersReviewPanel({
   </section>;
 
   const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
-  const simpleSplitAllowed = reviewCase.temporal_topology?.simple_split_allowed === true;
   const selectedAssignment = assignments[selectedSegment] || null;
   const selected = segments[selectedSegment];
   const segmentTimeLabel = (frameStart: number, frameEnd: number) => {
