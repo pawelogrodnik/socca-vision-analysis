@@ -1521,11 +1521,13 @@ def _has_explicit_disposition(unit: dict[str, Any], match_doc: dict[str, Any]) -
         return False
     if action == "assign_roster_player":
         return True
-    # A material continuity case is a focused safety question: should this
-    # exact interval receive a name?  An explicit "Nie wiem" resolves that
-    # question even when Team A still has separate complete-roster coverage
-    # debt to surface elsewhere.
-    if is_material_continuity_case(unit) and action == "unresolved":
+    # "Nie wiem" is a completed operator decision for this exact source, not
+    # a temporary absence of a decision. In particular, complete-roster
+    # coverage must never keep presenting the same ambiguous/corrupt crop in
+    # an attempt to force a name. The residual coverage gap remains explicit
+    # in readiness as unavailable, and a changed ownership digest creates a
+    # new unit which can be reviewed again.
+    if action == "unresolved":
         return True
     team = _team_label(unit.get("effective_team_label"))
     return roster_scope(match_doc, team) != "complete_roster"

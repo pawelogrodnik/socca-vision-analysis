@@ -97,6 +97,9 @@ from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
 )
+from app.services.identity_reviewed_correction_context import (
+    reviewed_decisions_semantic_digest,
+)
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     validate_identity_review_scope,
@@ -127,10 +130,13 @@ from app.services.identity_reviewed_slot_review import (
 )
 from app.services.identity_reviewed_segments import SegmentTargetError
 from app.services.identity_reviewed_mixed_store import (
+    build_focused_mixed_review_case,
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
     inline_temporal_split_for_source,
+    render_mixed_review_evidence,
 )
+from app.services.identity_canonical_io import review_build_context
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
     save_inline_temporal_split,
@@ -2042,6 +2048,32 @@ def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
+@app.post("/api/matches/{match_id}/review-workflow/reproject")
+def reproject_match_review_workflow(match_id: str) -> dict[str, Any]:
+    """Refresh durable Review projections after a structural Review mutation.
+
+    This is deliberately separate from finalization and from the operator
+    retry action. A Mixed temporal split invalidates topology, coverage and
+    Required pagination; it therefore needs one authoritative projection even
+    while other Required work remains.
+    """
+    path = match_dir(match_id)
+    try:
+        return refresh_review_after_identity_mutation(
+            path,
+            read_match_meta(path),
+            source="mixed_players_reproject",
+            # Structural Mixed saves already invalidate the old generation.
+            # Reproject exactly once, leave that authoritative generation warm
+            # for Required offset-0 navigation, and do not globally render
+            # every possible Review crop on this click path.
+            operator_evidence=False,
+            leave_hot_state_warm=True,
+        )
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
 @app.get("/api/matches/{match_id}/reviewed-identity/review-progress")
 def get_match_reviewed_identity_progress(
     match_id: str,
@@ -2165,7 +2197,13 @@ def get_match_reviewed_correction_context(
     started = time.perf_counter()
     try:
         state_started = time.perf_counter()
-        state = load_or_rebuild_review_hot_state(path, read_match_meta(path))
+        # Context is a read for the card selected by progress. It must never
+        # cold-rebuild the shared queue: concurrent prefetches previously
+        # raced a save and changed the review-state version underneath the
+        # operator. Progress owns authoritative recovery materialization.
+        state = load_existing_fresh_hot_state(path, read_match_meta(path))
+        if state is None:
+            raise ReviewedIdentityHotStateError("review_state_stale")
         state_ms = round((time.perf_counter() - state_started) * 1000, 1)
         context_started = time.perf_counter()
         result = hot_context(state, candidate_subject_id, review_target_id)
@@ -2180,6 +2218,14 @@ def get_match_reviewed_correction_context(
             "total_ms": elapsed_ms,
         }
         return result
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": "Stan Review zmienił się. Synchronizuję kolejkę Review.",
+            },
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2202,6 +2248,46 @@ def post_match_reviewed_identity_correction(
                 payload,
             )
             deferred_gate_ms = round((time.perf_counter() - started) * 1000, 1)
+            if deferred_gate.get("idempotent_replay") is True:
+                # The mutation was already durably accepted. Do not touch
+                # canonical decisions or patch the hot projection again: the
+                # caller must obtain the current authoritative queue instead
+                # of treating this replay as a second successful decision.
+                hot_state = deferred_gate.get("hot_state")
+                return {
+                    "saved_decision": deferred_gate.get("saved_decision"),
+                    "effective_action": str(payload.get("action") or ""),
+                    "allocated_stable_slot_id": None,
+                    "semantic_decision_digest": reviewed_decisions_semantic_digest(path),
+                    "recompute_deferred": True,
+                    "idempotent_replay": True,
+                    "review_state_version": (
+                        hot_state.get("state_version")
+                        if isinstance(hot_state, dict)
+                        else None
+                    ),
+                    "coverage_debt": (
+                        dict((hot_state.get("progress") or {}).get("coverage_debt") or {})
+                        if isinstance(hot_state, dict)
+                        else None
+                    ),
+                    "persistence": {
+                        "status": "already_saved",
+                        "downstream_recompute_triggered": False,
+                    },
+                    "performance": {
+                        "workflow_validation_ms": 0.0,
+                        "deferred_gate_ms": deferred_gate_ms,
+                        "persist_decision_ms": 0.0,
+                        "hot_state_update_ms": 0.0,
+                        "seeded_candidate_rebuild_ms": 0.0,
+                        "finalize_reviewed_identity_ms": 0.0,
+                        "segment_evidence_ms": 0.0,
+                        "progress_build_ms": 0.0,
+                        "final_workflow_ms": 0.0,
+                        "total_ms": round((time.perf_counter() - started) * 1000, 1),
+                    },
+                }
             persist_started = time.perf_counter()
             result = persist_reviewed_identity_correction(
                 path,
@@ -2242,6 +2328,16 @@ def post_match_reviewed_identity_correction(
                         # rebuild from canonical artifacts.
                         invalidate_review_hot_state(path)
                         result["review_state_rebuild_required"] = True
+            if isinstance(hot_state, dict) and result.get("review_state_rebuild_required") is not True:
+                # A versioned deferred save has an authoritative hot
+                # projection already. Return its workflow view so Required
+                # and Mixed badges do not display a stale durable snapshot
+                # while the later structural reprojection is still pending.
+                result["workflow"] = get_review_workflow_state(
+                    path,
+                    match_document,
+                    progress=hot_progress(hot_state),
+                )
             hot_state_ms = round((time.perf_counter() - hot_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(
@@ -2457,10 +2553,24 @@ def finalize_match_reviewed_identity_corrections(match_id: str) -> dict[str, Any
 
 
 @app.get("/api/matches/{match_id}/reviewed-identity/mixed-players")
-def get_match_reviewed_identity_mixed_players(match_id: str) -> dict[str, Any]:
+def get_match_reviewed_identity_mixed_players(
+    match_id: str,
+) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return build_mixed_review_queue(path, read_match_meta(path))
+        with review_build_context():
+            match_document = read_match_meta(path)
+            queue = build_mixed_review_queue(path, match_document)
+            # Manual entry needs authoritative membership and ordering, but
+            # still materializes evidence only for its first visible card.
+            evidence_case = next(iter(queue.get("cases") or []), None)
+            if isinstance(evidence_case, dict):
+                render_mixed_review_evidence(
+                    path,
+                    match_document,
+                    {"cases": [evidence_case]},
+                )
+            return queue
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2477,19 +2587,48 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return build_mixed_boundary_refinement(
-            path,
-            read_match_meta(path),
-            candidate_subject_id,
-            after_frame,
-            before_frame,
-            case_id=case_id if isinstance(case_id, str) else None,
-        )
+        with review_build_context():
+            return build_mixed_boundary_refinement(
+                path,
+                read_match_meta(path),
+                candidate_subject_id,
+                after_frame,
+                before_frame,
+                case_id=case_id if isinstance(case_id, str) else None,
+            )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         status = 409 if str(exc) == "mixed_player_case_stale" else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/mixed-players/{case_id}")
+def get_match_reviewed_identity_mixed_player_case(
+    match_id: str,
+    case_id: str,
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        with review_build_context():
+            match_document = read_match_meta(path)
+            focused = build_focused_mixed_review_case(
+                path,
+                match_document,
+                case_id,
+            )
+            exact_case = focused.get("case")
+            if isinstance(exact_case, dict):
+                render_mixed_review_evidence(
+                    path,
+                    match_document,
+                    {"cases": [exact_case]},
+                )
+            return focused
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/mixed-players/resolve")

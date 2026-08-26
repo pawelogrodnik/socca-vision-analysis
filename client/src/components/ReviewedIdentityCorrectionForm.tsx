@@ -39,6 +39,7 @@ type Props = {
   onCancel: () => void;
   onSaved: (result: ReviewedCorrectionResponse) => void;
   onSaveConflict?: () => void;
+  onMixedStaged?: (caseId: string, disposition: 'resolve_now' | 'defer') => void;
   teams?: Team[];
   teamAttributionOnly?: boolean;
   deferRecompute?: boolean;
@@ -69,6 +70,7 @@ export function ReviewedIdentityCorrectionForm({
   onCancel,
   onSaved,
   onSaveConflict,
+  onMixedStaged,
   teams,
   deferRecompute = false,
   mixedHandling = 'stage',
@@ -77,6 +79,7 @@ export function ReviewedIdentityCorrectionForm({
   const subjectId = entity.candidate_subject_id;
   const [context, setContext] = useState<Awaited<ReturnType<typeof loadReviewedCorrectionContext>> | null>(null);
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
+  const [mixedDisposition, setMixedDisposition] = useState<'resolve_now' | 'defer' | null>(null);
   const [splitEditorOpen, setSplitEditorOpen] = useState(false);
   const [selectedTeamLabel, setSelectedTeamLabel] = useState('');
   const [playerId, setPlayerId] = useState('');
@@ -91,6 +94,7 @@ export function ReviewedIdentityCorrectionForm({
 
     setContext(null);
     setAction(null);
+    setMixedDisposition(null);
     setSplitEditorOpen(false);
     setSelectedTeamLabel('');
     setPlayerId('');
@@ -118,7 +122,16 @@ export function ReviewedIdentityCorrectionForm({
         }
       })
       .catch((reason) => {
-        if (!cancelled) setError(errorMessage(reason));
+        if (cancelled) return;
+        if (onSaveConflict && isRecoverableReviewQueueConflict(reason)) {
+          // Context is intentionally read-only. A stale context means the
+          // queue changed while it was being prefetched, so let the parent
+          // recover from progress rather than showing a dead card.
+          invalidateReviewedCorrectionContext(matchId);
+          onSaveConflict();
+          return;
+        }
+        setError(errorMessage(reason));
       })
       .finally(() => {
         if (!cancelled) setBusy(false);
@@ -151,7 +164,8 @@ export function ReviewedIdentityCorrectionForm({
     && (action !== 'assign_team' || ['A', 'B'].includes(selectedTeamLabel))
     && (action !== 'assign_roster_player' || Boolean(playerId))
     && (action !== 'assign_existing_slot' || Boolean(stableSlotId))
-    && (action !== 'create_new_stable_player' || ['A', 'B'].includes(selectedTeamLabel));
+    && (action !== 'create_new_stable_player' || ['A', 'B'].includes(selectedTeamLabel))
+    && (action !== 'mixed_players' || mixedDisposition !== null);
 
   function selectAction(nextAction: UiAction) {
     if (nextAction === 'split') {
@@ -159,6 +173,7 @@ export function ReviewedIdentityCorrectionForm({
       setAction(null);
       return;
     }
+    setMixedDisposition(null);
     if (nextAction === 'assign_team' && !['A', 'B'].includes(selectedTeamLabel)) {
       setSelectedTeamLabel('A');
     }
@@ -175,6 +190,7 @@ export function ReviewedIdentityCorrectionForm({
 
   function returnToCategories() {
     setAction(null);
+    setMixedDisposition(null);
     setPlayerId('');
     setStableSlotId('');
     setSelectedTeamLabel(context ? defaultCorrectionTeam(context) : '');
@@ -219,6 +235,10 @@ export function ReviewedIdentityCorrectionForm({
             invalidateReviewedCorrectionContextsBeforeVersion(matchId, result.review_state_version);
           }
           onSaved(result);
+          if (action === 'mixed_players' && mixedDisposition && onMixedStaged) {
+            const caseId = String(result.saved_decision?.case_id || '');
+            if (caseId) onMixedStaged(caseId, mixedDisposition);
+          }
         },
       );
     } catch (reason) {
@@ -348,7 +368,29 @@ export function ReviewedIdentityCorrectionForm({
           </select>
         </label>}
         {action === 'create_new_stable_player' && <p className='reviewed-correction-range'>Utworzy nowego, odrębnego anonimowego zawodnika w {operatorTeamName(selectedTeamLabel)}.</p>}
+        {action === 'mixed_players' && <>
+          <p className='reviewed-correction-range'>Ten dokładny fragment zostanie odłożony jako Mixed. Wybierz, czy przejść do pełnego stanowiska podziału od razu, czy kontynuować kolejkę Required.</p>
+          <div className='reviewed-action-cards' role='radiogroup' aria-label='Sposób obsługi zmieszanych graczy'>
+            <button
+              type='button'
+              role='radio'
+              aria-checked={mixedDisposition === 'resolve_now'}
+              className={mixedDisposition === 'resolve_now' ? 'reviewed-action-card selected' : 'reviewed-action-card'}
+              onClick={() => setMixedDisposition('resolve_now')}
+              disabled={busy}
+            >Rozwiąż teraz</button>
+            <button
+              type='button'
+              role='radio'
+              aria-checked={mixedDisposition === 'defer'}
+              className={mixedDisposition === 'defer' ? 'reviewed-action-card selected' : 'reviewed-action-card'}
+              onClick={() => setMixedDisposition('defer')}
+              disabled={busy}
+            >Odłóż do Mixed</button>
+          </div>
+        </>}
         {!['assign_team', 'assign_roster_player', 'assign_existing_slot', 'create_new_stable_player'].includes(action)
+          && action !== 'mixed_players'
           && <p className='reviewed-correction-range'>Wybrano: <strong>{actionLabel}</strong>. Zapisz decyzję, aby przejść do kolejnego przypadku.</p>}
         <label>Dodatkowy komentarz (opcjonalnie)
           <textarea value={comment} onChange={(event) => setComment(event.target.value)} disabled={busy} rows={3} />

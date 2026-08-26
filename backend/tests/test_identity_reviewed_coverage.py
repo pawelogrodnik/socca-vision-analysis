@@ -1483,6 +1483,35 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             {row["code"] for row in policy["readiness"]["blockers"]},
         )
 
+    def test_explicit_unresolved_coverage_case_is_not_requeued_to_force_a_name(self) -> None:
+        rows = [
+            _observation("named", frame, "A", "confirmed", "p1")
+            for frame in range(880)
+        ] + [
+            _observation("ambiguous", frame, "A", "unresolved", None)
+            for frame in range(880, 1_000)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        ambiguous = _unit(
+            "ambiguous",
+            [("ambiguous", frame) for frame in range(880, 1_000)],
+            visual=True,
+        )
+        ambiguous.update(
+            current_decision={"action": "unresolved"},
+            current_resolution_status="reviewed_by_operator",
+        )
+
+        policy = apply_coverage_policy([ambiguous], coverage, pair_index, _scoped_match())
+
+        self.assertEqual(policy["coverage_blockers"], 0)
+        self.assertEqual(policy["next_cases"], [])
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+        self.assertIn(
+            "complete_roster_named_coverage_gap_unreachable",
+            {row["code"] for row in policy["readiness"]["blockers"]},
+        )
+
     def test_stale_unresolved_material_decision_does_not_hide_changed_case(self) -> None:
         members = _continuity_members(team="A")
         original = next(

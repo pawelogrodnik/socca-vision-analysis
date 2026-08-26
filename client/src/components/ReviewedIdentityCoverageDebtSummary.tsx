@@ -9,7 +9,6 @@ import {
 type Props = {
   match: Match;
   debt: ReviewedIdentityCoverageDebt;
-  mixedLocked: boolean;
 };
 
 const rows = [
@@ -20,7 +19,7 @@ const rows = [
   ['unavailable', 'Bez bezpiecznej ścieżki', false],
 ] as const;
 
-export function ReviewedIdentityCoverageDebtSummary({ match, debt, mixedLocked }: Props) {
+export function ReviewedIdentityCoverageDebtSummary({ match, debt }: Props) {
   const teams = coverageDebtPresentationTeams(debt).filter((item) => item.show);
   if (teams.length === 0) return null;
 
@@ -62,7 +61,7 @@ export function ReviewedIdentityCoverageDebtSummary({ match, debt, mixedLocked }
             {requiredBreakdownLabel(kind as 'semantic' | 'continuity' | 'coverage')}: {item.case_count} przypadków · {item.unique_observations} obserwacji
           </small>)}
         </div>}
-        {team.buckets.mixed.unique_observations > 0 && mixedLocked && <p>Mixed Players stanie się dostępne po zakończeniu wymaganych przypadków.</p>}
+        {team.buckets.mixed.unique_observations > 0 && <p>Zmieszanych graczy można rozwiązywać równolegle z pozostałymi przypadkami.</p>}
         {team.unaccounted_unnamed_observations !== 0 && <p className='identity-coverage-debt-diagnostic'>Diagnostyka: {team.unaccounted_unnamed_observations} nieprzypisanych obserwacji.</p>}
       </div>;
     })}

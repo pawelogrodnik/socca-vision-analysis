@@ -89,13 +89,13 @@ test('required breakdown uses product labels', () => {
   assert.equal(requiredBreakdownLabel('coverage'), 'Pokrycie imienne');
 });
 
-test('coverage debt presentation explains pending Mixed without changing workflow access', () => {
+test('coverage debt presentation explains that Mixed is parallel to Required', () => {
   const components = new URL('../src/components/', import.meta.url);
   const summary = readFileSync(new URL('ReviewedIdentityCoverageDebtSummary.tsx', components), 'utf8');
 
   assert.match(summary, /Gdzie jest pozostałe pokrycie/);
   assert.match(summary, /Brak zwykłych wymaganych przypadków/);
-  assert.match(summary, /Mixed Players stanie się dostępne po zakończeniu wymaganych przypadków/);
+  assert.match(summary, /Zmieszanych graczy można rozwiązywać równolegle z pozostałymi przypadkami/);
   assert.match(summary, /do \$\{formatReviewedIdentityPercentagePoints/);
   assert.match(summary, /Rozpoznanie zawodników tej drużyny nie jest wymagane/);
   assert.match(summary, /Dług tożsamości operatora/);

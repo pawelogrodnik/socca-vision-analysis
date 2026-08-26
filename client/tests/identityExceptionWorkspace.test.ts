@@ -109,6 +109,22 @@ test('workstation recovery only reloads authoritative progress and never treats 
 });
 
 
+test('idempotent replay reloads instead of decrementing or finalizing a Required card', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
+  const savedStart = panel.indexOf('function saved(result: ReviewedCorrectionResponse)');
+  const savedEnd = panel.indexOf('function recoverFromReviewSaveConflict()', savedStart);
+  const saved = panel.slice(savedStart, savedEnd);
+  const replay = saved.slice(
+    saved.indexOf('if (result.idempotent_replay)'),
+    saved.indexOf('const savedKey'),
+  );
+
+  assert.match(replay, /recoverFromReviewSaveConflict\(\)/);
+  assert.doesNotMatch(replay, /markIfNew|setTotalRemaining|finalizeCorrections|recordDurableRequiredReviewSave/);
+});
+
+
 test('exception workstation keeps one active case and stateful correction subviews', () => {
   const components = new URL('../src/components/', import.meta.url);
   const panel = readFileSync(new URL('IdentityExceptionReviewPanel.tsx', components), 'utf8');
@@ -142,6 +158,7 @@ test('exception workstation keeps one active case and stateful correction subvie
   assert.match(form, /persistReviewDecision/);
   assert.match(form, /saveInFlightRef/);
   assert.match(form, /onSaveConflict && isRecoverableReviewQueueConflict\(reason\)/);
+  assert.match(form, /Context is intentionally read-only/);
   assert.match(panel, /resetForAuthoritativeQueue\(\)/);
   assert.match(panel, /recoverFromReviewSaveConflict/);
   assert.match(panel, /setCases\(recovery\.localCases\)/);

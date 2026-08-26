@@ -72,6 +72,26 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "identity_issues_remaining")
         self.assertEqual(raised.exception.state["phase"], "exceptions")
 
+    def test_required_and_blocking_mixed_are_parallel_review_actions(self) -> None:
+        state = derive_review_workflow_state(evidence(issues={
+            "blocking": 34,
+            "normal_blocking": 6,
+            "mixed_blocking": 28,
+            "mixed_total": 28,
+            "mixed_resolved": 0,
+            "important": 34,
+        }))
+
+        self.assertEqual(state["phase"], "exceptions")
+        self.assertEqual(
+            state["allowed_actions"],
+            ["review_identity_issue", "review_mixed_players"],
+        )
+        steps = {row["id"]: row for row in state["steps"]}
+        self.assertEqual(steps["exceptions"]["status"], "current")
+        self.assertEqual(steps["mixed_players"]["status"], "current")
+        self.assertNotIn("finalize_identity", state["allowed_actions"])
+
     def test_technical_structural_diagnostics_do_not_become_blockers(self) -> None:
         state = derive_review_workflow_state(evidence(issues={"blocking": 0, "important": 0, "optional": 0}))
         self.assertEqual(state["phase"], "ready_to_finalize")

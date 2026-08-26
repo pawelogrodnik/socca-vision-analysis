@@ -256,6 +256,65 @@ class ReviewProgressColdWarmContractTests(unittest.TestCase):
             rebuild_review_hot_state(Path(tmp), _match(), prebuilt_progress=progress)
             build.assert_not_called()
 
+    def test_structural_reproject_warms_the_immediate_progress_read_without_another_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            side_effect=lambda *args, **kwargs: self._progress(),
+        ) as recovery_build, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "after-split"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=lambda *args, **kwargs: self._progress(),
+        ) as reproject_build, patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value={"issues": {"blocking": 1}, "phase": "review"},
+        ):
+            root = Path(tmp)
+            match = _match()
+
+            load_or_rebuild_review_hot_state(root, match)
+            self.assertEqual(recovery_build.call_count, 1)
+            self.assertIsNotNone(load_existing_fresh_hot_state(root, match))
+
+            # A structural save changes canonical topology and invalidates the
+            # old generation before the explicit Review reproject.
+            (root / "reviewed_identity_snapshot.json").write_text(
+                json.dumps({"semantic_digest": "after-split"}),
+                encoding="utf-8",
+            )
+            self.assertIsNone(load_existing_fresh_hot_state(root, match))
+
+            refresh_review_after_identity_mutation(
+                root,
+                match,
+                source="mixed_players_reproject",
+                operator_evidence=False,
+                leave_hot_state_warm=True,
+            )
+            self.assertEqual(reproject_build.call_count, 1)
+            self.assertEqual(recovery_build.call_count, 1)
+
+            # The real immediate GET review-progress consumes the warm
+            # generation and performs zero additional canonical builds.
+            from fastapi import Response
+            from app.main import get_match_reviewed_identity_progress
+
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value=match
+            ):
+                response = get_match_reviewed_identity_progress(
+                    match["id"],
+                    Response(),
+                    offset=0,
+                    limit=20,
+                    queue="required",
+                )
+            self.assertEqual(response["summary"]["important_decisions_remaining"], 1)
+            self.assertEqual(response["server_timing"]["review_hot_state_source"], "warm_hit")
+            self.assertEqual(reproject_build.call_count, 1)
+            self.assertEqual(recovery_build.call_count, 1)
+
 
 class FinalizeResponseContractTests(unittest.TestCase):
     def test_authoritative_snapshot_builder_runs_exactly_once_per_refresh(self) -> None:

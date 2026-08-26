@@ -69,6 +69,10 @@ type Props = {
   onRetryReview?: () => Promise<void>;
   initialQueue?: ReviewedIdentityReviewQueue;
   onOptionalAuditSummaryChanged?: (summary: ReviewedIdentityOptionalAudit) => void;
+  showPrimaryQueueSwitch?: boolean;
+  onMixedResolveNow?: (caseId: string) => void;
+  requiredTeamFilter?: TeamReviewFilter;
+  onRequiredTeamFilterChange?: (teamFilter: TeamReviewFilter) => void;
 };
 
 type ReviewCase = {
@@ -136,6 +140,10 @@ export function IdentityExceptionReviewPanel({
   onRetryReview,
   initialQueue = 'required',
   onOptionalAuditSummaryChanged,
+  showPrimaryQueueSwitch = true,
+  onMixedResolveNow,
+  requiredTeamFilter = 'all',
+  onRequiredTeamFilterChange,
 }: Props) {
   const [coverageDetailsOpen, setCoverageDetailsOpen] = useState(false);
   const [cases, setCases] = useState<ReviewCase[]>([]);
@@ -151,7 +159,8 @@ export function IdentityExceptionReviewPanel({
   const [coverageDebt, setCoverageDebt] = useState<ReviewedIdentityCoverageDebt | null>(null);
   const [coverageReadiness, setCoverageReadiness] = useState<ReviewedIdentityCoverageReadiness | null>(null);
   const [workload, setWorkload] = useState<ReviewedIdentityWorkload | null>(null);
-  const [activeTeamFilter, setActiveTeamFilter] = useState<TeamReviewFilter>('all');
+  const [uncontrolledTeamFilter, setUncontrolledTeamFilter] = useState<TeamReviewFilter>('all');
+  const activeTeamFilter = onRequiredTeamFilterChange ? requiredTeamFilter : uncontrolledTeamFilter;
   const [reviewFilters, setReviewFilters] = useState<ReviewedIdentityReviewFilters | null>(null);
   const [activeQueue, setActiveQueue] = useState<ReviewedIdentityReviewQueue>(initialQueue);
   const [optionalAuditRemaining, setOptionalAuditRemaining] = useState(0);
@@ -247,11 +256,10 @@ export function IdentityExceptionReviewPanel({
 
   useEffect(() => {
     let disposed = false;
-    setActiveTeamFilter('all');
     setActiveQueue(initialQueue);
     requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
     requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
-    void loadCases(() => disposed, false, 0, 0, 'all', initialQueue);
+    void loadCases(() => disposed, false, 0, 0, activeTeamFilter, initialQueue);
     return () => { disposed = true; };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,7 +310,8 @@ export function IdentityExceptionReviewPanel({
 
   function changeTeamFilter(nextFilter: TeamReviewFilter) {
     if (nextFilter === activeTeamFilter || loading || finalizing) return;
-    setActiveTeamFilter(nextFilter);
+    if (onRequiredTeamFilterChange) onRequiredTeamFilterChange(nextFilter);
+    else setUncontrolledTeamFilter(nextFilter);
     setCases([]);
     setIndex(0);
     setPageOffset(0);
@@ -316,7 +325,6 @@ export function IdentityExceptionReviewPanel({
   function changeQueue(nextQueue: ReviewedIdentityReviewQueue) {
     if (nextQueue === activeQueue || loading || finalizing) return;
     setActiveQueue(nextQueue);
-    setActiveTeamFilter('all');
     setCases([]);
     setIndex(0);
     setPageOffset(0);
@@ -362,8 +370,15 @@ export function IdentityExceptionReviewPanel({
 
   function saved(result: ReviewedCorrectionResponse) {
     if (result.coverage_debt) setCoverageDebt(result.coverage_debt);
+    if (result.workflow) onWorkflowChanged(result.workflow);
     if (!reviewCase || !result.recompute_deferred) {
-      if (result.workflow) onWorkflowChanged(result.workflow);
+      return;
+    }
+    if (result.idempotent_replay) {
+      // A request can arrive after a previous accepted save (for example from
+      // an old card kept by a pre-policy cache). It is not another decision:
+      // do not decrement, finalize, or locally advance the Required queue.
+      recoverFromReviewSaveConflict();
       return;
     }
     const savedKey = reviewUnitKey(reviewCase.unit);
@@ -518,10 +533,10 @@ export function IdentityExceptionReviewPanel({
       </div>
       <div className='identity-exception-case-context' aria-live='polite'>
         <div className='identity-exception-controls'>
-          <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
+          {showPrimaryQueueSwitch && <nav className='identity-review-queue-switch' aria-label='Rodzaj kolejki Review'>
             <button type='button' className={activeQueue === 'required' ? 'active' : ''} onClick={() => changeQueue('required')} disabled={loading || finalizing}>Wymagane</button>
             <button type='button' className={activeQueue === 'optional_audit' ? 'active' : ''} onClick={() => changeQueue('optional_audit')} disabled={loading || finalizing}>Kontynuuj do MAX <span>{optionalAuditRemaining}</span></button>
-          </nav>
+          </nav>}
           {activeQueue === 'required' && <nav className='identity-team-review-filter' aria-label='Filtr przypadków według drużyny'>
             {filterOptions.map((option) => <button
               type='button'
@@ -583,7 +598,6 @@ export function IdentityExceptionReviewPanel({
     {coverageDebt && coverageDetailsOpen && <ReviewedIdentityCoverageDebtDialog
       match={match}
       debt={coverageDebt}
-      mixedLocked={(workflow.issues.normal_blocking ?? workflow.issues.blocking) > 0}
       onClose={() => setCoverageDetailsOpen(false)}
     />}
     {workload && workload.level !== 'normal' && <details className='identity-exception-guidance identity-coverage-warning'>
@@ -662,6 +676,9 @@ export function IdentityExceptionReviewPanel({
             onCancel={() => setMessage('Decyzja nie została zapisana.')}
             onSaved={saved}
             onSaveConflict={recoverFromReviewSaveConflict}
+            onMixedStaged={(caseId, disposition) => {
+              if (disposition === 'resolve_now') onMixedResolveNow?.(caseId);
+            }}
             deferRecompute
             mixedHandling={activeQueue === 'optional_audit' ? 'direct' : 'stage'}
             navigation={{

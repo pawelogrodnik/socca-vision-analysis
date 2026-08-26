@@ -254,6 +254,14 @@ export async function retryReviewRecompute(matchId: string): Promise<ReviewWorkf
   return response.workflow;
 }
 
+export async function reprojectReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/reproject`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
 export async function getReviewedIdentityReviewProgress(
   matchId: string,
   offset = 0,
@@ -367,9 +375,20 @@ export async function finalizeReviewedIdentityCorrections(
   );
 }
 
-export async function getMixedPlayersReview(matchId: string): Promise<import('./types').MixedPlayersReviewQueue> {
+export async function getMixedPlayersReview(
+  matchId: string,
+): Promise<import('./types').MixedPlayersReviewQueue> {
   return request<import('./types').MixedPlayersReviewQueue>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players`,
+  );
+}
+
+export async function getMixedPlayerReviewCase(
+  matchId: string,
+  caseId: string,
+): Promise<import('./types').MixedPlayerFocusedCaseResponse> {
+  return request<import('./types').MixedPlayerFocusedCaseResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/${encodeURIComponent(caseId)}`,
   );
 }
 

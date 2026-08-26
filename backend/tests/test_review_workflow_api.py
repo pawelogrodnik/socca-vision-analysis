@@ -14,6 +14,67 @@ FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for workflow API tests")
 class ReviewWorkflowApiTests(unittest.TestCase):
+    def test_structural_mixed_reproject_is_not_a_finalize_request(self) -> None:
+        from app.main import reproject_match_review_workflow
+
+        refreshed = {
+            "workflow": {
+                "phase": "exceptions",
+                "issues": {"normal_blocking": 4, "mixed_blocking": 0},
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.refresh_review_after_identity_mutation", return_value=refreshed
+        ) as reproject, patch("app.main.finalize_review_for_qa") as finalize:
+            response = reproject_match_review_workflow("m1")
+
+        self.assertEqual(response["workflow"]["phase"], "exceptions")
+        self.assertEqual(reproject.call_args.kwargs["source"], "mixed_players_reproject")
+        self.assertFalse(reproject.call_args.kwargs["operator_evidence"])
+        self.assertTrue(reproject.call_args.kwargs["leave_hot_state_warm"])
+        finalize.assert_not_called()
+
+    def test_focused_mixed_read_renders_only_the_exact_case_before_returning_urls(self) -> None:
+        from app.main import get_match_reviewed_identity_mixed_player_case
+
+        focused = {"case_id": "M-new", "temporal_evidence": {"anchor_crops": [{"artifact": "new.jpg"}]}}
+        response_document = {
+            "requested_case_id": "M-new",
+            "status": "current_blocking",
+            "case": focused,
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.build_focused_mixed_review_case",
+            return_value=response_document,
+        ) as build_focused, patch("app.main.build_mixed_review_queue") as build_queue, patch(
+            "app.main.render_mixed_review_evidence"
+        ) as render:
+            response = get_match_reviewed_identity_mixed_player_case("m1", "M-new")
+
+        self.assertIs(response, response_document)
+        build_focused.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"}, "M-new")
+        build_queue.assert_not_called()
+        render.assert_called_once()
+        self.assertEqual(render.call_args.args[2]["cases"], [focused])
+
+    def test_manual_mixed_read_materializes_only_the_next_authoritative_case(self) -> None:
+        from app.main import get_match_reviewed_identity_mixed_players
+
+        first = {"case_id": "M-first", "temporal_evidence": {"anchor_crops": [{"artifact": "first.jpg"}]}}
+        later = {"case_id": "M-later", "temporal_evidence": {"anchor_crops": [{"artifact": "later.jpg"}]}}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.build_mixed_review_queue", return_value={"cases": [first, later]}), patch(
+            "app.main.render_mixed_review_evidence"
+        ) as render:
+            get_match_reviewed_identity_mixed_players("m1")
+
+        self.assertEqual(render.call_args.args[2]["cases"], [first])
+
     def test_scope_change_rebuilds_only_progress_and_preserves_identity_decisions(self) -> None:
         from app.main import update_match_metadata
         from app.models import MatchMetadataPayload
@@ -231,6 +292,56 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         progress_build.assert_not_called()
         finalize_snapshot.assert_not_called()
         seeded_rebuild.assert_not_called()
+
+    def test_deferred_idempotent_replay_never_persists_or_advances_hot_state(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        hot_state = {
+            "state_version": 11,
+            "progress": {"coverage_debt": {"required_cases": 3}},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "idempotent_replay": True,
+                "saved_decision": {"candidate_subject_id": "subject-1", "action": "unresolved"},
+                "hot_state": hot_state,
+            },
+        ), patch("app.main.reviewed_decisions_semantic_digest", return_value="existing-decision"), patch(
+            "app.main.persist_reviewed_identity_correction"
+        ) as persist, patch("app.main.update_hot_state_after_deferred_save") as update_hot:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "unresolved", "defer_recompute": True},
+            )
+
+        self.assertTrue(response["idempotent_replay"])
+        self.assertEqual(response["review_state_version"], 11)
+        self.assertEqual(response["persistence"]["status"], "already_saved")
+        persist.assert_not_called()
+        update_hot.assert_not_called()
+
+    def test_correction_context_is_read_only_and_reports_a_stale_queue(self) -> None:
+        from fastapi import HTTPException, Response
+        from app.main import get_match_reviewed_correction_context
+
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.load_existing_fresh_hot_state", return_value=None), patch(
+            "app.main.load_or_rebuild_review_hot_state"
+        ) as rebuild:
+            with self.assertRaises(HTTPException) as raised:
+                get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-1",
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "review_state_stale")
+        rebuild.assert_not_called()
 
     def test_deferred_exact_mixed_stage_updates_hot_queue_without_structural_reload(self) -> None:
         from app.main import post_match_reviewed_identity_correction

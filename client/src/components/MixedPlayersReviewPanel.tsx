@@ -1,19 +1,55 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { artifactUrl, finalizeReviewedIdentityCorrections, getMixedBoundaryRefinement, getMixedPlayersReview, saveMixedPlayerResolution } from '../api';
+import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, getReviewWorkflow, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mixedQueueForFocusedCase, reconciledMixedFocusCaseId, type ExactMixedFocusResult, type MixedEntryMode, type MixedNavigationDirection } from '../utils/mixedReviewNavigation';
+
+export type MixedPlayersReviewApi = {
+  getBoundaryRefinement: typeof getMixedBoundaryRefinement;
+  getFocusedCase: typeof getMixedPlayerReviewCase;
+  getQueue: typeof getMixedPlayersReview;
+  getWorkflow: typeof getReviewWorkflow;
+  reprojectWorkflow: typeof reprojectReviewWorkflow;
+  saveResolution: typeof saveMixedPlayerResolution;
+};
+
+const defaultReviewApi: MixedPlayersReviewApi = {
+  getBoundaryRefinement: getMixedBoundaryRefinement,
+  getFocusedCase: getMixedPlayerReviewCase,
+  getQueue: getMixedPlayersReview,
+  getWorkflow: getReviewWorkflow,
+  reprojectWorkflow: reprojectReviewWorkflow,
+  saveResolution: saveMixedPlayerResolution,
+};
 
 type Props = {
   match: Match;
   workflow: ReviewWorkflow;
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
+  focusCaseId?: string | null;
+  entryMode?: MixedEntryMode;
+  onReturnToRequired?: () => void;
+  onResolveNowComplete?: () => void;
+  onLeaveGuard?: (guard: () => boolean) => void;
+  reviewApi?: Partial<MixedPlayersReviewApi>;
 };
 
-export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: Props) {
+export function MixedPlayersReviewPanel({
+  match,
+  workflow,
+  onWorkflowChanged,
+  focusCaseId,
+  entryMode = 'manual',
+  onReturnToRequired,
+  onResolveNowComplete,
+  onLeaveGuard,
+  reviewApi,
+}: Props) {
+  const api = useMemo(() => ({ ...defaultReviewApi, ...reviewApi }), [reviewApi]);
   const [queue, setQueue] = useState<MixedPlayersReviewQueue | null>(null);
   const [index, setIndex] = useState(0);
   const reviewCase = queue?.cases[index] || null;
@@ -25,17 +61,63 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   const [refinementBusy, setRefinementBusy] = useState(false);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState('');
+  const [focusMissing, setFocusMissing] = useState(false);
+  const [reprojectFailed, setReprojectFailed] = useState(false);
+  const caseNavigationRequestRef = useRef(0);
   void workflow;
 
   useEffect(() => {
     let cancelled = false;
+    caseNavigationRequestRef.current += 1;
     setBusy(true);
-    getMixedPlayersReview(match.id)
-      .then((value) => { if (!cancelled) setQueue(value); })
-      .catch((error) => { if (!cancelled) setMessage(errorMessage(error)); })
-      .finally(() => { if (!cancelled) setBusy(false); });
+    setQueue(null);
+    setIndex(0);
+    setFocusMissing(false);
+    setReprojectFailed(false);
+    async function loadInitialQueue() {
+      try {
+        let value: MixedPlayersReviewQueue | null;
+        if (focusCaseId) {
+          const focused = await loadExactMixedFocus(
+            (caseId) => api.getFocusedCase(match.id, caseId),
+            focusCaseId,
+          );
+          value = focused.kind === 'visible' ? mixedQueueForFocusedCase(focused.response) : null;
+        } else {
+          value = await api.getQueue(match.id);
+        }
+        if (cancelled) return;
+        if (!value || exactMixedFocusIndex(value.cases.map((item) => item.case_id || ''), focusCaseId) === null) {
+          // Resolve-now is exact-source handoff. Never silently fall through
+          // to the first unrelated Mixed card if the durable case vanished.
+          setQueue(null);
+          setFocusMissing(true);
+          setMessage('Wybrany przypadek Mixed nie jest już aktualny. Kolejka została odświeżona bez otwierania innego przypadku.');
+          return;
+        }
+        setQueue(value);
+      } catch (error) {
+        if (!cancelled) setMessage(errorMessage(error));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }
+    void loadInitialQueue();
     return () => { cancelled = true; };
-  }, [match.id]);
+  }, [api, focusCaseId, match.id]);
+
+  useEffect(() => {
+    if (!focusCaseId || !queue || focusMissing) return;
+    const focusedIndex = exactMixedFocusIndex(queue.cases.map((item) => item.case_id || ''), focusCaseId);
+    if (focusedIndex !== null) setIndex(focusedIndex);
+  }, [focusCaseId, queue]);
+
+  useEffect(() => {
+    onLeaveGuard?.(() => !hasUnsavedChanges || window.confirm(
+      'Masz niezapisany podział lub przypisania. Przejście do pozostałych przypadków je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
+    ));
+    return () => onLeaveGuard?.(() => true);
+  }, [hasUnsavedChanges, onLeaveGuard]);
 
   useEffect(() => {
     if (!reviewCase) return;
@@ -76,7 +158,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setRefinementBusy(true);
     setMessage('');
     try {
-      const value = await getMixedBoundaryRefinement(
+      const value = await api.getBoundaryRefinement(
         match.id,
         reviewCase.candidate_subject_id,
         afterFrame,
@@ -137,7 +219,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setBusy(true);
     setMessage('');
     try {
-      await saveMixedPlayerResolution(match.id, {
+      await api.saveResolution(match.id, {
         candidate_subject_id: reviewCase.candidate_subject_id,
         case_id: reviewCase.case_id,
         source_subject_digest: reviewCase.source_subject_digest,
@@ -158,7 +240,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setBusy(true);
     setMessage('');
     try {
-      await saveMixedPlayerResolution(match.id, {
+      await api.saveResolution(match.id, {
         candidate_subject_id: reviewCase.candidate_subject_id,
         case_id: reviewCase.case_id,
         source_subject_digest: reviewCase.source_subject_digest,
@@ -166,12 +248,18 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
       });
       setHasUnsavedChanges(false);
       setMessage('Zapisano jako przypadek bez prostego podziału czasowego. Tożsamość nie została zgadnięta.');
-      if (queue && index < queue.cases.length - 1) setIndex(index + 1);
+      if (queue && index < queue.cases.length - 1) {
+        await materializeAndFocusCase(index + 1, true);
+      }
     } catch (error) {
       setMessage(errorMessage(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  function completeResolveNowIntent() {
+    if (entryMode === 'resolve_now') onResolveNowComplete?.();
   }
 
   async function advanceAfterSave() {
@@ -184,19 +272,202 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setHasUnsavedChanges(false);
     setQueue({ ...queue, cases: next.cases });
     setIndex(next.index);
-    if (next.cases.length === 0) {
-      setMessage('Przeliczam Review po zapisaniu podziałów…');
-      const result = await finalizeReviewedIdentityCorrections(match.id);
-      onWorkflowChanged(result.workflow);
+    // A temporal split can alter ownership, coverage and Required ordering.
+    // It is a structural Review reprojection, not a finalization shortcut.
+    setMessage('Odświeżam Review po zapisaniu podziału…');
+    let nextWorkflow: ReviewWorkflow;
+    try {
+      nextWorkflow = await api.reprojectWorkflow(match.id);
+    } catch (error) {
+      // Persistence has already succeeded. The old local queue is invalid
+      // after a structural save, so abandon it rather than pretending the
+      // split failed or offering another pre-split card.
+      setQueue(null);
+      setIndex(0);
+      setReprojectFailed(true);
+      setMessage(`Podział został zapisany, ale odświeżenie Review nie powiodło się. ${errorMessage(error)}`);
+      return;
+    }
+    onWorkflowChanged(nextWorkflow);
+    const normalRemaining = nextWorkflow.issues.normal_blocking ?? 0;
+    const mixedRemaining = nextWorkflow.issues.mixed_blocking ?? 0;
+    const destination = mixedPostSaveDestination(entryMode, normalRemaining, mixedRemaining);
+    if (destination === 'required') {
+      onReturnToRequired?.();
+      return;
+    }
+    completeResolveNowIntent();
+    if (destination === 'workflow') return;
+    const refreshedQueue = await api.getQueue(match.id);
+    setQueue(refreshedQueue);
+    setIndex(0);
+    setMessage(refreshedQueue.cases.length === 0
+      ? 'Zapisano podział. Wymagane kolejki Review zostały odświeżone.'
+      : 'Zapisano podział. Kolejka Mixed została odświeżona.');
+  }
+
+  async function retryStructuralReproject() {
+    setBusy(true);
+    setMessage('Odświeżam kolejkę Review po zapisanym podziale…');
+    try {
+      const nextWorkflow = await api.reprojectWorkflow(match.id);
+      onWorkflowChanged(nextWorkflow);
+      setReprojectFailed(false);
+      const normalRemaining = nextWorkflow.issues.normal_blocking ?? 0;
+      const mixedRemaining = nextWorkflow.issues.mixed_blocking ?? 0;
+      const destination = mixedPostSaveDestination(entryMode, normalRemaining, mixedRemaining);
+      if (destination === 'required') {
+        onReturnToRequired?.();
+        return;
+      }
+      completeResolveNowIntent();
+      if (destination === 'workflow') return;
+      const refreshedQueue = await api.getQueue(match.id);
+      setQueue(refreshedQueue);
+      setIndex(0);
+      setMessage('Kolejka Mixed została zsynchronizowana.');
+    } catch (error) {
+      setMessage(`Podział jest zapisany, ale Review nadal wymaga odświeżenia. ${errorMessage(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function showFocusedCase(
+    baseQueue: MixedPlayersReviewQueue,
+    targetCaseId: string,
+    focused: Extract<ExactMixedFocusResult<Awaited<ReturnType<MixedPlayersReviewApi['getFocusedCase']>>>, { kind: 'visible' }>,
+  ) {
+    const focusedIndex = exactMixedFocusIndex(
+      baseQueue.cases.map((item) => item.case_id || ''),
+      targetCaseId,
+    );
+    if (focusedIndex === null) return false;
+    const nextCases = [...baseQueue.cases];
+    nextCases[focusedIndex] = focused.case;
+    setQueue({
+      ...baseQueue,
+      assignment_options: focused.response.assignment_options,
+      cases: nextCases,
+    });
+    setIndex(focusedIndex);
+    setFocusMissing(false);
+    setMessage('');
+    return true;
+  }
+
+  async function routeAfterEmptyReconciledQueue(refreshedQueue: MixedPlayersReviewQueue) {
+    const nextWorkflow = await api.getWorkflow(match.id);
+    onWorkflowChanged(nextWorkflow);
+    setQueue(refreshedQueue);
+    setIndex(0);
+    setFocusMissing(false);
+    if ((nextWorkflow.issues.normal_blocking ?? 0) > 0) {
+      onReturnToRequired?.();
+      return;
+    }
+    setMessage('Kolejka Mixed została zsynchronizowana. Workflow wskaże następny aktualny krok Review.');
+  }
+
+  async function reconcileAfterMissingFocusedCase(
+    previousQueue: MixedPlayersReviewQueue,
+    currentCaseId: string | null,
+    attemptedIndex: number,
+    direction: MixedNavigationDirection,
+    requestId: number,
+  ) {
+    // This is deliberately bounded: one full authoritative reconciliation,
+    // followed by at most one exact focused read of its selected case.
+    const refreshedQueue = await api.getQueue(match.id);
+    if (requestId !== caseNavigationRequestRef.current) return;
+    const nextCaseId = reconciledMixedFocusCaseId(
+      previousQueue.cases.map((item) => item.case_id || ''),
+      currentCaseId,
+      attemptedIndex,
+      refreshedQueue.cases.map((item) => item.case_id || ''),
+      direction,
+    );
+    if (!nextCaseId) {
+      await routeAfterEmptyReconciledQueue(refreshedQueue);
+      return;
+    }
+    const focused = await loadExactMixedFocus(
+      (caseId) => api.getFocusedCase(match.id, caseId),
+      nextCaseId,
+    );
+    if (requestId !== caseNavigationRequestRef.current) return;
+    if (focused.kind !== 'visible' || !showFocusedCase(refreshedQueue, nextCaseId, focused)) {
+      setQueue(null);
+      setFocusMissing(true);
+      setMessage('Kolejka Mixed zmieniła się ponownie podczas jednokrotnej synchronizacji. Odśwież Review przed dalszą pracą.');
+    }
+  }
+
+  async function materializeAndFocusCase(nextIndex: number, discardCurrent = false) {
+    if (!queue) return;
+    const previousQueue = queue;
+    const currentCaseId = reviewCase?.case_id || null;
+    const direction: MixedNavigationDirection = nextIndex < index ? 'previous' : 'next';
+    const boundedIndex = Math.max(0, Math.min(previousQueue.cases.length - 1, nextIndex));
+    const targetCaseId = previousQueue.cases[boundedIndex]?.case_id;
+    if (!targetCaseId) {
+      setFocusMissing(true);
+      setMessage('Nie można ustalić dokładnego przypadku Mixed do otwarcia.');
+      return;
+    }
+    const requestId = ++caseNavigationRequestRef.current;
+    setBusy(true);
+    if (discardCurrent) {
+      setQueue(null);
+      setIndex(0);
+    }
+    setMessage('Przygotowuję widoki wybranego przypadku…');
+    try {
+      const focused = await loadExactMixedFocus(
+        (caseId) => api.getFocusedCase(match.id, caseId),
+        targetCaseId,
+      );
+      if (requestId !== caseNavigationRequestRef.current) return;
+      if (focused.kind === 'membership_changed' && entryMode === 'manual') {
+        setMessage('Synchronizuję aktualną kolejkę Mixed…');
+        await reconcileAfterMissingFocusedCase(
+          previousQueue,
+          currentCaseId,
+          boundedIndex,
+          direction,
+          requestId,
+        );
+        return;
+      }
+      if (focused.kind !== 'visible') {
+        setQueue(null);
+        setFocusMissing(true);
+        setMessage('Wybrany przypadek Mixed zniknął z aktualnej kolejki. Nie otwarto innego przypadku.');
+        return;
+      }
+      // The backend has now materialized this exact case's missing evidence.
+      // Only at this point may it become the visible review card.
+      if (!showFocusedCase(previousQueue, targetCaseId, focused)) {
+        setQueue(null);
+        setFocusMissing(true);
+        setMessage('Wybrany przypadek Mixed nie należy już do lokalnej kolejki.');
+      }
+    } catch (error) {
+      if (requestId === caseNavigationRequestRef.current) {
+        if (discardCurrent) setFocusMissing(true);
+        setMessage(errorMessage(error));
+      }
+    } finally {
+      if (requestId === caseNavigationRequestRef.current) setBusy(false);
     }
   }
 
   function navigateTo(nextIndex: number) {
-    if (!queue || nextIndex === index) return;
+    if (!queue || busy || nextIndex === index) return;
     if (hasUnsavedChanges && !window.confirm(
       'Masz niezapisany podział lub przypisania. Przejście do innego przypadku je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
     )) return;
-    setIndex(Math.max(0, Math.min(queue.cases.length - 1, nextIndex)));
+    void materializeAndFocusCase(nextIndex);
   }
 
   useEffect(() => {
@@ -213,9 +484,11 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasUnsavedChanges, index, queue]);
+  }, [busy, hasUnsavedChanges, index, queue]);
 
   if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
+  if (focusMissing) return <section className='identity-exception-review'><div className='status error'><strong>Nie można bezpiecznie otworzyć wskazanego przypadku Mixed.</strong><p>{message}</p></div></section>;
+  if (reprojectFailed) return <section className='identity-exception-review'><div className='status error'><strong>Podział został zapisany, ale kolejka Review wymaga odświeżenia.</strong><p>{message}</p><button type='button' onClick={() => void retryStructuralReproject()} disabled={busy}>Spróbuj odświeżyć Review</button></div></section>;
   if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className='status'>{message}</p>}</section>;
   if (reviewCase.scope_status === 'stale_or_unclassifiable_blocking') return <section className='identity-exception-review mixed-player-review'>
     <div className='status'><strong>Nie można bezpiecznie odtworzyć źródła Mixed.</strong><p>Przypadek nadal blokuje Review. Odśwież lub uruchom bezpieczne przeliczenie Review; nie przypisuj tej historycznej własności na podstawie niepełnych danych.</p></div>

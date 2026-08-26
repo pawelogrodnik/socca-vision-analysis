@@ -29,8 +29,11 @@ from app.services.identity_reviewed_mixed_resolution import (
     save_mixed_player_resolution,
 )
 from app.services.identity_reviewed_mixed_store import (
+    build_focused_mixed_review_case,
     current_mixed_subject_digest,
     load_mixed_player_cases,
+    _materialize_mixed_review_case,
+    save_mixed_case_document,
     unresolved_mixed_observation_assignments,
 )
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
@@ -55,6 +58,93 @@ from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_focused_case_materializes_only_the_exact_durable_marker(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            marker = _classify(root, match)
+            document = load_mixed_player_cases(root)
+            markers = [
+                {**marker, "case_id": f"M{index:02d}"}
+                for index in range(28)
+            ]
+            save_mixed_case_document(root, {**document, "cases": markers})
+
+            with patch(
+                "app.services.identity_reviewed_mixed_store._materialize_mixed_review_case",
+                wraps=_materialize_mixed_review_case,
+            ) as materialize:
+                focused = build_focused_mixed_review_case(root, match, "M17")
+
+            self.assertEqual(focused["status"], "current_blocking")
+            self.assertEqual(focused["case"]["case_id"], "M17")
+            self.assertEqual(materialize.call_count, 1)
+            self.assertEqual(materialize.call_args.args[2]["case_id"], "M17")
+
+    def test_focused_case_reports_resolved_stale_nonblocking_and_missing_exactly(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            marker = _classify(root, match)
+
+            resolved_document = load_mixed_player_cases(root)
+            resolved_document["cases"][0]["resolution_status"] = "resolved"
+            save_mixed_case_document(root, resolved_document)
+            resolved = build_focused_mixed_review_case(root, match, "subject-mixed")
+            self.assertEqual(resolved["status"], "no_longer_unresolved")
+            self.assertIsNone(resolved["case"])
+
+            resolved_document["cases"][0] = marker
+            save_mixed_case_document(root, resolved_document)
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["positions_m"].pop()
+            _write(root / "tracklets.json", tracklets)
+            stale = build_focused_mixed_review_case(root, match, "subject-mixed")
+            self.assertEqual(stale["status"], "stale_or_unclassifiable_blocking")
+            self.assertEqual(stale["case"]["scope_status"], "stale_or_unclassifiable_blocking")
+
+            missing = build_focused_mixed_review_case(root, match, "not-this-subject")
+            self.assertEqual(missing["status"], "missing")
+            self.assertIsNone(missing["case"])
+
+        with _workspace() as root:
+            match = _fixture(root)
+            match["identity_review_scope"] = {
+                "schema_version": "1.0.0",
+                "teams": {"A": "complete_roster", "B": "team_stats_only"},
+            }
+            tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            tracklets["tracklets"][0]["team_label"] = "B"
+            _write(root / "tracklets.json", tracklets)
+            source_digest = current_mixed_subject_digest(root, "subject-mixed")
+            unit = {
+                "scope_kind": "whole_subject",
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": source_digest,
+                "detected_observation_count": 9,
+                "detected_pairs": [("t1", frame) for frame in range(1, 10)],
+                "effective_team_label": "B",
+            }
+            marker = persist_reviewed_identity_correction(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_ownership_digest": source_digest,
+                    "action": "mixed_players",
+                    "mixed_hint": "same_team_b",
+                },
+                authorized_review_unit=unit,
+            )["saved_decision"]
+            scoped_document = load_mixed_player_cases(root)
+            scoped_document["cases"][0]["source"]["effective_team_label"] = "B"
+            save_mixed_case_document(root, scoped_document)
+            nonblocking = build_focused_mixed_review_case(
+                root,
+                match,
+                str(marker.get("case_id") or marker["candidate_subject_id"]),
+            )
+            self.assertEqual(nonblocking["status"], "not_in_mandatory_queue")
+            self.assertIsNone(nonblocking["case"])
+
     def test_staged_mixed_marker_is_exact_source_and_resolves_through_shared_split_engine(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -235,6 +325,13 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {row["source"]["review_target_id"] for row in cases},
                 {"canonical-a", "canonical-b"},
             )
+            subject_fallback = build_focused_mixed_review_case(
+                root,
+                match,
+                "subject-mixed",
+            )
+            self.assertEqual(subject_fallback["status"], "missing")
+            self.assertIsNone(subject_fallback["case"])
 
     def test_optional_max_capabilities_hide_staged_mixed_but_keep_direct_split(self) -> None:
         optional = reviewed_identity_action_capabilities({
@@ -565,11 +662,16 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                     ],
                 },
             )
+            projected = load_segment_review(root)
             review = build_segment_review_document(root, match)
             targets = [row for row in review["targets"] if row.get("target_origin") == "operator_mixed_players"]
             rows = segment_observation_assignments(review, load_segment_decisions(root), _roster(match))
 
             self.assertEqual(response["saved_case"]["resolution_status"], "resolved")
+            self.assertEqual(_semantic_segment_review(projected), _semantic_segment_review(review))
+            self.assertIn("segment_review_build_ms", response["performance"])
+            self.assertIn("segment_review_projection_ms", response["performance"])
+            self.assertIn("total_ms", response["performance"])
             self.assertEqual([row["frame_start"] for row in targets], [1, 4, 7])
             self.assertEqual([row["frame_end"] for row in targets], [3, 6, 9])
             self.assertEqual({(row["tracklet_id"], row["frame"]) for row in rows}, {("t1", frame) for frame in range(1, 10)})
@@ -826,6 +928,74 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             )
             self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
 
+    def test_inline_split_projects_all_decision_fields_without_second_topology_build(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _reserve_canonical_slots(root, 1)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "resolution": "split",
+                "split_after_frames": [1, 2, 3, 5, 7, 8],
+                "segment_assignments": [
+                    {"action": "assign_roster_player", "player_id": "player-a"},
+                    {"action": "assign_team", "team_label": "B"},
+                    {"action": "assign_existing_slot", "stable_slot_id": "A01"},
+                    {"action": "create_new_stable_player", "team_label": "B"},
+                    {"action": "team_unknown"},
+                    {"action": "unresolved"},
+                    {"action": "referee"},
+                ],
+            }
+
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.build_segment_review_document",
+                wraps=build_segment_review_document,
+            ) as structural_build:
+                result = save_inline_temporal_split(root, match, payload)
+
+            projected = load_segment_review(root)
+            canonical = build_segment_review_document(root, match)
+
+            self.assertEqual(structural_build.call_count, 1)
+            self.assertEqual(len(result["saved_segment_decisions"]), 7)
+            self.assertEqual(
+                {row["action"] for row in result["saved_segment_decisions"]},
+                {
+                    "assign_roster_player",
+                    "assign_team",
+                    "assign_existing_slot",
+                    "create_new_stable_player",
+                    "team_unknown",
+                    "unresolved",
+                    "referee",
+                },
+            )
+            self.assertEqual(_semantic_segment_review(projected), _semantic_segment_review(canonical))
+            self.assertEqual(projected["summary"]["targets_reviewed"], 7)
+            self.assertEqual(projected["summary"]["targets_pending"], 0)
+            self.assertEqual(
+                set(result["performance"]),
+                {
+                    "source_resolution_ms",
+                    "mixed_case_load_ms",
+                    "split_validation_ms",
+                    "target_derivation_ms",
+                    "segment_review_build_ms",
+                    "segment_decision_batch_ms",
+                    "segment_assignment_validation_ms",
+                    "segment_decision_persistence_ms",
+                    "reviewed_slot_persistence_ms",
+                    "mixed_case_persistence_ms",
+                    "superseded_decision_cleanup_ms",
+                    "slot_cleanup_ms",
+                    "segment_review_projection_ms",
+                    "semantic_digest_ms",
+                    "recompute_marker_ms",
+                    "total_ms",
+                },
+            )
+
     def test_inline_split_rejects_stale_source_and_conflicting_replay(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -916,6 +1086,10 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertNotEqual(old_ids, current_ids)
             self.assertTrue(current_ids <= decision_ids)
             self.assertFalse(old_ids & decision_ids)
+            projected = load_segment_review(root)
+            canonical = build_segment_review_document(root, match)
+            self.assertEqual(_semantic_segment_review(projected), _semantic_segment_review(canonical))
+            self.assertEqual(projected["summary"]["orphaned_decisions_requiring_review"], 0)
 
     def test_direct_parent_decision_atomically_retires_exact_saved_inline_split(self) -> None:
         with _workspace() as root:
@@ -1487,6 +1661,12 @@ def _roster(match: dict) -> dict[str, dict]:
 
 def _write(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def _semantic_segment_review(document: dict) -> dict:
+    normalized = json.loads(json.dumps(document))
+    normalized.pop("generated_at", None)
+    return normalized
 
 
 def _workspace():

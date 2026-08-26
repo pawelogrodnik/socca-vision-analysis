@@ -25,6 +25,9 @@ MIXED_HINTS = frozenset(
     {"cross_team", "same_team_a", "same_team_b", "player_referee", "unknown"}
 )
 UNRESOLVED_STATUSES = frozenset({"unresolved", "unresolved_complex_mix"})
+MANDATORY_MIXED_CASE_STATUSES = frozenset(
+    {"current_blocking", "stale_or_unclassifiable_blocking"}
+)
 
 
 def load_mixed_player_cases(match_path: Path) -> dict[str, Any]:
@@ -274,52 +277,18 @@ def build_mixed_review_queue(
     cases = []
     blocking_case_ids: set[str] = set()
     for marker in document.get("cases") or []:
-        if str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
-            continue
         marker_id = str(marker.get("case_id") or marker.get("candidate_subject_id") or "")
         subject_id = str(marker.get("candidate_subject_id") or "")
-        subject = subjects.get(subject_id)
-        observations = (
-            _observations_for_marker(match_path, marker, subject)
-            if subject or isinstance(marker.get("source"), dict)
-            else []
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subjects.get(subject_id),
+            card=cards.get(subject_id),
         )
-        if not observations:
-            # Exact v2 ownership deliberately fails materialization when even
-            # one stored pair is absent. Never reinterpret that as a certain
-            # Team-B-only case: the workflow must stop safely and surface the
-            # stale source instead of silently finalizing.
+        if materialized["status"] in MANDATORY_MIXED_CASE_STATUSES:
             blocking_case_ids.add(marker_id)
-            cases.append({
-                **marker,
-                "blocking": True,
-                "scope_status": "stale_or_unclassifiable_blocking",
-                "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
-                "reviewed_complex_at": marker.get("updated_at")
-                if str(marker.get("resolution_status")) == "unresolved_complex_mix"
-                else None,
-                "temporal_evidence": {"status": "missing", "anchor_crops": []},
-            })
-            continue
-        crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
-        blocking = mixed_review_relevant_for_scope(marker, observations, match_doc)
-        if blocking:
-            blocking_case_ids.add(marker_id)
-            cases.append(
-                {
-                    **marker,
-                    "blocking": True,
-                    "scope_status": "blocking",
-                    "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
-                    "reviewed_complex_at": marker.get("updated_at")
-                    if str(marker.get("resolution_status")) == "unresolved_complex_mix"
-                    else None,
-                    "temporal_evidence": {
-                        "status": "ready" if crops else "missing",
-                        "anchor_crops": crops,
-                    },
-                }
-            )
+            cases.append(materialized["case"])
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_queue",
@@ -333,6 +302,200 @@ def build_mixed_review_queue(
             "slots": list(build_reviewed_slot_registry(match_path).values()),
         },
         "cases": sorted(cases, key=lambda row: (int(row.get("frame_start") or 0), str(row.get("case_id") or row.get("candidate_subject_id")))),
+    }
+
+
+def build_focused_mixed_review_case(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    case_id: str,
+) -> dict[str, Any]:
+    """Load and materialize one durable Mixed marker without building its peers."""
+    wanted_case_id = str(case_id or "").strip()
+    marker = next(
+        (
+            dict(row)
+            for row in load_mixed_player_cases(match_path).get("cases") or []
+            if str(row.get("case_id") or row.get("candidate_subject_id") or "")
+            == wanted_case_id
+        ),
+        None,
+    )
+    if marker is None:
+        status = "missing"
+        case = None
+    elif str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
+        status = "no_longer_unresolved"
+        case = None
+    else:
+        subject_id = str(marker.get("candidate_subject_id") or "")
+        subject = next(
+            (
+                row
+                for row in _load(match_path / "identity_candidate_shadow.json").get("subjects") or []
+                if str(row.get("candidate_subject_id") or "") == subject_id
+            ),
+            None,
+        )
+        card = next(
+            (
+                row
+                for row in _load(
+                    match_path / "identity_roster_subject_review_shadow.json"
+                ).get("cards") or []
+                if str(row.get("candidate_subject_id") or "") == subject_id
+            ),
+            None,
+        )
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subject,
+            card=card,
+        )
+        status = str(materialized["status"])
+        case = materialized["case"]
+    assignment_options = (
+        {
+            "roster": _match_roster(match_doc),
+            "slots": list(build_reviewed_slot_registry(match_path).values()),
+        }
+        if status == "current_blocking"
+        else {"roster": [], "slots": []}
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "reviewed_identity_mixed_focused_case",
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "requested_case_id": wanted_case_id,
+        "status": status,
+        "case": case,
+        "assignment_options": assignment_options,
+    }
+
+
+def _materialize_mixed_review_case(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    marker: dict[str, Any],
+    *,
+    subject: dict[str, Any] | None,
+    card: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply one shared ownership/scope contract to queue and focused reads."""
+    if str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
+        return {"status": "no_longer_unresolved", "case": None}
+    observations = (
+        _observations_for_marker(match_path, marker, subject)
+        if subject is not None or isinstance(marker.get("source"), dict)
+        else []
+    )
+    if not observations or not _mixed_marker_ownership_is_current(
+        marker,
+        subject,
+        observations,
+    ):
+        # Exact ownership deliberately fails closed. Never reinterpret an
+        # incomplete V2 marker as a whole-subject case or suppress the blocker.
+        return {
+            "status": "stale_or_unclassifiable_blocking",
+            "case": _stale_blocking_case(marker),
+        }
+    if not mixed_review_relevant_for_scope(marker, observations, match_doc):
+        return {"status": "not_in_mandatory_queue", "case": None}
+    subject_id = str(marker.get("candidate_subject_id") or "")
+    crops = _temporal_evidence(subject_id, observations, card, limit=12)
+    complex_unresolved = (
+        str(marker.get("resolution_status")) == "unresolved_complex_mix"
+    )
+    return {
+        "status": "current_blocking",
+        "case": {
+            **marker,
+            "blocking": True,
+            "scope_status": "blocking",
+            "reviewed_complex": complex_unresolved,
+            "reviewed_complex_at": marker.get("updated_at")
+            if complex_unresolved
+            else None,
+            "temporal_evidence": {
+                "status": "ready" if crops else "missing",
+                "anchor_crops": crops,
+            },
+        },
+    }
+
+
+def _mixed_marker_ownership_is_current(
+    marker: dict[str, Any],
+    subject: dict[str, Any] | None,
+    observations: list[dict[str, Any]],
+) -> bool:
+    source = marker.get("source")
+    if isinstance(source, dict):
+        digest = str(source.get("source_ownership_digest") or "")
+        scope_kind = str(source.get("scope_kind") or "")
+        if (
+            not digest
+            or str(marker.get("candidate_subject_id") or "")
+            != str(source.get("candidate_subject_id") or "")
+        ):
+            return False
+        if scope_kind and scope_kind not in {
+            "whole_subject",
+            "canonical_segment",
+            "material_continuity",
+        }:
+            return False
+        if scope_kind and str(marker.get("source_subject_digest") or "") != digest:
+            return False
+        if scope_kind == "canonical_segment" and not source.get("review_target_id"):
+            return False
+        if scope_kind == "material_continuity" and not source.get("continuity_group_id"):
+            return False
+        wanted = _owned_observation_pairs(source.get("owned_observations"))
+        found = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in observations
+        }
+        if not wanted or found != wanted:
+            return False
+        # Older exact V2 markers predate scope/bounds aliases but still own a
+        # complete server-generated pair set. Never widen them to a subject;
+        # exact pair equality above is their authoritative compatibility gate.
+        return True
+    if subject is None or str(marker.get("source_subject_digest") or "") != _subject_digest(
+        subject,
+        observations,
+    ):
+        return False
+    observed_tracklets = sorted({str(row["tracklet_id"]) for row in observations})
+    observed_frames = [int(row["frame"]) for row in observations]
+    return (
+        sorted(str(value) for value in marker.get("source_tracklet_ids") or [])
+        == observed_tracklets
+        and int(marker.get("observation_count") or 0) == len(observations)
+        and marker.get("frame_start") is not None
+        and int(marker["frame_start"]) == min(observed_frames)
+        and marker.get("frame_end") is not None
+        and int(marker["frame_end"]) == max(observed_frames)
+    )
+
+
+def _stale_blocking_case(marker: dict[str, Any]) -> dict[str, Any]:
+    complex_unresolved = (
+        str(marker.get("resolution_status")) == "unresolved_complex_mix"
+    )
+    return {
+        **marker,
+        "blocking": True,
+        "scope_status": "stale_or_unclassifiable_blocking",
+        "reviewed_complex": complex_unresolved,
+        "reviewed_complex_at": marker.get("updated_at")
+        if complex_unresolved
+        else None,
+        "temporal_evidence": {"status": "missing", "anchor_crops": []},
     }
 
 
