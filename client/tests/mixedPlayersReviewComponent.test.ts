@@ -754,6 +754,11 @@ test('lane refinement keeps the leading after-preview boundary instead of shifti
   await waitFor(() => assert.ok(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' })));
   assert.ok(view.getByAltText('Lewy widok graniczny — podział następuje po tym widoku'));
   assert.ok(view.getByAltText('Prawy widok graniczny — podział następuje przed tym widokiem'));
+  assert.equal(
+    Array.from(view.container.querySelectorAll('.mixed-refinement-strip button'))
+      .filter((button) => button.textContent?.includes('02:40.0')).length,
+    0,
+  );
   fireEvent.click(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' }));
   fireEvent.click(view.getByText('Inne przypisanie'));
   fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));

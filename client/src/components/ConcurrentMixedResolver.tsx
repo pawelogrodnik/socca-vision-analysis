@@ -19,6 +19,7 @@ import {
   replaceMixedBoundaryInInterval,
   sortedMixedEvidenceCrops,
   toggleMixedBoundary,
+  validMixedBoundaryFrames,
 } from '../utils/mixedPlayersReview';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
@@ -167,6 +168,12 @@ export function ConcurrentMixedResolver({
   }
 
   function updateLaneBoundaries(lane: ConcurrentMixedLane, next: number[]): boolean {
+    const laneCase = laneAsMixedCase(reviewCase, lane);
+    const normalized = validMixedBoundaryFrames(laneCase, next);
+    if (normalized.length !== next.length || normalized.some((frame, index) => frame !== next[index])) {
+      setMessage('Nie można podzielić po ostatniej klatce ścieżki. Wybierz wcześniejszy moment przejścia.');
+      return false;
+    }
     const current = drafts[lane.lane_id];
     const previousBoundaries = current?.resolution === 'temporal_split'
       ? current.split_after_frames
@@ -175,9 +182,9 @@ export function ConcurrentMixedResolver({
       ? current.segment_assignments
       : [];
     const remapped = remapMixedAssignments(
-      laneAsMixedCase(reviewCase, lane),
+      laneCase,
       previousBoundaries,
-      next,
+      normalized,
       previousAssignments,
     );
     if (remapped.requiresConfirmation && !window.confirm(
@@ -189,11 +196,11 @@ export function ConcurrentMixedResolver({
         lane_id: lane.lane_id,
         lane_source_digest: lane.source_ownership_digest,
         resolution: 'temporal_split',
-        split_after_frames: next,
+        split_after_frames: normalized,
         segment_assignments: remapped.assignments,
       },
     }));
-    setSelectedSegment(Math.min(selectedSegment, next.length));
+    setSelectedSegment(Math.min(selectedSegment, normalized.length));
     setMessage(remapped.requiresConfirmation
       ? 'Zmieniono granicę. Przypisz ponownie zmienione fragmenty tej ścieżki.'
       : '');
@@ -425,6 +432,9 @@ function ConcurrentLaneSplitEditor({ match, reviewCase, lane, draft, assignmentO
   const laneCase = laneAsMixedCase(reviewCase, lane);
   const segments = mixedSegments(laneCase, boundaries);
   const crops = sortedMixedEvidenceCrops(lane.evidence.anchor_crops);
+  const selectableRefinementCrops = refinement
+    ? sortedMixedEvidenceCrops(refinement.anchor_crops).filter((crop) => crop.frame < lane.frame_end)
+    : [];
   return <section className='concurrent-lane-split-editor' aria-label='Podział wybranej ścieżki'>
     <header><div><span className='eyebrow'>Ścieżka {(reviewCase.concurrent_resolution?.lanes.findIndex((value) => value.lane_id === lane.lane_id) ?? -1) + 1} › Podział ścieżki</span><h2>Podziel tylko tę ścieżkę</h2><p>Podglądy i granice poniżej dotyczą wyłącznie wybranej ścieżki.</p></div><button type='button' className='secondary' onClick={onBack}>Wróć do ścieżek</button></header>
     <div className='mixed-temporal-strip lane-only-strip'>
@@ -433,7 +443,7 @@ function ConcurrentLaneSplitEditor({ match, reviewCase, lane, draft, assignmentO
         {index < crops.length - 1 && <button type='button' className='split-boundary' disabled={busy} onClick={() => lane.observation_count > crops.length ? onRefine(crop.frame, crops[index + 1].frame) : onBoundaries(toggleMixedBoundary(boundaries, crop.frame))}>{lane.observation_count > crops.length ? 'Doprecyzuj' : 'Podziel tutaj'}</button>}
       </div>)}
     </div>
-    {refinement && <div className='mixed-boundary-refinement'><strong>Doprecyzuj przejście w tej ścieżce</strong><MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} /><div className='mixed-refinement-strip'><button type='button' className='mixed-refinement-leading-action' disabled={busy} onClick={() => onSelectRefined(refinement.after_frame)}>Podziel zaraz po poprzednim podglądzie</button>{sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop) => <button type='button' key={crop.anchor_crop_id} disabled={busy} onClick={() => onSelectRefined(crop.frame)}><ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy podgląd ścieżki' /><span>{formatReviewTime(crop.time_sec || 0)}</span></button>)}</div>{boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={onRemoveRefined}>Usuń podział z tego przedziału</button>}</div>}
+    {refinement && <div className='mixed-boundary-refinement'><strong>Doprecyzuj przejście w tej ścieżce</strong><MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} /><div className='mixed-refinement-strip'><button type='button' className='mixed-refinement-leading-action' disabled={busy} onClick={() => onSelectRefined(refinement.after_frame)}>Podziel zaraz po poprzednim podglądzie</button>{selectableRefinementCrops.map((crop) => <button type='button' key={crop.anchor_crop_id} disabled={busy} onClick={() => onSelectRefined(crop.frame)}><ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy podgląd ścieżki' /><span>{formatReviewTime(crop.time_sec || 0)}</span></button>)}</div>{boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={onRemoveRefined}>Usuń podział z tego przedziału</button>}</div>}
     <div className='concurrent-lane-split-layout'>
       <div className='mixed-segment-list'>{segments.map((segment) => <button type='button' key={segment.index} className={selectedSegment === segment.index ? 'selected' : ''} onClick={() => onSelectSegment(segment.index)}><strong>Fragment {segment.index + 1}</strong><span>{timeRange(reviewCase, segment.frameStart, segment.frameEnd)}</span><small>{assignmentLabel(assignments[segment.index] || null)}</small></button>)}</div>
       <aside className='concurrent-lane-decision'><h3>Przypisz fragment {selectedSegment + 1}</h3><MixedAssignmentControls assignment={assignments[selectedSegment] || null} options={assignmentOptions} teams={match.teams} capabilities={reviewCase.action_capabilities} onAssign={onAssign} /></aside>
