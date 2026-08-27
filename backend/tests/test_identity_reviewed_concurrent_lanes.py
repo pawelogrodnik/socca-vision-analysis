@@ -79,6 +79,49 @@ class ReviewedIdentityConcurrentLaneTests(unittest.TestCase):
             [("A", 100, 150), ("A", 151, 200), ("B", 140, 180)],
         )
 
+    def test_leading_refinement_boundary_keeps_the_first_refined_frame_in_next_child(self) -> None:
+        _topology, lanes = derive_concurrent_lanes(
+            "case",
+            "parent",
+            [*_rows("A", range(100, 161)), *_rows("B", range(140, 201))],
+        )
+        normalized = validate_concurrent_lane_resolutions(lanes, [
+            {
+                "lane_id": lanes[0]["lane_id"],
+                "lane_source_digest": lanes[0]["source_ownership_digest"],
+                "resolution": "temporal_split",
+                "split_after_frames": [100],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            },
+            {
+                "lane_id": lanes[1]["lane_id"],
+                "lane_source_digest": lanes[1]["source_ownership_digest"],
+                "resolution": "direct",
+                "assignment": {"action": "assign_team", "team_label": "A"},
+            },
+        ])
+        segments = expanded_concurrent_lane_segments(lanes, normalized)
+
+        self.assertEqual(
+            [
+                sorted(int(value["frame"]) for value in row["observations"])
+                for row in segments[:2]
+            ],
+            [[100], list(range(101, 161))],
+        )
+
+    def test_single_observation_lane_is_not_offered_a_split(self) -> None:
+        _topology, lanes = derive_concurrent_lanes(
+            "case",
+            "parent",
+            [*_rows("A", [100]), *_rows("B", range(100, 103))],
+        )
+        self.assertFalse(next(lane for lane in lanes if lane["tracklet_id"] == "A")["split_allowed"])
+        self.assertTrue(next(lane for lane in lanes if lane["tracklet_id"] == "B")["split_allowed"])
+
 
 if __name__ == "__main__":
     unittest.main()

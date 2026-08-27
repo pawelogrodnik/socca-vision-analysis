@@ -50,6 +50,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [topologyRejected, setTopologyRejected] = useState(false);
+  const [concurrentRecoveryRevision, setConcurrentRecoveryRevision] = useState(0);
   const [concurrentDirty, setConcurrentDirty] = useState(false);
   const crops = useMemo(() => sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops), [reviewCase]);
   const segments = useMemo(() => mixedSegments(reviewCase, boundaries), [reviewCase, boundaries]);
@@ -243,6 +244,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
   async function recoverConcurrentContext() {
     setTopologyRejected(true);
     setConcurrentDirty(false);
+    setConcurrentRecoveryRevision((value) => value + 1);
     try {
       const fresh = await getReviewedCorrectionContext(
         matchId,
@@ -286,6 +288,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
     busy={busy}
     historicalRepair={context.historical_concurrent_repair}
     statusMessage={error}
+    recoveryRevision={concurrentRecoveryRevision}
     onDirtyChange={setConcurrentDirty}
     onSave={saveConcurrent}
     onDefer={async () => { await saveComplex(); }}
@@ -301,6 +304,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
       review_target_id: context.review_target_id || undefined,
       continuity_group_id: context.continuity_group_id || undefined,
     })}
+    onRecoverableRefinementConflict={recoverConcurrentContext}
   />;
   return <section className='reviewed-inline-split' aria-label='Podział kilku zawodników'>
     <header><strong>{simpleSplitAllowed ? 'To kilku zawodników — podziel' : 'Równoległe tracklety'}</strong><p>{simpleSplitAllowed ? 'Podział obejmie wyłącznie dokładnie pokazane obserwacje.' : 'Ten materiał nie może być bezpiecznie rozdzielony jedną granicą czasu.'}</p></header>

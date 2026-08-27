@@ -16,6 +16,9 @@ from app.services.identity_reviewed_slot_registry import build_reviewed_slot_reg
 from app.services.identity_reviewed_scope_eligibility import (
     mixed_review_relevant_for_scope,
 )
+from app.services.identity_reviewed_action_scope import (
+    reviewed_identity_action_capabilities,
+)
 from app.services.identity_reviewed_mixed_topology import (
     analyze_temporal_split_topology,
     require_simple_temporal_split,
@@ -419,6 +422,7 @@ def _materialize_mixed_review_case(
     subject_id = str(marker.get("candidate_subject_id") or "")
     temporal_topology = analyze_temporal_split_topology(observations)
     crops = _temporal_evidence(subject_id, observations, card, limit=12)
+    action_capabilities = _mixed_action_capabilities(marker, observations, card)
     concurrent_resolution = (
         materialize_concurrent_resolution(
             subject_id,
@@ -445,6 +449,7 @@ def _materialize_mixed_review_case(
             else None,
             "temporal_topology": temporal_topology,
             "concurrent_resolution": concurrent_resolution,
+            "action_capabilities": action_capabilities,
             "temporal_evidence": {
                 "status": "ready" if crops else "missing",
                 "anchor_crops": crops,
@@ -525,6 +530,26 @@ def _stale_blocking_case(marker: dict[str, Any]) -> dict[str, Any]:
         "concurrent_resolution": None,
         "temporal_evidence": {"status": "missing", "anchor_crops": []},
     }
+
+
+def _mixed_action_capabilities(
+    marker: dict[str, Any],
+    observations: list[dict[str, Any]],
+    card: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Expose the same server-owned action gate used by concurrent saves."""
+    source = marker.get("source")
+    scope_unit = {
+        "scope_kind": (
+            str(source.get("scope_kind") or "")
+            if isinstance(source, dict)
+            else "whole_subject"
+        ) or "whole_subject",
+        "detected_observation_count": len(observations),
+    }
+    if isinstance(card, dict) and card.get("priority") is not None:
+        scope_unit["priority"] = card["priority"]
+    return reviewed_identity_action_capabilities(scope_unit)
 
 
 def build_mixed_boundary_refinement(
@@ -700,6 +725,7 @@ def materialize_concurrent_resolution(
                     "frame_start",
                     "frame_end",
                     "observation_count",
+                    "split_allowed",
                     "overlap_lane_ids",
                 )
             }

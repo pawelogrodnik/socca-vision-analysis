@@ -487,6 +487,12 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {crop["tracklet_id"] for crop in full_case["temporal_evidence"]["anchor_crops"]},
                 {"t1", "t2"},
             )
+            self.assertTrue(full_case["action_capabilities"]["assign_existing_slot"]["allowed"])
+            self.assertTrue(full_case["action_capabilities"]["create_new_stable_player"]["allowed"])
+            self.assertTrue(all(
+                lane["split_allowed"]
+                for lane in full_case["concurrent_resolution"]["lanes"]
+            ))
 
     def test_concurrent_refinement_never_reads_another_lane(self) -> None:
         with _workspace() as root:
@@ -823,6 +829,11 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 staged["source"]["owned_observations"],
                 [{"tracklet_id": "t1", "frame": frame} for frame in (1, 2, 3)],
             )
+
+            queued = build_mixed_review_queue(root, match)["cases"]
+            self.assertEqual(len(queued), 1)
+            self.assertFalse(queued[0]["action_capabilities"]["assign_existing_slot"]["allowed"])
+            self.assertFalse(queued[0]["action_capabilities"]["create_new_stable_player"]["allowed"])
 
             resolved = save_mixed_player_resolution(
                 root,

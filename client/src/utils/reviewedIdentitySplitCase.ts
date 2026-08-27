@@ -16,6 +16,7 @@ export function correctionContextAsSplitCase(context: ReviewedCorrectionContext)
     frame_start: context.frame_start ?? (cropFrames.length > 0 ? Math.min(...cropFrames) : 0),
     frame_end: context.frame_end ?? (cropFrames.length > 0 ? Math.max(...cropFrames) : 0),
     temporal_topology: context.temporal_topology || null,
+    action_capabilities: context.action_capabilities,
     temporal_evidence: { status: context.visual_evidence?.status || 'missing', anchor_crops: crops },
   };
 }

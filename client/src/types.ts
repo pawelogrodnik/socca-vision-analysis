@@ -2363,6 +2363,7 @@ export type ConcurrentMixedLane = {
   frame_start: number;
   frame_end: number;
   observation_count: number;
+  split_allowed: boolean;
   overlap_lane_ids: string[];
   evidence: {
     status: string;
@@ -2396,6 +2397,7 @@ export type MixedPlayerCase = {
   scope_status?: 'blocking' | 'not_required_by_scope' | 'stale_or_unclassifiable_blocking';
   temporal_topology?: MixedTemporalTopology | null;
   concurrent_resolution?: ConcurrentMixedResolution | null;
+  action_capabilities?: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
   temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
 };
 

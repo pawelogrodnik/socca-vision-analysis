@@ -68,6 +68,11 @@ def derive_concurrent_lanes(
                 "frame_start": int(tracklet["frame_start"]),
                 "frame_end": int(tracklet["frame_end"]),
                 "observation_count": len(lane_observations),
+                # A parent may be concurrent while one of its lanes contains
+                # only a single observed frame.  The UI consumes this
+                # server-derived fact instead of inferring split viability
+                # from the parent topology.
+                "split_allowed": len({int(row["frame"]) for row in lane_observations}) >= 2,
                 "overlap_tracklet_ids": sorted(overlaps_by_tracklet[tracklet_id]),
                 "owned_observations": owned,
                 "observations": lane_observations,

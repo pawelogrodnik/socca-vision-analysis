@@ -1,16 +1,32 @@
-import type { Match, MixedPlayersReviewQueue, MixedSegmentAssignment } from '../types';
+import type {
+  Match,
+  MixedPlayersReviewQueue,
+  MixedSegmentAssignment,
+  ReviewedCorrectionActionCapability,
+  ReviewedCorrectionPrimaryAction,
+} from '../types';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 
 type Props = {
   assignment: MixedSegmentAssignment | null;
   options: MixedPlayersReviewQueue['assignment_options'];
   teams: Match['teams'];
+  capabilities: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>> | undefined;
   onAssign: (assignment: MixedSegmentAssignment) => void;
 };
 
-export function MixedAssignmentControls({ assignment, options, teams, onAssign }: Props) {
+export function MixedAssignmentControls({ assignment, options, teams, capabilities, onAssign }: Props) {
+  const allowed = (action: MixedSegmentAssignment['action']) => capabilities?.[action]?.allowed === true;
+  const hasOtherAssignments = [
+    'assign_team',
+    'create_new_stable_player',
+    'referee',
+    'false_detection',
+    'team_unknown',
+    'unresolved',
+  ].some((action) => allowed(action as MixedSegmentAssignment['action']));
   return <div className='mixed-assignment-controls'>
-    <label className='mixed-primary-assignment'>Zawodnik z kadry
+    {allowed('assign_roster_player') && <label className='mixed-primary-assignment'>Zawodnik z kadry
       <select
         aria-label='Zawodnik z kadry'
         value={assignment?.action === 'assign_roster_player' ? assignment.player_id : ''}
@@ -23,8 +39,8 @@ export function MixedAssignmentControls({ assignment, options, teams, onAssign }
           </option>)}
         </optgroup>)}
       </select>
-    </label>
-    <label>Ten sam co wcześniej
+    </label>}
+    {allowed('assign_existing_slot') && <label>Ten sam co wcześniej
       <select
         aria-label='Ten sam co wcześniej'
         value={assignment?.action === 'assign_existing_slot' ? assignment.stable_slot_id : ''}
@@ -33,19 +49,17 @@ export function MixedAssignmentControls({ assignment, options, teams, onAssign }
         <option value=''>Wybierz wcześniej rozpoznanego gracza</option>
         {options.slots.map((slot) => <option key={slot.stable_slot_id} value={slot.stable_slot_id}>{slot.stable_slot_id}</option>)}
       </select>
-    </label>
-    <details className='mixed-other-assignments'>
+    </label>}
+    {hasOtherAssignments && <details className='mixed-other-assignments'>
       <summary>Inne przypisanie</summary>
       <div className='mixed-other-assignment-actions'>
-        <button type='button' onClick={() => onAssign({ action: 'assign_team', team_label: 'A' })}>{matchTeamName(teams || [], 'A')} — zawodnik nieznany</button>
-        <button type='button' onClick={() => onAssign({ action: 'assign_team', team_label: 'B' })}>{matchTeamName(teams || [], 'B')} — zawodnik nieznany</button>
-        <button type='button' onClick={() => onAssign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik ({matchTeamName(teams || [], 'A')})</button>
-        <button type='button' onClick={() => onAssign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik ({matchTeamName(teams || [], 'B')})</button>
-        <button type='button' onClick={() => onAssign({ action: 'referee' })}>Sędzia</button>
-        <button type='button' onClick={() => onAssign({ action: 'false_detection' })}>Fałszywa detekcja</button>
-        <button type='button' onClick={() => onAssign({ action: 'team_unknown' })}>Nieznana drużyna</button>
-        <button type='button' onClick={() => onAssign({ action: 'unresolved' })}>Nie wiem</button>
+        {allowed('assign_team') && <><button type='button' onClick={() => onAssign({ action: 'assign_team', team_label: 'A' })}>{matchTeamName(teams || [], 'A')} — zawodnik nieznany</button><button type='button' onClick={() => onAssign({ action: 'assign_team', team_label: 'B' })}>{matchTeamName(teams || [], 'B')} — zawodnik nieznany</button></>}
+        {allowed('create_new_stable_player') && <><button type='button' onClick={() => onAssign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik ({matchTeamName(teams || [], 'A')})</button><button type='button' onClick={() => onAssign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik ({matchTeamName(teams || [], 'B')})</button></>}
+        {allowed('referee') && <button type='button' onClick={() => onAssign({ action: 'referee' })}>Sędzia</button>}
+        {allowed('false_detection') && <button type='button' onClick={() => onAssign({ action: 'false_detection' })}>Fałszywa detekcja</button>}
+        {allowed('team_unknown') && <button type='button' onClick={() => onAssign({ action: 'team_unknown' })}>Nieznana drużyna</button>}
+        {allowed('unresolved') && <button type='button' onClick={() => onAssign({ action: 'unresolved' })}>Nie wiem</button>}
       </div>
-    </details>
+    </details>}
   </div>;
 }

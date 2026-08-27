@@ -69,6 +69,7 @@ export function MixedPlayersReviewPanel({
   const [focusMissing, setFocusMissing] = useState(false);
   const [reprojectFailed, setReprojectFailed] = useState(false);
   const [topologyRejected, setTopologyRejected] = useState(false);
+  const [concurrentRecoveryRevision, setConcurrentRecoveryRevision] = useState(0);
   const caseNavigationRequestRef = useRef(0);
   const simpleSplitAllowed = reviewCase?.temporal_topology?.simple_split_allowed === true
     && !topologyRejected;
@@ -334,6 +335,7 @@ export function MixedPlayersReviewPanel({
   async function recoverAfterConcurrentLaneConflict() {
     setTopologyRejected(true);
     setHasUnsavedChanges(false);
+    setConcurrentRecoveryRevision((value) => value + 1);
     const caseId = reviewCase?.case_id;
     if (!queue || !caseId) {
       setMessage('Układ ścieżek zmienił się. Odśwież Review przed ponownym przypisaniem.');
@@ -606,6 +608,7 @@ export function MixedPlayersReviewPanel({
     caseTotal={queue.cases.length}
     busy={busy}
     statusMessage={message}
+    recoveryRevision={concurrentRecoveryRevision}
     onDirtyChange={setHasUnsavedChanges}
     onSave={saveConcurrentLanes}
     onDefer={deferComplex}
@@ -622,6 +625,7 @@ export function MixedPlayersReviewPanel({
       after_frame: afterFrame,
       before_frame: beforeFrame,
     })}
+    onRecoverableRefinementConflict={recoverAfterConcurrentLaneConflict}
   />;
 
   const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
@@ -708,7 +712,7 @@ export function MixedPlayersReviewPanel({
       {simpleSplitAllowed && <aside className='mixed-assignment-panel'>
         <header><h3>Wybrany fragment {selectedSegment + 1}</h3><p>{selected ? segmentTimeLabel(selected.frameStart, selected.frameEnd) : ''}</p><strong>{assignmentLabel(selectedAssignment)}</strong></header>
         <div className='mixed-assignment-scroll'>
-          <MixedAssignmentControls assignment={selectedAssignment} options={queue.assignment_options} teams={match.teams} onAssign={assign} />
+          <MixedAssignmentControls assignment={selectedAssignment} options={queue.assignment_options} teams={match.teams} capabilities={reviewCase.action_capabilities} onAssign={assign} />
         </div>
       </aside>}
     </div>
