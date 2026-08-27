@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 import React from 'react';
 
 import { MixedPlayersReviewPanel, type MixedPlayersReviewApi } from '../src/components/MixedPlayersReviewPanel.tsx';
+import { ReviewedIdentityCorrectionForm } from '../src/components/ReviewedIdentityCorrectionForm.tsx';
 import { ReviewedIdentitySplitEditor } from '../src/components/ReviewedIdentitySplitEditor.tsx';
 import { ApiRequestError } from '../src/lib/apiErrors.ts';
 import type { ConcurrentLaneRefinement, Match, MixedPlayerCase, MixedPlayerFocusedCaseResponse, MixedPlayersReviewQueue, ReviewedCorrectionContext, ReviewWorkflow } from '../src/types.ts';
@@ -303,7 +304,7 @@ async function submitValidStructuralSplit(view: ReturnType<typeof render>) {
   fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
   fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
   const save = view.getByRole('button', { name: 'Zapisz podział + następny' });
-  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 2_000 });
   await act(async () => { fireEvent.click(save); });
 }
 
@@ -335,9 +336,11 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
 
   fireEvent.click(view.getByText('Inne przypisanie'));
   fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  await waitFor(() => assert.ok(view.getByText('1 z 3 ścieżek przypisane')));
   fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  await waitFor(() => assert.ok(view.getByText('2 z 3 ścieżek przypisane')));
   fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
-  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 2_000 });
   await act(async () => { fireEvent.click(save); });
 
   assert.deepEqual(resolutions, ['concurrent_lanes']);
@@ -393,6 +396,204 @@ test('production correction-context response shape activates the exact lane reso
   assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
   assert.ok(view.getByRole('button', { name: 'Nie da się bezpiecznie rozwiązać tego przypadku' }));
   assert.ok(view.getByRole('button', { name: 'Wróć bez zapisu' }));
+});
+
+test('canonical child opens its historical concurrent parent only after an explicit repair click', async () => {
+  const parent = concurrentMixedCase('legacy-material-parent');
+  const childContext = {
+    candidate_subject_id: 'continuity:A12:100-599',
+    review_target_id: 'review-mixed-segment:v1:child',
+    scope_kind: 'canonical_segment',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
+    tracklet_ids: ['material-tracklet'],
+    review_card_key: null,
+    roster_options: [],
+    slot_options: [],
+    current_decision: null,
+    semantic_decision_digest: 'semantic',
+    source_ownership_digest: 'child-digest',
+    frame_start: 100,
+    frame_end: 349,
+    detected_observation_count: 250,
+    temporal_topology: { ...parent.temporal_topology, kind: 'serial', simple_split_allowed: true, max_concurrent_tracklets: 1, overlap_ranges: [] },
+    concurrent_resolution: null,
+    historical_concurrent_repair: false,
+    historical_parent_repair: { available: true, case_id: parent.case_id },
+    visual_evidence: parent.temporal_evidence,
+    source_evidence_kind: 'identity_continuity',
+    temporal_split: null,
+    action_capabilities: normalActionCapabilities,
+    scope_copy: 'Korekta obejmuje dokładnie pokazany fragment.',
+    review_state_version: 42,
+  } satisfies ReviewedCorrectionContext;
+  const parentContext = {
+    ...childContext,
+    candidate_subject_id: parent.candidate_subject_id,
+    review_target_id: null,
+    scope_kind: 'material_continuity',
+    available_team_labels: ['A', 'B'],
+    tracklet_ids: parent.source_tracklet_ids,
+    source_ownership_digest: parent.source_subject_digest,
+    frame_start: parent.frame_start,
+    frame_end: parent.frame_end,
+    detected_observation_count: parent.observation_count,
+    temporal_topology: parent.temporal_topology,
+    concurrent_resolution: parent.concurrent_resolution,
+    historical_concurrent_repair: true,
+    historical_parent_repair: null,
+    visual_evidence: parent.temporal_evidence,
+    temporal_split: {
+      resolution_status: 'resolved',
+      split_after_frames: [20],
+      split_semantic_digest: 'old-split',
+      segment_assignments: [
+        { action: 'assign_team', team_label: 'A' },
+        { action: 'assign_team', team_label: 'B' },
+      ],
+    },
+  } satisfies ReviewedCorrectionContext;
+  const entity = {
+    frame: 100,
+    time_sec: 10,
+    tracklet_id: 'material-tracklet',
+    candidate_subject_id: childContext.candidate_subject_id,
+    candidate_subject_ids: [childContext.candidate_subject_id],
+    team_label: 'A',
+    stable_anonymous_slot_id: null,
+    canonical_player_id: null,
+    player_name: null,
+    display_label: 'Nieznany zawodnik',
+    identity_status: 'unresolved',
+    identity_source: null,
+    fallback_label: 'Nieznany',
+    requires_review: true,
+    hard_blockers: [],
+    conflicts: [],
+    detected_evidence_count: 250,
+    frame_start: 100,
+    frame_end: 349,
+    review_target_id: childContext.review_target_id,
+    scope_kind: 'canonical_segment',
+  } as const;
+  const originalFetch = globalThis.fetch;
+  const requested: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.includes('/corrections/historical-split/')) {
+      return new Response(JSON.stringify(parentContext), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.includes('/reviewed-identity/corrections/context')) {
+      return new Response(JSON.stringify(childContext), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    throw new Error(`unexpected request ${url}`);
+  };
+  try {
+    const view = render(React.createElement(ReviewedIdentityCorrectionForm, {
+      matchId: match.id,
+      entity,
+      teams: match.teams,
+      onCancel: () => undefined,
+      onSaved: () => assert.fail('opening a historical repair must not save'),
+    }));
+    await waitFor(() => assert.ok(view.getByRole('button', { name: 'Napraw równoległe przypisanie' })));
+    assert.equal(requested.filter((url) => url.includes('/historical-split/')).length, 0);
+    fireEvent.click(view.getByRole('button', { name: 'Napraw równoległe przypisanie' }));
+    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+    assert.ok(view.getByText('Historyczny podział czasowy nie jest już uznawany za bezpieczny.'));
+    assert.equal(requested.filter((url) => url.includes('/historical-split/')).length, 1);
+    assert.equal(requested.filter((url) => url.includes('/corrections')).length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('ordinary canonical child never exposes a historical repair action without the exact parent link', async () => {
+  const context = {
+    candidate_subject_id: 'ordinary-child',
+    review_target_id: 'review-mixed-segment:v1:ordinary',
+    scope_kind: 'canonical_segment',
+    team_label: 'A',
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    available_team_labels: ['A'],
+    tracklet_ids: ['tracklet-ordinary'],
+    review_card_key: null,
+    roster_options: [],
+    slot_options: [],
+    current_decision: null,
+    semantic_decision_digest: 'semantic',
+    source_ownership_digest: 'ordinary-digest',
+    frame_start: 10,
+    frame_end: 20,
+    detected_observation_count: 2,
+    temporal_topology: {
+      kind: 'serial',
+      simple_split_allowed: true,
+      tracklet_count: 1,
+      max_concurrent_tracklets: 1,
+      overlap_ranges: [],
+      tracklets: [{ tracklet_id: 'tracklet-ordinary', frame_start: 10, frame_end: 20, observation_count: 2 }],
+    },
+    concurrent_resolution: null,
+    historical_concurrent_repair: false,
+    historical_parent_repair: null,
+    visual_evidence: { status: 'ready', anchor_crops: [] },
+    source_evidence_kind: 'identity_continuity',
+    temporal_split: null,
+    action_capabilities: normalActionCapabilities,
+    scope_copy: 'Korekta obejmuje dokładnie pokazany fragment.',
+    review_state_version: 42,
+  } satisfies ReviewedCorrectionContext;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify(context), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  try {
+    const view = render(React.createElement(ReviewedIdentityCorrectionForm, {
+      matchId: match.id,
+      entity: {
+        frame: 10,
+        time_sec: 1,
+        tracklet_id: 'tracklet-ordinary',
+        candidate_subject_id: context.candidate_subject_id,
+        candidate_subject_ids: [context.candidate_subject_id],
+        team_label: 'A',
+        stable_anonymous_slot_id: null,
+        canonical_player_id: null,
+        player_name: null,
+        display_label: 'Nieznany zawodnik',
+        identity_status: 'unresolved',
+        identity_source: null,
+        fallback_label: 'Nieznany',
+        requires_review: true,
+        hard_blockers: [],
+        conflicts: [],
+        detected_evidence_count: 2,
+        frame_start: 10,
+        frame_end: 20,
+        review_target_id: context.review_target_id,
+        scope_kind: 'canonical_segment',
+      },
+      teams: match.teams,
+      onCancel: () => undefined,
+      onSaved: () => undefined,
+    }));
+    await waitFor(() => assert.ok(view.getByRole('radiogroup', { name: 'Rodzaj poprawki' })));
+    assert.equal(view.queryByRole('button', { name: 'Napraw równoległe przypisanie' }), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('correction editor discards stale lane refinement drafts and refreshes its exact context once', async () => {

@@ -110,6 +110,7 @@ from app.services.identity_reviewed_recompute_state import (
 from app.services.identity_reviewed_hot_state import (
     ReviewedIdentityHotStateError,
     hot_context,
+    hot_historical_split_repair_context,
     hot_progress,
     hot_review_unit,
     invalidate_review_hot_state,
@@ -2238,6 +2239,54 @@ def get_match_reviewed_correction_context(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/corrections/historical-split/{case_id}")
+def get_match_reviewed_historical_split_repair_context(
+    match_id: str,
+    case_id: str,
+    response: Response,
+) -> dict[str, Any]:
+    """Read one correction-only historical parent from fresh hot state."""
+    path = match_dir(match_id)
+    started = time.perf_counter()
+    try:
+        state_started = time.perf_counter()
+        state = load_existing_fresh_hot_state(path, read_match_meta(path))
+        if state is None:
+            raise ReviewedIdentityHotStateError("review_state_stale")
+        state_ms = round((time.perf_counter() - state_started) * 1000, 1)
+        context_started = time.perf_counter()
+        result = hot_historical_split_repair_context(state, case_id)
+        context_ms = round((time.perf_counter() - context_started) * 1000, 1)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        response.headers["Server-Timing"] = (
+            f"review_hot_state;dur={state_ms}, review_context;dur={context_ms}, total;dur={elapsed_ms}"
+        )
+        result["server_timing"] = {
+            "review_hot_state_ms": state_ms,
+            "review_context_ms": context_ms,
+            "total_ms": elapsed_ms,
+        }
+        return result
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": "Stan Review zmienił się. Synchronizuję kolejkę Review.",
+            },
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "historical_split_repair_unavailable",
+                "message": "Pierwotny podział nie jest już dostępny do bezpiecznej naprawy.",
+            },
+        ) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/corrections")

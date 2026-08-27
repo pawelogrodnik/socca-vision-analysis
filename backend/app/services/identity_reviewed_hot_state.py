@@ -49,6 +49,7 @@ from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_mixed_store import (
+    load_mixed_player_cases,
     render_mixed_review_evidence,
     temporal_evidence_for_observations,
 )
@@ -57,10 +58,10 @@ from app.services.play_area import is_on_pitch_product_observation
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-# 2.3 invalidates materializations that predate the concurrent correction
-# contract.  A warm correction-context GET must never serve an older document
-# that has no topology/lane state for the resolver.
-SCHEMA_VERSION = "2.3.0"
+# 2.4 invalidates materializations that predate correction-only historical
+# split repairs. A warm GET must never mistake an older hot document for a
+# complete repair index.
+SCHEMA_VERSION = "2.4.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -155,7 +156,11 @@ def _rebuild_review_hot_state_scoped(
     projection_inputs = dict(progress.pop("_projection_inputs", {}) or {})
     _attach_exact_whole_subject_digests(match_path, internal)
     _attach_legacy_context_fields(match_path, internal)
-    _attach_correction_temporal_evidence(match_path, match_doc, internal)
+    historical_split_repairs = _attach_correction_temporal_evidence(
+        match_path,
+        match_doc,
+        internal,
+    )
     _attach_temporal_split_context(match_path, internal)
     state = {
         "schema_version": SCHEMA_VERSION,
@@ -165,6 +170,7 @@ def _rebuild_review_hot_state_scoped(
         "internal_review_units": internal,
         "unit_lookup": _unit_lookup(internal),
         "source_index": _source_index(internal),
+        "historical_split_repairs": historical_split_repairs,
         "projection_inputs": projection_inputs,
         "roster_options": match_roster(match_doc),
         "slot_options": [registry[key] for key in sorted(registry)],
@@ -393,6 +399,24 @@ def hot_context(
     unit = hot_review_unit(state, candidate_subject_id, review_target_id)
     if not isinstance(unit, dict):
         raise ValueError(f"Unknown reviewed correction target: {candidate_subject_id}")
+    return _hot_context_from_unit(state, unit)
+
+
+def hot_historical_split_repair_context(
+    state: dict[str, Any],
+    case_id: str,
+) -> dict[str, Any]:
+    """Project one correction-only historical parent from fresh hot state."""
+    repair = (state.get("historical_split_repairs") or {}).get(case_id)
+    if not isinstance(repair, dict):
+        raise ValueError(f"Unknown historical split repair: {case_id}")
+    return _hot_context_from_unit(state, repair)
+
+
+def _hot_context_from_unit(state: dict[str, Any], unit: dict[str, Any]) -> dict[str, Any]:
+    """Cheap public projection for active units and repair-only parents."""
+    candidate_subject_id = str(unit.get("candidate_subject_id") or "")
+    review_target_id = str(unit.get("review_target_id") or "") or None
     scope_kind = str(unit.get("scope_kind") or "whole_subject")
     source_team = str(unit.get("source_team_label") or "U").upper()
     # A material continuity unit joins several safe fragments. A human may
@@ -458,6 +482,7 @@ def hot_context(
         "historical_concurrent_repair": bool(
             unit.get("historical_concurrent_repair")
         ),
+        "historical_parent_repair": unit.get("historical_parent_repair"),
         "action_capabilities": _capabilities(unit),
         "scope_copy": _scope_copy(scope_kind),
         "review_state_version": int(state.get("state_version") or 0),
@@ -772,7 +797,7 @@ def _attach_correction_temporal_evidence(
     match_path: Path,
     match_doc: dict[str, Any],
     units: list[dict[str, Any]],
-) -> None:
+) -> dict[str, dict[str, Any]]:
     """Cache legacy-equivalent correction crops during cold materialization.
 
     Hot context reads must not reconstruct raw match-wide sources.  The exact
@@ -854,6 +879,12 @@ def _attach_correction_temporal_evidence(
                 "temporal_evidence": {"anchor_crops": crops},
                 "concurrent_resolution": concurrent_fields["concurrent_resolution"],
             })
+    repairs = _materialize_historical_split_repairs(
+        match_path,
+        units,
+        observations_by_pair,
+        render_cases,
+    )
     if render_cases:
         try:
             render_mixed_review_evidence(match_path, match_doc, {"cases": render_cases})
@@ -861,6 +892,129 @@ def _attach_correction_temporal_evidence(
             # Matches retained without a local source video can still serve
             # their cached artifact references and normal image failure UI.
             pass
+    return repairs
+
+
+def _materialize_historical_split_repairs(
+    match_path: Path,
+    units: list[dict[str, Any]],
+    observations_by_pair: dict[tuple[str, int], dict[str, Any]],
+    render_cases: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build correction-only contexts for unsafe resolved historical splits.
+
+    These parents are deliberately absent from normal Review progress after
+    their canonical children cover the exact source. The hot index gives those
+    children one explicit, read-only route back to the original durable parent
+    without requeueing it or storing its full observation ownership.
+    """
+    repairs: dict[str, dict[str, Any]] = {}
+    for case in load_mixed_player_cases(match_path).get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("case_id") or "")
+        source = case.get("source")
+        if (
+            not case_id
+            or str(case.get("original_issue") or "") != "inline_temporal_split"
+            or str(case.get("resolution_status") or "") != "resolved"
+            or str(case.get("resolution_model") or "") == "concurrent_lanes"
+            or not isinstance(source, dict)
+        ):
+            continue
+        pairs = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in source.get("owned_observations") or []
+            if isinstance(row, dict)
+            and row.get("tracklet_id") is not None
+            and row.get("frame") is not None
+        }
+        if not pairs or any(pair not in observations_by_pair for pair in pairs):
+            continue
+        observations = sorted(
+            (observations_by_pair[pair] for pair in pairs),
+            key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
+        )
+        exact_source = {
+            key: source.get(key)
+            for key in (
+                "scope_kind",
+                "candidate_subject_id",
+                "review_target_id",
+                "continuity_group_id",
+                "source_ownership_digest",
+            )
+        }
+        if (
+            not str(exact_source.get("candidate_subject_id") or "")
+            or not str(exact_source.get("source_ownership_digest") or "")
+        ):
+            continue
+        exact_source["scope_kind"] = str(
+            exact_source.get("scope_kind") or "whole_subject"
+        )
+        exact_source["observations"] = observations
+        concurrent_fields = concurrent_correction_context_fields(
+            exact_source,
+            match_path,
+        )
+        if (
+            concurrent_fields["temporal_topology"].get("kind") != "concurrent"
+            or not concurrent_fields["historical_concurrent_repair"]
+            or str((concurrent_fields["concurrent_resolution"] or {}).get("parent_case_id") or "") != case_id
+        ):
+            continue
+        crops = temporal_evidence_for_observations(
+            str(exact_source["candidate_subject_id"]),
+            observations,
+            limit=12,
+        )
+        source_team = str(source.get("source_team_label") or "U").upper()
+        scope_kind = str(exact_source["scope_kind"])
+        repair = {
+            "candidate_subject_id": str(exact_source["candidate_subject_id"]),
+            "review_target_id": None,
+            "scope_kind": scope_kind,
+            "team_label": source_team,
+            "source_team_label": source_team,
+            "effective_team_label": source_team,
+            "available_team_labels": ["A", "B"] if source_team == "U" or scope_kind == "material_continuity" else [source_team],
+            "tracklet_ids": sorted({str(row["tracklet_id"]) for row in observations}),
+            "continuity_group_id": exact_source.get("continuity_group_id"),
+            "review_card_key": None,
+            "current_decision": None,
+            "source_ownership_digest": str(exact_source["source_ownership_digest"]),
+            "frame_ranges": [],
+            "frame_start": min(int(row["frame"]) for row in observations),
+            "frame_end": max(int(row["frame"]) for row in observations),
+            "detected_observation_count": len(observations),
+            "visual_evidence": {
+                "kind": "identity_continuity",
+                "status": "ready" if crops else "missing",
+                "selected_crop_count": len(crops),
+                "anchor_crops": crops,
+            },
+            "source_evidence_kind": "identity_continuity",
+            "legacy_suggestion": None,
+            "temporal_split": temporal_split_context_for_source(match_path, exact_source),
+            **concurrent_fields,
+        }
+        repairs[case_id] = repair
+        render_cases.append({
+            "temporal_evidence": {"anchor_crops": crops},
+            "concurrent_resolution": concurrent_fields["concurrent_resolution"],
+        })
+
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        parent_case_id = str(unit.get("split_parent_case_id") or "")
+        if parent_case_id in repairs:
+            unit["historical_parent_repair"] = {
+                "available": True,
+                "case_id": parent_case_id,
+            }
+    return repairs
 
 
 def _attach_temporal_split_context(match_path: Path, units: list[dict[str, Any]]) -> None:

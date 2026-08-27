@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { artifactUrl, getConcurrentLaneRefinement, getReviewedCorrectionContext, getReviewedIdentityTemporalSplitRefinement, saveReviewedIdentityTemporalSplit } from '../api';
+import { artifactUrl, getConcurrentLaneRefinement, getReviewedCorrectionContext, getReviewedHistoricalSplitRepairContext, getReviewedIdentityTemporalSplitRefinement, saveReviewedIdentityTemporalSplit } from '../api';
 import { isRecoverableConcurrentLaneConflict, isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type {
@@ -246,11 +246,16 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
     setConcurrentDirty(false);
     setConcurrentRecoveryRevision((value) => value + 1);
     try {
-      const fresh = await getReviewedCorrectionContext(
-        matchId,
-        context.candidate_subject_id,
-        context.review_target_id,
-      );
+      const fresh = context.historical_concurrent_repair
+        ? await getReviewedHistoricalSplitRepairContext(
+          matchId,
+          context.concurrent_resolution?.parent_case_id || '',
+        )
+        : await getReviewedCorrectionContext(
+          matchId,
+          context.candidate_subject_id,
+          context.review_target_id,
+        );
       const sameTarget = fresh.candidate_subject_id === context.candidate_subject_id
         && (fresh.review_target_id || null) === (context.review_target_id || null);
       if (
@@ -262,7 +267,9 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
       setTopologyRejected(false);
       setError('Układ ścieżek został zaktualizowany. Wprowadź przypisania ponownie na podstawie aktualnego materiału.');
     } catch {
-      setError('Układ ścieżek zmienił się i nie udało się pobrać aktualnego przypadku. Nie zapisano żadnych przypisań; zamknij edytor i odśwież Review.');
+      setError(context.historical_concurrent_repair
+        ? 'Pierwotny podział zmienił się i nie można go już bezpiecznie otworzyć. Odśwież Review.'
+        : 'Układ ścieżek zmienił się i nie udało się pobrać aktualnego przypadku. Nie zapisano żadnych przypisań; zamknij edytor i odśwież Review.');
     }
   }
 

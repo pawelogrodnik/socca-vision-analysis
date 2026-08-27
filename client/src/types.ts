@@ -1971,6 +1971,10 @@ export type ReviewedCorrectionContext = {
   temporal_topology?: MixedTemporalTopology | null;
   concurrent_resolution?: ConcurrentMixedResolution | null;
   historical_concurrent_repair?: boolean;
+  historical_parent_repair?: {
+    available: true;
+    case_id: string;
+  } | null;
   source_evidence_kind?: string;
   legacy_suggestion?: {
     action: 'assign_roster_player';

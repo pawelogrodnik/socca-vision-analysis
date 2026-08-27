@@ -314,6 +314,15 @@ export async function getReviewedCorrectionContext(
   );
 }
 
+export async function getReviewedHistoricalSplitRepairContext(
+  matchId: string,
+  caseId: string,
+): Promise<ReviewedCorrectionContext> {
+  return request<ReviewedCorrectionContext>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/historical-split/${encodeURIComponent(caseId)}`,
+  );
+}
+
 export async function saveReviewedIdentityCorrection(
   matchId: string,
   payload: ReviewedCorrectionRequest,
