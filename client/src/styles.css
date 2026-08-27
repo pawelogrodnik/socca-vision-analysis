@@ -869,6 +869,11 @@ a { color: #93c5fd; }
 .mixed-boundary-refinement > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .mixed-boundary-refinement > header div { display: grid; gap: 2px; }
 .mixed-boundary-refinement > header span { color: #cbd5e1; font-size: 12px; }
+.mixed-refinement-boundaries { display: flex; align-items: center; gap: 8px; overflow-x: auto; }
+.mixed-refinement-boundaries figure { display: grid; grid-template-columns: 72px auto; align-items: center; gap: 6px; min-width: 200px; margin: 0; padding: 4px; border: 1px solid #38bdf8; border-radius: 7px; background: rgba(2, 132, 199, 0.12); }
+.mixed-refinement-boundaries img { width: 72px; height: 72px; object-fit: contain; border-radius: 4px; background: #020617; }
+.mixed-refinement-boundaries figcaption { font-size: 12px; font-weight: 700; line-height: 1.25; }
+.mixed-refinement-boundary-arrow { color: #7dd3fc; font-size: 20px; }
 .mixed-refinement-strip { display: flex; gap: 6px; min-height: 150px; overflow-x: auto; overscroll-behavior: contain; }
 .mixed-refinement-leading-action { width: 90px; min-width: 90px; padding: 8px; font-size: 11px; }
 .mixed-refinement-crop { display: flex; align-items: center; gap: 5px; }

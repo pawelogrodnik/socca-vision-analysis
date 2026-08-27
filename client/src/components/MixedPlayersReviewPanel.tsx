@@ -10,6 +10,7 @@ import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mi
 import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
 import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
 import { MixedAssignmentControls } from './MixedAssignmentControls';
+import { MixedRefinementBoundaryEvidence } from './MixedRefinementBoundaryEvidence';
 
 export type MixedPlayersReviewApi = {
   getBoundaryRefinement: typeof getMixedBoundaryRefinement;
@@ -684,6 +685,7 @@ export function MixedPlayersReviewPanel({
             <div><strong>Doprecyzuj moment przejścia</strong><span>Wybierz dokładniejszą granicę między sąsiednimi podglądami.</span></div>
             <button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button>
           </header>
+          <MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} />
           <div className='mixed-refinement-strip'>
             <button type='button' className='mixed-refinement-leading-action' onClick={() => selectRefinedBoundary(refinement.after_frame)} disabled={busy}>Podziel zaraz po poprzednim podglądzie</button>
             {sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop, cropIndex, refinementCrops) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>

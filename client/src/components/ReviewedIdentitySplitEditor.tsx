@@ -28,6 +28,7 @@ import { teamLabelForOperator } from '../utils/reviewedOutputPresentation';
 import { correctionContextAsSplitCase } from '../utils/reviewedIdentitySplitCase';
 import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
 import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
+import { MixedRefinementBoundaryEvidence } from './MixedRefinementBoundaryEvidence';
 
 type Props = {
   matchId: string;
@@ -342,6 +343,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
     {refinement && <section className='mixed-boundary-refinement' aria-label='Doprecyzowanie granicy podziału'>
       <header><strong>Doprecyzuj moment przejścia</strong><button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button></header>
       <p>Wybierz dokładną granicę między sąsiednimi widokami. Nie jest ograniczona do 12 widoków głównych.</p>
+      <MixedRefinementBoundaryEvidence matchId={matchId} refinement={refinement} />
       <div className='mixed-refinement-strip'>
         <button type='button' className='mixed-refinement-leading-action' onClick={() => selectRefinedBoundary(refinement.after_frame)} disabled={busy}>Podziel zaraz po poprzednim widoku</button>
         {sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop, index, refinedCrops) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>

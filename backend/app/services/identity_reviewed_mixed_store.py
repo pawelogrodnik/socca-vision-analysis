@@ -607,16 +607,15 @@ def build_mixed_boundary_refinement(
         ),
         None,
     )
-    overview_frames = [
-        int(crop["frame"])
-        for crop in _temporal_evidence(subject_id, observations, card, limit=12)
-    ]
+    overview = _temporal_evidence(subject_id, observations, card, limit=12)
+    overview_frames = [int(crop["frame"]) for crop in overview]
     if (after_frame, before_frame) not in set(zip(overview_frames, overview_frames[1:])):
         raise ValueError("Refinement interval must use neighboring overview samples")
     interval = [row for row in observations if after_frame < int(row["frame"]) <= before_frame]
     if not interval:
         raise ValueError("No detected observations in the selected refinement interval")
     crops = _temporal_evidence(subject_id, interval, card, limit=max(3, min(limit, 16)))
+    boundary_crops = refinement_boundary_crops(overview, after_frame, before_frame)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_boundary_refinement",
@@ -626,6 +625,7 @@ def build_mixed_boundary_refinement(
         "source_subject_digest": case.get("source_subject_digest"),
         "after_frame": after_frame,
         "before_frame": before_frame,
+        "boundary_crops": boundary_crops,
         "anchor_crops": crops,
     }
     if source:
@@ -682,6 +682,25 @@ def temporal_evidence_for_observations(
 ) -> list[dict[str, Any]]:
     """Shared evidence selection for legacy and inline temporal split UI."""
     return _temporal_evidence(subject_id, observations, None, limit=limit)
+
+
+def refinement_boundary_crops(
+    overview: list[dict[str, Any]],
+    after_frame: int,
+    before_frame: int,
+) -> dict[str, dict[str, Any]]:
+    """Return the exact two overview observations that define a refinement.
+
+    The dense samples inside a refinement interval are useful for choosing a
+    boundary, but their rounded timestamps must never be mistaken for the two
+    authoritative endpoint observations selected in the overview.
+    """
+    by_frame = {int(crop["frame"]): crop for crop in overview}
+    after_crop = by_frame.get(after_frame)
+    before_crop = by_frame.get(before_frame)
+    if after_crop is None or before_crop is None:
+        raise ValueError("Refinement interval must use neighboring overview samples")
+    return {"after": dict(after_crop), "before": dict(before_crop)}
 
 
 def materialize_concurrent_resolution(

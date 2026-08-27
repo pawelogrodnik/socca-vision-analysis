@@ -664,6 +664,10 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             self.assertEqual(refined["lane_id"], lane["lane_id"])
             self.assertTrue(refined["anchor_crops"])
+            self.assertEqual(refined["boundary_crops"]["after"], overview[0])
+            self.assertEqual(refined["boundary_crops"]["before"], overview[1])
+            self.assertEqual(refined["anchor_crops"][-1]["frame"], overview[1]["frame"])
+            self.assertEqual(refined["anchor_crops"][-1]["tracklet_id"], overview[1]["tracklet_id"])
             self.assertEqual(
                 {crop["tracklet_id"] for crop in refined["anchor_crops"]},
                 {lane["tracklet_id"]},
@@ -1507,6 +1511,10 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertLess(refined_spacing, overview_spacing)
             self.assertEqual(refinement["after_frame"], after_frame)
             self.assertEqual(refinement["before_frame"], before_frame)
+            self.assertEqual(refinement["boundary_crops"]["after"], overview[4])
+            self.assertEqual(refinement["boundary_crops"]["before"], overview[5])
+            self.assertEqual(refinement["anchor_crops"][-1]["frame"], before_frame)
+            self.assertEqual(refinement["anchor_crops"][-1]["anchor_crop_id"], overview[5]["anchor_crop_id"])
             render.assert_called_once()
             selected_frame = refinement_frames[len(refinement_frames) // 2]
             save_mixed_player_resolution(
@@ -2353,6 +2361,9 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 )
             self.assertEqual(len(refinement["anchor_crops"]), 10)
             self.assertTrue(all(after_frame < crop["frame"] <= before_frame for crop in refinement["anchor_crops"]))
+            self.assertEqual(refinement["boundary_crops"]["after"], crops[4])
+            self.assertEqual(refinement["boundary_crops"]["before"], crops[5])
+            self.assertEqual(refinement["anchor_crops"][-1]["anchor_crop_id"], crops[5]["anchor_crop_id"])
 
             with (
                 patch("app.main.match_dir", return_value=root),

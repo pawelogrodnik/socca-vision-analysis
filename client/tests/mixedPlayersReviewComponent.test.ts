@@ -275,6 +275,10 @@ function laneRefinement(caseId: string): ConcurrentLaneRefinement {
     lane_source_digest: 'lane-digest-A',
     after_frame: 100,
     before_frame: 160,
+    boundary_crops: {
+      after: { anchor_crop_id: 'overview-100', artifact: 'overview-100.jpg', frame: 100, time_sec: 100, tracklet_id: 'track-A' },
+      before: { anchor_crop_id: 'overview-160', artifact: 'overview-160.jpg', frame: 160, time_sec: 160, tracklet_id: 'track-A' },
+    },
     anchor_crops: [110, 120, 130, 140, 150, 160].map((frame) => ({
       anchor_crop_id: `refined-${frame}`,
       artifact: `refined-${frame}.jpg`,
@@ -733,6 +737,8 @@ test('lane refinement keeps the leading after-preview boundary instead of shifti
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' })));
+  assert.ok(view.getByAltText('Lewy widok graniczny — podział następuje po tym widoku'));
+  assert.ok(view.getByAltText('Prawy widok graniczny — podział następuje przed tym widokiem'));
   fireEvent.click(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' }));
   fireEvent.click(view.getByText('Inne przypisanie'));
   fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
