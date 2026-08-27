@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ImgHTMLAttributes } from 'react';
 
 import { artifactUrl } from '../api';
 import { isRecoverableConcurrentLaneConflict } from '../lib/apiErrors';
@@ -67,6 +67,56 @@ type ConcurrentLaneDraft =
   };
 
 type DraftMap = Record<string, ConcurrentLaneDraft | undefined>;
+
+type RetryImageProps = ImgHTMLAttributes<HTMLImageElement> & {
+  src: string;
+  maxRetries?: number;
+  retryDelay?: number;
+};
+
+export function RetryImage({
+  src,
+  maxRetries = 5,
+  retryDelay = 1000,
+  onError,
+  ...props
+}: RetryImageProps) {
+  const [retry, setRetry] = useState(0);
+  const retryTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setRetry(0);
+    return () => {
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    };
+  }, [src]);
+
+  const retrySrc =
+    retry === 0
+      ? src
+      : `${src}${src.includes('?') ? '&' : '?'}retry=${retry}`;
+
+  const handleError = () => {
+    if (retry >= maxRetries || retryTimerRef.current !== null) return;
+    const nextRetry = retry + 1;
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetry(nextRetry);
+    }, retryDelay);
+  };
+
+  return (
+    <img
+      {...props}
+      src={retrySrc}
+      onError={(event) => {
+        onError?.(event);
+        handleError();
+      }}
+    />
+  );
+}
 
 export function ConcurrentMixedResolver({
   match,
@@ -384,7 +434,13 @@ function ConcurrentLaneCard({ matchId, reviewCase, lane, laneIndex, lanes, selec
     <button type='button' className='concurrent-lane-card-main' aria-pressed={selected} onClick={onSelect}>
     <span className='concurrent-lane-card-title'><strong>{completeLaneResolution(lane, resolution) ? '✓' : '!'} Ścieżka {laneIndex + 1}</strong><span>{laneStatus(resolution, roster, { teams })}</span></span>
     <span className='concurrent-lane-crops'>
-      {sortedMixedEvidenceCrops(lane.evidence.anchor_crops).map((crop) => <img key={crop.anchor_crop_id} src={artifactUrl(matchId, crop.artifact)} alt={`Ścieżka ${laneIndex + 1}, ${formatReviewTime(crop.time_sec || 0)}`} />)}
+      {sortedMixedEvidenceCrops(lane.evidence.anchor_crops).map((crop) => <RetryImage
+          key={crop.anchor_crop_id}
+          src={artifactUrl(matchId, crop.artifact)}
+          alt={`Ścieżka ${laneIndex + 1}, ${formatReviewTime(crop.time_sec || 0)}`}
+          maxRetries={10}
+          retryDelay={1000}
+        /> )}
       {lane.evidence.anchor_crops.length === 0 && <em>Brak podglądu tej ścieżki</em>}
     </span>
     <span className='concurrent-lane-card-meta'><span>{timeRange(reviewCase, lane.frame_start, lane.frame_end)}</span>{overlaps.length > 0 && <span>Nakłada się ze {overlaps.map((value) => `Ścieżką ${value}`).join(', ')}</span>}</span>

@@ -673,6 +673,22 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {lane["tracklet_id"]},
             )
 
+    def test_concurrent_lanes_use_distinct_artifacts_for_shared_frames(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+
+            context = reviewed_correction_context(root, match, "subject-mixed")
+            lanes = context["concurrent_resolution"]["lanes"]
+            shared_frame = 5
+            shared_crops = [
+                next(crop for crop in lane["evidence"]["anchor_crops"] if crop["frame"] == shared_frame)
+                for lane in lanes
+            ]
+
+            self.assertEqual({crop["tracklet_id"] for crop in shared_crops}, {"t1", "t2"})
+            self.assertEqual(len({crop["artifact"] for crop in shared_crops}), 2)
+
     def test_concurrent_refinement_returns_structured_conflict(self) -> None:
         with _workspace() as root:
             match = _fixture(root)

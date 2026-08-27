@@ -1171,7 +1171,11 @@ def _temporal_evidence(
                 continue
             crop = {
                 "anchor_crop_id": f"mixed-crop:{safe_subject}:{row['tracklet_id']}:{row['frame']}",
-                "artifact": f"reviewed_identity_mixed/{safe_subject}/{index:02d}_f{int(row['frame']):06d}.jpg",
+                # Concurrent lanes may contain distinct detections in the
+                # same frame.  Include the tracklet in the artifact identity
+                # so one lane can never reuse or overwrite another lane's
+                # crop while the operator is switching between lanes.
+                "artifact": f"reviewed_identity_mixed/{safe_subject}/{index:02d}_t{canonical_digest(str(row['tracklet_id']))[:10]}_f{int(row['frame']):06d}.jpg",
                 "frame": int(row["frame"]),
                 "time_sec": row.get("time_sec"),
                 "tracklet_id": row["tracklet_id"],
