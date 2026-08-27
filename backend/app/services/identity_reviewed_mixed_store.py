@@ -706,19 +706,63 @@ def materialize_mixed_review_artifact(
         if target.exists() and target.stat().st_size > 0:
             return True
         with review_build_context():
-            queue = build_mixed_review_queue(match_path, match_doc)
-            evidence_case = next(
-                (
-                    case
-                    for case in queue.get("cases") or []
-                    if _mixed_case_contains_artifact(case, artifact)
-                ),
-                None,
+            evidence_case = _current_mixed_case_for_artifact(
+                match_path,
+                match_doc,
+                artifact,
             )
             if not isinstance(evidence_case, dict):
                 return False
             render_mixed_review_evidence(match_path, match_doc, {"cases": [evidence_case]})
         return target.exists() and target.stat().st_size > 0
+
+
+def _current_mixed_case_for_artifact(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    artifact: str,
+) -> dict[str, Any] | None:
+    """Resolve one artifact without constructing every peer in the queue."""
+    artifact_parts = Path(artifact).parts
+    if len(artifact_parts) != 3 or artifact_parts[0] != "reviewed_identity_mixed":
+        return None
+    subject_digest = artifact_parts[1]
+    markers = [
+        dict(marker)
+        for marker in load_mixed_player_cases(match_path).get("cases") or []
+        if canonical_digest(str(marker.get("candidate_subject_id") or ""))[:16] == subject_digest
+        and str(marker.get("resolution_status")) in UNRESOLVED_STATUSES
+    ]
+    if not markers:
+        return None
+    subject_ids = {str(marker.get("candidate_subject_id") or "") for marker in markers}
+    subjects = {
+        str(subject.get("candidate_subject_id") or ""): subject
+        for subject in _load(match_path / "identity_candidate_shadow.json").get("subjects") or []
+        if str(subject.get("candidate_subject_id") or "") in subject_ids
+    }
+    cards = {
+        str(card.get("candidate_subject_id") or ""): card
+        for card in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+        if str(card.get("candidate_subject_id") or "") in subject_ids
+    }
+    for marker in markers:
+        subject_id = str(marker.get("candidate_subject_id") or "")
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subjects.get(subject_id),
+            card=cards.get(subject_id),
+        )
+        case = materialized.get("case")
+        if (
+            materialized.get("status") == "current_blocking"
+            and isinstance(case, dict)
+            and _mixed_case_contains_artifact(case, artifact)
+        ):
+            return case
+    return None
 
 
 def _mixed_case_contains_artifact(case: dict[str, Any], artifact: str) -> bool:

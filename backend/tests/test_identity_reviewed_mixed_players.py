@@ -24,6 +24,7 @@ from app.services.identity_reviewed_action_scope import (
     reviewed_identity_action_capabilities,
     validate_review_unit_action_scope,
 )
+from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
@@ -1460,9 +1461,12 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
     def test_artifact_recovery_renders_only_its_current_authoritative_case(self) -> None:
         with _workspace() as root:
-            requested = "reviewed_identity_mixed/" + ("a" * 16) + "/01_f000001.jpg"
+            subject_id = "subject-current"
+            requested = "reviewed_identity_mixed/" + canonical_digest(subject_id)[:16] + "/01_f000001.jpg"
             current_case = {
                 "case_id": "current",
+                "candidate_subject_id": subject_id,
+                "resolution_status": "unresolved",
                 "temporal_evidence": {"anchor_crops": [{
                     "artifact": requested,
                     "generated_for_segment_review": True,
@@ -1472,6 +1476,8 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             }
             stale_case = {
                 "case_id": "stale",
+                "candidate_subject_id": subject_id,
+                "resolution_status": "unresolved",
                 "temporal_evidence": {"anchor_crops": [{
                     "artifact": "reviewed_identity_mixed/" + ("b" * 16) + "/01_f000001.jpg",
                 }]},
@@ -1486,8 +1492,19 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             with (
                 patch(
-                    "app.services.identity_reviewed_mixed_store.build_mixed_review_queue",
+                    "app.services.identity_reviewed_mixed_store.load_mixed_player_cases",
                     return_value={"cases": [stale_case, current_case]},
+                ),
+                patch(
+                    "app.services.identity_reviewed_mixed_store.build_mixed_review_queue",
+                    side_effect=AssertionError("artifact recovery must not build the full queue"),
+                ),
+                patch(
+                    "app.services.identity_reviewed_mixed_store._materialize_mixed_review_case",
+                    side_effect=[
+                        {"status": "no_longer_unresolved", "case": None},
+                        {"status": "current_blocking", "case": current_case},
+                    ],
                 ),
                 patch(
                     "app.services.identity_reviewed_mixed_store.render_mixed_review_evidence",
