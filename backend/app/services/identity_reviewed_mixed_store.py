@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
-from app.services.identity_canonical_io import load_json_cached_or
+from app.services.identity_canonical_io import load_json_cached_or, review_build_context
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.identity_roster_anchor_crop_renderer import render_identity_roster_anchor_crops
@@ -40,6 +41,13 @@ UNRESOLVED_STATUSES = frozenset({"unresolved", "unresolved_complex_mix"})
 MANDATORY_MIXED_CASE_STATUSES = frozenset(
     {"current_blocking", "stale_or_unclassifiable_blocking"}
 )
+
+# An image request may arrive while a freshly reprojected local workspace still
+# holds an otherwise valid card whose crop has not been materialized yet. Keep
+# that recovery bounded to one render per match, rather than letting every
+# image element start a duplicate video pass.
+_MIXED_EVIDENCE_LOCKS_GUARD = Lock()
+_MIXED_EVIDENCE_LOCKS: dict[str, Lock] = {}
 
 
 def load_mixed_player_cases(match_path: Path) -> dict[str, Any]:
@@ -672,6 +680,57 @@ def render_mixed_review_evidence(
         match_path,
         {"cards": [{"anchor_crops": crops}]},
     )
+
+
+def materialize_mixed_review_artifact(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    artifact: str,
+) -> bool:
+    """Materialize one current Mixed card when its image is requested late.
+
+    Queue and focused reads normally produce this evidence before returning.
+    This narrow fallback covers a stale in-memory card after a local
+    reprojection or development hot reload. It never resurrects a no-longer
+    mandatory case: only an exact artifact belonging to the authoritative
+    current queue is rendered.
+    """
+    target = match_path / artifact
+    if target.exists() and target.stat().st_size > 0:
+        return True
+
+    with _MIXED_EVIDENCE_LOCKS_GUARD:
+        render_lock = _MIXED_EVIDENCE_LOCKS.setdefault(str(match_path.resolve()), Lock())
+
+    with render_lock:
+        if target.exists() and target.stat().st_size > 0:
+            return True
+        with review_build_context():
+            queue = build_mixed_review_queue(match_path, match_doc)
+            evidence_case = next(
+                (
+                    case
+                    for case in queue.get("cases") or []
+                    if _mixed_case_contains_artifact(case, artifact)
+                ),
+                None,
+            )
+            if not isinstance(evidence_case, dict):
+                return False
+            render_mixed_review_evidence(match_path, match_doc, {"cases": [evidence_case]})
+        return target.exists() and target.stat().st_size > 0
+
+
+def _mixed_case_contains_artifact(case: dict[str, Any], artifact: str) -> bool:
+    crops = [
+        *((case.get("temporal_evidence") or {}).get("anchor_crops") or []),
+        *(
+            crop
+            for lane in (case.get("concurrent_resolution") or {}).get("lanes") or []
+            for crop in (lane.get("evidence") or {}).get("anchor_crops") or []
+        ),
+    ]
+    return any(str(crop.get("artifact") or "") == artifact for crop in crops)
 
 
 def temporal_evidence_for_observations(

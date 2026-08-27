@@ -36,7 +36,7 @@ python -m venv .venv
 source .venv/Scripts/activate   # Git Bash na Windows
 # PowerShell: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8000
 ```
 
 ### Client
