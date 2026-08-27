@@ -86,12 +86,41 @@ Concurrent sources are shown as parallel tracklet lanes and cannot enter
 boundary refinement. Both refinement and split persistence revalidate the
 current exact source and fail closed with `temporal_split_not_separable`
 before any structural write. The operator may still explicitly save
-`unresolved_complex_mix`; a future lane-level identity resolver is outside
-the current architecture.
+`unresolved_complex_mix` when the evidence is genuinely insufficient.
+
+## Concurrent lane resolution
+
+Concurrent sources are no longer forced into one global time boundary. The
+backend derives one exact lane for every owned `tracklet_id`; each lane has a
+deterministic identifier and digest tied to the parent source and its exact
+observation pairs. A lane can receive one normal identity decision or, if that
+one lane itself contains more than one person over time, an independent local
+temporal split. No child may contain observations from another lane.
+
+The browser sends one complete lane-resolution set in a single atomic save.
+The server re-resolves the current parent, re-derives the lane set, rejects
+missing, extra or stale lanes, validates action scope and then creates the
+normal canonical child targets. Same-player overlapping lane choices are
+allowed; the existing frame-uniqueness guard remains the authority that
+prevents duplicate player-stat observations.
+
+The operator view is lane-first: "Ścieżka 1", "Ścieżka 2" and so on show
+their own crops, time range and overlap warning. Global refinement controls
+are absent. Lane-local refinement uses only the selected lane's observations.
+All lane decisions save together, so there is no per-lane persistence,
+reprojection or finalization.
+
+If a lane save reports a known stale parent/lane conflict, the client discards
+all local lane drafts and performs at most one exact focused read of the same
+case. It never repeats the POST or guesses whether the previous assignments
+remain correct. An unreadable refresh stays fail-closed. Older resolved
+global splits whose exact source is now concurrent remain unchanged until an
+operator explicitly replaces them with a lane resolution.
 
 ## Structural Mixed split lifecycle
 
-A temporal split changes canonical Review topology. Its implemented path is:
+A serial split or concurrent lane save changes canonical Review topology. Its
+implemented path is:
 
 ```text
 save exact Mixed case

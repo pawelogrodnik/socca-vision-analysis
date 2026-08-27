@@ -141,12 +141,16 @@ from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
     save_inline_temporal_split,
     save_mixed_player_resolution,
+    validate_concurrent_lane_resolution_request,
 )
+from app.services.identity_reviewed_concurrent_lanes import ConcurrentLaneResolutionError
 from app.services.identity_reviewed_mixed_topology import (
     MixedTemporalTopologyError,
     require_simple_temporal_split,
 )
 from app.services.identity_reviewed_review_source import (
+    ReviewedIdentityReviewSourceError,
+    build_concurrent_lane_boundary_refinement,
     build_review_source_boundary_refinement,
     resolve_review_source,
 )
@@ -2444,11 +2448,23 @@ def post_match_reviewed_identity_temporal_split(
             continuity_group_id=str(payload.get("continuity_group_id") or "") or None,
             source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
         )
-        if str(payload.get("resolution") or "split") == "split":
+        resolution = str(payload.get("resolution") or "split")
+        if resolution == "split":
             # Reject a structurally impossible split before loading or
             # generating a hot Review state. The same resolved source is
             # reused by persistence to avoid a second exact-source parse.
             require_simple_temporal_split(list(resolved_source["observations"]))
+        elif resolution == "concurrent_lanes":
+            existing_inline = inline_temporal_split_for_source(path, resolved_source)
+            validate_concurrent_lane_resolution_request(
+                resolved_source,
+                payload,
+                case_id=(
+                    str(existing_inline.get("case_id") or "")
+                    if isinstance(existing_inline, dict)
+                    else None
+                ),
+            )
         hot_state = load_or_rebuild_review_hot_state(path, match_document)
         from app.services.identity_reviewed_hot_state import assert_hot_state_version
 
@@ -2490,6 +2506,8 @@ def post_match_reviewed_identity_temporal_split(
     except MixedPlayerTargetError as exc:
         raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
     except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ConcurrentLaneResolutionError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ReviewedIdentityActionScopeError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
@@ -2536,6 +2554,50 @@ def get_match_reviewed_identity_temporal_split_refinement(
         code = str(exc)
         status = 409 if code in {"review_target_stale", "material_continuity_target_stale"} else 400
         raise HTTPException(status_code=status, detail={"code": code, "message": code}) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/concurrent-lanes/refine")
+def get_match_reviewed_identity_concurrent_lane_refinement(
+    match_id: str,
+    candidate_subject_id: str = Query(..., min_length=1),
+    parent_case_id: str = Query(..., min_length=1),
+    parent_source_digest: str = Query(..., min_length=1),
+    lane_id: str = Query(..., min_length=1),
+    lane_source_digest: str = Query(..., min_length=1),
+    after_frame: int = Query(..., ge=0),
+    before_frame: int = Query(..., ge=1),
+    review_target_id: str | None = Query(default=None),
+    continuity_group_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_concurrent_lane_boundary_refinement(
+            path,
+            read_match_meta(path),
+            candidate_subject_id=candidate_subject_id,
+            parent_case_id=parent_case_id,
+            parent_source_digest=parent_source_digest,
+            lane_id=lane_id,
+            lane_source_digest=lane_source_digest,
+            after_frame=after_frame,
+            before_frame=before_frame,
+            review_target_id=review_target_id,
+            continuity_group_id=continuity_group_id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConcurrentLaneResolutionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ReviewedIdentityReviewSourceError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/corrections/finalize")
@@ -2614,6 +2676,8 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except MixedTemporalTopologyError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ConcurrentLaneResolutionError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         status = 409 if str(exc) == "mixed_player_case_stale" else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
@@ -2670,6 +2734,8 @@ def post_match_reviewed_identity_mixed_resolution(
             detail={"code": str(exc), "message": str(exc)},
         ) from exc
     except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ConcurrentLaneResolutionError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

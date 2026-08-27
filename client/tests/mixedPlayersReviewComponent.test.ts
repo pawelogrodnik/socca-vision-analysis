@@ -189,6 +189,61 @@ function concurrentMixedCase(caseId: string): MixedPlayerCase {
         { anchor_crop_id: 'crop-C', artifact: 'C.jpg', frame: 25, time_sec: 25, tracklet_id: 'track-C' },
       ],
     },
+    concurrent_resolution: {
+      status: 'unresolved',
+      parent_case_id: caseId,
+      parent_source_digest: `digest-${caseId}`,
+      lanes: [
+        {
+          lane_id: 'lane-A',
+          tracklet_id: 'track-A',
+          source_ownership_digest: 'lane-digest-A',
+          frame_start: 10,
+          frame_end: 20,
+          observation_count: 2,
+          overlap_lane_ids: ['lane-B'],
+          evidence: {
+            status: 'ready',
+            anchor_crops: [
+              { anchor_crop_id: 'lane-A-10', artifact: 'A-10.jpg', frame: 10, time_sec: 10, tracklet_id: 'track-A' },
+              { anchor_crop_id: 'lane-A-20', artifact: 'A-20.jpg', frame: 20, time_sec: 20, tracklet_id: 'track-A' },
+            ],
+          },
+        },
+        {
+          lane_id: 'lane-B',
+          tracklet_id: 'track-B',
+          source_ownership_digest: 'lane-digest-B',
+          frame_start: 15,
+          frame_end: 20,
+          observation_count: 2,
+          overlap_lane_ids: ['lane-A'],
+          evidence: {
+            status: 'ready',
+            anchor_crops: [
+              { anchor_crop_id: 'lane-B-15', artifact: 'B-15.jpg', frame: 15, time_sec: 15, tracklet_id: 'track-B' },
+              { anchor_crop_id: 'lane-B-20', artifact: 'B-20.jpg', frame: 20, time_sec: 20, tracklet_id: 'track-B' },
+            ],
+          },
+        },
+        {
+          lane_id: 'lane-C',
+          tracklet_id: 'track-C',
+          source_ownership_digest: 'lane-digest-C',
+          frame_start: 21,
+          frame_end: 30,
+          observation_count: 2,
+          overlap_lane_ids: [],
+          evidence: {
+            status: 'ready',
+            anchor_crops: [
+              { anchor_crop_id: 'lane-C-21', artifact: 'C-21.jpg', frame: 21, time_sec: 21, tracklet_id: 'track-C' },
+              { anchor_crop_id: 'lane-C-30', artifact: 'C-30.jpg', frame: 30, time_sec: 30, tracklet_id: 'track-C' },
+            ],
+          },
+        },
+      ],
+    },
   };
 }
 
@@ -207,39 +262,53 @@ function workflowWithBlocking(normalBlocking: number, mixedBlocking: number): Re
 async function submitValidStructuralSplit(view: ReturnType<typeof render>) {
   await waitFor(() => assert.ok(view.getByText('2 wykrytych obserwacji')));
   fireEvent.click(view.getByRole('button', { name: 'Podziel tutaj' }));
-  fireEvent.click(view.getByRole('button', { name: 'Corgi — nieznany' }));
-  fireEvent.click(view.getByRole('button', { name: 'Verisk — nieznany' }));
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
   const save = view.getByRole('button', { name: 'Zapisz podział + następny' });
   await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
   await act(async () => { fireEvent.click(save); });
 }
 
-test('concurrent Mixed case shows parallel lanes and only the safe complex action', async () => {
+test('concurrent Mixed case resolves every exact lane and saves once atomically', async () => {
   const concurrent = concurrentMixedCase('M-concurrent');
   const resolutions: string[] = [];
+  const lanePayloads: unknown[] = [];
+  let reprojects = 0;
   const view = renderPanel({
     getQueue: async () => queue([concurrent]),
     saveResolution: async (_matchId, payload) => {
       resolutions.push(payload.resolution);
-      return { saved_case: concurrent, semantic_decision_digest: 'complex', recompute_deferred: true };
+      lanePayloads.push(payload.lane_resolutions);
+      return { saved_case: concurrent, semantic_decision_digest: 'lanes', recompute_deferred: true };
     },
+    reprojectWorkflow: async () => { reprojects += 1; return workflowWithBlocking(0, 0); },
   });
 
-  await waitFor(() => assert.ok(view.getByText('Ten przypadek zawiera tracklety występujące równocześnie.')));
-  assert.ok(view.getByText('track-A'));
-  assert.ok(view.getByText('track-B'));
-  assert.ok(view.getByText('track-C'));
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  assert.ok(view.getByRole('button', { name: /Ścieżka 1/ }));
+  assert.ok(view.getByRole('button', { name: /Ścieżka 2/ }));
+  assert.ok(view.getByRole('button', { name: /Ścieżka 3/ }));
+  assert.equal(view.queryByText('track-A'), null);
   assert.equal(view.queryByRole('button', { name: 'Podziel tutaj' }), null);
   assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
   assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
+  const save = view.getByRole('button', { name: 'Zapisz przypisania + następny' });
+  assert.equal(save.hasAttribute('disabled'), true);
 
-  await act(async () => {
-    fireEvent.click(view.getByRole('button', { name: 'Nie ma prostego podziału czasowego' }));
-  });
-  assert.deepEqual(resolutions, ['unresolved_complex_mix']);
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
+  await act(async () => { fireEvent.click(save); });
+
+  assert.deepEqual(resolutions, ['concurrent_lanes']);
+  assert.equal((lanePayloads[0] as unknown[]).length, 3);
+  assert.equal(reprojects, 1);
 });
 
-test('shared correction split editor also fails closed for concurrent topology', () => {
+test('shared correction split editor exposes the same exact lane resolver', () => {
   const concurrent = concurrentMixedCase('M-inline');
   const context = {
     candidate_subject_id: concurrent.candidate_subject_id,
@@ -259,6 +328,7 @@ test('shared correction split editor also fails closed for concurrent topology',
     frame_end: concurrent.frame_end,
     detected_observation_count: concurrent.observation_count,
     temporal_topology: concurrent.temporal_topology,
+    concurrent_resolution: concurrent.concurrent_resolution,
     visual_evidence: concurrent.temporal_evidence,
     action_capabilities: {},
   } as ReviewedCorrectionContext;
@@ -270,10 +340,34 @@ test('shared correction split editor also fails closed for concurrent topology',
     onSaved: () => assert.fail('concurrent case must not report a split save'),
   }));
 
-  assert.ok(view.getByText('Ten przypadek zawiera tracklety występujące równocześnie.'));
+  assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' }));
   assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
   assert.equal(view.queryByRole('button', { name: 'Doprecyzuj' }), null);
-  assert.ok(view.getByRole('button', { name: 'Nie da się bezpiecznie podzielić czasowo' }));
+  assert.ok(view.getByRole('button', { name: 'Nie da się bezpiecznie rozwiązać tego przypadku' }));
+  assert.ok(view.getByRole('button', { name: 'Wróć bez zapisu' }));
+});
+
+test('lane-local temporal split shows and edits only the selected lane evidence', async () => {
+  const concurrent = concurrentMixedCase('M-lane-split');
+  const view = renderPanel({ getQueue: async () => queue([concurrent]) });
+
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+
+  assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' }));
+  const laneImages = view.getAllByAltText('Podgląd wyłącznie wybranej ścieżki') as HTMLImageElement[];
+  assert.equal(laneImages.length, 2);
+  assert.ok(laneImages.every((image) => image.src.includes('/A-')));
+  assert.equal(view.queryByAltText('Ścieżka 2, 00:15.0'), null);
+
+  fireEvent.click(view.getByRole('button', { name: 'Podziel tutaj' }));
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Wróć do ścieżek' }));
+
+  assert.equal(view.getAllByText('Podzielono na 2 fragmenty').length, 2);
+  assert.ok(view.getByText('1 z 3 ścieżek przypisane'));
 });
 
 test('serial-to-concurrent save race refreshes exact case without retry or fake success', async () => {
@@ -303,13 +397,98 @@ test('serial-to-concurrent save race refreshes exact case without retry or fake 
   });
 
   await submitValidStructuralSplit(view);
-  await waitFor(() => assert.ok(view.getByText('Ten przypadek zawiera tracklety występujące równocześnie.')));
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
 
   assert.equal(saves, 1);
   assert.equal(focusedReads, 1);
   assert.equal(reprojects, 0);
   assert.equal(view.queryByRole('button', { name: 'Zapisz podział + następny' }), null);
   assert.ok(view.getByText(/Pokazano aktualny przypadek/));
+});
+
+test('stale concurrent lane save exact-refreshes once and never retries the POST automatically', async () => {
+  const stale = concurrentMixedCase('M-lane-stale');
+  const fresh = {
+    ...concurrentMixedCase('M-lane-stale'),
+    source_subject_digest: 'digest-M-lane-fresh',
+    concurrent_resolution: {
+      ...concurrentMixedCase('M-lane-stale').concurrent_resolution!,
+      parent_source_digest: 'digest-M-lane-fresh',
+      lanes: concurrentMixedCase('M-lane-stale').concurrent_resolution!.lanes.map((lane) => ({
+        ...lane,
+        source_ownership_digest: `${lane.source_ownership_digest}-fresh`,
+        current_resolution: null,
+      })),
+    },
+  };
+  let saves = 0;
+  let focusedReads = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([stale]),
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      return focusedResponse('M-lane-stale', 'current_blocking', fresh);
+    },
+    saveResolution: async () => {
+      saves += 1;
+      if (saves === 1) {
+        throw new ApiRequestError(409, 'lane set changed', 'concurrent_lane_set_stale');
+      }
+      return { saved_case: fresh, semantic_decision_digest: 'fresh-save', recompute_deferred: true };
+    },
+    reprojectWorkflow: async () => { reprojects += 1; return workflowWithBlocking(0, 0); },
+  });
+
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Zapisz przypisania + następny' })); });
+
+  await waitFor(() => assert.ok(view.getByText(/Układ ścieżek został zaktualizowany/)));
+  assert.equal(saves, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(reprojects, 0);
+  assert.ok(view.getByText('0 z 3 ścieżek przypisane'));
+
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
+  await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Zapisz przypisania + następny' })); });
+  await waitFor(() => assert.equal(reprojects, 1));
+  assert.equal(saves, 2);
+});
+
+test('concurrent lane save ignores a repeated click while the atomic POST is in flight', async () => {
+  const concurrent = concurrentMixedCase('M-lane-double-save');
+  const pending = deferred<{ saved_case: MixedPlayerCase; semantic_decision_digest: string; recompute_deferred: true }>();
+  let saves = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([concurrent]),
+    saveResolution: async () => {
+      saves += 1;
+      return pending.promise;
+    },
+    reprojectWorkflow: async () => workflowWithBlocking(0, 0),
+  });
+
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
+  const save = view.getByRole('button', { name: 'Zapisz przypisania + następny' });
+  fireEvent.click(save);
+  fireEvent.click(save);
+  assert.equal(saves, 1);
+  await act(async () => pending.resolve({
+    saved_case: concurrent,
+    semantic_decision_digest: 'one-save',
+    recompute_deferred: true,
+  }));
 });
 
 test('failed exact recovery after split rejection keeps stale serial case fail-closed', async () => {
@@ -497,7 +676,8 @@ test('dirty navigation makes no request when cancelled and gates M2 until confir
   });
 
   await waitFor(() => assert.ok(view.getByText('11 wykrytych obserwacji')));
-  fireEvent.click(view.getByRole('button', { name: 'Corgi — nieznany' }));
+  fireEvent.click(view.getByText('Inne przypisanie'));
+  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
   dom.window.confirm = () => false;
   fireEvent.click(view.getByRole('button', { name: 'Następny' }));
   assert.deepEqual(focusedIds, []);

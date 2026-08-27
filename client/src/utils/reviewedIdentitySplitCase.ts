@@ -5,6 +5,7 @@ export function correctionContextAsSplitCase(context: ReviewedCorrectionContext)
   const crops = context.visual_evidence?.anchor_crops || [];
   const cropFrames = crops.map((crop) => crop.frame);
   return {
+    case_id: context.concurrent_resolution?.parent_case_id,
     candidate_subject_id: context.candidate_subject_id,
     original_issue: 'mixed_players',
     mixed_hint: 'unknown',

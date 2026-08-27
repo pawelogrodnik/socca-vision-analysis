@@ -30,3 +30,21 @@ export function isTemporalSplitNotSeparable(error: unknown): boolean {
     && error.status === 409
     && error.code === 'temporal_split_not_separable';
 }
+
+const RECOVERABLE_CONCURRENT_LANE_CONFLICT_CODES = new Set([
+  'mixed_player_case_stale',
+  'review_target_stale',
+  'material_continuity_target_stale',
+  'concurrent_lane_topology_stale',
+  'concurrent_lane_set_stale',
+  'concurrent_lane_source_stale',
+  'concurrent_lane_target_stale',
+  'concurrent_lane_resolution_conflict',
+]);
+
+export function isRecoverableConcurrentLaneConflict(error: unknown): boolean {
+  return error instanceof ApiRequestError
+    && error.status === 409
+    && error.code !== null
+    && RECOVERABLE_CONCURRENT_LANE_CONFLICT_CODES.has(error.code);
+}

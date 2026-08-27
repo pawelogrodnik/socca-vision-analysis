@@ -181,7 +181,7 @@ test('normal correction stages mixed players while split editing remains a full-
   assert.match(editor, /onClick=\{cancel\} disabled=\{busy\}>Wróć bez zapisu</);
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.doesNotMatch(mixed, /Team A — nieznany/);
-  assert.match(mixed, /matchTeamName\(match\.teams \|\| \[\], 'A'\)/);
+  assert.match(mixed, /MixedAssignmentControls/);
   assert.match(editor, /Doprecyzuj moment przejścia/);
   assert.match(editor, /window\.confirm/);
   assert.match(editor, /Wróć bez zapisu/);

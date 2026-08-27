@@ -268,7 +268,7 @@ def build_segment_review_document(
         "summary": {
             "mixed_tracklets": len({key[1] for key in groups}),
             "operator_mixed_targets": sum(
-                row.get("target_origin") in {"operator_mixed_players", "operator_temporal_split"}
+                str(row.get("target_origin") or "").startswith("operator_")
                 for row in targets
             ),
             "targets_total": len(targets),

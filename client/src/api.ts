@@ -410,6 +410,36 @@ export async function getMixedBoundaryRefinement(
   );
 }
 
+export async function getConcurrentLaneRefinement(
+  matchId: string,
+  payload: {
+    candidate_subject_id: string;
+    parent_case_id: string;
+    parent_source_digest: string;
+    lane_id: string;
+    lane_source_digest: string;
+    after_frame: number;
+    before_frame: number;
+    review_target_id?: string;
+    continuity_group_id?: string;
+  },
+): Promise<import('./types').ConcurrentLaneRefinement> {
+  const query = new URLSearchParams({
+    candidate_subject_id: payload.candidate_subject_id,
+    parent_case_id: payload.parent_case_id,
+    parent_source_digest: payload.parent_source_digest,
+    lane_id: payload.lane_id,
+    lane_source_digest: payload.lane_source_digest,
+    after_frame: String(payload.after_frame),
+    before_frame: String(payload.before_frame),
+  });
+  if (payload.review_target_id) query.set('review_target_id', payload.review_target_id);
+  if (payload.continuity_group_id) query.set('continuity_group_id', payload.continuity_group_id);
+  return request<import('./types').ConcurrentLaneRefinement>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/concurrent-lanes/refine?${query}`,
+  );
+}
+
 export async function saveMixedPlayerResolution(
   matchId: string,
   payload: import('./types').MixedPlayerResolutionRequest,

@@ -13,6 +13,11 @@ from app.services.identity_reviewed_mixed_store import (
     temporal_evidence_for_observations,
 )
 from app.services.identity_reviewed_mixed_topology import require_simple_temporal_split
+from app.services.identity_reviewed_concurrent_lanes import (
+    ConcurrentLaneResolutionError,
+    CONCURRENT_LANE_SOURCE_STALE,
+    derive_concurrent_lanes,
+)
 from app.services.identity_reviewed_segments import build_segment_review_document, load_segment_review, target_for_id
 
 
@@ -279,6 +284,101 @@ def build_review_source_boundary_refinement(
         "review_target_id": review_target_id,
         "continuity_group_id": continuity_group_id,
         "source_ownership_digest": source["source_ownership_digest"],
+        "after_frame": after_frame,
+        "before_frame": before_frame,
+        "anchor_crops": crops,
+    }
+
+
+def build_concurrent_lane_boundary_refinement(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    candidate_subject_id: str,
+    parent_case_id: str,
+    parent_source_digest: str,
+    lane_id: str,
+    lane_source_digest: str,
+    after_frame: int,
+    before_frame: int,
+    review_target_id: str | None = None,
+    continuity_group_id: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Return bounded refinement evidence from one exact lane only."""
+    source = resolve_review_source(
+        match_path,
+        match_doc,
+        candidate_subject_id=candidate_subject_id,
+        review_target_id=review_target_id,
+        continuity_group_id=continuity_group_id,
+        source_ownership_digest=parent_source_digest,
+    )
+    canonical_case_id = source_case_id(source)
+    if parent_case_id != canonical_case_id:
+        from app.services.identity_reviewed_mixed_store import load_mixed_player_cases
+
+        marker = next(
+            (
+                row
+                for row in load_mixed_player_cases(match_path).get("cases") or []
+                if str(row.get("case_id") or row.get("candidate_subject_id") or "")
+                == parent_case_id
+                and str(row.get("source_subject_digest") or "")
+                == parent_source_digest
+            ),
+            None,
+        )
+        if not isinstance(marker, dict):
+            raise ConcurrentLaneResolutionError(CONCURRENT_LANE_SOURCE_STALE)
+    _topology, lanes = derive_concurrent_lanes(
+        parent_case_id,
+        parent_source_digest,
+        list(source["observations"]),
+    )
+    lane = next((row for row in lanes if str(row["lane_id"]) == lane_id), None)
+    if (
+        not isinstance(lane, dict)
+        or str(lane["source_ownership_digest"]) != lane_source_digest
+    ):
+        raise ConcurrentLaneResolutionError(CONCURRENT_LANE_SOURCE_STALE)
+    if after_frame >= before_frame:
+        raise ValueError("Refinement interval must have increasing frame boundaries")
+    lane_observations = list(lane["observations"])
+    overview = temporal_evidence_for_observations(
+        candidate_subject_id,
+        lane_observations,
+        limit=5,
+    )
+    overview_frames = [int(crop["frame"]) for crop in overview]
+    if (after_frame, before_frame) not in set(zip(overview_frames, overview_frames[1:])):
+        raise ValueError("Refinement interval must use neighboring lane samples")
+    interval = [
+        row
+        for row in lane_observations
+        if after_frame < int(row["frame"]) <= before_frame
+    ]
+    if not interval:
+        raise ValueError("No observations in the selected lane refinement interval")
+    crops = temporal_evidence_for_observations(
+        candidate_subject_id,
+        interval,
+        limit=max(3, min(limit, 16)),
+    )
+    render_mixed_review_evidence(
+        match_path,
+        match_doc,
+        {"cases": [{"temporal_evidence": {"anchor_crops": crops}}]},
+    )
+    return {
+        "schema_version": "1.0.0",
+        "mode": "reviewed_identity_concurrent_lane_refinement",
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "candidate_subject_id": candidate_subject_id,
+        "parent_case_id": parent_case_id,
+        "parent_source_digest": parent_source_digest,
+        "lane_id": lane_id,
+        "lane_source_digest": lane_source_digest,
         "after_frame": after_frame,
         "before_frame": before_frame,
         "anchor_crops": crops,
