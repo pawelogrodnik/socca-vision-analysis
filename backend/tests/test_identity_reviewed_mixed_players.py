@@ -12,6 +12,7 @@ from fastapi import HTTPException, Response
 
 from app.main import (
     get_artifact,
+    get_match_reviewed_correction_context,
     get_match_reviewed_identity_mixed_boundary_refinement,
     get_match_reviewed_identity_progress,
     get_match_reviewed_identity_temporal_split_refinement,
@@ -55,7 +56,12 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_review_queue,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
-from app.services.identity_reviewed_hot_state import FILENAME, load_or_rebuild_review_hot_state
+from app.services.identity_reviewed_hot_state import (
+    FILENAME,
+    hot_context,
+    load_existing_fresh_hot_state,
+    load_or_rebuild_review_hot_state,
+)
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_decisions,
@@ -397,6 +403,22 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             context = reviewed_correction_context(root, match, "subject-mixed")
 
+            # The production correction API reads the durable hot document,
+            # not the direct service above.  It must preserve the historical
+            # parent case id and expose repair metadata without mutating it.
+            _write(root / "reviewed_identity_snapshot.json", {})
+            load_or_rebuild_review_hot_state(root, match)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+            ):
+                hot_response = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                )
+
             self.assertEqual(
                 (root / "reviewed_identity_mixed_players.json").read_bytes(),
                 before,
@@ -407,7 +429,21 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 context["concurrent_resolution"]["parent_case_id"],
                 case_id,
             )
-            lanes = context["concurrent_resolution"]["lanes"]
+            self.assertEqual(hot_response["temporal_topology"]["kind"], "concurrent")
+            self.assertTrue(hot_response["historical_concurrent_repair"])
+            self.assertIsNotNone(hot_response["concurrent_resolution"])
+            self.assertIsNotNone(hot_response["temporal_split"])
+            self.assertEqual(
+                hot_response["concurrent_resolution"]["parent_case_id"],
+                case_id,
+            )
+            self.assertEqual(
+                (root / "reviewed_identity_mixed_players.json").read_bytes(),
+                before,
+            )
+            # The public hot response is the actual client contract used to
+            # construct an explicit, atomic historical repair.
+            lanes = hot_response["concurrent_resolution"]["lanes"]
             payload = {
                 "candidate_subject_id": "subject-mixed",
                 "source_ownership_digest": source["source_ownership_digest"],
@@ -493,6 +529,115 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 lane["split_allowed"]
                 for lane in full_case["concurrent_resolution"]["lanes"]
             ))
+
+    def test_hot_correction_context_http_exposes_the_concurrent_contract_without_rebuild(self) -> None:
+        """The production context route projects concurrent hot-state fields.
+
+        This intentionally calls the route rather than the direct correction
+        service: correction context is served from fresh hot state in normal
+        operation and must remain warm/read-only.
+        """
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            _write(root / "reviewed_identity_snapshot.json", {})
+            direct = reviewed_correction_context(root, match, "subject-mixed")
+            load_or_rebuild_review_hot_state(root, match)
+            persisted = load_existing_fresh_hot_state(root, match)
+            assert persisted is not None
+            self.assertEqual(
+                hot_context(persisted, "subject-mixed")["temporal_topology"],
+                direct["temporal_topology"],
+            )
+            guarded_paths = [
+                root / name
+                for name in (
+                    "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_review.json",
+                    "reviewed_identity_segment_decisions.json",
+                    "reviewed_identity_slot_assignments.json",
+                    "reviewed_identity_recompute_required.json",
+                )
+            ]
+            before = _path_snapshots(guarded_paths)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                    side_effect=AssertionError("warm correction context rebuilt Review"),
+                ),
+            ):
+                response = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                )
+
+            self.assertEqual(response["temporal_topology"], direct["temporal_topology"])
+            self.assertEqual(
+                response["concurrent_resolution"]["parent_case_id"],
+                direct["concurrent_resolution"]["parent_case_id"],
+            )
+            self.assertEqual(
+                response["concurrent_resolution"]["parent_source_digest"],
+                direct["concurrent_resolution"]["parent_source_digest"],
+            )
+            self.assertEqual(
+                [
+                    (
+                        lane["lane_id"],
+                        lane["source_ownership_digest"],
+                        lane["frame_start"],
+                        lane["frame_end"],
+                        lane["observation_count"],
+                        lane["split_allowed"],
+                    )
+                    for lane in response["concurrent_resolution"]["lanes"]
+                ],
+                [
+                    (
+                        lane["lane_id"],
+                        lane["source_ownership_digest"],
+                        lane["frame_start"],
+                        lane["frame_end"],
+                        lane["observation_count"],
+                        lane["split_allowed"],
+                    )
+                    for lane in direct["concurrent_resolution"]["lanes"]
+                ],
+            )
+            self.assertTrue(response["action_capabilities"]["assign_existing_slot"]["allowed"])
+            self.assertFalse(response["historical_concurrent_repair"])
+            self.assertTrue(all(
+                lane["split_allowed"]
+                and 1 <= len(lane["evidence"]["anchor_crops"]) <= 5
+                and "owned_observations" not in lane
+                and "observations" not in lane
+                for lane in response["concurrent_resolution"]["lanes"]
+            ))
+            self.assertEqual(_path_snapshots(guarded_paths), before)
+
+    def test_hot_correction_context_keeps_serial_sources_lightweight(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {})
+            load_or_rebuild_review_hot_state(root, match)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+            ):
+                response = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                )
+
+            self.assertEqual(response["temporal_topology"]["kind"], "serial")
+            self.assertIsNone(response["concurrent_resolution"])
+            self.assertFalse(response["historical_concurrent_repair"])
 
     def test_concurrent_refinement_never_reads_another_lane(self) -> None:
         with _workspace() as root:

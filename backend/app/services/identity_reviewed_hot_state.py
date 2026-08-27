@@ -30,8 +30,10 @@ from app.services.identity_ownership_compact import (
     validate_v2_hot_state,
 )
 from app.services.identity_reviewed_correction_context import (
+    concurrent_correction_context_fields,
     match_roster,
     reviewed_decisions_semantic_digest,
+    temporal_split_context_for_source,
 )
 from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
@@ -55,9 +57,10 @@ from app.services.play_area import is_on_pitch_product_observation
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-# 2.2 invalidates materializations built with the former coverage policy,
-# which incorrectly requeued an exact operator "Nie wiem" decision.
-SCHEMA_VERSION = "2.2.0"
+# 2.3 invalidates materializations that predate the concurrent correction
+# contract.  A warm correction-context GET must never serve an older document
+# that has no topology/lane state for the resolver.
+SCHEMA_VERSION = "2.3.0"
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -450,6 +453,11 @@ def hot_context(
         ),
         "legacy_suggestion": unit.get("legacy_suggestion"),
         "temporal_split": unit.get("temporal_split"),
+        "temporal_topology": unit.get("temporal_topology"),
+        "concurrent_resolution": unit.get("concurrent_resolution"),
+        "historical_concurrent_repair": bool(
+            unit.get("historical_concurrent_repair")
+        ),
         "action_capabilities": _capabilities(unit),
         "scope_copy": _scope_copy(scope_kind),
         "review_state_version": int(state.get("state_version") or 0),
@@ -826,8 +834,26 @@ def _attach_correction_temporal_evidence(
             or evidence_kind_by_subject.get(subject_id)
             or "identity_continuity"
         )
+        source = {
+            key: unit.get(key)
+            for key in (
+                "scope_kind",
+                "candidate_subject_id",
+                "review_target_id",
+                "continuity_group_id",
+                "source_ownership_digest",
+            )
+        }
+        source["scope_kind"] = str(unit.get("scope_kind") or "whole_subject")
+        source["observations"] = observations
+        concurrent_fields = concurrent_correction_context_fields(source, match_path)
+        unit.update(concurrent_fields)
+        unit["temporal_split"] = temporal_split_context_for_source(match_path, source)
         if crops:
-            render_cases.append({"temporal_evidence": {"anchor_crops": crops}})
+            render_cases.append({
+                "temporal_evidence": {"anchor_crops": crops},
+                "concurrent_resolution": concurrent_fields["concurrent_resolution"],
+            })
     if render_cases:
         try:
             render_mixed_review_evidence(match_path, match_doc, {"cases": render_cases})
@@ -838,26 +864,29 @@ def _attach_correction_temporal_evidence(
 
 
 def _attach_temporal_split_context(match_path: Path, units: list[dict[str, Any]]) -> None:
-    """Keep durable split state available without re-resolving raw ownership."""
-    document = _load(match_path / "reviewed_identity_mixed_players.json") or {}
-    cases = document.get("cases") or []
-    split_by_source = {
-        _source_key(source): case
-        for case in cases
-        if isinstance(case, dict)
-        and str(case.get("original_issue") or "") == "inline_temporal_split"
-        and isinstance((source := case.get("source")), dict)
-    }
+    """Keep saved split state for compact legacy hot fixtures too.
+
+    Normally this is attached alongside exact observations above.  This small
+    no-scan pass retains the existing split read contract for units whose
+    source video/tracklet fixture has no materialized observations.
+    """
     for unit in units:
-        case = split_by_source.get(_source_key(unit))
-        if not isinstance(case, dict):
+        if not isinstance(unit, dict):
             continue
-        unit["temporal_split"] = {
-            "resolution_status": case.get("resolution_status"),
-            "split_after_frames": list(case.get("split_after_frames") or []),
-            "segment_assignments": list(case.get("segment_assignments") or []),
-            "split_semantic_digest": case.get("split_semantic_digest"),
+        source = {
+            key: unit.get(key)
+            for key in (
+                "scope_kind",
+                "candidate_subject_id",
+                "review_target_id",
+                "continuity_group_id",
+                "source_ownership_digest",
+            )
         }
+        source["scope_kind"] = str(unit.get("scope_kind") or "whole_subject")
+        split = temporal_split_context_for_source(match_path, source)
+        if split is not None:
+            unit["temporal_split"] = split
 
 
 def _lookup_key(candidate_subject_id: str, review_target_id: Any) -> str:

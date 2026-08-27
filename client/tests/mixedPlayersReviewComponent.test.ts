@@ -345,10 +345,11 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
   assert.equal(reprojects, 1);
 });
 
-test('shared correction split editor exposes the same exact lane resolver', () => {
+test('production correction-context response shape activates the exact lane resolver', () => {
   const concurrent = concurrentMixedCase('M-inline');
-  const context = {
+  const correctionContextResponse = {
     candidate_subject_id: concurrent.candidate_subject_id,
+    review_target_id: null,
     scope_kind: 'whole_subject',
     team_label: 'A',
     source_team_label: 'A',
@@ -366,12 +367,22 @@ test('shared correction split editor exposes the same exact lane resolver', () =
     detected_observation_count: concurrent.observation_count,
     temporal_topology: concurrent.temporal_topology,
     concurrent_resolution: concurrent.concurrent_resolution,
+    historical_concurrent_repair: false,
     visual_evidence: concurrent.temporal_evidence,
+    source_evidence_kind: 'identity_continuity',
+    temporal_split: null,
     action_capabilities: normalActionCapabilities,
-  } as ReviewedCorrectionContext;
+    scope_copy: 'Korekta obejmuje cały pokazany fragment.',
+    review_state_version: 42,
+    server_timing: {
+      review_hot_state_ms: 1,
+      review_context_ms: 1,
+      total_ms: 2,
+    },
+  } satisfies ReviewedCorrectionContext & { server_timing: Record<string, number> };
   const view = render(React.createElement(ReviewedIdentitySplitEditor, {
     matchId: match.id,
-    context,
+    context: correctionContextResponse,
     teams: match.teams,
     onCancel: () => undefined,
     onSaved: () => assert.fail('concurrent case must not report a split save'),

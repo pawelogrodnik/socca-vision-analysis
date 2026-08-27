@@ -2534,6 +2534,9 @@ def _assert_hot_context_equivalent(
         "action_capabilities",
         "source_evidence_kind",
         "temporal_split",
+        "temporal_topology",
+        "concurrent_resolution",
+        "historical_concurrent_repair",
         "legacy_suggestion",
         "visual_evidence",
     )
