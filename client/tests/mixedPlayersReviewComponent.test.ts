@@ -5,7 +5,7 @@ import { JSDOM } from 'jsdom';
 import React from 'react';
 
 import { MixedPlayersReviewPanel, type MixedPlayersReviewApi } from '../src/components/MixedPlayersReviewPanel.tsx';
-import { RetryImage } from '../src/components/ConcurrentMixedResolver.tsx';
+import { ReviewedEvidenceImage } from '../src/components/ReviewedEvidenceImage.tsx';
 import { ReviewedIdentityCorrectionForm } from '../src/components/ReviewedIdentityCorrectionForm.tsx';
 import { ReviewedIdentitySplitEditor } from '../src/components/ReviewedIdentitySplitEditor.tsx';
 import { ApiRequestError } from '../src/lib/apiErrors.ts';
@@ -37,14 +37,15 @@ afterEach(() => {
   dom.window.confirm = () => true;
 });
 
-test('lane crop retries a just-materialized artifact with a cache-busting URL', async () => {
-  const view = render(React.createElement(RetryImage, {
+test('review crop retries a just-materialized artifact with a cache-busting URL', async () => {
+  const view = render(React.createElement(ReviewedEvidenceImage, {
     src: '/api/matches/m1/artifact/reviewed_identity_mixed/example/crop.jpg',
     alt: 'Retry crop',
     retryDelay: 1,
     maxRetries: 1,
   }));
   const image = view.getByAltText('Retry crop') as HTMLImageElement;
+  assert.match(image.src, /review_evidence=1&retry=0/);
   fireEvent.error(image);
 
   await waitFor(() => assert.match(image.src, /retry=1/));

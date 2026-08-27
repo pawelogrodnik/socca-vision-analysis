@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ImgHTMLAttributes } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { artifactUrl } from '../api';
 import { isRecoverableConcurrentLaneConflict } from '../lib/apiErrors';
@@ -24,6 +24,7 @@ import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 import { MixedAssignmentControls } from './MixedAssignmentControls';
 import { MixedRefinementBoundaryEvidence } from './MixedRefinementBoundaryEvidence';
+import { ReviewedEvidenceImage } from './ReviewedEvidenceImage';
 
 type Props = {
   match: Pick<Match, 'id' | 'teams'>;
@@ -67,56 +68,6 @@ type ConcurrentLaneDraft =
   };
 
 type DraftMap = Record<string, ConcurrentLaneDraft | undefined>;
-
-type RetryImageProps = ImgHTMLAttributes<HTMLImageElement> & {
-  src: string;
-  maxRetries?: number;
-  retryDelay?: number;
-};
-
-export function RetryImage({
-  src,
-  maxRetries = 5,
-  retryDelay = 1000,
-  onError,
-  ...props
-}: RetryImageProps) {
-  const [retry, setRetry] = useState(0);
-  const retryTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    setRetry(0);
-    return () => {
-      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    };
-  }, [src]);
-
-  const retrySrc =
-    retry === 0
-      ? src
-      : `${src}${src.includes('?') ? '&' : '?'}retry=${retry}`;
-
-  const handleError = () => {
-    if (retry >= maxRetries || retryTimerRef.current !== null) return;
-    const nextRetry = retry + 1;
-    retryTimerRef.current = window.setTimeout(() => {
-      retryTimerRef.current = null;
-      setRetry(nextRetry);
-    }, retryDelay);
-  };
-
-  return (
-    <img
-      {...props}
-      src={retrySrc}
-      onError={(event) => {
-        onError?.(event);
-        handleError();
-      }}
-    />
-  );
-}
 
 export function ConcurrentMixedResolver({
   match,
@@ -434,12 +385,10 @@ function ConcurrentLaneCard({ matchId, reviewCase, lane, laneIndex, lanes, selec
     <button type='button' className='concurrent-lane-card-main' aria-pressed={selected} onClick={onSelect}>
     <span className='concurrent-lane-card-title'><strong>{completeLaneResolution(lane, resolution) ? '✓' : '!'} Ścieżka {laneIndex + 1}</strong><span>{laneStatus(resolution, roster, { teams })}</span></span>
     <span className='concurrent-lane-crops'>
-      {sortedMixedEvidenceCrops(lane.evidence.anchor_crops).map((crop) => <RetryImage
+      {sortedMixedEvidenceCrops(lane.evidence.anchor_crops).map((crop) => <ReviewedEvidenceImage
           key={crop.anchor_crop_id}
           src={artifactUrl(matchId, crop.artifact)}
           alt={`Ścieżka ${laneIndex + 1}, ${formatReviewTime(crop.time_sec || 0)}`}
-          maxRetries={10}
-          retryDelay={1000}
         /> )}
       {lane.evidence.anchor_crops.length === 0 && <em>Brak podglądu tej ścieżki</em>}
     </span>
@@ -480,11 +429,11 @@ function ConcurrentLaneSplitEditor({ match, reviewCase, lane, draft, assignmentO
     <header><div><span className='eyebrow'>Ścieżka {(reviewCase.concurrent_resolution?.lanes.findIndex((value) => value.lane_id === lane.lane_id) ?? -1) + 1} › Podział ścieżki</span><h2>Podziel tylko tę ścieżkę</h2><p>Podglądy i granice poniżej dotyczą wyłącznie wybranej ścieżki.</p></div><button type='button' className='secondary' onClick={onBack}>Wróć do ścieżek</button></header>
     <div className='mixed-temporal-strip lane-only-strip'>
       {crops.map((crop, index) => <div className='mixed-crop-group' key={crop.anchor_crop_id}>
-        <figure><img src={artifactUrl(match.id, crop.artifact)} alt='Podgląd wyłącznie wybranej ścieżki' /><figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption></figure>
+        <figure><ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Podgląd wyłącznie wybranej ścieżki' /><figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption></figure>
         {index < crops.length - 1 && <button type='button' className='split-boundary' disabled={busy} onClick={() => lane.observation_count > crops.length ? onRefine(crop.frame, crops[index + 1].frame) : onBoundaries(toggleMixedBoundary(boundaries, crop.frame))}>{lane.observation_count > crops.length ? 'Doprecyzuj' : 'Podziel tutaj'}</button>}
       </div>)}
     </div>
-    {refinement && <div className='mixed-boundary-refinement'><strong>Doprecyzuj przejście w tej ścieżce</strong><MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} /><div className='mixed-refinement-strip'><button type='button' className='mixed-refinement-leading-action' disabled={busy} onClick={() => onSelectRefined(refinement.after_frame)}>Podziel zaraz po poprzednim podglądzie</button>{sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop) => <button type='button' key={crop.anchor_crop_id} disabled={busy} onClick={() => onSelectRefined(crop.frame)}><img src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy podgląd ścieżki' /><span>{formatReviewTime(crop.time_sec || 0)}</span></button>)}</div>{boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={onRemoveRefined}>Usuń podział z tego przedziału</button>}</div>}
+    {refinement && <div className='mixed-boundary-refinement'><strong>Doprecyzuj przejście w tej ścieżce</strong><MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} /><div className='mixed-refinement-strip'><button type='button' className='mixed-refinement-leading-action' disabled={busy} onClick={() => onSelectRefined(refinement.after_frame)}>Podziel zaraz po poprzednim podglądzie</button>{sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop) => <button type='button' key={crop.anchor_crop_id} disabled={busy} onClick={() => onSelectRefined(crop.frame)}><ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy podgląd ścieżki' /><span>{formatReviewTime(crop.time_sec || 0)}</span></button>)}</div>{boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={onRemoveRefined}>Usuń podział z tego przedziału</button>}</div>}
     <div className='concurrent-lane-split-layout'>
       <div className='mixed-segment-list'>{segments.map((segment) => <button type='button' key={segment.index} className={selectedSegment === segment.index ? 'selected' : ''} onClick={() => onSelectSegment(segment.index)}><strong>Fragment {segment.index + 1}</strong><span>{timeRange(reviewCase, segment.frameStart, segment.frameEnd)}</span><small>{assignmentLabel(assignments[segment.index] || null)}</small></button>)}</div>
       <aside className='concurrent-lane-decision'><h3>Przypisz fragment {selectedSegment + 1}</h3><MixedAssignmentControls assignment={assignments[selectedSegment] || null} options={assignmentOptions} teams={match.teams} capabilities={reviewCase.action_capabilities} onAssign={onAssign} /></aside>

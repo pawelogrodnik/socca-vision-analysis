@@ -3576,7 +3576,23 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     if artifact_path != match_root and match_root not in artifact_path.parents:
         raise HTTPException(status_code=404, detail="Artifact not available")
     if not artifact_path.exists():
-        raise HTTPException(status_code=404, detail="Artifact not generated yet")
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact not generated yet",
+            headers=(
+                {"Cache-Control": "no-store"}
+                if artifact_rel.parts and artifact_rel.parts[0] == "reviewed_identity_mixed"
+                else None
+            ),
+        )
     if artifact_path.stat().st_size == 0:
         raise HTTPException(status_code=410, detail=f"Artifact {artifact_name} exists but is empty. Rerun analysis and check backend logs.")
-    return FileResponse(artifact_path, media_type=allowed[artifact_basename])
+    # Mixed-review crops are materialized just in time for the current card.
+    # A transient 404 must never become a sticky browser cache entry: the
+    # client can safely retry the same immutable crop once rendering finishes.
+    headers = (
+        {"Cache-Control": "no-store"}
+        if artifact_rel.parts and artifact_rel.parts[0] == "reviewed_identity_mixed"
+        else None
+    )
+    return FileResponse(artifact_path, media_type=allowed[artifact_basename], headers=headers)

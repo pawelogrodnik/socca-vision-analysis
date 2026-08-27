@@ -1417,6 +1417,18 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             self.assertIsInstance(response, FileResponse)
             self.assertEqual(response.media_type, "image/jpeg")
+            self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_missing_mixed_crop_is_not_cacheable(self) -> None:
+        with _workspace() as root:
+            relative = Path("reviewed_identity_mixed") / ("a" * 16) / "01_f000001.jpg"
+
+            with patch("app.main.match_dir", return_value=root):
+                with self.assertRaises(HTTPException) as raised:
+                    get_artifact("match", str(relative))
+
+            self.assertEqual(raised.exception.status_code, 404)
+            self.assertEqual(raised.exception.headers, {"Cache-Control": "no-store"})
 
     def test_classification_moves_case_to_mixed_queue_without_mutating_raw_tracks(self) -> None:
         with _workspace() as root:
