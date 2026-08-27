@@ -16,9 +16,17 @@ from app.services.identity_reviewed_slot_registry import build_reviewed_slot_reg
 from app.services.identity_reviewed_scope_eligibility import (
     mixed_review_relevant_for_scope,
 )
+from app.services.identity_reviewed_action_scope import (
+    reviewed_identity_action_capabilities,
+)
 from app.services.identity_reviewed_mixed_topology import (
     analyze_temporal_split_topology,
     require_simple_temporal_split,
+)
+from app.services.identity_reviewed_concurrent_lanes import (
+    derive_concurrent_lanes,
+    expanded_concurrent_lane_segments,
+    validate_concurrent_lane_resolutions,
 )
 from app.services.video import resolve_match_video_path
 
@@ -143,7 +151,10 @@ def inline_temporal_split_for_source(
         )
     }
     for row in load_mixed_player_cases(match_path).get("cases") or []:
-        if str(row.get("original_issue") or "") != "inline_temporal_split":
+        if (
+            str(row.get("original_issue") or "") != "inline_temporal_split"
+            and str(row.get("resolution_model") or "") != "concurrent_lanes"
+        ):
             continue
         stored = row.get("source")
         if not isinstance(stored, dict):
@@ -411,6 +422,18 @@ def _materialize_mixed_review_case(
     subject_id = str(marker.get("candidate_subject_id") or "")
     temporal_topology = analyze_temporal_split_topology(observations)
     crops = _temporal_evidence(subject_id, observations, card, limit=12)
+    action_capabilities = _mixed_action_capabilities(marker, observations, card)
+    concurrent_resolution = (
+        materialize_concurrent_resolution(
+            subject_id,
+            str(marker.get("case_id") or subject_id),
+            str(marker.get("source_subject_digest") or ""),
+            observations,
+            marker,
+        )
+        if temporal_topology["kind"] == "concurrent"
+        else None
+    )
     complex_unresolved = (
         str(marker.get("resolution_status")) == "unresolved_complex_mix"
     )
@@ -425,6 +448,8 @@ def _materialize_mixed_review_case(
             if complex_unresolved
             else None,
             "temporal_topology": temporal_topology,
+            "concurrent_resolution": concurrent_resolution,
+            "action_capabilities": action_capabilities,
             "temporal_evidence": {
                 "status": "ready" if crops else "missing",
                 "anchor_crops": crops,
@@ -502,8 +527,29 @@ def _stale_blocking_case(marker: dict[str, Any]) -> dict[str, Any]:
         if complex_unresolved
         else None,
         "temporal_topology": None,
+        "concurrent_resolution": None,
         "temporal_evidence": {"status": "missing", "anchor_crops": []},
     }
+
+
+def _mixed_action_capabilities(
+    marker: dict[str, Any],
+    observations: list[dict[str, Any]],
+    card: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Expose the same server-owned action gate used by concurrent saves."""
+    source = marker.get("source")
+    scope_unit = {
+        "scope_kind": (
+            str(source.get("scope_kind") or "")
+            if isinstance(source, dict)
+            else "whole_subject"
+        ) or "whole_subject",
+        "detected_observation_count": len(observations),
+    }
+    if isinstance(card, dict) and card.get("priority") is not None:
+        scope_unit["priority"] = card["priority"]
+    return reviewed_identity_action_capabilities(scope_unit)
 
 
 def build_mixed_boundary_refinement(
@@ -603,7 +649,14 @@ def render_mixed_review_evidence(
     crops = [
         crop
         for case in queue.get("cases") or []
-        for crop in (case.get("temporal_evidence") or {}).get("anchor_crops") or []
+        for crop in [
+            *((case.get("temporal_evidence") or {}).get("anchor_crops") or []),
+            *(
+                crop
+                for lane in (case.get("concurrent_resolution") or {}).get("lanes") or []
+                for crop in (lane.get("evidence") or {}).get("anchor_crops") or []
+            ),
+        ]
         if crop.get("generated_for_segment_review")
         and crop.get("artifact")
         and not (match_path / str(crop["artifact"])).exists()
@@ -631,6 +684,70 @@ def temporal_evidence_for_observations(
     return _temporal_evidence(subject_id, observations, None, limit=limit)
 
 
+def materialize_concurrent_resolution(
+    subject_id: str,
+    parent_case_id: str,
+    parent_source_digest: str,
+    observations: list[dict[str, Any]],
+    marker: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the bounded operator read model from exact server-owned lanes."""
+    _topology, lanes = derive_concurrent_lanes(
+        parent_case_id,
+        parent_source_digest,
+        observations,
+    )
+    stored = {
+        str(row.get("lane_id") or ""): dict(row)
+        for row in (marker or {}).get("lane_resolutions") or []
+        if isinstance(row, dict)
+    }
+    public_lanes = []
+    for lane in lanes:
+        current = stored.get(str(lane["lane_id"]))
+        if current and str(current.get("lane_source_digest") or "") != str(
+            lane["source_ownership_digest"]
+        ):
+            current = None
+        crops = _temporal_evidence(
+            subject_id,
+            list(lane["observations"]),
+            None,
+            limit=5,
+        )
+        public_lanes.append(
+            {
+                key: lane[key]
+                for key in (
+                    "lane_id",
+                    "tracklet_id",
+                    "source_ownership_digest",
+                    "frame_start",
+                    "frame_end",
+                    "observation_count",
+                    "split_allowed",
+                    "overlap_lane_ids",
+                )
+            }
+            | {
+                "evidence": {
+                    "status": "ready" if crops else "missing",
+                    "anchor_crops": crops,
+                },
+                "current_resolution": _public_lane_resolution(current),
+            }
+        )
+    return {
+        "status": str((marker or {}).get("resolution_status") or "unresolved"),
+        "parent_case_id": parent_case_id,
+        "parent_source_digest": parent_source_digest,
+        "resolution_semantic_digest": (marker or {}).get(
+            "resolution_semantic_digest"
+        ),
+        "lanes": public_lanes,
+    }
+
+
 def operator_mixed_targets(
     match_path: Path,
     cases_document: dict[str, Any] | None = None,
@@ -648,6 +765,9 @@ def operator_mixed_targets(
     }
     targets: list[dict[str, Any]] = []
     for marker in document.get("cases") or []:
+        if str(marker.get("resolution_model") or "") == "concurrent_lanes":
+            targets.extend(_operator_concurrent_lane_targets(match_path, marker, cards))
+            continue
         split_frames = sorted({int(value) for value in marker.get("split_after_frames") or []})
         if not split_frames:
             continue
@@ -713,6 +833,106 @@ def operator_mixed_targets(
                 }
             )
     return targets
+
+
+def _operator_concurrent_lane_targets(
+    match_path: Path,
+    marker: dict[str, Any],
+    cards: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    subject_id = str(marker.get("candidate_subject_id") or "")
+    observations = observations_for_case(match_path, marker)
+    if not observations:
+        return []
+    try:
+        _topology, lanes = derive_concurrent_lanes(
+            str(marker.get("case_id") or subject_id),
+            str(marker.get("source_subject_digest") or ""),
+            observations,
+        )
+        resolutions = validate_concurrent_lane_resolutions(
+            lanes,
+            list(marker.get("lane_resolutions") or []),
+        )
+    except (ValueError, TypeError):
+        return []
+
+    targets: list[dict[str, Any]] = []
+    for expanded in expanded_concurrent_lane_segments(lanes, resolutions):
+        lane = expanded["lane"]
+        group = expanded["observations"]
+        ownership = [
+            {"tracklet_id": str(row["tracklet_id"]), "frame": int(row["frame"])}
+            for row in group
+        ]
+        digest = canonical_digest(
+            {
+                "source_case_id": marker.get("case_id") or subject_id,
+                "lane_id": lane["lane_id"],
+                "lane_source_digest": lane["source_ownership_digest"],
+                "segment_index": expanded["segment_index"],
+                "owned_observations": ownership,
+            }
+        )
+        frames = [int(row["frame"]) for row in group]
+        teams = {str(row.get("team_label") or "U") for row in group}
+        source_team = next(iter(teams)) if len(teams) == 1 else "U"
+        crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
+        targets.append(
+            {
+                "review_target_id": f"review-mixed-lane-segment:v1:{digest}",
+                "scope_kind": "canonical_segment",
+                "target_origin": (
+                    "operator_concurrent_lane"
+                    if len(frames) == int(lane["observation_count"])
+                    else "operator_concurrent_lane_split"
+                ),
+                "candidate_subject_id": subject_id,
+                "tracklet_ids": [str(lane["tracklet_id"])],
+                "stable_slot_id": None,
+                "source_team_label": source_team,
+                "effective_team_label": source_team,
+                "frame_start": min(frames),
+                "frame_end": max(frames),
+                "frame_ranges": _exact_ranges(sorted(set(frames))),
+                "owned_frames": sorted(set(frames)),
+                "owned_observations": ownership,
+                "detected_observation_count": len(group),
+                "source_ownership_digest": digest,
+                "reason_codes": ["operator_concurrent_lane_resolution"],
+                "visual_evidence": {
+                    "status": "ready" if crops else "missing",
+                    "selected_crop_count": len(crops),
+                    "anchor_crops": crops,
+                },
+                "current_decision": None,
+                "decision_status": "pending",
+                "stale_decision": False,
+                "legacy_suggestion": None,
+                "mixed_lane_id": lane["lane_id"],
+                "mixed_lane_index": expanded["lane_index"],
+                "mixed_lane_segment_index": expanded["segment_index"],
+                "split_parent_case_id": marker.get("case_id") or subject_id,
+            }
+        )
+    return targets
+
+
+def _public_lane_resolution(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: value.get(key)
+        for key in (
+            "lane_id",
+            "lane_source_digest",
+            "resolution",
+            "assignment",
+            "split_after_frames",
+            "segment_assignments",
+        )
+        if value.get(key) is not None
+    }
 
 
 def validate_split_frames(observations: list[dict[str, Any]], split_frames: list[int]) -> None:

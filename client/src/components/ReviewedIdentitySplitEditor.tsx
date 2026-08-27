@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { artifactUrl, getReviewedIdentityTemporalSplitRefinement, saveReviewedIdentityTemporalSplit } from '../api';
-import { isTemporalSplitNotSeparable } from '../lib/apiErrors';
+import { artifactUrl, getConcurrentLaneRefinement, getReviewedCorrectionContext, getReviewedHistoricalSplitRepairContext, getReviewedIdentityTemporalSplitRefinement, saveReviewedIdentityTemporalSplit } from '../api';
+import { isRecoverableConcurrentLaneConflict, isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type {
   MixedBoundaryRefinement,
+  ConcurrentLaneResolution,
   MixedSegmentAssignment,
   ReviewedCorrectionContext,
   ReviewedTemporalSplitResponse,
@@ -26,6 +27,7 @@ import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { teamLabelForOperator } from '../utils/reviewedOutputPresentation';
 import { correctionContextAsSplitCase } from '../utils/reviewedIdentitySplitCase';
 import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
+import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
 
 type Props = {
   matchId: string;
@@ -37,7 +39,8 @@ type Props = {
 
 const CHILD_ACTIONS = reviewedIdentityChildActions();
 
-export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel, onSaved }: Props) {
+export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext, teams, onCancel, onSaved }: Props) {
+  const [context, setContext] = useState(suppliedContext);
   const reviewCase = useMemo(() => correctionContextAsSplitCase(context), [context]);
   const [boundaries, setBoundaries] = useState<number[]>([]);
   const [assignments, setAssignments] = useState<Array<MixedSegmentAssignment | null>>([null]);
@@ -47,6 +50,8 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [topologyRejected, setTopologyRejected] = useState(false);
+  const [concurrentRecoveryRevision, setConcurrentRecoveryRevision] = useState(0);
+  const [concurrentDirty, setConcurrentDirty] = useState(false);
   const crops = useMemo(() => sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops), [reviewCase]);
   const segments = useMemo(() => mixedSegments(reviewCase, boundaries), [reviewCase, boundaries]);
   const persistedSplit = context.temporal_split?.resolution_status === 'resolved'
@@ -68,6 +73,10 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   }), [context.roster_options]);
 
   useEffect(() => {
+    setContext(suppliedContext);
+  }, [suppliedContext]);
+
+  useEffect(() => {
     setTopologyRejected(false);
     if (!persistedSplit) {
       setBoundaries([]);
@@ -83,7 +92,7 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
     boundaries: persistedSplit?.split_after_frames || [],
     assignments: persistedSplit?.segment_assignments || [null],
   }), [persistedSplit]);
-  const hasUnsavedChanges = JSON.stringify({ boundaries, assignments }) !== savedState;
+  const hasUnsavedChanges = concurrentDirty || JSON.stringify({ boundaries, assignments }) !== savedState;
 
   function updateBoundaries(next: number[]) {
     const remapped = remapMixedAssignments(reviewCase, boundaries, next, assignments);
@@ -204,6 +213,66 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
     }
   }
 
+  async function saveConcurrent(resolutions: ConcurrentLaneResolution[]) {
+    if (!context.source_ownership_digest || topologyRejected) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await saveReviewedIdentityTemporalSplit(matchId, {
+        candidate_subject_id: context.candidate_subject_id,
+        review_target_id: context.review_target_id || undefined,
+        continuity_group_id: context.continuity_group_id || undefined,
+        source_ownership_digest: context.source_ownership_digest,
+        existing_resolution_semantic_digest: context.concurrent_resolution?.resolution_semantic_digest || undefined,
+        existing_split_semantic_digest: context.temporal_split?.split_semantic_digest || undefined,
+        resolution: 'concurrent_lanes',
+        lane_resolutions: resolutions,
+        review_state_version: context.review_state_version,
+      });
+      onSaved(result);
+    } catch (reason) {
+      if (isRecoverableConcurrentLaneConflict(reason)) {
+        await recoverConcurrentContext();
+      } else {
+        setError(errorMessage(reason));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recoverConcurrentContext() {
+    setTopologyRejected(true);
+    setConcurrentDirty(false);
+    setConcurrentRecoveryRevision((value) => value + 1);
+    try {
+      const fresh = context.historical_concurrent_repair
+        ? await getReviewedHistoricalSplitRepairContext(
+          matchId,
+          context.concurrent_resolution?.parent_case_id || '',
+        )
+        : await getReviewedCorrectionContext(
+          matchId,
+          context.candidate_subject_id,
+          context.review_target_id,
+        );
+      const sameTarget = fresh.candidate_subject_id === context.candidate_subject_id
+        && (fresh.review_target_id || null) === (context.review_target_id || null);
+      if (
+        !sameTarget
+        || fresh.temporal_topology?.kind !== 'concurrent'
+        || !fresh.concurrent_resolution
+      ) throw new Error('Dokładny przypadek nie jest już aktualnym przypadkiem równoległym.');
+      setContext(fresh);
+      setTopologyRejected(false);
+      setError('Układ ścieżek został zaktualizowany. Wprowadź przypisania ponownie na podstawie aktualnego materiału.');
+    } catch {
+      setError(context.historical_concurrent_repair
+        ? 'Pierwotny podział zmienił się i nie można go już bezpiecznie otworzyć. Odśwież Review.'
+        : 'Układ ścieżek zmienił się i nie udało się pobrać aktualnego przypadku. Nie zapisano żadnych przypisań; zamknij edytor i odśwież Review.');
+    }
+  }
+
   function rejectStaleTemporalTopology() {
     setTopologyRejected(true);
     setBoundaries([]);
@@ -214,6 +283,36 @@ export function ReviewedIdentitySplitEditor({ matchId, context, teams, onCancel,
   }
 
   const selected = segments[selectedSegment];
+  if (
+    reviewCase.temporal_topology?.kind === 'concurrent'
+    && context.concurrent_resolution
+    && !topologyRejected
+  ) return <ConcurrentMixedResolver
+    key={`${reviewCase.case_id || context.candidate_subject_id}:${context.source_ownership_digest}`}
+    match={{ id: matchId, teams: teams || [] }}
+    reviewCase={{ ...reviewCase, concurrent_resolution: context.concurrent_resolution }}
+    assignmentOptions={{ roster: context.roster_options, slots: context.slot_options }}
+    busy={busy}
+    historicalRepair={context.historical_concurrent_repair}
+    statusMessage={error}
+    recoveryRevision={concurrentRecoveryRevision}
+    onDirtyChange={setConcurrentDirty}
+    onSave={saveConcurrent}
+    onDefer={async () => { await saveComplex(); }}
+    onCancel={cancel}
+    loadRefinement={(lane, afterFrame, beforeFrame) => getConcurrentLaneRefinement(matchId, {
+      candidate_subject_id: context.candidate_subject_id,
+      parent_case_id: context.concurrent_resolution?.parent_case_id || reviewCase.case_id || context.candidate_subject_id,
+      parent_source_digest: context.concurrent_resolution?.parent_source_digest || context.source_ownership_digest || '',
+      lane_id: lane.lane_id,
+      lane_source_digest: lane.source_ownership_digest,
+      after_frame: afterFrame,
+      before_frame: beforeFrame,
+      review_target_id: context.review_target_id || undefined,
+      continuity_group_id: context.continuity_group_id || undefined,
+    })}
+    onRecoverableRefinementConflict={recoverConcurrentContext}
+  />;
   return <section className='reviewed-inline-split' aria-label='Podział kilku zawodników'>
     <header><strong>{simpleSplitAllowed ? 'To kilku zawodników — podziel' : 'Równoległe tracklety'}</strong><p>{simpleSplitAllowed ? 'Podział obejmie wyłącznie dokładnie pokazane obserwacje.' : 'Ten materiał nie może być bezpiecznie rozdzielony jedną granicą czasu.'}</p></header>
     {!simpleSplitAllowed && reviewCase.temporal_topology?.kind === 'concurrent' && <MixedTemporalTopologyLanes matchId={matchId} reviewCase={reviewCase} />}

@@ -12,9 +12,11 @@ from fastapi import HTTPException, Response
 
 from app.main import (
     get_artifact,
+    get_match_reviewed_correction_context,
     get_match_reviewed_identity_mixed_boundary_refinement,
     get_match_reviewed_identity_progress,
     get_match_reviewed_identity_temporal_split_refinement,
+    post_match_reviewed_identity_mixed_resolution,
     post_match_reviewed_identity_temporal_split,
 )
 from app.services.identity_reviewed_action_scope import (
@@ -40,13 +42,26 @@ from app.services.identity_reviewed_mixed_store import (
 from app.services.identity_reviewed_slot_review import load_reviewed_slot_assignments
 from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
 from app.services.identity_reviewed_correction_context import reviewed_correction_context
-from app.services.identity_reviewed_review_source import build_review_source_boundary_refinement
+from app.services.identity_reviewed_snapshot import finalize_reviewed_identity
+from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_reviewed_review_source import (
+    build_review_source_boundary_refinement,
+    build_concurrent_lane_boundary_refinement,
+    resolve_review_source,
+    source_case_id,
+    source_storage_payload,
+)
 from app.services.identity_reviewed_mixed_store import (
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
-from app.services.identity_reviewed_hot_state import FILENAME, load_or_rebuild_review_hot_state
+from app.services.identity_reviewed_hot_state import (
+    FILENAME,
+    hot_context,
+    load_existing_fresh_hot_state,
+    load_or_rebuild_review_hot_state,
+)
 from app.services.identity_reviewed_segments import (
     build_segment_review_document,
     load_segment_decisions,
@@ -59,6 +74,409 @@ from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_concurrent_lane_resolution_reaches_snapshot_and_reviewed_stats(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            review_case = build_mixed_review_queue(root, match)["cases"][0]
+            lanes = review_case["concurrent_resolution"]["lanes"]
+
+            result = save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "case_id": marker.get("case_id"),
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "concurrent_lanes",
+                    "lane_resolutions": [
+                        _direct_lane(lanes[0], "player-a"),
+                        _direct_lane(lanes[1], "player-b"),
+                    ],
+                },
+            )
+            snapshot = finalize_reviewed_identity(root, match)
+            rows = snapshot["segment_observation_assignments"]
+            with patch(
+                "app.services.identity_reviewed_stats.read_match_video_metadata",
+                return_value={
+                    "fps": 1.0,
+                    "frame_count": 20,
+                    "duration_sec": 20.0,
+                    "source": "test",
+                    "filename": "test.mp4",
+                },
+            ):
+                stats = build_reviewed_stats(root, snapshot, match)
+
+            self.assertEqual(result["saved_case"]["resolution_model"], "concurrent_lanes")
+            self.assertEqual(
+                {(row["tracklet_id"], row["canonical_player_id"]) for row in rows},
+                {("t1", "player-a"), ("t2", "player-b")},
+            )
+            players = {
+                row["player_id"]: row
+                for row in stats["reviewed_player_stats.json"]["players"]
+            }
+            self.assertEqual(players["player-a"]["confirmed_detected_observations"], 9)
+            self.assertEqual(players["player-b"]["confirmed_detected_observations"], 4)
+            self.assertEqual(
+                {row["player_id"] for row in stats["reviewed_player_timeline.json"]["players"]},
+                {"player-a", "player-b"},
+            )
+            self.assertEqual(
+                {row["player_id"] for row in stats["reviewed_player_heatmaps.json"]["heatmaps"]},
+                {"player-a", "player-b"},
+            )
+
+    def test_same_player_on_overlapping_lanes_uses_frame_uniqueness_guard(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "concurrent_lanes",
+                    "lane_resolutions": [
+                        _direct_lane(lanes[0], "player-a"),
+                        _direct_lane(lanes[1], "player-a"),
+                    ],
+                },
+            )
+
+            snapshot = finalize_reviewed_identity(root, match)
+            diagnostics = snapshot["frame_uniqueness_diagnostics"]
+
+            self.assertEqual(diagnostics["frames_with_duplicate_canonical_player_claims"], 4)
+            self.assertEqual(diagnostics["demoted_canonical_player_observations"], 8)
+            self.assertTrue(all(
+                row["eligible_for_player_stats"] is False
+                for row in snapshot["observation_demotions"]
+            ))
+
+    def test_concurrent_lane_save_builds_and_projects_once(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            from app.services.identity_reviewed_mixed_resolution import (
+                build_segment_review_document as build_real,
+                project_segment_decisions_onto_materialized_review as project_real,
+            )
+
+            with (
+                patch(
+                    "app.services.identity_reviewed_mixed_resolution.build_segment_review_document",
+                    wraps=build_real,
+                ) as build,
+                patch(
+                    "app.services.identity_reviewed_mixed_resolution.project_segment_decisions_onto_materialized_review",
+                    wraps=project_real,
+                ) as project,
+            ):
+                save_mixed_player_resolution(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": [
+                            _direct_lane(lanes[0], "player-a"),
+                            _direct_lane(lanes[1], "player-b"),
+                        ],
+                    },
+                )
+
+            self.assertEqual(build.call_count, 1)
+            self.assertEqual(project.call_count, 1)
+
+    def test_concurrent_lane_save_rolls_back_every_partial_write(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            before = _path_snapshots(_split_state_paths(root))
+
+            with (
+                patch(
+                    "app.services.identity_reviewed_mixed_resolution.project_segment_decisions_onto_materialized_review",
+                    side_effect=RuntimeError("projection failed"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "projection failed"),
+            ):
+                save_mixed_player_resolution(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": [
+                            _direct_lane(lanes[0], "player-a"),
+                            _direct_lane(lanes[1], "player-b"),
+                        ],
+                    },
+                )
+
+            self.assertEqual(_path_snapshots(_split_state_paths(root)), before)
+
+    def test_concurrent_lane_local_split_preserves_exact_parent_union(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "concurrent_lanes",
+                    "lane_resolutions": [
+                        {
+                            "lane_id": lanes[0]["lane_id"],
+                            "lane_source_digest": lanes[0]["source_ownership_digest"],
+                            "resolution": "temporal_split",
+                            "split_after_frames": [4],
+                            "segment_assignments": [
+                                {"action": "assign_roster_player", "player_id": "player-a"},
+                                {"action": "assign_team", "team_label": "A"},
+                            ],
+                        },
+                        _direct_lane(lanes[1], "player-b"),
+                    ],
+                },
+            )
+            targets = [
+                row for row in load_segment_review(root)["targets"]
+                if str(row.get("target_origin") or "").startswith("operator_concurrent_lane")
+            ]
+            owned = [
+                {(row["tracklet_id"], row["frame"]) for row in target["owned_observations"]}
+                for target in targets
+            ]
+
+            self.assertEqual(len(targets), 3)
+            self.assertEqual(set().union(*owned), {
+                ("t1", frame) for frame in range(1, 10)
+            } | {("t2", frame) for frame in range(4, 8)})
+            self.assertEqual(sum(map(len, owned)), len(set().union(*owned)))
+            target_tracklets = [
+                {row["tracklet_id"] for row in target["owned_observations"]}
+                for target in targets
+            ]
+            self.assertEqual(target_tracklets.count({"t1"}), 2)
+            self.assertEqual(target_tracklets.count({"t2"}), 1)
+
+    def test_stale_concurrent_lane_set_has_zero_persistence(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            before = _path_snapshots(_split_state_paths(root))
+
+            with self.assertRaisesRegex(ValueError, "concurrent_lane_set_stale"):
+                save_mixed_player_resolution(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": [_direct_lane(lanes[0], "player-a")],
+                    },
+                )
+
+            self.assertEqual(_path_snapshots(_split_state_paths(root)), before)
+
+    def test_both_http_write_paths_reject_incomplete_lane_sets_before_mutation(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            before = _path_snapshots(_split_state_paths(root))
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]},
+                ),
+                patch("app.main.invalidate_review_hot_state") as invalidate,
+                self.assertRaises(HTTPException) as raised,
+            ):
+                post_match_reviewed_identity_mixed_resolution(
+                    "m1",
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "case_id": marker.get("case_id") or marker["candidate_subject_id"],
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": [_direct_lane(lanes[0], "player-a")],
+                    },
+                )
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(raised.exception.detail["code"], "concurrent_lane_set_stale")
+            invalidate.assert_not_called()
+            self.assertEqual(_path_snapshots(_split_state_paths(root)), before)
+
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            context = reviewed_correction_context(root, match, "subject-mixed")
+            lanes = context["concurrent_resolution"]["lanes"]
+            before = _path_snapshots(_split_state_paths(root))
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={"phase": "exceptions", "allowed_actions": ["review_identity_issue"]},
+                ),
+                patch("app.main.load_or_rebuild_review_hot_state") as hot_state,
+                patch("app.main.invalidate_review_hot_state") as invalidate,
+                self.assertRaises(HTTPException) as raised,
+            ):
+                post_match_reviewed_identity_temporal_split(
+                    "m1",
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_ownership_digest": context["source_ownership_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": [_direct_lane(lanes[0], "player-a")],
+                    },
+                )
+            self.assertEqual(raised.exception.status_code, 409)
+            self.assertEqual(raised.exception.detail["code"], "concurrent_lane_set_stale")
+            hot_state.assert_not_called()
+            invalidate.assert_not_called()
+            self.assertEqual(_path_snapshots(_split_state_paths(root)), before)
+
+    def test_historical_unsafe_split_is_read_only_until_explicit_lane_repair(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            source = resolve_review_source(
+                root,
+                match,
+                candidate_subject_id="subject-mixed",
+                source_ownership_digest=current_mixed_subject_digest(
+                    root,
+                    "subject-mixed",
+                ),
+            )
+            case_id = "legacy-inline-a10-case"
+            save_mixed_case_document(
+                root,
+                {
+                    "schema_version": "2.0.0",
+                    "cases": [{
+                        "case_id": case_id,
+                        "candidate_subject_id": "subject-mixed",
+                        "original_issue": "inline_temporal_split",
+                        "source": source_storage_payload(source),
+                        "source_subject_digest": source["source_ownership_digest"],
+                        "resolution_status": "resolved",
+                        "split_after_frames": [3],
+                        "split_semantic_digest": "historical-unsafe-split",
+                        "segment_assignments": [
+                            {"action": "assign_team", "team_label": "A"},
+                            {"action": "assign_team", "team_label": "B"},
+                        ],
+                        "segment_target_ids": ["historical-a", "historical-b"],
+                    }],
+                },
+            )
+            before = (root / "reviewed_identity_mixed_players.json").read_bytes()
+
+            context = reviewed_correction_context(root, match, "subject-mixed")
+
+            # The production correction API reads the durable hot document,
+            # not the direct service above.  It must preserve the historical
+            # parent case id and expose repair metadata without mutating it.
+            _write(root / "reviewed_identity_snapshot.json", {})
+            load_or_rebuild_review_hot_state(root, match)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+            ):
+                hot_response = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                )
+
+            self.assertEqual(
+                (root / "reviewed_identity_mixed_players.json").read_bytes(),
+                before,
+            )
+            self.assertTrue(context["historical_concurrent_repair"])
+            self.assertEqual(context["temporal_topology"]["kind"], "concurrent")
+            self.assertEqual(
+                context["concurrent_resolution"]["parent_case_id"],
+                case_id,
+            )
+            self.assertEqual(hot_response["temporal_topology"]["kind"], "concurrent")
+            self.assertTrue(hot_response["historical_concurrent_repair"])
+            self.assertIsNotNone(hot_response["concurrent_resolution"])
+            self.assertIsNotNone(hot_response["temporal_split"])
+            self.assertEqual(
+                hot_response["concurrent_resolution"]["parent_case_id"],
+                case_id,
+            )
+            self.assertEqual(
+                (root / "reviewed_identity_mixed_players.json").read_bytes(),
+                before,
+            )
+            # The public hot response is the actual client contract used to
+            # construct an explicit, atomic historical repair.
+            lanes = hot_response["concurrent_resolution"]["lanes"]
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": source["source_ownership_digest"],
+                "existing_split_semantic_digest": "historical-unsafe-split",
+                "resolution": "concurrent_lanes",
+                "lane_resolutions": [
+                    _direct_lane(lanes[0], "player-a"),
+                    _direct_lane(lanes[1], "player-b"),
+                ],
+            }
+            # Exercise the public write path too: its preflight must derive
+            # lane ids from the legacy durable parent, not a new canonical id.
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={
+                        "phase": "ready_to_finalize",
+                        "allowed_actions": ["review_identity_issue"],
+                    },
+                ),
+            ):
+                result = post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertEqual(
+                result["saved_case"]["resolution_model"],
+                "concurrent_lanes",
+            )
+            self.assertEqual(result["saved_case"]["case_id"], case_id)
+            self.assertEqual(result["saved_case"]["split_after_frames"], [])
+            self.assertEqual(len(result["saved_case"]["segment_target_ids"]), 2)
+
     def test_full_and_focused_reads_share_concurrent_topology_and_lane_evidence(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -86,12 +504,169 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 full_case["temporal_topology"],
             )
             self.assertEqual(
+                focused["case"]["concurrent_resolution"],
+                full_case["concurrent_resolution"],
+            )
+            self.assertEqual(
+                correction_context["concurrent_resolution"]["parent_source_digest"],
+                full_case["concurrent_resolution"]["parent_source_digest"],
+            )
+            self.assertTrue(all(
+                1 <= len(lane["evidence"]["anchor_crops"]) <= 5
+                for lane in full_case["concurrent_resolution"]["lanes"]
+            ))
+            self.assertEqual(
                 full_case["temporal_topology"]["overlap_ranges"],
                 [{"frame_start": 4, "frame_end": 7, "tracklet_ids": ["t1", "t2"]}],
             )
             self.assertEqual(
                 {crop["tracklet_id"] for crop in full_case["temporal_evidence"]["anchor_crops"]},
                 {"t1", "t2"},
+            )
+            self.assertTrue(full_case["action_capabilities"]["assign_existing_slot"]["allowed"])
+            self.assertTrue(full_case["action_capabilities"]["create_new_stable_player"]["allowed"])
+            self.assertTrue(all(
+                lane["split_allowed"]
+                for lane in full_case["concurrent_resolution"]["lanes"]
+            ))
+
+    def test_hot_correction_context_http_exposes_the_concurrent_contract_without_rebuild(self) -> None:
+        """The production context route projects concurrent hot-state fields.
+
+        This intentionally calls the route rather than the direct correction
+        service: correction context is served from fresh hot state in normal
+        operation and must remain warm/read-only.
+        """
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            _write(root / "reviewed_identity_snapshot.json", {})
+            direct = reviewed_correction_context(root, match, "subject-mixed")
+            load_or_rebuild_review_hot_state(root, match)
+            persisted = load_existing_fresh_hot_state(root, match)
+            assert persisted is not None
+            self.assertEqual(
+                hot_context(persisted, "subject-mixed")["temporal_topology"],
+                direct["temporal_topology"],
+            )
+            guarded_paths = [
+                root / name
+                for name in (
+                    "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_review.json",
+                    "reviewed_identity_segment_decisions.json",
+                    "reviewed_identity_slot_assignments.json",
+                    "reviewed_identity_recompute_required.json",
+                )
+            ]
+            before = _path_snapshots(guarded_paths)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                    side_effect=AssertionError("warm correction context rebuilt Review"),
+                ),
+            ):
+                response = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                )
+
+            self.assertEqual(response["temporal_topology"], direct["temporal_topology"])
+            self.assertEqual(
+                response["concurrent_resolution"]["parent_case_id"],
+                direct["concurrent_resolution"]["parent_case_id"],
+            )
+            self.assertEqual(
+                response["concurrent_resolution"]["parent_source_digest"],
+                direct["concurrent_resolution"]["parent_source_digest"],
+            )
+            self.assertEqual(
+                [
+                    (
+                        lane["lane_id"],
+                        lane["source_ownership_digest"],
+                        lane["frame_start"],
+                        lane["frame_end"],
+                        lane["observation_count"],
+                        lane["split_allowed"],
+                    )
+                    for lane in response["concurrent_resolution"]["lanes"]
+                ],
+                [
+                    (
+                        lane["lane_id"],
+                        lane["source_ownership_digest"],
+                        lane["frame_start"],
+                        lane["frame_end"],
+                        lane["observation_count"],
+                        lane["split_allowed"],
+                    )
+                    for lane in direct["concurrent_resolution"]["lanes"]
+                ],
+            )
+            self.assertTrue(response["action_capabilities"]["assign_existing_slot"]["allowed"])
+            self.assertFalse(response["historical_concurrent_repair"])
+            self.assertTrue(all(
+                lane["split_allowed"]
+                and 1 <= len(lane["evidence"]["anchor_crops"]) <= 5
+                and "owned_observations" not in lane
+                and "observations" not in lane
+                for lane in response["concurrent_resolution"]["lanes"]
+            ))
+            self.assertEqual(_path_snapshots(guarded_paths), before)
+
+    def test_hot_correction_context_keeps_serial_sources_lightweight(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {})
+            load_or_rebuild_review_hot_state(root, match)
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+            ):
+                response = get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-mixed",
+                    review_target_id=None,
+                )
+
+            self.assertEqual(response["temporal_topology"]["kind"], "serial")
+            self.assertIsNone(response["concurrent_resolution"])
+            self.assertFalse(response["historical_concurrent_repair"])
+
+    def test_concurrent_refinement_never_reads_another_lane(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            context = reviewed_correction_context(root, match, "subject-mixed")
+            lane = context["concurrent_resolution"]["lanes"][0]
+            overview = lane["evidence"]["anchor_crops"]
+
+            with patch(
+                "app.services.identity_reviewed_review_source.render_mixed_review_evidence"
+            ):
+                refined = build_concurrent_lane_boundary_refinement(
+                    root,
+                    match,
+                    candidate_subject_id="subject-mixed",
+                    parent_case_id=context["concurrent_resolution"]["parent_case_id"],
+                    parent_source_digest=context["concurrent_resolution"]["parent_source_digest"],
+                    lane_id=lane["lane_id"],
+                    lane_source_digest=lane["source_ownership_digest"],
+                    after_frame=overview[0]["frame"],
+                    before_frame=overview[1]["frame"],
+                )
+
+            self.assertEqual(refined["lane_id"], lane["lane_id"])
+            self.assertTrue(refined["anchor_crops"])
+            self.assertEqual(
+                {crop["tracklet_id"] for crop in refined["anchor_crops"]},
+                {lane["tracklet_id"]},
             )
 
     def test_concurrent_refinement_returns_structured_conflict(self) -> None:
@@ -399,6 +974,11 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 staged["source"]["owned_observations"],
                 [{"tracklet_id": "t1", "frame": frame} for frame in (1, 2, 3)],
             )
+
+            queued = build_mixed_review_queue(root, match)["cases"]
+            self.assertEqual(len(queued), 1)
+            self.assertFalse(queued[0]["action_capabilities"]["assign_existing_slot"]["allowed"])
+            self.assertFalse(queued[0]["action_capabilities"]["create_new_stable_player"]["allowed"])
 
             resolved = save_mixed_player_resolution(
                 root,
@@ -1800,6 +2380,15 @@ def _classify(root: Path, match: dict) -> dict:
     )["saved_decision"]
 
 
+def _direct_lane(lane: dict, player_id: str) -> dict:
+    return {
+        "lane_id": lane["lane_id"],
+        "lane_source_digest": lane["source_ownership_digest"],
+        "resolution": "direct",
+        "assignment": {"action": "assign_roster_player", "player_id": player_id},
+    }
+
+
 def _fixture(root: Path) -> dict:
     match = {
         "id": "m1",
@@ -1816,7 +2405,7 @@ def _fixture(root: Path) -> dict:
         "tracklet_id": "t1",
         "team_label": "A",
         "positions_m": [
-            {"frame": frame, "time_sec": float(frame), "x_m": float(frame), "y_m": 1.0, "detected": True, "play_area_status": "inside_play", "bbox_xyxy": [10, 10, 20, 30]}
+            {"frame": frame, "time_sec": float(frame), "x_m": float(frame), "y_m": 1.0, "pitch_m": [float(frame), 1.0], "detected": True, "play_area_status": "inside_play", "bbox_xyxy": [10, 10, 20, 30]}
             for frame in range(1, 10)
         ],
     }]})
@@ -1848,6 +2437,7 @@ def _make_concurrent(root: Path) -> None:
                 "time_sec": float(frame),
                 "x_m": float(frame),
                 "y_m": 2.0,
+                "pitch_m": [float(frame), 2.0],
                 "detected": True,
                 "play_area_status": "inside_play",
                 "bbox_xyxy": [30, 10, 40, 30],

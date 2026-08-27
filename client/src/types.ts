@@ -1969,6 +1969,12 @@ export type ReviewedCorrectionContext = {
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
   temporal_topology?: MixedTemporalTopology | null;
+  concurrent_resolution?: ConcurrentMixedResolution | null;
+  historical_concurrent_repair?: boolean;
+  historical_parent_repair?: {
+    available: true;
+    case_id: string;
+  } | null;
   source_evidence_kind?: string;
   legacy_suggestion?: {
     action: 'assign_roster_player';
@@ -1983,6 +1989,8 @@ export type ReviewedCorrectionContext = {
     split_after_frames: number[];
     split_semantic_digest?: string | null;
     segment_assignments: MixedSegmentAssignment[];
+    resolution_model?: 'concurrent_lanes' | null;
+    resolution_semantic_digest?: string | null;
   } | null;
   action_capabilities: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
   scope_copy?: string;
@@ -2333,6 +2341,49 @@ export type MixedTemporalTopology = {
   tracklets: MixedTemporalTracklet[];
 };
 
+export type ConcurrentLaneDirectResolution = {
+  lane_id: string;
+  lane_source_digest: string;
+  resolution: 'direct';
+  assignment: MixedSegmentAssignment;
+};
+
+export type ConcurrentLaneTemporalSplitResolution = {
+  lane_id: string;
+  lane_source_digest: string;
+  resolution: 'temporal_split';
+  split_after_frames: number[];
+  segment_assignments: MixedSegmentAssignment[];
+};
+
+export type ConcurrentLaneResolution =
+  | ConcurrentLaneDirectResolution
+  | ConcurrentLaneTemporalSplitResolution;
+
+export type ConcurrentMixedLane = {
+  lane_id: string;
+  tracklet_id: string;
+  source_ownership_digest: string;
+  frame_start: number;
+  frame_end: number;
+  observation_count: number;
+  split_allowed: boolean;
+  overlap_lane_ids: string[];
+  evidence: {
+    status: string;
+    anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
+  };
+  current_resolution?: ConcurrentLaneResolution | null;
+};
+
+export type ConcurrentMixedResolution = {
+  status: string;
+  parent_case_id: string;
+  parent_source_digest: string;
+  resolution_semantic_digest?: string | null;
+  lanes: ConcurrentMixedLane[];
+};
+
 export type MixedPlayerCase = {
   case_id?: string;
   candidate_subject_id: string;
@@ -2349,6 +2400,8 @@ export type MixedPlayerCase = {
   blocking?: boolean;
   scope_status?: 'blocking' | 'not_required_by_scope' | 'stale_or_unclassifiable_blocking';
   temporal_topology?: MixedTemporalTopology | null;
+  concurrent_resolution?: ConcurrentMixedResolution | null;
+  action_capabilities?: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
   temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
 };
 
@@ -2403,9 +2456,11 @@ export type ReviewedTemporalSplitRequest = {
   continuity_group_id?: string;
   source_ownership_digest: string;
   existing_split_semantic_digest?: string;
-  resolution: 'split' | 'unresolved_complex_mix';
+  existing_resolution_semantic_digest?: string;
+  resolution: 'split' | 'concurrent_lanes' | 'unresolved_complex_mix';
   split_after_frames?: number[];
   segment_assignments?: MixedSegmentAssignment[];
+  lane_resolutions?: ConcurrentLaneResolution[];
   comment?: string;
   review_state_version?: number;
 };
@@ -2427,10 +2482,25 @@ export type MixedPlayerResolutionRequest = {
   candidate_subject_id: string;
   case_id?: string;
   source_subject_digest: string;
-  resolution: 'split' | 'unresolved_complex_mix';
+  resolution: 'split' | 'concurrent_lanes' | 'unresolved_complex_mix';
   split_after_frames?: number[];
   segment_assignments?: MixedSegmentAssignment[];
+  lane_resolutions?: ConcurrentLaneResolution[];
   comment?: string;
+};
+
+export type ConcurrentLaneRefinement = {
+  schema_version: string;
+  mode: 'reviewed_identity_concurrent_lane_refinement';
+  match_id: string;
+  candidate_subject_id: string;
+  parent_case_id: string;
+  parent_source_digest: string;
+  lane_id: string;
+  lane_source_digest: string;
+  after_frame: number;
+  before_frame: number;
+  anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
 };
 
 export type MixedPlayerResolutionResponse = {

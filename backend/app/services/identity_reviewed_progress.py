@@ -873,6 +873,7 @@ def _segment_units(
                 "stable_slot_id": target.get("stable_slot_id"),
                 "visual_evidence": target.get("visual_evidence") or {},
                 "legacy_suggestion": target.get("legacy_suggestion"),
+                "split_parent_case_id": target.get("split_parent_case_id"),
                 "has_operator_visual_evidence": has_operator_visual_evidence,
                 "detected_pairs": sorted(pairs),
             }

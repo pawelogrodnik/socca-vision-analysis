@@ -16,6 +16,8 @@ from app.services.identity_reviewed_slot_review import load_reviewed_slot_assign
 from app.services.identity_reviewed_mixed_store import (
     FILENAME as MIXED_PLAYERS_FILENAME,
     inline_temporal_split_for_source,
+    load_mixed_player_cases,
+    materialize_concurrent_resolution,
     mixed_case_for_subject,
     render_mixed_review_evidence,
     temporal_evidence_for_observations,
@@ -36,7 +38,7 @@ from app.services.identity_reviewed_action_scope import (
     reviewed_identity_action_capabilities,
     scope_copy,
 )
-from app.services.identity_reviewed_review_source import resolve_review_source
+from app.services.identity_reviewed_review_source import resolve_review_source, source_case_id
 from app.services.identity_roster_subject_review_store import (
     REVIEW_ARTIFACT_FILENAME,
     REVIEW_DECISIONS_FILENAME,
@@ -130,11 +132,9 @@ def reviewed_correction_context(
         "scope_copy": scope_copy("whole_subject"),
         "frame_ranges": [],
         "visual_evidence": temporal_evidence,
-        "temporal_topology": analyze_temporal_split_topology(
-            list(source["observations"])
-        ),
+        **concurrent_correction_context_fields(source, match_path),
         "source_evidence_kind": source_evidence_kind,
-        "temporal_split": _inline_temporal_split_context(match_path, source),
+        "temporal_split": temporal_split_context_for_source(match_path, source),
         "legacy_suggestion": None,
     }
 
@@ -158,8 +158,35 @@ def _material_continuity_correction_context(
         ),
         None,
     )
+    historical_case: dict[str, Any] | None = None
     if not isinstance(unit, dict):
-        raise ValueError(f"Unknown material continuity case: {continuity_group_id}")
+        historical = [
+            dict(row)
+            for row in load_mixed_player_cases(match_path).get("cases") or []
+            if str(row.get("resolution_status") or "") == "resolved"
+            and isinstance(row.get("source"), dict)
+            and str((row.get("source") or {}).get("scope_kind") or "")
+            == "material_continuity"
+            and str((row.get("source") or {}).get("continuity_group_id") or "")
+            == continuity_group_id
+        ]
+        if len(historical) != 1:
+            raise ValueError(f"Unknown material continuity case: {continuity_group_id}")
+        historical_case = historical[0]
+        stored_source = dict(historical_case["source"])
+        unit = {
+            "candidate_subject_id": stored_source.get("candidate_subject_id"),
+            "continuity_group_id": continuity_group_id,
+            "scope_kind": "material_continuity",
+            "effective_team_label": stored_source.get("source_team_label") or "U",
+            "source_ownership_digest": stored_source.get("source_ownership_digest"),
+            "tracklet_ids": sorted({
+                str(row.get("tracklet_id") or "")
+                for row in stored_source.get("owned_observations") or []
+            }),
+            "current_decision": None,
+            "visual_evidence": {"kind": "identity_continuity"},
+        }
     team_label = str(unit.get("effective_team_label") or "A").upper()
     if team_label not in {"A", "B"}:
         raise ValueError("Material continuity case has no safe team")
@@ -206,11 +233,13 @@ def _material_continuity_correction_context(
         "frame_end": unit.get("frame_end"),
         "detected_observation_count": unit.get("detected_observation_count"),
         "visual_evidence": temporal_evidence,
-        "temporal_topology": analyze_temporal_split_topology(
-            list(source["observations"])
+        **concurrent_correction_context_fields(
+            source,
+            match_path,
+            allow_historical_repair=historical_case is not None,
         ),
         "source_evidence_kind": str((unit.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
-        "temporal_split": _inline_temporal_split_context(match_path, source),
+        "temporal_split": temporal_split_context_for_source(match_path, source),
         "legacy_suggestion": None,
         "action_capabilities": reviewed_identity_action_capabilities(unit),
         "scope_copy": scope_copy("material_continuity"),
@@ -270,11 +299,9 @@ def _segment_correction_context(
         "frame_end": target.get("frame_end"),
         "detected_observation_count": target.get("detected_observation_count"),
         "visual_evidence": temporal_evidence,
-        "temporal_topology": analyze_temporal_split_topology(
-            list(source["observations"])
-        ),
+        **concurrent_correction_context_fields(source, match_path),
         "source_evidence_kind": str((target.get("visual_evidence") or {}).get("kind") or "identity_continuity"),
-        "temporal_split": _inline_temporal_split_context(match_path, source),
+        "temporal_split": temporal_split_context_for_source(match_path, source),
         "legacy_suggestion": target.get("legacy_suggestion"),
         "action_capabilities": reviewed_identity_action_capabilities(target),
         "scope_copy": scope_copy("canonical_segment"),
@@ -325,7 +352,7 @@ def _review_source_evidence_kind(
     return "identity_continuity"
 
 
-def _inline_temporal_split_context(
+def temporal_split_context_for_source(
     match_path: Path,
     source: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -347,6 +374,47 @@ def _inline_temporal_split_context(
         "split_after_frames": list(case.get("split_after_frames") or []),
         "split_semantic_digest": case.get("split_semantic_digest"),
         "segment_assignments": assignments,
+        "resolution_model": case.get("resolution_model"),
+        "resolution_semantic_digest": case.get("resolution_semantic_digest"),
+    }
+
+
+def concurrent_correction_context_fields(
+    source: dict[str, Any],
+    match_path: Path,
+    *,
+    allow_historical_repair: bool = True,
+) -> dict[str, Any]:
+    """Build the shared, public concurrent-correction read fields.
+
+    Both the direct correction service and the durable hot-state builder use
+    this authority.  Keeping the parent-case selection here is particularly
+    important for historical inline splits: their durable case id scopes the
+    lane ids during an explicit repair.
+    """
+    topology = analyze_temporal_split_topology(list(source["observations"]))
+    if topology["kind"] != "concurrent":
+        return {
+            "temporal_topology": topology,
+            "concurrent_resolution": None,
+            "historical_concurrent_repair": False,
+        }
+    case = inline_temporal_split_for_source(match_path, source)
+    return {
+        "temporal_topology": topology,
+        "concurrent_resolution": materialize_concurrent_resolution(
+            str(source["candidate_subject_id"]),
+            str((case or {}).get("case_id") or source_case_id(source)),
+            str(source["source_ownership_digest"]),
+            list(source["observations"]),
+            case,
+        ),
+        "historical_concurrent_repair": bool(
+            allow_historical_repair
+            and isinstance(case, dict)
+            and str(case.get("resolution_status") or "") == "resolved"
+            and str(case.get("resolution_model") or "") != "concurrent_lanes"
+        ),
     }
 
 
@@ -420,6 +488,9 @@ def reviewed_decisions_semantic_digest(match_path: Path) -> str:
                         "split_after_frames": row.get("split_after_frames") or [],
                         "segment_target_ids": row.get("segment_target_ids") or [],
                         "split_semantic_digest": row.get("split_semantic_digest"),
+                        "resolution_model": row.get("resolution_model"),
+                        "resolution_semantic_digest": row.get("resolution_semantic_digest"),
+                        "lane_resolutions": row.get("lane_resolutions") or [],
                         "source": row.get("source") or {},
                     }
                     for row in mixed.get("cases") or []

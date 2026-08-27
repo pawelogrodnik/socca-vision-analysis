@@ -939,13 +939,13 @@ class ReviewedIdentityHotStateTests(unittest.TestCase):
             load_or_rebuild_review_hot_state(root, changed)
         self.assertEqual(build.call_count, 2)
 
-    def test_legacy_schema_materialization_is_rebuilt_into_compact_form(self) -> None:
+    def test_pre_concurrent_context_schema_materialization_is_rebuilt(self) -> None:
         with _workspace() as root, patch(
             "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
             return_value=_progress(),
         ) as build:
             legacy = {
-                "schema_version": "1.4.0",
+                "schema_version": "2.2.0",
                 "state_version": 9,
                 "progress": {},
                 "internal_review_units": [],

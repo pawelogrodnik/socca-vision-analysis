@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
+  getReviewedHistoricalSplitRepairContext,
   saveReviewedIdentityCorrection,
 } from '../api';
 import { isRecoverableReviewQueueConflict } from '../lib/apiErrors';
@@ -81,6 +82,7 @@ export function ReviewedIdentityCorrectionForm({
   const [action, setAction] = useState<ReviewedCorrectionAction | null>(null);
   const [mixedDisposition, setMixedDisposition] = useState<'resolve_now' | 'defer' | null>(null);
   const [splitEditorOpen, setSplitEditorOpen] = useState(false);
+  const [historicalRepairContext, setHistoricalRepairContext] = useState<Awaited<ReturnType<typeof loadReviewedCorrectionContext>> | null>(null);
   const [selectedTeamLabel, setSelectedTeamLabel] = useState('');
   const [playerId, setPlayerId] = useState('');
   const [stableSlotId, setStableSlotId] = useState('');
@@ -96,6 +98,7 @@ export function ReviewedIdentityCorrectionForm({
     setAction(null);
     setMixedDisposition(null);
     setSplitEditorOpen(false);
+    setHistoricalRepairContext(null);
     setSelectedTeamLabel('');
     setPlayerId('');
     setStableSlotId('');
@@ -169,6 +172,7 @@ export function ReviewedIdentityCorrectionForm({
 
   function selectAction(nextAction: UiAction) {
     if (nextAction === 'split') {
+      setHistoricalRepairContext(null);
       setSplitEditorOpen(true);
       setAction(null);
       return;
@@ -196,6 +200,28 @@ export function ReviewedIdentityCorrectionForm({
     setSelectedTeamLabel(context ? defaultCorrectionTeam(context) : '');
     setError('');
     setSplitEditorOpen(false);
+    setHistoricalRepairContext(null);
+  }
+
+  async function openHistoricalParentRepair() {
+    const caseId = context?.historical_parent_repair?.case_id;
+    if (!caseId || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const repair = await getReviewedHistoricalSplitRepairContext(matchId, caseId);
+      if (
+        repair.historical_concurrent_repair !== true
+        || repair.concurrent_resolution?.parent_case_id !== caseId
+      ) throw new Error('historyczny parent nie jest już bezpieczny do naprawy');
+      setHistoricalRepairContext(repair);
+      setSplitEditorOpen(true);
+      setAction(null);
+    } catch {
+      setError('Pierwotny podział zmienił się i nie można go już bezpiecznie otworzyć. Odśwież Review.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function actionIsAvailable(card: ReviewedIdentityActionCard): boolean {
@@ -296,6 +322,13 @@ export function ReviewedIdentityCorrectionForm({
         <strong>Aktualna decyzja: Nie udało się bezpiecznie podzielić tego fragmentu czasowo.</strong>
         <button type='button' className='secondary compact-button' onClick={() => selectAction('split')} disabled={busy}>Rozstrzygnij ponownie</button>
       </div>}
+      {context?.historical_parent_repair?.available === true && <div className='reviewed-correction-suggestion'>
+        <strong>Ten fragment pochodzi ze starszego podziału czasowego, który nakładające się ścieżki czynią niejednoznacznym.</strong>
+        <span> Możesz ponownie przypisać cały pierwotny fragment.</span>
+        <button type='button' className='secondary compact-button' onClick={() => void openHistoricalParentRepair()} disabled={busy}>
+          Napraw równoległe przypisanie
+        </button>
+      </div>}
       {range && <p className='reviewed-correction-range'>Zakres: {range}<br />{entity.detected_evidence_count} wykryte obserwacje</p>}
 
       {showActionCategories && <>
@@ -312,9 +345,9 @@ export function ReviewedIdentityCorrectionForm({
           </div>
         </details>}
       </>}
-      {splitEditorOpen && context && <ReviewedIdentitySplitModal
+      {splitEditorOpen && (historicalRepairContext || context) && <ReviewedIdentitySplitModal
         matchId={matchId}
-        context={context}
+        context={historicalRepairContext ?? context!}
         teams={teams}
         onCancel={returnToCategories}
         onSaved={(result) => {

@@ -166,6 +166,7 @@ _V2_TOP_LEVEL_CONTRACT: dict[str, type | tuple[type, ...]] = {
     "internal_review_units": list,
     "unit_lookup": dict,
     "source_index": dict,
+    "historical_split_repairs": dict,
     "projection_inputs": dict,
     "roster_options": list,
     "slot_options": list,

@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { artifactUrl, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, getReviewWorkflow, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
-import { isTemporalSplitNotSeparable } from '../lib/apiErrors';
+import { artifactUrl, getConcurrentLaneRefinement, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, getReviewWorkflow, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
+import { isRecoverableConcurrentLaneConflict, isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
-import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
+import type { ConcurrentLaneResolution, Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
-import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
 import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mixedQueueForFocusedCase, reconciledMixedFocusCaseId, type ExactMixedFocusResult, type MixedEntryMode, type MixedNavigationDirection } from '../utils/mixedReviewNavigation';
 import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
+import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
+import { MixedAssignmentControls } from './MixedAssignmentControls';
 
 export type MixedPlayersReviewApi = {
   getBoundaryRefinement: typeof getMixedBoundaryRefinement;
+  getLaneRefinement: typeof getConcurrentLaneRefinement;
   getFocusedCase: typeof getMixedPlayerReviewCase;
   getQueue: typeof getMixedPlayersReview;
   getWorkflow: typeof getReviewWorkflow;
@@ -21,6 +23,7 @@ export type MixedPlayersReviewApi = {
 
 const defaultReviewApi: MixedPlayersReviewApi = {
   getBoundaryRefinement: getMixedBoundaryRefinement,
+  getLaneRefinement: getConcurrentLaneRefinement,
   getFocusedCase: getMixedPlayerReviewCase,
   getQueue: getMixedPlayersReview,
   getWorkflow: getReviewWorkflow,
@@ -66,6 +69,7 @@ export function MixedPlayersReviewPanel({
   const [focusMissing, setFocusMissing] = useState(false);
   const [reprojectFailed, setReprojectFailed] = useState(false);
   const [topologyRejected, setTopologyRejected] = useState(false);
+  const [concurrentRecoveryRevision, setConcurrentRecoveryRevision] = useState(0);
   const caseNavigationRequestRef = useRef(0);
   const simpleSplitAllowed = reviewCase?.temporal_topology?.simple_split_allowed === true
     && !topologyRejected;
@@ -250,6 +254,30 @@ export function MixedPlayersReviewPanel({
     }
   }
 
+  async function saveConcurrentLanes(laneResolutions: ConcurrentLaneResolution[]) {
+    if (!reviewCase?.concurrent_resolution || topologyRejected) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await api.saveResolution(match.id, {
+        candidate_subject_id: reviewCase.candidate_subject_id,
+        case_id: reviewCase.case_id,
+        source_subject_digest: reviewCase.source_subject_digest,
+        resolution: 'concurrent_lanes',
+        lane_resolutions: laneResolutions,
+      });
+      await advanceAfterSave();
+    } catch (error) {
+      if (isRecoverableConcurrentLaneConflict(error)) {
+        await recoverAfterConcurrentLaneConflict();
+      } else {
+        setMessage(errorMessage(error));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function deferComplex() {
     if (!reviewCase) return;
     setBusy(true);
@@ -301,6 +329,34 @@ export function MixedPlayersReviewPanel({
       setMessage('Ten materiał nie ma już prostego podziału czasowego, a dokładny przypadek zmienił się podczas odświeżenia. Odśwież Review.');
     } catch {
       setMessage('Ten materiał nie ma już potwierdzonego prostego podziału czasowego. Nie udało się odświeżyć aktualnego przypadku. Odśwież Review przed dalszą próbą podziału.');
+    }
+  }
+
+  async function recoverAfterConcurrentLaneConflict() {
+    setTopologyRejected(true);
+    setHasUnsavedChanges(false);
+    setConcurrentRecoveryRevision((value) => value + 1);
+    const caseId = reviewCase?.case_id;
+    if (!queue || !caseId) {
+      setMessage('Układ ścieżek zmienił się. Odśwież Review przed ponownym przypisaniem.');
+      return;
+    }
+    try {
+      const focused = await loadExactMixedFocus(
+        (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+        caseId,
+      );
+      if (focused.kind === 'visible' && showFocusedCase(queue, caseId, focused)) {
+        setTopologyRejected(false);
+        setMessage('Układ ścieżek został zaktualizowany. Wprowadź przypisania ponownie na podstawie aktualnego materiału.');
+        return;
+      }
+      setQueue(null);
+      setIndex(0);
+      setFocusMissing(true);
+      setMessage('Dokładny przypadek zmienił się podczas odświeżenia. Nie zapisano żadnych przypisań. Odśwież Review.');
+    } catch {
+      setMessage('Nie udało się pobrać aktualnych ścieżek. Stare przypisania zostały odrzucone; odśwież Review przed dalszą pracą.');
     }
   }
 
@@ -539,6 +595,38 @@ export function MixedPlayersReviewPanel({
   if (reviewCase.scope_status === 'stale_or_unclassifiable_blocking') return <section className='identity-exception-review mixed-player-review'>
     <div className='status'><strong>Nie można bezpiecznie odtworzyć źródła Mixed.</strong><p>Przypadek nadal blokuje Review. Odśwież lub uruchom bezpieczne przeliczenie Review; nie przypisuj tej historycznej własności na podstawie niepełnych danych.</p></div>
   </section>;
+  if (
+    reviewCase.temporal_topology?.kind === 'concurrent'
+    && reviewCase.concurrent_resolution
+    && !topologyRejected
+  ) return <ConcurrentMixedResolver
+    key={`${reviewCase.case_id || reviewCase.candidate_subject_id}:${reviewCase.source_subject_digest}`}
+    match={match}
+    reviewCase={reviewCase}
+    assignmentOptions={queue.assignment_options}
+    caseNumber={index + 1}
+    caseTotal={queue.cases.length}
+    busy={busy}
+    statusMessage={message}
+    recoveryRevision={concurrentRecoveryRevision}
+    onDirtyChange={setHasUnsavedChanges}
+    onSave={saveConcurrentLanes}
+    onDefer={deferComplex}
+    onPrevious={() => navigateTo(index - 1)}
+    onNext={() => navigateTo(index + 1)}
+    previousDisabled={index === 0}
+    nextDisabled={index >= queue.cases.length - 1}
+    loadRefinement={(lane, afterFrame, beforeFrame) => api.getLaneRefinement(match.id, {
+      candidate_subject_id: reviewCase.candidate_subject_id,
+      parent_case_id: reviewCase.concurrent_resolution?.parent_case_id || reviewCase.case_id || reviewCase.candidate_subject_id,
+      parent_source_digest: reviewCase.concurrent_resolution?.parent_source_digest || reviewCase.source_subject_digest,
+      lane_id: lane.lane_id,
+      lane_source_digest: lane.source_ownership_digest,
+      after_frame: afterFrame,
+      before_frame: beforeFrame,
+    })}
+    onRecoverableRefinementConflict={recoverAfterConcurrentLaneConflict}
+  />;
 
   const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
   const selectedAssignment = assignments[selectedSegment] || null;
@@ -624,28 +712,7 @@ export function MixedPlayersReviewPanel({
       {simpleSplitAllowed && <aside className='mixed-assignment-panel'>
         <header><h3>Wybrany fragment {selectedSegment + 1}</h3><p>{selected ? segmentTimeLabel(selected.frameStart, selected.frameEnd) : ''}</p><strong>{assignmentLabel(selectedAssignment)}</strong></header>
         <div className='mixed-assignment-scroll'>
-          <label>Zawodnik z kadry
-            <select value={selectedAssignment?.action === 'assign_roster_player' ? selectedAssignment.player_id : ''} onChange={(event) => event.target.value && assign({ action: 'assign_roster_player', player_id: event.target.value })}>
-              <option value=''>Wybierz zawodnika</option>
-              {(['A', 'B'] as const).map((team) => <optgroup key={team} label={matchTeamName(match.teams || [], team)}>{queue.assignment_options.roster.filter((player) => player.team_label === team).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}</option>)}</optgroup>)}
-            </select>
-          </label>
-          <label>Ten sam gracz co Axx/Bxx
-            <select value={selectedAssignment?.action === 'assign_existing_slot' ? selectedAssignment.stable_slot_id : ''} onChange={(event) => event.target.value && assign({ action: 'assign_existing_slot', stable_slot_id: event.target.value })}>
-              <option value=''>Wybierz gracza</option>
-              {queue.assignment_options.slots.map((slot) => <option key={slot.stable_slot_id} value={slot.stable_slot_id}>{slot.stable_slot_id}</option>)}
-            </select>
-          </label>
-          <div className='reviewed-action-cards'>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'A' })}>{matchTeamName(match.teams || [], 'A')} — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'B' })}>{matchTeamName(match.teams || [], 'B')} — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'A')})</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'B')})</button>
-            <button type='button' onClick={() => assign({ action: 'referee' })}>Sędzia</button>
-            <button type='button' onClick={() => assign({ action: 'false_detection' })}>Fałszywa detekcja</button>
-            <button type='button' onClick={() => assign({ action: 'team_unknown' })}>Nieznana drużyna</button>
-            <button type='button' onClick={() => assign({ action: 'unresolved' })}>Nie wiem</button>
-          </div>
+          <MixedAssignmentControls assignment={selectedAssignment} options={queue.assignment_options} teams={match.teams} capabilities={reviewCase.action_capabilities} onAssign={assign} />
         </div>
       </aside>}
     </div>
