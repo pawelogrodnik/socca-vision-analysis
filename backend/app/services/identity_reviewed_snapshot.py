@@ -276,6 +276,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         documents["segment_decisions"],
         roster,
     )
+    phases.phase("segment_observation_assignment_ms")
     segment_assignments.extend(
         material_continuity_observation_assignments(
             match_path,
@@ -283,9 +284,11 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             documents["material_continuity_decisions"],
         )
     )
+    phases.phase("material_continuity_observation_assignment_ms")
     segment_assignments.extend(
         unresolved_mixed_observation_assignments(match_path, match_doc)
     )
+    phases.phase("unresolved_mixed_observation_assignment_ms")
     segment_assignments.sort(key=lambda row: (int(row["frame"]), str(row["tracklet_id"])))
     observation_demotions, uniqueness = build_frame_slot_demotions(
         tracklets,
@@ -294,7 +297,7 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         canonical_observation_assignments,
         segment_assignments,
     )
-    phases.phase("frame_uniqueness_ms")
+    phases.phase("frame_uniqueness_guard_ms")
     conflicts.extend(
         {
             "tracklet_id": row["tracklet_id"],

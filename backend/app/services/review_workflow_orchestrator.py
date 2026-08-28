@@ -7,7 +7,11 @@ from pathlib import Path
 import time
 from typing import Any
 
-from app.services.identity_canonical_io import invalidate_cached_json, review_build_context
+from app.services.identity_canonical_io import (
+    invalidate_cached_json,
+    review_build_context,
+    scoped_memo_invalidate,
+)
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_coverage import compact_mixed_players_summary
 from app.services.identity_reviewed_output_jobs import generate_reviewed_output
@@ -15,7 +19,11 @@ from app.services.identity_reviewed_progress import build_reviewed_identity_prog
 from app.services.identity_reviewed_recompute_state import (
     clear_reviewed_identity_recompute_required,
 )
-from app.services.identity_reviewed_snapshot import finalize_reviewed_identity, get_reviewed_identity_status
+from app.services.identity_reviewed_snapshot import (
+    finalize_reviewed_identity,
+    get_reviewed_identity_status,
+    last_snapshot_build_phases,
+)
 from app.services.identity_reviewed_segments import (
     load_segment_review,
     render_segment_review_evidence,
@@ -85,7 +93,7 @@ def _refresh_review_after_identity_mutation_scoped(
     leave_hot_state_warm: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    timings = {
+    timings: dict[str, Any] = {
         "seeded_candidate_rebuild_ms": 0.0,
         "finalize_reviewed_identity_ms": 0.0,
         "segment_evidence_ms": 0.0,
@@ -105,6 +113,7 @@ def _refresh_review_after_identity_mutation_scoped(
         phase_started = time.perf_counter()
         snapshot = finalize_reviewed_identity(match_path, match_doc)
         timings["finalize_reviewed_identity_ms"] = _elapsed_ms(phase_started)
+        timings["finalize_phases"] = last_snapshot_build_phases()
         phase_started = time.perf_counter()
         # Operator-review evidence is only meaningful while reviewable cases
         # remain.  A successful finalize has zero blockers, so regenerating
@@ -154,16 +163,6 @@ def _refresh_review_after_identity_mutation_scoped(
                 "workflow_refresh_source": source,
             }
         )
-        write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
-        invalidate_cached_json(match_path / PROGRESS_FILENAME)
-        if leave_hot_state_warm:
-            from app.services.identity_reviewed_hot_state import (
-                rebuild_review_hot_state,
-            )
-
-            phase_started = time.perf_counter()
-            rebuild_review_hot_state(match_path, match_doc, prebuilt_progress=progress)
-            timings["hot_state_warm_write_ms"] = _elapsed_ms(phase_started)
     except Exception as exc:
         write_identity_json_atomic(
             match_path / RECOMPUTE_FAILURE_FILENAME,
@@ -196,6 +195,66 @@ def _refresh_review_after_identity_mutation_scoped(
         completion_evidence=completion_evidence,
     )
     timings["final_workflow_ms"] = _elapsed_ms(phase_started)
+    focused_subject_ids = _not_materialized_team_attribution_subject_ids(
+        workflow,
+        progress,
+    )
+    if focused_subject_ids:
+        phase_started = time.perf_counter()
+        try:
+            materialize_team_attribution_evidence(
+                match_path,
+                candidate_subject_ids=focused_subject_ids,
+            )
+        except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
+            logger.warning(
+                "review_workflow focused_team_attribution_evidence_failed match=%s error=%s",
+                match_doc.get("id") or match_path.name,
+                type(exc).__name__,
+            )
+        timings["focused_team_attribution_evidence_ms"] = _elapsed_ms(phase_started)
+        # The first progress projection was intentionally built without this
+        # evidence. Drop only request-local derived values, then rebuild the
+        # affected authoritative projection once from current durable inputs.
+        scoped_memo_invalidate("__review_units__")
+        scoped_memo_invalidate("__authoritative_progress__")
+        phase_started = time.perf_counter()
+        progress = build_reviewed_identity_progress(
+            match_path,
+            match_doc,
+            include_internal_units=True,
+        )
+        timings["focused_progress_rebuild_ms"] = _elapsed_ms(phase_started)
+        durable_progress = (
+            durable_review_progress(progress)
+            | {
+                "source_snapshot_digest": snapshot.get("semantic_digest"),
+                "workflow_refresh_source": source,
+            }
+        )
+        phase_started = time.perf_counter()
+        workflow = get_review_workflow_state(
+            match_path,
+            match_doc,
+            snapshot=snapshot,
+            progress=durable_progress,
+            completion_evidence=completion_evidence,
+        )
+        timings["focused_final_workflow_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
+    invalidate_cached_json(match_path / PROGRESS_FILENAME)
+    timings["durable_progress_write_ms"] = _elapsed_ms(phase_started)
+    if leave_hot_state_warm:
+        from app.services.identity_reviewed_hot_state import (
+            last_hot_state_build_phases,
+            rebuild_review_hot_state,
+        )
+
+        phase_started = time.perf_counter()
+        rebuild_review_hot_state(match_path, match_doc, prebuilt_progress=progress)
+        timings["hot_state_warm_write_ms"] = _elapsed_ms(phase_started)
+        timings["hot_state_warm_write_phases"] = last_hot_state_build_phases()
     timings["total_ms"] = _elapsed_ms(started)
     clear_reviewed_identity_recompute_required(match_path)
     logger.info(
@@ -273,6 +332,40 @@ def durable_review_progress(progress: dict[str, Any]) -> dict[str, Any]:
         for key, value in base.items()
         if key not in DURABLE_PROGRESS_QUEUE_KEYS
     }
+
+
+def _not_materialized_team_attribution_subject_ids(
+    workflow: dict[str, Any],
+    progress: dict[str, Any],
+) -> set[str]:
+    """Find only terminal coverage sources skipped by fast reproject.
+
+    This deliberately reads the policy's non-actionable uncertainty rows, not
+    every Team-U source. A normal Required/Mixed queue is already actionable
+    and must keep the fast no-global-evidence path.
+    """
+    issues = workflow.get("issues") or {}
+    if (
+        not issues.get("coverage_readiness_blocked")
+        or int(issues.get("normal_blocking") or 0) > 0
+        or int(issues.get("mixed_blocking") or 0) > 0
+    ):
+        return set()
+    subject_ids: set[str] = set()
+    for residual in (progress.get("coverage_residuals") or {}).values():
+        if not isinstance(residual, dict):
+            continue
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []:
+            if not isinstance(case, dict):
+                continue
+            if (
+                str(case.get("team_attribution_evidence_status") or "")
+                == "team_attribution_evidence_not_materialized"
+            ):
+                subject_id = str(case.get("candidate_subject_id") or "")
+                if subject_id:
+                    subject_ids.add(subject_id)
+    return subject_ids
 
 
 def _materialize_operator_evidence(match_path: Path, match_doc: dict[str, Any]) -> None:

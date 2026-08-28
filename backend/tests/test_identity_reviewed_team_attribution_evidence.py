@@ -159,6 +159,18 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
             4,
         )
 
+    def test_focused_evidence_can_materialize_an_exact_cross_team_source(self) -> None:
+        document = build_team_attribution_evidence(
+            {"subjects": [{"candidate_subject_id": "b-cross", "team_label": "B", "tracklet_ids": ["t"]}]},
+            {"tracklets": [{"tracklet_id": "t", "positions_m": [_position(frame) for frame in range(1, 5)]}]},
+            {"cards": [{"candidate_subject_id": "b-cross", "review_status": "no_visual_evidence"}]},
+            candidate_subject_ids={"b-cross"},
+        )
+
+        self.assertEqual(len(document["cases"]), 1)
+        self.assertEqual(document["cases"][0]["source_team_label"], "B")
+        self.assertEqual(document["cases"][0]["status"], "ready_for_team_attribution")
+
     def test_prefers_clean_temporally_distinct_observations_over_overlap(self) -> None:
         document = build_team_attribution_evidence(
             {"subjects": [{"candidate_subject_id": "u", "team_label": "U", "tracklet_ids": ["t"]}]},

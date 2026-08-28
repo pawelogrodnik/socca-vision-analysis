@@ -9,6 +9,7 @@ from unittest.mock import patch
 from app.services.identity_reviewed_coverage import paginate_progress
 from app.services.identity_reviewed_hot_state import (
     FILENAME,
+    last_hot_state_build_phases,
     load_existing_fresh_hot_state,
     load_or_rebuild_review_hot_state,
     rebuild_review_hot_state,
@@ -256,6 +257,32 @@ class ReviewProgressColdWarmContractTests(unittest.TestCase):
             rebuild_review_hot_state(Path(tmp), _match(), prebuilt_progress=progress)
             build.assert_not_called()
 
+    def test_hot_state_rebuild_exposes_materialization_subphases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.identity_reviewed_hot_state.build_materialized_reviewed_slot_registry",
+            return_value={},
+        ), patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_slot_registry",
+            return_value={},
+        ):
+            rebuild_review_hot_state(Path(tmp), _match(), prebuilt_progress=self._progress())
+
+        phases = last_hot_state_build_phases()
+        self.assertTrue({
+            "materialized_slot_registry_ms",
+            "canonical_segment_registry_ms",
+            "exact_whole_subject_digest_attachment_ms",
+            "legacy_context_attachment_ms",
+            "correction_temporal_evidence_attachment_ms",
+            "historical_repair_materialization_ms",
+            "temporal_split_context_attachment_ms",
+            "lookup_source_index_build_ms",
+            "freshness_calculation_ms",
+            "durable_encoding_ms",
+            "hot_state_json_write_ms",
+            "total_ms",
+        }.issubset(phases))
+
     def test_structural_reproject_warms_the_immediate_progress_read_without_another_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
             "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
@@ -403,6 +430,43 @@ class FinalizeResponseContractTests(unittest.TestCase):
             progress.assert_called_once()
             hot_rebuild.assert_called_once()
             self.assertIsNotNone(hot_rebuild.call_args.kwargs.get("prebuilt_progress"))
+
+    def test_reproject_performance_contains_snapshot_and_hot_state_subphases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.last_snapshot_build_phases",
+            return_value={"segment_review_ms": 12.3, "total_ms": 45.6},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            return_value={"summary": {}, "next_cases": [], "optional_audit_cases": []},
+        ), patch(
+            "app.services.identity_reviewed_hot_state.rebuild_review_hot_state",
+            return_value={},
+        ), patch(
+            "app.services.identity_reviewed_hot_state.last_hot_state_build_phases",
+            return_value={"durable_encoding_ms": 7.8, "total_ms": 9.0},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value={"issues": {"blocking": 0}, "phase": "ready_to_finalize"},
+        ):
+            refreshed = refresh_review_after_identity_mutation(
+                Path(tmp),
+                _match(),
+                source="mixed_players_reproject",
+                operator_evidence=False,
+                leave_hot_state_warm=True,
+            )
+
+        self.assertEqual(
+            refreshed["performance"]["finalize_phases"]["segment_review_ms"],
+            12.3,
+        )
+        self.assertEqual(
+            refreshed["performance"]["hot_state_warm_write_phases"]["durable_encoding_ms"],
+            7.8,
+        )
 
     def test_public_finalized_identity_drops_large_internal_arrays(self) -> None:
         snapshot = {

@@ -382,6 +382,9 @@ def apply_coverage_policy(
                     "coverage_team_label": row.get("coverage_team_label"),
                     "effective_team_label": row.get("effective_team_label"),
                     "reason_codes": list(row.get("reason_codes") or []),
+                    "team_attribution_evidence_status": row.get(
+                        "team_attribution_evidence_status"
+                    ),
                 }
                 for row in sorted(
                     non_actionable_team_uncertainty.get(team, []),

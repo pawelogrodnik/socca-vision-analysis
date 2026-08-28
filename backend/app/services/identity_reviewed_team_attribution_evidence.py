@@ -48,6 +48,8 @@ def build_team_attribution_evidence(
     candidate_document: dict[str, Any],
     tracklets_document: dict[str, Any],
     roster_review_document: dict[str, Any],
+    *,
+    candidate_subject_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Build Team-U evidence references from exact raw observations only.
 
@@ -77,7 +79,14 @@ def build_team_attribution_evidence(
         card = cards.get(subject_id) or {}
         if (
             not subject_id
-            or str(subject.get("team_label") or "U").upper() != "U"
+            or (
+                candidate_subject_ids is None
+                and str(subject.get("team_label") or "U").upper() != "U"
+            )
+            or (
+                candidate_subject_ids is not None
+                and subject_id not in candidate_subject_ids
+            )
             or str(card.get("review_status") or "") != "no_visual_evidence"
             or card.get("requires_operator_review") is False
         ):
@@ -109,7 +118,7 @@ def build_team_attribution_evidence(
                 "tracklet_ids": sorted(
                     {str(value) for value in subject.get("tracklet_ids") or []}
                 ),
-                "source_team_label": "U",
+                "source_team_label": str(subject.get("team_label") or "U").upper(),
                 "source_ownership_digest": source_digest,
                 "detected_observation_count": len(pairs),
                 "source_observation_pairs": [list(pair) for pair in pairs],
@@ -164,8 +173,18 @@ def build_team_attribution_evidence(
     }
 
 
-def materialize_team_attribution_evidence(match_path: Path) -> dict[str, Any]:
-    """Render the selected Team-U crops and persist the read-only artifact."""
+def materialize_team_attribution_evidence(
+    match_path: Path,
+    *,
+    candidate_subject_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Render selected team-attribution crops and persist their read-only artifact.
+
+    A focused call is reserved for the terminal coverage recovery path. It
+    renders only exact sources that were previously classified as not yet
+    materialized, rather than restoring a global crop-render pass after every
+    structural Mixed decision.
+    """
     candidate_document = _load(match_path / "identity_candidate_shadow.json")
     tracklets_document = _load(match_path / "tracklets.json")
     roster_review_document = _load(
@@ -175,10 +194,16 @@ def materialize_team_attribution_evidence(match_path: Path) -> dict[str, Any]:
         candidate_document,
         tracklets_document,
         roster_review_document,
+        candidate_subject_ids=candidate_subject_ids,
     )
     video_path = match_path / "video.mp4"
     existing = load_team_attribution_evidence(match_path)
-    if _cached_evidence_is_current(existing, document, match_path, video_path):
+    if candidate_subject_ids is None and _cached_evidence_is_current(
+        existing,
+        document,
+        match_path,
+        video_path,
+    ):
         return existing
     if video_path.exists():
         requested = {
@@ -210,8 +235,60 @@ def materialize_team_attribution_evidence(match_path: Path) -> dict[str, Any]:
         len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE
         for row in document.get("cases") or []
     )
+    if candidate_subject_ids is not None:
+        document = _merge_focused_evidence(existing, document)
     write_identity_json_atomic(match_path / FILENAME, document)
     return document
+
+
+def _merge_focused_evidence(
+    existing: dict[str, Any],
+    focused: dict[str, Any],
+) -> dict[str, Any]:
+    """Replace only freshly requested exact cases in a current evidence file."""
+    focused_ids = {
+        str(row.get("candidate_subject_id") or "")
+        for row in focused.get("cases") or []
+        if isinstance(row, dict)
+    }
+    can_retain_existing = (
+        existing.get("schema_version") == SCHEMA_VERSION
+        and existing.get("source_inputs_digest") == focused.get("source_inputs_digest")
+        and (existing.get("parameters") or {}).get("evidence_selection_version")
+        == EVIDENCE_SELECTION_VERSION
+    )
+    retained = (
+        [
+            row
+            for row in existing.get("cases") or []
+            if isinstance(row, dict)
+            and str(row.get("candidate_subject_id") or "") not in focused_ids
+        ]
+        if can_retain_existing
+        else []
+    )
+    cases = sorted(
+        [*retained, *(row for row in focused.get("cases") or [] if isinstance(row, dict))],
+        key=lambda row: str(row.get("candidate_subject_id") or ""),
+    )
+    merged = {**focused, "cases": cases}
+    merged["summary"] = {
+        "cases": len(cases),
+        "source_observations": sum(
+            int(row.get("detected_observation_count") or 0) for row in cases
+        ),
+        "reviewable_cases": sum(
+            row.get("status") == "ready_for_team_attribution" for row in cases
+        ),
+        "unavailable_cases": sum(
+            row.get("status") != "ready_for_team_attribution" for row in cases
+        ),
+        "rendered_reviewable_cases": sum(
+            len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE
+            for row in cases
+        ),
+    }
+    return merged
 
 
 def visual_evidence_for_unit(

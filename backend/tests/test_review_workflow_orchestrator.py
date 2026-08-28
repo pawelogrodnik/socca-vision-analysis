@@ -124,6 +124,75 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             stats.assert_not_called()
             render.assert_not_called()
 
+    def test_fast_reproject_materializes_only_terminal_not_materialized_team_evidence(self) -> None:
+        initial_progress = {
+            "summary": {"important_decisions_remaining": 0},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_residuals": {
+                "B": {
+                    "non_actionable_required_team_uncertainty_cases": [
+                        {
+                            "candidate_subject_id": "cross-team-b",
+                            "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
+                        }
+                    ]
+                }
+            },
+        }
+        recovered_progress = {
+            "summary": {"important_decisions_remaining": 1},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_residuals": {},
+        }
+        blocked = {
+            "issues": {
+                "blocking": 0,
+                "normal_blocking": 0,
+                "mixed_blocking": 0,
+                "coverage_readiness_blocked": True,
+            },
+            "allowed_actions": [],
+            "phase": "exceptions",
+            "status": "action_required",
+        }
+        actionable = {
+            "issues": {"blocking": 1, "normal_blocking": 1, "mixed_blocking": 0},
+            "allowed_actions": ["review_identity_issue"],
+            "phase": "exceptions",
+            "status": "action_required",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ) as finalize, patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=[initial_progress, recovered_progress],
+        ) as progress, patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            side_effect=[blocked, actionable],
+        ) as workflow, patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={"summary": {}},
+        ) as materialize:
+            result = refresh_review_after_identity_mutation(
+                Path(tmp),
+                {"id": "m1"},
+                source="mixed_players_reproject",
+                operator_evidence=False,
+                leave_hot_state_warm=False,
+            )
+
+        finalize.assert_called_once()
+        self.assertEqual(progress.call_count, 2)
+        self.assertEqual(workflow.call_count, 2)
+        materialize.assert_called_once_with(
+            Path(tmp),
+            candidate_subject_ids={"cross-team-b"},
+        )
+        self.assertEqual(result["workflow"], actionable)
+        self.assertIn("focused_team_attribution_evidence_ms", result["performance"])
+        self.assertIn("focused_progress_rebuild_ms", result["performance"])
+
     def test_finalize_builds_stats_then_queues_one_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
             "app.services.review_workflow_orchestrator.build_cheap_finalize_preflight_state",

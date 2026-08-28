@@ -188,22 +188,22 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 "identity_coverage_unresolved_without_reviewable_evidence",
                 "exceptions",
                 details,
-                user_actionable=False,
+                user_actionable=True,
             )
         )
         return _state(
             match_id,
             True,
-            "action_required",
+            "error",
             "exceptions",
             steps,
             blockers,
-            [],
+            ["retry_review_recompute"],
             initial,
             issues,
             freshness,
             render,
-            None,
+            {"type": "retry_review_recompute", "step_id": "exceptions"},
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")

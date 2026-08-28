@@ -770,10 +770,24 @@ def _attach_team_attribution_evidence(
     units: list[dict[str, Any]],
     document: dict[str, Any],
 ) -> None:
-    """Add Team-U-only crops without replacing stricter naming evidence."""
+    """Add team-attribution crops without replacing stricter naming evidence."""
     for unit in units:
+        reasons = [str(value).lower() for value in unit.get("reason_codes") or []]
+        requires_team_attribution = (
+            str(unit.get("source_team_label") or "").upper() == "U"
+            or any(
+                marker in reason
+                for reason in reasons
+                for marker in (
+                    "cross_team",
+                    "team_mismatch",
+                    "team_attribution",
+                    "team_conflict",
+                )
+            )
+        )
         if (
-            str(unit.get("source_team_label") or "").upper() != "U"
+            not requires_team_attribution
             or unit.get("has_operator_visual_evidence")
         ):
             continue
