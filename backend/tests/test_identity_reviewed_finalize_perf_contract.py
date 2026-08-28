@@ -467,6 +467,8 @@ class FinalizeResponseContractTests(unittest.TestCase):
             refreshed["performance"]["hot_state_warm_write_phases"]["durable_encoding_ms"],
             7.8,
         )
+        self.assertEqual(refreshed["performance"]["finalize_segment_review_ms"], 12.3)
+        self.assertEqual(refreshed["performance"]["hot_durable_encoding_ms"], 7.8)
 
     def test_public_finalized_identity_drops_large_internal_arrays(self) -> None:
         snapshot = {

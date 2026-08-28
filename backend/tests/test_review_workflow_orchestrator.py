@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,10 +16,55 @@ from app.services.review_workflow_state import WorkflowActionError
 from app.services.identity_reviewed_recompute_state import (
     mark_reviewed_identity_recompute_required,
 )
+from app.services.identity_initial_audit_store import (
+    write_identity_json_atomic as write_identity_json_atomic_original,
+)
 
 
 def ready_state() -> dict:
     return {"issues": {"blocking": 0}, "allowed_actions": ["finalize_identity"], "phase": "ready_to_finalize"}
+
+
+def _focused_terminal_progress_and_workflow() -> tuple[dict, dict]:
+    progress = {
+        "summary": {"important_decisions_remaining": 0},
+        "mixed_players": {"summary": {"unresolved": 0}},
+        "coverage_residuals": {
+            "B": {
+                "non_actionable_required_team_uncertainty_cases": [
+                    {
+                        "candidate_subject_id": "cross-team-b",
+                        "scope_kind": "whole_subject",
+                        "source_ownership_digest": "whole-source-digest",
+                        "team_attribution_evidence_source_digest": "evidence-digest",
+                        "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
+                    }
+                ]
+            }
+        },
+        "_internal_review_units": [
+            {
+                "candidate_subject_id": "cross-team-b",
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": "whole-source-digest",
+                "team_attribution_evidence_source_digest": "evidence-digest",
+                "source_team_label": "B",
+                "detected_pairs": [("track-b", 10), ("track-b", 11)],
+            }
+        ],
+    }
+    workflow = {
+        "issues": {
+            "blocking": 0,
+            "normal_blocking": 0,
+            "mixed_blocking": 0,
+            "coverage_readiness_blocked": True,
+        },
+        "allowed_actions": [],
+        "phase": "exceptions",
+        "status": "error",
+    }
+    return progress, workflow
 
 
 class ReviewWorkflowOrchestratorTests(unittest.TestCase):
@@ -133,11 +179,24 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
                     "non_actionable_required_team_uncertainty_cases": [
                         {
                             "candidate_subject_id": "cross-team-b",
+                            "scope_kind": "whole_subject",
+                            "source_ownership_digest": "whole-source-digest",
+                            "team_attribution_evidence_source_digest": "evidence-digest",
                             "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
                         }
                     ]
                 }
             },
+            "_internal_review_units": [
+                {
+                    "candidate_subject_id": "cross-team-b",
+                    "scope_kind": "whole_subject",
+                    "source_ownership_digest": "whole-source-digest",
+                    "team_attribution_evidence_source_digest": "evidence-digest",
+                    "source_team_label": "B",
+                    "detected_pairs": [("track-b", 10), ("track-b", 11)],
+                }
+            ],
         }
         recovered_progress = {
             "summary": {"important_decisions_remaining": 1},
@@ -187,11 +246,117 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         self.assertEqual(workflow.call_count, 2)
         materialize.assert_called_once_with(
             Path(tmp),
-            candidate_subject_ids={"cross-team-b"},
+            focused_sources=[
+                {
+                    "candidate_subject_id": "cross-team-b",
+                    "scope_kind": "whole_subject",
+                    "review_target_id": None,
+                    "continuity_group_id": None,
+                    "source_team_label": "B",
+                    "source_ownership_digest": "evidence-digest",
+                    "detected_pairs": [("track-b", 10), ("track-b", 11)],
+                }
+            ],
         )
         self.assertEqual(result["workflow"], actionable)
         self.assertIn("focused_team_attribution_evidence_ms", result["performance"])
         self.assertIn("focused_progress_rebuild_ms", result["performance"])
+
+    def test_focused_progress_failure_writes_controlled_recompute_failure(self) -> None:
+        initial_progress, blocked = _focused_terminal_progress_and_workflow()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            mark_reviewed_identity_recompute_required(path, semantic_decision_digest="dirty")
+            with patch(
+                "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+                return_value={"semantic_digest": "identity"},
+            ), patch(
+                "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+                side_effect=[initial_progress, RuntimeError("focused progress failed")],
+            ), patch(
+                "app.services.review_workflow_orchestrator.get_review_workflow_state",
+                return_value=blocked,
+            ), patch(
+                "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+                return_value={"summary": {}},
+            ):
+                with self.assertRaises(ReviewWorkflowRecomputeError):
+                    refresh_review_after_identity_mutation(
+                        path,
+                        {"id": "m1"},
+                        source="mixed_players_reproject",
+                        operator_evidence=False,
+                    )
+
+            self.assertTrue((path / "reviewed_identity_recompute_required.json").exists())
+            failure = json.loads((path / "review_workflow_recompute_failure.json").read_text())
+            self.assertEqual(failure["source"], "mixed_players_reproject")
+            self.assertIn("focused progress failed", failure["error"])
+
+    def test_durable_progress_write_failure_uses_controlled_recompute_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            mark_reviewed_identity_recompute_required(path, semantic_decision_digest="dirty")
+
+            def fail_progress_write(target: Path, value: dict, **kwargs: object) -> None:
+                if Path(target).name == "reviewed_identity_progress.json":
+                    raise RuntimeError("durable progress failed")
+                write_identity_json_atomic_original(target, value, **kwargs)
+
+            with patch(
+                "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+                return_value={"semantic_digest": "identity"},
+            ), patch(
+                "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+                return_value={"summary": {}, "coverage_residuals": {}},
+            ), patch(
+                "app.services.review_workflow_orchestrator.get_review_workflow_state",
+                return_value=ready_state(),
+            ), patch(
+                "app.services.review_workflow_orchestrator.write_identity_json_atomic",
+                side_effect=fail_progress_write,
+            ):
+                with self.assertRaises(ReviewWorkflowRecomputeError):
+                    refresh_review_after_identity_mutation(
+                        path,
+                        {"id": "m1"},
+                        source="mixed_players_reproject",
+                        operator_evidence=False,
+                    )
+
+            self.assertTrue((path / "reviewed_identity_recompute_required.json").exists())
+            failure = json.loads((path / "review_workflow_recompute_failure.json").read_text())
+            self.assertIn("durable progress failed", failure["error"])
+
+    def test_hot_state_failure_uses_controlled_recompute_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            mark_reviewed_identity_recompute_required(path, semantic_decision_digest="dirty")
+            with patch(
+                "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+                return_value={"semantic_digest": "identity"},
+            ), patch(
+                "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+                return_value={"summary": {}, "coverage_residuals": {}},
+            ), patch(
+                "app.services.review_workflow_orchestrator.get_review_workflow_state",
+                return_value=ready_state(),
+            ), patch(
+                "app.services.identity_reviewed_hot_state.rebuild_review_hot_state",
+                side_effect=RuntimeError("hot state failed"),
+            ):
+                with self.assertRaises(ReviewWorkflowRecomputeError):
+                    refresh_review_after_identity_mutation(
+                        path,
+                        {"id": "m1"},
+                        source="mixed_players_reproject",
+                        operator_evidence=False,
+                        leave_hot_state_warm=True,
+                    )
+
+            self.assertTrue((path / "reviewed_identity_recompute_required.json").exists())
+            failure = json.loads((path / "review_workflow_recompute_failure.json").read_text())
+            self.assertIn("hot state failed", failure["error"])
 
     def test_finalize_builds_stats_then_queues_one_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(

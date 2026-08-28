@@ -92,6 +92,30 @@ def _refresh_review_after_identity_mutation_scoped(
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
 ) -> dict[str, Any]:
+    try:
+        return _refresh_review_after_identity_mutation_scoped_inner(
+            match_path,
+            match_doc,
+            source=source,
+            rebuild_seeded_candidates=rebuild_seeded_candidates,
+            operator_evidence=operator_evidence,
+            leave_hot_state_warm=leave_hot_state_warm,
+        )
+    except ReviewWorkflowRecomputeError:
+        raise
+    except Exception as exc:
+        _raise_review_recompute_failure(match_path, match_doc, source, exc)
+
+
+def _refresh_review_after_identity_mutation_scoped_inner(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    source: str,
+    rebuild_seeded_candidates: bool = False,
+    operator_evidence: bool = True,
+    leave_hot_state_warm: bool = False,
+) -> dict[str, Any]:
     started = time.perf_counter()
     timings: dict[str, Any] = {
         "seeded_candidate_rebuild_ms": 0.0,
@@ -114,6 +138,7 @@ def _refresh_review_after_identity_mutation_scoped(
         snapshot = finalize_reviewed_identity(match_path, match_doc)
         timings["finalize_reviewed_identity_ms"] = _elapsed_ms(phase_started)
         timings["finalize_phases"] = last_snapshot_build_phases()
+        timings.update(_flatten_phase_timings("finalize", timings["finalize_phases"]))
         phase_started = time.perf_counter()
         # Operator-review evidence is only meaningful while reviewable cases
         # remain.  A successful finalize has zero blockers, so regenerating
@@ -164,22 +189,7 @@ def _refresh_review_after_identity_mutation_scoped(
             }
         )
     except Exception as exc:
-        write_identity_json_atomic(
-            match_path / RECOMPUTE_FAILURE_FILENAME,
-            {
-                "schema_version": "1.0.0",
-                "code": "review_recompute_failed",
-                "source": source,
-                "error": f"{type(exc).__name__}: {exc}",
-            },
-        )
-        logger.info(
-            "review_workflow action=refresh_failed match=%s source=%s error=%s",
-            match_doc.get("id") or match_path.name,
-            source,
-            type(exc).__name__,
-        )
-        raise ReviewWorkflowRecomputeError(str(exc)) from exc
+        _raise_review_recompute_failure(match_path, match_doc, source, exc)
     (match_path / RECOMPUTE_FAILURE_FILENAME).unlink(missing_ok=True)
     phase_started = time.perf_counter()
     # Same-transaction reuse (§22/§37): the snapshot and progress above were
@@ -195,16 +205,16 @@ def _refresh_review_after_identity_mutation_scoped(
         completion_evidence=completion_evidence,
     )
     timings["final_workflow_ms"] = _elapsed_ms(phase_started)
-    focused_subject_ids = _not_materialized_team_attribution_subject_ids(
+    focused_sources = _not_materialized_team_attribution_sources(
         workflow,
         progress,
     )
-    if focused_subject_ids:
+    if focused_sources:
         phase_started = time.perf_counter()
         try:
             materialize_team_attribution_evidence(
                 match_path,
-                candidate_subject_ids=focused_subject_ids,
+                focused_sources=focused_sources,
             )
         except (FileNotFoundError, RuntimeError, ValueError, OSError) as exc:
             logger.warning(
@@ -255,6 +265,9 @@ def _refresh_review_after_identity_mutation_scoped(
         rebuild_review_hot_state(match_path, match_doc, prebuilt_progress=progress)
         timings["hot_state_warm_write_ms"] = _elapsed_ms(phase_started)
         timings["hot_state_warm_write_phases"] = last_hot_state_build_phases()
+        timings.update(
+            _flatten_phase_timings("hot", timings["hot_state_warm_write_phases"])
+        )
     timings["total_ms"] = _elapsed_ms(started)
     clear_reviewed_identity_recompute_required(match_path)
     logger.info(
@@ -334,10 +347,10 @@ def durable_review_progress(progress: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _not_materialized_team_attribution_subject_ids(
+def _not_materialized_team_attribution_sources(
     workflow: dict[str, Any],
     progress: dict[str, Any],
-) -> set[str]:
+) -> list[dict[str, Any]]:
     """Find only terminal coverage sources skipped by fast reproject.
 
     This deliberately reads the policy's non-actionable uncertainty rows, not
@@ -350,8 +363,8 @@ def _not_materialized_team_attribution_subject_ids(
         or int(issues.get("normal_blocking") or 0) > 0
         or int(issues.get("mixed_blocking") or 0) > 0
     ):
-        return set()
-    subject_ids: set[str] = set()
+        return []
+    required_keys: set[tuple[str, str, str, str, str]] = set()
     for residual in (progress.get("coverage_residuals") or {}).values():
         if not isinstance(residual, dict):
             continue
@@ -362,10 +375,86 @@ def _not_materialized_team_attribution_subject_ids(
                 str(case.get("team_attribution_evidence_status") or "")
                 == "team_attribution_evidence_not_materialized"
             ):
-                subject_id = str(case.get("candidate_subject_id") or "")
-                if subject_id:
-                    subject_ids.add(subject_id)
-    return subject_ids
+                key = _team_evidence_source_key(case)
+                if key is not None:
+                    required_keys.add(key)
+    if not required_keys:
+        return []
+    sources = []
+    for unit in progress.get("_internal_review_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        if _team_evidence_source_key(unit) not in required_keys:
+            continue
+        pairs = unit.get("detected_pairs") or []
+        if not pairs:
+            continue
+        sources.append(
+            {
+                "candidate_subject_id": unit.get("candidate_subject_id"),
+                "scope_kind": unit.get("scope_kind"),
+                "review_target_id": unit.get("review_target_id"),
+                "continuity_group_id": unit.get("continuity_group_id"),
+                "source_team_label": unit.get("source_team_label"),
+                "source_ownership_digest": unit.get(
+                    "team_attribution_evidence_source_digest"
+                ),
+                "detected_pairs": pairs,
+            }
+        )
+    return sorted(sources, key=lambda row: _team_evidence_source_key(row) or ("",) * 5)
+
+
+def _team_evidence_source_key(
+    row: dict[str, Any],
+) -> tuple[str, str, str, str, str] | None:
+    subject_id = str(row.get("candidate_subject_id") or "")
+    source_digest = str(row.get("team_attribution_evidence_source_digest") or "")
+    if not source_digest:
+        source_digest = str(row.get("source_ownership_digest") or "")
+    if not subject_id or not source_digest:
+        return None
+    return (
+        subject_id,
+        str(row.get("scope_kind") or ""),
+        str(row.get("review_target_id") or ""),
+        str(row.get("continuity_group_id") or ""),
+        source_digest,
+    )
+
+
+def _raise_review_recompute_failure(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    source: str,
+    exc: Exception,
+) -> None:
+    """Persist the one fail-closed envelope for every reproject phase."""
+    write_identity_json_atomic(
+        match_path / RECOMPUTE_FAILURE_FILENAME,
+        {
+            "schema_version": "1.0.0",
+            "code": "review_recompute_failed",
+            "source": source,
+            "error": f"{type(exc).__name__}: {exc}",
+        },
+    )
+    logger.info(
+        "review_workflow action=refresh_failed match=%s source=%s error=%s",
+        match_doc.get("id") or match_path.name,
+        source,
+        type(exc).__name__,
+    )
+    raise ReviewWorkflowRecomputeError(str(exc)) from exc
+
+
+def _flatten_phase_timings(prefix: str, phases: dict[str, Any]) -> dict[str, float]:
+    """Expose nested phase diagnostics in Server-Timing without extra work."""
+    return {
+        f"{prefix}_{name}": float(value)
+        for name, value in phases.items()
+        if name.endswith("_ms") and isinstance(value, (int, float))
+    }
 
 
 def _materialize_operator_evidence(match_path: Path, match_doc: dict[str, Any]) -> None:

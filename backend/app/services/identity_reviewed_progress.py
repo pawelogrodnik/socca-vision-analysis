@@ -44,6 +44,7 @@ from app.services.identity_reviewed_material_continuity import (
 from app.services.identity_reviewed_team_attribution_evidence import (
     evidence_status_for_unit,
     load_team_attribution_evidence,
+    source_ownership_digest as team_attribution_source_ownership_digest,
     visual_evidence_for_unit,
 )
 from app.services.identity_review_scope import (
@@ -732,6 +733,7 @@ def _unit(
         "stable_slot_id": stable_slot_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
+        "scope_kind": "whole_subject",
         "correction_scope": "whole_subject",
         "operator_actionable": bool(reviewability["actionable"]),
         "non_actionable_reason": reviewability["reason"],
@@ -792,16 +794,22 @@ def _attach_team_attribution_evidence(
         ):
             continue
         subject_id = str(unit.get("candidate_subject_id") or "")
+        detected_pairs = unit.get("detected_pairs") or []
+        unit["team_attribution_evidence_source_digest"] = (
+            team_attribution_source_ownership_digest(subject_id, detected_pairs)
+            if subject_id and detected_pairs
+            else None
+        )
         evidence = visual_evidence_for_unit(
             document,
             candidate_subject_id=subject_id,
-            detected_pairs=unit.get("detected_pairs") or [],
+            detected_pairs=detected_pairs,
         )
         if evidence is None:
             unit["team_attribution_evidence_status"] = evidence_status_for_unit(
                 document,
                 candidate_subject_id=subject_id,
-                detected_pairs=unit.get("detected_pairs") or [],
+                detected_pairs=detected_pairs,
             )
             unit["reason_codes"] = sorted(
                 set(unit.get("reason_codes") or [])

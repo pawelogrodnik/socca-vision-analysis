@@ -362,16 +362,16 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(state["issues"]["actionable_blocking"], 0)
         self.assertTrue(state["issues"]["coverage_readiness_blocked"])
         self.assertTrue(state["issues"]["overall_identity_blocked"])
-        self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
+        self.assertEqual(state["allowed_actions"], [])
         self.assertEqual(
             state["required_action"],
-            {"type": "retry_review_recompute", "step_id": "exceptions"},
+            {"type": "coverage_evidence_unavailable", "step_id": "exceptions"},
         )
         self.assertEqual(
             state["blockers"][0]["code"],
             "identity_coverage_unresolved_without_reviewable_evidence",
         )
-        self.assertTrue(state["blockers"][0]["user_actionable"])
+        self.assertFalse(state["blockers"][0]["user_actionable"])
         exceptions = next(row for row in state["steps"] if row["id"] == "exceptions")
         self.assertEqual(exceptions["remaining"], 0)
 

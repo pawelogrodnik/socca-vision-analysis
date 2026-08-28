@@ -376,6 +376,13 @@ def apply_coverage_policy(
             "non_actionable_required_team_uncertainty_cases": [
                 {
                     "candidate_subject_id": row.get("candidate_subject_id"),
+                    "scope_kind": row.get("scope_kind"),
+                    "review_target_id": row.get("review_target_id"),
+                    "continuity_group_id": row.get("continuity_group_id"),
+                    "source_ownership_digest": row.get("source_ownership_digest"),
+                    "team_attribution_evidence_source_digest": row.get(
+                        "team_attribution_evidence_source_digest"
+                    ),
                     "detected_observation_count": int(
                         row.get("detected_observation_count") or 0
                     ),

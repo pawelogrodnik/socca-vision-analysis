@@ -66,6 +66,9 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     coverage_readiness_blocked = bool(
         issues.get("coverage_readiness_blocked")
     )
+    team_attribution_not_materialized = bool(
+        issues.get("team_attribution_evidence_not_materialized")
+    )
     render_status = str(render.get("status") or "missing")
     render_current = bool(freshness.get("reviewed_output_current"))
     stats_current = bool(freshness.get("reviewed_stats_current"))
@@ -188,9 +191,10 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 "identity_coverage_unresolved_without_reviewable_evidence",
                 "exceptions",
                 details,
-                user_actionable=True,
+                user_actionable=team_attribution_not_materialized,
             )
         )
+        allowed = ["retry_review_recompute"] if team_attribution_not_materialized else []
         return _state(
             match_id,
             True,
@@ -198,12 +202,16 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             "exceptions",
             steps,
             blockers,
-            ["retry_review_recompute"],
+            allowed,
             initial,
             issues,
             freshness,
             render,
-            {"type": "retry_review_recompute", "step_id": "exceptions"},
+            (
+                {"type": "retry_review_recompute", "step_id": "exceptions"}
+                if team_attribution_not_materialized
+                else {"type": "coverage_evidence_unavailable", "step_id": "exceptions"}
+            ),
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -570,6 +578,15 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         isinstance(coverage_readiness, dict)
         and coverage_readiness.get("allows_finalize") is False
     )
+    coverage_residuals = (progress or {}).get("coverage_residuals") or {}
+    team_attribution_evidence_not_materialized = any(
+        str(case.get("team_attribution_evidence_status") or "")
+        == "team_attribution_evidence_not_materialized"
+        for residual in coverage_residuals.values()
+        if isinstance(residual, dict)
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
+        if isinstance(case, dict)
+    )
     # The progress artifact is the authoritative operator queue.  The reviewed
     # snapshot can still report technical conflicts after an operator has made
     # every available decision (for example a multi-slot tracker fragment).
@@ -580,6 +597,7 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         "blocking": pending + mixed_pending,
         "actionable_blocking": pending + mixed_pending,
         "coverage_readiness_blocked": coverage_readiness_blocked,
+        "team_attribution_evidence_not_materialized": team_attribution_evidence_not_materialized,
         "overall_identity_blocked": bool(
             pending or mixed_pending or coverage_readiness_blocked
         ),

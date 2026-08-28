@@ -13,6 +13,7 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     build_team_attribution_evidence,
     evidence_status_for_unit,
     materialize_team_attribution_evidence,
+    source_ownership_digest,
     visual_evidence_for_unit,
 )
 
@@ -160,16 +161,114 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
         )
 
     def test_focused_evidence_can_materialize_an_exact_cross_team_source(self) -> None:
+        pairs = [("t", frame) for frame in range(1, 5)]
         document = build_team_attribution_evidence(
             {"subjects": [{"candidate_subject_id": "b-cross", "team_label": "B", "tracklet_ids": ["t"]}]},
             {"tracklets": [{"tracklet_id": "t", "positions_m": [_position(frame) for frame in range(1, 5)]}]},
             {"cards": [{"candidate_subject_id": "b-cross", "review_status": "no_visual_evidence"}]},
-            candidate_subject_ids={"b-cross"},
+            focused_sources=[
+                {
+                    "candidate_subject_id": "b-cross",
+                    "scope_kind": "whole_subject",
+                    "source_team_label": "B",
+                    "source_ownership_digest": source_ownership_digest("b-cross", pairs),
+                    "detected_pairs": pairs,
+                }
+            ],
         )
 
         self.assertEqual(len(document["cases"]), 1)
         self.assertEqual(document["cases"][0]["source_team_label"], "B")
+        self.assertEqual(document["cases"][0]["source_observation_pairs"], [list(pair) for pair in pairs])
         self.assertEqual(document["cases"][0]["status"], "ready_for_team_attribution")
+
+    def test_focused_evidence_preserves_trimmed_exact_source_ownership(self) -> None:
+        subject = {"candidate_subject_id": "same-subject", "team_label": "U", "tracklet_ids": ["t"]}
+        tracklets = {"tracklets": [{"tracklet_id": "t", "positions_m": [_position(frame) for frame in range(1, 7)]}]}
+        trimmed_pairs = [("t", frame) for frame in range(1, 5)]
+        document = build_team_attribution_evidence(
+            {"subjects": [subject]},
+            tracklets,
+            {"cards": [{"candidate_subject_id": "same-subject", "review_status": "no_visual_evidence"}]},
+            focused_sources=[
+                {
+                    "candidate_subject_id": "same-subject",
+                    "scope_kind": "whole_subject",
+                    "source_ownership_digest": source_ownership_digest("same-subject", trimmed_pairs),
+                    "detected_pairs": trimmed_pairs,
+                }
+            ],
+        )
+
+        self.assertEqual(len(document["cases"]), 1)
+        case = document["cases"][0]
+        self.assertEqual(case["source_observation_pairs"], [list(pair) for pair in trimmed_pairs])
+        self.assertEqual([crop["frame"] for crop in case["anchor_crops"]], [1, 2, 3, 4])
+        case["rendered_anchor_crops"] = list(case["anchor_crops"])
+        self.assertIsNotNone(
+            visual_evidence_for_unit(
+                document,
+                candidate_subject_id="same-subject",
+                detected_pairs=trimmed_pairs,
+            )
+        )
+        self.assertIsNone(
+            visual_evidence_for_unit(
+                document,
+                candidate_subject_id="same-subject",
+                detected_pairs=[("t", frame) for frame in range(1, 7)],
+            )
+        )
+
+    def test_focused_sources_with_one_subject_do_not_collapse_distinct_ownership(self) -> None:
+        subject = {"candidate_subject_id": "same-subject", "team_label": "U", "tracklet_ids": ["t"]}
+        first_pairs = [("t", frame) for frame in range(1, 4)]
+        second_pairs = [("t", frame) for frame in range(4, 7)]
+        document = build_team_attribution_evidence(
+            {"subjects": [subject]},
+            {"tracklets": [{"tracklet_id": "t", "positions_m": [_position(frame) for frame in range(1, 7)]}]},
+            {"cards": [{"candidate_subject_id": "same-subject", "review_status": "no_visual_evidence"}]},
+            focused_sources=[
+                {
+                    "candidate_subject_id": "same-subject",
+                    "scope_kind": "whole_subject",
+                    "source_ownership_digest": source_ownership_digest("same-subject", first_pairs),
+                    "detected_pairs": first_pairs,
+                },
+                {
+                    "candidate_subject_id": "same-subject",
+                    "scope_kind": "segment",
+                    "review_target_id": "segment-2",
+                    "source_ownership_digest": source_ownership_digest("same-subject", second_pairs),
+                    "detected_pairs": second_pairs,
+                },
+            ],
+        )
+
+        self.assertEqual(len(document["cases"]), 2)
+        self.assertEqual(
+            {case["source_ownership_digest"] for case in document["cases"]},
+            {
+                source_ownership_digest("same-subject", first_pairs),
+                source_ownership_digest("same-subject", second_pairs),
+            },
+        )
+
+    def test_focused_evidence_rejects_stale_or_broadened_source_digest(self) -> None:
+        document = build_team_attribution_evidence(
+            {"subjects": [{"candidate_subject_id": "u", "team_label": "U", "tracklet_ids": ["t"]}]},
+            {"tracklets": [{"tracklet_id": "t", "positions_m": [_position(frame) for frame in range(1, 5)]}]},
+            {"cards": [{"candidate_subject_id": "u", "review_status": "no_visual_evidence"}]},
+            focused_sources=[
+                {
+                    "candidate_subject_id": "u",
+                    "source_ownership_digest": "stale-digest",
+                    "detected_pairs": [("t", frame) for frame in range(1, 4)],
+                }
+            ],
+        )
+
+        self.assertEqual(document["cases"], [])
 
     def test_prefers_clean_temporally_distinct_observations_over_overlap(self) -> None:
         document = build_team_attribution_evidence(
