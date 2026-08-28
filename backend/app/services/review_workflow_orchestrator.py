@@ -34,6 +34,7 @@ from app.services.identity_reviewed_mixed_store import (
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
     classify_team_attribution_evidence_status,
+    mark_team_attribution_evidence_technical_failure,
     materialize_team_attribution_evidence,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
@@ -223,6 +224,14 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 match_doc.get("id") or match_path.name,
                 type(exc).__name__,
             )
+            # A failed exact materialization is not ordinary missing evidence.
+            # Persist the technical outcome so this retry cannot return a
+            # misleading 200 with the same generic Retry action.
+            mark_team_attribution_evidence_technical_failure(
+                match_path,
+                focused_sources,
+                status="team_attribution_evidence_materialization_failed",
+            )
         timings["focused_team_attribution_evidence_ms"] = _elapsed_ms(phase_started)
         # The first progress projection was intentionally built without this
         # evidence. Drop only request-local derived values, then rebuild the
@@ -243,6 +252,37 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 "workflow_refresh_source": source,
             }
         )
+        unresolved_sources = _remaining_not_established_focused_sources(
+            focused_sources,
+            progress,
+        )
+        if unresolved_sources:
+            # The focused renderer returned normally but did not prove an
+            # actionable, terminal-unavailable, or technical result for these
+            # exact sources.  Convert only those rows into an explicit
+            # technical failure and reproject once more; fail closed rather
+            # than offering an endless indistinguishable retry.
+            mark_team_attribution_evidence_technical_failure(
+                match_path,
+                unresolved_sources,
+                status="team_attribution_evidence_recovery_incomplete",
+            )
+            scoped_memo_invalidate("__review_units__")
+            scoped_memo_invalidate("__authoritative_progress__")
+            phase_started = time.perf_counter()
+            progress = build_reviewed_identity_progress(
+                match_path,
+                match_doc,
+                include_internal_units=True,
+            )
+            timings["focused_failure_progress_rebuild_ms"] = _elapsed_ms(phase_started)
+            durable_progress = (
+                durable_review_progress(progress)
+                | {
+                    "source_snapshot_digest": snapshot.get("semantic_digest"),
+                    "workflow_refresh_source": source,
+                }
+            )
     phase_started = time.perf_counter()
     write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
     invalidate_cached_json(match_path / PROGRESS_FILENAME)
@@ -426,6 +466,41 @@ def _team_evidence_source_key(
         str(row.get("continuity_group_id") or ""),
         source_digest,
     )
+
+
+def _remaining_not_established_focused_sources(
+    focused_sources: list[dict[str, Any],],
+    progress: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return exact focused sources that did not reach a monotonic outcome."""
+    required_keys = {
+        key
+        for row in progress.get("next_cases") or []
+        if isinstance(row, dict)
+        if (key := _team_evidence_source_key(row)) is not None
+    }
+    units_by_key = {
+        key: row
+        for row in progress.get("_internal_review_units") or []
+        if isinstance(row, dict)
+        if (key := _team_evidence_source_key(row)) is not None
+    }
+    unresolved: list[dict[str, Any]] = []
+    for source in focused_sources:
+        key = _team_evidence_source_key(source)
+        if key is None or key in required_keys:
+            continue
+        unit = units_by_key.get(key)
+        classification = (
+            classify_team_attribution_evidence_status(
+                unit.get("team_attribution_evidence_status")
+            )
+            if unit is not None
+            else "remediable_not_established"
+        )
+        if classification == "remediable_not_established":
+            unresolved.append(source)
+    return unresolved
 
 
 def _raise_review_recompute_failure(
@@ -626,8 +701,21 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
         match_path,
         match_doc,
         source="retry",
+        operator_evidence=_retry_requires_global_operator_evidence(state),
         leave_hot_state_warm=True,
     )
+
+
+def _retry_requires_global_operator_evidence(state: dict[str, Any]) -> bool:
+    """Keep policy migration retry bounded without weakening other retries.
+
+    A policy-version mismatch has current canonical decisions; it needs a new
+    projection, not a full crop regeneration.  The existing focused recovery
+    below still materializes exact Team-U sources when no normal queue exists.
+    Other retry reasons retain the legacy broad-evidence behavior explicitly.
+    """
+    reason = str((state.get("freshness") or {}).get("review_progress_reason") or "")
+    return reason != "review_progress_policy_stale"
 
 
 def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:

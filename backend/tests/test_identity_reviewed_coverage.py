@@ -1088,6 +1088,25 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
                     {"team_attribution_evidence_not_materialized": 1},
                 )
 
+    def test_technical_team_evidence_failures_do_not_consume_residual_tolerance(self) -> None:
+        rows = [_observation("u", frame, "U", "team_unknown", None) for frame in range(3)]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        for evidence_status in ("source_video_unavailable", "team_attribution_crops_unavailable"):
+            with self.subTest(evidence_status=evidence_status):
+                uncertain = _unit("technical", [("u", frame) for frame in range(3)], visual=False)
+                uncertain.update({
+                    "source_team_label": "U",
+                    "effective_team_label": "U",
+                    "operator_actionable": False,
+                    "team_attribution_evidence_status": evidence_status,
+                })
+                policy = apply_coverage_policy([uncertain], coverage, pair_index, _scoped_match())
+
+                self.assertFalse(policy["readiness"]["allows_finalize"])
+                residual = policy["readiness"]["team_attribution_residual"]
+                self.assertEqual(residual["status"], "technical_evidence_failure")
+                self.assertEqual(policy["readiness"]["blockers"][0]["code"], "team_attribution_evidence_technical_failure")
+
     def test_unknown_case_becomes_sufficient_after_assigning_team_stats_only_team(self) -> None:
         rows = [_observation("u", frame, "U", "unresolved", None) for frame in range(100)]
         match = _scoped_match()

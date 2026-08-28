@@ -390,6 +390,28 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
         self.assertEqual(state["required_action"]["type"], "retry_review_recompute")
 
+    def test_technical_team_evidence_failure_fails_closed_without_endless_retry(self) -> None:
+        issues = {
+            "blocking": 0,
+            "normal_blocking": 0,
+            "mixed_blocking": 0,
+            "coverage_readiness_blocked": True,
+            "team_attribution_evidence_not_materialized": False,
+            "team_attribution_evidence_technical_failure": True,
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "team_attribution_evidence_technical_failure"}],
+            },
+        }
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(state["status"], "error")
+        self.assertEqual(state["allowed_actions"], [])
+        self.assertEqual(state["required_action"]["type"], "coverage_evidence_technical_failure")
+        self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
+        self.assertFalse(state["mandatory_operator_review_complete"])
+
     def test_workflow_carries_the_exact_required_queue_descriptor(self) -> None:
         progress = {
             "next_cases": [

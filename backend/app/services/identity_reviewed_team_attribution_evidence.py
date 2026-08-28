@@ -45,6 +45,16 @@ TERMINAL_UNAVAILABLE_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
     "insufficient_team_attribution_evidence",
     "no_team_attribution_evidence",
 })
+# These statuses mean the exact source was evaluated but the application could
+# not provide its evidence.  They are deliberately not ordinary "no safe
+# evidence" outcomes: accepting them would hide a broken video/artifact path
+# behind the Team-U residual tolerance.
+TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
+    "source_video_unavailable",
+    "team_attribution_crops_unavailable",
+    "team_attribution_evidence_recovery_incomplete",
+    "team_attribution_evidence_materialization_failed",
+})
 
 
 def classify_team_attribution_evidence_status(value: object) -> str:
@@ -58,15 +68,74 @@ def classify_team_attribution_evidence_status(value: object) -> str:
     status = str(value or "").strip()
     if status in TERMINAL_UNAVAILABLE_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
         return "terminal_unavailable"
+    if status in TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
+        return "technical_failure"
     return "remediable_not_established"
 
 
 def normalized_team_attribution_evidence_status(value: object) -> str:
     """Return a safe public status for readiness diagnostics."""
     status = str(value or "").strip()
-    if classify_team_attribution_evidence_status(status) == "terminal_unavailable":
+    if classify_team_attribution_evidence_status(status) in {
+        "terminal_unavailable",
+        "technical_failure",
+    }:
         return status
     return TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED
+
+
+def mark_team_attribution_evidence_technical_failure(
+    match_path: Path,
+    focused_sources: list[dict[str, Any]],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    """Durably mark only exact failed focused sources as technical failures.
+
+    A retry must never return success while an exact remediation source is
+    still merely "not materialized".  This helper preserves every unrelated
+    cached case and writes a diagnostic status only for the owned source keys.
+    """
+    if status not in TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
+        raise ValueError(f"unsupported team-attribution technical status: {status}")
+    document = load_team_attribution_evidence(match_path)
+    requested_keys = {_source_key(row) for row in focused_sources if isinstance(row, dict)}
+    cases = [dict(row) for row in document.get("cases") or [] if isinstance(row, dict)]
+    existing_keys = {_case_key(row) for row in cases}
+    for row in cases:
+        if _case_key(row) in requested_keys:
+            row["status"] = status
+            row["rendered_anchor_crops"] = []
+    for source in focused_sources:
+        if not isinstance(source, dict) or _source_key(source) in existing_keys:
+            continue
+        cases.append({
+            "candidate_subject_id": source.get("candidate_subject_id"),
+            "source_ownership_digest": source.get("source_ownership_digest"),
+            "scope_kind": source.get("scope_kind"),
+            "review_target_id": source.get("review_target_id"),
+            "continuity_group_id": source.get("continuity_group_id"),
+            "source_team_label": source.get("source_team_label"),
+            "detected_observation_count": len(source.get("detected_pairs") or []),
+            "status": status,
+            "anchor_crops": [],
+            "rendered_anchor_crops": [],
+        })
+    cases.sort(key=_case_sort_key)
+    updated = {
+        **document,
+        "schema_version": document.get("schema_version") or SCHEMA_VERSION,
+        "cases": cases,
+        "summary": {
+            "cases": len(cases),
+            "source_observations": sum(int(row.get("detected_observation_count") or 0) for row in cases),
+            "reviewable_cases": sum(row.get("status") == "ready_for_team_attribution" for row in cases),
+            "unavailable_cases": sum(row.get("status") != "ready_for_team_attribution" for row in cases),
+            "rendered_reviewable_cases": sum(len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE for row in cases),
+        },
+    }
+    write_identity_json_atomic(match_path / FILENAME, updated)
+    return updated
 
 
 def load_team_attribution_evidence(match_path: Path) -> dict[str, Any]:

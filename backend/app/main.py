@@ -2053,10 +2053,19 @@ def retry_match_review_render(match_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/matches/{match_id}/review-workflow/retry-recompute")
-def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
+def retry_match_review_recompute(match_id: str, response: Response) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return retry_review_recompute(path, read_match_meta(path))
+        refreshed = retry_review_recompute(path, read_match_meta(path))
+        performance = dict(refreshed.get("performance") or {})
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        # Full snapshot/progress stays in the service result for authoritative
+        # in-process consumers. The browser only needs the bounded workflow.
+        return {"workflow": refreshed["workflow"], "performance": performance}
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except ReviewWorkflowRecomputeError as exc:

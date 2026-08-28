@@ -35,3 +35,16 @@ test('does not claim more cases after recompute when the queue is empty', () => 
     'Po przeliczeniu pozostały 4 przypadki do sprawdzenia.',
   );
 });
+
+test('explains a technical Team-attribution evidence failure without offering a fake residual', () => {
+  const message = teamAttributionBlockerMessage({
+    status: 'incomplete',
+    policy_version: 'test',
+    allows_finalize: false,
+    roster_scope: {},
+    blockers: [{ code: 'team_attribution_evidence_technical_failure' }],
+  });
+
+  assert.match(message || '', /Nie udało się przygotować bezpiecznych widoków/);
+  assert.match(message || '', /pliku wideo i artefaktów analizy/);
+});

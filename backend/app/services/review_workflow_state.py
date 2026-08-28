@@ -75,6 +75,9 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     team_attribution_not_materialized = bool(
         issues.get("team_attribution_evidence_not_materialized")
     )
+    team_attribution_technical_failure = bool(
+        issues.get("team_attribution_evidence_technical_failure")
+    )
     render_status = str(render.get("status") or "missing")
     render_current = bool(freshness.get("reviewed_output_current"))
     stats_current = bool(freshness.get("reviewed_stats_current"))
@@ -192,15 +195,20 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             "identity_coverage_unresolved_without_reviewable_evidence",
             details,
         )
+        blocker_code = (
+            "team_attribution_evidence_technical_failure"
+            if team_attribution_technical_failure
+            else "identity_coverage_unresolved_without_reviewable_evidence"
+        )
         blockers.append(
             _blocker(
-                "identity_coverage_unresolved_without_reviewable_evidence",
+                blocker_code,
                 "exceptions",
                 details,
-                user_actionable=team_attribution_not_materialized,
+                user_actionable=team_attribution_not_materialized and not team_attribution_technical_failure,
             )
         )
-        allowed = ["retry_review_recompute"] if team_attribution_not_materialized else []
+        allowed = ["retry_review_recompute"] if team_attribution_not_materialized and not team_attribution_technical_failure else []
         return _state(
             match_id,
             True,
@@ -215,10 +223,17 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             render,
             (
                 {"type": "retry_review_recompute", "step_id": "exceptions"}
-                if team_attribution_not_materialized
-                else {"type": "coverage_evidence_unavailable", "step_id": "exceptions"}
+                if team_attribution_not_materialized and not team_attribution_technical_failure
+                else {
+                    "type": (
+                        "coverage_evidence_technical_failure"
+                        if team_attribution_technical_failure
+                        else "coverage_evidence_unavailable"
+                    ),
+                    "step_id": "exceptions",
+                }
             ),
-            terminal_data_quality_error=True,
+            terminal_data_quality_error=not team_attribution_technical_failure,
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -606,6 +621,16 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
         if isinstance(case, dict)
     )
+    team_attribution_evidence_technical_failure = any(
+        classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        )
+        == "technical_failure"
+        for residual in coverage_residuals.values()
+        if isinstance(residual, dict)
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
+        if isinstance(case, dict)
+    )
     # The progress artifact is the authoritative operator queue.  The reviewed
     # snapshot can still report technical conflicts after an operator has made
     # every available decision (for example a multi-slot tracker fragment).
@@ -617,6 +642,7 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         "actionable_blocking": pending + mixed_pending,
         "coverage_readiness_blocked": coverage_readiness_blocked,
         "team_attribution_evidence_not_materialized": team_attribution_evidence_not_materialized,
+        "team_attribution_evidence_technical_failure": team_attribution_evidence_technical_failure,
         "overall_identity_blocked": bool(
             pending or mixed_pending or coverage_readiness_blocked
         ),
@@ -708,6 +734,9 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "coverage_readiness_blocked": coverage_readiness_blocked,
         "team_attribution_evidence_not_materialized": bool(
             issues.get("team_attribution_evidence_not_materialized")
+        ),
+        "team_attribution_evidence_technical_failure": bool(
+            issues.get("team_attribution_evidence_technical_failure")
         ),
         "overall_identity_blocked": bool(
             issues.get("overall_identity_blocked")

@@ -89,7 +89,89 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             Path("/tmp/match"),
             {"id": "m1"},
             source="retry",
+            operator_evidence=True,
             leave_hot_state_warm=True,
+        )
+
+    def test_policy_stale_retry_skips_global_evidence_and_keeps_warm_commit(self) -> None:
+        retryable = {
+            "allowed_actions": ["retry_review_recompute"],
+            "freshness": {"review_progress_reason": "review_progress_policy_stale"},
+            "issues": {"normal_blocking": 0, "mixed_blocking": 0},
+        }
+        refreshed = {"workflow": {"issues": {"normal_blocking": 0}}}
+        with patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=retryable,
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ) as refresh:
+            result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
+
+        self.assertEqual(result, refreshed)
+        refresh.assert_called_once_with(
+            Path("/tmp/match"),
+            {"id": "m1"},
+            source="retry",
+            operator_evidence=False,
+            leave_hot_state_warm=True,
+        )
+
+    def test_focused_remediation_that_stays_generic_becomes_technical_failure(self) -> None:
+        initial_progress, blocked = _focused_terminal_progress_and_workflow()
+        still_generic = {
+            **initial_progress,
+            "_internal_review_units": list(initial_progress["_internal_review_units"]),
+        }
+        technical = {
+            **initial_progress,
+            "coverage_residuals": {
+                "B": {
+                    "non_actionable_required_team_uncertainty_cases": [{
+                        **initial_progress["coverage_residuals"]["B"]["non_actionable_required_team_uncertainty_cases"][0],
+                        "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                    }]
+                }
+            },
+        }
+        technical_workflow = {
+            "issues": {
+                "blocking": 0,
+                "normal_blocking": 0,
+                "mixed_blocking": 0,
+                "coverage_readiness_blocked": True,
+                "team_attribution_evidence_technical_failure": True,
+            },
+            "allowed_actions": [],
+            "phase": "exceptions",
+            "status": "error",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=[initial_progress, still_generic, technical],
+        ) as progress, patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            side_effect=[blocked, technical_workflow],
+        ), patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={"summary": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.mark_team_attribution_evidence_technical_failure",
+        ) as mark_technical:
+            result = refresh_review_after_identity_mutation(
+                Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False
+            )
+
+        self.assertEqual(progress.call_count, 3)
+        self.assertEqual(result["workflow"], technical_workflow)
+        mark_technical.assert_called_once()
+        self.assertEqual(
+            mark_technical.call_args.kwargs["status"],
+            "team_attribution_evidence_recovery_incomplete",
         )
 
     def test_lightweight_identity_refresh_does_not_build_stats_or_render(self) -> None:
@@ -223,9 +305,21 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             ],
         }
         recovered_progress = {
+            "next_cases": [{
+                "candidate_subject_id": "cross-team-b",
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": "whole-source-digest",
+                "team_attribution_evidence_source_digest": "evidence-digest",
+            }],
             "summary": {"important_decisions_remaining": 1},
             "mixed_players": {"summary": {"unresolved": 0}},
             "coverage_residuals": {},
+            "_internal_review_units": [{
+                "candidate_subject_id": "cross-team-b",
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": "whole-source-digest",
+                "team_attribution_evidence_source_digest": "evidence-digest",
+            }],
         }
         blocked = {
             "issues": {

@@ -1830,7 +1830,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; team_attribution_evidence_not_materialized?: boolean; normal_blocking?: number; required_queue?: { count: number; source_keys_digest: string }; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
+  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; team_attribution_evidence_not_materialized?: boolean; team_attribution_evidence_technical_failure?: boolean; normal_blocking?: number; required_queue?: { count: number; source_keys_digest: string }; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -2127,7 +2127,7 @@ export type ReviewedIdentityCoverageReadiness = {
   allows_finalize: boolean;
   blockers: Array<Record<string, unknown>>;
   team_attribution_residual?: {
-    status: 'none' | 'materialization_required' | 'accepted_within_tolerance' | 'exceeds_tolerance';
+    status: 'none' | 'materialization_required' | 'technical_evidence_failure' | 'accepted_within_tolerance' | 'exceeds_tolerance';
     units: number;
     observations: number;
     residual_budget_observations: number;
