@@ -15,8 +15,12 @@ from app.services.identity_reviewed_mixed_store import (
     UNRESOLVED_STATUSES,
     current_mixed_subject_digest,
     inline_temporal_split_for_source,
+    operator_concurrent_targets_for_marker,
+    operator_targets_for_mixed_marker,
     load_mixed_player_cases,
     observations_for_case,
+    # Retained as an import seam for regression tests that prove serial and
+    # concurrent save paths do not enumerate this global helper.
     operator_mixed_targets,
     save_mixed_case_document,
     validate_split_frames,
@@ -140,7 +144,7 @@ def save_mixed_player_resolution(
         # The classification changes which operator targets are materialized,
         # so this branch still needs one canonical topology refresh.
         phase_started = time.perf_counter()
-        build_segment_review_document(match_path, match_doc)
+        build_segment_review_document(match_path, match_doc, performance=performance)
         performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
         digest = reviewed_decisions_semantic_digest(match_path)
@@ -168,11 +172,7 @@ def save_mixed_player_resolution(
     )
     pending_document = {**document, "cases": [case if key == case_id else row for key, row in cases.items()]}
     phase_started = time.perf_counter()
-    targets = [
-        row
-        for row in operator_mixed_targets(match_path, pending_document)
-        if str(row.get("candidate_subject_id") or "") == subject_id
-    ]
+    targets = operator_targets_for_mixed_marker(match_path, case)
     assignments = payload.get("segment_assignments") or []
     if len(assignments) != len(targets):
         raise ValueError("Every mixed segment requires one assignment")
@@ -192,7 +192,7 @@ def save_mixed_player_resolution(
         save_mixed_case_document(match_path, pending_document)
         performance["mixed_case_persistence_ms"] += _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
-        review = build_segment_review_document(match_path, match_doc)
+        review = build_segment_review_document(match_path, match_doc, performance=performance)
         performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
         saved = save_segment_decisions_batch(
@@ -268,6 +268,7 @@ def _mixed_split_performance() -> dict[str, float]:
         "split_validation_ms": 0.0,
         "target_derivation_ms": 0.0,
         "segment_review_build_ms": 0.0,
+        "segment_review_operator_targets_ms": 0.0,
         "segment_decision_batch_ms": 0.0,
         "segment_assignment_validation_ms": 0.0,
         "segment_decision_persistence_ms": 0.0,
@@ -396,7 +397,7 @@ def save_inline_temporal_split(
             # complex blocker, refresh the review snapshot in the same atomic
             # operation so those now-retired targets cannot remain displayed.
             phase_started = time.perf_counter()
-            build_segment_review_document(match_path, match_doc)
+            build_segment_review_document(match_path, match_doc, performance=performance)
             performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
         except Exception:
             for path, previous in rollback_paths.items():
@@ -459,10 +460,7 @@ def save_inline_temporal_split(
     pending_cases = [row for row in cases if str(row.get("case_id") or "") != case_id] + [case]
     pending_document = {**document, "cases": pending_cases}
     phase_started = time.perf_counter()
-    targets = [
-        row for row in operator_mixed_targets(match_path, pending_document)
-        if str(row.get("split_parent_case_id") or "") == case_id
-    ]
+    targets = operator_targets_for_mixed_marker(match_path, case)
     if len(assignments) != len(targets):
         raise ValueError("Every split segment requires one assignment")
     performance["target_derivation_ms"] = _elapsed_ms(phase_started)
@@ -500,7 +498,7 @@ def save_inline_temporal_split(
         )
         performance["superseded_decision_cleanup_ms"] = _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
-        review = build_segment_review_document(match_path, match_doc)
+        review = build_segment_review_document(match_path, match_doc, performance=performance)
         performance["segment_review_build_ms"] = _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
         saved = save_segment_decisions_batch(
@@ -668,12 +666,10 @@ def _save_concurrent_lane_resolution(
     ] + [case]
     pending_document = {**document, "cases": pending_cases}
     phase_started = time.perf_counter()
-    targets = [
-        row
-        for row in operator_mixed_targets(match_path, pending_document)
-        if str(row.get("split_parent_case_id") or "") == case_id
-        and str(row.get("target_origin") or "").startswith("operator_concurrent_lane")
-    ]
+    # The exact current parent and validated lane resolutions are already in
+    # hand. Do not materialize every sibling Mixed marker merely to filter
+    # this one parent's deterministic targets.
+    targets = operator_concurrent_targets_for_marker(match_path, case)
     if len(targets) != len(expanded):
         raise MixedPlayerTargetError("concurrent_lane_target_stale")
     target_pairs = [
@@ -699,7 +695,7 @@ def _save_concurrent_lane_resolution(
             _remove_superseded_segment_decisions(match_path, old_target_ids)
             if old_target_ids else []
         )
-        review = build_segment_review_document(match_path, match_doc)
+        review = build_segment_review_document(match_path, match_doc, performance=performance)
         saved = save_segment_decisions_batch(
             match_path,
             match_doc,

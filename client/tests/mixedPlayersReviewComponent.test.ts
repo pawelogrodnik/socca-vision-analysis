@@ -851,6 +851,7 @@ test('stale lane refinement refreshes the exact case once without save or reproj
   });
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  await waitFor(() => assert.ok(view.getByRole('button', { name: 'Doprecyzuj' })));
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByText(/Układ ścieżek został zaktualizowany/)));
   assert.equal(focusedReads, 1);
@@ -998,6 +999,38 @@ test('concurrent lane save ignores a repeated click while the atomic POST is in 
     semantic_decision_digest: 'one-save',
     recompute_deferred: true,
   }));
+});
+
+test('Review makes initial loading and structural reprojection visibly busy', async () => {
+  const initialQueue = deferred<MixedPlayersReviewQueue>();
+  const initial = renderPanel({ getQueue: async () => initialQueue.promise });
+  assert.match(initial.getByRole('status').textContent || '', /Ładuję zmieszane przypadki/);
+  await act(async () => initialQueue.resolve(queue([splittableMixedCase('M-loading-initial')])));
+  await waitFor(() => assert.ok(initial.getByText('2 wykrytych obserwacji')));
+  initial.unmount();
+
+  const reproject = deferred<ReviewWorkflow>();
+  let reprojectCalls = 0;
+  const structural = renderPanel({
+    getQueue: async () => queue([splittableMixedCase('M-loading-save')]),
+    saveResolution: async () => ({
+      saved_case: splittableMixedCase('M-loading-save'),
+      semantic_decision_digest: 'saved',
+      recompute_deferred: true,
+    }),
+    reprojectWorkflow: async () => {
+      reprojectCalls += 1;
+      return reproject.promise;
+    },
+  });
+
+  await submitValidStructuralSplit(structural);
+  await waitFor(() => assert.equal(reprojectCalls, 1));
+  assert.match(
+    structural.getByRole('status').textContent || '',
+    /Odświeżam Review po zapisaniu podziału/,
+  );
+  await act(async () => reproject.resolve(workflowWithBlocking(0, 0)));
 });
 
 test('failed exact recovery after split rejection keeps stale serial case fail-closed', async () => {

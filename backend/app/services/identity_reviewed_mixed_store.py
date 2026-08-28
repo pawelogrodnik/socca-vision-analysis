@@ -887,81 +887,125 @@ def operator_mixed_targets(
     }
     targets: list[dict[str, Any]] = []
     for marker in document.get("cases") or []:
-        if str(marker.get("resolution_model") or "") == "concurrent_lanes":
-            targets.extend(_operator_concurrent_lane_targets(match_path, marker, cards))
+        if not isinstance(marker, dict):
             continue
-        split_frames = sorted({int(value) for value in marker.get("split_after_frames") or []})
-        if not split_frames:
-            continue
-        subject_id = str(marker.get("candidate_subject_id") or "")
-        subject = subjects.get(subject_id)
-        if not subject and not isinstance(marker.get("source"), dict):
-            continue
-        observations = _observations_for_marker(match_path, marker, subject)
-        if not observations:
-            continue
-        groups = _split_observations(observations, split_frames)
-        for index, group in enumerate(groups):
-            teams = {str(row.get("team_label") or "U") for row in group}
-            source_team = next(iter(teams)) if len(teams) == 1 else "U"
-            ownership_payload = [
-                {"tracklet_id": row["tracklet_id"], "frame": row["frame"]}
-                for row in group
-            ]
-            digest = canonical_digest(
-                {
-                    "source_case_id": marker.get("case_id") or subject_id,
-                    "source_subject_digest": marker.get("source_subject_digest"),
-                    "segment_index": index,
-                    "owned_observations": ownership_payload,
-                }
+        targets.extend(
+            operator_targets_for_mixed_marker(
+                match_path,
+                marker,
+                cards,
+                subjects.get(str(marker.get("candidate_subject_id") or "")),
             )
-            target_id = f"review-mixed-segment:v1:{digest}"
-            frames = sorted({int(row["frame"]) for row in group})
-            crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
-            targets.append(
-                {
-                    "review_target_id": target_id,
-                    "scope_kind": "canonical_segment",
-                    "target_origin": (
-                        "operator_temporal_split"
-                        if isinstance(marker.get("source"), dict)
-                        else "operator_mixed_players"
-                    ),
-                    "candidate_subject_id": subject_id,
-                    "tracklet_ids": sorted({str(row["tracklet_id"]) for row in group}),
-                    "stable_slot_id": None,
-                    "source_team_label": source_team,
-                    "effective_team_label": source_team,
-                    "frame_start": frames[0],
-                    "frame_end": frames[-1],
-                    "frame_ranges": _exact_ranges(frames),
-                    "owned_frames": frames,
-                    "owned_observations": ownership_payload,
-                    "detected_observation_count": len(group),
-                    "source_ownership_digest": digest,
-                    "reason_codes": ["operator_temporal_split"],
-                    "visual_evidence": {
-                        "status": "ready" if crops else "missing",
-                        "selected_crop_count": len(crops),
-                        "anchor_crops": crops,
-                    },
-                    "current_decision": None,
-                    "decision_status": "pending",
-                    "stale_decision": False,
-                    "legacy_suggestion": None,
-                    "mixed_segment_index": index,
-                    "split_parent_case_id": marker.get("case_id") or subject_id,
-                }
-            )
+        )
     return targets
 
 
-def _operator_concurrent_lane_targets(
+def operator_targets_for_mixed_marker(
     match_path: Path,
     marker: dict[str, Any],
-    cards: dict[str, dict[str, Any]],
+    cards: dict[str, dict[str, Any]] | None = None,
+    subject: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    """Materialize deterministic operator targets for one durable parent.
+
+    Structural saves already own and validate the exact parent marker.  They
+    must not enumerate every sibling Mixed case merely to select this parent.
+    The global builder intentionally reuses this helper for byte-for-byte
+    equivalent target identities and ordering.
+    """
+    if str(marker.get("resolution_model") or "") == "concurrent_lanes":
+        return operator_concurrent_targets_for_marker(match_path, marker, cards)
+
+    split_frames = sorted({int(value) for value in marker.get("split_after_frames") or []})
+    if not split_frames:
+        return []
+    subject_id = str(marker.get("candidate_subject_id") or "")
+    has_exact_source = isinstance(marker.get("source"), dict)
+    if not has_exact_source and subject is None:
+        try:
+            subject = _subject(match_path, subject_id)
+        except ValueError:
+            return []
+    try:
+        observations = _observations_for_marker(match_path, marker, subject)
+    except (TypeError, ValueError):
+        return []
+    if not observations:
+        return []
+    if cards is None:
+        cards = {
+            str(row.get("candidate_subject_id")): row
+            for row in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+            if row.get("candidate_subject_id")
+        }
+
+    targets: list[dict[str, Any]] = []
+    for index, group in enumerate(_split_observations(observations, split_frames)):
+        teams = {str(row.get("team_label") or "U") for row in group}
+        source_team = next(iter(teams)) if len(teams) == 1 else "U"
+        ownership_payload = [
+            {"tracklet_id": row["tracklet_id"], "frame": row["frame"]}
+            for row in group
+        ]
+        digest = canonical_digest(
+            {
+                "source_case_id": marker.get("case_id") or subject_id,
+                "source_subject_digest": marker.get("source_subject_digest"),
+                "segment_index": index,
+                "owned_observations": ownership_payload,
+            }
+        )
+        frames = sorted({int(row["frame"]) for row in group})
+        crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
+        targets.append(
+            {
+                "review_target_id": f"review-mixed-segment:v1:{digest}",
+                "scope_kind": "canonical_segment",
+                "target_origin": (
+                    "operator_temporal_split"
+                    if isinstance(marker.get("source"), dict)
+                    else "operator_mixed_players"
+                ),
+                "candidate_subject_id": subject_id,
+                "tracklet_ids": sorted({str(row["tracklet_id"]) for row in group}),
+                "stable_slot_id": None,
+                "source_team_label": source_team,
+                "effective_team_label": source_team,
+                "frame_start": frames[0],
+                "frame_end": frames[-1],
+                "frame_ranges": _exact_ranges(frames),
+                "owned_frames": frames,
+                "owned_observations": ownership_payload,
+                "detected_observation_count": len(group),
+                "source_ownership_digest": digest,
+                "reason_codes": ["operator_temporal_split"],
+                "visual_evidence": {
+                    "status": "ready" if crops else "missing",
+                    "selected_crop_count": len(crops),
+                    "anchor_crops": crops,
+                },
+                "current_decision": None,
+                "decision_status": "pending",
+                "stale_decision": False,
+                "legacy_suggestion": None,
+                "mixed_segment_index": index,
+                "split_parent_case_id": marker.get("case_id") or subject_id,
+            }
+        )
+    return targets
+
+
+def operator_concurrent_targets_for_marker(
+    match_path: Path,
+    marker: dict[str, Any],
+    cards: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if cards is None:
+        cards = {
+            str(row.get("candidate_subject_id")): row
+            for row in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+            if row.get("candidate_subject_id")
+        }
     subject_id = str(marker.get("candidate_subject_id") or "")
     observations = observations_for_case(match_path, marker)
     if not observations:

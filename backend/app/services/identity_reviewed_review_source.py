@@ -309,35 +309,63 @@ def build_concurrent_lane_boundary_refinement(
     limit: int = 10,
 ) -> dict[str, Any]:
     """Return bounded refinement evidence from one exact lane only."""
-    source = resolve_review_source(
-        match_path,
-        match_doc,
-        candidate_subject_id=candidate_subject_id,
-        review_target_id=review_target_id,
-        continuity_group_id=continuity_group_id,
-        source_ownership_digest=parent_source_digest,
+    # A durable concurrent parent already owns the exact observations needed
+    # here. Resolving a material-continuity source through the generic path
+    # would build the whole Review progress just to refine one lane.
+    from app.services.identity_reviewed_mixed_store import (
+        load_mixed_player_cases,
+        observations_for_case,
     )
-    canonical_case_id = source_case_id(source)
-    if parent_case_id != canonical_case_id:
-        from app.services.identity_reviewed_mixed_store import load_mixed_player_cases
 
-        marker = next(
-            (
-                row
-                for row in load_mixed_player_cases(match_path).get("cases") or []
-                if str(row.get("case_id") or row.get("candidate_subject_id") or "")
-                == parent_case_id
-                and str(row.get("source_subject_digest") or "")
-                == parent_source_digest
-            ),
-            None,
-        )
-        if not isinstance(marker, dict):
+    marker = next(
+        (
+            row
+            for row in load_mixed_player_cases(match_path).get("cases") or []
+            if str(row.get("case_id") or row.get("candidate_subject_id") or "")
+            == parent_case_id
+            and str(row.get("source_subject_digest") or "")
+            == parent_source_digest
+        ),
+        None,
+    )
+    source = marker.get("source") if isinstance(marker, dict) else None
+    if isinstance(source, dict):
+        if (
+            str(source.get("candidate_subject_id") or "") != candidate_subject_id
+            or str(source.get("source_ownership_digest") or "") != parent_source_digest
+        ):
             raise ConcurrentLaneResolutionError(CONCURRENT_LANE_SOURCE_STALE)
+        owned_pairs = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in source.get("owned_observations") or []
+            if isinstance(row, dict) and str(row.get("tracklet_id") or "")
+        }
+        observations = observations_for_case(match_path, marker)
+        observed_pairs = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in observations
+        }
+        if not owned_pairs or observed_pairs != owned_pairs:
+            raise ConcurrentLaneResolutionError(CONCURRENT_LANE_SOURCE_STALE)
+    else:
+        # Correction-context/historical callers without a durable Mixed
+        # parent retain the existing exact-source fallback and its stricter
+        # canonical validation.
+        resolved = resolve_review_source(
+            match_path,
+            match_doc,
+            candidate_subject_id=candidate_subject_id,
+            review_target_id=review_target_id,
+            continuity_group_id=continuity_group_id,
+            source_ownership_digest=parent_source_digest,
+        )
+        if parent_case_id != source_case_id(resolved):
+            raise ConcurrentLaneResolutionError(CONCURRENT_LANE_SOURCE_STALE)
+        observations = list(resolved["observations"])
     _topology, lanes = derive_concurrent_lanes(
         parent_case_id,
         parent_source_digest,
-        list(source["observations"]),
+        observations,
     )
     lane = next((row for row in lanes if str(row["lane_id"]) == lane_id), None)
     if (

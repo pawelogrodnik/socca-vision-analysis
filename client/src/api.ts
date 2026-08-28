@@ -64,12 +64,65 @@ import type {
 import { ApiRequestError } from './lib/apiErrors';
 
 const API_BASE = import.meta.env?.DEV ? '' : (import.meta.env?.VITE_API_BASE_URL || '');
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method || 'GET').toUpperCase();
+  const requestKey = `${API_BASE}${path}`;
+  if (method === 'GET') {
+    if (options?.signal?.aborted) throw createRequestAbortError();
+    const pending = inFlightGetRequests.get(requestKey);
+    if (pending) return awaitSharedGet<T>(pending, options?.signal);
+    // The shared request deliberately has no consumer-owned signal. A panel
+    // cleanup detaches only that consumer; it must not start a duplicate cold
+    // backend build when StrictMode immediately remounts another consumer.
+    const sharedOptions: RequestInit = { ...options };
+    delete sharedOptions.signal;
+    const operation = requestUncoalesced<T>(path, sharedOptions).finally(() => {
+      inFlightGetRequests.delete(requestKey);
+    });
+    inFlightGetRequests.set(requestKey, operation);
+    // A signal can already abort during a synchronous fetch mock or another
+    // caller edge case. Keep the shared rejection observed even when that
+    // consumer never gets far enough to attach its local wrapper.
+    void operation.catch(() => undefined);
+    return awaitSharedGet<T>(operation, options?.signal);
+  }
+  return requestUncoalesced<T>(path, options);
+}
+
+function awaitSharedGet<T>(
+  shared: Promise<unknown>,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  if (!signal) return shared as Promise<T>;
+  if (signal.aborted) return Promise.reject(createRequestAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createRequestAbortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    shared.then(
+      (value) => {
+        cleanup();
+        resolve(value as T);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+async function requestUncoalesced<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, options);
   } catch (error) {
+    if (isRequestAbortError(error)) throw error;
     throw new Error(`Network error: ${error instanceof Error ? error.message : String(error)}`);
   }
 
@@ -91,6 +144,21 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
     throw new ApiRequestError(res.status, detail, code);
   }
   return res.json() as Promise<T>;
+}
+
+export function isRequestAbortError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { name?: unknown }).name === 'AbortError';
+}
+
+function createRequestAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('Request was cancelled by this consumer.', 'AbortError');
+  }
+  const error = new Error('Request was cancelled by this consumer.');
+  error.name = 'AbortError';
+  return error;
 }
 
 export function artifactUrl(matchId: string, artifactName: string): string {
@@ -268,6 +336,7 @@ export async function getReviewedIdentityReviewProgress(
   limit = 20,
   teamLabel?: import('./types').ReviewedIdentityTeamFilterLabel,
   queue: import('./types').ReviewedIdentityReviewQueue = 'required',
+  options?: Pick<RequestInit, 'signal'>,
 ): Promise<ReviewedIdentityReviewProgress> {
   const query = new URLSearchParams({
     offset: String(offset),
@@ -277,6 +346,7 @@ export async function getReviewedIdentityReviewProgress(
   query.set('queue', queue);
   return request<ReviewedIdentityReviewProgress>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?${query}`,
+    options,
   );
 }
 
@@ -702,8 +772,14 @@ export async function saveIdentityCropReview(
   });
 }
 
-export async function getIdentityRosterSubjectReview(matchId: string): Promise<IdentityRosterSubjectReviewDocument> {
-  return request<IdentityRosterSubjectReviewDocument>(`/api/matches/${matchId}/identity-roster-subject-review`);
+export async function getIdentityRosterSubjectReview(
+  matchId: string,
+  options?: Pick<RequestInit, 'signal'>,
+): Promise<IdentityRosterSubjectReviewDocument> {
+  return request<IdentityRosterSubjectReviewDocument>(
+    `/api/matches/${matchId}/identity-roster-subject-review`,
+    options,
+  );
 }
 
 export async function saveIdentityRosterSubjectReview(

@@ -6,7 +6,7 @@ import {
   isRecoverableConcurrentLaneConflict,
   isRecoverableReviewQueueConflict,
 } from '../src/lib/apiErrors.ts';
-import { request } from '../src/api.ts';
+import { isRequestAbortError, request } from '../src/api.ts';
 
 test('recognizes exactly the safe Review queue recovery conflicts', () => {
   for (const code of [
@@ -67,6 +67,101 @@ test('request preserves structured FastAPI conflict code', async () => {
         && error.status === 409
         && error.code === 'review_queue_stale',
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('request coalesces only identical pending GETs and clears them afterwards', async () => {
+  const originalFetch = globalThis.fetch;
+  let resolve!: (response: Response) => void;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls > 1) {
+      return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Promise<Response>((done) => { resolve = done; });
+  };
+  try {
+    const first = request<{ ok: boolean }>('/api/same');
+    const second = request<{ ok: boolean }>('/api/same');
+    assert.equal(calls, 1);
+    resolve(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
+    assert.deepEqual(await first, { ok: true });
+    assert.deepEqual(await second, { ok: true });
+    await request('/api/same');
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('request never coalesces mutations', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    await Promise.all([
+      request('/api/mutation', { method: 'POST' }),
+      request('/api/mutation', { method: 'POST' }),
+    ]);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('one aborted GET consumer detaches while another shares and completes the same request', async () => {
+  const originalFetch = globalThis.fetch;
+  let resolveResponse!: (response: Response) => void;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Promise<Response>((resolve) => { resolveResponse = resolve; });
+  };
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  try {
+    const first = request<{ ok: boolean }>('/api/shared-component-read', {
+      signal: firstController.signal,
+    });
+    const second = request<{ ok: boolean }>('/api/shared-component-read', {
+      signal: secondController.signal,
+    });
+    assert.equal(calls, 1);
+
+    firstController.abort();
+    await assert.rejects(first, (error: unknown) => isRequestAbortError(error));
+
+    resolveResponse(new Response(JSON.stringify({ ok: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    assert.deepEqual(await second, { ok: true });
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('aborted safe GET remains an abort instead of an operator-facing network error', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let resolveResponse!: (response: Response) => void;
+  globalThis.fetch = async () => new Promise<Response>((resolve) => { resolveResponse = resolve; });
+  try {
+    const requestPromise = request('/api/component-owned-read', { signal: controller.signal });
+    controller.abort();
+    await assert.rejects(
+      requestPromise,
+      (error: unknown) => isRequestAbortError(error),
+    );
+    resolveResponse(new Response(JSON.stringify({ ok: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
   } finally {
     globalThis.fetch = originalFetch;
   }

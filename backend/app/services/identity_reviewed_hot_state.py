@@ -12,6 +12,7 @@ the match-wide tracker artifact on each click.
 import json
 from copy import deepcopy
 from pathlib import Path
+import time
 from typing import Any
 
 from app.services.identity_canonical_io import (
@@ -62,6 +63,14 @@ REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
 # split repairs. A warm GET must never mistake an older hot document for a
 # complete repair index.
 SCHEMA_VERSION = "2.4.0"
+
+# Diagnostics only. The reproject response reads this immediately after the
+# authoritative warm write; it is never persisted in the hot-state contract.
+_LAST_REBUILD_PHASES: dict[str, float] = {}
+
+
+def last_hot_state_build_phases() -> dict[str, float]:
+    return dict(_LAST_REBUILD_PHASES)
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -125,16 +134,21 @@ def _rebuild_review_hot_state_scoped(
     *,
     prebuilt_progress: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
+    timings: dict[str, float] = {}
     if prebuilt_progress is not None:
         # Authoritative caller already materialized progress in this request;
         # reuse it instead of a second full canonical pass.
         progress = dict(prebuilt_progress)
     else:
+        phase_started = time.perf_counter()
         progress = build_reviewed_identity_progress(
             match_path,
             match_doc,
             include_internal_units=True,
         )
+        timings["progress_build_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     candidate = _load(match_path / "identity_candidate_shadow.json") or {}
     registry = build_materialized_reviewed_slot_registry(
         candidate,
@@ -145,31 +159,52 @@ def _rebuild_review_hot_state_scoped(
             match_path,
             load_reviewed_slot_assignments(match_path),
         )
+    timings["materialized_slot_registry_ms"] = _elapsed_ms(phase_started)
     # Canonical segments intentionally retain the legacy segment registry
     # semantics. Whole subjects and material continuity use the materialized
     # registry because their source can cross automatic subject boundaries.
+    phase_started = time.perf_counter()
     canonical_segment_registry = build_reviewed_slot_registry(
         match_path,
         load_reviewed_slot_assignments(match_path),
     )
+    timings["canonical_segment_registry_ms"] = _elapsed_ms(phase_started)
     internal = list(progress.pop("_internal_review_units", []) or [])
     projection_inputs = dict(progress.pop("_projection_inputs", {}) or {})
+    phase_started = time.perf_counter()
     _attach_exact_whole_subject_digests(match_path, internal)
+    timings["exact_whole_subject_digest_attachment_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     _attach_legacy_context_fields(match_path, internal)
-    historical_split_repairs = _attach_correction_temporal_evidence(
+    timings["legacy_context_attachment_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    historical_split_repairs, historical_repair_ms = _attach_correction_temporal_evidence(
         match_path,
         match_doc,
         internal,
     )
+    correction_total_ms = _elapsed_ms(phase_started)
+    timings["historical_repair_materialization_ms"] = historical_repair_ms
+    timings["correction_temporal_evidence_attachment_ms"] = round(
+        max(0.0, correction_total_ms - historical_repair_ms),
+        1,
+    )
+    phase_started = time.perf_counter()
     _attach_temporal_split_context(match_path, internal)
+    timings["temporal_split_context_attachment_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    unit_lookup = _unit_lookup(internal)
+    source_index = _source_index(internal)
+    timings["lookup_source_index_build_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     state = {
         "schema_version": SCHEMA_VERSION,
         "state_version": _next_state_version(match_path),
         "match_id": str(match_doc.get("id") or match_path.name),
         "progress": progress,
         "internal_review_units": internal,
-        "unit_lookup": _unit_lookup(internal),
-        "source_index": _source_index(internal),
+        "unit_lookup": unit_lookup,
+        "source_index": source_index,
         "historical_split_repairs": historical_split_repairs,
         "projection_inputs": projection_inputs,
         "roster_options": match_roster(match_doc),
@@ -180,8 +215,17 @@ def _rebuild_review_hot_state_scoped(
         ],
         "freshness": _freshness(match_path, match_doc),
     }
-    write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
+    timings["freshness_calculation_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    encoded = _encode_for_write(state)
+    timings["durable_encoding_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    write_identity_json_atomic(match_path / FILENAME, encoded, compact=True)
+    timings["hot_state_json_write_ms"] = _elapsed_ms(phase_started)
     state["progress"] = _json_safe(progress)
+    timings["total_ms"] = _elapsed_ms(started)
+    _LAST_REBUILD_PHASES.clear()
+    _LAST_REBUILD_PHASES.update(timings)
     return state
 
 
@@ -499,6 +543,7 @@ def _freshness(match_path: Path, match_doc: dict[str, Any], *, semantic_digest: 
             "tracklets.json", "identity_candidate_shadow.json", "reviewed_identity_segment_review.json",
             "reviewed_identity_segment_decisions.json", "reviewed_identity_material_continuity_decisions.json",
             "reviewed_identity_mixed_players.json", "reviewed_identity_snapshot.json",
+            "reviewed_identity_team_attribution_evidence.json",
         )},
     }
 
@@ -797,7 +842,7 @@ def _attach_correction_temporal_evidence(
     match_path: Path,
     match_doc: dict[str, Any],
     units: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], float]:
     """Cache legacy-equivalent correction crops during cold materialization.
 
     Hot context reads must not reconstruct raw match-wide sources.  The exact
@@ -879,12 +924,14 @@ def _attach_correction_temporal_evidence(
                 "temporal_evidence": {"anchor_crops": crops},
                 "concurrent_resolution": concurrent_fields["concurrent_resolution"],
             })
+    historical_started = time.perf_counter()
     repairs = _materialize_historical_split_repairs(
         match_path,
         units,
         observations_by_pair,
         render_cases,
     )
+    historical_repair_ms = _elapsed_ms(historical_started)
     if render_cases:
         try:
             render_mixed_review_evidence(match_path, match_doc, {"cases": render_cases})
@@ -892,7 +939,7 @@ def _attach_correction_temporal_evidence(
             # Matches retained without a local source video can still serve
             # their cached artifact references and normal image failure UI.
             pass
-    return repairs
+    return repairs, historical_repair_ms
 
 
 def _materialize_historical_split_repairs(
@@ -1089,3 +1136,7 @@ def _capabilities(unit: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _scope_copy(scope_kind: str) -> str:
     from app.services.identity_reviewed_action_scope import scope_copy
     return scope_copy(scope_kind)
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)

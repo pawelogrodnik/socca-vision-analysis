@@ -37,6 +37,9 @@ from app.services.identity_reviewed_mixed_store import (
     current_mixed_subject_digest,
     load_mixed_player_cases,
     materialize_mixed_review_artifact,
+    operator_concurrent_targets_for_marker,
+    operator_mixed_targets,
+    operator_targets_for_mixed_marker,
     _materialize_mixed_review_case,
     save_mixed_case_document,
     unresolved_mixed_observation_assignments,
@@ -200,6 +203,89 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertEqual(build.call_count, 1)
             self.assertEqual(project.call_count, 1)
 
+    def test_concurrent_save_derives_only_current_parent_before_one_global_review_build(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+
+            # The save path must not call its old global helper to derive the
+            # current parent. The one canonical segment-review build still
+            # derives the full durable topology through its own module.
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.operator_mixed_targets",
+                side_effect=AssertionError("current concurrent parent must not enumerate sibling cases"),
+            ):
+                result = save_mixed_player_resolution(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": [
+                            _direct_lane(lanes[0], "player-a"),
+                            _direct_lane(lanes[1], "player-b"),
+                        ],
+                    },
+                )
+
+            self.assertEqual(result["saved_case"]["resolution_model"], "concurrent_lanes")
+            self.assertIn("segment_review_operator_targets_ms", result["performance"])
+
+    def test_focused_concurrent_targets_match_global_derivation_for_direct_and_split_lanes(self) -> None:
+        def assert_equivalent(lane_resolutions: list[dict]) -> None:
+            with _workspace() as root:
+                match = _fixture(root)
+                _make_concurrent(root)
+                marker = _classify(root, match)
+                result = save_mixed_player_resolution(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_subject_digest": marker["source_subject_digest"],
+                        "resolution": "concurrent_lanes",
+                        "lane_resolutions": lane_resolutions,
+                    },
+                )
+                case = result["saved_case"]
+                case_id = str(case["case_id"])
+                global_targets = [
+                    target
+                    for target in operator_mixed_targets(root)
+                    if str(target.get("split_parent_case_id") or "") == case_id
+                ]
+
+                self.assertEqual(
+                    operator_concurrent_targets_for_marker(root, case),
+                    global_targets,
+                )
+
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            direct = [_direct_lane(lanes[0], "player-a"), _direct_lane(lanes[1], "player-b")]
+            split = [
+                {
+                    "lane_id": lanes[0]["lane_id"],
+                    "lane_source_digest": lanes[0]["source_ownership_digest"],
+                    "resolution": "temporal_split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_roster_player", "player_id": "player-a"},
+                        {"action": "assign_team", "team_label": "A"},
+                    ],
+                },
+                _direct_lane(lanes[1], "player-b"),
+            ]
+
+        assert_equivalent(direct)
+        assert_equivalent(split)
+
     def test_concurrent_lane_save_rolls_back_every_partial_write(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
@@ -313,7 +399,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 patch("app.main.match_dir", return_value=root),
                 patch("app.main.read_match_meta", return_value=match),
                 patch(
-                    "app.main.get_review_workflow_state",
+                    "app.main.build_compact_review_workflow_state",
                     return_value={"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]},
                 ),
                 patch("app.main.invalidate_review_hot_state") as invalidate,
@@ -321,6 +407,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             ):
                 post_match_reviewed_identity_mixed_resolution(
                     "m1",
+                    Response(),
                     {
                         "candidate_subject_id": "subject-mixed",
                         "case_id": marker.get("case_id") or marker["candidate_subject_id"],
@@ -674,6 +761,47 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 {crop["tracklet_id"] for crop in refined["anchor_crops"]},
                 {lane["tracklet_id"]},
             )
+
+    def test_durable_concurrent_refinement_never_builds_full_review_progress(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+            marker = _classify(root, match)
+            lanes = build_mixed_review_queue(root, match)["cases"][0]["concurrent_resolution"]["lanes"]
+            saved = save_mixed_player_resolution(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "source_subject_digest": marker["source_subject_digest"],
+                    "resolution": "concurrent_lanes",
+                    "lane_resolutions": [
+                        _direct_lane(lanes[0], "player-a"),
+                        _direct_lane(lanes[1], "player-b"),
+                    ],
+                },
+            )["saved_case"]
+            overview = lanes[0]["evidence"]["anchor_crops"]
+
+            with patch(
+                "app.services.identity_reviewed_progress.build_reviewed_identity_progress",
+                side_effect=AssertionError("durable focused refinement must not build full progress"),
+            ), patch(
+                "app.services.identity_reviewed_review_source.render_mixed_review_evidence"
+            ):
+                refined = build_concurrent_lane_boundary_refinement(
+                    root,
+                    match,
+                    candidate_subject_id="subject-mixed",
+                    parent_case_id=saved["case_id"],
+                    parent_source_digest=saved["source_subject_digest"],
+                    lane_id=lanes[0]["lane_id"],
+                    lane_source_digest=lanes[0]["source_ownership_digest"],
+                    after_frame=overview[0]["frame"],
+                    before_frame=overview[1]["frame"],
+                )
+
+            self.assertEqual(refined["lane_id"], lanes[0]["lane_id"])
 
     def test_concurrent_lanes_use_distinct_artifacts_for_shared_frames(self) -> None:
         with _workspace() as root:
@@ -1885,6 +2013,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                     "split_validation_ms",
                     "target_derivation_ms",
                     "segment_review_build_ms",
+                    "segment_review_operator_targets_ms",
                     "segment_decision_batch_ms",
                     "segment_assignment_validation_ms",
                     "segment_decision_persistence_ms",
@@ -1898,6 +2027,120 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                     "total_ms",
                 },
             )
+
+    def test_focused_serial_targets_match_global_parent_targets(self) -> None:
+        def assert_equivalent(split_after_frames: list[int], assignments: list[dict]) -> None:
+            with _workspace() as root:
+                match = _fixture(root)
+                result = save_inline_temporal_split(
+                    root,
+                    match,
+                    {
+                        "candidate_subject_id": "subject-mixed",
+                        "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                        "resolution": "split",
+                        "split_after_frames": split_after_frames,
+                        "segment_assignments": assignments,
+                    },
+                )
+                case = result["saved_case"]
+                case_id = str(case["case_id"])
+                global_targets = [
+                    target
+                    for target in operator_mixed_targets(root)
+                    if str(target.get("split_parent_case_id") or "") == case_id
+                ]
+                focused = operator_targets_for_mixed_marker(root, case)
+
+                self.assertEqual(focused, global_targets)
+                self.assertEqual(
+                    [target["review_target_id"] for target in focused],
+                    list(case["segment_target_ids"]),
+                )
+                self.assertEqual(
+                    {
+                        (str(row["tracklet_id"]), int(row["frame"]))
+                        for target in focused
+                        for row in target["owned_observations"]
+                    },
+                    {
+                        (str(row["tracklet_id"]), int(row["frame"]))
+                        for row in case["source"]["owned_observations"]
+                    },
+                )
+
+        assert_equivalent(
+            [4],
+            [
+                {"action": "assign_roster_player", "player_id": "player-a"},
+                {"action": "assign_team", "team_label": "B"},
+            ],
+        )
+        assert_equivalent(
+            [2, 5],
+            [
+                {"action": "assign_roster_player", "player_id": "player-a"},
+                {"action": "assign_team", "team_label": "B"},
+                {"action": "assign_team", "team_label": "A"},
+            ],
+        )
+
+    def test_inline_serial_save_focuses_parent_before_one_global_review_build(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_roster_player", "player_id": "player-a"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            from app.services.identity_reviewed_segments import operator_mixed_targets as build_targets
+
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.operator_mixed_targets",
+                side_effect=AssertionError("serial target validation must not enumerate sibling Mixed cases"),
+            ), patch(
+                "app.services.identity_reviewed_segments.operator_mixed_targets",
+                wraps=build_targets,
+            ) as global_build_targets:
+                result = save_inline_temporal_split(root, match, payload)
+
+            self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
+            self.assertEqual(global_build_targets.call_count, 1)
+            self.assertIn("segment_review_operator_targets_ms", result["performance"])
+
+    def test_legacy_serial_save_also_focuses_its_exact_parent(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            marker = _classify(root, match)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "case_id": marker.get("case_id"),
+                "source_subject_digest": marker["source_subject_digest"],
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_roster_player", "player_id": "player-a"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            from app.services.identity_reviewed_segments import operator_mixed_targets as build_targets
+
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.operator_mixed_targets",
+                side_effect=AssertionError("legacy serial validation must not enumerate sibling Mixed cases"),
+            ), patch(
+                "app.services.identity_reviewed_segments.operator_mixed_targets",
+                wraps=build_targets,
+            ) as global_build_targets:
+                result = save_mixed_player_resolution(root, match, payload)
+
+            self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
+            self.assertEqual(global_build_targets.call_count, 1)
 
     def test_inline_split_rejects_stale_source_and_conflicting_replay(self) -> None:
         with _workspace() as root:

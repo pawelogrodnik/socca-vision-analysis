@@ -9,6 +9,7 @@ from unittest.mock import patch
 from app.services.review_workflow_state import (
     WorkflowActionError,
     assert_workflow_action_allowed,
+    build_compact_review_workflow_state,
     derive_review_workflow_state,
     get_review_workflow_state,
     _current_cached_progress,
@@ -43,7 +44,154 @@ def evidence(**overrides: object) -> dict:
     return value
 
 
+def _public_workflow_semantics(state: dict) -> dict:
+    return {
+        key: state.get(key)
+        for key in (
+            "available", "phase", "status", "current_step_id", "review_complete",
+            "can_enter_report", "can_publish", "required_action", "issues",
+            "allowed_actions", "blockers", "render", "freshness",
+        )
+    } | {
+        "steps": [
+            {
+                key: step.get(key)
+                for key in (
+                    "id", "status", "completed", "total", "remaining",
+                    "locked_reason_code",
+                )
+            }
+            for step in state.get("steps") or []
+        ],
+    }
+
+
 class ReviewWorkflowStateTests(unittest.TestCase):
+    def test_compact_workflow_matches_authoritative_lifecycle_semantics(self) -> None:
+        complete = {"prepared": True, "complete": True, "completed": 8, "total": 8, "remaining": 0}
+        base_progress = {
+            "schema_version": "2.2.0",
+            "policy": {"version": "coverage-driven-review:v9-scope-eligible-required"},
+            "source_snapshot_digest": "snapshot",
+            "summary": {"important_decisions_remaining": 0},
+            "mixed_players": {"summary": {"unresolved": 0, "total": 0, "resolved": 0}},
+        }
+        cases = [
+            ("required", {**base_progress, "summary": {"important_decisions_remaining": 3}}, {"status": "missing"}, False, False),
+            ("required_and_mixed", {**base_progress, "summary": {"important_decisions_remaining": 3}, "mixed_players": {"summary": {"unresolved": 2, "total": 2, "resolved": 0}}}, {"status": "missing"}, False, True),
+            ("mixed_only", {**base_progress, "mixed_players": {"summary": {"unresolved": 2, "total": 2, "resolved": 0}}}, {"status": "missing"}, False, True),
+            ("ready", base_progress, {"status": "missing"}, False, False),
+            ("render_queued", base_progress, {"status": "queued"}, False, False),
+            ("render_running", base_progress, {"status": "running"}, False, False),
+            ("render_failed", base_progress, {"status": "failed"}, False, False),
+            ("video_qa", base_progress, {"status": "completed", "source_snapshot_digest": "snapshot"}, False, False),
+            ("complete", base_progress, {"status": "completed", "source_snapshot_digest": "snapshot"}, False, False),
+            ("recompute_failure", base_progress, {"status": "missing"}, True, False),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            match = {"id": "m1", "status": "analyzed"}
+            for name, progress, job, recompute_failed, mixed_allowed in cases:
+                with self.subTest(name=name), patch(
+                    "app.services.review_workflow_state._analysis_completed", return_value=True
+                ), patch(
+                    "app.services.review_workflow_state.load_initial_audit_completion_evidence", return_value=complete
+                ), patch(
+                    "app.services.review_workflow_state.get_reviewed_identity_status",
+                    side_effect=AssertionError(
+                        "compact workflow must not load the heavyweight snapshot"
+                    ),
+                ), patch(
+                    "app.services.review_workflow_state._current_cached_progress",
+                    return_value=(progress, None),
+                ), patch(
+                    "app.services.review_workflow_state._current_cached_progress_for_snapshot_digest",
+                    return_value=(progress, None),
+                ), patch(
+                    "app.services.review_workflow_state.canonical_generation_maybe_current", return_value=True
+                ), patch(
+                    "app.services.review_workflow_state.review_scope_dependency_matches", return_value=True
+                ), patch(
+                    "app.services.review_workflow_state.reviewed_output_status_read_only", return_value=job
+                ), patch(
+                    "app.services.review_workflow_state.load_video_qa_approval", return_value={}
+                ), patch(
+                    "app.services.review_workflow_state.approval_is_current", return_value=name == "complete"
+                ), patch(
+                    "app.services.review_workflow_state.load_json_object",
+                    side_effect=lambda path: {
+                        "reviewed_identity_report.json": {"snapshot_digest": "snapshot", "source_file_fingerprints": {}},
+                        "reviewed_player_stats.json": {"source_snapshot_digest": "snapshot"},
+                        "reviewed_output_manifest.json": {"stale": False},
+                        "review_workflow_recompute_failure.json": (
+                            {"code": "failed"} if recompute_failed else None
+                        ),
+                    }.get(Path(path).name),
+                ):
+                    authoritative = get_review_workflow_state(
+                        root,
+                        match,
+                        snapshot={"status": "current", "semantic_digest": "snapshot"},
+                        progress=progress,
+                        completion_evidence=complete,
+                    )
+                    compact = build_compact_review_workflow_state(root, match)
+
+                self.assertEqual(
+                    _public_workflow_semantics(compact),
+                    _public_workflow_semantics(authoritative),
+                )
+                for state in (authoritative, compact):
+                    if mixed_allowed:
+                        assert_workflow_action_allowed(state, "review_mixed_players")
+                    else:
+                        with self.assertRaises(WorkflowActionError):
+                            assert_workflow_action_allowed(state, "review_mixed_players")
+
+    def test_compact_workflow_pre_report_states_match_authoritative_and_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            match = {"id": "m1", "status": "analyzed"}
+            audit_incomplete = {"prepared": True, "complete": False, "completed": 1, "total": 3, "remaining": 2}
+            with patch("app.services.review_workflow_state._analysis_completed", return_value=True), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence", return_value=audit_incomplete
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact workflow must not load the heavyweight snapshot"),
+            ):
+                authoritative = get_review_workflow_state(root, match, snapshot={"status": "missing"}, completion_evidence=audit_incomplete)
+                compact = build_compact_review_workflow_state(root, match)
+            self.assertEqual(_public_workflow_semantics(compact), _public_workflow_semantics(authoritative))
+            self.assertEqual(compact["phase"], "initial_audit")
+            self.assertIn("identify_players", compact["allowed_actions"])
+            with self.assertRaises(WorkflowActionError):
+                assert_workflow_action_allowed(compact, "review_mixed_players")
+
+            complete = {"prepared": True, "complete": True, "completed": 3, "total": 3, "remaining": 0}
+            with patch("app.services.review_workflow_state._analysis_completed", return_value=True), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence", return_value=complete
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact workflow must not load the heavyweight snapshot"),
+            ):
+                authoritative = get_review_workflow_state(root, match, snapshot={"status": "missing"}, completion_evidence=complete)
+                compact = build_compact_review_workflow_state(root, match)
+            self.assertEqual(_public_workflow_semantics(compact), _public_workflow_semantics(authoritative))
+            self.assertEqual(compact["phase"], "exceptions")
+            self.assertNotIn("finalize_identity", compact["allowed_actions"])
+            with self.assertRaises(WorkflowActionError):
+                assert_workflow_action_allowed(compact, "review_mixed_players")
+
+            with patch("app.services.review_workflow_state._analysis_completed", return_value=False), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence", return_value=audit_incomplete
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact workflow must not load the heavyweight snapshot"),
+            ):
+                authoritative = get_review_workflow_state(root, match, snapshot={"status": "missing"}, completion_evidence=audit_incomplete)
+                compact = build_compact_review_workflow_state(root, match)
+            self.assertEqual(_public_workflow_semantics(compact), _public_workflow_semantics(authoritative))
+            self.assertFalse(compact["available"])
     def test_transition_table(self) -> None:
         cases = [
             ("analysis", evidence(analysis_completed=False), "unavailable", "initial_audit", []),
@@ -209,13 +357,16 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         state = derive_review_workflow_state(evidence(issues=issues))
 
         self.assertEqual(state["phase"], "exceptions")
-        self.assertEqual(state["status"], "action_required")
+        self.assertEqual(state["status"], "error")
         self.assertEqual(state["issues"]["blocking"], 0)
         self.assertEqual(state["issues"]["actionable_blocking"], 0)
         self.assertTrue(state["issues"]["coverage_readiness_blocked"])
         self.assertTrue(state["issues"]["overall_identity_blocked"])
         self.assertEqual(state["allowed_actions"], [])
-        self.assertIsNone(state["required_action"])
+        self.assertEqual(
+            state["required_action"],
+            {"type": "coverage_evidence_unavailable", "step_id": "exceptions"},
+        )
         self.assertEqual(
             state["blockers"][0]["code"],
             "identity_coverage_unresolved_without_reviewable_evidence",
