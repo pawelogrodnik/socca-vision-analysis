@@ -238,10 +238,6 @@ def _materialize_review_units(
         )
         for subject_id, tracklet_ids in sorted(subjects.items())
     ]
-    _attach_team_attribution_evidence(
-        whole_subject_units,
-        load_team_attribution_evidence(match_path),
-    )
     resolved_material_pairs = resolved_material_continuity_observation_pairs(
         match_path
     )
@@ -274,6 +270,14 @@ def _materialize_review_units(
         unit for unit in units
         if not any(_unit_matches_staged_source(unit, source) for source in staged_sources)
     ]
+    # Team-attribution evidence is bound to a Review unit's exact ownership.
+    # Do this only after trimming parents, adding canonical segments and the
+    # remaining presentation shaping: a parent digest must never leak into a
+    # child with a smaller detected-pair scope.
+    _attach_team_attribution_evidence(
+        units,
+        load_team_attribution_evidence(match_path),
+    )
     return {
         "units": units,
         "whole_subject_units": whole_subject_units,
@@ -772,7 +776,7 @@ def _attach_team_attribution_evidence(
     units: list[dict[str, Any]],
     document: dict[str, Any],
 ) -> None:
-    """Add team-attribution crops without replacing stricter naming evidence."""
+    """Attach evidence only for each unit's current exact detected-pair scope."""
     for unit in units:
         reasons = [str(value).lower() for value in unit.get("reason_codes") or []]
         requires_team_attribution = (
@@ -788,18 +792,49 @@ def _attach_team_attribution_evidence(
                 )
             )
         )
-        if (
-            not requires_team_attribution
-            or unit.get("has_operator_visual_evidence")
-        ):
+        if not requires_team_attribution:
+            # A prior transformation may have changed this unit from Team-U
+            # or cross-team to a single known team. Never carry stale
+            # attribution metadata into that final presentation unit.
+            unit.pop("team_attribution_evidence_source_digest", None)
+            unit.pop("team_attribution_evidence_status", None)
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                - {
+                    "team_attribution_evidence_unavailable",
+                    "team_attribution_evidence_recovered",
+                }
+            )
             continue
         subject_id = str(unit.get("candidate_subject_id") or "")
         detected_pairs = unit.get("detected_pairs") or []
-        unit["team_attribution_evidence_source_digest"] = (
+        current_digest = (
             team_attribution_source_ownership_digest(subject_id, detected_pairs)
             if subject_id and detected_pairs
             else None
         )
+        previous_digest = unit.get("team_attribution_evidence_source_digest")
+        if previous_digest != current_digest:
+            # This is defensive for callers that deliberately attach at an
+            # earlier stage. A trim/coalesce must never retain an artifact or
+            # status for the parent ownership scope.
+            unit.pop("team_attribution_evidence_status", None)
+            visual_evidence = unit.get("visual_evidence") or {}
+            if visual_evidence.get("kind") == "team_attribution":
+                unit["visual_evidence"] = {}
+                unit["has_operator_visual_evidence"] = False
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                - {
+                    "team_attribution_evidence_unavailable",
+                    "team_attribution_evidence_recovered",
+                }
+            )
+        unit["team_attribution_evidence_source_digest"] = current_digest
+        if unit.get("has_operator_visual_evidence"):
+            # Stronger identity evidence is sufficient, but the digest above
+            # still records the current exact Team-attribution source scope.
+            continue
         evidence = visual_evidence_for_unit(
             document,
             candidate_subject_id=subject_id,
@@ -816,6 +851,7 @@ def _attach_team_attribution_evidence(
                 | {"team_attribution_evidence_unavailable"}
             )
             continue
+        unit.pop("team_attribution_evidence_status", None)
         unit["visual_evidence"] = evidence
         unit["has_operator_visual_evidence"] = True
         unit["reason_codes"] = sorted(
