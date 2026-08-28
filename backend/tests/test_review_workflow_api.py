@@ -14,14 +14,14 @@ FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for workflow API tests")
 class ReviewWorkflowApiTests(unittest.TestCase):
-    def test_workflow_get_uses_compact_durable_preflight_not_snapshot_workflow(self) -> None:
+    def test_workflow_get_uses_general_compact_state_not_snapshot_workflow(self) -> None:
         from app.main import get_match_review_workflow
 
         compact = {"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]}
         with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
             "app.main.read_match_meta", return_value={"id": "m1"}
         ), patch(
-            "app.main.build_cheap_finalize_preflight_state", return_value=compact
+            "app.main.build_compact_review_workflow_state", return_value=compact
         ) as preflight, patch(
             "app.main.get_review_workflow_state",
             side_effect=AssertionError("normal workflow GET must not parse the snapshot"),
@@ -31,6 +31,72 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         self.assertIs(response, compact)
         preflight.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"})
 
+    def test_workflow_get_without_report_keeps_initial_audit_and_analysis_lifecycle(self) -> None:
+        from app.main import get_match_review_workflow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            match = {"id": "m1", "status": "analyzed"}
+            (root / "match.json").write_text(json.dumps(match), encoding="utf-8")
+            (root / "analysis_report.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            incomplete = {"prepared": True, "complete": False, "completed": 1, "total": 3, "remaining": 2}
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value=match
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=incomplete,
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact initial-audit GET must not load the snapshot"),
+            ):
+                initial = get_match_review_workflow("m1")
+
+            self.assertEqual(initial["phase"], "initial_audit")
+            self.assertEqual(initial["status"], "action_required")
+            self.assertIn("identify_players", initial["allowed_actions"])
+            self.assertNotEqual(initial["phase"], "finalize")
+            self.assertNotEqual(initial["status"], "ready")
+
+            audit_complete_without_report = {
+                "prepared": True,
+                "complete": True,
+                "completed": 3,
+                "total": 3,
+                "remaining": 0,
+            }
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value=match
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=audit_complete_without_report,
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact missing-report GET must not load the snapshot"),
+            ):
+                missing_report = get_match_review_workflow("m1")
+
+            self.assertEqual(missing_report["phase"], "exceptions")
+            self.assertEqual(missing_report["status"], "error")
+            self.assertIn("retry_review_recompute", missing_report["allowed_actions"])
+            self.assertNotIn("finalize_identity", missing_report["allowed_actions"])
+
+            incomplete_analysis = {"prepared": False, "complete": False, "completed": 0, "total": 0, "remaining": 0}
+            (root / "analysis_report.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value={"id": "m1", "status": "pending"}
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=incomplete_analysis,
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact analysis GET must not load the snapshot"),
+            ):
+                analysis = get_match_review_workflow("m1")
+
+            self.assertFalse(analysis["available"])
+            self.assertEqual(analysis["phase"], "initial_audit")
+            self.assertNotIn("finalize_identity", analysis["allowed_actions"])
+
     def test_mixed_save_uses_compact_authorization_and_reports_outer_timing(self) -> None:
         from fastapi import Response
         from app.main import post_match_reviewed_identity_mixed_resolution
@@ -39,7 +105,7 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
             "app.main.read_match_meta", return_value={"id": "m1"}
         ), patch(
-            "app.main.build_cheap_finalize_preflight_state",
+            "app.main.build_compact_review_workflow_state",
             return_value={"allowed_actions": ["review_mixed_players"]},
         ) as preflight, patch(
             "app.main.get_review_workflow_state",

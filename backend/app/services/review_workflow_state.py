@@ -308,6 +308,122 @@ def get_review_workflow_state(
     return state
 
 
+def build_compact_review_workflow_state(
+    match_path: Path,
+    match_doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive public workflow state without parsing the large snapshot.
+
+    This is deliberately distinct from the finalize-only preflight below:
+    browser reads must describe analysis and initial-audit stages before a
+    Reviewed Identity report has ever been materialized.
+    """
+    analysis_completed = _analysis_completed(match_path, match_doc)
+    initial = load_initial_audit_completion_evidence(match_path)
+    recompute_failed = bool(
+        load_json_object(match_path / RECOMPUTE_FAILURE_FILENAME)
+    )
+    if not analysis_completed or not bool(initial.get("complete")):
+        return derive_review_workflow_state({
+            "match_id": str(match_doc.get("id") or match_path.name),
+            "analysis_completed": analysis_completed,
+            "initial_audit": initial,
+            "issues": _issue_evidence({}, None),
+            "freshness": {
+                "reviewed_identity_current": False,
+                "reviewed_stats_current": False,
+                "reviewed_output_current": False,
+                "qa_approval_current": False,
+                "review_progress_current": False,
+                "review_progress_reason": "review_progress_missing",
+            },
+            "render": {"status": "missing"},
+            "recompute_failed": recompute_failed,
+        })
+
+    report = load_json_object(match_path / "reviewed_identity_report.json")
+    snapshot_digest = str((report or {}).get("snapshot_digest") or "")
+    return _compact_workflow_state_for_generation(
+        match_path,
+        match_doc,
+        initial=initial,
+        snapshot_digest=snapshot_digest,
+        canonical_generation_current=bool(
+            snapshot_digest
+            and canonical_generation_maybe_current(
+                (report or {}).get(FINGERPRINTS_FIELD),
+                match_path,
+            )
+        ),
+        recompute_failed=recompute_failed,
+    )
+
+
+def _compact_workflow_state_for_generation(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    initial: dict[str, Any],
+    snapshot_digest: str,
+    canonical_generation_current: bool,
+    recompute_failed: bool,
+) -> dict[str, Any]:
+    """Use report/progress generation evidence to derive public workflow."""
+    progress, progress_reason = _current_cached_progress_for_snapshot_digest(
+        match_path,
+        snapshot_digest,
+        match_doc,
+    )
+    stats = load_json_object(match_path / "reviewed_player_stats.json")
+    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
+    output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
+    job = reviewed_output_status_read_only(
+        match_path,
+        snapshot_digest=snapshot_digest,
+    )
+    approval = load_video_qa_approval(match_path)
+    fingerprints = current_approval_fingerprint(snapshot_digest, stats, job, output_manifest)
+    stats_current = bool(
+        stats
+        and stats.get("source_snapshot_digest") == snapshot_digest
+        and review_scope_dependency_matches(match_doc, stats)
+        and (
+            not stats_readiness
+            or stats_readiness.get("status") == "completed"
+        )
+    )
+    output_current = bool(
+        job.get("status") == "completed"
+        and job.get("source_snapshot_digest") == snapshot_digest
+        and review_scope_dependency_matches(match_doc, job)
+        and output_manifest
+        and output_manifest.get("stale") is not True
+    )
+    state = derive_review_workflow_state({
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "analysis_completed": _analysis_completed(match_path, match_doc),
+        "initial_audit": initial,
+        "issues": _issue_evidence({}, progress),
+        "freshness": {
+            "reviewed_identity_current": canonical_generation_current,
+            "reviewed_stats_current": stats_current and canonical_generation_current,
+            "reviewed_output_current": output_current and canonical_generation_current,
+            "qa_approval_current": (
+                approval_is_current(approval, fingerprints)
+                and output_current
+                and stats_current
+                and canonical_generation_current
+            ),
+            "review_progress_current": progress is not None,
+            "review_progress_reason": progress_reason,
+        },
+        "render": _public_render(job),
+        "recompute_failed": recompute_failed,
+    })
+    state["compact_workflow"] = True
+    return state
+
+
 def build_cheap_finalize_preflight_state(
     match_path: Path,
     match_doc: dict[str, Any],
@@ -350,64 +466,16 @@ def build_cheap_finalize_preflight_state(
         )
     )
 
-    progress, progress_reason = _current_cached_progress_for_snapshot_digest(
+    state = _compact_workflow_state_for_generation(
         match_path,
-        snapshot_digest,
         match_doc,
-    )
-
-    stats = load_json_object(match_path / "reviewed_player_stats.json")
-    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
-    output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
-    job = reviewed_output_status_read_only(
-        match_path,
+        initial=load_initial_audit_completion_evidence(match_path),
         snapshot_digest=snapshot_digest,
-    )
-    approval = load_video_qa_approval(match_path)
-    fingerprints = current_approval_fingerprint(snapshot_digest, stats, job, output_manifest)
-    stats_current = bool(
-        stats
-        and stats.get("source_snapshot_digest") == snapshot_digest
-        and review_scope_dependency_matches(match_doc, stats)
-        and (
-            not stats_readiness
-            or stats_readiness.get("status") == "completed"
-        )
-    )
-    output_current = bool(
-        job.get("status") == "completed"
-        and job.get("source_snapshot_digest") == snapshot_digest
-        and review_scope_dependency_matches(match_doc, job)
-        and output_manifest
-        and output_manifest.get("stale") is not True
-    )
-    state = derive_review_workflow_state({
-        "match_id": str(match_doc.get("id") or match_path.name),
-        "analysis_completed": _analysis_completed(match_path, match_doc),
-        "initial_audit": load_initial_audit_completion_evidence(match_path),
-        "issues": _issue_evidence({}, progress),
-        "freshness": {
-            # Canonical freshness versus the current sources is approximated
-            # by the compact source-file generation fingerprints; only a
-            # matching generation keeps deferring the expensive semantic
-            # check to the authoritative pass.
-            "reviewed_identity_current": canonical_generation_current,
-            "reviewed_stats_current": stats_current and canonical_generation_current,
-            "reviewed_output_current": output_current and canonical_generation_current,
-            "qa_approval_current": (
-                approval_is_current(approval, fingerprints)
-                and output_current
-                and stats_current
-                and canonical_generation_current
-            ),
-            "review_progress_current": progress is not None,
-            "review_progress_reason": progress_reason,
-        },
-        "render": _public_render(job),
-        "recompute_failed": bool(
+        canonical_generation_current=canonical_generation_current,
+        recompute_failed=bool(
             load_json_object(match_path / RECOMPUTE_FAILURE_FILENAME)
         ),
-    })
+    )
     state["cheap_preflight"] = True
     return state
 

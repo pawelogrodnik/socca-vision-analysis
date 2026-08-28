@@ -398,7 +398,7 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 patch("app.main.match_dir", return_value=root),
                 patch("app.main.read_match_meta", return_value=match),
                 patch(
-                    "app.main.build_cheap_finalize_preflight_state",
+                    "app.main.build_compact_review_workflow_state",
                     return_value={"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]},
                 ),
                 patch("app.main.invalidate_review_hot_state") as invalidate,

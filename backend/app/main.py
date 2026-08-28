@@ -170,6 +170,7 @@ from app.services.review_workflow_orchestrator import (
 from app.services.review_workflow_state import (
     WorkflowActionError,
     assert_workflow_action_allowed,
+    build_compact_review_workflow_state,
     build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
@@ -2012,7 +2013,7 @@ def get_match_review_workflow(match_id: str) -> dict[str, Any]:
     # Normal browser reads must not parse the observation-level snapshot just
     # to derive a workflow card. This compact path is conservative on stale
     # generations and keeps authoritative recomputation at mutation/finalize.
-    return build_cheap_finalize_preflight_state(path, read_match_meta(path))
+    return build_compact_review_workflow_state(path, read_match_meta(path))
 
 
 @app.post("/api/matches/{match_id}/review-workflow/finalize")
@@ -2785,7 +2786,7 @@ def post_match_reviewed_identity_mixed_resolution(
     try:
         gate_started = time.perf_counter()
         match_document = read_match_meta(path)
-        state = build_cheap_finalize_preflight_state(path, match_document)
+        state = build_compact_review_workflow_state(path, match_document)
         assert_workflow_action_allowed(state, "review_mixed_players")
         workflow_gate_ms = round((time.perf_counter() - gate_started) * 1000, 1)
         result = save_mixed_player_resolution(path, match_document, payload)
