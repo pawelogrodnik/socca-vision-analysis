@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
-from app.services.identity_canonical_io import load_json_cached_or
+from app.services.identity_canonical_io import load_json_cached_or, review_build_context
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.identity_roster_anchor_crop_renderer import render_identity_roster_anchor_crops
@@ -40,6 +41,13 @@ UNRESOLVED_STATUSES = frozenset({"unresolved", "unresolved_complex_mix"})
 MANDATORY_MIXED_CASE_STATUSES = frozenset(
     {"current_blocking", "stale_or_unclassifiable_blocking"}
 )
+
+# An image request may arrive while a freshly reprojected local workspace still
+# holds an otherwise valid card whose crop has not been materialized yet. Keep
+# that recovery bounded to one render per match, rather than letting every
+# image element start a duplicate video pass.
+_MIXED_EVIDENCE_LOCKS_GUARD = Lock()
+_MIXED_EVIDENCE_LOCKS: dict[str, Lock] = {}
 
 
 def load_mixed_player_cases(match_path: Path) -> dict[str, Any]:
@@ -607,16 +615,15 @@ def build_mixed_boundary_refinement(
         ),
         None,
     )
-    overview_frames = [
-        int(crop["frame"])
-        for crop in _temporal_evidence(subject_id, observations, card, limit=12)
-    ]
+    overview = _temporal_evidence(subject_id, observations, card, limit=12)
+    overview_frames = [int(crop["frame"]) for crop in overview]
     if (after_frame, before_frame) not in set(zip(overview_frames, overview_frames[1:])):
         raise ValueError("Refinement interval must use neighboring overview samples")
     interval = [row for row in observations if after_frame < int(row["frame"]) <= before_frame]
     if not interval:
         raise ValueError("No detected observations in the selected refinement interval")
     crops = _temporal_evidence(subject_id, interval, card, limit=max(3, min(limit, 16)))
+    boundary_crops = refinement_boundary_crops(overview, after_frame, before_frame)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_boundary_refinement",
@@ -626,6 +633,7 @@ def build_mixed_boundary_refinement(
         "source_subject_digest": case.get("source_subject_digest"),
         "after_frame": after_frame,
         "before_frame": before_frame,
+        "boundary_crops": boundary_crops,
         "anchor_crops": crops,
     }
     if source:
@@ -674,6 +682,101 @@ def render_mixed_review_evidence(
     )
 
 
+def materialize_mixed_review_artifact(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    artifact: str,
+) -> bool:
+    """Materialize one current Mixed card when its image is requested late.
+
+    Queue and focused reads normally produce this evidence before returning.
+    This narrow fallback covers a stale in-memory card after a local
+    reprojection or development hot reload. It never resurrects a no-longer
+    mandatory case: only an exact artifact belonging to the authoritative
+    current queue is rendered.
+    """
+    target = match_path / artifact
+    if target.exists() and target.stat().st_size > 0:
+        return True
+
+    with _MIXED_EVIDENCE_LOCKS_GUARD:
+        render_lock = _MIXED_EVIDENCE_LOCKS.setdefault(str(match_path.resolve()), Lock())
+
+    with render_lock:
+        if target.exists() and target.stat().st_size > 0:
+            return True
+        with review_build_context():
+            evidence_case = _current_mixed_case_for_artifact(
+                match_path,
+                match_doc,
+                artifact,
+            )
+            if not isinstance(evidence_case, dict):
+                return False
+            render_mixed_review_evidence(match_path, match_doc, {"cases": [evidence_case]})
+        return target.exists() and target.stat().st_size > 0
+
+
+def _current_mixed_case_for_artifact(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    artifact: str,
+) -> dict[str, Any] | None:
+    """Resolve one artifact without constructing every peer in the queue."""
+    artifact_parts = Path(artifact).parts
+    if len(artifact_parts) != 3 or artifact_parts[0] != "reviewed_identity_mixed":
+        return None
+    subject_digest = artifact_parts[1]
+    markers = [
+        dict(marker)
+        for marker in load_mixed_player_cases(match_path).get("cases") or []
+        if canonical_digest(str(marker.get("candidate_subject_id") or ""))[:16] == subject_digest
+        and str(marker.get("resolution_status")) in UNRESOLVED_STATUSES
+    ]
+    if not markers:
+        return None
+    subject_ids = {str(marker.get("candidate_subject_id") or "") for marker in markers}
+    subjects = {
+        str(subject.get("candidate_subject_id") or ""): subject
+        for subject in _load(match_path / "identity_candidate_shadow.json").get("subjects") or []
+        if str(subject.get("candidate_subject_id") or "") in subject_ids
+    }
+    cards = {
+        str(card.get("candidate_subject_id") or ""): card
+        for card in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+        if str(card.get("candidate_subject_id") or "") in subject_ids
+    }
+    for marker in markers:
+        subject_id = str(marker.get("candidate_subject_id") or "")
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subjects.get(subject_id),
+            card=cards.get(subject_id),
+        )
+        case = materialized.get("case")
+        if (
+            materialized.get("status") == "current_blocking"
+            and isinstance(case, dict)
+            and _mixed_case_contains_artifact(case, artifact)
+        ):
+            return case
+    return None
+
+
+def _mixed_case_contains_artifact(case: dict[str, Any], artifact: str) -> bool:
+    crops = [
+        *((case.get("temporal_evidence") or {}).get("anchor_crops") or []),
+        *(
+            crop
+            for lane in (case.get("concurrent_resolution") or {}).get("lanes") or []
+            for crop in (lane.get("evidence") or {}).get("anchor_crops") or []
+        ),
+    ]
+    return any(str(crop.get("artifact") or "") == artifact for crop in crops)
+
+
 def temporal_evidence_for_observations(
     subject_id: str,
     observations: list[dict[str, Any]],
@@ -682,6 +785,25 @@ def temporal_evidence_for_observations(
 ) -> list[dict[str, Any]]:
     """Shared evidence selection for legacy and inline temporal split UI."""
     return _temporal_evidence(subject_id, observations, None, limit=limit)
+
+
+def refinement_boundary_crops(
+    overview: list[dict[str, Any]],
+    after_frame: int,
+    before_frame: int,
+) -> dict[str, dict[str, Any]]:
+    """Return the exact two overview observations that define a refinement.
+
+    The dense samples inside a refinement interval are useful for choosing a
+    boundary, but their rounded timestamps must never be mistaken for the two
+    authoritative endpoint observations selected in the overview.
+    """
+    by_frame = {int(crop["frame"]): crop for crop in overview}
+    after_crop = by_frame.get(after_frame)
+    before_crop = by_frame.get(before_frame)
+    if after_crop is None or before_crop is None:
+        raise ValueError("Refinement interval must use neighboring overview samples")
+    return {"after": dict(after_crop), "before": dict(before_crop)}
 
 
 def materialize_concurrent_resolution(
@@ -1152,7 +1274,11 @@ def _temporal_evidence(
                 continue
             crop = {
                 "anchor_crop_id": f"mixed-crop:{safe_subject}:{row['tracklet_id']}:{row['frame']}",
-                "artifact": f"reviewed_identity_mixed/{safe_subject}/{index:02d}_f{int(row['frame']):06d}.jpg",
+                # Concurrent lanes may contain distinct detections in the
+                # same frame.  Include the tracklet in the artifact identity
+                # so one lane can never reuse or overwrite another lane's
+                # crop while the operator is switching between lanes.
+                "artifact": f"reviewed_identity_mixed/{safe_subject}/{index:02d}_t{canonical_digest(str(row['tracklet_id']))[:10]}_f{int(row['frame']):06d}.jpg",
                 "frame": int(row["frame"]),
                 "time_sec": row.get("time_sec"),
                 "tracklet_id": row["tracklet_id"],

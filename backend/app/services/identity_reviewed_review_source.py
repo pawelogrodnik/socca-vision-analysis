@@ -9,6 +9,7 @@ from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_mixed_store import (
     current_mixed_subject_digest,
     observations_for_case,
+    refinement_boundary_crops,
     render_mixed_review_evidence,
     temporal_evidence_for_observations,
 )
@@ -271,6 +272,7 @@ def build_review_source_boundary_refinement(
         interval,
         limit=max(3, min(limit, 16)),
     )
+    boundary_crops = refinement_boundary_crops(overview, after_frame, before_frame)
     render_mixed_review_evidence(
         match_path,
         match_doc,
@@ -286,6 +288,7 @@ def build_review_source_boundary_refinement(
         "source_ownership_digest": source["source_ownership_digest"],
         "after_frame": after_frame,
         "before_frame": before_frame,
+        "boundary_crops": boundary_crops,
         "anchor_crops": crops,
     }
 
@@ -365,6 +368,7 @@ def build_concurrent_lane_boundary_refinement(
         interval,
         limit=max(3, min(limit, 16)),
     )
+    boundary_crops = refinement_boundary_crops(overview, after_frame, before_frame)
     render_mixed_review_evidence(
         match_path,
         match_doc,
@@ -381,6 +385,7 @@ def build_concurrent_lane_boundary_refinement(
         "lane_source_digest": lane_source_digest,
         "after_frame": after_frame,
         "before_frame": before_frame,
+        "boundary_crops": boundary_crops,
         "anchor_crops": crops,
     }
 

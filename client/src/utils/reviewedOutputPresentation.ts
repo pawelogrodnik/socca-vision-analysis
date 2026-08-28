@@ -1,10 +1,11 @@
 import type { ReviewedIdentityDocument, ReviewedOutputJob } from '../types';
 
 export function formatReviewTime(value: number | null | undefined): string {
-  const seconds = Math.max(0, Number(value) || 0);
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds - minutes * 60;
-  return `${String(minutes).padStart(2, '0')}:${remainingSeconds.toFixed(1).padStart(4, '0')}`;
+  const numericValue = Number(value);
+  const tenths = Math.max(0, Math.round((Number.isFinite(numericValue) ? numericValue : 0) * 10));
+  const minutes = Math.floor(tenths / 600);
+  const secondsWithinMinute = tenths % 600;
+  return `${String(minutes).padStart(2, '0')}:${String(Math.floor(secondsWithinMinute / 10)).padStart(2, '0')}.${secondsWithinMinute % 10}`;
 }
 
 export function formatElapsedTime(startedAt: string | undefined, now = Date.now()): string | null {

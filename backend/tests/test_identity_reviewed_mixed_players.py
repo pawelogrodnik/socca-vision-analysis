@@ -24,6 +24,7 @@ from app.services.identity_reviewed_action_scope import (
     reviewed_identity_action_capabilities,
     validate_review_unit_action_scope,
 )
+from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
@@ -35,6 +36,7 @@ from app.services.identity_reviewed_mixed_store import (
     build_focused_mixed_review_case,
     current_mixed_subject_digest,
     load_mixed_player_cases,
+    materialize_mixed_review_artifact,
     _materialize_mixed_review_case,
     save_mixed_case_document,
     unresolved_mixed_observation_assignments,
@@ -664,10 +666,30 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             self.assertEqual(refined["lane_id"], lane["lane_id"])
             self.assertTrue(refined["anchor_crops"])
+            self.assertEqual(refined["boundary_crops"]["after"], overview[0])
+            self.assertEqual(refined["boundary_crops"]["before"], overview[1])
+            self.assertEqual(refined["anchor_crops"][-1]["frame"], overview[1]["frame"])
+            self.assertEqual(refined["anchor_crops"][-1]["tracklet_id"], overview[1]["tracklet_id"])
             self.assertEqual(
                 {crop["tracklet_id"] for crop in refined["anchor_crops"]},
                 {lane["tracklet_id"]},
             )
+
+    def test_concurrent_lanes_use_distinct_artifacts_for_shared_frames(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_concurrent(root)
+
+            context = reviewed_correction_context(root, match, "subject-mixed")
+            lanes = context["concurrent_resolution"]["lanes"]
+            shared_frame = 5
+            shared_crops = [
+                next(crop for crop in lane["evidence"]["anchor_crops"] if crop["frame"] == shared_frame)
+                for lane in lanes
+            ]
+
+            self.assertEqual({crop["tracklet_id"] for crop in shared_crops}, {"t1", "t2"})
+            self.assertEqual(len({crop["artifact"] for crop in shared_crops}), 2)
 
     def test_concurrent_refinement_returns_structured_conflict(self) -> None:
         with _workspace() as root:
@@ -1397,6 +1419,102 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
 
             self.assertIsInstance(response, FileResponse)
             self.assertEqual(response.media_type, "image/jpeg")
+            self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_missing_mixed_crop_is_not_cacheable(self) -> None:
+        with _workspace() as root:
+            relative = Path("reviewed_identity_mixed") / ("a" * 16) / "01_f000001.jpg"
+
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value={}),
+                patch("app.main.materialize_mixed_review_artifact", return_value=False),
+            ):
+                with self.assertRaises(HTTPException) as raised:
+                    get_artifact("match", str(relative))
+
+            self.assertEqual(raised.exception.status_code, 404)
+            self.assertEqual(raised.exception.headers, {"Cache-Control": "no-store"})
+
+    def test_missing_current_mixed_crop_materializes_its_exact_card_on_read(self) -> None:
+        with _workspace() as root:
+            relative = Path("reviewed_identity_mixed") / ("a" * 16) / "01_f000001.jpg"
+            artifact = root / relative
+
+            def materialize(path: Path, _match: dict[str, object], requested: str) -> bool:
+                self.assertEqual(path, root)
+                self.assertEqual(requested, str(relative))
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_bytes(b"jpeg")
+                return True
+
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value={}),
+                patch("app.main.materialize_mixed_review_artifact", side_effect=materialize) as recovery,
+            ):
+                response = get_artifact("match", str(relative))
+
+            self.assertIsInstance(response, FileResponse)
+            recovery.assert_called_once()
+            self.assertEqual(response.headers["cache-control"], "no-store")
+
+    def test_artifact_recovery_renders_only_its_current_authoritative_case(self) -> None:
+        with _workspace() as root:
+            subject_id = "subject-current"
+            requested = "reviewed_identity_mixed/" + canonical_digest(subject_id)[:16] + "/01_f000001.jpg"
+            current_case = {
+                "case_id": "current",
+                "candidate_subject_id": subject_id,
+                "resolution_status": "unresolved",
+                "temporal_evidence": {"anchor_crops": [{
+                    "artifact": requested,
+                    "generated_for_segment_review": True,
+                    "frame": 1,
+                    "bbox_xyxy": [0, 0, 1, 1],
+                }]},
+            }
+            stale_case = {
+                "case_id": "stale",
+                "candidate_subject_id": subject_id,
+                "resolution_status": "unresolved",
+                "temporal_evidence": {"anchor_crops": [{
+                    "artifact": "reviewed_identity_mixed/" + ("b" * 16) + "/01_f000001.jpg",
+                }]},
+            }
+
+            def render(path: Path, _match: dict[str, object], queue: dict[str, object]) -> set[str]:
+                self.assertEqual(queue["cases"], [current_case])
+                artifact = path / requested
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_bytes(b"jpeg")
+                return {requested}
+
+            with (
+                patch(
+                    "app.services.identity_reviewed_mixed_store.load_mixed_player_cases",
+                    return_value={"cases": [stale_case, current_case]},
+                ),
+                patch(
+                    "app.services.identity_reviewed_mixed_store.build_mixed_review_queue",
+                    side_effect=AssertionError("artifact recovery must not build the full queue"),
+                ),
+                patch(
+                    "app.services.identity_reviewed_mixed_store._materialize_mixed_review_case",
+                    side_effect=[
+                        {"status": "no_longer_unresolved", "case": None},
+                        {"status": "current_blocking", "case": current_case},
+                    ],
+                ),
+                patch(
+                    "app.services.identity_reviewed_mixed_store.render_mixed_review_evidence",
+                    side_effect=render,
+                ) as render_evidence,
+            ):
+                recovered = materialize_mixed_review_artifact(root, {}, requested)
+
+            self.assertTrue(recovered)
+            render_evidence.assert_called_once()
 
     def test_classification_moves_case_to_mixed_queue_without_mutating_raw_tracks(self) -> None:
         with _workspace() as root:
@@ -1507,6 +1625,10 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             self.assertLess(refined_spacing, overview_spacing)
             self.assertEqual(refinement["after_frame"], after_frame)
             self.assertEqual(refinement["before_frame"], before_frame)
+            self.assertEqual(refinement["boundary_crops"]["after"], overview[4])
+            self.assertEqual(refinement["boundary_crops"]["before"], overview[5])
+            self.assertEqual(refinement["anchor_crops"][-1]["frame"], before_frame)
+            self.assertEqual(refinement["anchor_crops"][-1]["anchor_crop_id"], overview[5]["anchor_crop_id"])
             render.assert_called_once()
             selected_frame = refinement_frames[len(refinement_frames) // 2]
             save_mixed_player_resolution(
@@ -2353,6 +2475,9 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 )
             self.assertEqual(len(refinement["anchor_crops"]), 10)
             self.assertTrue(all(after_frame < crop["frame"] <= before_frame for crop in refinement["anchor_crops"]))
+            self.assertEqual(refinement["boundary_crops"]["after"], crops[4])
+            self.assertEqual(refinement["boundary_crops"]["before"], crops[5])
+            self.assertEqual(refinement["anchor_crops"][-1]["anchor_crop_id"], crops[5]["anchor_crop_id"])
 
             with (
                 patch("app.main.match_dir", return_value=root),

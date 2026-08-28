@@ -6,7 +6,7 @@ import test from 'node:test';
 import type { MixedPlayerCase, MixedSegmentAssignment, ReviewedCorrectionContext } from '../src/types.ts';
 import { correctionContextAsSplitCase } from '../src/utils/reviewedIdentitySplitCase.ts';
 import { reviewedIdentityChildActions } from '../src/utils/reviewedIdentityActions.ts';
-import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
+import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedBoundaryFrames, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
 import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, reconciledMixedFocusCaseId } from '../src/utils/mixedReviewNavigation.ts';
 
 const reviewCase: MixedPlayerCase = {
@@ -54,6 +54,18 @@ test('valid split requires a decision for every segment and stays inside range',
   assert.equal(validMixedResolution(reviewCase, [25], assignments), true);
   assert.equal(validMixedResolution(reviewCase, [25], [assignments[0]]), false);
   assert.equal(validMixedResolution(reviewCase, [50], assignments), false);
+});
+
+test('an end-of-track boundary never creates an empty reversed segment', () => {
+  assert.deepEqual(validMixedBoundaryFrames(reviewCase, [25, 50]), [25]);
+  assert.deepEqual(
+    mixedSegments(reviewCase, [25, 50]).map((segment) => [segment.frameStart, segment.frameEnd]),
+    [[10, 25], [26, 50]],
+  );
+  assert.equal(validMixedResolution(reviewCase, [25, 50], [
+    { action: 'assign_team', team_label: 'A' },
+    { action: 'assign_team', team_label: 'B' },
+  ]), false);
 });
 
 test('split children retain the unified safe correction vocabulary without recursive splitting', () => {

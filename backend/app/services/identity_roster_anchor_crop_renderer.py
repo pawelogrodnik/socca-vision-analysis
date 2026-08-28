@@ -28,7 +28,17 @@ def render_identity_roster_anchor_crops(
     rendered: set[str] = set()
     try:
         target_frames = set(requests)
-        frame_index = 0
+        first_requested_frame = min(target_frames)
+        # Mixed-review cases can occur late in a match.  Starting a sequential
+        # decode at frame zero made rendering a handful of missing crops take
+        # minutes for a late case.  Seek once to the first requested frame and
+        # then keep the short local decode, which also avoids repeated keyframe
+        # seeks for the remaining crops in this case.
+        seek_succeeded = (
+            first_requested_frame == 0
+            or capture.set(cv2.CAP_PROP_POS_FRAMES, first_requested_frame)
+        )
+        frame_index = first_requested_frame if seek_succeeded else 0
         while target_frames:
             ok, frame = capture.read()
             if not ok:

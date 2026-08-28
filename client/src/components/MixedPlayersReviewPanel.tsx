@@ -10,6 +10,8 @@ import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mi
 import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
 import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
 import { MixedAssignmentControls } from './MixedAssignmentControls';
+import { MixedRefinementBoundaryEvidence } from './MixedRefinementBoundaryEvidence';
+import { ReviewedEvidenceImage } from './ReviewedEvidenceImage';
 
 export type MixedPlayersReviewApi = {
   getBoundaryRefinement: typeof getMixedBoundaryRefinement;
@@ -664,7 +666,7 @@ export function MixedPlayersReviewPanel({
           <div className='mixed-temporal-strip'>
           {crops.map((crop, cropIndex) => <div className='mixed-crop-group' key={crop.anchor_crop_id}>
             <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
-              <img src={artifactUrl(match.id, crop.artifact)} alt='Czasowy widok zmieszanego przypadku' />
+              <ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Czasowy widok zmieszanego przypadku' />
               <figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption>
             </figure>
             {cropIndex < crops.length - 1 && <button
@@ -684,11 +686,12 @@ export function MixedPlayersReviewPanel({
             <div><strong>Doprecyzuj moment przejścia</strong><span>Wybierz dokładniejszą granicę między sąsiednimi podglądami.</span></div>
             <button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button>
           </header>
+          <MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} />
           <div className='mixed-refinement-strip'>
             <button type='button' className='mixed-refinement-leading-action' onClick={() => selectRefinedBoundary(refinement.after_frame)} disabled={busy}>Podziel zaraz po poprzednim podglądzie</button>
             {sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop, cropIndex, refinementCrops) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>
               <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
-                <img src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' />
+                <ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' />
                 <figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption>
               </figure>
               {cropIndex < refinementCrops.length - 1 && <button type='button' onClick={() => selectRefinedBoundary(crop.frame)} disabled={busy}>Ustaw tutaj</button>}

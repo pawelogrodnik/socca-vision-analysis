@@ -2,6 +2,7 @@ import { artifactUrl } from '../api';
 import type { MixedPlayerCase } from '../types';
 import { mixedTimeForFrame, sortedMixedEvidenceCrops } from '../utils/mixedPlayersReview';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
+import { ReviewedEvidenceImage } from './ReviewedEvidenceImage';
 
 type Props = {
   matchId: string;
@@ -55,7 +56,7 @@ export function MixedTemporalTopologyLanes({ matchId, reviewCase }: Props) {
           </div>
           <div className='mixed-topology-crops'>
             {laneCrops.map((crop) => <figure key={crop.anchor_crop_id} className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
-              <img src={artifactUrl(matchId, crop.artifact)} alt={`Widok trackletu ${tracklet.tracklet_id}`} />
+              <ReviewedEvidenceImage src={artifactUrl(matchId, crop.artifact)} alt={`Widok trackletu ${tracklet.tracklet_id}`} />
               <figcaption>{frameLabel(reviewCase, crop.frame)}</figcaption>
             </figure>)}
             {laneCrops.length === 0 && <span className='mixed-topology-no-crop'>Brak reprezentatywnego cropa w ograniczonym podglądzie.</span>}

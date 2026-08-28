@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 import React from 'react';
 
 import { MixedPlayersReviewPanel, type MixedPlayersReviewApi } from '../src/components/MixedPlayersReviewPanel.tsx';
+import { ReviewedEvidenceImage } from '../src/components/ReviewedEvidenceImage.tsx';
 import { ReviewedIdentityCorrectionForm } from '../src/components/ReviewedIdentityCorrectionForm.tsx';
 import { ReviewedIdentitySplitEditor } from '../src/components/ReviewedIdentitySplitEditor.tsx';
 import { ApiRequestError } from '../src/lib/apiErrors.ts';
@@ -34,6 +35,20 @@ const { act, cleanup, fireEvent, render, waitFor } = await import('@testing-libr
 afterEach(() => {
   cleanup();
   dom.window.confirm = () => true;
+});
+
+test('review crop retries a just-materialized artifact with a cache-busting URL', async () => {
+  const view = render(React.createElement(ReviewedEvidenceImage, {
+    src: '/api/matches/m1/artifact/reviewed_identity_mixed/example/crop.jpg',
+    alt: 'Retry crop',
+    retryDelay: 1,
+    maxRetries: 1,
+  }));
+  const image = view.getByAltText('Retry crop') as HTMLImageElement;
+  assert.match(image.src, /review_evidence=1&retry=0/);
+  fireEvent.error(image);
+
+  await waitFor(() => assert.match(image.src, /retry=1/));
 });
 
 const match = {
@@ -275,6 +290,10 @@ function laneRefinement(caseId: string): ConcurrentLaneRefinement {
     lane_source_digest: 'lane-digest-A',
     after_frame: 100,
     before_frame: 160,
+    boundary_crops: {
+      after: { anchor_crop_id: 'overview-100', artifact: 'overview-100.jpg', frame: 100, time_sec: 100, tracklet_id: 'track-A' },
+      before: { anchor_crop_id: 'overview-160', artifact: 'overview-160.jpg', frame: 160, time_sec: 160, tracklet_id: 'track-A' },
+    },
     anchor_crops: [110, 120, 130, 140, 150, 160].map((frame) => ({
       anchor_crop_id: `refined-${frame}`,
       artifact: `refined-${frame}.jpg`,
@@ -733,6 +752,13 @@ test('lane refinement keeps the leading after-preview boundary instead of shifti
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' })));
+  assert.ok(view.getByAltText('Lewy widok graniczny — podział następuje po tym widoku'));
+  assert.ok(view.getByAltText('Prawy widok graniczny — podział następuje przed tym widokiem'));
+  assert.equal(
+    Array.from(view.container.querySelectorAll('.mixed-refinement-strip button'))
+      .filter((button) => button.textContent?.includes('02:40.0')).length,
+    0,
+  );
   fireEvent.click(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' }));
   fireEvent.click(view.getByText('Inne przypisanie'));
   fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));

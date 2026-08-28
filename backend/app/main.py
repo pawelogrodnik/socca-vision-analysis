@@ -135,6 +135,7 @@ from app.services.identity_reviewed_mixed_store import (
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
     inline_temporal_split_for_source,
+    materialize_mixed_review_artifact,
     render_mixed_review_evidence,
 )
 from app.services.identity_canonical_io import review_build_context
@@ -3575,8 +3576,33 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     match_root = path.resolve()
     if artifact_path != match_root and match_root not in artifact_path.parents:
         raise HTTPException(status_code=404, detail="Artifact not available")
+    if (
+        not artifact_path.exists()
+        and artifact_rel.parts
+        and artifact_rel.parts[0] == "reviewed_identity_mixed"
+    ):
+        # The card can legitimately outlive just-in-time evidence generation
+        # in a local/HMR workspace. Recover only the exact current card; do
+        # not make image delivery a path to old or nonmandatory review data.
+        materialize_mixed_review_artifact(path, read_match_meta(path), artifact_name)
     if not artifact_path.exists():
-        raise HTTPException(status_code=404, detail="Artifact not generated yet")
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact not generated yet",
+            headers=(
+                {"Cache-Control": "no-store"}
+                if artifact_rel.parts and artifact_rel.parts[0] == "reviewed_identity_mixed"
+                else None
+            ),
+        )
     if artifact_path.stat().st_size == 0:
         raise HTTPException(status_code=410, detail=f"Artifact {artifact_name} exists but is empty. Rerun analysis and check backend logs.")
-    return FileResponse(artifact_path, media_type=allowed[artifact_basename])
+    # Mixed-review crops are materialized just in time for the current card.
+    # A transient 404 must never become a sticky browser cache entry: the
+    # client can safely retry the same immutable crop once rendering finishes.
+    headers = (
+        {"Cache-Control": "no-store"}
+        if artifact_rel.parts and artifact_rel.parts[0] == "reviewed_identity_mixed"
+        else None
+    )
+    return FileResponse(artifact_path, media_type=allowed[artifact_basename], headers=headers)

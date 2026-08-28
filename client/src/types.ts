@@ -2440,6 +2440,10 @@ export type MixedBoundaryRefinement = {
   source_subject_digest: string;
   after_frame: number;
   before_frame: number;
+  boundary_crops: {
+    after: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+    before: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+  };
   anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
 };
 
@@ -2500,6 +2504,10 @@ export type ConcurrentLaneRefinement = {
   lane_source_digest: string;
   after_frame: number;
   before_frame: number;
+  boundary_crops: {
+    after: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+    before: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+  };
   anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
 };
 

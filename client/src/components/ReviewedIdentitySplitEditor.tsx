@@ -28,6 +28,8 @@ import { teamLabelForOperator } from '../utils/reviewedOutputPresentation';
 import { correctionContextAsSplitCase } from '../utils/reviewedIdentitySplitCase';
 import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
 import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
+import { MixedRefinementBoundaryEvidence } from './MixedRefinementBoundaryEvidence';
+import { ReviewedEvidenceImage } from './ReviewedEvidenceImage';
 
 type Props = {
   matchId: string;
@@ -320,8 +322,8 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
     {simpleSplitAllowed && <>
       <div className='mixed-temporal-strip'>
       {crops.map((crop, index) => <div className='mixed-crop-group' key={crop.anchor_crop_id}>
-        <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
-          <img src={artifactUrl(matchId, crop.artifact)} alt='Widok fragmentu w kolejności czasu' />
+          <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
+            <ReviewedEvidenceImage src={artifactUrl(matchId, crop.artifact)} alt='Widok fragmentu w kolejności czasu' />
           <figcaption>{crop.time_sec?.toFixed(1) ?? `Klatka ${crop.frame}`}</figcaption>
         </figure>
         {index < crops.length - 1 && (() => {
@@ -342,10 +344,11 @@ export function ReviewedIdentitySplitEditor({ matchId, context: suppliedContext,
     {refinement && <section className='mixed-boundary-refinement' aria-label='Doprecyzowanie granicy podziału'>
       <header><strong>Doprecyzuj moment przejścia</strong><button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button></header>
       <p>Wybierz dokładną granicę między sąsiednimi widokami. Nie jest ograniczona do 12 widoków głównych.</p>
+      <MixedRefinementBoundaryEvidence matchId={matchId} refinement={refinement} />
       <div className='mixed-refinement-strip'>
         <button type='button' className='mixed-refinement-leading-action' onClick={() => selectRefinedBoundary(refinement.after_frame)} disabled={busy}>Podziel zaraz po poprzednim widoku</button>
         {sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop, index, refinedCrops) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>
-          <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}><img src={artifactUrl(matchId, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' /><figcaption>{crop.time_sec?.toFixed(1) ?? `Klatka ${crop.frame}`}</figcaption></figure>
+          <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}><ReviewedEvidenceImage src={artifactUrl(matchId, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' /><figcaption>{crop.time_sec?.toFixed(1) ?? `Klatka ${crop.frame}`}</figcaption></figure>
           {index < refinedCrops.length - 1 && <button type='button' onClick={() => selectRefinedBoundary(crop.frame)} disabled={busy}>Ustaw tutaj</button>}
         </div>)}
       </div>
