@@ -427,6 +427,35 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(state["allowed_actions"], [])
         self.assertEqual(state["required_action"]["type"], "coverage_evidence_unavailable")
 
+    def test_stale_progress_with_cached_coverage_block_is_not_terminal_completion(self) -> None:
+        issues = _issue_evidence({}, {
+            "summary": {"important_decisions_remaining": 0},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "team_attribution_residual_exceeds_tolerance"}],
+            },
+        })
+
+        state = derive_review_workflow_state(evidence(
+            issues=issues,
+            freshness={
+                "reviewed_identity_current": False,
+                "reviewed_stats_current": False,
+                "reviewed_output_current": False,
+                "qa_approval_current": False,
+                "review_progress_current": False,
+                "review_progress_reason": "review_progress_stale",
+            },
+        ))
+
+        self.assertEqual(state["status"], "error")
+        self.assertEqual(state["blockers"][0]["code"], "review_progress_stale")
+        self.assertFalse(state["mandatory_operator_review_complete"])
+        self.assertFalse(state["data_quality_ready_for_output"])
+        self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
+
     def test_unmaterialized_team_evidence_keeps_a_bounded_remediation_action(self) -> None:
         issues = _issue_evidence({}, {
             "summary": {"important_decisions_remaining": 0},

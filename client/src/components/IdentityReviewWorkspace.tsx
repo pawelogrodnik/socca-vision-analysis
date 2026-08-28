@@ -14,6 +14,7 @@ import {
   identityReviewProgress,
   identityReviewStage,
   initialMandatoryQueue,
+  isTerminalDataQualityBlocker,
   reviewWorkflowErrorMessage,
   workflowAllows,
 } from '../utils/identityReviewWorkspace';
@@ -209,12 +210,7 @@ export function IdentityReviewWorkspace({
     ?.team_attribution_residual?.status === 'accepted_within_tolerance'
     ? workflow.issues.coverage_readiness.team_attribution_residual
     : null;
-  const terminalDataQualityBlocker = Boolean(
-    workflow
-    && stage === 'error'
-    && workflow.mandatory_operator_review_complete
-    && workflow.issues.coverage_readiness_blocked,
-  );
+  const terminalDataQualityBlocker = isTerminalDataQualityBlocker(workflow);
 
   async function retry(action: 'retry_render' | 'retry_review_recompute') {
     if (!workflowAllows(workflow, action)) return;

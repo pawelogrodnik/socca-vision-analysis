@@ -95,3 +95,16 @@ export function reviewWorkflowErrorMessage(workflow: ReviewWorkflow): string {
   }
   return 'Nie udało się przygotować kolejnego kroku review.';
 }
+
+export function isTerminalDataQualityBlocker(workflow: ReviewWorkflow | null): boolean {
+  return Boolean(
+    workflow
+    && workflow.phase === 'exceptions'
+    && workflow.status === 'error'
+    && workflow.mandatory_operator_review_complete
+    && workflow.issues.coverage_readiness_blocked
+    && workflow.blockers.some((blocker) => (
+      blocker.code === 'identity_coverage_unresolved_without_reviewable_evidence'
+    )),
+  );
+}

@@ -12,6 +12,7 @@ import {
   hasOperatorReviewableVisualEvidence,
   identityReviewProgress,
   identityReviewStage,
+  isTerminalDataQualityBlocker,
   reviewWorkflowErrorMessage,
   workflowAllows,
 } from '../src/utils/identityReviewWorkspace.ts';
@@ -143,8 +144,33 @@ test('terminal data-quality state says operator review is complete, not that cas
   const workspace = readFileSync(new URL('IdentityReviewWorkspace.tsx', new URL('../src/components/', import.meta.url)), 'utf8');
 
   assert.match(reviewWorkflowErrorMessage(blocked), /przekracza bezpieczny limit/);
+  assert.equal(isTerminalDataQualityBlocker(blocked), true);
   assert.match(workspace, /Wymagany Review zakończony/);
   assert.match(workspace, /Nie ma już kolejnych bezpiecznych decyzji manualnych/);
+});
+
+test('stale Review progress never masquerades as terminal data-quality completion', () => {
+  const stale = workflow({
+    phase: 'exceptions',
+    status: 'error',
+    mandatory_operator_review_complete: false,
+    data_quality_ready_for_output: false,
+    issues: {
+      blocking: 0,
+      important: 0,
+      optional: 0,
+      coverage_readiness_blocked: true,
+    },
+    blockers: [{
+      code: 'review_progress_stale',
+      step_id: 'exceptions',
+      user_actionable: true,
+      details: {},
+    }],
+  });
+
+  assert.match(reviewWorkflowErrorMessage(stale), /wymaga odświeżenia/);
+  assert.equal(isTerminalDataQualityBlocker(stale), false);
 });
 
 test('published history never bypasses incomplete current review', () => {

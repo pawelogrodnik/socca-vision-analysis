@@ -10,6 +10,9 @@ from app.services.identity_reviewed_output_jobs import reviewed_output_status_re
 from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_team_attribution_evidence import (
+    classify_team_attribution_evidence_status,
+)
 from app.services.identity_review_scope import (
     review_scope_dependency_matches,
 )
@@ -212,6 +215,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 if team_attribution_not_materialized
                 else {"type": "coverage_evidence_unavailable", "step_id": "exceptions"}
             ),
+            terminal_data_quality_error=True,
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -580,8 +584,10 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
     )
     coverage_residuals = (progress or {}).get("coverage_residuals") or {}
     team_attribution_evidence_not_materialized = any(
-        str(case.get("team_attribution_evidence_status") or "")
-        == "team_attribution_evidence_not_materialized"
+        classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        )
+        == "remediable_not_established"
         for residual in coverage_residuals.values()
         if isinstance(residual, dict)
         for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
@@ -647,7 +653,7 @@ def _blocker(
     }
 
 
-def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None) -> dict[str, Any]:
+def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None, *, terminal_data_quality_error: bool = False) -> dict[str, Any]:
     complete = status == "complete"
     coverage_readiness_blocked = bool(issues.get("coverage_readiness_blocked"))
     mandatory_operator_review_complete = bool(
@@ -655,10 +661,11 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         and not int(issues.get("normal_blocking") or issues.get("blocking") or 0)
         and not int(issues.get("mixed_blocking") or 0)
         and phase not in {"initial_audit", "unavailable"}
-        # A terminal data-quality state is specifically the case where the
-        # operator is done but output readiness is not. Other workflow errors
-        # (such as a failed recompute) must not masquerade as completion.
-        and (status != "error" or coverage_readiness_blocked)
+        # An error means operator completion only when this exact,
+        # authoritative branch reached exhausted queues and final coverage
+        # readiness. Cached coverage flags on stale/technical errors cannot
+        # turn a required refresh into a terminal data-quality state.
+        and (status != "error" or terminal_data_quality_error)
     )
     data_quality_ready_for_output = bool(
         mandatory_operator_review_complete and not coverage_readiness_blocked

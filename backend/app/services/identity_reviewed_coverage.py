@@ -40,11 +40,15 @@ from app.services.identity_reviewed_scope_eligibility import (
     required_review_relevant_for_scope,
     unit_team_label,
 )
+from app.services.identity_reviewed_team_attribution_evidence import (
+    classify_team_attribution_evidence_status,
+    normalized_team_attribution_evidence_status,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v10-terminal-residual-readiness"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v11-fail-closed-evidence-status"
 OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
 COVERAGE_DEBT_POLICY_VERSION = "reviewed-identity-coverage-debt:v2-queue-observability"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
@@ -1570,8 +1574,18 @@ def _readiness(
         for units in non_actionable_team_uncertainty.values()
         for unit in units
     ]
-    team_attribution_status_counts = Counter(
-        str(unit.get("team_attribution_evidence_status") or "no_safe_visual_evidence")
+    team_attribution_statuses = [
+        normalized_team_attribution_evidence_status(
+            unit.get("team_attribution_evidence_status")
+        )
+        for unit in team_attribution_units
+    ]
+    team_attribution_status_counts = Counter(team_attribution_statuses)
+    team_attribution_requires_materialization = any(
+        classify_team_attribution_evidence_status(
+            unit.get("team_attribution_evidence_status")
+        )
+        == "remediable_not_established"
         for unit in team_attribution_units
     )
     reliable_observations = int(coverage.get("reliable_observations") or 0)
@@ -1606,9 +1620,7 @@ def _readiness(
         "evidence_status_counts": dict(sorted(team_attribution_status_counts.items())),
     }
     if team_attribution_units:
-        if team_attribution_status_counts.get(
-            "team_attribution_evidence_not_materialized", 0
-        ):
+        if team_attribution_requires_materialization:
             # This is a recoverable materialization gap, not a claim that
             # evidence is impossible. The workflow must offer its bounded
             # recompute/evidence pass before displaying a terminal residual.

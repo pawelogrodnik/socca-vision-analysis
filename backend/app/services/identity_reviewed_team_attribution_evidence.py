@@ -34,6 +34,39 @@ MIN_BBOX_WIDTH_PX = 8
 MIN_BBOX_HEIGHT_PX = 18
 PREFERRED_MAX_OVERLAP = 0.12
 UNUSABLE_MAX_OVERLAP = 0.85
+TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED = (
+    "team_attribution_evidence_not_materialized"
+)
+# Only these statuses are emitted by the current evidence builder after it has
+# actually evaluated the exact source and found no safe operator evidence.
+# Everything else, including a missing or future status, is intentionally
+# remediable: it must never silently consume the terminal residual budget.
+TERMINAL_UNAVAILABLE_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
+    "insufficient_team_attribution_evidence",
+    "no_team_attribution_evidence",
+})
+
+
+def classify_team_attribution_evidence_status(value: object) -> str:
+    """Classify a persisted status without treating absent metadata as proof.
+
+    The returned values are deliberately policy-level rather than mirroring
+    every evidence-builder implementation detail.  A new evidence status must
+    be explicitly added to the terminal allowlist before it can be accepted as
+    a genuine Team-U residual.
+    """
+    status = str(value or "").strip()
+    if status in TERMINAL_UNAVAILABLE_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
+        return "terminal_unavailable"
+    return "remediable_not_established"
+
+
+def normalized_team_attribution_evidence_status(value: object) -> str:
+    """Return a safe public status for readiness diagnostics."""
+    status = str(value or "").strip()
+    if classify_team_attribution_evidence_status(status) == "terminal_unavailable":
+        return status
+    return TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED
 
 
 def load_team_attribution_evidence(match_path: Path) -> dict[str, Any]:
