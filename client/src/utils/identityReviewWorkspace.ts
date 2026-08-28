@@ -46,6 +46,13 @@ export function identityReviewStage(workflow: ReviewWorkflow | null): IdentityRe
   return stageByPhase[workflow.phase] || 'unavailable';
 }
 
+/** Pick the first mandatory queue before either review panel can mount. */
+export function initialMandatoryQueue(
+  workflow: ReviewWorkflow | null,
+): 'required' | 'mixed' {
+  return identityReviewStage(workflow) === 'mixed_players' ? 'mixed' : 'required';
+}
+
 export function identityReviewProgress(workflow: ReviewWorkflow | null): IdentityReviewProgressItem[] {
   const byId = new Map((workflow?.steps || []).map((step) => [step.id, step]));
   return (Object.keys(progressLabels) as ReviewWorkflowStepId[]).map((id) => ({

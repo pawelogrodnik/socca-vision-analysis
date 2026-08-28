@@ -16,8 +16,11 @@ from app.services.identity_reviewed_mixed_store import (
     current_mixed_subject_digest,
     inline_temporal_split_for_source,
     operator_concurrent_targets_for_marker,
+    operator_targets_for_mixed_marker,
     load_mixed_player_cases,
     observations_for_case,
+    # Retained as an import seam for regression tests that prove serial and
+    # concurrent save paths do not enumerate this global helper.
     operator_mixed_targets,
     save_mixed_case_document,
     validate_split_frames,
@@ -169,11 +172,7 @@ def save_mixed_player_resolution(
     )
     pending_document = {**document, "cases": [case if key == case_id else row for key, row in cases.items()]}
     phase_started = time.perf_counter()
-    targets = [
-        row
-        for row in operator_mixed_targets(match_path, pending_document)
-        if str(row.get("candidate_subject_id") or "") == subject_id
-    ]
+    targets = operator_targets_for_mixed_marker(match_path, case)
     assignments = payload.get("segment_assignments") or []
     if len(assignments) != len(targets):
         raise ValueError("Every mixed segment requires one assignment")
@@ -461,10 +460,7 @@ def save_inline_temporal_split(
     pending_cases = [row for row in cases if str(row.get("case_id") or "") != case_id] + [case]
     pending_document = {**document, "cases": pending_cases}
     phase_started = time.perf_counter()
-    targets = [
-        row for row in operator_mixed_targets(match_path, pending_document)
-        if str(row.get("split_parent_case_id") or "") == case_id
-    ]
+    targets = operator_targets_for_mixed_marker(match_path, case)
     if len(assignments) != len(targets):
         raise ValueError("Every split segment requires one assignment")
     performance["target_derivation_ms"] = _elapsed_ms(phase_started)

@@ -69,7 +69,9 @@ const inFlightGetRequests = new Map<string, Promise<unknown>>();
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const method = (options?.method || 'GET').toUpperCase();
   const requestKey = `${API_BASE}${path}`;
-  if (method === 'GET') {
+  // A caller-owned signal must retain cancellation ownership. Sharing that
+  // request would make one panel's cleanup abort an unrelated consumer.
+  if (method === 'GET' && !options?.signal) {
     const pending = inFlightGetRequests.get(requestKey);
     if (pending) return pending as Promise<T>;
     const operation = requestUncoalesced<T>(path, options).finally(() => {
@@ -86,6 +88,7 @@ async function requestUncoalesced<T>(path: string, options?: RequestInit): Promi
   try {
     res = await fetch(`${API_BASE}${path}`, options);
   } catch (error) {
+    if (isRequestAbortError(error)) throw error;
     throw new Error(`Network error: ${error instanceof Error ? error.message : String(error)}`);
   }
 
@@ -107,6 +110,12 @@ async function requestUncoalesced<T>(path: string, options?: RequestInit): Promi
     throw new ApiRequestError(res.status, detail, code);
   }
   return res.json() as Promise<T>;
+}
+
+export function isRequestAbortError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { name?: unknown }).name === 'AbortError';
 }
 
 export function artifactUrl(matchId: string, artifactName: string): string {
@@ -284,6 +293,7 @@ export async function getReviewedIdentityReviewProgress(
   limit = 20,
   teamLabel?: import('./types').ReviewedIdentityTeamFilterLabel,
   queue: import('./types').ReviewedIdentityReviewQueue = 'required',
+  options?: Pick<RequestInit, 'signal'>,
 ): Promise<ReviewedIdentityReviewProgress> {
   const query = new URLSearchParams({
     offset: String(offset),
@@ -293,6 +303,7 @@ export async function getReviewedIdentityReviewProgress(
   query.set('queue', queue);
   return request<ReviewedIdentityReviewProgress>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?${query}`,
+    options,
   );
 }
 
@@ -718,8 +729,14 @@ export async function saveIdentityCropReview(
   });
 }
 
-export async function getIdentityRosterSubjectReview(matchId: string): Promise<IdentityRosterSubjectReviewDocument> {
-  return request<IdentityRosterSubjectReviewDocument>(`/api/matches/${matchId}/identity-roster-subject-review`);
+export async function getIdentityRosterSubjectReview(
+  matchId: string,
+  options?: Pick<RequestInit, 'signal'>,
+): Promise<IdentityRosterSubjectReviewDocument> {
+  return request<IdentityRosterSubjectReviewDocument>(
+    `/api/matches/${matchId}/identity-roster-subject-review`,
+    options,
+  );
 }
 
 export async function saveIdentityRosterSubjectReview(

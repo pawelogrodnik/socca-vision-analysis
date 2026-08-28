@@ -13,6 +13,7 @@ import type { Match, ReviewedIdentityOptionalAudit, ReviewedOutputJob, ReviewWor
 import {
   identityReviewProgress,
   identityReviewStage,
+  initialMandatoryQueue,
   reviewWorkflowErrorMessage,
   workflowAllows,
 } from '../utils/identityReviewWorkspace';
@@ -70,7 +71,9 @@ export function IdentityReviewWorkspace({
   const [liveOptionalAuditSummary, setLiveOptionalAuditSummary] = useState<ReviewedIdentityOptionalAudit | null>(null);
   const [optionalSummaryRefreshError, setOptionalSummaryRefreshError] = useState(false);
   const [optionalSummaryRefreshAttempt, setOptionalSummaryRefreshAttempt] = useState(0);
-  const [activeMandatoryQueue, setActiveMandatoryQueue] = useState<ReviewedIdentityMandatoryQueue>('required');
+  const [activeMandatoryQueue, setActiveMandatoryQueue] = useState<ReviewedIdentityMandatoryQueue>(
+    () => initialMandatoryQueue(initialWorkflow),
+  );
   const [mixedFocusCaseId, setMixedFocusCaseId] = useState<string | null>(null);
   const [mixedEntryMode, setMixedEntryMode] = useState<'manual' | 'resolve_now'>('manual');
   const [requiredTeamFilter, setRequiredTeamFilter] = useState<TeamReviewFilter>('all');
@@ -78,6 +81,11 @@ export function IdentityReviewWorkspace({
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
+    setActiveMandatoryQueue((current) => (
+      current === 'required' && initialMandatoryQueue(next) === 'mixed'
+        ? 'mixed'
+        : current
+    ));
     setLiveOptionalAuditSummary(null);
     setOptionalSummaryRefreshError(false);
     setProcessingJob(next.processing || null);
@@ -100,7 +108,7 @@ export function IdentityReviewWorkspace({
     setOptionalSummaryRefreshAttempt(0);
     setShowOptionalAudit(false);
     setShowOptionalFinishConfirmation(false);
-    setActiveMandatoryQueue('required');
+    setActiveMandatoryQueue(initialMandatoryQueue(initialWorkflow));
     setMixedFocusCaseId(null);
     setMixedEntryMode('manual');
     setRequiredTeamFilter('all');
@@ -118,9 +126,8 @@ export function IdentityReviewWorkspace({
   const mandatoryReviewActive = stage === 'remaining_issues' || stage === 'mixed_players';
 
   useEffect(() => {
-    if (stage === 'mixed_players') setActiveMandatoryQueue('mixed');
     if (!mandatoryReviewActive) setMixedFocusCaseId(null);
-  }, [mandatoryReviewActive, stage]);
+  }, [mandatoryReviewActive]);
   const optionalSummaryFingerprint = workflow?.issues.optional_audit_summary
     ? [
       workflow.issues.optional_audit_summary.current_named_observations,

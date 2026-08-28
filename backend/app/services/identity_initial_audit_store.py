@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 import uuid
 
-from app.services.identity_canonical_io import load_json_cached
+from app.services.identity_canonical_io import invalidate_cached_json, load_json_cached
 
 from app.services.identity_initial_audit import (
     AUDIT_DIRECTORY,
@@ -1050,6 +1050,7 @@ def write_identity_json_atomic(
 ) -> None:
     """Persist a derived identity document without exposing partial JSON."""
     _write_atomic(path, document, indent=None if compact else 2)
+    invalidate_cached_json(path)
 
 
 def load_identity_json(path: Path) -> dict[str, Any]:

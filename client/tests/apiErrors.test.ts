@@ -6,7 +6,7 @@ import {
   isRecoverableConcurrentLaneConflict,
   isRecoverableReviewQueueConflict,
 } from '../src/lib/apiErrors.ts';
-import { request } from '../src/api.ts';
+import { isRequestAbortError, request } from '../src/api.ts';
 
 test('recognizes exactly the safe Review queue recovery conflicts', () => {
   for (const code of [
@@ -110,6 +110,23 @@ test('request never coalesces mutations', async () => {
       request('/api/mutation', { method: 'POST' }),
     ]);
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('aborted safe GET remains an abort instead of an operator-facing network error', async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  globalThis.fetch = async () => {
+    controller.abort();
+    throw new DOMException('Cancelled by component cleanup', 'AbortError');
+  };
+  try {
+    await assert.rejects(
+      request('/api/component-owned-read', { signal: controller.signal }),
+      (error: unknown) => isRequestAbortError(error),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -2553,13 +2553,14 @@ def post_match_reviewed_identity_temporal_split(
         capabilities = reviewed_identity_action_capabilities(review_unit)
         if not isinstance(review_unit, dict) or not capabilities["split"].get("allowed"):
             raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
-        result = save_inline_temporal_split(
-            path,
-            match_document,
-            payload,
-            materialized_review_unit=materialized_review_unit,
-            resolved_source=resolved_source,
-        )
+        with review_build_context():
+            result = save_inline_temporal_split(
+                path,
+                match_document,
+                payload,
+                materialized_review_unit=materialized_review_unit,
+                resolved_source=resolved_source,
+            )
         # A split changes the number and exact ownership of review units, so
         # this is deliberately a cache invalidation, not a guessed incremental
         # queue mutation. The next request safely materializes canonical state.
@@ -2789,7 +2790,8 @@ def post_match_reviewed_identity_mixed_resolution(
         state = build_compact_review_workflow_state(path, match_document)
         assert_workflow_action_allowed(state, "review_mixed_players")
         workflow_gate_ms = round((time.perf_counter() - gate_started) * 1000, 1)
-        result = save_mixed_player_resolution(path, match_document, payload)
+        with review_build_context():
+            result = save_mixed_player_resolution(path, match_document, payload)
         # Resolving a staged marker creates/removes exact child targets.  Do
         # not let a browser retain a queue projected before that topology
         # change; the following progress read materializes it once.

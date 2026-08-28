@@ -5,6 +5,7 @@ import {
   finalizeReviewedIdentityCorrections,
   getIdentityRosterSubjectReview,
   getReviewedIdentityReviewProgress,
+  isRequestAbortError,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type {
@@ -178,6 +179,7 @@ export function IdentityExceptionReviewPanel({
     preferredIndex = 0,
     teamFilter: TeamReviewFilter = activeTeamFilter,
     queue: ReviewedIdentityReviewQueue = activeQueue,
+    signal?: AbortSignal,
   ): Promise<ReviewCase[]> {
     const requestId = ++loadRequestIdRef.current;
     setLoading(true);
@@ -186,13 +188,14 @@ export function IdentityExceptionReviewPanel({
       const [document, progress] = await Promise.all([
         cardsBySubjectRef.current
           ? Promise.resolve(null)
-          : getIdentityRosterSubjectReview(match.id),
+          : getIdentityRosterSubjectReview(match.id, { signal }),
         getReviewedIdentityReviewProgress(
           match.id,
           offset,
           REQUIRED_REVIEW_WORKING_WINDOW_SIZE,
           apiTeamFilter(teamFilter),
           queue,
+          { signal },
         ),
       ]);
       if (ignore?.() || requestId !== loadRequestIdRef.current) return [];
@@ -247,6 +250,7 @@ export function IdentityExceptionReviewPanel({
         : 0);
       return actionable;
     } catch (error) {
+      if (isRequestAbortError(error)) return [];
       if (!ignore?.() && requestId === loadRequestIdRef.current) setMessage(errorMessage(error));
       return [];
     } finally {
@@ -256,11 +260,23 @@ export function IdentityExceptionReviewPanel({
 
   useEffect(() => {
     let disposed = false;
+    const controller = new AbortController();
     setActiveQueue(initialQueue);
     requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
     requiredReviewNavigationRef.current = beginRequiredReviewNavigation();
-    void loadCases(() => disposed, false, 0, 0, activeTeamFilter, initialQueue);
-    return () => { disposed = true; };
+    void loadCases(
+      () => disposed,
+      false,
+      0,
+      0,
+      activeTeamFilter,
+      initialQueue,
+      controller.signal,
+    );
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
     // Cards are reloaded after a semantic decision, not for incidental workflow object updates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQueue, match.id]);
