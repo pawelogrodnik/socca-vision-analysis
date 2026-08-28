@@ -851,6 +851,7 @@ test('stale lane refinement refreshes the exact case once without save or reproj
   });
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  await waitFor(() => assert.ok(view.getByRole('button', { name: 'Doprecyzuj' })));
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByText(/Układ ścieżek został zaktualizowany/)));
   assert.equal(focusedReads, 1);
