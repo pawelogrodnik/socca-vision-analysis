@@ -115,18 +115,53 @@ test('request never coalesces mutations', async () => {
   }
 });
 
+test('one aborted GET consumer detaches while another shares and completes the same request', async () => {
+  const originalFetch = globalThis.fetch;
+  let resolveResponse!: (response: Response) => void;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Promise<Response>((resolve) => { resolveResponse = resolve; });
+  };
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  try {
+    const first = request<{ ok: boolean }>('/api/shared-component-read', {
+      signal: firstController.signal,
+    });
+    const second = request<{ ok: boolean }>('/api/shared-component-read', {
+      signal: secondController.signal,
+    });
+    assert.equal(calls, 1);
+
+    firstController.abort();
+    await assert.rejects(first, (error: unknown) => isRequestAbortError(error));
+
+    resolveResponse(new Response(JSON.stringify({ ok: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    assert.deepEqual(await second, { ok: true });
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('aborted safe GET remains an abort instead of an operator-facing network error', async () => {
   const originalFetch = globalThis.fetch;
   const controller = new AbortController();
-  globalThis.fetch = async () => {
-    controller.abort();
-    throw new DOMException('Cancelled by component cleanup', 'AbortError');
-  };
+  let resolveResponse!: (response: Response) => void;
+  globalThis.fetch = async () => new Promise<Response>((resolve) => { resolveResponse = resolve; });
   try {
+    const requestPromise = request('/api/component-owned-read', { signal: controller.signal });
+    controller.abort();
     await assert.rejects(
-      request('/api/component-owned-read', { signal: controller.signal }),
+      requestPromise,
       (error: unknown) => isRequestAbortError(error),
     );
+    resolveResponse(new Response(JSON.stringify({ ok: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
   } finally {
     globalThis.fetch = originalFetch;
   }

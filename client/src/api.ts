@@ -69,18 +69,52 @@ const inFlightGetRequests = new Map<string, Promise<unknown>>();
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const method = (options?.method || 'GET').toUpperCase();
   const requestKey = `${API_BASE}${path}`;
-  // A caller-owned signal must retain cancellation ownership. Sharing that
-  // request would make one panel's cleanup abort an unrelated consumer.
-  if (method === 'GET' && !options?.signal) {
+  if (method === 'GET') {
+    if (options?.signal?.aborted) throw createRequestAbortError();
     const pending = inFlightGetRequests.get(requestKey);
-    if (pending) return pending as Promise<T>;
-    const operation = requestUncoalesced<T>(path, options).finally(() => {
+    if (pending) return awaitSharedGet<T>(pending, options?.signal);
+    // The shared request deliberately has no consumer-owned signal. A panel
+    // cleanup detaches only that consumer; it must not start a duplicate cold
+    // backend build when StrictMode immediately remounts another consumer.
+    const sharedOptions: RequestInit = { ...options };
+    delete sharedOptions.signal;
+    const operation = requestUncoalesced<T>(path, sharedOptions).finally(() => {
       inFlightGetRequests.delete(requestKey);
     });
     inFlightGetRequests.set(requestKey, operation);
-    return operation;
+    // A signal can already abort during a synchronous fetch mock or another
+    // caller edge case. Keep the shared rejection observed even when that
+    // consumer never gets far enough to attach its local wrapper.
+    void operation.catch(() => undefined);
+    return awaitSharedGet<T>(operation, options?.signal);
   }
   return requestUncoalesced<T>(path, options);
+}
+
+function awaitSharedGet<T>(
+  shared: Promise<unknown>,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  if (!signal) return shared as Promise<T>;
+  if (signal.aborted) return Promise.reject(createRequestAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createRequestAbortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    shared.then(
+      (value) => {
+        cleanup();
+        resolve(value as T);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 async function requestUncoalesced<T>(path: string, options?: RequestInit): Promise<T> {
@@ -116,6 +150,15 @@ export function isRequestAbortError(error: unknown): boolean {
   return typeof error === 'object'
     && error !== null
     && (error as { name?: unknown }).name === 'AbortError';
+}
+
+function createRequestAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('Request was cancelled by this consumer.', 'AbortError');
+  }
+  const error = new Error('Request was cancelled by this consumer.');
+  error.name = 'AbortError';
+  return error;
 }
 
 export function artifactUrl(matchId: string, artifactName: string): string {

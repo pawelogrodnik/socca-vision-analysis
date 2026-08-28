@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: do
 Object.defineProperty(globalThis, 'Node', { configurable: true, value: dom.window.Node });
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true, writable: true });
 
-const { cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
 const { IdentityReviewWorkspace } = await import('../src/components/IdentityReviewWorkspace.tsx');
 
 afterEach(() => cleanup());
@@ -114,6 +114,49 @@ test('an initially Mixed workflow mounts only Mixed and never starts Required pr
       requests.some((url) => url.includes('review-progress') && url.includes('queue=required')),
       false,
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('StrictMode remount shares one pending Required progress request', async () => {
+  const originalFetch = globalThis.fetch;
+  let progressCalls = 0;
+  let resolveProgress!: (response: Response) => void;
+  const initial = mandatoryWorkflow('exceptions');
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes('review-progress') && url.includes('queue=required')) {
+      progressCalls += 1;
+      return new Promise<Response>((resolve) => { resolveProgress = resolve; });
+    }
+    const body = url.includes('/review-workflow')
+      ? initial
+      : url.includes('/identity-roster-subject-review')
+        ? { cards: [] }
+        : {};
+    return new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  try {
+    render(React.createElement(
+      React.StrictMode,
+      null,
+      React.createElement(IdentityReviewWorkspace, {
+        match,
+        initialWorkflow: initial,
+        onWorkflowChanged: () => undefined,
+        onOpenReport: () => undefined,
+      }),
+    ));
+    await waitFor(() => assert.equal(progressCalls, 1));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(progressCalls, 1);
+
+    resolveProgress(new Response(JSON.stringify(emptyProgress()), {
+      headers: { 'Content-Type': 'application/json' },
+    }));
   } finally {
     globalThis.fetch = originalFetch;
   }
