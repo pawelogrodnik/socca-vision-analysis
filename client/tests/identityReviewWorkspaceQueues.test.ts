@@ -16,6 +16,7 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 
 const { act, cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
 const { IdentityReviewWorkspace } = await import('../src/components/IdentityReviewWorkspace.tsx');
+const { ReviewedIdentityQueueTabs } = await import('../src/components/ReviewedIdentityQueueTabs.tsx');
 
 afterEach(() => cleanup());
 
@@ -194,6 +195,53 @@ test('switching Required to Mixed starts no additional Required progress request
       requests.filter((url) => url.includes('review-progress') && url.includes('queue=required')).length,
       requiredBefore,
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a remediation blocker remains separate from an empty Required queue badge', async () => {
+  const remediation: ReviewWorkflow = {
+    ...mandatoryWorkflow('exceptions'),
+    status: 'error',
+    issues: {
+      ...mandatoryWorkflow('exceptions').issues,
+      blocking: 0,
+      normal_blocking: 0,
+      required_queue: { count: 0, source_keys_digest: 'empty-required-queue' },
+      mixed_blocking: 0,
+      coverage_readiness_blocked: true,
+      team_attribution_evidence_not_materialized: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        allows_finalize: false,
+        blockers: [{ code: 'team_attribution_evidence_not_materialized' }],
+        team_attribution_residual: { status: 'materialization_required' },
+      },
+    },
+    blockers: [{
+      code: 'identity_coverage_unresolved_without_reviewable_evidence',
+      step_id: 'exceptions',
+      user_actionable: true,
+      details: {},
+    }],
+    allowed_actions: ['retry_review_recompute'],
+    required_action: { type: 'retry_review_recompute', step_id: 'exceptions' },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    const tabs = render(React.createElement(ReviewedIdentityQueueTabs, {
+      workflow: remediation,
+      activeQueue: 'required',
+      onSelect: () => undefined,
+    }));
+    assert.match(tabs.getByRole('button', { name: /Wymagane przypadki/ }).textContent || '', /Wymagane przypadki 0/);
+
+    const workspace = renderWorkspace(remediation);
+    await waitFor(() => assert.match(
+      workspace.container.textContent || '',
+      /System musi jeszcze przygotować bezpieczne widoki/,
+    ));
   } finally {
     globalThis.fetch = originalFetch;
   }

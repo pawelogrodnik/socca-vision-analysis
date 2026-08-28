@@ -194,9 +194,9 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     (match_path / RECOMPUTE_FAILURE_FILENAME).unlink(missing_ok=True)
     phase_started = time.perf_counter()
     # Same-transaction reuse (§22/§37): the snapshot and progress above were
-    # produced from current canonical inputs moments ago, so the final workflow
-    # derivation reuses them instead of re-parsing and re-digesting every
-    # large source. Independent GET calls keep reading durable state.
+    # produced from current canonical inputs moments ago. This first workflow
+    # derivation only decides whether bounded evidence recovery is needed; the
+    # response is derived after the final generation is durably committed.
     completion_evidence = load_initial_audit_completion_evidence(match_path)
     workflow = get_review_workflow_state(
         match_path,
@@ -243,15 +243,6 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 "workflow_refresh_source": source,
             }
         )
-        phase_started = time.perf_counter()
-        workflow = get_review_workflow_state(
-            match_path,
-            match_doc,
-            snapshot=snapshot,
-            progress=durable_progress,
-            completion_evidence=completion_evidence,
-        )
-        timings["focused_final_workflow_ms"] = _elapsed_ms(phase_started)
     phase_started = time.perf_counter()
     write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
     invalidate_cached_json(match_path / PROGRESS_FILENAME)
@@ -269,6 +260,17 @@ def _refresh_review_after_identity_mutation_scoped_inner(
         timings.update(
             _flatten_phase_timings("hot", timings["hot_state_warm_write_phases"])
         )
+    phase_started = time.perf_counter()
+    # Return only a workflow derived from the exact generation already
+    # persisted (and, where requested, warmed) for subsequent browser reads.
+    workflow = get_review_workflow_state(
+        match_path,
+        match_doc,
+        snapshot=snapshot,
+        progress=durable_progress,
+        completion_evidence=completion_evidence,
+    )
+    timings["final_workflow_ms"] = _elapsed_ms(phase_started)
     timings["total_ms"] = _elapsed_ms(started)
     clear_reviewed_identity_recompute_required(match_path)
     logger.info(
@@ -617,7 +619,15 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
     state = get_review_workflow_state(match_path, match_doc)
     if "retry_review_recompute" not in set(state.get("allowed_actions") or []):
         raise WorkflowActionError("workflow_action_not_allowed", state, "retry_review_recompute")
-    return refresh_review_after_identity_mutation(match_path, match_doc, source="retry")
+    # Retry is the boundary between an old operator projection and the next
+    # one. Commit and warm the exact same generation before returning it so an
+    # immediate Required offset-0 GET cannot observe a different queue.
+    return refresh_review_after_identity_mutation(
+        match_path,
+        match_doc,
+        source="retry",
+        leave_hot_state_warm=True,
+    )
 
 
 def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:

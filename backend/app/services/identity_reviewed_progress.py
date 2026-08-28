@@ -15,6 +15,7 @@ from app.services.identity_ownership_compact import (
     encode_pair_runs,
 )
 from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_context
+from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_coverage import (
     build_coverage_debt,
     COVERAGE_POLICY_VERSION,
@@ -58,7 +59,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.12.0"
+PROGRESS_SCHEMA_VERSION = "2.13.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -82,6 +83,53 @@ SEMANTIC_CONFLICT_REASON_MARKERS = (
     "cross_team",
     "team_mismatch",
 )
+
+
+# The Required queue is the only authority for mandatory whole-subject work.
+# Keep the identity deliberately separate from presentation pagination so
+# workflow, durable progress and the hot read model can prove they describe
+# the exact same current sources without duplicating full case payloads.
+REQUIRED_QUEUE_SOURCE_FIELDS = (
+    "candidate_subject_id",
+    "scope_kind",
+    "review_target_id",
+    "continuity_group_id",
+    "source_ownership_digest",
+)
+
+
+def required_queue_source_keys(progress: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    """Return the exact, stable Required sources from the public queue.
+
+    ``summary.important_decisions_remaining`` is a convenience counter, not
+    an independent source of truth. Reading the keys from ``next_cases``
+    prevents a lifecycle path from reporting mandatory operator debt which
+    the authoritative queue cannot actually open.
+    """
+    by_key: dict[tuple[str, ...], dict[str, str]] = {}
+    for row in (progress or {}).get("next_cases") or []:
+        if not isinstance(row, Mapping):
+            continue
+        value = {
+            field: str(row.get(field) or "")
+            for field in REQUIRED_QUEUE_SOURCE_FIELDS
+        }
+        # A Required source without a subject cannot be retrieved or acted on;
+        # it must never inflate the operator queue count.
+        if not value["candidate_subject_id"]:
+            continue
+        key = tuple(value[field] for field in REQUIRED_QUEUE_SOURCE_FIELDS)
+        by_key[key] = value
+    return [by_key[key] for key in sorted(by_key)]
+
+
+def required_queue_descriptor(progress: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Compact exact-source handshake shared by every Review read model."""
+    sources = required_queue_source_keys(progress)
+    return {
+        "count": len(sources),
+        "source_keys_digest": canonical_digest(sources),
+    }
 
 
 def reviewed_snapshot_file_fingerprint(match_path: Path) -> dict[str, int] | None:
@@ -523,16 +571,11 @@ def project_reviewed_identity_progress(
         + counts["resolved_automatically"]
         + counts["safe_anonymous"]
     )
-    # Queue-facing normal blocking and coverage-debt queue observability use
-    # the same stable-source deduplication in this generation. The category
-    # counters remain diagnostic, while this total cannot disagree with the
-    # Required queue displayed to the operator.
-    important_remaining = int(
-        (coverage_debt.get("actual_required_queue") or {}).get(
-            "normal_blocking_case_count",
-            len(coverage_policy["next_cases"]),
-        )
-    )
+    # The exact Required queue is the one and only mandatory-work authority.
+    # Never promote a coverage-debt diagnostic into a second count: remediation
+    # sources without safe evidence are intentionally absent from this queue.
+    required_queue = required_queue_descriptor({"next_cases": coverage_policy["next_cases"]})
+    important_remaining = int(required_queue["count"])
     queue_total = completed + important_remaining
     result = {
         "schema_version": PROGRESS_SCHEMA_VERSION,
@@ -581,6 +624,7 @@ def project_reviewed_identity_progress(
         "coverage_readiness": coverage_policy["readiness"],
         "coverage_residuals": coverage_policy["residual_by_team"],
         "coverage_debt": coverage_debt,
+        "required_queue": required_queue,
         "workload": coverage_policy["workload"],
         "optional_audit": coverage_policy["optional_audit"],
         "next_cases": [_public_unit(unit) for unit in next_cases],

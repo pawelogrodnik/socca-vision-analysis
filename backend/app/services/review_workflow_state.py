@@ -9,7 +9,10 @@ from typing import Any
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
-from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    required_queue_descriptor,
+)
 from app.services.identity_reviewed_team_attribution_evidence import (
     classify_team_attribution_evidence_status,
 )
@@ -574,7 +577,17 @@ def _current_cached_progress_for_snapshot_digest(
 
 def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, Any]:
     progress_summary = (progress or {}).get("summary") or {}
-    pending = int(progress_summary.get("important_decisions_remaining") or 0)
+    required_queue = required_queue_descriptor(progress)
+    # The public Required queue owns this count. A stale summary or a
+    # technical remediation residual must never become fake operator debt.
+    # Tiny legacy/isolated fixtures can omit the queue entirely; production
+    # progress always persists it. Retain their diagnostic fallback without
+    # allowing a real empty queue to inherit a stale summary count.
+    pending = (
+        int(required_queue["count"])
+        if isinstance(progress, dict) and "next_cases" in progress
+        else int(progress_summary.get("important_decisions_remaining") or 0)
+    )
     mixed = (progress or {}).get("mixed_players", {}).get("summary", {})
     mixed_pending = int(mixed.get("unresolved") or 0)
     coverage_readiness = (progress or {}).get("coverage_readiness")
@@ -608,6 +621,7 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
             pending or mixed_pending or coverage_readiness_blocked
         ),
         "normal_blocking": pending,
+        "required_queue": required_queue,
         "mixed_blocking": mixed_pending,
         "important": pending + mixed_pending,
         "semantic": int(progress_summary.get("semantic_decisions_remaining") or 0),
@@ -682,6 +696,7 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
             issues.get("actionable_blocking") or issues.get("blocking") or 0
         ),
         "normal_blocking": int(issues.get("normal_blocking") or 0),
+        "required_queue": dict(issues.get("required_queue") or {}),
         "mixed_blocking": int(issues.get("mixed_blocking") or 0),
         "mixed_total": int(issues.get("mixed_total") or 0),
         "mixed_resolved": int(issues.get("mixed_resolved") or 0),

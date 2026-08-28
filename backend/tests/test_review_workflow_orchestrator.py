@@ -11,6 +11,7 @@ from app.services.review_workflow_orchestrator import (
     after_video_qa_correction,
     finalize_review_for_qa,
     refresh_review_after_identity_mutation,
+    retry_review_recompute,
 )
 from app.services.review_workflow_state import WorkflowActionError
 from app.services.identity_reviewed_recompute_state import (
@@ -68,6 +69,29 @@ def _focused_terminal_progress_and_workflow() -> tuple[dict, dict]:
 
 
 class ReviewWorkflowOrchestratorTests(unittest.TestCase):
+    def test_retry_commits_and_warms_the_generation_before_returning_workflow(self) -> None:
+        retryable = {
+            "allowed_actions": ["retry_review_recompute"],
+            "issues": {"normal_blocking": 0, "mixed_blocking": 0},
+        }
+        refreshed = {"workflow": {"issues": {"normal_blocking": 0}}}
+        with patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=retryable,
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ) as refresh:
+            result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
+
+        self.assertEqual(result, refreshed)
+        refresh.assert_called_once_with(
+            Path("/tmp/match"),
+            {"id": "m1"},
+            source="retry",
+            leave_hot_state_warm=True,
+        )
+
     def test_lightweight_identity_refresh_does_not_build_stats_or_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
             "app.services.review_workflow_orchestrator.rebuild_identity_seeded_candidate_assignments"
