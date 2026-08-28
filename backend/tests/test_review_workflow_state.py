@@ -15,6 +15,8 @@ from app.services.review_workflow_state import (
     _current_cached_progress,
     _issue_evidence,
 )
+from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
+from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_seeded_review_reduction import (
     build_initial_audit_completion_evidence,
 )
@@ -50,6 +52,8 @@ def _public_workflow_semantics(state: dict) -> dict:
         for key in (
             "available", "phase", "status", "current_step_id", "review_complete",
             "can_enter_report", "can_publish", "required_action", "issues",
+            "mandatory_operator_review_complete", "data_quality_ready_for_output",
+            "optional_max_available",
             "allowed_actions", "blockers", "render", "freshness",
         )
     } | {
@@ -70,8 +74,8 @@ class ReviewWorkflowStateTests(unittest.TestCase):
     def test_compact_workflow_matches_authoritative_lifecycle_semantics(self) -> None:
         complete = {"prepared": True, "complete": True, "completed": 8, "total": 8, "remaining": 0}
         base_progress = {
-            "schema_version": "2.2.0",
-            "policy": {"version": "coverage-driven-review:v9-scope-eligible-required"},
+            "schema_version": PROGRESS_SCHEMA_VERSION,
+            "policy": {"version": COVERAGE_POLICY_VERSION},
             "source_snapshot_digest": "snapshot",
             "summary": {"important_decisions_remaining": 0},
             "mixed_players": {"summary": {"unresolved": 0, "total": 0, "resolved": 0}},
@@ -374,6 +378,77 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertFalse(state["blockers"][0]["user_actionable"])
         exceptions = next(row for row in state["steps"] if row["id"] == "exceptions")
         self.assertEqual(exceptions["remaining"], 0)
+
+    def test_bounded_unavailable_team_residual_allows_finalize_after_mandatory_review(self) -> None:
+        issues = _issue_evidence({}, {
+            "summary": {"important_decisions_remaining": 0},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_readiness": {
+                "status": "ready_with_review",
+                "allows_finalize": True,
+                "blockers": [],
+                "team_attribution_residual": {
+                    "status": "accepted_within_tolerance",
+                    "observations": 193,
+                    "residual_budget_observations": 6_400,
+                },
+            },
+            "optional_audit": {"status": "available", "remaining_cases": 7},
+        })
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertTrue(state["mandatory_operator_review_complete"])
+        self.assertTrue(state["data_quality_ready_for_output"])
+        self.assertTrue(state["optional_max_available"])
+        self.assertEqual(state["phase"], "ready_to_finalize")
+        self.assertIn("finalize_identity", state["allowed_actions"])
+
+    def test_data_quality_residual_is_distinct_from_remaining_operator_work(self) -> None:
+        issues = _issue_evidence({}, {
+            "summary": {"important_decisions_remaining": 0},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{
+                    "code": "team_attribution_residual_exceeds_tolerance",
+                    "observations": 193,
+                    "residual_budget_observations": 10,
+                }],
+            },
+        })
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertTrue(state["mandatory_operator_review_complete"])
+        self.assertFalse(state["data_quality_ready_for_output"])
+        self.assertEqual(state["issues"]["blocking"], 0)
+        self.assertEqual(state["allowed_actions"], [])
+        self.assertEqual(state["required_action"]["type"], "coverage_evidence_unavailable")
+
+    def test_unmaterialized_team_evidence_keeps_a_bounded_remediation_action(self) -> None:
+        issues = _issue_evidence({}, {
+            "summary": {"important_decisions_remaining": 0},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "team_attribution_evidence_not_materialized"}],
+            },
+            "coverage_residuals": {
+                "U": {"non_actionable_required_team_uncertainty_cases": [{
+                    "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
+                }]},
+            },
+        })
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertTrue(state["mandatory_operator_review_complete"])
+        self.assertFalse(state["data_quality_ready_for_output"])
+        self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
+        self.assertEqual(state["required_action"]["type"], "retry_review_recompute")
 
     def test_empty_queue_with_ready_or_ready_with_review_coverage_can_finalize(self) -> None:
         for readiness_status in ("ready", "ready_with_review"):

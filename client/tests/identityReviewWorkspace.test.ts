@@ -12,6 +12,7 @@ import {
   hasOperatorReviewableVisualEvidence,
   identityReviewProgress,
   identityReviewStage,
+  reviewWorkflowErrorMessage,
   workflowAllows,
 } from '../src/utils/identityReviewWorkspace.ts';
 import {
@@ -90,7 +91,7 @@ test('Required and mandatory Mixed are peer navigation queues', () => {
   assert.match(workspace, /mandatoryReviewActive/);
   assert.match(workspace, /<ReviewedIdentityQueueTabs/);
   assert.match(workspace, /activeMandatoryQueue === 'mixed'/);
-  assert.match(tabs, /Pozostałe przypadki/);
+  assert.match(tabs, /Wymagane przypadki/);
   assert.match(tabs, /Zmieszani gracze/);
   assert.match(tabs, /workflowAllows\(workflow, 'review_mixed_players'\)/);
   assert.doesNotMatch(tabs, /saveMixed|saveReviewed|finalize/);
@@ -100,9 +101,50 @@ test('progress labels stay friendly and follow workflow step status', () => {
   const steps = identityReviewProgress(workflow({
     steps: [{ id: 'initial_audit', status: 'completed', completed: 5, total: 5, remaining: 0, locked_reason_code: null }],
   }));
-  assert.deepEqual(steps.map((step) => step.label), ['Rozpoznaj zawodników', 'Pozostałe przypadki', 'Zmieszani gracze', 'Przygotuj wynik', 'Sprawdź wideo']);
+  assert.deepEqual(steps.map((step) => step.label), ['Rozpoznaj zawodników', 'Wymagane przypadki', 'Zmieszani gracze', 'Przygotuj wynik', 'Sprawdź wideo']);
   assert.equal(steps[0].status, 'completed');
   assert.equal(steps[1].status, 'locked');
+});
+
+test('terminal data-quality state says operator review is complete, not that cases remain', () => {
+  const blocked = workflow({
+    phase: 'exceptions',
+    status: 'error',
+    mandatory_operator_review_complete: true,
+    data_quality_ready_for_output: false,
+    issues: {
+      blocking: 0,
+      important: 0,
+      optional: 0,
+      coverage_readiness_blocked: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        policy_version: 'test',
+        allows_finalize: false,
+        roster_scope: {},
+        blockers: [{ code: 'team_attribution_residual_exceeds_tolerance' }],
+        team_attribution_residual: {
+          status: 'exceeds_tolerance',
+          units: 9,
+          observations: 193,
+          residual_budget_observations: 10,
+          within_tolerance: false,
+          evidence_status_counts: { no_team_attribution_evidence: 9 },
+        },
+      },
+    },
+    blockers: [{
+      code: 'identity_coverage_unresolved_without_reviewable_evidence',
+      step_id: 'exceptions',
+      user_actionable: false,
+      details: {},
+    }],
+  });
+  const workspace = readFileSync(new URL('IdentityReviewWorkspace.tsx', new URL('../src/components/', import.meta.url)), 'utf8');
+
+  assert.match(reviewWorkflowErrorMessage(blocked), /przekracza bezpieczny limit/);
+  assert.match(workspace, /Wymagany Review zakończony/);
+  assert.match(workspace, /Nie ma już kolejnych bezpiecznych decyzji manualnych/);
 });
 
 test('published history never bypasses incomplete current review', () => {

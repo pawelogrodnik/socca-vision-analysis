@@ -168,7 +168,7 @@ test('an explicit Mixed to Required switch loads Required normally', async () =>
   try {
     const view = renderWorkspace(mandatoryWorkflow('mixed_players'));
     await waitFor(() => assert.ok(requests.some((url) => url.includes('/mixed-players'))));
-    fireEvent.click(view.getByRole('button', { name: /Pozostałe przypadki/ }));
+    fireEvent.click(view.getByRole('button', { name: /Wymagane przypadki/ }));
     await waitFor(() => assert.ok(
       requests.some((url) => url.includes('review-progress') && url.includes('queue=required')),
     ));

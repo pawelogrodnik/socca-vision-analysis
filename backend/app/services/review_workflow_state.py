@@ -649,6 +649,53 @@ def _blocker(
 
 def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None) -> dict[str, Any]:
     complete = status == "complete"
+    coverage_readiness_blocked = bool(issues.get("coverage_readiness_blocked"))
+    mandatory_operator_review_complete = bool(
+        initial.get("complete")
+        and not int(issues.get("normal_blocking") or issues.get("blocking") or 0)
+        and not int(issues.get("mixed_blocking") or 0)
+        and phase not in {"initial_audit", "unavailable"}
+        # A terminal data-quality state is specifically the case where the
+        # operator is done but output readiness is not. Other workflow errors
+        # (such as a failed recompute) must not masquerade as completion.
+        and (status != "error" or coverage_readiness_blocked)
+    )
+    data_quality_ready_for_output = bool(
+        mandatory_operator_review_complete and not coverage_readiness_blocked
+    )
+    optional_summary = issues.get("optional_audit_summary") or {}
+    optional_max_available = bool(
+        data_quality_ready_for_output
+        and str(optional_summary.get("status") or "") == "available"
+        and int(optional_summary.get("remaining_cases") or 0) > 0
+    )
+    public_issues = {
+        "blocking": int(issues.get("blocking") or 0),
+        "actionable_blocking": int(
+            issues.get("actionable_blocking") or issues.get("blocking") or 0
+        ),
+        "normal_blocking": int(issues.get("normal_blocking") or 0),
+        "mixed_blocking": int(issues.get("mixed_blocking") or 0),
+        "mixed_total": int(issues.get("mixed_total") or 0),
+        "mixed_resolved": int(issues.get("mixed_resolved") or 0),
+        "important": int(issues.get("important") or 0),
+        "semantic": int(issues.get("semantic") or 0),
+        "coverage": int(issues.get("coverage") or 0),
+        "optional": int(issues.get("optional") or 0),
+        "optional_audit": int(issues.get("optional_audit") or 0),
+        "coverage_readiness_blocked": coverage_readiness_blocked,
+        "team_attribution_evidence_not_materialized": bool(
+            issues.get("team_attribution_evidence_not_materialized")
+        ),
+        "overall_identity_blocked": bool(
+            issues.get("overall_identity_blocked")
+            or int(issues.get("blocking") or 0)
+        ),
+        "coverage_readiness": issues.get("coverage_readiness"),
+        "identity_coverage": issues.get("identity_coverage"),
+        "workload": issues.get("workload"),
+        "optional_audit_summary": optional_summary or None,
+    }
     return {
         "schema_version": WORKFLOW_SCHEMA_VERSION,
         "match_id": match_id,
@@ -657,11 +704,14 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "status": status,
         "current_step_id": phase if phase in STEP_IDS else "video_qa" if phase == "complete" else "finalize",
         "review_complete": complete,
+        "mandatory_operator_review_complete": mandatory_operator_review_complete,
+        "data_quality_ready_for_output": data_quality_ready_for_output,
+        "optional_max_available": optional_max_available,
         "can_enter_report": complete,
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "actionable_blocking": int(issues.get("actionable_blocking") or issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "optional_audit": int(issues.get("optional_audit") or 0), "coverage_readiness_blocked": bool(issues.get("coverage_readiness_blocked")), "overall_identity_blocked": bool(issues.get("overall_identity_blocked") or int(issues.get("blocking") or 0)), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload"), "optional_audit_summary": issues.get("optional_audit_summary")},
+        "issues": public_issues,
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

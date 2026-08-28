@@ -44,7 +44,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v9-scope-eligible-required"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v10-terminal-residual-readiness"
 OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
 COVERAGE_DEBT_POLICY_VERSION = "reviewed-identity-coverage-debt:v2-queue-observability"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
@@ -1565,24 +1565,74 @@ def _readiness(
         )
     if coverage_count:
         blockers.append({"code": "significant_named_coverage_debt", "count": coverage_count})
-    for team, units in non_actionable_team_uncertainty.items():
-        if units:
-            evidence_status_counts = Counter(
-                str(unit.get("team_attribution_evidence_status") or "no_safe_visual_evidence")
-                for unit in units
-            )
+    team_attribution_units = [
+        unit
+        for units in non_actionable_team_uncertainty.values()
+        for unit in units
+    ]
+    team_attribution_status_counts = Counter(
+        str(unit.get("team_attribution_evidence_status") or "no_safe_visual_evidence")
+        for unit in team_attribution_units
+    )
+    reliable_observations = int(coverage.get("reliable_observations") or 0)
+    # These units are exact final Review ownership scopes. Count them rather
+    # than inferring uncertainty from a previous snapshot's tentative team
+    # labels: the whole point of the residual is that no durable attribution
+    # is safe for these observations yet.
+    team_attribution_runs = runs_union(*[
+        unit.get("detected_pair_runs")
+        if isinstance(unit.get("detected_pair_runs"), dict)
+        else encode_pair_runs(unit.get("detected_pairs") or [])
+        for unit in team_attribution_units
+    ])
+    unknown_team_observations = count_pair_runs(team_attribution_runs)
+    # Reuse the existing 90% reviewed-observation tolerance rather than
+    # turning team attribution into an implicit 100% completion requirement.
+    # The budget applies globally because Team-U observations intentionally do
+    # not belong to either roster scope until a safe operator decision exists.
+    unknown_team_budget = max(
+        0,
+        reliable_observations
+        - target_named_observations(
+            reliable_observations,
+            REVIEWED_OBSERVATION_TARGET_RATIO,
+        ),
+    )
+    team_attribution_residual = {
+        "units": len(team_attribution_units),
+        "observations": unknown_team_observations,
+        "residual_budget_observations": unknown_team_budget,
+        "within_tolerance": unknown_team_observations <= unknown_team_budget,
+        "evidence_status_counts": dict(sorted(team_attribution_status_counts.items())),
+    }
+    if team_attribution_units:
+        if team_attribution_status_counts.get(
+            "team_attribution_evidence_not_materialized", 0
+        ):
+            # This is a recoverable materialization gap, not a claim that
+            # evidence is impossible. The workflow must offer its bounded
+            # recompute/evidence pass before displaying a terminal residual.
+            team_attribution_residual["status"] = "materialization_required"
             blockers.append(
                 {
-                    "code": "team_attribution_evidence_unavailable",
-                    "team_label": team,
-                    "units": len(units),
-                    "observations": sum(
-                        int(unit.get("detected_observation_count") or 0)
-                        for unit in units
-                    ),
-                    "evidence_status_counts": dict(sorted(evidence_status_counts.items())),
+                    "code": "team_attribution_evidence_not_materialized",
+                    **team_attribution_residual,
                 }
             )
+        elif unknown_team_observations > unknown_team_budget:
+            team_attribution_residual["status"] = "exceeds_tolerance"
+            blockers.append(
+                {
+                    "code": "team_attribution_residual_exceeds_tolerance",
+                    **team_attribution_residual,
+                }
+            )
+        else:
+            # Genuine no-safe-evidence residuals remain explicitly Team-U and
+            # stay out of unsafe stats; they are accepted only inside policy.
+            team_attribution_residual["status"] = "accepted_within_tolerance"
+    else:
+        team_attribution_residual["status"] = "none"
     for team, row in residual_by_team.items():
         scope = team_review_scope(match_doc, team)
         if scope == TEAM_STATS_ONLY:
@@ -1652,6 +1702,7 @@ def _readiness(
         "roster_scope": scopes,
         "identity_review_scope": identity_review_scope_read_model(match_doc),
         "blockers": blockers,
+        "team_attribution_residual": team_attribution_residual,
         "allows_finalize": status in {"ready", "ready_with_review"},
     }
 

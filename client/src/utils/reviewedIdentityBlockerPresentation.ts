@@ -15,7 +15,8 @@ export function teamAttributionBlockerMessage(
   readiness: ReviewedIdentityCoverageReadiness | null,
 ): string | null {
   const blocker = readiness?.blockers.find((item) => (
-    (item as TeamAttributionBlocker).code === 'team_attribution_evidence_unavailable'
+    ['team_attribution_evidence_unavailable', 'team_attribution_residual_exceeds_tolerance']
+      .includes(String((item as TeamAttributionBlocker).code || ''))
   )) as TeamAttributionBlocker | undefined;
   const units = positiveInteger(blocker?.units);
   const observations = positiveInteger(blocker?.observations);

@@ -13,7 +13,7 @@ test('explains unavailable team-attribution evidence with operator-facing counts
     allows_finalize: false,
     roster_scope: {},
     blockers: [{
-      code: 'team_attribution_evidence_unavailable',
+      code: 'team_attribution_residual_exceeds_tolerance',
       units: 27,
       observations: 809,
     }],

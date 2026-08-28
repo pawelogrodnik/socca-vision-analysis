@@ -64,6 +64,16 @@ class ReviewedMatchReportTests(unittest.TestCase):
                 "status": "ready_with_review",
                 "allows_finalize": True,
                 "blockers": [],
+                "team_attribution_residual": {
+                    "status": "accepted_within_tolerance",
+                    "observations": 3,
+                    "residual_budget_observations": 10,
+                    "within_tolerance": True,
+                    "units": 1,
+                    "evidence_status_counts": {
+                        "no_team_attribution_evidence": 1,
+                    },
+                },
             }
             self._write(root / "reviewed_stats_readiness.json", readiness)
 
@@ -73,6 +83,10 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(
                 report["identity_coverage_readiness"]["status"],
                 "ready_with_review",
+            )
+            self.assertEqual(
+                report["identity_coverage_readiness"]["team_attribution_residual"]["status"],
+                "accepted_within_tolerance",
             )
 
     def _write_fixture(self, root: Path) -> None:

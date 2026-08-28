@@ -22,7 +22,7 @@ export function ReviewedIdentityQueueTabs({ workflow, activeQueue, onSelect }: P
       aria-pressed={activeQueue === 'required'}
       disabled={!canOpenRequired}
       onClick={() => onSelect('required')}
-    >Pozostałe przypadki <span>{required}</span></button>
+    >Wymagane przypadki <span>{required}</span></button>
     <button
       type='button'
       className={activeQueue === 'mixed' ? 'active' : ''}

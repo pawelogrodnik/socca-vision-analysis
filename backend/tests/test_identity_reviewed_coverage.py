@@ -979,6 +979,75 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(cases[0]["candidate_subject_id"], "unknown-without-crops")
         self.assertIn("team_attribution_uncertain", cases[0]["reason_codes"])
 
+    def test_bounded_genuinely_unavailable_team_u_residual_does_not_block_finalize(self) -> None:
+        # Mirrors the observed terminal state: complete-roster A is already
+        # above 90% named, B is team-stats-only, and a tiny Team-U remainder
+        # has been evaluated but has no safe crop for an operator decision.
+        rows = [
+            _observation(
+                "a",
+                frame,
+                "A",
+                "confirmed" if frame < 950 else "unresolved",
+                "p1" if frame < 950 else None,
+            )
+            for frame in range(1_000)
+        ] + [
+            _observation("b", frame, "B", "unresolved", None)
+            for frame in range(47)
+        ] + [
+            _observation("u", frame, "U", "team_unknown", None)
+            for frame in range(3)
+        ]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        uncertain = _unit("unknown-without-crops", [("u", frame) for frame in range(3)], visual=False)
+        uncertain.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "operator_actionable": False,
+            "non_actionable_reason": "missing_visual_evidence",
+            "team_attribution_evidence_status": "no_team_attribution_evidence",
+        })
+
+        policy = apply_coverage_policy([uncertain], coverage, pair_index, match)
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+        residual = policy["readiness"]["team_attribution_residual"]
+        self.assertEqual(residual["status"], "accepted_within_tolerance")
+        self.assertEqual(residual["observations"], 3)
+        self.assertEqual(residual["residual_budget_observations"], 105)
+        self.assertEqual(coverage["per_team"]["A"]["named_observation_coverage"], 0.95)
+        self.assertEqual(coverage["per_team"]["B"]["named_coverage_status"], "not_required_by_scope")
+        self.assertEqual(coverage["per_team"]["U"]["team_known_observation_coverage"], 0.0)
+        self.assertEqual(coverage["team_known_observation_coverage"], 0.9971)
+        self.assertEqual(pair_index[("u", 0)]["team_label"], "U")
+        self.assertIsNone(pair_index[("u", 0)]["canonical_player_id"])
+
+    def test_unmaterialized_team_u_evidence_is_a_remediable_not_terminal_residual(self) -> None:
+        rows = [_observation("u", frame, "U", "team_unknown", None) for frame in range(3)]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        uncertain = _unit("not-materialized", [("u", frame) for frame in range(3)], visual=False)
+        uncertain.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "operator_actionable": False,
+            "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
+        })
+
+        policy = apply_coverage_policy([uncertain], coverage, pair_index, _scoped_match())
+
+        self.assertFalse(policy["readiness"]["allows_finalize"])
+        self.assertEqual(
+            policy["readiness"]["team_attribution_residual"]["status"],
+            "materialization_required",
+        )
+        self.assertEqual(
+            policy["readiness"]["blockers"][0]["code"],
+            "team_attribution_evidence_not_materialized",
+        )
+
     def test_unknown_case_becomes_sufficient_after_assigning_team_stats_only_team(self) -> None:
         rows = [_observation("u", frame, "U", "unresolved", None) for frame in range(100)]
         match = _scoped_match()
