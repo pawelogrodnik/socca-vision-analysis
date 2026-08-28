@@ -10,6 +10,9 @@ from app.services.identity_reviewed_output_jobs import reviewed_output_status_re
 from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_team_attribution_evidence import (
+    classify_team_attribution_evidence_status,
+)
 from app.services.identity_review_scope import (
     review_scope_dependency_matches,
 )
@@ -212,6 +215,7 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 if team_attribution_not_materialized
                 else {"type": "coverage_evidence_unavailable", "step_id": "exceptions"}
             ),
+            terminal_data_quality_error=True,
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -580,8 +584,10 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
     )
     coverage_residuals = (progress or {}).get("coverage_residuals") or {}
     team_attribution_evidence_not_materialized = any(
-        str(case.get("team_attribution_evidence_status") or "")
-        == "team_attribution_evidence_not_materialized"
+        classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        )
+        == "remediable_not_established"
         for residual in coverage_residuals.values()
         if isinstance(residual, dict)
         for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
@@ -647,8 +653,56 @@ def _blocker(
     }
 
 
-def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None) -> dict[str, Any]:
+def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None, *, terminal_data_quality_error: bool = False) -> dict[str, Any]:
     complete = status == "complete"
+    coverage_readiness_blocked = bool(issues.get("coverage_readiness_blocked"))
+    mandatory_operator_review_complete = bool(
+        initial.get("complete")
+        and not int(issues.get("normal_blocking") or issues.get("blocking") or 0)
+        and not int(issues.get("mixed_blocking") or 0)
+        and phase not in {"initial_audit", "unavailable"}
+        # An error means operator completion only when this exact,
+        # authoritative branch reached exhausted queues and final coverage
+        # readiness. Cached coverage flags on stale/technical errors cannot
+        # turn a required refresh into a terminal data-quality state.
+        and (status != "error" or terminal_data_quality_error)
+    )
+    data_quality_ready_for_output = bool(
+        mandatory_operator_review_complete and not coverage_readiness_blocked
+    )
+    optional_summary = issues.get("optional_audit_summary") or {}
+    optional_max_available = bool(
+        data_quality_ready_for_output
+        and str(optional_summary.get("status") or "") == "available"
+        and int(optional_summary.get("remaining_cases") or 0) > 0
+    )
+    public_issues = {
+        "blocking": int(issues.get("blocking") or 0),
+        "actionable_blocking": int(
+            issues.get("actionable_blocking") or issues.get("blocking") or 0
+        ),
+        "normal_blocking": int(issues.get("normal_blocking") or 0),
+        "mixed_blocking": int(issues.get("mixed_blocking") or 0),
+        "mixed_total": int(issues.get("mixed_total") or 0),
+        "mixed_resolved": int(issues.get("mixed_resolved") or 0),
+        "important": int(issues.get("important") or 0),
+        "semantic": int(issues.get("semantic") or 0),
+        "coverage": int(issues.get("coverage") or 0),
+        "optional": int(issues.get("optional") or 0),
+        "optional_audit": int(issues.get("optional_audit") or 0),
+        "coverage_readiness_blocked": coverage_readiness_blocked,
+        "team_attribution_evidence_not_materialized": bool(
+            issues.get("team_attribution_evidence_not_materialized")
+        ),
+        "overall_identity_blocked": bool(
+            issues.get("overall_identity_blocked")
+            or int(issues.get("blocking") or 0)
+        ),
+        "coverage_readiness": issues.get("coverage_readiness"),
+        "identity_coverage": issues.get("identity_coverage"),
+        "workload": issues.get("workload"),
+        "optional_audit_summary": optional_summary or None,
+    }
     return {
         "schema_version": WORKFLOW_SCHEMA_VERSION,
         "match_id": match_id,
@@ -657,11 +711,14 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "status": status,
         "current_step_id": phase if phase in STEP_IDS else "video_qa" if phase == "complete" else "finalize",
         "review_complete": complete,
+        "mandatory_operator_review_complete": mandatory_operator_review_complete,
+        "data_quality_ready_for_output": data_quality_ready_for_output,
+        "optional_max_available": optional_max_available,
         "can_enter_report": complete,
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "actionable_blocking": int(issues.get("actionable_blocking") or issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "optional_audit": int(issues.get("optional_audit") or 0), "coverage_readiness_blocked": bool(issues.get("coverage_readiness_blocked")), "overall_identity_blocked": bool(issues.get("overall_identity_blocked") or int(issues.get("blocking") or 0)), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload"), "optional_audit_summary": issues.get("optional_audit_summary")},
+        "issues": public_issues,
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

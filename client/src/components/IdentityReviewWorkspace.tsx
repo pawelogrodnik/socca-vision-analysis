@@ -14,6 +14,7 @@ import {
   identityReviewProgress,
   identityReviewStage,
   initialMandatoryQueue,
+  isTerminalDataQualityBlocker,
   reviewWorkflowErrorMessage,
   workflowAllows,
 } from '../utils/identityReviewWorkspace';
@@ -205,6 +206,11 @@ export function IdentityReviewWorkspace({
 
   const optionalAudit = liveOptionalAuditSummary || workflow?.issues.optional_audit_summary;
   const teamAName = matchTeamName(match.teams || [], 'A');
+  const acceptedTeamAttributionResidual = workflow?.issues.coverage_readiness
+    ?.team_attribution_residual?.status === 'accepted_within_tolerance'
+    ? workflow.issues.coverage_readiness.team_attribution_residual
+    : null;
+  const terminalDataQualityBlocker = isTerminalDataQualityBlocker(workflow);
 
   async function retry(action: 'retry_render' | 'retry_review_recompute') {
     if (!workflowAllows(workflow, action)) return;
@@ -243,7 +249,16 @@ export function IdentityReviewWorkspace({
     {!workflow && <p className='loading-line'><span className='spinner' /> Ładuję status review…</p>}
     {stage === 'unavailable' && workflow && <div className='status'>Review będzie dostępny po zakończeniu analizy meczu.</div>}
     {stage === 'error' && workflow && <div className='reviewed-stale-banner'>
-      <div><strong>{reviewWorkflowErrorMessage(workflow)}</strong><span>Możesz bezpiecznie ponowić tylko wymagane odświeżenie.</span></div>
+      <div>{terminalDataQualityBlocker ? <>
+        <strong>Wymagany Review zakończony</strong>
+        <span>{reviewWorkflowErrorMessage(workflow)} Nie ma już kolejnych bezpiecznych decyzji manualnych.</span>
+        <details><summary>Diagnostyka jakości danych</summary>
+          <span>Pozostałe nierozstrzygnięte obserwacje są zachowane jako nieznane i wyłączone z niepewnych statystyk.</span>
+        </details>
+      </> : <>
+        <strong>{reviewWorkflowErrorMessage(workflow)}</strong>
+        <span>Możesz bezpiecznie ponowić tylko wymagane odświeżenie.</span>
+      </>}</div>
       {workflowAllows(workflow, 'retry_review_recompute') && <button type='button' onClick={() => void retry('retry_review_recompute')} disabled={busy}>Spróbuj ponownie</button>}
       {workflowAllows(workflow, 'retry_render') && <button type='button' onClick={() => void retry('retry_render')} disabled={busy}>Spróbuj ponownie</button>}
     </div>}
@@ -322,6 +337,9 @@ export function IdentityReviewWorkspace({
         </p>}
         {optionalAudit?.status === 'available' && <p>Wymagany poziom jakości został osiągnięty. Możesz zakończyć Review teraz albo opcjonalnie zwiększyć dokładność indywidualnych statystyk.</p>}
         {optionalAudit?.status === 'safe_max_reached' && <p>✓ Bezpieczne maksimum osiągnięte. Nie ma więcej obserwacji, które można bezpiecznie przypisać przy obecnym materiale.</p>}
+        {acceptedTeamAttributionResidual && <p className='reviewed-residual-diagnostic'>
+          {acceptedTeamAttributionResidual.observations} obserwacji pozostało bez bezpiecznego przypisania drużyny. Mieszczą się w limicie jakości ({acceptedTeamAttributionResidual.residual_budget_observations}), pozostają oznaczone jako nieznane i nie trafiają do statystyk wymagających pewnej drużyny lub zawodnika.
+        </p>}
       </div>
       {optionalAudit?.status === 'available' && <button type='button' onClick={() => setShowOptionalAudit(true)}>
         Kontynuuj do MAX

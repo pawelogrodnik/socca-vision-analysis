@@ -33,6 +33,7 @@ from app.services.identity_reviewed_mixed_store import (
     render_mixed_review_evidence,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    classify_team_attribution_evidence_status,
     materialize_team_attribution_evidence,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
@@ -372,8 +373,10 @@ def _not_materialized_team_attribution_sources(
             if not isinstance(case, dict):
                 continue
             if (
-                str(case.get("team_attribution_evidence_status") or "")
-                == "team_attribution_evidence_not_materialized"
+                classify_team_attribution_evidence_status(
+                    case.get("team_attribution_evidence_status")
+                )
+                == "remediable_not_established"
             ):
                 key = _team_evidence_source_key(case)
                 if key is not None:

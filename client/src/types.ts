@@ -1810,6 +1810,9 @@ export type ReviewWorkflow = {
   status: 'unavailable' | 'action_required' | 'processing' | 'ready' | 'complete' | 'error';
   current_step_id: ReviewWorkflowStepId;
   review_complete: boolean;
+  mandatory_operator_review_complete?: boolean;
+  data_quality_ready_for_output?: boolean;
+  optional_max_available?: boolean;
   can_enter_report: boolean;
   can_publish: boolean;
   steps: ReviewWorkflowStep[];
@@ -1827,7 +1830,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
+  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; team_attribution_evidence_not_materialized?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -2123,6 +2126,14 @@ export type ReviewedIdentityCoverageReadiness = {
   policy_version: string;
   allows_finalize: boolean;
   blockers: Array<Record<string, unknown>>;
+  team_attribution_residual?: {
+    status: 'none' | 'materialization_required' | 'accepted_within_tolerance' | 'exceeds_tolerance';
+    units: number;
+    observations: number;
+    residual_budget_observations: number;
+    within_tolerance: boolean;
+    evidence_status_counts: Record<string, number>;
+  };
   roster_scope: Record<string, string>;
 };
 

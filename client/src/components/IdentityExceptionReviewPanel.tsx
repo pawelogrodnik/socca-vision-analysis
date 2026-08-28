@@ -542,7 +542,7 @@ export function IdentityExceptionReviewPanel({
   return <section className='identity-exception-review'>
     <header className='identity-exception-header'>
       <div className='identity-exception-heading'>
-        <h2>Pozostałe przypadki</h2>
+        <h2>{activeQueue === 'required' ? 'Wymagane przypadki' : 'Opcjonalny MAX'}</h2>
         <p>{activeQueue === 'required'
           ? 'Rozwiąż przypadki wymagane do zakończenia Review.'
           : `Pełny audyt tożsamości ${matchTeamName(match.teams || [], 'A')} jest dobrowolny i nie blokuje zakończenia Review.`}</p>

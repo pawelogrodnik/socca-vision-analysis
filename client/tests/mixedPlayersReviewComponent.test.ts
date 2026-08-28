@@ -695,7 +695,7 @@ test('lane-local temporal split shows and edits only the selected lane evidence'
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
 
-  assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' }));
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })));
   const laneImages = view.getAllByAltText('Podgląd wyłącznie wybranej ścieżki') as HTMLImageElement[];
   assert.equal(laneImages.length, 2);
   assert.ok(laneImages.every((image) => image.src.includes('/A-')));
@@ -750,6 +750,7 @@ test('lane refinement keeps the leading after-preview boundary instead of shifti
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })));
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' })));
   assert.ok(view.getByAltText('Lewy widok graniczny — podział następuje po tym widoku'));
