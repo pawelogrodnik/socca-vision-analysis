@@ -22,6 +22,9 @@ from app.services.identity_reviewed_progress import (
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
 )
+from app.services.identity_reviewed_team_attribution_evidence import (
+    materialize_team_attribution_evidence,
+)
 from app.services.review_workflow_orchestrator import finalize_review_for_qa
 from app.services.review_workflow_state import (
     WorkflowActionError,
@@ -288,6 +291,232 @@ class CanonicalStalePreflightRegressionTests(unittest.TestCase):
             render_stub.assert_called_once()
             # Fresh fingerprints were re-recorded for the same generation.
             self.assertIsNotNone(report.get("source_file_fingerprints"))
+
+    def test_accepted_terminal_team_u_residual_finalizes_without_stats_contamination(
+        self,
+    ) -> None:
+        """Exercise the real accepted-residual finalize transaction end to end.
+
+        This is deliberately not a client or mocked-workflow test.  The
+        compact preflight, authoritative refresh, coverage policy, snapshot,
+        progress and Reviewed stats all operate on durable fixture artifacts.
+        Only the expensive reviewed-video submission is replaced.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            match = _accepted_team_u_residual_fixture(root)
+            audit = patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=dict(COMPLETE_AUDIT_EVIDENCE),
+            )
+            with audit:
+                snapshot = finalize_reviewed_identity(root, match)
+                # The no-crop status comes from the real exact-source evidence
+                # builder; the U tracklet's deliberately too-small boxes make
+                # its evidence genuinely unavailable rather than missing.
+                evidence = materialize_team_attribution_evidence(root)
+                self.assertEqual(
+                    evidence["cases"][0]["status"],
+                    "no_team_attribution_evidence",
+                )
+                progress = build_reviewed_identity_progress(root, match)
+                _write(root / "reviewed_identity_progress.json", progress)
+
+                readiness = progress["coverage_readiness"]
+                residual = readiness["team_attribution_residual"]
+                self.assertTrue(readiness["allows_finalize"])
+                self.assertEqual(residual["status"], "accepted_within_tolerance")
+                self.assertEqual(residual["observations"], 3)
+                self.assertEqual(residual["residual_budget_observations"], 3)
+                self.assertTrue(residual["within_tolerance"])
+
+                preflight = build_cheap_finalize_preflight_state(root, match)
+                self.assertTrue(preflight["mandatory_operator_review_complete"])
+                self.assertTrue(preflight["data_quality_ready_for_output"])
+                self.assertIn("finalize_identity", preflight["allowed_actions"])
+
+                with patch(
+                    "app.services.review_workflow_orchestrator.load_initial_audit_completion_evidence",
+                    return_value=dict(COMPLETE_AUDIT_EVIDENCE),
+                ), patch(
+                    "app.services.identity_reviewed_stats.read_match_video_metadata",
+                    return_value={
+                        "fps": 25.0,
+                        "frame_count": 103,
+                        "duration_sec": 4.12,
+                        "source": "test",
+                        "filename": "fixture.mp4",
+                    },
+                ), patch(
+                    # Hot-state correction galleries are unrelated to this
+                    # terminal Team-U policy test and would otherwise attempt
+                    # to decode the intentionally non-video placeholder.
+                    "app.services.identity_reviewed_hot_state.render_mixed_review_evidence",
+                    return_value=set(),
+                ), patch(
+                    "app.services.review_workflow_orchestrator.generate_reviewed_output",
+                    return_value={"status": "queued", "job_key": "accepted-residual"},
+                ) as render:
+                    result = finalize_review_for_qa(root, match)
+
+            # The final, authoritative refresh independently retained the
+            # policy state.  A stale compact progress document alone would not
+            # satisfy this assertion.
+            workflow = result["workflow"]
+            self.assertIn("finalize_identity", workflow["allowed_actions"])
+            self.assertTrue(workflow["mandatory_operator_review_complete"])
+            self.assertTrue(workflow["data_quality_ready_for_output"])
+            render.assert_called_once()
+
+            refreshed_progress = _load(root / "reviewed_identity_progress.json")
+            refreshed_residual = refreshed_progress["coverage_readiness"][
+                "team_attribution_residual"
+            ]
+            self.assertEqual(refreshed_residual["status"], "accepted_within_tolerance")
+            self.assertEqual(refreshed_residual["observations"], 3)
+            self.assertEqual(refreshed_residual["residual_budget_observations"], 3)
+            self.assertTrue(refreshed_residual["within_tolerance"])
+            self.assertEqual(refreshed_progress["summary"]["important_decisions_remaining"], 0)
+            self.assertEqual(refreshed_progress["mixed_players"]["summary"]["unresolved"], 0)
+
+            final_snapshot = _load(root / "reviewed_identity_snapshot.json")
+            unknown_assignments = [
+                row
+                for row in final_snapshot["tracklet_assignments"]
+                if row["tracklet_id"] == "u-residual"
+            ]
+            self.assertEqual(len(unknown_assignments), 1)
+            self.assertEqual(unknown_assignments[0]["team_label"], "U")
+            self.assertIsNone(unknown_assignments[0]["canonical_player_id"])
+            self.assertEqual(
+                _load(root / "identity_roster_subject_review_decisions_shadow.json"),
+                {"decisions": [{"candidate_subject_id": "a-player", "decision": "assign_roster_player", "player_id": "p1"}]},
+            )
+
+            stats = _load(root / "reviewed_player_stats.json")
+            timeline = _load(root / "reviewed_player_timeline.json")
+            heatmaps = _load(root / "reviewed_player_heatmaps.json")
+            self.assertEqual([row["player_id"] for row in stats["players"]], ["p1"])
+            player = stats["players"][0]
+            # All player-dependent metrics are derived exclusively from the 27
+            # confirmed Team-A observations; Team-U is absent from rows,
+            # distance/speed/intensity, heatmap and average position alike.
+            self.assertEqual(player["confirmed_detected_observations"], 27)
+            self.assertEqual(player["detected_frames"], 27)
+            self.assertEqual(timeline["players"][0]["player_id"], "p1")
+            self.assertEqual(len(timeline["players"][0]["observations"]), 27)
+            self.assertEqual(heatmaps["heatmaps"][0]["player_id"], "p1")
+            self.assertEqual(heatmaps["heatmaps"][0]["samples"], 27)
+            self.assertNotIn("u-residual", json.dumps({"stats": stats, "timeline": timeline, "heatmaps": heatmaps}))
+
+            stats_readiness = _load(root / "reviewed_stats_readiness.json")
+            stats_residual = stats_readiness["coverage_readiness"][
+                "team_attribution_residual"
+            ]
+            self.assertEqual(stats_readiness["status"], "completed")
+            self.assertEqual(stats_residual["status"], "accepted_within_tolerance")
+            self.assertEqual(stats_residual["observations"], 3)
+            self.assertEqual(stats_residual["residual_budget_observations"], 3)
+            self.assertTrue(stats_residual["within_tolerance"])
+
+
+def _accepted_team_u_residual_fixture(root: Path) -> dict:
+    """Persist a minimal, production-shaped accepted Team-U terminal state."""
+    a_positions = [
+        {
+            "frame": frame,
+            "status": "detected",
+            "pitch_m": [float(frame), 10.0],
+            "smoothed_pitch_m": [float(frame), 10.0],
+            "bbox_xyxy": [10, 10, 30, 50],
+        }
+        for frame in range(27)
+    ]
+    # These are real on-pitch detected observations, but their exact source
+    # has no renderable team-attribution crop: width/height are below the
+    # evidence builder's safety floor. They must remain U, never become p1.
+    u_positions = [
+        {
+            "frame": frame,
+            "status": "detected",
+            "pitch_m": [float(frame), 20.0],
+            "smoothed_pitch_m": [float(frame), 20.0],
+            "bbox_xyxy": [10, 10, 11, 11],
+        }
+        for frame in range(100, 103)
+    ]
+    match = {
+        "id": "accepted-team-u-residual",
+        "status": "analyzed",
+        "teams": [
+            {
+                "id": "team-a",
+                "team_label": "A",
+                "players": [{"id": "p1", "name": "Named A", "number": "7"}],
+            },
+            {
+                "id": "team-b",
+                "team_label": "B",
+                "players": [{"id": "p2", "name": "Team B", "number": "9"}],
+            },
+        ],
+        "identity_review_scope": {
+            "teams": {"A": "complete_roster", "B": "team_stats_only"},
+        },
+    }
+    _write(root / "match.json", match)
+    _write(root / "analysis_report.json", {"status": "completed"})
+    # There are no eligible crop requests for the deliberately tiny Team-U
+    # boxes, so the renderer returns before opening this placeholder video.
+    # Its presence lets the evidence builder preserve the evaluated
+    # `no_team_attribution_evidence` status rather than reporting a missing
+    # video lifecycle error.
+    (root / "video.mp4").write_bytes(b"fixture-video-not-opened")
+    _write(root / "tracklets.json", {"tracklets": [
+        {
+            "tracklet_id": "a-confirmed",
+            "team_label": "A",
+            "team_id": "team-a",
+            "positions_m": a_positions,
+        },
+        {
+            "tracklet_id": "u-residual",
+            "team_label": "U",
+            "positions_m": u_positions,
+        },
+    ]})
+    _write(root / "identity_candidate_shadow.json", {"subjects": [
+        {"candidate_subject_id": "a-player", "tracklet_ids": ["a-confirmed"]},
+        {"candidate_subject_id": "u-player", "tracklet_ids": ["u-residual"]},
+    ]})
+    _write(root / "global_identity.json", {"slots": []})
+    _write(root / "stable_players.json", {"players": []})
+    _write(root / "identity_roster_subject_review_decisions_shadow.json", {
+        "decisions": [{
+            "candidate_subject_id": "a-player",
+            "decision": "assign_roster_player",
+            "player_id": "p1",
+        }],
+    })
+    _write(root / "identity_roster_subject_review_shadow.json", {"cards": [
+        {
+            "review_card_key": "a-player-card",
+            "candidate_subject_id": "a-player",
+            "team_label": "A",
+            "review_status": "reviewed",
+            "requires_operator_review": False,
+            "visual_evidence": {"anchor_crops": []},
+        },
+        {
+            "review_card_key": "u-player-card",
+            "candidate_subject_id": "u-player",
+            "team_label": "U",
+            "review_status": "no_visual_evidence",
+            "requires_operator_review": True,
+            "visual_evidence": {"anchor_crops": []},
+        },
+    ]})
+    return match
 
 
 def _fixture(root: Path) -> None:
