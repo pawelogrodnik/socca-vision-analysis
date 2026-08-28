@@ -170,6 +170,7 @@ from app.services.review_workflow_orchestrator import (
 from app.services.review_workflow_state import (
     WorkflowActionError,
     assert_workflow_action_allowed,
+    build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
 from app.services.json_publish_store import (
@@ -2008,7 +2009,10 @@ def get_reviewed_identity(match_id: str) -> dict[str, Any]:
 @app.get("/api/matches/{match_id}/review-workflow")
 def get_match_review_workflow(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
-    return get_review_workflow_state(path, read_match_meta(path))
+    # Normal browser reads must not parse the observation-level snapshot just
+    # to derive a workflow card. This compact path is conservative on stale
+    # generations and keeps authoritative recomputation at mutation/finalize.
+    return build_cheap_finalize_preflight_state(path, read_match_meta(path))
 
 
 @app.post("/api/matches/{match_id}/review-workflow/finalize")
@@ -2059,7 +2063,7 @@ def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/matches/{match_id}/review-workflow/reproject")
-def reproject_match_review_workflow(match_id: str) -> dict[str, Any]:
+def reproject_match_review_workflow(match_id: str, response: Response) -> dict[str, Any]:
     """Refresh durable Review projections after a structural Review mutation.
 
     This is deliberately separate from finalization and from the operator
@@ -2069,7 +2073,7 @@ def reproject_match_review_workflow(match_id: str) -> dict[str, Any]:
     """
     path = match_dir(match_id)
     try:
-        return refresh_review_after_identity_mutation(
+        refreshed = refresh_review_after_identity_mutation(
             path,
             read_match_meta(path),
             source="mixed_players_reproject",
@@ -2080,6 +2084,15 @@ def reproject_match_review_workflow(match_id: str) -> dict[str, Any]:
             operator_evidence=False,
             leave_hot_state_warm=True,
         )
+        performance = dict(refreshed.get("performance") or {})
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        # The in-process service retains full snapshot/progress data for
+        # authoritative callers. The browser needs only this bounded result.
+        return {"workflow": refreshed["workflow"], "performance": performance}
     except ReviewWorkflowRecomputeError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
 
@@ -2764,18 +2777,37 @@ def get_match_reviewed_identity_mixed_player_case(
 @app.post("/api/matches/{match_id}/reviewed-identity/mixed-players/resolve")
 def post_match_reviewed_identity_mixed_resolution(
     match_id: str,
+    response: Response,
     payload: dict[str, Any] = Body(...),
 ) -> dict[str, Any]:
     path = match_dir(match_id)
+    started = time.perf_counter()
     try:
-        state = get_review_workflow_state(path, read_match_meta(path))
+        gate_started = time.perf_counter()
+        match_document = read_match_meta(path)
+        state = build_cheap_finalize_preflight_state(path, match_document)
         assert_workflow_action_allowed(state, "review_mixed_players")
-        result = save_mixed_player_resolution(path, read_match_meta(path), payload)
+        workflow_gate_ms = round((time.perf_counter() - gate_started) * 1000, 1)
+        result = save_mixed_player_resolution(path, match_document, payload)
         # Resolving a staged marker creates/removes exact child targets.  Do
         # not let a browser retain a queue projected before that topology
         # change; the following progress read materializes it once.
         invalidate_review_hot_state(path)
-        return {**result, "review_state_rebuild_required": True}
+        performance = {
+            **dict(result.get("performance") or {}),
+            "workflow_gate_ms": workflow_gate_ms,
+            "total_ms": round((time.perf_counter() - started) * 1000, 1),
+        }
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        return {
+            **result,
+            "performance": performance,
+            "review_state_rebuild_required": True,
+        }
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:

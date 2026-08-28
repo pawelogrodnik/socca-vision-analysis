@@ -64,8 +64,24 @@ import type {
 import { ApiRequestError } from './lib/apiErrors';
 
 const API_BASE = import.meta.env?.DEV ? '' : (import.meta.env?.VITE_API_BASE_URL || '');
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
 export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method || 'GET').toUpperCase();
+  const requestKey = `${API_BASE}${path}`;
+  if (method === 'GET') {
+    const pending = inFlightGetRequests.get(requestKey);
+    if (pending) return pending as Promise<T>;
+    const operation = requestUncoalesced<T>(path, options).finally(() => {
+      inFlightGetRequests.delete(requestKey);
+    });
+    inFlightGetRequests.set(requestKey, operation);
+    return operation;
+  }
+  return requestUncoalesced<T>(path, options);
+}
+
+async function requestUncoalesced<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, options);

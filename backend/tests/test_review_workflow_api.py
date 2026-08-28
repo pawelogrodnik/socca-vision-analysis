@@ -14,7 +14,55 @@ FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for workflow API tests")
 class ReviewWorkflowApiTests(unittest.TestCase):
+    def test_workflow_get_uses_compact_durable_preflight_not_snapshot_workflow(self) -> None:
+        from app.main import get_match_review_workflow
+
+        compact = {"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.build_cheap_finalize_preflight_state", return_value=compact
+        ) as preflight, patch(
+            "app.main.get_review_workflow_state",
+            side_effect=AssertionError("normal workflow GET must not parse the snapshot"),
+        ):
+            response = get_match_review_workflow("m1")
+
+        self.assertIs(response, compact)
+        preflight.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"})
+
+    def test_mixed_save_uses_compact_authorization_and_reports_outer_timing(self) -> None:
+        from fastapi import Response
+        from app.main import post_match_reviewed_identity_mixed_resolution
+
+        saved = {"saved_case": {"case_id": "M1"}, "performance": {"total_ms": 3.0}}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.build_cheap_finalize_preflight_state",
+            return_value={"allowed_actions": ["review_mixed_players"]},
+        ) as preflight, patch(
+            "app.main.get_review_workflow_state",
+            side_effect=AssertionError("Mixed authorization must not load the heavyweight workflow"),
+        ), patch("app.main.save_mixed_player_resolution", return_value=saved) as save, patch(
+            "app.main.invalidate_review_hot_state"
+        ) as invalidate:
+            raw_response = Response()
+            response = post_match_reviewed_identity_mixed_resolution(
+                "m1",
+                raw_response,
+                {"candidate_subject_id": "subject"},
+            )
+
+        preflight.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"})
+        save.assert_called_once()
+        invalidate.assert_called_once_with(Path("/tmp/m1"))
+        self.assertTrue(response["review_state_rebuild_required"])
+        self.assertIn("workflow_gate_ms", response["performance"])
+        self.assertIn("total;dur=", raw_response.headers["server-timing"])
+
     def test_structural_mixed_reproject_is_not_a_finalize_request(self) -> None:
+        from fastapi import Response
         from app.main import reproject_match_review_workflow
 
         refreshed = {
@@ -28,13 +76,32 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         ), patch(
             "app.main.refresh_review_after_identity_mutation", return_value=refreshed
         ) as reproject, patch("app.main.finalize_review_for_qa") as finalize:
-            response = reproject_match_review_workflow("m1")
+            response = reproject_match_review_workflow("m1", Response())
 
         self.assertEqual(response["workflow"]["phase"], "exceptions")
         self.assertEqual(reproject.call_args.kwargs["source"], "mixed_players_reproject")
         self.assertFalse(reproject.call_args.kwargs["operator_evidence"])
         self.assertTrue(reproject.call_args.kwargs["leave_hot_state_warm"])
         finalize.assert_not_called()
+
+    def test_reproject_http_response_excludes_full_snapshot_and_internal_units(self) -> None:
+        from fastapi import Response
+        from app.main import reproject_match_review_workflow
+
+        refreshed = {
+            "snapshot": {"entities": [{"frame": 1}]},
+            "review_progress": {"_internal_review_units": [{"id": "hidden"}]},
+            "workflow": {"phase": "exceptions"},
+            "performance": {"progress_build_ms": 4.0, "total_ms": 12.5},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.refresh_review_after_identity_mutation", return_value=refreshed):
+            raw_response = Response()
+            payload = reproject_match_review_workflow("m1", raw_response)
+
+        self.assertEqual(payload, {"workflow": refreshed["workflow"], "performance": refreshed["performance"]})
+        self.assertIn("total;dur=12.5", raw_response.headers["server-timing"])
 
     def test_focused_mixed_read_renders_only_the_exact_case_before_returning_urls(self) -> None:
         from app.main import get_match_reviewed_identity_mixed_player_case

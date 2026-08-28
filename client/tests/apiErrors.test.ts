@@ -71,3 +71,46 @@ test('request preserves structured FastAPI conflict code', async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test('request coalesces only identical pending GETs and clears them afterwards', async () => {
+  const originalFetch = globalThis.fetch;
+  let resolve!: (response: Response) => void;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls > 1) {
+      return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Promise<Response>((done) => { resolve = done; });
+  };
+  try {
+    const first = request<{ ok: boolean }>('/api/same');
+    const second = request<{ ok: boolean }>('/api/same');
+    assert.equal(calls, 1);
+    resolve(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
+    assert.deepEqual(await first, { ok: true });
+    assert.deepEqual(await second, { ok: true });
+    await request('/api/same');
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('request never coalesces mutations', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    await Promise.all([
+      request('/api/mutation', { method: 'POST' }),
+      request('/api/mutation', { method: 'POST' }),
+    ]);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -590,10 +590,10 @@ export function MixedPlayersReviewPanel({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [busy, hasUnsavedChanges, index, queue]);
 
-  if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
+  if (busy && !queue) return <p className='loading-line' role='status'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
   if (focusMissing) return <section className='identity-exception-review'><div className='status error'><strong>Nie można bezpiecznie otworzyć wskazanego przypadku Mixed.</strong><p>{message}</p></div></section>;
   if (reprojectFailed) return <section className='identity-exception-review'><div className='status error'><strong>Podział został zapisany, ale kolejka Review wymaga odświeżenia.</strong><p>{message}</p><button type='button' onClick={() => void retryStructuralReproject()} disabled={busy}>Spróbuj odświeżyć Review</button></div></section>;
-  if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className='status'>{message}</p>}</section>;
+  if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className={busy ? 'loading-line' : 'status'} role='status'>{busy && <span className='spinner' />} {message}</p>}</section>;
   if (reviewCase.scope_status === 'stale_or_unclassifiable_blocking') return <section className='identity-exception-review mixed-player-review'>
     <div className='status'><strong>Nie można bezpiecznie odtworzyć źródła Mixed.</strong><p>Przypadek nadal blokuje Review. Odśwież lub uruchom bezpieczne przeliczenie Review; nie przypisuj tej historycznej własności na podstawie niepełnych danych.</p></div>
   </section>;
@@ -653,6 +653,7 @@ export function MixedPlayersReviewPanel({
         <span>{reviewCase.observation_count} wykrytych obserwacji</span>
       </div>
     </header>
+    {busy && <p className='loading-line' role='status'><span className='spinner' /> {message || 'Zapisuję i synchronizuję Review…'}</p>}
     {reviewCase.reviewed_complex && <div className='mixed-complex-reviewed' role='status'>
       <strong>⚠ Przejrzano: brak prostego podziału czasowego</strong>
       <span>Przypadek nadal wymaga rozwiązania. Możesz spróbować podziału ponownie albo pozostawić go jako złożony.</span>

@@ -888,7 +888,7 @@ def operator_mixed_targets(
     targets: list[dict[str, Any]] = []
     for marker in document.get("cases") or []:
         if str(marker.get("resolution_model") or "") == "concurrent_lanes":
-            targets.extend(_operator_concurrent_lane_targets(match_path, marker, cards))
+            targets.extend(operator_concurrent_targets_for_marker(match_path, marker, cards))
             continue
         split_frames = sorted({int(value) for value in marker.get("split_after_frames") or []})
         if not split_frames:
@@ -957,11 +957,17 @@ def operator_mixed_targets(
     return targets
 
 
-def _operator_concurrent_lane_targets(
+def operator_concurrent_targets_for_marker(
     match_path: Path,
     marker: dict[str, Any],
-    cards: dict[str, dict[str, Any]],
+    cards: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    if cards is None:
+        cards = {
+            str(row.get("candidate_subject_id")): row
+            for row in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+            if row.get("candidate_subject_id")
+        }
     subject_id = str(marker.get("candidate_subject_id") or "")
     observations = observations_for_case(match_path, marker)
     if not observations:

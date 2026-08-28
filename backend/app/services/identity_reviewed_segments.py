@@ -58,7 +58,10 @@ ALLOWED_ACTIONS = frozenset(
 def build_segment_review_document(
     match_path: Path,
     match_doc: dict[str, Any],
+    *,
+    performance: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     tracklets_doc = _load(match_path / "tracklets.json")
     subjects_doc = _load(match_path / "identity_candidate_shadow.json")
     global_doc = _load(match_path / "global_identity.json")
@@ -230,6 +233,7 @@ def build_segment_review_document(
                 "requires_confirmation": True,
             }
 
+    operator_targets_started = time.perf_counter()
     for target in operator_mixed_targets(match_path):
         target_id = str(target["review_target_id"])
         decision = stored_decisions.get(target_id)
@@ -244,6 +248,12 @@ def build_segment_review_document(
         target["decision_status"] = "reviewed" if decision_current else "pending"
         target["stale_decision"] = bool(decision and not decision_current)
         targets.append(target)
+
+    if performance is not None:
+        performance["segment_review_operator_targets_ms"] = round(
+            (time.perf_counter() - operator_targets_started) * 1000,
+            1,
+        )
 
     _attach_boundary_evidence(targets)
 
@@ -301,6 +311,11 @@ def build_segment_review_document(
         },
     }
     write_identity_json_atomic(match_path / REVIEW_FILENAME, document)
+    if performance is not None:
+        performance["segment_review_build_ms"] = round(
+            (time.perf_counter() - started) * 1000,
+            1,
+        )
     return document
 
 
