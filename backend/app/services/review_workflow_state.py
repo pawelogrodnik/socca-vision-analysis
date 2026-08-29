@@ -9,7 +9,10 @@ from typing import Any
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
-from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    required_queue_descriptor,
+)
 from app.services.identity_reviewed_team_attribution_evidence import (
     classify_team_attribution_evidence_status,
 )
@@ -71,6 +74,9 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     )
     team_attribution_not_materialized = bool(
         issues.get("team_attribution_evidence_not_materialized")
+    )
+    team_attribution_technical_failure = bool(
+        issues.get("team_attribution_evidence_technical_failure")
     )
     render_status = str(render.get("status") or "missing")
     render_current = bool(freshness.get("reviewed_output_current"))
@@ -189,15 +195,25 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             "identity_coverage_unresolved_without_reviewable_evidence",
             details,
         )
+        blocker_code = (
+            "team_attribution_evidence_technical_failure"
+            if team_attribution_technical_failure
+            else "identity_coverage_unresolved_without_reviewable_evidence"
+        )
         blockers.append(
             _blocker(
-                "identity_coverage_unresolved_without_reviewable_evidence",
+                blocker_code,
                 "exceptions",
                 details,
-                user_actionable=team_attribution_not_materialized,
+                user_actionable=team_attribution_not_materialized and not team_attribution_technical_failure,
             )
         )
-        allowed = ["retry_review_recompute"] if team_attribution_not_materialized else []
+        # Technical evidence failures are fail-closed for finalization, but
+        # not permanent dead-ends: after restoring the video/artifact an
+        # operator can explicitly re-run the server-authorized recompute.
+        allowed = ["retry_review_recompute"] if (
+            team_attribution_not_materialized or team_attribution_technical_failure
+        ) else []
         return _state(
             match_id,
             True,
@@ -212,10 +228,17 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             render,
             (
                 {"type": "retry_review_recompute", "step_id": "exceptions"}
-                if team_attribution_not_materialized
-                else {"type": "coverage_evidence_unavailable", "step_id": "exceptions"}
+                if team_attribution_not_materialized and not team_attribution_technical_failure
+                else {
+                    "type": (
+                        "coverage_evidence_technical_failure"
+                        if team_attribution_technical_failure
+                        else "coverage_evidence_unavailable"
+                    ),
+                    "step_id": "exceptions",
+                }
             ),
-            terminal_data_quality_error=True,
+            terminal_data_quality_error=not team_attribution_technical_failure,
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -574,7 +597,17 @@ def _current_cached_progress_for_snapshot_digest(
 
 def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, Any]:
     progress_summary = (progress or {}).get("summary") or {}
-    pending = int(progress_summary.get("important_decisions_remaining") or 0)
+    required_queue = required_queue_descriptor(progress)
+    # The public Required queue owns this count. A stale summary or a
+    # technical remediation residual must never become fake operator debt.
+    # Tiny legacy/isolated fixtures can omit the queue entirely; production
+    # progress always persists it. Retain their diagnostic fallback without
+    # allowing a real empty queue to inherit a stale summary count.
+    pending = (
+        int(required_queue["count"])
+        if isinstance(progress, dict) and "next_cases" in progress
+        else int(progress_summary.get("important_decisions_remaining") or 0)
+    )
     mixed = (progress or {}).get("mixed_players", {}).get("summary", {})
     mixed_pending = int(mixed.get("unresolved") or 0)
     coverage_readiness = (progress or {}).get("coverage_readiness")
@@ -593,6 +626,16 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
         if isinstance(case, dict)
     )
+    team_attribution_evidence_technical_failure = any(
+        classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        )
+        == "technical_failure"
+        for residual in coverage_residuals.values()
+        if isinstance(residual, dict)
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
+        if isinstance(case, dict)
+    )
     # The progress artifact is the authoritative operator queue.  The reviewed
     # snapshot can still report technical conflicts after an operator has made
     # every available decision (for example a multi-slot tracker fragment).
@@ -604,10 +647,12 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         "actionable_blocking": pending + mixed_pending,
         "coverage_readiness_blocked": coverage_readiness_blocked,
         "team_attribution_evidence_not_materialized": team_attribution_evidence_not_materialized,
+        "team_attribution_evidence_technical_failure": team_attribution_evidence_technical_failure,
         "overall_identity_blocked": bool(
             pending or mixed_pending or coverage_readiness_blocked
         ),
         "normal_blocking": pending,
+        "required_queue": required_queue,
         "mixed_blocking": mixed_pending,
         "important": pending + mixed_pending,
         "semantic": int(progress_summary.get("semantic_decisions_remaining") or 0),
@@ -682,6 +727,7 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
             issues.get("actionable_blocking") or issues.get("blocking") or 0
         ),
         "normal_blocking": int(issues.get("normal_blocking") or 0),
+        "required_queue": dict(issues.get("required_queue") or {}),
         "mixed_blocking": int(issues.get("mixed_blocking") or 0),
         "mixed_total": int(issues.get("mixed_total") or 0),
         "mixed_resolved": int(issues.get("mixed_resolved") or 0),
@@ -693,6 +739,9 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "coverage_readiness_blocked": coverage_readiness_blocked,
         "team_attribution_evidence_not_materialized": bool(
             issues.get("team_attribution_evidence_not_materialized")
+        ),
+        "team_attribution_evidence_technical_failure": bool(
+            issues.get("team_attribution_evidence_technical_failure")
         ),
         "overall_identity_blocked": bool(
             issues.get("overall_identity_blocked")

@@ -83,6 +83,12 @@ export function reviewWorkflowErrorMessage(workflow: ReviewWorkflow): string {
   if (code === 'review_progress_missing' || code === 'review_progress_stale') {
     return 'Review wymaga odświeżenia przed kolejną decyzją.';
   }
+  if (
+    code === 'team_attribution_evidence_technical_failure'
+    || code === 'coverage_evidence_technical_failure'
+  ) {
+    return 'Nie udało się przygotować bezpiecznych widoków dla nierozstrzygniętych obserwacji. Sprawdź dostępność pliku wideo i artefaktów analizy, a następnie spróbuj ponownie.';
+  }
   if (code === 'identity_coverage_unresolved_without_reviewable_evidence') {
     const residual = workflow.issues.coverage_readiness?.team_attribution_residual;
     if (residual?.status === 'materialization_required') {

@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached_or
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_roster_anchor_crop_renderer import (
@@ -45,6 +46,21 @@ TERMINAL_UNAVAILABLE_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
     "insufficient_team_attribution_evidence",
     "no_team_attribution_evidence",
 })
+# These statuses mean the exact source was evaluated but the application could
+# not provide its evidence.  They are deliberately not ordinary "no safe
+# evidence" outcomes: accepting them would hide a broken video/artifact path
+# behind the Team-U residual tolerance.
+TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
+    "source_video_unavailable",
+    "team_attribution_crops_unavailable",
+    "team_attribution_evidence_recovery_incomplete",
+    "team_attribution_evidence_materialization_failed",
+    "focused_source_subject_missing",
+    "focused_source_pairs_missing",
+    "focused_source_pairs_stale",
+    "focused_source_digest_mismatch",
+    "focused_source_not_reviewable",
+})
 
 
 def classify_team_attribution_evidence_status(value: object) -> str:
@@ -58,15 +74,74 @@ def classify_team_attribution_evidence_status(value: object) -> str:
     status = str(value or "").strip()
     if status in TERMINAL_UNAVAILABLE_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
         return "terminal_unavailable"
+    if status in TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
+        return "technical_failure"
     return "remediable_not_established"
 
 
 def normalized_team_attribution_evidence_status(value: object) -> str:
     """Return a safe public status for readiness diagnostics."""
     status = str(value or "").strip()
-    if classify_team_attribution_evidence_status(status) == "terminal_unavailable":
+    if classify_team_attribution_evidence_status(status) in {
+        "terminal_unavailable",
+        "technical_failure",
+    }:
         return status
     return TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED
+
+
+def mark_team_attribution_evidence_technical_failure(
+    match_path: Path,
+    focused_sources: list[dict[str, Any]],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    """Durably mark only exact failed focused sources as technical failures.
+
+    A retry must never return success while an exact remediation source is
+    still merely "not materialized".  This helper preserves every unrelated
+    cached case and writes a diagnostic status only for the owned source keys.
+    """
+    if status not in TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES:
+        raise ValueError(f"unsupported team-attribution technical status: {status}")
+    document = load_team_attribution_evidence(match_path)
+    requested_keys = {_source_key(row) for row in focused_sources if isinstance(row, dict)}
+    cases = [dict(row) for row in document.get("cases") or [] if isinstance(row, dict)]
+    existing_keys = {_case_key(row) for row in cases}
+    for row in cases:
+        if _case_key(row) in requested_keys:
+            row["status"] = status
+            row["rendered_anchor_crops"] = []
+    for source in focused_sources:
+        if not isinstance(source, dict) or _source_key(source) in existing_keys:
+            continue
+        cases.append({
+            "candidate_subject_id": source.get("candidate_subject_id"),
+            "source_ownership_digest": source.get("source_ownership_digest"),
+            "scope_kind": source.get("scope_kind"),
+            "review_target_id": source.get("review_target_id"),
+            "continuity_group_id": source.get("continuity_group_id"),
+            "source_team_label": source.get("source_team_label"),
+            "detected_observation_count": len(source.get("detected_pairs") or []),
+            "status": status,
+            "anchor_crops": [],
+            "rendered_anchor_crops": [],
+        })
+    cases.sort(key=_case_sort_key)
+    updated = {
+        **document,
+        "schema_version": document.get("schema_version") or SCHEMA_VERSION,
+        "cases": cases,
+        "summary": {
+            "cases": len(cases),
+            "source_observations": sum(int(row.get("detected_observation_count") or 0) for row in cases),
+            "reviewable_cases": sum(row.get("status") == "ready_for_team_attribution" for row in cases),
+            "unavailable_cases": sum(row.get("status") != "ready_for_team_attribution" for row in cases),
+            "rendered_reviewable_cases": sum(len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE for row in cases),
+        },
+    }
+    write_identity_json_atomic(match_path / FILENAME, updated)
+    return updated
 
 
 def load_team_attribution_evidence(match_path: Path) -> dict[str, Any]:
@@ -252,6 +327,14 @@ def materialize_team_attribution_evidence(
         candidate_subject_ids=candidate_subject_ids,
         focused_sources=focused_sources,
     )
+    if focused_sources is not None:
+        _append_focused_source_diagnostics(
+            document,
+            focused_sources,
+            candidate_document,
+            tracklets_document,
+            roster_review_document,
+        )
     video_path = match_path / "video.mp4"
     existing = load_team_attribution_evidence(match_path)
     if candidate_subject_ids is None and focused_sources is None and _cached_evidence_is_current(
@@ -286,7 +369,8 @@ def materialize_team_attribution_evidence(
                 row["status"] = "team_attribution_crops_unavailable"
     else:
         for row in document.get("cases") or []:
-            row["status"] = "source_video_unavailable"
+            if row.get("status") == "ready_for_team_attribution":
+                row["status"] = "source_video_unavailable"
     document["summary"]["rendered_reviewable_cases"] = sum(
         len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE
         for row in document.get("cases") or []
@@ -299,6 +383,103 @@ def materialize_team_attribution_evidence(
         )
     write_identity_json_atomic(match_path / FILENAME, document)
     return document
+
+
+def _append_focused_source_diagnostics(
+    document: dict[str, Any],
+    focused_sources: list[dict[str, Any]],
+    candidate_document: dict[str, Any],
+    tracklets_document: dict[str, Any],
+    roster_review_document: dict[str, Any],
+) -> None:
+    """Make every exact focused-source rejection durable and observable.
+
+    Focused recovery is a terminal safety path. A source emitted by progress
+    cannot disappear because its current raw ownership no longer normalizes;
+    it must receive a specific technical outcome before the one reproject.
+    """
+    subjects = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in candidate_document.get("subjects") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    tracklets = {
+        str(row.get("tracklet_id") or ""): row
+        for row in tracklets_document.get("tracklets") or []
+        if isinstance(row, dict) and row.get("tracklet_id")
+    }
+    cards = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in roster_review_document.get("cards") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    present = {_case_key(row) for row in document.get("cases") or [] if isinstance(row, dict)}
+    for source in focused_sources:
+        if not isinstance(source, dict) or _source_key(source) in present:
+            continue
+        status = _focused_source_failure_status(source, subjects, tracklets, cards)
+        document.setdefault("cases", []).append({
+            "candidate_subject_id": source.get("candidate_subject_id"),
+            "scope_kind": source.get("scope_kind"),
+            "review_target_id": source.get("review_target_id"),
+            "continuity_group_id": source.get("continuity_group_id"),
+            "source_team_label": source.get("source_team_label") or "U",
+            "source_ownership_digest": source.get("source_ownership_digest"),
+            "detected_observation_count": len(source.get("detected_pairs") or []),
+            "source_observation_pairs": [list(pair) for pair in source.get("detected_pairs") or []],
+            "status": status,
+            "materialization_reason": status,
+            "selected_crop_count": 0,
+            "minimum_required": MIN_CROPS_PER_CASE,
+            "anchor_crops": [],
+            "rendered_anchor_crops": [],
+            "rejected_observations": {status: 1},
+            "safety": {
+                "exact_subject_observations_only": True,
+                "does_not_assign_team_automatically": True,
+                "does_not_assign_roster_player_automatically": True,
+                "does_not_mutate_canonical_identity": True,
+            },
+        })
+    document["cases"] = sorted(
+        [row for row in document.get("cases") or [] if isinstance(row, dict)],
+        key=_case_sort_key,
+    )
+
+
+def _focused_source_failure_status(
+    source: dict[str, Any],
+    subjects: dict[str, dict[str, Any]],
+    tracklets: dict[str, dict[str, Any]],
+    cards: dict[str, dict[str, Any]],
+) -> str:
+    subject_id = str(source.get("candidate_subject_id") or "")
+    subject = subjects.get(subject_id)
+    if subject is None:
+        return "focused_source_subject_missing"
+    try:
+        pairs = sorted({
+            (str(pair[0]), int(pair[1]))
+            for pair in source.get("detected_pairs") or []
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2
+        })
+    except (TypeError, ValueError):
+        return "focused_source_pairs_missing"
+    if not pairs:
+        return "focused_source_pairs_missing"
+    if not set(pairs).issubset(set(_source_pairs(subject, tracklets))):
+        return "focused_source_pairs_stale"
+    if source_ownership_digest(subject_id, pairs) != str(source.get("source_ownership_digest") or ""):
+        return "focused_source_digest_mismatch"
+    card = cards.get(subject_id) or {}
+    if (
+        str(card.get("review_status") or "") != "no_visual_evidence"
+        or card.get("requires_operator_review") is False
+    ):
+        return "focused_source_not_reviewable"
+    # The normal builder should have emitted this source. Keep the generic
+    # safety fallback only for impossible future implementation drift.
+    return "team_attribution_evidence_recovery_incomplete"
 
 
 def _merge_focused_evidence(
@@ -665,11 +846,62 @@ def _round_or_none(value: Any, digits: int) -> float | None:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return {}
+    value = load_json_cached_or(path, {})
     return value if isinstance(value, dict) else {}
+
+
+def resolve_current_team_attribution_sources(
+    match_path: Path,
+    descriptors: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    """Resolve durable technical descriptors to current exact source pairs.
+
+    Durable progress intentionally omits raw observation pairs. Whole-subject
+    ownership is safely recoverable from the current canonical subject and
+    tracklet inputs only when the recomputed pair digest equals the persisted
+    evidence digest. Other scopes or any mismatch return ``None`` so callers
+    use the established full authoritative-progress fallback.
+    """
+    if not descriptors:
+        return None
+    candidate_document = _load(match_path / "identity_candidate_shadow.json")
+    tracklets_document = _load(match_path / "tracklets.json")
+    subjects = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in candidate_document.get("subjects") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    tracklets = {
+        str(row.get("tracklet_id") or ""): row
+        for row in tracklets_document.get("tracklets") or []
+        if isinstance(row, dict) and row.get("tracklet_id")
+    }
+    resolved: list[dict[str, Any]] = []
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict):
+            return None
+        if str(descriptor.get("scope_kind") or "whole_subject") != "whole_subject":
+            return None
+        subject_id = str(descriptor.get("candidate_subject_id") or "")
+        expected_digest = str(
+            descriptor.get("team_attribution_evidence_source_digest") or ""
+        )
+        subject = subjects.get(subject_id)
+        if not subject_id or not expected_digest or not isinstance(subject, dict):
+            return None
+        pairs = _source_pairs(subject, tracklets)
+        if not pairs or source_ownership_digest(subject_id, pairs) != expected_digest:
+            return None
+        resolved.append({
+            "candidate_subject_id": subject_id,
+            "scope_kind": "whole_subject",
+            "review_target_id": None,
+            "continuity_group_id": None,
+            "source_team_label": subject.get("team_label"),
+            "source_ownership_digest": expected_digest,
+            "detected_pairs": pairs,
+        })
+    return sorted(resolved, key=_case_sort_key)
 
 
 def _source_inputs_digest(

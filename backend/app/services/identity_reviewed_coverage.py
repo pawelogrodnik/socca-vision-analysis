@@ -1588,6 +1588,13 @@ def _readiness(
         == "remediable_not_established"
         for unit in team_attribution_units
     )
+    team_attribution_has_technical_failure = any(
+        classify_team_attribution_evidence_status(
+            unit.get("team_attribution_evidence_status")
+        )
+        == "technical_failure"
+        for unit in team_attribution_units
+    )
     reliable_observations = int(coverage.get("reliable_observations") or 0)
     # These units are exact final Review ownership scopes. Count them rather
     # than inferring uncertainty from a previous snapshot's tentative team
@@ -1620,7 +1627,18 @@ def _readiness(
         "evidence_status_counts": dict(sorted(team_attribution_status_counts.items())),
     }
     if team_attribution_units:
-        if team_attribution_requires_materialization:
+        if team_attribution_has_technical_failure:
+            # A video/render failure is not evidence that the operator cannot
+            # decide. Keep it visible and fail closed rather than spending the
+            # ordinary Team-U residual tolerance.
+            team_attribution_residual["status"] = "technical_evidence_failure"
+            blockers.append(
+                {
+                    "code": "team_attribution_evidence_technical_failure",
+                    **team_attribution_residual,
+                }
+            )
+        elif team_attribution_requires_materialization:
             # This is a recoverable materialization gap, not a claim that
             # evidence is impossible. The workflow must offer its bounded
             # recompute/evidence pass before displaying a terminal residual.

@@ -169,6 +169,36 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         self.assertEqual(payload, {"workflow": refreshed["workflow"], "performance": refreshed["performance"]})
         self.assertIn("total;dur=12.5", raw_response.headers["server-timing"])
 
+    def test_retry_http_response_is_compact_and_has_server_timing(self) -> None:
+        from fastapi import Response
+        from app.main import retry_match_review_recompute
+
+        refreshed = {
+            "snapshot": {"entities": [{"frame": 1}]},
+            "review_progress": {"_internal_review_units": [{"id": "hidden"}]},
+            "completion_evidence": {"observation_keys": ["hidden"]},
+            "workflow": {"phase": "exceptions"},
+            "performance": {
+                "progress_build_ms": 4.0,
+                "retry_preflight_ms": 1.5,
+                "retry_refresh_ms": 11.0,
+                "endpoint_total_ms": 12.5,
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.retry_review_recompute", return_value=refreshed):
+            raw_response = Response()
+            payload = retry_match_review_recompute("m1", raw_response)
+
+        self.assertEqual(payload, {"workflow": refreshed["workflow"], "performance": refreshed["performance"]})
+        self.assertNotIn("snapshot", payload)
+        self.assertNotIn("review_progress", payload)
+        self.assertNotIn("completion_evidence", payload)
+        self.assertNotIn("_internal_review_units", payload)
+        self.assertIn("endpoint_total;dur=12.5", raw_response.headers["server-timing"])
+        self.assertIn("retry_preflight;dur=1.5", raw_response.headers["server-timing"])
+
     def test_focused_mixed_read_renders_only_the_exact_case_before_returning_urls(self) -> None:
         from app.main import get_match_reviewed_identity_mixed_player_case
 

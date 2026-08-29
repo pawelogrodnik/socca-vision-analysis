@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
 from app.main import get_artifact
@@ -13,6 +14,7 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     build_team_attribution_evidence,
     evidence_status_for_unit,
     materialize_team_attribution_evidence,
+    resolve_current_team_attribution_sources,
     source_ownership_digest,
     visual_evidence_for_unit,
 )
@@ -176,16 +178,38 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
     def test_generated_team_attribution_crop_is_available_through_match_artifact_route(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            relative = Path("team_attribution_evidence") / "shadow-u-a1b2c3d4e5f60708" / "01_f000001.jpg"
+            relatives = [
+                Path("team_attribution_evidence") / subject / "a1b2c3d4e5f60708" / "01_f000001.jpg"
+                for subject in (
+                    "shadow-a-a1b2c3d4e5f60708",
+                    "shadow-b-a1b2c3d4e5f60708",
+                    "shadow-u-a1b2c3d4e5f60708",
+                )
+            ]
+            for relative in relatives:
+                artifact = root / relative
+                artifact.parent.mkdir(parents=True)
+                artifact.write_bytes(b"jpeg")
+
+            with patch("app.main.match_dir", return_value=root):
+                responses = [get_artifact("match", str(relative)) for relative in relatives]
+
+            for response in responses:
+                self.assertIsInstance(response, FileResponse)
+                self.assertEqual(response.media_type, "image/jpeg")
+
+    def test_team_attribution_artifact_route_rejects_an_unowned_path_shape(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            relative = Path("team_attribution_evidence/shadow-a-a1b2c3d4e5f60708/01_f000001.jpg")
             artifact = root / relative
             artifact.parent.mkdir(parents=True)
             artifact.write_bytes(b"jpeg")
 
-            with patch("app.main.match_dir", return_value=root):
-                response = get_artifact("match", str(relative))
+            with patch("app.main.match_dir", return_value=root), self.assertRaises(HTTPException) as error:
+                get_artifact("match", str(relative))
 
-            self.assertIsInstance(response, FileResponse)
-            self.assertEqual(response.media_type, "image/jpeg")
+        self.assertEqual(error.exception.status_code, 404)
 
     def test_recovers_exact_inside_play_team_u_observations_without_reid_gates(self) -> None:
         document = build_team_attribution_evidence(
@@ -457,6 +481,31 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
             self.assertEqual(document["cases"][0]["rendered_anchor_crops"], [])
             self.assertEqual(document["summary"]["rendered_reviewable_cases"], 0)
 
+    def test_focused_source_digest_mismatch_is_persisted_as_exact_technical_outcome(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_team_u_inputs(root)
+            source = {
+                "candidate_subject_id": "u",
+                "scope_kind": "whole_subject",
+                "review_target_id": None,
+                "continuity_group_id": None,
+                "source_team_label": "U",
+                "source_ownership_digest": "forged-digest",
+                "detected_pairs": [("t", 1), ("t", 2)],
+            }
+
+            document = materialize_team_attribution_evidence(
+                root,
+                focused_sources=[source],
+            )
+
+            self.assertEqual(len(document["cases"]), 1)
+            case = document["cases"][0]
+            self.assertEqual(case["status"], "focused_source_digest_mismatch")
+            self.assertEqual(case["materialization_reason"], "focused_source_digest_mismatch")
+            self.assertEqual(case["source_ownership_digest"], "forged-digest")
+
     def test_current_rendered_evidence_is_reused_across_decision_refreshes(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -483,6 +532,31 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
             self.assertEqual(renderer.call_count, 1)
             self.assertEqual(first["source_inputs_digest"], second["source_inputs_digest"])
             self.assertEqual(second["summary"]["rendered_reviewable_cases"], 1)
+
+    def test_current_durable_technical_source_requires_exact_canonical_ownership(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_team_u_inputs(root)
+            pairs = [("t", frame) for frame in range(1, 5)]
+            descriptor = {
+                "candidate_subject_id": "u",
+                "scope_kind": "whole_subject",
+                "team_attribution_evidence_source_digest": source_ownership_digest("u", pairs),
+            }
+
+            resolved = resolve_current_team_attribution_sources(root, [descriptor])
+
+            self.assertEqual(resolved, [{
+                "candidate_subject_id": "u",
+                "scope_kind": "whole_subject",
+                "review_target_id": None,
+                "continuity_group_id": None,
+                "source_team_label": "U",
+                "source_ownership_digest": descriptor["team_attribution_evidence_source_digest"],
+                "detected_pairs": pairs,
+            }])
+            descriptor["team_attribution_evidence_source_digest"] = "stale-digest"
+            self.assertIsNone(resolve_current_team_attribution_sources(root, [descriptor]))
 
 
 def _position(

@@ -16,7 +16,10 @@ from app.services.review_workflow_state import (
     _issue_evidence,
 )
 from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
-from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    required_queue_descriptor,
+)
 from app.services.identity_seeded_review_reduction import (
     build_initial_audit_completion_evidence,
 )
@@ -91,6 +94,23 @@ class ReviewWorkflowStateTests(unittest.TestCase):
             ("video_qa", base_progress, {"status": "completed", "source_snapshot_digest": "snapshot"}, False, False),
             ("complete", base_progress, {"status": "completed", "source_snapshot_digest": "snapshot"}, False, False),
             ("recompute_failure", base_progress, {"status": "missing"}, True, False),
+            (
+                "technical_evidence_retry",
+                {
+                    **base_progress,
+                    "next_cases": [],
+                    "coverage_readiness": {"allows_finalize": False},
+                    "coverage_residuals": {"U": {
+                        "non_actionable_required_team_uncertainty_cases": [{
+                            "candidate_subject_id": "u",
+                            "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                        }]
+                    }},
+                },
+                {"status": "missing"},
+                False,
+                False,
+            ),
         ]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -146,6 +166,9 @@ class ReviewWorkflowStateTests(unittest.TestCase):
                     _public_workflow_semantics(authoritative),
                 )
                 for state in (authoritative, compact):
+                    if name == "technical_evidence_retry":
+                        self.assertIn("retry_review_recompute", state["allowed_actions"])
+                        self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
                     if mixed_allowed:
                         assert_workflow_action_allowed(state, "review_mixed_players")
                     else:
@@ -342,6 +365,117 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertTrue(state["issues"]["overall_identity_blocked"])
         self.assertEqual(state["allowed_actions"], ["review_identity_issue"])
         self.assertNotIn("finalize_identity", state["allowed_actions"])
+
+    def test_not_materialized_remediation_never_becomes_a_fake_required_case(self) -> None:
+        # Regression for the real retry sequence: a stale summary previously
+        # leaked two remediation sources into the workflow badge while the
+        # exact Required queue was empty and could not open either source.
+        progress = {
+            "next_cases": [],
+            "summary": {
+                "important_decisions_remaining": 2,
+                "semantic_decisions_remaining": 0,
+                "coverage_decisions_remaining": 0,
+            },
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "team_attribution_evidence_not_materialized"}],
+            },
+            "coverage_residuals": {
+                "A": {
+                    "non_actionable_required_team_uncertainty_cases": [{
+                        "candidate_subject_id": "shadow-a",
+                        "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
+                    }],
+                },
+                "B": {
+                    "non_actionable_required_team_uncertainty_cases": [{
+                        "candidate_subject_id": "shadow-b",
+                        "team_attribution_evidence_status": "team_attribution_evidence_not_materialized",
+                    }],
+                },
+            },
+        }
+
+        issues = _issue_evidence({}, progress)
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(issues["normal_blocking"], 0)
+        self.assertEqual(issues["required_queue"]["count"], 0)
+        self.assertEqual(state["issues"]["blocking"], 0)
+        self.assertTrue(state["issues"]["coverage_readiness_blocked"])
+        self.assertTrue(state["issues"]["team_attribution_evidence_not_materialized"])
+        self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
+        self.assertEqual(state["required_action"]["type"], "retry_review_recompute")
+
+    def test_technical_team_evidence_failure_fails_closed_with_post_repair_retry(self) -> None:
+        issues = {
+            "blocking": 0,
+            "normal_blocking": 0,
+            "mixed_blocking": 0,
+            "coverage_readiness_blocked": True,
+            "team_attribution_evidence_not_materialized": False,
+            "team_attribution_evidence_technical_failure": True,
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "team_attribution_evidence_technical_failure"}],
+            },
+        }
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertEqual(state["status"], "error")
+        self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
+        self.assertEqual(state["required_action"]["type"], "coverage_evidence_technical_failure")
+        self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
+        self.assertFalse(state["mandatory_operator_review_complete"])
+        self.assertFalse(state["data_quality_ready_for_output"])
+        self.assertNotIn("finalize_identity", state["allowed_actions"])
+
+    def test_workflow_carries_the_exact_required_queue_descriptor(self) -> None:
+        progress = {
+            "next_cases": [
+                {
+                    "candidate_subject_id": "subject-a",
+                    "scope_kind": "whole_subject",
+                    "review_target_id": None,
+                    "continuity_group_id": None,
+                    "source_ownership_digest": "source-a",
+                },
+                {
+                    "candidate_subject_id": "subject-b",
+                    "scope_kind": "canonical_segment",
+                    "review_target_id": "segment-b",
+                    "continuity_group_id": "continuity-b",
+                    "source_ownership_digest": "source-b",
+                },
+            ],
+            # Deliberately wrong: workflow must read the exact queue, not this
+            # counter, and its digest must change when the source set changes
+            # even if the count stays at two.
+            "summary": {"important_decisions_remaining": 99},
+            "mixed_players": {"summary": {"unresolved": 0}},
+        }
+        expected = required_queue_descriptor(progress)
+        issues = _issue_evidence({}, progress)
+        workflow = derive_review_workflow_state(evidence(issues=issues))
+
+        changed = {
+            **progress,
+            "next_cases": [
+                progress["next_cases"][0],
+                {**progress["next_cases"][1], "source_ownership_digest": "source-b-new"},
+            ],
+        }
+
+        self.assertEqual(issues["normal_blocking"], 2)
+        self.assertEqual(workflow["issues"]["required_queue"], expected)
+        self.assertNotEqual(
+            workflow["issues"]["required_queue"]["source_keys_digest"],
+            required_queue_descriptor(changed)["source_keys_digest"],
+        )
 
     def test_non_actionable_coverage_debt_blocks_without_fake_case(self) -> None:
         issues = _issue_evidence({}, {

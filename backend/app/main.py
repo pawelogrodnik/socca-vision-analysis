@@ -2053,10 +2053,19 @@ def retry_match_review_render(match_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/matches/{match_id}/review-workflow/retry-recompute")
-def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
+def retry_match_review_recompute(match_id: str, response: Response) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return retry_review_recompute(path, read_match_meta(path))
+        refreshed = retry_review_recompute(path, read_match_meta(path))
+        performance = dict(refreshed.get("performance") or {})
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        # Full snapshot/progress stays in the service result for authoritative
+        # in-process consumers. The browser only needs the bounded workflow.
+        return {"workflow": refreshed["workflow"], "performance": performance}
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except ReviewWorkflowRecomputeError as exc:
@@ -3583,11 +3592,13 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     ):
         allowed[artifact_basename] = "image/jpeg"
     if (
-        len(artifact_rel.parts) == 3
+        len(artifact_rel.parts) == 4
         and artifact_rel.parts[0] == "team_attribution_evidence"
-        and artifact_rel.parts[1].startswith("shadow-u-")
-        and len(artifact_rel.parts[1]) == len("shadow-u-") + 16
-        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][len("shadow-u-"):])
+        and artifact_rel.parts[1][:9] in {"shadow-a-", "shadow-b-", "shadow-u-"}
+        and len(artifact_rel.parts[1]) == len("shadow-a-") + 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][9:])
+        and len(artifact_rel.parts[2]) == 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[2])
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):
         allowed[artifact_basename] = "image/jpeg"

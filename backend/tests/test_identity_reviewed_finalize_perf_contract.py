@@ -9,10 +9,16 @@ from unittest.mock import patch
 from app.services.identity_reviewed_coverage import paginate_progress
 from app.services.identity_reviewed_hot_state import (
     FILENAME,
+    hot_progress,
     last_hot_state_build_phases,
     load_existing_fresh_hot_state,
     load_or_rebuild_review_hot_state,
     rebuild_review_hot_state,
+)
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    required_queue_descriptor,
+    required_queue_source_keys,
 )
 from app.services.identity_reviewed_video import (
     DIGEST_CACHE_FILENAME,
@@ -165,7 +171,7 @@ class ReviewProgressColdWarmContractTests(unittest.TestCase):
             "detected_pairs": [["t-1", 10], ["t-1", 11]],
         }
         return {
-            "schema_version": "2.8.0",
+            "schema_version": PROGRESS_SCHEMA_VERSION,
             "status": "ready",
             "source_snapshot_digest": "snapshot",
             "next_cases": [dict(unit)],
@@ -184,6 +190,76 @@ class ReviewProgressColdWarmContractTests(unittest.TestCase):
                 "deferred_correction_context": {},
             },
         }
+
+    def test_warm_and_cold_projections_keep_exact_required_sources_identical(self) -> None:
+        progress = self._progress()
+        second = {
+            **LARGE_UNIT_BASE,
+            "candidate_subject_id": "subject-segment",
+            "review_target_id": "segment-1",
+            "scope_kind": "canonical_segment",
+            "continuity_group_id": "continuity-1",
+            "source_ownership_digest": "digest-2",
+            "team_attribution_evidence_source_digest": "evidence-2",
+            "detected_pairs": [["t-2", 20]],
+        }
+        progress["next_cases"] = [progress["next_cases"][0], second]
+        progress["summary"] = {"important_decisions_remaining": 2}
+        progress["required_queue"] = required_queue_descriptor(progress)
+        progress["coverage_readiness"] = {
+            "status": "incomplete",
+            "allows_finalize": False,
+        }
+        progress["mixed_players"] = {"summary": {"unresolved": 1, "total": 1, "resolved": 0}}
+
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+            side_effect=lambda *args, **kwargs: self._progress_with_required_sources(),
+        ):
+            root = Path(tmp)
+            match = _match()
+            warm = rebuild_review_hot_state(root, match, prebuilt_progress=progress)
+            warm_progress = hot_progress(warm)
+
+            # Force the same canonical inputs through the cold path rather
+            # than merely reading the warm cache written above.
+            (root / FILENAME).unlink()
+            cold = load_or_rebuild_review_hot_state(root, match)
+            cold_progress = hot_progress(cold)
+
+        expected_sources = required_queue_source_keys(progress)
+        self.assertEqual(required_queue_source_keys(warm_progress), expected_sources)
+        self.assertEqual(required_queue_source_keys(cold_progress), expected_sources)
+        self.assertEqual(warm_progress["required_queue"], progress["required_queue"])
+        self.assertEqual(cold_progress["required_queue"], progress["required_queue"])
+        self.assertEqual(
+            paginate_progress(warm_progress, queue="required")["pagination"]["global_total_remaining"],
+            len(expected_sources),
+        )
+        self.assertEqual(warm_progress["mixed_players"]["summary"], cold_progress["mixed_players"]["summary"])
+        self.assertEqual(warm_progress["coverage_readiness"], cold_progress["coverage_readiness"])
+
+    def _progress_with_required_sources(self) -> dict:
+        progress = self._progress()
+        second = {
+            **LARGE_UNIT_BASE,
+            "candidate_subject_id": "subject-segment",
+            "review_target_id": "segment-1",
+            "scope_kind": "canonical_segment",
+            "continuity_group_id": "continuity-1",
+            "source_ownership_digest": "digest-2",
+            "team_attribution_evidence_source_digest": "evidence-2",
+            "detected_pairs": [["t-2", 20]],
+        }
+        progress["next_cases"] = [progress["next_cases"][0], second]
+        progress["summary"] = {"important_decisions_remaining": 2}
+        progress["required_queue"] = required_queue_descriptor(progress)
+        progress["coverage_readiness"] = {
+            "status": "incomplete",
+            "allows_finalize": False,
+        }
+        progress["mixed_players"] = {"summary": {"unresolved": 1, "total": 1, "resolved": 0}}
+        return progress
 
     def test_cold_build_once_then_warm_hits_without_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(
