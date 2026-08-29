@@ -1194,7 +1194,6 @@ def get_match(match_id: str) -> dict[str, Any]:
         "team_shape.json",
         "change_candidates.json",
         "change_review_report.json",
-        "tracklets.json",
         "tracking_quality_report.json",
         "ball_analysis_report.json",
         "ball_tracking_report.json",
