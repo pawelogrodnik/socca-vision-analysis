@@ -14,6 +14,7 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     build_team_attribution_evidence,
     evidence_status_for_unit,
     materialize_team_attribution_evidence,
+    resolve_current_team_attribution_sources,
     source_ownership_digest,
     visual_evidence_for_unit,
 )
@@ -531,6 +532,31 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
             self.assertEqual(renderer.call_count, 1)
             self.assertEqual(first["source_inputs_digest"], second["source_inputs_digest"])
             self.assertEqual(second["summary"]["rendered_reviewable_cases"], 1)
+
+    def test_current_durable_technical_source_requires_exact_canonical_ownership(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_team_u_inputs(root)
+            pairs = [("t", frame) for frame in range(1, 5)]
+            descriptor = {
+                "candidate_subject_id": "u",
+                "scope_kind": "whole_subject",
+                "team_attribution_evidence_source_digest": source_ownership_digest("u", pairs),
+            }
+
+            resolved = resolve_current_team_attribution_sources(root, [descriptor])
+
+            self.assertEqual(resolved, [{
+                "candidate_subject_id": "u",
+                "scope_kind": "whole_subject",
+                "review_target_id": None,
+                "continuity_group_id": None,
+                "source_team_label": "U",
+                "source_ownership_digest": descriptor["team_attribution_evidence_source_digest"],
+                "detected_pairs": pairs,
+            }])
+            descriptor["team_attribution_evidence_source_digest"] = "stale-digest"
+            self.assertIsNone(resolve_current_team_attribution_sources(root, [descriptor]))
 
 
 def _position(

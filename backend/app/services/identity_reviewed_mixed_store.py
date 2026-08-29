@@ -52,11 +52,7 @@ _MIXED_EVIDENCE_LOCKS: dict[str, Lock] = {}
 
 def load_mixed_player_cases(match_path: Path) -> dict[str, Any]:
     path = match_path / FILENAME
-    if not path.exists():
-        return _document([])
-    import json
-
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = load_json_cached_or(path, _document([]))
     if not isinstance(value, dict) or not isinstance(value.get("cases"), list):
         raise ValueError(f"{FILENAME} must contain a cases array")
     return value

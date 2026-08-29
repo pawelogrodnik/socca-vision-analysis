@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from app.services.identity_canonical_io import load_json_cached_or
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_roster_anchor_crop_renderer import (
@@ -845,11 +846,62 @@ def _round_or_none(value: Any, digits: int) -> float | None:
 
 
 def _load(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, ValueError):
-        return {}
+    value = load_json_cached_or(path, {})
     return value if isinstance(value, dict) else {}
+
+
+def resolve_current_team_attribution_sources(
+    match_path: Path,
+    descriptors: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    """Resolve durable technical descriptors to current exact source pairs.
+
+    Durable progress intentionally omits raw observation pairs. Whole-subject
+    ownership is safely recoverable from the current canonical subject and
+    tracklet inputs only when the recomputed pair digest equals the persisted
+    evidence digest. Other scopes or any mismatch return ``None`` so callers
+    use the established full authoritative-progress fallback.
+    """
+    if not descriptors:
+        return None
+    candidate_document = _load(match_path / "identity_candidate_shadow.json")
+    tracklets_document = _load(match_path / "tracklets.json")
+    subjects = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in candidate_document.get("subjects") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    tracklets = {
+        str(row.get("tracklet_id") or ""): row
+        for row in tracklets_document.get("tracklets") or []
+        if isinstance(row, dict) and row.get("tracklet_id")
+    }
+    resolved: list[dict[str, Any]] = []
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict):
+            return None
+        if str(descriptor.get("scope_kind") or "whole_subject") != "whole_subject":
+            return None
+        subject_id = str(descriptor.get("candidate_subject_id") or "")
+        expected_digest = str(
+            descriptor.get("team_attribution_evidence_source_digest") or ""
+        )
+        subject = subjects.get(subject_id)
+        if not subject_id or not expected_digest or not isinstance(subject, dict):
+            return None
+        pairs = _source_pairs(subject, tracklets)
+        if not pairs or source_ownership_digest(subject_id, pairs) != expected_digest:
+            return None
+        resolved.append({
+            "candidate_subject_id": subject_id,
+            "scope_kind": "whole_subject",
+            "review_target_id": None,
+            "continuity_group_id": None,
+            "source_team_label": subject.get("team_label"),
+            "source_ownership_digest": expected_digest,
+            "detected_pairs": pairs,
+        })
+    return sorted(resolved, key=_case_sort_key)
 
 
 def _source_inputs_digest(

@@ -15,7 +15,10 @@ from app.services.identity_canonical_io import (
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_coverage import compact_mixed_players_summary
 from app.services.identity_reviewed_output_jobs import generate_reviewed_output
-from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    build_reviewed_identity_progress,
+)
 from app.services.identity_reviewed_recompute_state import (
     clear_reviewed_identity_recompute_required,
 )
@@ -36,6 +39,7 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     classify_team_attribution_evidence_status,
     mark_team_attribution_evidence_technical_failure,
     materialize_team_attribution_evidence,
+    resolve_current_team_attribution_sources,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_seeded_review_reduction import load_initial_audit_completion_evidence
@@ -139,6 +143,9 @@ def _refresh_review_after_identity_mutation_scoped_inner(
         "progress_build_ms": 0.0,
         "final_workflow_ms": 0.0,
     }
+    progress: dict[str, Any] | None = None
+    durable_progress: dict[str, Any] | None = None
+    focused_sources: list[dict[str, Any]] | None = None
     try:
         if rebuild_seeded_candidates:
             # Callers that mutate actual seed inputs may request this JSON-only
@@ -194,44 +201,48 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                     type(exc).__name__,
                 )
             timings["team_attribution_evidence_ms"] = _elapsed_ms(phase_started)
-        phase_started = time.perf_counter()
-        # Internal units are required to leave the hot read model warm without
-        # a second canonical pass; the durable progress artifact stays compact.
-        progress = build_reviewed_identity_progress(
-            match_path,
-            match_doc,
-            include_internal_units=True,
-        )
-        timings["progress_build_ms"] = _elapsed_ms(phase_started)
-        durable_progress = (
-            durable_review_progress(progress)
-            | {
-                "source_snapshot_digest": snapshot.get("semantic_digest"),
-                "workflow_refresh_source": source,
-            }
-        )
+        if retry_technical_team_attribution_evidence:
+            phase_started = time.perf_counter()
+            focused_sources = _technical_retry_sources_from_current_durable_progress(
+                match_path,
+                snapshot,
+            )
+            timings["technical_source_lookup_ms"] = _elapsed_ms(phase_started)
+        if focused_sources is None:
+            phase_started = time.perf_counter()
+            # Internal units are required to leave the hot read model warm without
+            # a second canonical pass; the durable progress artifact stays compact.
+            progress = build_reviewed_identity_progress(
+                match_path,
+                match_doc,
+                include_internal_units=True,
+            )
+            timings["progress_build_ms"] = _elapsed_ms(phase_started)
+            durable_progress = _durable_progress_for_snapshot(progress, snapshot, source)
     except Exception as exc:
         _raise_review_recompute_failure(match_path, match_doc, source, exc)
     (match_path / RECOMPUTE_FAILURE_FILENAME).unlink(missing_ok=True)
-    phase_started = time.perf_counter()
-    # Same-transaction reuse (§22/§37): the snapshot and progress above were
-    # produced from current canonical inputs moments ago. This first workflow
-    # derivation only decides whether bounded evidence recovery is needed; the
-    # response is derived after the final generation is durably committed.
     completion_evidence = load_initial_audit_completion_evidence(match_path)
-    workflow = get_review_workflow_state(
-        match_path,
-        match_doc,
-        snapshot=snapshot,
-        progress=durable_progress,
-        completion_evidence=completion_evidence,
-    )
-    timings["final_workflow_ms"] = _elapsed_ms(phase_started)
-    focused_sources = _not_materialized_team_attribution_sources(
-        workflow,
-        progress,
-        include_technical_failures=retry_technical_team_attribution_evidence,
-    )
+    if focused_sources is None:
+        assert progress is not None and durable_progress is not None
+        phase_started = time.perf_counter()
+        # Same-transaction reuse (§22/§37): the snapshot and progress above were
+        # produced from current canonical inputs moments ago. This first workflow
+        # derivation only decides whether bounded evidence recovery is needed; the
+        # response is derived after the final generation is durably committed.
+        workflow = get_review_workflow_state(
+            match_path,
+            match_doc,
+            snapshot=snapshot,
+            progress=durable_progress,
+            completion_evidence=completion_evidence,
+        )
+        timings["initial_workflow_ms"] = _elapsed_ms(phase_started)
+        focused_sources = _not_materialized_team_attribution_sources(
+            workflow,
+            progress,
+            include_technical_failures=retry_technical_team_attribution_evidence,
+        )
     if focused_sources:
         phase_started = time.perf_counter()
         try:
@@ -280,13 +291,8 @@ def _refresh_review_after_identity_mutation_scoped_inner(
             include_internal_units=True,
         )
         timings["focused_progress_rebuild_ms"] = _elapsed_ms(phase_started)
-        durable_progress = (
-            durable_review_progress(progress)
-            | {
-                "source_snapshot_digest": snapshot.get("semantic_digest"),
-                "workflow_refresh_source": source,
-            }
-        )
+        durable_progress = _durable_progress_for_snapshot(progress, snapshot, source)
+    assert progress is not None and durable_progress is not None
     phase_started = time.perf_counter()
     write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
     invalidate_cached_json(match_path / PROGRESS_FILENAME)
@@ -392,6 +398,51 @@ def durable_review_progress(progress: dict[str, Any]) -> dict[str, Any]:
         for key, value in base.items()
         if key not in DURABLE_PROGRESS_QUEUE_KEYS
     }
+
+
+def _durable_progress_for_snapshot(
+    progress: dict[str, Any],
+    snapshot: dict[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    return durable_review_progress(progress) | {
+        "source_snapshot_digest": snapshot.get("semantic_digest"),
+        "workflow_refresh_source": source,
+    }
+
+
+def _technical_retry_sources_from_current_durable_progress(
+    match_path: Path,
+    snapshot: dict[str, Any],
+) -> list[dict[str, Any]] | None:
+    """Resolve only current technical descriptors, or request full fallback.
+
+    This is deliberately stricter than the compact retry authorization. The
+    durable artifact has to belong to the exact snapshot just freshness-checked
+    above, and every candidate source must be reconstructed from canonical
+    inputs with an equal digest. Any absence, drift or unsupported scope is a
+    safe ``None`` fallback to the existing full progress pass.
+    """
+    snapshot_digest = str(snapshot.get("semantic_digest") or "")
+    progress = load_json_object(match_path / PROGRESS_FILENAME)
+    if (
+        not snapshot_digest
+        or not progress
+        or progress.get("schema_version") != PROGRESS_SCHEMA_VERSION
+        or str(progress.get("source_snapshot_digest") or "") != snapshot_digest
+    ):
+        return None
+    descriptors = [
+        dict(case)
+        for residual in (progress.get("coverage_residuals") or {}).values()
+        if isinstance(residual, dict)
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
+        if isinstance(case, dict)
+        and classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        ) == "technical_failure"
+    ]
+    return resolve_current_team_attribution_sources(match_path, descriptors)
 
 
 def _not_materialized_team_attribution_sources(
