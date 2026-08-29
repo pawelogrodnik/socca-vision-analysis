@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.services.artifact_lineage import canonical_json_sha256
+from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION, PUBLIC_MATCH_REPORT_TYPE
 from app.services.match_groups import (
     MatchGroupError,
     create_match_group,
@@ -36,6 +37,7 @@ class MatchGroupStoreTests(unittest.TestCase):
             self.assertEqual(manifest["timing"]["analyzed_duration_sec"], 300.0)
             self.assertEqual(manifest["timing"]["timeline_span_sec"], 300.0)
             self.assertEqual(manifest["compatibility"]["status"], "compatible")
+            self.assertEqual(manifest["members"][0]["public_report_schema_version"], PUBLIC_MATCH_REPORT_SCHEMA_VERSION)
             self.assertEqual(validate_match_group(manifest["group_id"])["status"], "compatible")
             self.assertTrue((root / "groups" / manifest["group_id"] / "manifest.json").is_file())
 
@@ -124,6 +126,53 @@ class MatchGroupStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(MatchGroupError, "does not match the digest"):
                 create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
 
+    def test_public_report_schema_and_type_are_pinned_and_fail_closed(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one")
+            _write_source(root, "published-two", "physical-two", public_schema_version="9.0.0")
+            with self.assertRaises(MatchGroupError) as unsupported_schema:
+                create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            self.assertEqual(unsupported_schema.exception.code, "unsupported_public_report_schema")
+
+            _write_source(root, "published-two", "physical-two", report_type="public_aggregate_match_report")
+            with self.assertRaises(MatchGroupError) as unsupported_type:
+                create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            self.assertEqual(unsupported_type.exception.code, "unsupported_public_report_type")
+
+            _write_source(root, "published-two", "physical-two", report_type=None)
+            with self.assertRaises(MatchGroupError) as missing_type:
+                create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            self.assertEqual(missing_type.exception.code, "required_source_field_missing")
+
+    def test_republished_supported_public_report_becomes_stale_without_repinning(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one")
+            _write_source(root, "published-two", "physical-two", public_title="Original")
+            manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            original_pin = manifest["members"][1]["public_report_semantic_digest"]
+
+            _write_source(root, "published-two", "physical-two", public_title="Republished")
+            validation = validate_match_group(manifest["group_id"])
+
+            self.assertEqual(validation["status"], "stale")
+            self.assertEqual(validation["blocking_reasons"][0]["code"], "source_generation_changed")
+            self.assertEqual(get_match_group(manifest["group_id"])["members"][1]["public_report_semantic_digest"], original_pin)
+
+    def test_manifest_requires_pinned_public_report_schema_version(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one")
+            _write_source(root, "published-two", "physical-two")
+            manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            manifest_path = root / "groups" / manifest["group_id"] / "manifest.json"
+            tampered = _read(manifest_path)
+            tampered["members"][0].pop("public_report_schema_version")
+            tampered["aggregate_semantic_digest"] = _self_excluding_digest(tampered, "aggregate_semantic_digest")
+            _write(manifest_path, tampered)
+
+            validation = validate_match_group(manifest["group_id"])
+            self.assertEqual(validation["status"], "invalid")
+            self.assertEqual(validation["blocking_reasons"][0]["code"], "required_source_field_missing")
+
     def test_validate_detects_missing_and_republished_sources_without_repinning(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one")
@@ -154,6 +203,32 @@ class MatchGroupStoreTests(unittest.TestCase):
             self.assertEqual(validation["status"], "incompatible")
             self.assertEqual(validation["blocking_reasons"][0]["code"], "unsupported_aggregate_input_schema")
 
+    def test_validation_status_precedence_is_independent_of_member_order(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-invalid", "physical-invalid")
+            _write_source(root, "published-missing", "physical-missing")
+            _write_source(root, "published-valid", "physical-valid")
+            first = create_match_group(
+                member_published_ids=["published-invalid", "published-missing", "published-valid"], metadata=_metadata()
+            )
+            reversed_order = create_match_group(
+                member_published_ids=["published-missing", "published-invalid", "published-valid"], metadata=_metadata()
+            )
+            invalid_path = root / "published" / "published-invalid" / "aggregate_inputs.json"
+            invalid = _read(invalid_path)
+            invalid["timing"]["analyzed_duration_sec"] = 999.0
+            _write(invalid_path, invalid)
+            shutil.rmtree(root / "published" / "published-missing")
+
+            first_validation = validate_match_group(first["group_id"])
+            reversed_validation = validate_match_group(reversed_order["group_id"])
+
+            self.assertEqual(first_validation["status"], "invalid")
+            self.assertEqual(reversed_validation["status"], "invalid")
+            expected_codes = {"aggregation_input_digest_mismatch", "published_source_missing"}
+            self.assertEqual({reason["code"] for reason in first_validation["blocking_reasons"]}, expected_codes)
+            self.assertEqual({reason["code"] for reason in reversed_validation["blocking_reasons"]}, expected_codes)
+
     def test_order_changes_digest_while_technical_source_timestamps_do_not(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one")
@@ -182,6 +257,36 @@ class MatchGroupStoreTests(unittest.TestCase):
             changed = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
             self.assertEqual(changed["compatibility"]["status"], "compatible")
             self.assertEqual(changed["compatibility"]["capabilities"]["spatial"], {"status": "incompatible", "reason": "pitch_dimensions_mismatch"})
+
+    def test_capabilities_remain_granular_and_report_partial_coverage(self) -> None:
+        with self._store() as root:
+            _write_source(
+                root,
+                "published-one",
+                "physical-one",
+                team_movement_status="not_available",
+                player_movement_status="available",
+                possession_timeline_status="completed",
+                momentum_status="not_available",
+            )
+            _write_source(
+                root,
+                "published-two",
+                "physical-two",
+                team_movement_status="not_available",
+                player_movement_status="available",
+                possession_timeline_status="not_available",
+                momentum_status="not_available",
+            )
+
+            capabilities = create_match_group(
+                member_published_ids=["published-one", "published-two"], metadata=_metadata()
+            )["compatibility"]["capabilities"]
+
+            self.assertEqual(capabilities["movement"]["team"]["status"], "not_available")
+            self.assertEqual(capabilities["movement"]["player"]["status"], "available")
+            self.assertEqual(capabilities["timelines"]["possession"]["status"], "partial")
+            self.assertEqual(capabilities["timelines"]["attacking_momentum"]["status"], "not_available")
 
     def test_update_failure_is_atomic_and_caller_cannot_inject_pins_or_statistics(self) -> None:
         with self._store() as root:
@@ -215,6 +320,9 @@ class MatchGroupStoreTests(unittest.TestCase):
             source_before = _artifact_bytes(root / "published")
 
             manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            self.assertEqual(before_player, build_player_profile_stats(matches_dir, "player-corgi", registry_teams=registry)["summary"])
+            self.assertEqual(before_team, build_team_profile_stats(matches_dir, "team-corgi", registry_teams=registry)["summary"])
+            self.assertEqual(source_before, _artifact_bytes(root / "published"))
             delete_match_group(manifest["group_id"])
 
             after_player = build_player_profile_stats(matches_dir, "player-corgi", registry_teams=registry)["summary"]
@@ -260,19 +368,28 @@ def _write_source(
     labels: tuple[str, str] = ("A", "B"),
     players: list[tuple[str, str]] | None = None,
     schema_version: str = "1.0.0",
+    public_schema_version: str = PUBLIC_MATCH_REPORT_SCHEMA_VERSION,
+    report_type: str | None = PUBLIC_MATCH_REPORT_TYPE,
+    public_title: str | None = None,
     pitch: tuple[float, float] = (30.0, 47.4),
+    team_movement_status: str = "available",
+    player_movement_status: str = "available",
+    possession_timeline_status: str = "completed",
+    momentum_status: str = "completed",
 ) -> None:
     source_dir = root / "published" / published_id
     if source_dir.exists():
         shutil.rmtree(source_dir)
     source_dir.mkdir(parents=True)
     public_report = {
-        "schema_version": "0.1.0",
+        "schema_version": public_schema_version,
         "generated_at": "2026-08-29T10:00:00+00:00",
         "id": published_id,
         "source_match_id": source_match_id,
-        "match": {"id": source_match_id, "title": source_match_id},
+        "match": {"id": source_match_id, "title": public_title or source_match_id},
     }
+    if report_type is not None:
+        public_report["report_type"] = report_type
     player_rows = players if players is not None else [("player-corgi", teams[0])]
     aggregate = {
         "schema_version": schema_version,
@@ -295,8 +412,8 @@ def _write_source(
         "identity_coverage": {"status": "completed", "confirmed_observations": 2},
         "ball": {"possession": {"status": "completed"}, "passes": {"status": "completed"}},
         "timelines": {
-            "possession": {"status": "completed", "windows": []},
-            "attacking_momentum": {"status": "completed", "points": []},
+            "possession": {"status": possession_timeline_status, "windows": []},
+            "attacking_momentum": {"status": momentum_status, "points": []},
         },
         "spatial": {
             "orientation": "unproven",
@@ -305,8 +422,8 @@ def _write_source(
             "team_shape": {"status": "not_available"},
         },
         "metric_readiness": {
-            "team_movement": {"status": "available"},
-            "player_movement": {"status": "available"},
+            "team_movement": {"status": team_movement_status},
+            "player_movement": {"status": player_movement_status},
         },
     }
     aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
@@ -355,6 +472,12 @@ def _write(path: Path, value: dict) -> None:
 
 def _artifact_bytes(root: Path) -> dict[str, bytes]:
     return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()}
+
+
+def _self_excluding_digest(document: dict, field: str) -> str:
+    digest_document = copy.deepcopy(document)
+    digest_document.pop(field, None)
+    return canonical_json_sha256(digest_document)
 
 
 if __name__ == "__main__":

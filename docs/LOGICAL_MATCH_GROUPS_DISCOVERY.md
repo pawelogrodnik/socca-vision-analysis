@@ -311,9 +311,10 @@ storage/published/match-groups/match-group-<uuid>/manifest.json
 
 The caller supplies only ordered `published_id` values and editable group
 metadata.  The service reads the current source `aggregate_inputs.json` and
-`public_report.json`, verifies both canonical digests, then derives and pins
-the source IDs, supported contract versions, Reviewed Identity digest and
-sequential logical timeline offsets itself.  It never reads `package.json`,
+`public_report.json`, verifies both canonical digests and the supported
+physical public-report schema/type, then derives and pins the source IDs,
+aggregate-input and public-report contract versions, Reviewed Identity digest
+and sequential logical timeline offsets itself.  It never reads `package.json`,
 source video, raw tracking artifacts or `MATCHES_DIR`.
 
 Core compatibility is fail-closed: every member must expose exactly the same

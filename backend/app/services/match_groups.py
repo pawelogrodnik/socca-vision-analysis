@@ -18,12 +18,23 @@ from typing import Any
 from app.config import PUBLISHED_DIR
 from app.services.aggregate_inputs import AGGREGATE_INPUTS_SCHEMA_VERSION, AGGREGATION_POLICY_VERSION
 from app.services.artifact_lineage import canonical_json_sha256
+from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION, PUBLIC_MATCH_REPORT_TYPE
 
 
 MATCH_GROUP_MANIFEST_SCHEMA_VERSION = "1.0.0"
 MATCH_GROUPS_DIR = PUBLISHED_DIR / "match-groups"
 PUBLISHED_MATCHES_DIR = PUBLISHED_DIR / "matches"
 EXPECTED_TEAM_COUNT = 2
+# Invalid means corrupted or untrustworthy evidence and therefore wins over a
+# supported-contract incompatibility, which in turn wins over a reproducible
+# but changed/missing source generation.  This order is lifecycle-safe and is
+# independent of the caller's member order.
+VALIDATION_STATUS_PRECEDENCE = {
+    "compatible": 0,
+    "stale": 1,
+    "incompatible": 2,
+    "invalid": 3,
+}
 
 
 class MatchGroupError(ValueError):
@@ -136,12 +147,7 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
             current = _authoritative_member(published_id, sequence_index=expected_index)
         except MatchGroupError as error:
             reasons.append(error.reason())
-            if error.code in {"unsupported_aggregate_input_schema", "unsupported_aggregation_policy"}:
-                status = "incompatible"
-            elif error.code == "published_source_missing":
-                status = "stale"
-            else:
-                status = "invalid"
+            status = _more_severe_status(status, _source_error_status(error.code))
             continue
         current_members.append(current)
         for key in (
@@ -149,6 +155,7 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
             "aggregation_input_schema_version",
             "aggregation_policy_version",
             "aggregation_input_semantic_digest",
+            "public_report_schema_version",
             "public_report_semantic_digest",
             "reviewed_identity_digest",
         ):
@@ -160,7 +167,7 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
                         "detail": f"Current {key} differs from the persisted group pin.",
                     }
                 )
-                status = "stale"
+                status = _more_severe_status(status, "stale")
                 break
 
     if reasons:
@@ -231,6 +238,23 @@ def _authoritative_member(published_id: str, *, sequence_index: int) -> dict[str
             member=published_id,
         )
 
+    public_schema_version = _required_text(
+        public_report.get("schema_version"), "public report schema_version", member=published_id
+    )
+    if public_schema_version != PUBLIC_MATCH_REPORT_SCHEMA_VERSION:
+        raise MatchGroupError(
+            "unsupported_public_report_schema",
+            f"Public report schema {public_schema_version!r} is not supported.",
+            member=published_id,
+        )
+    report_type = _required_text(public_report.get("report_type"), "public report type", member=published_id)
+    if report_type != PUBLIC_MATCH_REPORT_TYPE:
+        raise MatchGroupError(
+            "unsupported_public_report_type",
+            f"Public report type {report_type!r} is not a physical source public report.",
+            member=published_id,
+        )
+
     source = _record(aggregate.get("source"))
     source_match_id = _required_text(source.get("source_match_id"), "source_match_id", member=published_id)
     source_published_id = _required_text(source.get("published_id"), "source.published_id", member=published_id)
@@ -281,6 +305,7 @@ def _authoritative_member(published_id: str, *, sequence_index: int) -> dict[str
         "aggregation_input_schema_version": schema_version,
         "aggregation_policy_version": policy_version,
         "aggregation_input_semantic_digest": aggregate_digest,
+        "public_report_schema_version": public_schema_version,
         "public_report_semantic_digest": public_digest,
         "reviewed_identity_digest": reviewed_identity_digest,
         "analyzed_duration_sec": analyzed_duration_sec,
@@ -360,22 +385,14 @@ def _capabilities(members: list[dict[str, Any]]) -> dict[str, Any]:
             return {"status": "partial", "reason": "not_available_for_every_member"}
         return {"status": "not_available", "reason": "not_available_for_any_member"}
 
-    movement_values = [
-        (_record(member["_metrics"].get("team_movement")).get("status"), _record(member["_metrics"].get("player_movement")).get("status"))
-        for member in members
-    ]
-    movement = capability(["available" if all(_is_available_status(value) for value in pair) else "not_available" for pair in movement_values])
+    team_movement = capability([_record(member["_metrics"].get("team_movement")).get("status") for member in members])
+    player_movement = capability([_record(member["_metrics"].get("player_movement")).get("status") for member in members])
     possession = capability([_record(member["_ball"].get("possession")).get("status") for member in members])
     passes = capability([_record(member["_ball"].get("passes")).get("status") for member in members])
     identity = capability([member["_identity_coverage"].get("status") for member in members])
-    timelines = capability(
-        [
-            "available"
-            if _is_available_status(_record(member["_timelines"].get("possession")).get("status"))
-            and _is_available_status(_record(member["_timelines"].get("attacking_momentum")).get("status"))
-            else "not_available"
-            for member in members
-        ]
+    possession_timeline = capability([_record(member["_timelines"].get("possession")).get("status") for member in members])
+    attacking_momentum = capability(
+        [_record(member["_timelines"].get("attacking_momentum")).get("status") for member in members]
     )
     dimensions = [_pitch_dimensions(member["_spatial"]) for member in members]
     if any(dimension is not None for dimension in dimensions) and len({tuple(sorted(item.items())) for item in dimensions if item}) > 1:
@@ -383,11 +400,11 @@ def _capabilities(members: list[dict[str, Any]]) -> dict[str, Any]:
     else:
         spatial = {"status": "not_available", "reason": "canonical_orientation_not_proven"}
     return {
-        "movement": movement,
+        "movement": {"team": team_movement, "player": player_movement},
         "possession": possession,
         "passes": passes,
         "identity_coverage": identity,
-        "timelines": timelines,
+        "timelines": {"possession": possession_timeline, "attacking_momentum": attacking_momentum},
         "spatial": spatial,
         "team_shape": {"status": "not_available", "reason": "canonical_orientation_and_sample_weights_not_proven"},
     }
@@ -395,6 +412,23 @@ def _capabilities(members: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _is_available_status(value: Any) -> bool:
     return str(value or "").strip().lower() in {"available", "completed", "fresh", "ready"}
+
+
+def _source_error_status(code: str) -> str:
+    if code in {
+        "unsupported_aggregate_input_schema",
+        "unsupported_aggregation_policy",
+        "unsupported_public_report_schema",
+        "unsupported_public_report_type",
+    }:
+        return "incompatible"
+    if code == "published_source_missing":
+        return "stale"
+    return "invalid"
+
+
+def _more_severe_status(current: str, candidate: str) -> str:
+    return candidate if VALIDATION_STATUS_PRECEDENCE[candidate] > VALIDATION_STATUS_PRECEDENCE[current] else current
 
 
 def _pitch_dimensions(spatial: dict[str, Any]) -> dict[str, float] | None:
@@ -525,6 +559,9 @@ def _manifest_structure_reason(manifest: dict[str, Any]) -> dict[str, str] | Non
             )
             _required_text(
                 member.get("aggregation_input_semantic_digest"), "manifest aggregation input digest", member=published_id
+            )
+            _required_text(
+                member.get("public_report_schema_version"), "manifest public report schema version", member=published_id
             )
             _required_text(member.get("public_report_semantic_digest"), "manifest public report digest", member=published_id)
             _required_text(member.get("reviewed_identity_digest"), "manifest reviewed identity digest", member=published_id)

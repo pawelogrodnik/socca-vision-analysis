@@ -14,6 +14,8 @@ from app.services.stabilization import _heatmap_quality, _safe_artifact_id, _wri
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CLIENT_PUBLIC_MATCHES_DIR = REPO_ROOT / "client" / "public" / "published" / "matches"
+PUBLIC_MATCH_REPORT_SCHEMA_VERSION = "0.1.0"
+PUBLIC_MATCH_REPORT_TYPE = "public_match_report"
 
 
 def now_iso() -> str:
@@ -689,11 +691,11 @@ def build_public_match_report(
     uses_reviewed_identity = package.get("identity_report_source") == "reviewed_identity"
     public_teams = _public_teams(package)
     report = {
-        "schema_version": "0.1.0",
+        "schema_version": PUBLIC_MATCH_REPORT_SCHEMA_VERSION,
         "generated_at": now_iso(),
         "id": published_id,
         "source_match_id": _public_match(package)["id"],
-        "report_type": "public_match_report",
+        "report_type": PUBLIC_MATCH_REPORT_TYPE,
         "stats_semantics": (
             {
                 "identity": "human_reviewed_named_players_only",
