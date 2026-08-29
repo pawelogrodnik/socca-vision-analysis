@@ -693,7 +693,9 @@ test('lane-local temporal split shows and edits only the selected lane evidence'
   const view = renderPanel({ getQueue: async () => queue([concurrent]) });
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
-  fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  });
 
   await waitFor(
     () => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })),
@@ -752,8 +754,13 @@ test('lane refinement keeps the leading after-preview boundary instead of shifti
   });
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
-  fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
-  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })));
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  });
+  await waitFor(
+    () => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })),
+    { timeout: 3_000 },
+  );
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByRole('button', { name: 'Podziel zaraz po poprzednim podglądzie' })));
   assert.ok(view.getByAltText('Lewy widok graniczny — podział następuje po tym widoku'));
@@ -882,7 +889,13 @@ test('failed stale lane-refinement refresh remains fail-closed', async () => {
     reprojectWorkflow: async () => { throw new Error('must not reproject'); },
   });
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
-  fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  });
+  await waitFor(
+    () => assert.ok(view.getByRole('button', { name: 'Doprecyzuj' })),
+    { timeout: 3_000 },
+  );
   fireEvent.click(view.getByRole('button', { name: 'Doprecyzuj' }));
   await waitFor(() => assert.ok(view.getByText(/Nie udało się pobrać aktualnych ścieżek/)));
   assert.equal(view.queryByRole('heading', { name: 'Przypisz równoległych zawodników' }), null);
