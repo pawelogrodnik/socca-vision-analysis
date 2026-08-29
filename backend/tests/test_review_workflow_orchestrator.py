@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
+    _not_materialized_team_attribution_sources,
     after_video_qa_correction,
     finalize_review_for_qa,
     refresh_review_after_identity_mutation,
@@ -76,7 +77,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         }
         refreshed = {"workflow": {"issues": {"normal_blocking": 0}}}
         with patch(
-            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
             return_value=retryable,
         ), patch(
             "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
@@ -95,6 +96,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             operator_evidence=True,
             leave_hot_state_warm=True,
             reuse_current_snapshot=False,
+            retry_technical_team_attribution_evidence=False,
         )
 
     def test_policy_stale_retry_skips_global_evidence_and_keeps_warm_commit(self) -> None:
@@ -108,7 +110,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         }
         refreshed = {"workflow": {"issues": {"normal_blocking": 0}}}
         with patch(
-            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
             return_value=retryable,
         ), patch(
             "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
@@ -124,12 +126,17 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             operator_evidence=False,
             leave_hot_state_warm=True,
             reuse_current_snapshot=True,
+            retry_technical_team_attribution_evidence=False,
         )
 
     def test_technical_evidence_retry_rechecks_authoritative_source_after_repair(self) -> None:
         retryable = {
             "allowed_actions": ["retry_review_recompute"],
-            "freshness": {"review_progress_reason": None},
+            "freshness": {
+                "review_progress_reason": None,
+                "review_progress_current": True,
+                "reviewed_identity_current": True,
+            },
             "issues": {
                 "normal_blocking": 0,
                 "mixed_blocking": 0,
@@ -143,7 +150,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             }
         }
         with patch(
-            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
             return_value=retryable,
         ), patch(
             "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
@@ -156,10 +163,189 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             Path("/tmp/match"),
             {"id": "m1"},
             source="retry",
-            operator_evidence=True,
+            operator_evidence=False,
             leave_hot_state_warm=True,
-            reuse_current_snapshot=False,
+            reuse_current_snapshot=True,
+            retry_technical_team_attribution_evidence=True,
         )
+
+    def test_technical_retry_selects_current_exact_sources_but_normal_refresh_does_not(self) -> None:
+        source_digest = "exact-evidence-digest"
+        workflow = {
+            "issues": {
+                "coverage_readiness_blocked": True,
+                "normal_blocking": 0,
+                "mixed_blocking": 0,
+            }
+        }
+        progress = {
+            "coverage_residuals": {
+                "U": {
+                    "non_actionable_required_team_uncertainty_cases": [{
+                        "candidate_subject_id": "team-u-source",
+                        "scope_kind": "whole_subject",
+                        "team_attribution_evidence_source_digest": source_digest,
+                        "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                    }]
+                }
+            },
+            "_internal_review_units": [{
+                "candidate_subject_id": "team-u-source",
+                "scope_kind": "whole_subject",
+                "source_team_label": "U",
+                "team_attribution_evidence_source_digest": source_digest,
+                "detected_pairs": [("track-current", 12), ("track-current", 13)],
+            }],
+        }
+
+        self.assertEqual(_not_materialized_team_attribution_sources(workflow, progress), [])
+        self.assertEqual(
+            _not_materialized_team_attribution_sources(
+                workflow,
+                progress,
+                include_technical_failures=True,
+            ),
+            [{
+                "candidate_subject_id": "team-u-source",
+                "scope_kind": "whole_subject",
+                "review_target_id": None,
+                "continuity_group_id": None,
+                "source_team_label": "U",
+                "source_ownership_digest": source_digest,
+                "detected_pairs": [("track-current", 12), ("track-current", 13)],
+            }],
+        )
+
+    def test_evidence_only_technical_retry_recovers_persisted_source_without_global_evidence(self) -> None:
+        source_digest = "exact-evidence-digest"
+        second_source_digest = "second-exact-evidence-digest"
+        source = {
+            "candidate_subject_id": "team-u-source",
+            "scope_kind": "whole_subject",
+            "review_target_id": None,
+            "continuity_group_id": None,
+            "source_team_label": "U",
+            "source_ownership_digest": source_digest,
+            "detected_pairs": [("track-current", 12), ("track-current", 13)],
+        }
+        second_source = {
+            "candidate_subject_id": "team-u-source-two",
+            "scope_kind": "whole_subject",
+            "review_target_id": None,
+            "continuity_group_id": None,
+            "source_team_label": "U",
+            "source_ownership_digest": second_source_digest,
+            "detected_pairs": [("track-current-two", 31), ("track-current-two", 32)],
+        }
+        technical_state = {
+            "allowed_actions": ["retry_review_recompute"],
+            "freshness": {"review_progress_current": True, "reviewed_identity_current": True},
+            "issues": {
+                "coverage_readiness_blocked": True,
+                "normal_blocking": 0,
+                "mixed_blocking": 0,
+                "team_attribution_evidence_technical_failure": True,
+            },
+        }
+        initial_progress = {
+            "summary": {},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_residuals": {
+                "U": {
+                    "non_actionable_required_team_uncertainty_cases": [
+                        {
+                            "candidate_subject_id": "team-u-source",
+                            "scope_kind": "whole_subject",
+                            "team_attribution_evidence_source_digest": source_digest,
+                            "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                        },
+                        {
+                            "candidate_subject_id": "team-u-source-two",
+                            "scope_kind": "whole_subject",
+                            "team_attribution_evidence_source_digest": second_source_digest,
+                            "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                        },
+                    ]
+                }
+            },
+            "_internal_review_units": [
+                {
+                    "candidate_subject_id": "team-u-source",
+                    "scope_kind": "whole_subject",
+                    "source_team_label": "U",
+                    "team_attribution_evidence_source_digest": source_digest,
+                    "detected_pairs": source["detected_pairs"],
+                },
+                {
+                    "candidate_subject_id": "team-u-source-two",
+                    "scope_kind": "whole_subject",
+                    "source_team_label": "U",
+                    "team_attribution_evidence_source_digest": second_source_digest,
+                    "detected_pairs": second_source["detected_pairs"],
+                },
+            ],
+        }
+        repaired_progress = {
+            "summary": {},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_residuals": {
+                "U": {"non_actionable_required_team_uncertainty_cases": []}
+            },
+            "coverage_readiness": {"allows_finalize": True, "status": "accepted_within_tolerance"},
+            "_internal_review_units": [],
+        }
+        accepted = {
+            "issues": {"blocking": 0, "normal_blocking": 0, "mixed_blocking": 0},
+            "mandatory_operator_review_complete": True,
+            "data_quality_ready_for_output": True,
+            "allowed_actions": ["finalize_identity"],
+        }
+        evidence_document = {
+            "cases": [
+                {
+                    "candidate_subject_id": source["candidate_subject_id"],
+                    "scope_kind": source["scope_kind"],
+                    "source_ownership_digest": source_digest,
+                    "status": "no_team_attribution_evidence",
+                },
+                {
+                    "candidate_subject_id": second_source["candidate_subject_id"],
+                    "scope_kind": second_source["scope_kind"],
+                    "source_ownership_digest": second_source_digest,
+                    "status": "no_team_attribution_evidence",
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
+            return_value=technical_state,
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_reviewed_identity_status",
+            return_value={"status": "partial_reviewed", "semantic_digest": "current"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+        ) as finalize, patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=[initial_progress, repaired_progress],
+        ) as progress, patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            side_effect=[technical_state, accepted],
+        ), patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value=evidence_document,
+        ) as materialize, patch(
+            "app.services.identity_reviewed_hot_state.rebuild_review_hot_state",
+        ):
+            result = retry_review_recompute(Path(tmp), {"id": "m1"})
+
+        finalize.assert_not_called()
+        self.assertEqual(progress.call_count, 2)
+        materialize.assert_called_once_with(
+            Path(tmp),
+            focused_sources=[source, second_source],
+        )
+        self.assertTrue(result["workflow"]["mandatory_operator_review_complete"])
+        self.assertTrue(result["workflow"]["data_quality_ready_for_output"])
 
     def test_retry_reports_orchestration_timings_in_the_returned_performance(self) -> None:
         retryable = {
@@ -171,7 +357,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             "performance": {"total_ms": 7.0},
         }
         with patch(
-            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
             return_value=retryable,
         ), patch(
             "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",

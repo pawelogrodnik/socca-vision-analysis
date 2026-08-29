@@ -45,6 +45,7 @@ from app.services.review_workflow_state import (
     RECOMPUTE_FAILURE_FILENAME,
     WorkflowActionError,
     assert_workflow_action_allowed,
+    build_compact_review_workflow_state,
     build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
@@ -73,6 +74,7 @@ def refresh_review_after_identity_mutation(
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
     reuse_current_snapshot: bool = False,
+    retry_technical_team_attribution_evidence: bool = False,
 ) -> dict[str, Any]:
     """Perform only the cheap reviewed-identity work needed for the next click."""
     with review_build_context():
@@ -84,6 +86,7 @@ def refresh_review_after_identity_mutation(
             operator_evidence=operator_evidence,
             leave_hot_state_warm=leave_hot_state_warm,
             reuse_current_snapshot=reuse_current_snapshot,
+            retry_technical_team_attribution_evidence=retry_technical_team_attribution_evidence,
         )
 
 
@@ -96,6 +99,7 @@ def _refresh_review_after_identity_mutation_scoped(
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
     reuse_current_snapshot: bool = False,
+    retry_technical_team_attribution_evidence: bool = False,
 ) -> dict[str, Any]:
     try:
         return _refresh_review_after_identity_mutation_scoped_inner(
@@ -106,6 +110,7 @@ def _refresh_review_after_identity_mutation_scoped(
             operator_evidence=operator_evidence,
             leave_hot_state_warm=leave_hot_state_warm,
             reuse_current_snapshot=reuse_current_snapshot,
+            retry_technical_team_attribution_evidence=retry_technical_team_attribution_evidence,
         )
     except ReviewWorkflowRecomputeError:
         raise
@@ -122,6 +127,7 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
     reuse_current_snapshot: bool = False,
+    retry_technical_team_attribution_evidence: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     timings: dict[str, Any] = {
@@ -224,6 +230,7 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     focused_sources = _not_materialized_team_attribution_sources(
         workflow,
         progress,
+        include_technical_failures=retry_technical_team_attribution_evidence,
     )
     if focused_sources:
         phase_started = time.perf_counter()
@@ -390,12 +397,16 @@ def durable_review_progress(progress: dict[str, Any]) -> dict[str, Any]:
 def _not_materialized_team_attribution_sources(
     workflow: dict[str, Any],
     progress: dict[str, Any],
+    *,
+    include_technical_failures: bool = False,
 ) -> list[dict[str, Any]]:
-    """Find only terminal coverage sources skipped by fast reproject.
+    """Find exact recovery sources from current authoritative review units.
 
     This deliberately reads the policy's non-actionable uncertainty rows, not
     every Team-U source. A normal Required/Mixed queue is already actionable
-    and must keep the fast no-global-evidence path.
+    and must keep the fast no-global-evidence path. Explicit evidence-retry
+    also admits exact technical failures, but never trusts persisted source
+    pairs: it derives them again from the current internal review units.
     """
     issues = workflow.get("issues") or {}
     if (
@@ -411,11 +422,11 @@ def _not_materialized_team_attribution_sources(
         for case in residual.get("non_actionable_required_team_uncertainty_cases") or []:
             if not isinstance(case, dict):
                 continue
-            if (
-                classify_team_attribution_evidence_status(
-                    case.get("team_attribution_evidence_status")
-                )
-                == "remediable_not_established"
+            classification = classify_team_attribution_evidence_status(
+                case.get("team_attribution_evidence_status")
+            )
+            if classification == "remediable_not_established" or (
+                include_technical_failures and classification == "technical_failure"
             ):
                 key = _team_evidence_source_key(case)
                 if key is not None:
@@ -690,10 +701,10 @@ def retry_review_render(match_path: Path, match_doc: dict[str, Any]) -> dict[str
 def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
     retry_started = time.perf_counter()
     preflight_started = time.perf_counter()
-    state = get_review_workflow_state(match_path, match_doc)
-    if "retry_review_recompute" not in set(state.get("allowed_actions") or []):
-        raise WorkflowActionError("workflow_action_not_allowed", state, "retry_review_recompute")
+    state = build_compact_review_workflow_state(match_path, match_doc)
+    assert_workflow_action_allowed(state, "retry_review_recompute")
     retry_preflight_ms = _elapsed_ms(preflight_started)
+    technical_evidence_retry = _is_evidence_only_technical_retry(state)
     # Retry is the boundary between an old operator projection and the next
     # one. Commit and warm the exact same generation before returning it so an
     # immediate Required offset-0 GET cannot observe a different queue.
@@ -705,6 +716,7 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
         operator_evidence=_retry_requires_global_operator_evidence(state),
         leave_hot_state_warm=True,
         reuse_current_snapshot=_retry_can_reuse_current_snapshot(state),
+        retry_technical_team_attribution_evidence=technical_evidence_retry,
     )
     performance = dict(refreshed.get("performance") or {})
     performance.update({
@@ -724,15 +736,33 @@ def _retry_requires_global_operator_evidence(state: dict[str, Any]) -> bool:
     Other retry reasons retain the legacy broad-evidence behavior explicitly.
     """
     reason = str((state.get("freshness") or {}).get("review_progress_reason") or "")
-    return reason != "review_progress_policy_stale"
+    return (
+        reason != "review_progress_policy_stale"
+        and not _is_evidence_only_technical_retry(state)
+    )
 
 
 def _retry_can_reuse_current_snapshot(state: dict[str, Any]) -> bool:
-    """Reuse only a durably current snapshot for a coverage-policy migration."""
+    """Reuse only a durably current snapshot for evidence-only recovery."""
     freshness = state.get("freshness") or {}
+    if not bool(freshness.get("reviewed_identity_current")):
+        return False
     return (
         str(freshness.get("review_progress_reason") or "")
         == "review_progress_policy_stale"
+        or _is_evidence_only_technical_retry(state)
+    )
+
+
+def _is_evidence_only_technical_retry(state: dict[str, Any]) -> bool:
+    """Recognize the bounded retry that repairs only known evidence artifacts."""
+    issues = state.get("issues") or {}
+    freshness = state.get("freshness") or {}
+    return (
+        bool(issues.get("team_attribution_evidence_technical_failure"))
+        and int(issues.get("normal_blocking") or 0) == 0
+        and int(issues.get("mixed_blocking") or 0) == 0
+        and bool(freshness.get("review_progress_current"))
         and bool(freshness.get("reviewed_identity_current"))
     )
 

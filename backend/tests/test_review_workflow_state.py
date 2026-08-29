@@ -94,6 +94,23 @@ class ReviewWorkflowStateTests(unittest.TestCase):
             ("video_qa", base_progress, {"status": "completed", "source_snapshot_digest": "snapshot"}, False, False),
             ("complete", base_progress, {"status": "completed", "source_snapshot_digest": "snapshot"}, False, False),
             ("recompute_failure", base_progress, {"status": "missing"}, True, False),
+            (
+                "technical_evidence_retry",
+                {
+                    **base_progress,
+                    "next_cases": [],
+                    "coverage_readiness": {"allows_finalize": False},
+                    "coverage_residuals": {"U": {
+                        "non_actionable_required_team_uncertainty_cases": [{
+                            "candidate_subject_id": "u",
+                            "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                        }]
+                    }},
+                },
+                {"status": "missing"},
+                False,
+                False,
+            ),
         ]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -149,6 +166,9 @@ class ReviewWorkflowStateTests(unittest.TestCase):
                     _public_workflow_semantics(authoritative),
                 )
                 for state in (authoritative, compact):
+                    if name == "technical_evidence_retry":
+                        self.assertIn("retry_review_recompute", state["allowed_actions"])
+                        self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
                     if mixed_allowed:
                         assert_workflow_action_allowed(state, "review_mixed_players")
                     else:
