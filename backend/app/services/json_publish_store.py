@@ -2,16 +2,24 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import MATCHES_DIR, PUBLISHED_DIR
 from app.services.aggregate_inputs import build_aggregate_inputs
-from app.services.public_match_report import write_public_match_report_bundle
+from app.services import public_match_report
 
 
 PUBLISHED_MATCHES_DIR = PUBLISHED_DIR / "matches"
+
+
+def write_public_match_report_bundle(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Late-bind the public-report service so its configured mirror remains patchable."""
+
+    return public_match_report.write_public_match_report_bundle(*args, **kwargs)
 
 
 def now_iso() -> str:
@@ -44,6 +52,69 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
     tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def _staging_directory(parent: Path, *, name: str) -> Path:
+    staging_parent = parent / ".staging"
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{name}-", dir=staging_parent))
+
+
+def _remove_directory(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def _remove_empty_directory(path: Path) -> None:
+    try:
+        path.rmdir()
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _commit_publication_generation(
+    *,
+    staged_match_dir: Path,
+    target_match_dir: Path,
+    staged_public_dir: Path,
+    target_public_dir: Path,
+) -> None:
+    """Replace the private and public projections together after full staging.
+
+    Each directory swap is atomic.  If the second swap cannot complete, the
+    already-swapped directory is restored from its preserved previous version.
+    All failure-prone report construction happens before this point.
+    """
+
+    generation_token = uuid.uuid4().hex
+    committed: list[tuple[Path, Path | None]] = []
+    try:
+        for staged_dir, target_dir in (
+            (staged_match_dir, target_match_dir),
+            (staged_public_dir, target_public_dir),
+        ):
+            target_dir.parent.mkdir(parents=True, exist_ok=True)
+            backup_dir: Path | None = None
+            if target_dir.exists():
+                backup_dir = target_dir.parent / f".{target_dir.name}.backup-{generation_token}"
+                target_dir.replace(backup_dir)
+            try:
+                staged_dir.replace(target_dir)
+            except Exception:
+                if backup_dir is not None and backup_dir.exists():
+                    backup_dir.replace(target_dir)
+                raise
+            committed.append((target_dir, backup_dir))
+    except Exception:
+        for target_dir, backup_dir in reversed(committed):
+            _remove_directory(target_dir)
+            if backup_dir is not None and backup_dir.exists():
+                backup_dir.replace(target_dir)
+        raise
+    else:
+        for _, backup_dir in committed:
+            if backup_dir is not None:
+                _remove_directory(backup_dir)
 
 
 def _match_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
@@ -158,10 +229,6 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
     if target_dir.exists() and not replace:
         raise FileExistsError(f"Published match {published_id} already exists. Re-import with replace=true to overwrite it.")
     existing_summary = _load_json_object(summary_path) if summary_path.exists() and replace else {}
-    if target_dir.exists() and replace:
-        shutil.rmtree(target_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
-
     generated = now_iso()
     created_at = str(existing_summary.get("created_at") or generated)
     source_match = package.get("match") if isinstance(package.get("match"), dict) else {}
@@ -172,22 +239,40 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
         created_at=created_at,
         updated_at=generated,
     )
-    _atomic_write_json(target_dir / "package.json", package)
-    public_report = write_public_match_report_bundle(
-        package,
-        target_dir=target_dir,
-        source_match_dir=MATCHES_DIR / source_match_id,
-    )
-    if package.get("identity_report_source") == "reviewed_identity":
-        # This is server-side publication data, not a public client asset.
-        # It is written after the exact public report generation it fingerprints.
-        aggregate_inputs = build_aggregate_inputs(
+    public_root = public_match_report.CLIENT_PUBLIC_MATCHES_DIR
+    target_public_dir = public_root / published_id
+    staged_match_dir = _staging_directory(PUBLISHED_MATCHES_DIR.parent, name=published_id)
+    staged_public_dir = _staging_directory(public_root.parent, name=published_id)
+    try:
+        _atomic_write_json(staged_match_dir / "package.json", package)
+        public_report = write_public_match_report_bundle(
             package,
-            public_report=public_report,
-            published_id=published_id,
+            target_dir=staged_match_dir,
+            source_match_dir=MATCHES_DIR / source_match_id,
+            mirror_dir=staged_public_dir,
         )
-        _atomic_write_json(target_dir / "aggregate_inputs.json", aggregate_inputs)
-    _atomic_write_json(summary_path, summary)
+        if package.get("identity_report_source") == "reviewed_identity":
+            # This is server-side publication data, not a public client asset.
+            # It is written after the exact public report generation it fingerprints.
+            aggregate_inputs = build_aggregate_inputs(
+                package,
+                public_report=public_report,
+                published_id=published_id,
+            )
+            _atomic_write_json(staged_match_dir / "aggregate_inputs.json", aggregate_inputs)
+        _atomic_write_json(staged_match_dir / "summary.json", summary)
+        _commit_publication_generation(
+            staged_match_dir=staged_match_dir,
+            target_match_dir=target_dir,
+            staged_public_dir=staged_public_dir,
+            target_public_dir=target_public_dir,
+        )
+    finally:
+        _remove_directory(staged_match_dir)
+        _remove_directory(staged_public_dir)
+        _remove_empty_directory(staged_match_dir.parent)
+        _remove_empty_directory(staged_public_dir.parent)
+
     result = get_published_match(published_id)
     result["public_report"] = public_report
     return result

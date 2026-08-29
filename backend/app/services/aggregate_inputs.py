@@ -11,6 +11,7 @@ outside this Phase 1 boundary.
 from typing import Any
 
 from app.services.artifact_lineage import canonical_json_sha256
+from app.services.public_match_report import pass_counts_for_team_label
 
 
 AGGREGATE_INPUTS_SCHEMA_VERSION = "1.0.0"
@@ -276,6 +277,20 @@ def _build_passes(package: dict[str, Any], team_by_label: dict[str, str]) -> dic
         value = _number_or_none(summary.get(source))
         if value is not None:
             result[destination] = value
+
+    candidate_rows = passes.get("candidates")
+    if not isinstance(candidate_rows, list):
+        raise AggregateInputsError(
+            "pass_candidates.candidates is required to derive stable-team restart and accepted pass counts"
+        )
+    restart_attempts_by_team_id: dict[str, int] = {}
+    accepted_by_team_id: dict[str, int] = {}
+    for label, team_id in sorted(team_by_label.items(), key=lambda item: item[1]):
+        counts = pass_counts_for_team_label(package, label)
+        restart_attempts_by_team_id[team_id] = counts["restart_passes"]
+        accepted_by_team_id[team_id] = counts["accepted_passes"]
+    result["restart_attempts_by_team_id"] = restart_attempts_by_team_id
+    result["accepted_by_team_id"] = accepted_by_team_id
     return result
 
 

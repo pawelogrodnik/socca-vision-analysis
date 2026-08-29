@@ -57,7 +57,14 @@ def package_fixture(match_id: str = "match-1") -> dict:
 
 
 class JsonPublishStoreTests(unittest.TestCase):
-    def _public_report_stub(self, package: dict, *, target_dir: Path, source_match_dir: Path | None = None) -> dict:
+    def _public_report_stub(
+        self,
+        package: dict,
+        *,
+        target_dir: Path,
+        source_match_dir: Path | None = None,
+        mirror_dir: Path | None = None,
+    ) -> dict:
         report = {
             "schema_version": "0.1.0",
             "id": f"published-{package['match']['id']}",
@@ -66,6 +73,9 @@ class JsonPublishStoreTests(unittest.TestCase):
             "players": [],
         }
         (target_dir / "public_report.json").write_text(json.dumps(report), encoding="utf-8")
+        if mirror_dir is not None:
+            mirror_dir.mkdir(parents=True, exist_ok=True)
+            (mirror_dir / "public_report.json").write_text(json.dumps(report), encoding="utf-8")
         return report
 
     def test_import_list_get_and_delete_match_package(self) -> None:
@@ -73,6 +83,7 @@ class JsonPublishStoreTests(unittest.TestCase):
             published_dir = Path(tmp) / "published" / "matches"
             with (
                 patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", published_dir),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", Path(tmp) / "public-mirror"),
                 patch.object(json_publish_store, "write_public_match_report_bundle", side_effect=self._public_report_stub),
             ):
                 imported = json_publish_store.import_match_package(package_fixture(), replace=False)
@@ -102,6 +113,7 @@ class JsonPublishStoreTests(unittest.TestCase):
             published_dir = Path(tmp) / "published" / "matches"
             with (
                 patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", published_dir),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", Path(tmp) / "public-mirror"),
                 patch.object(json_publish_store, "write_public_match_report_bundle", side_effect=self._public_report_stub),
             ):
                 json_publish_store.import_match_package(package_fixture(), replace=False)
@@ -113,6 +125,7 @@ class JsonPublishStoreTests(unittest.TestCase):
             published_dir = Path(tmp) / "published" / "matches"
             with (
                 patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", published_dir),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", Path(tmp) / "public-mirror"),
                 patch.object(json_publish_store, "write_public_match_report_bundle", side_effect=self._public_report_stub),
             ):
                 first = json_publish_store.import_match_package(package_fixture(), replace=False)

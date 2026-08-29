@@ -173,24 +173,31 @@ snapshot, tracker IDs or observation-level trajectories.
         "sprint_count": 0,
         "peak_speed_kmh": 0,
         "average_speed": {"status": "not_available"}
-      },
-      "possession": {
-        "status": "ready|not_available",
-        "controlled_frames": 0,
-        "known_frames": 0,
-        "free_frames": 0,
-        "unknown_frames": 0
-      },
-      "passes": {
-        "status": "ready|not_available",
-        "attempts": 0,
-        "completed": 0,
-        "failed": 0,
-        "restart_attempts": 0,
-        "accepted": 0
       }
     }
   ],
+  "ball": {
+    "possession": {
+      "status": "ready|not_available",
+      "controlled_frames_by_team_id": {"stable-team-id": 0},
+      "known_frames": 0,
+      "free_frames": 0,
+      "unknown_frames": 0
+    },
+    "passes": {
+      "status": "ready|not_available",
+      "attempts_by_team_id": {"stable-team-id": 0},
+      "completed_by_team_id": {"stable-team-id": 0},
+      "failed_by_team_id": {"stable-team-id": 0},
+      "restart_attempts_by_team_id": {"stable-team-id": 0},
+      "accepted_by_team_id": {"stable-team-id": 0},
+      "attempts": 0,
+      "completed": 0,
+      "failed": 0,
+      "restart_attempts": 0,
+      "accepted": 0
+    }
+  },
   "players": [
     {
       "player_id": "stable-real-player-id",

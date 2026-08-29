@@ -67,6 +67,16 @@ class AggregateInputsTests(unittest.TestCase):
         self.assertNotIn("avg_speed_kmh", player["movement"])
         self.assertEqual(inputs["ball"]["possession"]["controlled_frames_by_team_id"], {"team-corgi": 12, "team-verisk": 18})
         self.assertEqual(inputs["ball"]["passes"]["attempts_by_team_id"], {"team-corgi": 4, "team-verisk": 6})
+        self.assertEqual(inputs["ball"]["passes"]["restart_attempts_by_team_id"], {"team-corgi": 1, "team-verisk": 0})
+        self.assertEqual(inputs["ball"]["passes"]["accepted_by_team_id"], {"team-corgi": 2, "team-verisk": 2})
+        self.assertEqual(
+            sum(inputs["ball"]["passes"]["restart_attempts_by_team_id"].values()),
+            inputs["ball"]["passes"]["restart_attempts"],
+        )
+        self.assertEqual(
+            sum(inputs["ball"]["passes"]["accepted_by_team_id"].values()),
+            inputs["ball"]["passes"]["accepted"],
+        )
         self.assertNotIn("completion_rate", json.dumps(inputs))
         self.assertNotIn("possession_share_percent", json.dumps(inputs))
         self.assertEqual(inputs["spatial"]["orientation"], "unproven")
@@ -85,6 +95,8 @@ class AggregateInputsTests(unittest.TestCase):
         self.assertEqual(by_team["team-corgi"]["source_team_label"], "B")
         self.assertEqual(inputs["ball"]["possession"]["controlled_frames_by_team_id"], {"team-corgi": 18, "team-verisk": 12})
         self.assertEqual(inputs["ball"]["passes"]["completed_by_team_id"], {"team-corgi": 3, "team-verisk": 2})
+        self.assertEqual(inputs["ball"]["passes"]["restart_attempts_by_team_id"], {"team-corgi": 0, "team-verisk": 1})
+        self.assertEqual(inputs["ball"]["passes"]["accepted_by_team_id"], {"team-corgi": 2, "team-verisk": 2})
 
     def test_missing_stable_mapping_fails_closed(self) -> None:
         package = _package()
@@ -118,6 +130,12 @@ class AggregateInputsTests(unittest.TestCase):
         self.assertNotIn("controlled_frames_by_team_id", inputs["ball"]["possession"])
         self.assertEqual(inputs["ball"]["passes"]["status"], "not_available")
         self.assertNotIn("attempts", inputs["ball"]["passes"])
+
+    def test_passes_with_team_totals_but_no_candidate_rows_fail_closed(self) -> None:
+        package = _package()
+        package["pass_candidates"].pop("candidates")
+        with self.assertRaisesRegex(AggregateInputsError, "pass_candidates.candidates is required"):
+            build_aggregate_inputs(package, public_report=_public_report(), published_id="published-match-1")
 
     def test_semantic_digest_ignores_technical_timestamps_but_changes_for_primitives(self) -> None:
         package = _package()
@@ -156,7 +174,7 @@ class AggregateInputsTests(unittest.TestCase):
         self.assertNotIn("positions_m", serialized)
         self.assertNotIn("trajectory", serialized)
 
-    def test_publish_writes_server_only_input_and_replace_refreshes_it_atomically(self) -> None:
+    def test_publish_writes_server_only_input_and_successful_replace_swaps_one_complete_generation(self) -> None:
         from app.services import json_publish_store
         from app.services.json_publish_store import import_match_package
         from app.services.public_match_report import build_public_match_report
@@ -177,7 +195,9 @@ class AggregateInputsTests(unittest.TestCase):
                     public_heatmap_base="published/matches/published-match-1/heatmaps",
                 )
                 first = import_match_package(package)
-                artifact = root / "published" / "published-match-1" / "aggregate_inputs.json"
+                published_root = root / "published" / "published-match-1"
+                mirror_root = root / "public-mirror" / "published-match-1"
+                artifact = published_root / "aggregate_inputs.json"
                 first_input = json.loads(artifact.read_text(encoding="utf-8"))
                 self.assertNotIn("aggregate_inputs", first)
                 self.assertEqual(
@@ -187,7 +207,9 @@ class AggregateInputsTests(unittest.TestCase):
                 self.assertFalse((root / "public-mirror" / "published-match-1" / "aggregate_inputs.json").exists())
                 self.assertFalse(artifact.with_suffix(".json.tmp").exists())
                 self.assertFalse((root / "source-matches" / "match-1" / "aggregate_inputs.json").exists())
+                before = _artifact_bytes(published_root, mirror_root)
 
+                package["match"]["title"] = "Updated reviewed match"
                 package["reviewed_player_stats"]["players"][0]["total_distance_m"] = 51.0
                 second = import_match_package(package, replace=True)
                 second_input = json.loads(artifact.read_text(encoding="utf-8"))
@@ -200,7 +222,63 @@ class AggregateInputsTests(unittest.TestCase):
                     second_input["source"]["public_report_semantic_digest"],
                     canonical_json_sha256(second["public_report"]),
                 )
+                after = _artifact_bytes(published_root, mirror_root)
+                self.assertEqual(set(before), set(after))
+                for path in before:
+                    self.assertNotEqual(before[path], after[path], path)
                 self.assertFalse(artifact.with_suffix(".json.tmp").exists())
+                _assert_no_publish_staging_artifacts(root)
+
+    def test_invalid_first_reviewed_publish_leaves_no_authoritative_generation(self) -> None:
+        from app.services import json_publish_store
+        from app.services.json_publish_store import import_match_package
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", root / "published"),
+                patch("app.services.json_publish_store.MATCHES_DIR", root / "source-matches"),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", root / "public-mirror"),
+                patch(
+                    "app.services.json_publish_store.build_aggregate_inputs",
+                    side_effect=AggregateInputsError("invalid reviewed generation"),
+                ),
+            ):
+                with self.assertRaisesRegex(AggregateInputsError, "invalid reviewed generation"):
+                    import_match_package(_package())
+
+                self.assertFalse((root / "published" / "published-match-1").exists())
+                self.assertFalse((root / "public-mirror" / "published-match-1").exists())
+                _assert_no_publish_staging_artifacts(root)
+
+    def test_failed_replacement_preserves_every_previous_private_and_public_artifact(self) -> None:
+        from app.services import json_publish_store
+        from app.services.json_publish_store import import_match_package
+
+        package = _package()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", root / "published"),
+                patch("app.services.json_publish_store.MATCHES_DIR", root / "source-matches"),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", root / "public-mirror"),
+            ):
+                import_match_package(package)
+                published_root = root / "published" / "published-match-1"
+                mirror_root = root / "public-mirror" / "published-match-1"
+                before = _artifact_bytes(published_root, mirror_root)
+
+                package["match"]["title"] = "Broken replacement"
+                package["reviewed_player_stats"]["players"][0]["total_distance_m"] = 51.0
+                with patch(
+                    "app.services.json_publish_store.build_aggregate_inputs",
+                    side_effect=AggregateInputsError("replacement generation invalid"),
+                ):
+                    with self.assertRaisesRegex(AggregateInputsError, "replacement generation invalid"):
+                        import_match_package(package, replace=True)
+
+                self.assertEqual(before, _artifact_bytes(published_root, mirror_root))
+                _assert_no_publish_staging_artifacts(root)
 
 
 def _public_report() -> dict:
@@ -211,6 +289,23 @@ def _public_report() -> dict:
         "source_match_id": "match-1",
         "report_type": "public_match_report",
     }
+
+
+def _artifact_bytes(published_root: Path, mirror_root: Path) -> dict[str, bytes]:
+    roots = (("published", published_root), ("mirror", mirror_root))
+    return {
+        f"{name}/{path.relative_to(root)}": path.read_bytes()
+        for name, root in roots
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _assert_no_publish_staging_artifacts(root: Path) -> None:
+    staging_root = root / ".staging"
+    assert not staging_root.exists()
+    assert not list(root.rglob("*.tmp"))
+    assert not list(root.rglob("*.backup-*"))
 
 
 def _package(*, labels: dict[str, str] | None = None, swap_players: bool = False) -> dict:
@@ -314,7 +409,8 @@ def _package(*, labels: dict[str, str] | None = None, swap_players: bool = False
                 "restart_pass_attempts": 1,
                 "final_stat_passes": 4,
                 "completion_rate": 0.5,
-            }
+            },
+            "candidates": _pass_candidates(),
         },
         "attacking_momentum": {
             "status": "completed",
@@ -344,6 +440,46 @@ def _team_row(label: str, team_id: str, distance: float, high_intensity: float, 
         "sprint_count": sprint_count,
         "peak_sustained_speed_kmh": peak,
     }
+
+
+def _pass_candidates() -> list[dict]:
+    return [
+        {
+            "count_for_team_label": "A",
+            "pass_type": "same_team_pass",
+            "outcome": "completed_pass",
+            "completed": True,
+            "from_restart": True,
+            "final_stat_eligible": True,
+        },
+        {
+            "count_for_team_label": "A",
+            "pass_type": "same_team_pass",
+            "outcome": "completed_pass",
+            "completed": True,
+            "review_status": "accepted",
+        },
+        {"count_for_team_label": "A", "pass_type": "same_team_pass", "outcome": "failed_pass", "failed": True},
+        {"count_for_team_label": "A", "pass_type": "same_team_pass", "outcome": "failed_pass", "failed": True},
+        {
+            "count_for_team_label": "B",
+            "pass_type": "same_team_pass",
+            "outcome": "completed_pass",
+            "completed": True,
+            "final_stat_eligible": True,
+        },
+        {
+            "count_for_team_label": "B",
+            "pass_type": "same_team_pass",
+            "outcome": "completed_pass",
+            "completed": True,
+            "review_status": "accepted",
+        },
+        {"count_for_team_label": "B", "pass_type": "same_team_pass", "outcome": "completed_pass", "completed": True},
+        {"count_for_team_label": "B", "pass_type": "same_team_pass", "outcome": "failed_pass", "failed": True},
+        {"count_for_team_label": "B", "pass_type": "same_team_pass", "outcome": "failed_pass", "failed": True},
+        {"count_for_team_label": "B", "pass_type": "same_team_pass", "outcome": "failed_pass", "failed": True},
+    ]
 
 
 def _player(

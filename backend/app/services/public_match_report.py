@@ -74,7 +74,8 @@ def _possession_share(package: dict[str, Any], team_label: str) -> float | None:
     return round(float(controlled.get(team_label) or 0.0) / total * 100.0, 1)
 
 
-def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
+def pass_counts_for_team_label(package: dict[str, Any], team_label: str) -> dict[str, int]:
+    """Return the canonical public-pass classification for one source-local team."""
     pass_doc = package.get("pass_candidates") if isinstance(package.get("pass_candidates"), dict) else {}
     candidates = pass_doc.get("candidates") if isinstance(pass_doc.get("candidates"), list) else []
     team_candidates = [
@@ -104,6 +105,10 @@ def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
             if item.get("final_stat_eligible") is True or item.get("review_status") == "accepted"
         ),
     }
+
+
+def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
+    return pass_counts_for_team_label(package, team_label)
 
 
 def _is_public_pass_attempt(candidate: dict[str, Any]) -> bool:
