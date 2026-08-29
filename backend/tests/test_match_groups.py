@@ -203,6 +203,55 @@ class MatchGroupStoreTests(unittest.TestCase):
             self.assertEqual(validation["status"], "incompatible")
             self.assertEqual(validation["blocking_reasons"][0]["code"], "unsupported_aggregate_input_schema")
 
+    def test_tampered_contract_fields_are_invalid_before_compatibility_is_considered(self) -> None:
+        cases = (
+            ("aggregate_inputs.json", "schema_version", "9.0.0", "aggregation_input_digest_mismatch"),
+            ("aggregate_inputs.json", "aggregation_policy_version", "9.0.0", "aggregation_input_digest_mismatch"),
+            ("public_report.json", "schema_version", "9.0.0", "public_report_digest_mismatch"),
+            ("public_report.json", "report_type", "public_aggregate_match_report", "public_report_digest_mismatch"),
+        )
+        for filename, field, replacement, expected_code in cases:
+            with self.subTest(filename=filename, field=field), self._store() as root:
+                _write_source(root, "published-one", "physical-one")
+                _write_source(root, "published-two", "physical-two")
+                manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+                source_path = root / "published" / "published-two" / filename
+                tampered = _read(source_path)
+                tampered[field] = replacement
+                _write(source_path, tampered)
+
+                validation = validate_match_group(manifest["group_id"])
+
+                self.assertEqual(validation["status"], "invalid")
+                self.assertIn(expected_code, {reason["code"] for reason in validation["blocking_reasons"]})
+
+    def test_self_consistent_unsupported_contracts_remain_incompatible(self) -> None:
+        cases = (
+            {"schema_version": "9.0.0"},
+            {"aggregation_policy_version": "9.0.0"},
+            {"public_schema_version": "9.0.0"},
+            {"report_type": "public_aggregate_match_report"},
+        )
+        for overrides in cases:
+            with self.subTest(overrides=overrides), self._store() as root:
+                _write_source(root, "published-one", "physical-one")
+                _write_source(root, "published-two", "physical-two")
+                manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+
+                _write_source(root, "published-two", "physical-two", **overrides)
+                validation = validate_match_group(manifest["group_id"])
+
+                self.assertEqual(validation["status"], "incompatible")
+                self.assertIn(
+                    next(iter(validation["blocking_reasons"]))["code"],
+                    {
+                        "unsupported_aggregate_input_schema",
+                        "unsupported_aggregation_policy",
+                        "unsupported_public_report_schema",
+                        "unsupported_public_report_type",
+                    },
+                )
+
     def test_validation_status_precedence_is_independent_of_member_order(self) -> None:
         with self._store() as root:
             _write_source(root, "published-invalid", "physical-invalid")
@@ -368,6 +417,7 @@ def _write_source(
     labels: tuple[str, str] = ("A", "B"),
     players: list[tuple[str, str]] | None = None,
     schema_version: str = "1.0.0",
+    aggregation_policy_version: str = "1.0.0",
     public_schema_version: str = PUBLIC_MATCH_REPORT_SCHEMA_VERSION,
     report_type: str | None = PUBLIC_MATCH_REPORT_TYPE,
     public_title: str | None = None,
@@ -393,7 +443,7 @@ def _write_source(
     player_rows = players if players is not None else [("player-corgi", teams[0])]
     aggregate = {
         "schema_version": schema_version,
-        "aggregation_policy_version": "1.0.0",
+        "aggregation_policy_version": aggregation_policy_version,
         "source": {
             "source_match_id": source_match_id,
             "published_id": published_id,

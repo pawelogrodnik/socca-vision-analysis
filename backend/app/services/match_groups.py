@@ -223,50 +223,8 @@ def _authoritative_member(published_id: str, *, sequence_index: int) -> dict[str
 
     aggregate = _load_json_object(aggregate_path, member=published_id)
     public_report = _load_json_object(public_report_path, member=published_id)
-    schema_version = _required_text(aggregate.get("schema_version"), "aggregate input schema_version", member=published_id)
-    if schema_version != AGGREGATE_INPUTS_SCHEMA_VERSION:
-        raise MatchGroupError(
-            "unsupported_aggregate_input_schema",
-            f"Aggregate input schema {schema_version!r} is not supported.",
-            member=published_id,
-        )
-    policy_version = _required_text(aggregate.get("aggregation_policy_version"), "aggregation policy version", member=published_id)
-    if policy_version != AGGREGATION_POLICY_VERSION:
-        raise MatchGroupError(
-            "unsupported_aggregation_policy",
-            f"Aggregation policy {policy_version!r} is not supported.",
-            member=published_id,
-        )
-
-    public_schema_version = _required_text(
-        public_report.get("schema_version"), "public report schema_version", member=published_id
-    )
-    if public_schema_version != PUBLIC_MATCH_REPORT_SCHEMA_VERSION:
-        raise MatchGroupError(
-            "unsupported_public_report_schema",
-            f"Public report schema {public_schema_version!r} is not supported.",
-            member=published_id,
-        )
-    report_type = _required_text(public_report.get("report_type"), "public report type", member=published_id)
-    if report_type != PUBLIC_MATCH_REPORT_TYPE:
-        raise MatchGroupError(
-            "unsupported_public_report_type",
-            f"Public report type {report_type!r} is not a physical source public report.",
-            member=published_id,
-        )
-
     source = _record(aggregate.get("source"))
-    source_match_id = _required_text(source.get("source_match_id"), "source_match_id", member=published_id)
-    source_published_id = _required_text(source.get("published_id"), "source.published_id", member=published_id)
-    if source_published_id != published_id:
-        raise MatchGroupError(
-            "published_id_mismatch",
-            "aggregate_inputs source.published_id does not match its selected published source.",
-            member=published_id,
-        )
-    aggregate_digest = _required_text(
-        source.get("aggregation_input_semantic_digest"), "aggregation input semantic digest", member=published_id
-    )
+    aggregate_digest = _required_text(source.get("aggregation_input_semantic_digest"), "aggregation input semantic digest", member=published_id)
     digest_document = copy.deepcopy(aggregate)
     _record(digest_document.get("source")).pop("aggregation_input_semantic_digest", None)
     if canonical_json_sha256(digest_document) != aggregate_digest:
@@ -275,6 +233,9 @@ def _authoritative_member(published_id: str, *, sequence_index: int) -> dict[str
             "aggregate_inputs semantic digest does not match its self-excluding canonical content.",
             member=published_id,
         )
+
+    # The aggregate source is now integrity-verified, so its public-report
+    # digest can safely become the next link in the trust chain.
     public_digest = _required_text(
         source.get("public_report_semantic_digest"), "public report semantic digest", member=published_id
     )
@@ -282,6 +243,46 @@ def _authoritative_member(published_id: str, *, sequence_index: int) -> dict[str
         raise MatchGroupError(
             "public_report_digest_mismatch",
             "public_report.json does not match the digest pinned by aggregate_inputs.",
+            member=published_id,
+        )
+
+    public_schema_version = _required_text(
+        public_report.get("schema_version"), "public report schema_version", member=published_id
+    )
+    report_type = _required_text(public_report.get("report_type"), "public report type", member=published_id)
+    schema_version = _required_text(aggregate.get("schema_version"), "aggregate input schema_version", member=published_id)
+    policy_version = _required_text(aggregate.get("aggregation_policy_version"), "aggregation policy version", member=published_id)
+    if schema_version != AGGREGATE_INPUTS_SCHEMA_VERSION:
+        raise MatchGroupError(
+            "unsupported_aggregate_input_schema",
+            f"Aggregate input schema {schema_version!r} is not supported.",
+            member=published_id,
+        )
+    if policy_version != AGGREGATION_POLICY_VERSION:
+        raise MatchGroupError(
+            "unsupported_aggregation_policy",
+            f"Aggregation policy {policy_version!r} is not supported.",
+            member=published_id,
+        )
+    if public_schema_version != PUBLIC_MATCH_REPORT_SCHEMA_VERSION:
+        raise MatchGroupError(
+            "unsupported_public_report_schema",
+            f"Public report schema {public_schema_version!r} is not supported.",
+            member=published_id,
+        )
+    if report_type != PUBLIC_MATCH_REPORT_TYPE:
+        raise MatchGroupError(
+            "unsupported_public_report_type",
+            f"Public report type {report_type!r} is not a physical source public report.",
+            member=published_id,
+        )
+
+    source_match_id = _required_text(source.get("source_match_id"), "source_match_id", member=published_id)
+    source_published_id = _required_text(source.get("published_id"), "source.published_id", member=published_id)
+    if source_published_id != published_id:
+        raise MatchGroupError(
+            "published_id_mismatch",
+            "aggregate_inputs source.published_id does not match its selected published source.",
             member=published_id,
         )
     if str(public_report.get("id") or "") != published_id or str(public_report.get("source_match_id") or "") != source_match_id:
