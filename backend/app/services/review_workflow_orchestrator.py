@@ -688,13 +688,17 @@ def retry_review_render(match_path: Path, match_doc: dict[str, Any]) -> dict[str
 
 
 def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
+    retry_started = time.perf_counter()
+    preflight_started = time.perf_counter()
     state = get_review_workflow_state(match_path, match_doc)
     if "retry_review_recompute" not in set(state.get("allowed_actions") or []):
         raise WorkflowActionError("workflow_action_not_allowed", state, "retry_review_recompute")
+    retry_preflight_ms = _elapsed_ms(preflight_started)
     # Retry is the boundary between an old operator projection and the next
     # one. Commit and warm the exact same generation before returning it so an
     # immediate Required offset-0 GET cannot observe a different queue.
-    return refresh_review_after_identity_mutation(
+    refresh_started = time.perf_counter()
+    refreshed = refresh_review_after_identity_mutation(
         match_path,
         match_doc,
         source="retry",
@@ -702,6 +706,13 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
         leave_hot_state_warm=True,
         reuse_current_snapshot=_retry_can_reuse_current_snapshot(state),
     )
+    performance = dict(refreshed.get("performance") or {})
+    performance.update({
+        "retry_preflight_ms": retry_preflight_ms,
+        "retry_refresh_ms": _elapsed_ms(refresh_started),
+        "endpoint_total_ms": _elapsed_ms(retry_started),
+    })
+    return {**refreshed, "performance": performance}
 
 
 def _retry_requires_global_operator_evidence(state: dict[str, Any]) -> bool:

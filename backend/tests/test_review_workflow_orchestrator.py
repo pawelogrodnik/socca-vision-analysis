@@ -84,7 +84,10 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         ) as refresh:
             result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
 
-        self.assertEqual(result, refreshed)
+        self.assertEqual(result["workflow"], refreshed["workflow"])
+        self.assertIn("retry_preflight_ms", result["performance"])
+        self.assertIn("retry_refresh_ms", result["performance"])
+        self.assertIn("endpoint_total_ms", result["performance"])
         refresh.assert_called_once_with(
             Path("/tmp/match"),
             {"id": "m1"},
@@ -113,7 +116,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         ) as refresh:
             result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
 
-        self.assertEqual(result, refreshed)
+        self.assertEqual(result["workflow"], refreshed["workflow"])
         refresh.assert_called_once_with(
             Path("/tmp/match"),
             {"id": "m1"},
@@ -148,7 +151,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         ) as refresh:
             result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
 
-        self.assertEqual(result, repaired_result)
+        self.assertEqual(result["workflow"], repaired_result["workflow"])
         refresh.assert_called_once_with(
             Path("/tmp/match"),
             {"id": "m1"},
@@ -157,6 +160,108 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             leave_hot_state_warm=True,
             reuse_current_snapshot=False,
         )
+
+    def test_retry_reports_orchestration_timings_in_the_returned_performance(self) -> None:
+        retryable = {
+            "allowed_actions": ["retry_review_recompute"],
+            "issues": {"normal_blocking": 0, "mixed_blocking": 0},
+        }
+        refreshed = {
+            "workflow": {"phase": "exceptions"},
+            "performance": {"total_ms": 7.0},
+        }
+        with patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=retryable,
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ), patch(
+            "app.services.review_workflow_orchestrator.time.perf_counter",
+            side_effect=[10.0, 11.0, 13.0, 14.0, 19.0, 21.0],
+        ):
+            result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
+
+        self.assertEqual(result["performance"], {
+            "total_ms": 7.0,
+            "retry_preflight_ms": 2000.0,
+            "retry_refresh_ms": 5000.0,
+            "endpoint_total_ms": 11000.0,
+        })
+        self.assertEqual(refreshed["performance"], {"total_ms": 7.0})
+
+    def test_current_snapshot_reuse_skips_finalize_and_returns_durable_snapshot(self) -> None:
+        current = {"status": "partial_reviewed", "semantic_digest": "current"}
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.get_reviewed_identity_status",
+            return_value=current,
+        ), patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+        ) as finalize, patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            return_value={"summary": {}, "coverage_residuals": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=ready_state(),
+        ):
+            result = refresh_review_after_identity_mutation(
+                Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False,
+                reuse_current_snapshot=True,
+            )
+
+        finalize.assert_not_called()
+        self.assertIs(result["snapshot"], current)
+        self.assertTrue(result["performance"]["snapshot_reused"])
+
+    def test_stale_snapshot_reuse_falls_back_to_canonical_finalize(self) -> None:
+        stale = {"status": "stale", "semantic_digest": "old"}
+        canonical = {"status": "partial_reviewed", "semantic_digest": "fresh"}
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.get_reviewed_identity_status",
+            return_value=stale,
+        ), patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value=canonical,
+        ) as finalize, patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            return_value={"summary": {}, "coverage_residuals": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=ready_state(),
+        ):
+            result = refresh_review_after_identity_mutation(
+                Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False,
+                reuse_current_snapshot=True,
+            )
+
+        finalize.assert_called_once()
+        self.assertIs(result["snapshot"], canonical)
+        self.assertFalse(result["performance"]["snapshot_reused"])
+
+    def test_missing_snapshot_reuse_falls_back_to_canonical_finalize(self) -> None:
+        missing = {"status": "missing"}
+        canonical = {"status": "partial_reviewed", "semantic_digest": "fresh"}
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.get_reviewed_identity_status",
+            return_value=missing,
+        ), patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value=canonical,
+        ) as finalize, patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            return_value={"summary": {}, "coverage_residuals": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=ready_state(),
+        ):
+            result = refresh_review_after_identity_mutation(
+                Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False,
+                reuse_current_snapshot=True,
+            )
+
+        finalize.assert_called_once()
+        self.assertIs(result["snapshot"], canonical)
+        self.assertFalse(result["performance"]["snapshot_reused"])
 
     def test_focused_remediation_that_stays_generic_becomes_technical_failure(self) -> None:
         initial_progress, blocked = _focused_terminal_progress_and_workflow()
