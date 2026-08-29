@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
 from app.main import get_artifact
@@ -176,16 +177,38 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
     def test_generated_team_attribution_crop_is_available_through_match_artifact_route(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
-            relative = Path("team_attribution_evidence") / "shadow-u-a1b2c3d4e5f60708" / "01_f000001.jpg"
+            relatives = [
+                Path("team_attribution_evidence") / subject / "a1b2c3d4e5f60708" / "01_f000001.jpg"
+                for subject in (
+                    "shadow-a-a1b2c3d4e5f60708",
+                    "shadow-b-a1b2c3d4e5f60708",
+                    "shadow-u-a1b2c3d4e5f60708",
+                )
+            ]
+            for relative in relatives:
+                artifact = root / relative
+                artifact.parent.mkdir(parents=True)
+                artifact.write_bytes(b"jpeg")
+
+            with patch("app.main.match_dir", return_value=root):
+                responses = [get_artifact("match", str(relative)) for relative in relatives]
+
+            for response in responses:
+                self.assertIsInstance(response, FileResponse)
+                self.assertEqual(response.media_type, "image/jpeg")
+
+    def test_team_attribution_artifact_route_rejects_an_unowned_path_shape(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            relative = Path("team_attribution_evidence/shadow-a-a1b2c3d4e5f60708/01_f000001.jpg")
             artifact = root / relative
             artifact.parent.mkdir(parents=True)
             artifact.write_bytes(b"jpeg")
 
-            with patch("app.main.match_dir", return_value=root):
-                response = get_artifact("match", str(relative))
+            with patch("app.main.match_dir", return_value=root), self.assertRaises(HTTPException) as error:
+                get_artifact("match", str(relative))
 
-            self.assertIsInstance(response, FileResponse)
-            self.assertEqual(response.media_type, "image/jpeg")
+        self.assertEqual(error.exception.status_code, 404)
 
     def test_recovers_exact_inside_play_team_u_observations_without_reid_gates(self) -> None:
         document = build_team_attribution_evidence(

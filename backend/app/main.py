@@ -3592,11 +3592,13 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     ):
         allowed[artifact_basename] = "image/jpeg"
     if (
-        len(artifact_rel.parts) == 3
+        len(artifact_rel.parts) == 4
         and artifact_rel.parts[0] == "team_attribution_evidence"
-        and artifact_rel.parts[1].startswith("shadow-u-")
-        and len(artifact_rel.parts[1]) == len("shadow-u-") + 16
-        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][len("shadow-u-"):])
+        and artifact_rel.parts[1][:9] in {"shadow-a-", "shadow-b-", "shadow-u-"}
+        and len(artifact_rel.parts[1]) == len("shadow-a-") + 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][9:])
+        and len(artifact_rel.parts[2]) == 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[2])
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):
         allowed[artifact_basename] = "image/jpeg"
