@@ -72,6 +72,7 @@ def refresh_review_after_identity_mutation(
     rebuild_seeded_candidates: bool = False,
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
+    reuse_current_snapshot: bool = False,
 ) -> dict[str, Any]:
     """Perform only the cheap reviewed-identity work needed for the next click."""
     with review_build_context():
@@ -82,6 +83,7 @@ def refresh_review_after_identity_mutation(
             rebuild_seeded_candidates=rebuild_seeded_candidates,
             operator_evidence=operator_evidence,
             leave_hot_state_warm=leave_hot_state_warm,
+            reuse_current_snapshot=reuse_current_snapshot,
         )
 
 
@@ -93,6 +95,7 @@ def _refresh_review_after_identity_mutation_scoped(
     rebuild_seeded_candidates: bool = False,
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
+    reuse_current_snapshot: bool = False,
 ) -> dict[str, Any]:
     try:
         return _refresh_review_after_identity_mutation_scoped_inner(
@@ -102,6 +105,7 @@ def _refresh_review_after_identity_mutation_scoped(
             rebuild_seeded_candidates=rebuild_seeded_candidates,
             operator_evidence=operator_evidence,
             leave_hot_state_warm=leave_hot_state_warm,
+            reuse_current_snapshot=reuse_current_snapshot,
         )
     except ReviewWorkflowRecomputeError:
         raise
@@ -117,6 +121,7 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     rebuild_seeded_candidates: bool = False,
     operator_evidence: bool = True,
     leave_hot_state_warm: bool = False,
+    reuse_current_snapshot: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     timings: dict[str, Any] = {
@@ -137,10 +142,19 @@ def _refresh_review_after_identity_mutation_scoped_inner(
             rebuild_identity_seeded_candidate_assignments(match_path, match_doc)
             timings["seeded_candidate_rebuild_ms"] = _elapsed_ms(phase_started)
         phase_started = time.perf_counter()
-        snapshot = finalize_reviewed_identity(match_path, match_doc)
+        snapshot = get_reviewed_identity_status(match_path) if reuse_current_snapshot else {}
+        if not snapshot or snapshot.get("status") in {"missing", "stale"}:
+            # The reuse request is only an optimization for a policy-only
+            # migration. A durable semantic freshness proof is mandatory; if
+            # it is absent, fall back to the canonical snapshot build.
+            snapshot = finalize_reviewed_identity(match_path, match_doc)
+            timings["snapshot_reused"] = False
+            timings["finalize_phases"] = last_snapshot_build_phases()
+            timings.update(_flatten_phase_timings("finalize", timings["finalize_phases"]))
+        else:
+            timings["snapshot_reused"] = True
+            timings["finalize_phases"] = {}
         timings["finalize_reviewed_identity_ms"] = _elapsed_ms(phase_started)
-        timings["finalize_phases"] = last_snapshot_build_phases()
-        timings.update(_flatten_phase_timings("finalize", timings["finalize_phases"]))
         phase_started = time.perf_counter()
         # Operator-review evidence is only meaningful while reviewable cases
         # remain.  A successful finalize has zero blockers, so regenerating
@@ -214,7 +228,7 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     if focused_sources:
         phase_started = time.perf_counter()
         try:
-            materialize_team_attribution_evidence(
+            focused_evidence = materialize_team_attribution_evidence(
                 match_path,
                 focused_sources=focused_sources,
             )
@@ -232,6 +246,20 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 focused_sources,
                 status="team_attribution_evidence_materialization_failed",
             )
+        else:
+            unresolved_sources = _focused_sources_without_durable_outcome(
+                focused_sources,
+                focused_evidence,
+            )
+            if unresolved_sources:
+                # This is evaluated from the exact materialization result,
+                # before rebuilding the match-wide projection. It prevents a
+                # second ~full progress pass merely to discover a silent drop.
+                mark_team_attribution_evidence_technical_failure(
+                    match_path,
+                    unresolved_sources,
+                    status="team_attribution_evidence_recovery_incomplete",
+                )
         timings["focused_team_attribution_evidence_ms"] = _elapsed_ms(phase_started)
         # The first progress projection was intentionally built without this
         # evidence. Drop only request-local derived values, then rebuild the
@@ -252,37 +280,6 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 "workflow_refresh_source": source,
             }
         )
-        unresolved_sources = _remaining_not_established_focused_sources(
-            focused_sources,
-            progress,
-        )
-        if unresolved_sources:
-            # The focused renderer returned normally but did not prove an
-            # actionable, terminal-unavailable, or technical result for these
-            # exact sources.  Convert only those rows into an explicit
-            # technical failure and reproject once more; fail closed rather
-            # than offering an endless indistinguishable retry.
-            mark_team_attribution_evidence_technical_failure(
-                match_path,
-                unresolved_sources,
-                status="team_attribution_evidence_recovery_incomplete",
-            )
-            scoped_memo_invalidate("__review_units__")
-            scoped_memo_invalidate("__authoritative_progress__")
-            phase_started = time.perf_counter()
-            progress = build_reviewed_identity_progress(
-                match_path,
-                match_doc,
-                include_internal_units=True,
-            )
-            timings["focused_failure_progress_rebuild_ms"] = _elapsed_ms(phase_started)
-            durable_progress = (
-                durable_review_progress(progress)
-                | {
-                    "source_snapshot_digest": snapshot.get("semantic_digest"),
-                    "workflow_refresh_source": source,
-                }
-            )
     phase_started = time.perf_counter()
     write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
     invalidate_cached_json(match_path / PROGRESS_FILENAME)
@@ -468,38 +465,38 @@ def _team_evidence_source_key(
     )
 
 
-def _remaining_not_established_focused_sources(
-    focused_sources: list[dict[str, Any],],
-    progress: dict[str, Any],
+def _focused_sources_without_durable_outcome(
+    focused_sources: list[dict[str, Any]],
+    document: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Return exact focused sources that did not reach a monotonic outcome."""
-    required_keys = {
-        key
-        for row in progress.get("next_cases") or []
+    """Find exact focused sources lacking a materializer-owned outcome.
+
+    `ready_for_team_attribution` is an actionable outcome: the same exact
+    rendered crops are attached by the following progress projection. Terminal
+    and technical builder statuses are also final outcomes. Everything else is
+    explicitly converted before (not after) that one expensive projection.
+    """
+    cases_by_key = {
+        _team_evidence_source_key(row): row
+        for row in document.get("cases") or []
         if isinstance(row, dict)
-        if (key := _team_evidence_source_key(row)) is not None
-    }
-    units_by_key = {
-        key: row
-        for row in progress.get("_internal_review_units") or []
-        if isinstance(row, dict)
-        if (key := _team_evidence_source_key(row)) is not None
+        if _team_evidence_source_key(row) is not None
     }
     unresolved: list[dict[str, Any]] = []
     for source in focused_sources:
-        key = _team_evidence_source_key(source)
-        if key is None or key in required_keys:
-            continue
-        unit = units_by_key.get(key)
-        classification = (
-            classify_team_attribution_evidence_status(
-                unit.get("team_attribution_evidence_status")
-            )
-            if unit is not None
-            else "remediable_not_established"
-        )
-        if classification == "remediable_not_established":
+        case = cases_by_key.get(_team_evidence_source_key(source))
+        if not isinstance(case, dict):
             unresolved.append(source)
+            continue
+        status = str(case.get("status") or "")
+        if status == "ready_for_team_attribution":
+            continue
+        if classify_team_attribution_evidence_status(status) in {
+            "terminal_unavailable",
+            "technical_failure",
+        }:
+            continue
+        unresolved.append(source)
     return unresolved
 
 
@@ -703,6 +700,7 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
         source="retry",
         operator_evidence=_retry_requires_global_operator_evidence(state),
         leave_hot_state_warm=True,
+        reuse_current_snapshot=_retry_can_reuse_current_snapshot(state),
     )
 
 
@@ -716,6 +714,16 @@ def _retry_requires_global_operator_evidence(state: dict[str, Any]) -> bool:
     """
     reason = str((state.get("freshness") or {}).get("review_progress_reason") or "")
     return reason != "review_progress_policy_stale"
+
+
+def _retry_can_reuse_current_snapshot(state: dict[str, Any]) -> bool:
+    """Reuse only a durably current snapshot for a coverage-policy migration."""
+    freshness = state.get("freshness") or {}
+    return (
+        str(freshness.get("review_progress_reason") or "")
+        == "review_progress_policy_stale"
+        and bool(freshness.get("reviewed_identity_current"))
+    )
 
 
 def after_video_qa_correction(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:

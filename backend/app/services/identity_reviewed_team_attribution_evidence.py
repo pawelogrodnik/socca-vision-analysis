@@ -54,6 +54,11 @@ TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
     "team_attribution_crops_unavailable",
     "team_attribution_evidence_recovery_incomplete",
     "team_attribution_evidence_materialization_failed",
+    "focused_source_subject_missing",
+    "focused_source_pairs_missing",
+    "focused_source_pairs_stale",
+    "focused_source_digest_mismatch",
+    "focused_source_not_reviewable",
 })
 
 
@@ -321,6 +326,14 @@ def materialize_team_attribution_evidence(
         candidate_subject_ids=candidate_subject_ids,
         focused_sources=focused_sources,
     )
+    if focused_sources is not None:
+        _append_focused_source_diagnostics(
+            document,
+            focused_sources,
+            candidate_document,
+            tracklets_document,
+            roster_review_document,
+        )
     video_path = match_path / "video.mp4"
     existing = load_team_attribution_evidence(match_path)
     if candidate_subject_ids is None and focused_sources is None and _cached_evidence_is_current(
@@ -355,7 +368,8 @@ def materialize_team_attribution_evidence(
                 row["status"] = "team_attribution_crops_unavailable"
     else:
         for row in document.get("cases") or []:
-            row["status"] = "source_video_unavailable"
+            if row.get("status") == "ready_for_team_attribution":
+                row["status"] = "source_video_unavailable"
     document["summary"]["rendered_reviewable_cases"] = sum(
         len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE
         for row in document.get("cases") or []
@@ -368,6 +382,103 @@ def materialize_team_attribution_evidence(
         )
     write_identity_json_atomic(match_path / FILENAME, document)
     return document
+
+
+def _append_focused_source_diagnostics(
+    document: dict[str, Any],
+    focused_sources: list[dict[str, Any]],
+    candidate_document: dict[str, Any],
+    tracklets_document: dict[str, Any],
+    roster_review_document: dict[str, Any],
+) -> None:
+    """Make every exact focused-source rejection durable and observable.
+
+    Focused recovery is a terminal safety path. A source emitted by progress
+    cannot disappear because its current raw ownership no longer normalizes;
+    it must receive a specific technical outcome before the one reproject.
+    """
+    subjects = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in candidate_document.get("subjects") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    tracklets = {
+        str(row.get("tracklet_id") or ""): row
+        for row in tracklets_document.get("tracklets") or []
+        if isinstance(row, dict) and row.get("tracklet_id")
+    }
+    cards = {
+        str(row.get("candidate_subject_id") or ""): row
+        for row in roster_review_document.get("cards") or []
+        if isinstance(row, dict) and row.get("candidate_subject_id")
+    }
+    present = {_case_key(row) for row in document.get("cases") or [] if isinstance(row, dict)}
+    for source in focused_sources:
+        if not isinstance(source, dict) or _source_key(source) in present:
+            continue
+        status = _focused_source_failure_status(source, subjects, tracklets, cards)
+        document.setdefault("cases", []).append({
+            "candidate_subject_id": source.get("candidate_subject_id"),
+            "scope_kind": source.get("scope_kind"),
+            "review_target_id": source.get("review_target_id"),
+            "continuity_group_id": source.get("continuity_group_id"),
+            "source_team_label": source.get("source_team_label") or "U",
+            "source_ownership_digest": source.get("source_ownership_digest"),
+            "detected_observation_count": len(source.get("detected_pairs") or []),
+            "source_observation_pairs": [list(pair) for pair in source.get("detected_pairs") or []],
+            "status": status,
+            "materialization_reason": status,
+            "selected_crop_count": 0,
+            "minimum_required": MIN_CROPS_PER_CASE,
+            "anchor_crops": [],
+            "rendered_anchor_crops": [],
+            "rejected_observations": {status: 1},
+            "safety": {
+                "exact_subject_observations_only": True,
+                "does_not_assign_team_automatically": True,
+                "does_not_assign_roster_player_automatically": True,
+                "does_not_mutate_canonical_identity": True,
+            },
+        })
+    document["cases"] = sorted(
+        [row for row in document.get("cases") or [] if isinstance(row, dict)],
+        key=_case_sort_key,
+    )
+
+
+def _focused_source_failure_status(
+    source: dict[str, Any],
+    subjects: dict[str, dict[str, Any]],
+    tracklets: dict[str, dict[str, Any]],
+    cards: dict[str, dict[str, Any]],
+) -> str:
+    subject_id = str(source.get("candidate_subject_id") or "")
+    subject = subjects.get(subject_id)
+    if subject is None:
+        return "focused_source_subject_missing"
+    try:
+        pairs = sorted({
+            (str(pair[0]), int(pair[1]))
+            for pair in source.get("detected_pairs") or []
+            if isinstance(pair, (list, tuple)) and len(pair) >= 2
+        })
+    except (TypeError, ValueError):
+        return "focused_source_pairs_missing"
+    if not pairs:
+        return "focused_source_pairs_missing"
+    if not set(pairs).issubset(set(_source_pairs(subject, tracklets))):
+        return "focused_source_pairs_stale"
+    if source_ownership_digest(subject_id, pairs) != str(source.get("source_ownership_digest") or ""):
+        return "focused_source_digest_mismatch"
+    card = cards.get(subject_id) or {}
+    if (
+        str(card.get("review_status") or "") != "no_visual_evidence"
+        or card.get("requires_operator_review") is False
+    ):
+        return "focused_source_not_reviewable"
+    # The normal builder should have emitted this source. Keep the generic
+    # safety fallback only for impossible future implementation drift.
+    return "team_attribution_evidence_recovery_incomplete"
 
 
 def _merge_focused_evidence(

@@ -457,6 +457,31 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
             self.assertEqual(document["cases"][0]["rendered_anchor_crops"], [])
             self.assertEqual(document["summary"]["rendered_reviewable_cases"], 0)
 
+    def test_focused_source_digest_mismatch_is_persisted_as_exact_technical_outcome(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write_team_u_inputs(root)
+            source = {
+                "candidate_subject_id": "u",
+                "scope_kind": "whole_subject",
+                "review_target_id": None,
+                "continuity_group_id": None,
+                "source_team_label": "U",
+                "source_ownership_digest": "forged-digest",
+                "detected_pairs": [("t", 1), ("t", 2)],
+            }
+
+            document = materialize_team_attribution_evidence(
+                root,
+                focused_sources=[source],
+            )
+
+            self.assertEqual(len(document["cases"]), 1)
+            case = document["cases"][0]
+            self.assertEqual(case["status"], "focused_source_digest_mismatch")
+            self.assertEqual(case["materialization_reason"], "focused_source_digest_mismatch")
+            self.assertEqual(case["source_ownership_digest"], "forged-digest")
+
     def test_current_rendered_evidence_is_reused_across_decision_refreshes(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

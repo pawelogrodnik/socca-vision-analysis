@@ -91,12 +91,16 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             source="retry",
             operator_evidence=True,
             leave_hot_state_warm=True,
+            reuse_current_snapshot=False,
         )
 
     def test_policy_stale_retry_skips_global_evidence_and_keeps_warm_commit(self) -> None:
         retryable = {
             "allowed_actions": ["retry_review_recompute"],
-            "freshness": {"review_progress_reason": "review_progress_policy_stale"},
+            "freshness": {
+                "review_progress_reason": "review_progress_policy_stale",
+                "reviewed_identity_current": True,
+            },
             "issues": {"normal_blocking": 0, "mixed_blocking": 0},
         }
         refreshed = {"workflow": {"issues": {"normal_blocking": 0}}}
@@ -116,6 +120,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             source="retry",
             operator_evidence=False,
             leave_hot_state_warm=True,
+            reuse_current_snapshot=True,
         )
 
     def test_technical_evidence_retry_rechecks_authoritative_source_after_repair(self) -> None:
@@ -150,6 +155,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             source="retry",
             operator_evidence=True,
             leave_hot_state_warm=True,
+            reuse_current_snapshot=False,
         )
 
     def test_focused_remediation_that_stays_generic_becomes_technical_failure(self) -> None:
@@ -200,7 +206,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
                 Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False
             )
 
-        self.assertEqual(progress.call_count, 3)
+        self.assertEqual(progress.call_count, 2)
         self.assertEqual(result["workflow"], technical_workflow)
         mark_technical.assert_called_once()
         self.assertEqual(
@@ -383,8 +389,16 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             side_effect=[blocked, actionable],
         ) as workflow, patch(
             "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
-            return_value={"summary": {}},
-        ) as materialize:
+            return_value={"cases": [{
+                "candidate_subject_id": "cross-team-b",
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": "evidence-digest",
+                "status": "ready_for_team_attribution",
+                "rendered_anchor_crops": [{"artifact": "evidence.jpg"}] * 3,
+            }]},
+        ) as materialize, patch(
+            "app.services.review_workflow_orchestrator.mark_team_attribution_evidence_technical_failure",
+        ) as mark_technical:
             result = refresh_review_after_identity_mutation(
                 Path(tmp),
                 {"id": "m1"},
@@ -411,6 +425,7 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             ],
         )
         self.assertEqual(result["workflow"], actionable)
+        mark_technical.assert_not_called()
         self.assertIn("focused_team_attribution_evidence_ms", result["performance"])
         self.assertIn("focused_progress_rebuild_ms", result["performance"])
 
