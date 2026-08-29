@@ -2938,6 +2938,8 @@ export type PublicPlayerActivityWindow = {
   duration_sec: number;
   display_label: string;
   detected_time_sec: number;
+  observed_distance_m?: number;
+  estimated_short_gap_distance_m?: number;
   total_distance_m: number;
   high_intensity_distance_m: number;
   sprint_count: number;

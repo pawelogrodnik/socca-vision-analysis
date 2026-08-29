@@ -1,6 +1,7 @@
 import type { PublicPlayerActivityWindow, PublicPlayerWorkload, PublicReportPlayer } from '../types';
 
 export type WorkloadMetric = 'distance' | 'detectedTime' | 'highIntensity' | 'sprints';
+export type ReportablePlayerWorkloadMetric = 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5';
 
 export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distance', label: 'Dystans' },
@@ -15,6 +16,28 @@ export function hasPlayerWorkload(player: PublicReportPlayer): player is PublicR
 
 export function hasWorkloadMetrics(players: PublicReportPlayer[]): boolean {
   return players.some(hasPlayerWorkload);
+}
+
+export function hasReportablePlayerChartMetric(
+  players: PublicReportPlayer[],
+  metric: ReportablePlayerWorkloadMetric,
+): boolean {
+  return players.some((player) => {
+    const workload = player.workload;
+    const value = metric === 'distancePer5'
+      ? workload?.distance_per_5min_m
+      : metric === 'highIntensityPer5'
+        ? workload?.high_intensity_distance_per_5min_m
+        : workload?.sprints_per_5min;
+    return value !== null && value !== undefined;
+  });
+}
+
+export function playerChartEmptyMessage(metric: string): string {
+  if (metric === 'distancePer5' || metric === 'highIntensityPer5' || metric === 'sprintsPer5') {
+    return 'Brak wystarczającego czasu wykrytego do obliczenia tej metryki.';
+  }
+  return 'Brak rozpoznanych z imienia zawodników tej drużyny.';
 }
 
 export function formatWorkloadSeconds(value: number | null | undefined): string {

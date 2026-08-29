@@ -3565,6 +3565,52 @@ summary:focus-visible {
   .stats-table td span {
     color: #4b5563;
   }
+  .workload-matrix-wrap {
+    overflow: visible;
+    border-color: #d1d5db;
+    background: #ffffff;
+  }
+  .workload-matrix {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8px;
+  }
+  .workload-matrix th,
+  .workload-matrix td {
+    position: static;
+    min-width: 0;
+    padding: 4px 3px;
+    border-color: #d1d5db;
+    white-space: normal;
+    color: #111827;
+    background: #ffffff;
+  }
+  .workload-matrix thead th,
+  .workload-matrix tbody th {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  .workload-stats-table {
+    width: 100%;
+    min-width: 0;
+    font-size: 8px;
+  }
+  .workload-stats-table th,
+  .workload-stats-table td {
+    padding: 4px 3px;
+  }
+  .public-heatmap-average-marker {
+    fill: #111827;
+    stroke: #ffffff;
+  }
+  .public-heatmap-average-legend {
+    color: #111827;
+  }
+  .player-workload-card,
+  .workload-matrix-wrap {
+    break-inside: avoid;
+  }
   a {
     color: #1d4ed8;
   }

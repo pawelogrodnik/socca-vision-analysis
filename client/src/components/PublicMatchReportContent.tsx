@@ -25,7 +25,11 @@ import {
   publicReportPlayersForTeam,
   publicReportTeamKey,
 } from '../lib/publicReportPresentation';
-import { hasWorkloadMetrics } from '../lib/publicPlayerWorkloadPresentation';
+import {
+  hasReportablePlayerChartMetric,
+  playerChartEmptyMessage,
+  type ReportablePlayerWorkloadMetric,
+} from '../lib/publicPlayerWorkloadPresentation';
 
 type PublicMatchReportContentProps = {
   report: PublicMatchReport;
@@ -33,6 +37,12 @@ type PublicMatchReportContentProps = {
 };
 
 type PlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5' | 'peakSpeed';
+
+const REPORTABLE_WORKLOAD_CHART_METRICS = new Set<ReportablePlayerWorkloadMetric>([
+  'distancePer5',
+  'highIntensityPer5',
+  'sprintsPer5',
+]);
 
 type PlayerChartRow = {
   name: string;
@@ -288,7 +298,13 @@ export function PublicMatchReportContent({
   const matchDuration = formatSeconds(report.match.duration_sec);
   const showAdvancedPlayerMetrics = hasAdvancedPlayerMetrics(visiblePlayers);
   const playerChartMetrics = PLAYER_CHART_METRICS.filter((metric) =>
-    metric.key === 'peakSpeed' ? showAdvancedPlayerMetrics : !['distancePer5', 'highIntensityPer5', 'sprintsPer5'].includes(metric.key) || hasWorkloadMetrics(visiblePlayers),
+    metric.key === 'peakSpeed'
+      ? showAdvancedPlayerMetrics
+      : !REPORTABLE_WORKLOAD_CHART_METRICS.has(metric.key as ReportablePlayerWorkloadMetric)
+        || hasReportablePlayerChartMetric(
+          visiblePlayers,
+          metric.key as ReportablePlayerWorkloadMetric,
+        ),
   );
   const effectivePlayerChartMetric = playerChartMetrics.some(
     (metric) => metric.key === playerChartMetric,
@@ -541,7 +557,7 @@ export function PublicMatchReportContent({
           </div>
         ) : (
           <p className='muted player-team-empty'>
-            Brak rozpoznanych z imienia zawodników tej drużyny.
+            {playerChartEmptyMessage(effectivePlayerChartMetric)}
           </p>
         )}
         {['distancePer5', 'highIntensityPer5', 'sprintsPer5'].includes(effectivePlayerChartMetric) && (

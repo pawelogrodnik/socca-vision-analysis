@@ -84,17 +84,29 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         rows.sort(key=lambda row: (int(row.get("frame") or 0), str(row.get("tracklet_id") or "")))
         detected = [row for row in rows if row.get("pitch_m")]
         fragments = _fragments(rows)
+        frames = sorted({int(row.get("frame") or 0) for row in rows})
+        detected_time_sec = round(len(frames) / fps, 3)
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
         movement_summary = _aggregate_movement_stats(movement)
+        intensity_summary = movement_summary.get("intensity") if isinstance(movement_summary.get("intensity"), dict) else {}
         workload = build_reviewed_player_workload(
             fragments,
             fps=fps,
             video_duration_sec=float(video_metadata["duration_sec"]),
+            canonical={
+                "detected_time_sec": detected_time_sec,
+                "total_distance_m": movement_summary.get("total_distance_m"),
+                "high_intensity_distance_m": intensity_summary.get("high_intensity_distance_m"),
+                "high_intensity_time_sec": intensity_summary.get("high_intensity_time_sec"),
+                "sprint_count": intensity_summary.get("sprint_count"),
+                "sprint_time_sec": intensity_summary.get("sprint_time_sec"),
+                "sprint_distance_m": intensity_summary.get("sprint_distance_m"),
+                "max_sprint_speed_kmh": intensity_summary.get("max_sprint_speed_kmh"),
+            },
         )
         expected_movement_segments = sum(
             _expected_movement_segments(fragment, fps) for fragment in fragments
         )
-        frames = sorted({int(row.get("frame") or 0) for row in rows})
         first, last = (frames[0], frames[-1]) if frames else (None, None)
         positions = [row["pitch_m"] for row in detected if isinstance(row.get("pitch_m"), list) and len(row["pitch_m"]) >= 2]
         player = {
@@ -108,7 +120,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             "confirmed_tracklets": sorted({str(row["tracklet_id"]) for row in rows}),
             "confirmed_detected_observations": len(frames),
             "detected_frames": len(frames),
-            "detected_time_sec": round(len(frames) / fps, 3),
+            "detected_time_sec": detected_time_sec,
             "confirmed_observation_span_sec": (
                 round((last - first + 1) / fps, 3)
                 if first is not None and last is not None

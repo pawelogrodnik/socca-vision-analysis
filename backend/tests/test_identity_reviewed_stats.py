@@ -386,6 +386,50 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertEqual(public_player["workload"]["distance_per_5min_m"], None)
             self.assertEqual(public_player["heatmap"]["average_position"]["pitch_m"], [4.95, 10.0])
 
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_workload_normalized_distance_uses_canonical_reviewed_total_for_sub_centimeter_steps(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 3000,
+            "duration_sec": 300.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet_with_positions(
+                                "slow-runner",
+                                [
+                                    (frame, frame * 0.009)
+                                    for frame in range(3000)
+                                ],
+                            )
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(
+                root, _confirmed_snapshot("slow-runner"), {}
+            )
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            workload = player["workload"]
+            self.assertEqual(player["total_distance_m"], 26.99)
+            self.assertEqual(workload["distance_per_5min_m"], 67.47)
+            self.assertEqual(
+                workload["distance_per_5min_m"],
+                round(player["total_distance_m"] / player["detected_time_sec"] * 300, 2),
+            )
+            self.assertEqual(workload["activity_windows"][0]["total_distance_m"], 26.99)
+
 
 def _tracklet(tracklet_id: str, frames: list[int]) -> dict:
     return _tracklet_with_positions(

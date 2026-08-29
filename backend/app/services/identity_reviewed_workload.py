@@ -30,6 +30,7 @@ def build_reviewed_player_workload(
     *,
     fps: float,
     video_duration_sec: float,
+    canonical: dict[str, Any],
 ) -> dict[str, Any]:
     """Build actual-source-video workload windows for one reviewed player.
 
@@ -78,7 +79,7 @@ def build_reviewed_player_workload(
         window["observed_distance_m"] = round(window["observed_distance_m"], 2)
         window["estimated_short_gap_distance_m"] = round(window["estimated_short_gap_distance_m"], 2)
         window["total_distance_m"] = round(
-            window.pop("observed_distance_m") + window.pop("estimated_short_gap_distance_m"), 2
+            window["observed_distance_m"] + window["estimated_short_gap_distance_m"], 2
         )
         window["high_intensity_distance_m"] = round(window["high_intensity_distance_m"], 2)
         eligible = window["detected_time_sec"] >= WORKLOAD_MIN_RATE_SAMPLE_SEC
@@ -89,11 +90,14 @@ def build_reviewed_player_workload(
         )
         window["sprints_per_5min"] = _rate(window["sprint_count"], window["detected_time_sec"], eligible)
 
-    detected_time = round(sum(window["detected_time_sec"] for window in windows), 3)
-    total_distance = round(sum(window["total_distance_m"] for window in windows), 2)
-    high_intensity_distance = round(sum(window["high_intensity_distance_m"] for window in windows), 2)
-    high_intensity_time = round(sum(window["high_intensity_time_sec"] for window in windows), 3)
-    sprint_count = len(sprints)
+    # Full-player rates deliberately use the existing Reviewed Stats authority.
+    # Windows remain a compact temporal presentation breakdown and must never
+    # become a second source of truth for player totals.
+    detected_time = _number(canonical.get("detected_time_sec"))
+    total_distance = _number(canonical.get("total_distance_m"))
+    high_intensity_distance = _number(canonical.get("high_intensity_distance_m"))
+    high_intensity_time = _number(canonical.get("high_intensity_time_sec"))
+    sprint_count = int(canonical.get("sprint_count") or 0)
     eligible_total = detected_time >= WORKLOAD_MIN_RATE_SAMPLE_SEC
     best = max(
         (window for window in windows if window["distance_per_5min_m"] is not None),
@@ -116,9 +120,9 @@ def build_reviewed_player_workload(
         "high_intensity_time_sec": high_intensity_time,
         "high_intensity_distance_m": high_intensity_distance,
         "sprint_count": sprint_count,
-        "sprint_time_sec": round(sum(float(sprint["duration_sec"]) for sprint in sprints), 3),
-        "sprint_distance_m": round(sum(float(sprint["distance_m"]) for sprint in sprints), 2),
-        "max_sprint_speed_kmh": round(max((float(sprint["max_speed_mps"]) for sprint in sprints), default=0.0) * 3.6, 2),
+        "sprint_time_sec": _number(canonical.get("sprint_time_sec")),
+        "sprint_distance_m": _number(canonical.get("sprint_distance_m")),
+        "max_sprint_speed_kmh": _number(canonical.get("max_sprint_speed_kmh")),
         "activity_windows": windows,
         "best_activity_window": _best_window(best),
     }
@@ -171,7 +175,7 @@ def _accepted_segments(rows: list[dict[str, Any]], fps: float) -> list[dict[str,
         elapsed = max(1.0 / fps, end_time - start_time)
         distance = _distance(previous["pitch_m"], current["pitch_m"])
         speed = distance / elapsed
-        if distance <= 0.01 or speed > MAX_STATS_SPEED_MPS:
+        if speed > MAX_STATS_SPEED_MPS:
             continue
         if frame_gap <= STATS_OBSERVED_GAP_FRAMES:
             kind = "observed"
@@ -259,3 +263,10 @@ def _valid_pitch(value: Any) -> bool:
 
 def _distance(left: list[float], right: list[float]) -> float:
     return ((float(right[0]) - float(left[0])) ** 2 + (float(right[1]) - float(left[1])) ** 2) ** 0.5
+
+
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0

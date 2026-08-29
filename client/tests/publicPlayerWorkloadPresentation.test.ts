@@ -4,11 +4,14 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
+import { PublicPlayerStatsSection } from '../src/components/PublicPlayerStatsSection.tsx';
 import {
   exactWindowLabel,
   formatHiRatio,
   formatRate,
+  hasReportablePlayerChartMetric,
   hasWorkloadMetrics,
+  playerChartEmptyMessage,
   windowValue,
 } from '../src/lib/publicPlayerWorkloadPresentation.ts';
 import type { PublicReportPlayer } from '../src/types.ts';
@@ -61,6 +64,35 @@ test('workload presentation preserves null versus valid zero and final partial w
   assert.equal(windowValue(window, 'sprints'), '0');
 });
 
+test('normalized player-chart metric availability is specific to the selected metric', () => {
+  const unavailable = {
+    ...player,
+    workload: {
+      ...player.workload,
+      distance_per_5min_m: null,
+      high_intensity_distance_per_5min_m: null,
+      sprints_per_5min: null,
+    },
+  } as PublicReportPlayer;
+  const zeroSprint = {
+    ...unavailable,
+    workload: { ...unavailable.workload!, sprints_per_5min: 0 },
+  } as PublicReportPlayer;
+
+  assert.equal(hasReportablePlayerChartMetric([unavailable], 'distancePer5'), false);
+  assert.equal(hasReportablePlayerChartMetric([zeroSprint], 'sprintsPer5'), true);
+  assert.equal(hasReportablePlayerChartMetric([unavailable, player], 'highIntensityPer5'), true);
+  assert.equal(hasReportablePlayerChartMetric([unavailable, { ...unavailable }], 'highIntensityPer5'), false);
+  assert.equal(
+    playerChartEmptyMessage('distancePer5'),
+    'Brak wystarczającego czasu wykrytego do obliczenia tej metryki.',
+  );
+  assert.equal(
+    playerChartEmptyMessage('minutes'),
+    'Brak rozpoznanych z imienia zawodników tej drużyny.',
+  );
+});
+
 test('activity matrix renders actual windows, a valid zero sprint and safety copy', () => {
   const html = renderToStaticMarkup(createElement(PublicPlayerWorkloadSection, { players: [player], teamName: 'Corgi' }));
 
@@ -71,4 +103,15 @@ test('activity matrix renders actual windows, a valid zero sprint and safety cop
   assert.match(html, /412 m/);
   assert.match(html, /dostępnego nagrania/);
   assert.match(html, /nie próbuje sztucznie odtwarzać brakujących minut/);
+});
+
+test('legacy player data without workload keeps the existing basic stats section', () => {
+  const legacyPlayer = { ...player, workload: undefined } as PublicReportPlayer;
+  const html = renderToStaticMarkup(
+    createElement(PublicPlayerStatsSection, { players: [legacyPlayer], teamName: 'Corgi' }),
+  );
+
+  assert.match(html, /Statystyki rozpoznanych zawodników/);
+  assert.match(html, /Paweł/);
+  assert.doesNotMatch(html, /Obciążenie/);
 });
