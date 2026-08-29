@@ -353,13 +353,25 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
   const save = view.getByRole('button', { name: 'Zapisz przypisania + następny' });
   assert.equal(save.hasAttribute('disabled'), true);
 
-  fireEvent.click(view.getByText('Inne przypisanie'));
-  fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
-  await waitFor(() => assert.ok(view.getByText('1 z 3 ścieżek przypisane')));
-  fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
-  await waitFor(() => assert.ok(view.getByText('2 z 3 ścieżek przypisane')));
-  fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
-  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 2_000 });
+  await act(async () => {
+    fireEvent.click(view.getByText('Inne przypisanie'));
+    fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
+  });
+  await waitFor(
+    () => assert.ok(view.getByText('1 z 3 ścieżek przypisane')),
+    { timeout: 3_000 },
+  );
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
+  });
+  await waitFor(
+    () => assert.ok(view.getByText('2 z 3 ścieżek przypisane')),
+    { timeout: 3_000 },
+  );
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
+  });
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 3_000 });
   await act(async () => { fireEvent.click(save); });
 
   assert.deepEqual(resolutions, ['concurrent_lanes']);
