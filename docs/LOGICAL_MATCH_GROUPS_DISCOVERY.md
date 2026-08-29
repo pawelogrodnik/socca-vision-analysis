@@ -300,6 +300,47 @@ child directory under `MATCHES_DIR`.  Phase 2 needs a regression showing that
 creating/regenerating/deleting a group changes neither profile appearance
 counts nor longitudinal totals.
 
+## Phase 2: manifest store and compatibility boundary
+
+`backend/app/services/match_groups.py` stores one durable, UUID-backed
+manifest at:
+
+```text
+storage/published/match-groups/match-group-<uuid>/manifest.json
+```
+
+The caller supplies only ordered `published_id` values and editable group
+metadata.  The service reads the current source `aggregate_inputs.json` and
+`public_report.json`, verifies both canonical digests and the supported
+physical public-report schema/type, then derives and pins the source IDs,
+aggregate-input and public-report contract versions, Reviewed Identity digest
+and sequential logical timeline offsets itself.  It never reads `package.json`,
+source video, raw tracking artifacts or `MATCHES_DIR`.
+
+Core compatibility is fail-closed: every member must expose exactly the same
+two stable `team_id` values; the local A/B labels may be swapped.  Player rows
+may differ between fragments, but a repeated stable `player_id` must retain its
+stable `team_id`.  Duplicate published or physical source members are rejected.
+
+The stored group digest is canonical and self-excluding.  It changes with
+meaningful metadata, source order, pins and logical offsets, but not technical
+timestamps.  Later validation reads only `manifest.json`,
+`aggregate_inputs.json`, and `public_report.json`.  A current source whose
+verified pin has changed is reported as `stale`; it is never silently repinned.
+Missing/tampered sources are precise invalid/stale reasons, while unsupported
+input versions are incompatible.
+
+Spatial orientation remains a metric capability, not a core membership gate.
+Current groups can be `compatible` for non-spatial work while `spatial` and
+`team_shape` remain unavailable.  Differing pitch dimensions produce a spatial
+capability incompatibility only; this phase does not transform or merge them.
+
+Creation stages the manifest outside the authoritative directory and swaps it
+in only after all source checks pass.  Updates use an atomic JSON replacement,
+so a failed source validation leaves the previous manifest bytes intact.
+Deletion removes only the group directory.  No group store operation touches
+published physical source files or the physical-match profile boundary.
+
 ## Mergeable implementation phases
 
 1. **Aggregation input contract.** Implement the versioned builder above at
