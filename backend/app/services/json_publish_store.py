@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import MATCHES_DIR, PUBLISHED_DIR
+from app.services.aggregate_inputs import build_aggregate_inputs
 from app.services.public_match_report import write_public_match_report_bundle
 
 
@@ -177,6 +178,15 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
         target_dir=target_dir,
         source_match_dir=MATCHES_DIR / source_match_id,
     )
+    if package.get("identity_report_source") == "reviewed_identity":
+        # This is server-side publication data, not a public client asset.
+        # It is written after the exact public report generation it fingerprints.
+        aggregate_inputs = build_aggregate_inputs(
+            package,
+            public_report=public_report,
+            published_id=published_id,
+        )
+        _atomic_write_json(target_dir / "aggregate_inputs.json", aggregate_inputs)
     _atomic_write_json(summary_path, summary)
     result = get_published_match(published_id)
     result["public_report"] = public_report

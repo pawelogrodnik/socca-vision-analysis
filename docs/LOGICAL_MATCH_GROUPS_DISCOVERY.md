@@ -240,6 +240,22 @@ heatmap bin counts only after Phase 1 proves a canonical orientation and grid.
 Until then `heatmaps.status` stays `not_available`; it must not copy full
 `positions_m` lists just to make grouping work.
 
+### Phase 1 implementation boundary
+
+Phase 1 implements this contract in
+`backend/app/services/aggregate_inputs.py` and writes the server-only artifact
+from `json_publish_store.import_match_package()` immediately after the exact
+public report is generated.  It is not copied to `client/public`, returned by
+the existing published-match read model, or written under `MATCHES_DIR`.
+
+The implemented v1 keeps team movement in `teams`, global/per-team ball
+primitives in `ball`, source-local possession/momentum primitives in
+`timelines`, and all future aggregation decisions in `metric_readiness`.
+`reviewed_player_stats.movement_time_sec` is now persisted as the exact
+denominator used by Reviewed Identity's `avg_speed_mps`; older reviewed
+artifacts that lack it expose player average speed as `not_available` rather
+than receiving a fabricated denominator.
+
 `aggregation_input_semantic_digest` is computed over the input document with
 that field omitted.  `public_report_semantic_digest` is computed with the
 existing canonical hash helper, so a republish caused only by `generated_at`

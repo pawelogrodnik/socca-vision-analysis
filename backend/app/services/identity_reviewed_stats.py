@@ -189,6 +189,10 @@ def _aggregate_movement_stats(movement: list[dict[str, Any]]) -> dict[str, Any]:
         "observed_distance_m": round(observed_distance, 2),
         "estimated_short_gap_distance_m": round(estimated_gap_distance, 2),
         "total_distance_m": round(total_distance, 2),
+        # This is the denominator of avg_speed_mps below.  Persisting it makes
+        # a future aggregate recompute the same metric without averaging
+        # fragment-level speeds.
+        "movement_time_sec": round(movement_time, 3),
         "observed_movement_segments": sum(
             int(item.get("observed_segments") or 0) for item in movement
         ),
