@@ -173,24 +173,31 @@ snapshot, tracker IDs or observation-level trajectories.
         "sprint_count": 0,
         "peak_speed_kmh": 0,
         "average_speed": {"status": "not_available"}
-      },
-      "possession": {
-        "status": "ready|not_available",
-        "controlled_frames": 0,
-        "known_frames": 0,
-        "free_frames": 0,
-        "unknown_frames": 0
-      },
-      "passes": {
-        "status": "ready|not_available",
-        "attempts": 0,
-        "completed": 0,
-        "failed": 0,
-        "restart_attempts": 0,
-        "accepted": 0
       }
     }
   ],
+  "ball": {
+    "possession": {
+      "status": "ready|not_available",
+      "controlled_frames_by_team_id": {"stable-team-id": 0},
+      "known_frames": 0,
+      "free_frames": 0,
+      "unknown_frames": 0
+    },
+    "passes": {
+      "status": "ready|not_available",
+      "attempts_by_team_id": {"stable-team-id": 0},
+      "completed_by_team_id": {"stable-team-id": 0},
+      "failed_by_team_id": {"stable-team-id": 0},
+      "restart_attempts_by_team_id": {"stable-team-id": 0},
+      "accepted_by_team_id": {"stable-team-id": 0},
+      "attempts": 0,
+      "completed": 0,
+      "failed": 0,
+      "restart_attempts": 0,
+      "accepted": 0
+    }
+  },
   "players": [
     {
       "player_id": "stable-real-player-id",
@@ -239,6 +246,22 @@ metric is unavailable.  It should include sparse raw **metric-coordinate**
 heatmap bin counts only after Phase 1 proves a canonical orientation and grid.
 Until then `heatmaps.status` stays `not_available`; it must not copy full
 `positions_m` lists just to make grouping work.
+
+### Phase 1 implementation boundary
+
+Phase 1 implements this contract in
+`backend/app/services/aggregate_inputs.py` and writes the server-only artifact
+from `json_publish_store.import_match_package()` immediately after the exact
+public report is generated.  It is not copied to `client/public`, returned by
+the existing published-match read model, or written under `MATCHES_DIR`.
+
+The implemented v1 keeps team movement in `teams`, global/per-team ball
+primitives in `ball`, source-local possession/momentum primitives in
+`timelines`, and all future aggregation decisions in `metric_readiness`.
+`reviewed_player_stats.movement_time_sec` is now persisted as the exact
+denominator used by Reviewed Identity's `avg_speed_mps`; older reviewed
+artifacts that lack it expose player average speed as `not_available` rather
+than receiving a fabricated denominator.
 
 `aggregation_input_semantic_digest` is computed over the input document with
 that field omitted.  `public_report_semantic_digest` is computed with the

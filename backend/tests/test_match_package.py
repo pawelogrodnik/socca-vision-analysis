@@ -262,6 +262,12 @@ def write_json(path: Path, value: dict) -> None:
 
 def write_reviewed_identity_fixture(match_dir: Path) -> None:
     digest = "reviewed-digest"
+    # Reviewed source aggregation requires the same durable A/B -> team_id
+    # mapping that is already present for real reviewed publications.
+    write_json(
+        match_dir / "team_config.json",
+        {"schema_version": "0.1.0", "teams": [{"team_label": "A", "team_id": "team-a"}]},
+    )
     write_json(
         match_dir / "reviewed_player_stats.json",
         {

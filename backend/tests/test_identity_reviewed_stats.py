@@ -212,6 +212,7 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertGreater(player["observed_distance_m"], 0)
             self.assertGreater(player["total_distance_m"], 0)
             self.assertAlmostEqual(player["total_distance_m"], 0.1)
+            self.assertGreater(player["movement_time_sec"], 0)
             self.assertGreater(player["accepted_movement_segments"], 0)
             heatmap = documents["reviewed_player_heatmaps.json"]["heatmaps"][0]
             self.assertEqual(heatmap["samples"], 2)
