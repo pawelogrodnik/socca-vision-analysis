@@ -9,6 +9,7 @@ from unittest.mock import patch
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import identity_review_scope_digest
+from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION
 from app.services.reviewed_match_report import build_reviewed_match_report
 
 
@@ -358,6 +359,32 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 public_player["peak_speed_kmh"],
                 speed["peak_sustained_speed_kmh"],
             )
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_reviewed_public_report_keeps_optional_workload_and_average_position_without_schema_bump(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 100,
+            "duration_sec": 4.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [_tracklet("runner", list(range(100)))]}),
+                encoding="utf-8",
+            )
+            build_reviewed_stats(root, _confirmed_snapshot("runner"), {})
+
+            public_player = _build_public_report(root)["players"][0]
+
+            self.assertEqual(PUBLIC_MATCH_REPORT_SCHEMA_VERSION, "0.1.0")
+            self.assertIsNotNone(public_player["workload"])
+            self.assertEqual(public_player["workload"]["distance_per_5min_m"], None)
+            self.assertEqual(public_player["heatmap"]["average_position"]["pitch_m"], [4.95, 10.0])
 
 
 def _tracklet(tracklet_id: str, frames: list[int]) -> dict:

@@ -20,6 +20,7 @@ from app.services.identity_reviewed_effective_observation import (
 )
 from app.services.identity_reviewed_coverage import summarize_effective_observations
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_workload import build_reviewed_player_workload
 from app.services.identity_review_scope import (
     TEAM_STATS_ONLY,
     identity_review_scope_digest,
@@ -85,6 +86,11 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         fragments = _fragments(rows)
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
         movement_summary = _aggregate_movement_stats(movement)
+        workload = build_reviewed_player_workload(
+            fragments,
+            fps=fps,
+            video_duration_sec=float(video_metadata["duration_sec"]),
+        )
         expected_movement_segments = sum(
             _expected_movement_segments(fragment, fps) for fragment in fragments
         )
@@ -112,6 +118,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             "coverage_denominator": "unknown",
             "average_pitch_position_m": _mean(positions),
             "heatmap_samples": len(positions),
+            "workload": workload,
             **movement_summary,
             "expected_positive_movement_segments": expected_movement_segments,
             "longest_confirmed_gap_sec": _longest_gap(frames, fps),

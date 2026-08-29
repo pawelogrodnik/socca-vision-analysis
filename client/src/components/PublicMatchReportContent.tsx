@@ -14,7 +14,9 @@ import { useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
 import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
+import { PublicPlayerStatsSection } from './PublicPlayerStatsSection';
 import { PublicPlayerTeamFilter } from './PublicPlayerTeamFilter';
+import { PublicPlayerWorkloadSection } from './PublicPlayerWorkloadSection';
 import { TeamShapeSection } from './TeamShapeSection';
 import {
   displayJerseyNumber,
@@ -23,18 +25,22 @@ import {
   publicReportPlayersForTeam,
   publicReportTeamKey,
 } from '../lib/publicReportPresentation';
+import { hasWorkloadMetrics } from '../lib/publicPlayerWorkloadPresentation';
 
 type PublicMatchReportContentProps = {
   report: PublicMatchReport;
   assetHref?: (path: string) => string;
 };
 
-type PlayerChartMetric = 'minutes' | 'distanceKm' | 'peakSpeed';
+type PlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5' | 'peakSpeed';
 
 type PlayerChartRow = {
   name: string;
   minutes: number;
   distanceKm: number;
+  distancePer5: number;
+  highIntensityPer5: number;
+  sprintsPer5: number;
   peakSpeed: number;
 };
 
@@ -69,6 +75,30 @@ const PLAYER_CHART_METRICS: PlayerChartMetricConfig[] = [
     color: '#f8fafc',
     axisFormatter: (value) => `${Math.round(value)}m`,
     tooltipFormatter: (value) => `${value.toFixed(1)} min`,
+  },
+  {
+    key: 'distancePer5',
+    label: 'Dystans / 5 min',
+    buttonLabel: 'Dystans / 5 min',
+    color: '#a78bfa',
+    axisFormatter: (value) => `${Math.round(value)} m`,
+    tooltipFormatter: (value) => `${Math.round(value)} m / 5 min`,
+  },
+  {
+    key: 'highIntensityPer5',
+    label: 'HI / 5 min',
+    buttonLabel: 'HI / 5 min',
+    color: '#f59e0b',
+    axisFormatter: (value) => `${Math.round(value)} m`,
+    tooltipFormatter: (value) => `${Math.round(value)} m / 5 min`,
+  },
+  {
+    key: 'sprintsPer5',
+    label: 'Sprinty / 5 min',
+    buttonLabel: 'Sprinty / 5 min',
+    color: '#fb7185',
+    axisFormatter: (value) => value.toFixed(1),
+    tooltipFormatter: (value) => `${value.toFixed(1)} / 5 min`,
   },
   {
     key: 'distanceKm',
@@ -210,13 +240,27 @@ function PublicChartTooltip({
   );
 }
 
-function playerChartRows(players: PublicReportPlayer[]) {
-  return players.map((player) => ({
+function playerChartRows(players: PublicReportPlayer[], metric: PlayerChartMetric) {
+  return players.flatMap((player) => {
+    const workload = player.workload;
+    const workloadValue = metric === 'distancePer5'
+      ? workload?.distance_per_5min_m
+      : metric === 'highIntensityPer5'
+        ? workload?.high_intensity_distance_per_5min_m
+        : metric === 'sprintsPer5'
+          ? workload?.sprints_per_5min
+          : 0;
+    if (['distancePer5', 'highIntensityPer5', 'sprintsPer5'].includes(metric) && workloadValue == null) return [];
+    return [{
     name: player.player_name || player.player_id,
     minutes: Number(((player.detected_time_sec || player.playing_time_sec || 0) / 60).toFixed(1)),
     distanceKm: Number(((player.total_distance_m || 0) / 1000).toFixed(2)),
+    distancePer5: Number((workload?.distance_per_5min_m || 0).toFixed(2)),
+    highIntensityPer5: Number((workload?.high_intensity_distance_per_5min_m || 0).toFixed(2)),
+    sprintsPer5: Number((workload?.sprints_per_5min || 0).toFixed(2)),
     peakSpeed: Number((player.peak_speed_kmh || 0).toFixed(1)),
-  }));
+    }];
+  });
 }
 
 export function PublicMatchReportContent({
@@ -243,9 +287,9 @@ export function PublicMatchReportContent({
   const possessionTimeline = report.ball?.possession_timeline || [];
   const matchDuration = formatSeconds(report.match.duration_sec);
   const showAdvancedPlayerMetrics = hasAdvancedPlayerMetrics(visiblePlayers);
-  const playerChartMetrics = showAdvancedPlayerMetrics
-    ? PLAYER_CHART_METRICS
-    : PLAYER_CHART_METRICS.filter((metric) => metric.key !== 'peakSpeed');
+  const playerChartMetrics = PLAYER_CHART_METRICS.filter((metric) =>
+    metric.key === 'peakSpeed' ? showAdvancedPlayerMetrics : !['distancePer5', 'highIntensityPer5', 'sprintsPer5'].includes(metric.key) || hasWorkloadMetrics(visiblePlayers),
+  );
   const effectivePlayerChartMetric = playerChartMetrics.some(
     (metric) => metric.key === playerChartMetric,
   )
@@ -256,7 +300,7 @@ export function PublicMatchReportContent({
     PLAYER_CHART_METRICS[0];
   const playerChartData = useMemo<PlayerChartRow[]>(
     () =>
-      playerChartRows(visiblePlayers).sort(
+      playerChartRows(visiblePlayers, effectivePlayerChartMetric).sort(
         (left, right) => right[effectivePlayerChartMetric] - left[effectivePlayerChartMetric],
       ),
     [effectivePlayerChartMetric, visiblePlayers],
@@ -500,53 +544,18 @@ export function PublicMatchReportContent({
             Brak rozpoznanych z imienia zawodników tej drużyny.
           </p>
         )}
+        {['distancePer5', 'highIntensityPer5', 'sprintsPer5'].includes(effectivePlayerChartMetric) && (
+          <p className='team-comparison-note'>Metryki „/ 5 min” są przeliczone na pięć minut czasu, w którym zawodnik był potwierdzony w danych. Nie jest to oficjalny czas gry.</p>
+        )}
       </section>
 
-      <section className='card'>
-        <h2>
-          Statystyki rozpoznanych zawodników
-          {activeTeam?.team_name ? ` — ${activeTeam.team_name}` : ''}
-        </h2>
-        <div className='stats-table-wrap'>
-          <table className='stats-table'>
-            <thead>
-              <tr>
-                <th>Zawodnik</th>
-                <th>Drużyna</th>
-                <th title='Czas fragmentów nagrania, na których rozpoznano zawodnika'>Czas wykryty</th>
-                <th>Dystans</th>
-                {showAdvancedPlayerMetrics && <th>Dystans wys. intensywności</th>}
-                {showAdvancedPlayerMetrics && <th>Sprinty</th>}
-                {showAdvancedPlayerMetrics && <th>Śr. prędkość</th>}
-                {showAdvancedPlayerMetrics && <th>Prędkość maks.</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {visiblePlayers.map((player) => (
-                <tr key={player.player_id}>
-                  <td>
-                    <strong>{playerLabel(player)}</strong>
-                  </td>
-                  <td>{player.team_name || player.team_label || 'Team'}</td>
-                  <td>{formatSeconds(player.detected_time_sec || player.playing_time_sec)}</td>
-                  <td>{formatMeters(player.total_distance_m)}</td>
-                  {showAdvancedPlayerMetrics && <td>{formatMeters(player.high_intensity_distance_m)}</td>}
-                  {showAdvancedPlayerMetrics && <td>{player.sprint_count}</td>}
-                  {showAdvancedPlayerMetrics && <td>{formatSpeed(player.avg_speed_kmh)}</td>}
-                  {showAdvancedPlayerMetrics && <td>{formatSpeed(player.peak_speed_kmh)}</td>}
-                </tr>
-              ))}
-              {visiblePlayers.length === 0 && (
-                <tr>
-                  <td colSpan={showAdvancedPlayerMetrics ? 8 : 4}>
-                    Brak rozpoznanych z imienia zawodników tej drużyny.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <PublicPlayerWorkloadSection
+        players={visiblePlayers}
+        teamName={activeTeam?.team_name}
+        teamColor={activeTeam?.display_color}
+      />
+
+      <PublicPlayerStatsSection players={visiblePlayers} teamName={activeTeam?.team_name} />
 
       <section className='card'>
         <h2>
