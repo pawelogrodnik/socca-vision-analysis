@@ -120,6 +120,60 @@ test('an initially Mixed workflow mounts only Mixed and never starts Required pr
   }
 });
 
+test('technical Team-attribution failure explains recovery and exposes only server-authorized retry', async () => {
+  const originalFetch = globalThis.fetch;
+  const technical: ReviewWorkflow = {
+    ...mandatoryWorkflow('exceptions'),
+    status: 'error',
+    required_action: { type: 'coverage_evidence_technical_failure', step_id: 'exceptions' },
+    issues: {
+      blocking: 0,
+      normal_blocking: 0,
+      mixed_blocking: 0,
+      important: 0,
+      optional: 0,
+      coverage_readiness_blocked: true,
+      team_attribution_evidence_technical_failure: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        policy_version: 'test',
+        allows_finalize: false,
+        roster_scope: {},
+        blockers: [{ code: 'team_attribution_evidence_technical_failure' }],
+        team_attribution_residual: {
+          status: 'technical_evidence_failure',
+          units: 1,
+          observations: 3,
+          residual_budget_observations: 10,
+          within_tolerance: true,
+          evidence_status_counts: { source_video_unavailable: 1 },
+        },
+      },
+    },
+    blockers: [{
+      code: 'team_attribution_evidence_technical_failure',
+      step_id: 'exceptions',
+      user_actionable: true,
+      details: {},
+    }],
+    allowed_actions: ['retry_review_recompute'],
+    mandatory_operator_review_complete: false,
+    data_quality_ready_for_output: false,
+  };
+  installWorkspaceFetch(technical);
+  try {
+    const view = renderWorkspace(technical);
+    await waitFor(() => assert.ok(view.getByRole('button', { name: 'Spróbuj ponownie' })));
+    assert.ok(view.getByText(/Nie udało się przygotować bezpiecznych widoków/));
+    assert.equal(view.queryByText('Nie udało się przygotować kolejnego kroku review.'), null);
+    assert.equal(view.queryByText(/Wymagany Review zakończony/), null);
+    assert.equal(view.queryByText(/Wymagane przypadki =/), null);
+    assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('StrictMode remount shares one pending Required progress request', async () => {
   const originalFetch = globalThis.fetch;
   let progressCalls = 0;

@@ -118,6 +118,40 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             leave_hot_state_warm=True,
         )
 
+    def test_technical_evidence_retry_rechecks_authoritative_source_after_repair(self) -> None:
+        retryable = {
+            "allowed_actions": ["retry_review_recompute"],
+            "freshness": {"review_progress_reason": None},
+            "issues": {
+                "normal_blocking": 0,
+                "mixed_blocking": 0,
+                "team_attribution_evidence_technical_failure": True,
+            },
+        }
+        repaired_result = {
+            "workflow": {
+                "issues": {"normal_blocking": 1, "mixed_blocking": 0},
+                "allowed_actions": ["review_identity_issue"],
+            }
+        }
+        with patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=retryable,
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value=repaired_result,
+        ) as refresh:
+            result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
+
+        self.assertEqual(result, repaired_result)
+        refresh.assert_called_once_with(
+            Path("/tmp/match"),
+            {"id": "m1"},
+            source="retry",
+            operator_evidence=True,
+            leave_hot_state_warm=True,
+        )
+
     def test_focused_remediation_that_stays_generic_becomes_technical_failure(self) -> None:
         initial_progress, blocked = _focused_terminal_progress_and_workflow()
         still_generic = {

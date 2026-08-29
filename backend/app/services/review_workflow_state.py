@@ -208,7 +208,12 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 user_actionable=team_attribution_not_materialized and not team_attribution_technical_failure,
             )
         )
-        allowed = ["retry_review_recompute"] if team_attribution_not_materialized and not team_attribution_technical_failure else []
+        # Technical evidence failures are fail-closed for finalization, but
+        # not permanent dead-ends: after restoring the video/artifact an
+        # operator can explicitly re-run the server-authorized recompute.
+        allowed = ["retry_review_recompute"] if (
+            team_attribution_not_materialized or team_attribution_technical_failure
+        ) else []
         return _state(
             match_id,
             True,
