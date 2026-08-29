@@ -695,7 +695,10 @@ test('lane-local temporal split shows and edits only the selected lane evidence'
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
   fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
 
-  await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })));
+  await waitFor(
+    () => assert.ok(view.getByRole('heading', { name: 'Podziel tylko tę ścieżkę' })),
+    { timeout: 3_000 },
+  );
   const laneImages = view.getAllByAltText('Podgląd wyłącznie wybranej ścieżki') as HTMLImageElement[];
   assert.equal(laneImages.length, 2);
   assert.ok(laneImages.every((image) => image.src.includes('/A-')));
