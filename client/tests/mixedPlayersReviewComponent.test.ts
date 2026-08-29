@@ -37,6 +37,15 @@ afterEach(() => {
   dom.window.confirm = () => true;
 });
 
+async function settleConcurrentLaneResolver() {
+  // The resolver's initialization effect clears a prior split draft.  Flush it
+  // before testing a user transition, otherwise shared JSDOM timing can race
+  // the click and make the effect immediately close the split editor.
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 test('review crop retries a just-materialized artifact with a cache-busting URL', async () => {
   const view = render(React.createElement(ReviewedEvidenceImage, {
     src: '/api/matches/m1/artifact/reviewed_identity_mixed/example/crop.jpg',
@@ -705,6 +714,7 @@ test('lane-local temporal split shows and edits only the selected lane evidence'
   const view = renderPanel({ getQueue: async () => queue([concurrent]) });
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  await settleConcurrentLaneResolver();
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
   });
@@ -766,6 +776,7 @@ test('lane refinement keeps the leading after-preview boundary instead of shifti
   });
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  await settleConcurrentLaneResolver();
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
   });
@@ -873,6 +884,7 @@ test('stale lane refinement refreshes the exact case once without save or reproj
     reprojectWorkflow: async () => { reprojects += 1; return workflow; },
   });
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  await settleConcurrentLaneResolver();
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
   });
@@ -901,6 +913,7 @@ test('failed stale lane-refinement refresh remains fail-closed', async () => {
     reprojectWorkflow: async () => { throw new Error('must not reproject'); },
   });
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  await settleConcurrentLaneResolver();
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
   });
