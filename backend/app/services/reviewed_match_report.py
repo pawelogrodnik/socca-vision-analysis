@@ -206,6 +206,9 @@ def _reviewed_resolved_player_stats(package: dict[str, Any]) -> dict[str, Any]:
                     "quality": reviewed_speed.get("speed_quality") or "not_available",
                 },
                 "intensity": {
+                    "high_intensity_time_sec": _number(
+                        reviewed_intensity.get("high_intensity_time_sec")
+                    ),
                     "high_intensity_distance_m": _number(
                         reviewed_intensity.get("high_intensity_distance_m")
                     ),
@@ -218,6 +221,13 @@ def _reviewed_resolved_player_stats(package: dict[str, Any]) -> dict[str, Any]:
                         reviewed_intensity.get("max_sprint_speed_kmh")
                     ),
                 },
+                "workload": row.get("workload") if isinstance(row.get("workload"), dict) else None,
+                "average_pitch_position_m": (
+                    list(row["average_pitch_position_m"])
+                    if isinstance(row.get("average_pitch_position_m"), list)
+                    and len(row["average_pitch_position_m"]) >= 2
+                    else None
+                ),
                 "playing_time_method": "reviewed_confirmed_observations",
                 "calculation_method": "reviewed_effective_observations",
                 "quality_flags": [],

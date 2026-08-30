@@ -2898,7 +2898,12 @@ export type PublicReportPlayer = {
   avg_speed_kmh: number;
   peak_speed_kmh: number;
   high_intensity_distance_m: number;
+  high_intensity_time_sec?: number;
   sprint_count: number;
+  sprint_time_sec?: number;
+  sprint_distance_m?: number;
+  max_sprint_speed_kmh?: number;
+  workload?: PublicPlayerWorkload | null;
   heatmap?: {
     path: string;
     samples: number;
@@ -2918,7 +2923,60 @@ export type PublicReportPlayer = {
         value: number;
       }>;
     };
+    average_position?: {
+      pitch_m: [number, number];
+      x: number;
+      y: number;
+    } | null;
   };
+};
+
+export type PublicPlayerActivityWindow = {
+  window_index: number;
+  start_time_sec: number;
+  end_time_sec: number;
+  duration_sec: number;
+  display_label: string;
+  detected_time_sec: number;
+  observed_distance_m?: number;
+  estimated_short_gap_distance_m?: number;
+  total_distance_m: number;
+  high_intensity_distance_m: number;
+  sprint_count: number;
+  rate_status: 'reportable' | 'insufficient_detected_sample' | string;
+  distance_per_5min_m: number | null;
+  high_intensity_distance_per_5min_m: number | null;
+  sprints_per_5min: number | null;
+};
+
+export type PublicPlayerWorkload = {
+  semantics: string;
+  rate_window_sec: number;
+  minimum_rate_sample_sec: number;
+  detected_time_sec: number;
+  distance_per_5min_m: number | null;
+  high_intensity_distance_per_5min_m: number | null;
+  sprints_per_5min: number | null;
+  high_intensity_distance_ratio: number | null;
+  high_intensity_time_sec?: number;
+  high_intensity_distance_m?: number;
+  sprint_count?: number;
+  sprint_time_sec?: number;
+  sprint_distance_m?: number;
+  max_sprint_speed_kmh?: number;
+  activity_windows: PublicPlayerActivityWindow[];
+  best_activity_window: Pick<
+    PublicPlayerActivityWindow,
+    | 'window_index'
+    | 'display_label'
+    | 'start_time_sec'
+    | 'end_time_sec'
+    | 'detected_time_sec'
+    | 'total_distance_m'
+    | 'distance_per_5min_m'
+    | 'high_intensity_distance_m'
+    | 'sprint_count'
+  > | null;
 };
 
 export type PublicMatchReport = {

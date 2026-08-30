@@ -1922,6 +1922,22 @@ summary:focus-visible {
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
+.public-heatmap-average-marker {
+  fill: #f8fafc;
+  stroke: #0f172a;
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+}
+.public-heatmap-average-legend {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  border-radius: 4px;
+  background: rgba(2, 6, 23, 0.78);
+  color: #f8fafc;
+  padding: 3px 5px;
+  font-size: 11px;
+}
 .public-chart {
   width: 100%;
   height: 320px;
@@ -3349,6 +3365,65 @@ summary:focus-visible {
 .stats-table tr:last-child td {
   border-bottom: 0;
 }
+.player-workload-card {
+  display: grid;
+  gap: 10px;
+}
+.player-workload-card > p {
+  margin: 0;
+}
+.workload-matrix-wrap {
+  overflow-x: auto;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  background: #020617;
+}
+.workload-matrix {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+.workload-matrix th,
+.workload-matrix td {
+  min-width: 86px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1f2937;
+  border-right: 1px solid #1f2937;
+  text-align: center;
+  white-space: nowrap;
+}
+.workload-matrix thead th,
+.workload-matrix tbody th {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  text-align: left;
+  background: #0f172a;
+  color: #bfdbfe;
+}
+.workload-matrix thead th {
+  top: 0;
+}
+.workload-matrix td {
+  background: color-mix(in srgb, var(--workload-team-color) calc(var(--workload-intensity) * 28%), #020617);
+  color: #f8fafc;
+}
+.workload-matrix tr:last-child td,
+.workload-matrix tr:last-child th {
+  border-bottom: 0;
+}
+.player-workload-notes {
+  display: grid;
+  gap: 4px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.player-workload-notes p {
+  margin: 0;
+}
+.workload-stats-table {
+  min-width: 1120px;
+}
 .quality-list {
   display: grid;
   gap: 8px;
@@ -3489,6 +3564,54 @@ summary:focus-visible {
   .muted,
   .stats-table td span {
     color: #4b5563;
+  }
+  .workload-matrix-wrap {
+    overflow: visible;
+    border-color: #d1d5db;
+    background: #ffffff;
+  }
+  .workload-matrix {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8px;
+  }
+  .workload-matrix th,
+  .workload-matrix td {
+    position: static;
+    min-width: 0;
+    padding: 4px 3px;
+    border-color: #d1d5db;
+    white-space: normal;
+    color: #111827;
+    background: #ffffff;
+  }
+  .workload-matrix thead th,
+  .workload-matrix tbody th {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  .workload-stats-table {
+    width: 100%;
+    min-width: 0;
+    font-size: 8px;
+  }
+  .workload-stats-table th,
+  .workload-stats-table td {
+    padding: 4px 3px;
+  }
+  .public-heatmap-average-marker {
+    fill: #111827;
+    stroke: #ffffff;
+  }
+  .public-heatmap-average-legend {
+    border: 1px solid #d1d5db;
+    background: #ffffff;
+    color: #111827;
+  }
+  .player-workload-card,
+  .workload-matrix-wrap {
+    break-inside: avoid;
   }
   a {
     color: #1d4ed8;

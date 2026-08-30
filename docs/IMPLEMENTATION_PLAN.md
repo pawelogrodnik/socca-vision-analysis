@@ -495,6 +495,9 @@ Jako użytkownik chcę mieć linki do overlay video, JSON i obrazów debugowych.
 - `[x]` Raport lokalny ma akcje: kopiowanie linku, generowanie `match_package.json`, publikacja/nadpisanie w SQLite, pobranie package JSON i druk/PDF.
 - `[x]` Raport publiczny ma akcje: kopiowanie linku, eksport snapshotu JSON i druk/PDF.
 - `[~]` Raport ma widok publiczny bez admin panelu; public-share polish jest lokalny/SQLite, bez hostingu ani auth.
+- `[x]` Reviewed/public player report pokazuje opcjonalne tempo obciążenia na 5 minut czasu wykrytego: dystans, wysoka intensywność i sprinty, udział dystansu HI, szczegóły sprintów, najlepsze wiarygodne okno oraz macierz aktywności w kolejnych 5-minutowych oknach dostępnego nagrania. Pełne wartości „/ 5 min” normalizują kanoniczne sumy Reviewed Stats; macierz pozostaje wyłącznie rozbiciem prezentacyjnym z osobnym dystansem obserwowanym i estymowanym dla krótkich luk.
+- `[x]` Heatmapa rozpoznanego zawodnika może pokazać średnią pozycję na podstawie potwierdzonych obserwacji.
+- `[x]` Czas wykryty nie jest autorytatywnym czasem gry, puste okno aktywności nie potwierdza ławki/zmiany, a oś okien opisuje wyłącznie dostępne nagranie — bez odtwarzania brakujących minut oficjalnego meczu.
 
 ## Do not do yet
 

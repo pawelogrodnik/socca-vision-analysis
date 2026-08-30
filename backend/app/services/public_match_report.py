@@ -580,6 +580,35 @@ def _write_public_player_heatmap(
             width_px=width_px,
             length_px=length_px,
         ),
+        "average_position": _public_average_position(
+            player.get("average_pitch_position_m"),
+            pitch_width_m=pitch_width_m,
+            pitch_length_m=pitch_length_m,
+            width_px=width_px,
+            length_px=length_px,
+        ),
+    }
+
+
+def _public_average_position(
+    position: Any,
+    *,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    width_px: int,
+    length_px: int,
+) -> dict[str, Any] | None:
+    if not isinstance(position, (list, tuple)) or len(position) < 2:
+        return None
+    if not all(isinstance(value, (int, float)) for value in position[:2]):
+        return None
+    x_m, y_m = float(position[0]), float(position[1])
+    if not (0.0 <= x_m <= pitch_width_m and 0.0 <= y_m <= pitch_length_m):
+        return None
+    return {
+        "pitch_m": [_round(x_m, 3), _round(y_m, 3)],
+        "x": int(round(x_m / max(pitch_width_m, 0.001) * (width_px - 1))),
+        "y": int(round(y_m / max(pitch_length_m, 0.001) * (length_px - 1))),
     }
 
 
@@ -661,7 +690,12 @@ def _public_players(
                 "avg_speed_kmh": _round(speed.get("avg_speed_kmh")),
                 "peak_speed_kmh": _round(speed.get("peak_sustained_speed_kmh") or speed.get("top_speed_kmh")),
                 "high_intensity_distance_m": _round(intensity.get("high_intensity_distance_m")),
+                "high_intensity_time_sec": _round(intensity.get("high_intensity_time_sec")),
                 "sprint_count": int(intensity.get("sprint_count") or 0),
+                "sprint_time_sec": _round(intensity.get("sprint_time_sec")),
+                "sprint_distance_m": _round(intensity.get("sprint_distance_m")),
+                "max_sprint_speed_kmh": _round(intensity.get("max_sprint_speed_kmh")),
+                "workload": player.get("workload") if isinstance(player.get("workload"), dict) else None,
                 "calculation_method": player.get("calculation_method") or resolved.get("calculation_method"),
                 "coverage_ratio": _round(player.get("coverage_ratio"), 4),
                 "quality_flags": player.get("quality_flags") or [],
