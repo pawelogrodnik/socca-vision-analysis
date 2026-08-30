@@ -140,7 +140,7 @@ def _empty_windows(video_duration_sec: float) -> list[dict[str, Any]]:
                 "start_time_sec": round(start, 3),
                 "end_time_sec": round(end, 3),
                 "duration_sec": round(end - start, 3),
-                "display_label": f"{int(start // 60)}–{int(end // 60)}",
+                "display_label": _compact_window_label(start, end),
                 "detected_time_sec": 0.0,
                 "observed_distance_m": 0.0,
                 "estimated_short_gap_distance_m": 0.0,
@@ -151,6 +151,13 @@ def _empty_windows(video_duration_sec: float) -> list[dict[str, Any]]:
         )
         start = end
     return windows
+
+
+def _compact_window_label(start_time_sec: float, end_time_sec: float) -> str:
+    """Return a compact minute range without collapsing a non-empty interval."""
+    start_minute = int(start_time_sec // 60)
+    end_minute = max(start_minute + 1, int(end_time_sec // 60))
+    return f"{start_minute}–{end_minute}"
 
 
 def _window_for_time(windows: list[dict[str, Any]], time_sec: float) -> dict[str, Any]:

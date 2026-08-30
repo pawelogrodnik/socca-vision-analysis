@@ -43,6 +43,23 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
         )
         self.assertEqual(workload["activity_windows"][-1]["display_label"], "35–36")
 
+    def test_partial_final_window_label_advances_the_compact_end_minute(self) -> None:
+        workload = build_reviewed_player_workload(
+            [], fps=25.0, video_duration_sec=2147.0, canonical=_canonical()
+        )
+
+        final_window = workload["activity_windows"][-1]
+        self.assertEqual(final_window["start_time_sec"], 2100.0)
+        self.assertEqual(final_window["end_time_sec"], 2147.0)
+        self.assertEqual(final_window["display_label"], "35–36")
+
+    def test_full_five_minute_window_keeps_its_exact_compact_label(self) -> None:
+        workload = build_reviewed_player_workload(
+            [], fps=25.0, video_duration_sec=300.0, canonical=_canonical()
+        )
+
+        self.assertEqual(workload["activity_windows"][0]["display_label"], "0–5")
+
     def test_small_detected_sample_keeps_raw_values_but_hides_extrapolated_rates(self) -> None:
         rows = _rows(0, 90, fps=1.0, meters_per_frame=1.0)
         workload = build_reviewed_player_workload(

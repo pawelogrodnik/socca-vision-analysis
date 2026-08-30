@@ -3605,6 +3605,8 @@ summary:focus-visible {
     stroke: #ffffff;
   }
   .public-heatmap-average-legend {
+    border: 1px solid #d1d5db;
+    background: #ffffff;
     color: #111827;
   }
   .player-workload-card,
