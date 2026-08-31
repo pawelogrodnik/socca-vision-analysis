@@ -2968,6 +2968,16 @@ export type PublicPlayerWorkload = {
   sprint_time_sec?: number;
   sprint_distance_m?: number;
   max_sprint_speed_kmh?: number;
+  sprint_detection?: {
+    policy: 'player_relative_v1' | string;
+    reference_source: 'current_match_peak_sustained' | 'fallback_absolute' | string;
+    reference_peak_sustained_speed_kmh: number;
+    reference_speed_quality?: string;
+    start_threshold_kmh: number;
+    continue_threshold_kmh: number;
+    minimum_duration_sec: number;
+    allowed_dip_sec: number;
+  };
   activity_windows: PublicPlayerActivityWindow[];
   best_activity_window: Pick<
     PublicPlayerActivityWindow,

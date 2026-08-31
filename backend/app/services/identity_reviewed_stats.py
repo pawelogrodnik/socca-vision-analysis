@@ -93,10 +93,10 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
         movement_summary = _aggregate_movement_stats(movement)
         intensity_summary = movement_summary.get("intensity") if isinstance(movement_summary.get("intensity"), dict) else {}
-        speed_summary = movement_summary.get("speed") if isinstance(movement_summary.get("speed"), dict) else {}
+        sprint_reference = _sprint_reference(movement)
         sprint_detection = reviewed_sprint_policy(
-            peak_sustained_speed_kmh=float(speed_summary.get("peak_sustained_speed_kmh") or 0.0),
-            speed_quality=str(speed_summary.get("speed_quality") or "not_available"),
+            peak_sustained_speed_kmh=sprint_reference["peak_sustained_speed_kmh"],
+            speed_quality=sprint_reference["speed_quality"],
             detected_time_sec=detected_time_sec,
         )
         sprint_result = classify_reviewed_sprints(fragments, fps=fps, policy=sprint_detection)
@@ -107,6 +107,12 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             "max_sprint_speed_kmh": sprint_result["max_sprint_speed_kmh"],
             "sprint_candidate_count": sprint_result["sprint_candidate_count"],
             "rejected_sprint_candidate_count": sprint_result["rejected_sprint_candidate_count"],
+            "best_sprint_candidate_speed_kmh": sprint_result["best_sprint_candidate_speed_kmh"],
+            "best_sprint_candidate_duration_sec": sprint_result["best_sprint_candidate_duration_sec"],
+            "best_sprint_candidate_distance_m": sprint_result["best_sprint_candidate_distance_m"],
+            "best_sprint_candidate_reason": sprint_result["best_sprint_candidate_reason"],
+            "best_rejected_sprint_candidate": sprint_result["best_rejected_sprint_candidate"],
+            "sprint_detection": sprint_detection,
         })
         workload = build_reviewed_player_workload(
             fragments,
@@ -124,7 +130,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
                 "sprint_events": sprint_result["events"],
             },
         )
-        workload["sprint_detection"] = sprint_detection
+        workload["sprint_detection"] = {**sprint_detection, "reference_speed_quality": sprint_reference["speed_quality"]}
         expected_movement_segments = sum(
             _expected_movement_segments(fragment, fps) for fragment in fragments
         )
@@ -252,6 +258,33 @@ def _reviewed_team_movement(
     return rows
 
 
+def _sprint_reference(movement: list[dict[str, Any]]) -> dict[str, Any]:
+    """Select quality from the fragment that actually supplied the peak.
+
+    Aggregate display quality stays conservative (the worst fragment) because
+    it describes all player movement.  Sprint policy instead asks whether the
+    selected sustained-peak evidence is itself credible.
+    """
+    quality_rank = {"not_available": 0, "low": 1, "medium": 2, "high": 3}
+    candidates = [
+        row for row in movement
+        if float(row.get("peak_sustained_speed_kmh") or 0.0) > 0
+    ]
+    selected = max(
+        candidates,
+        key=lambda row: (
+            float(row.get("peak_sustained_speed_kmh") or 0.0),
+            quality_rank.get(str(row.get("speed_quality") or "not_available"), 0),
+            float(row.get("detected_time_sec") or 0.0),
+        ),
+        default={},
+    )
+    return {
+        "peak_sustained_speed_kmh": float(selected.get("peak_sustained_speed_kmh") or 0.0),
+        "speed_quality": str(selected.get("speed_quality") or "not_available"),
+    }
+
+
 def _aggregate_movement_stats(movement: list[dict[str, Any]]) -> dict[str, Any]:
     observed_distance = sum(float(item.get("observed_distance_m") or 0.0) for item in movement)
     estimated_gap_distance = sum(float(item.get("estimated_gap_distance_m") or 0.0) for item in movement)
@@ -330,12 +363,6 @@ def _aggregate_movement_stats(movement: list[dict[str, Any]]) -> dict[str, Any]:
         "intensity": {
             "high_intensity_threshold_kmh": _common_number(
                 intensity_rows, "high_intensity_threshold_kmh"
-            ),
-            "sprint_threshold_kmh": _common_number(
-                intensity_rows, "sprint_threshold_kmh"
-            ),
-            "min_sprint_duration_sec": _common_number(
-                intensity_rows, "min_sprint_duration_sec"
             ),
             "high_intensity_time_sec": round(
                 sum(float(item.get("high_intensity_time_sec") or 0.0) for item in intensity_rows),

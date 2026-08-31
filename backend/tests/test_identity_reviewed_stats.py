@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_reviewed_stats import _sprint_reference, build_reviewed_stats
+from app.services.reviewed_sprint_policy import reviewed_sprint_policy
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION
@@ -14,6 +15,33 @@ from app.services.reviewed_match_report import build_reviewed_match_report
 
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
+    def test_sprint_reference_uses_the_peak_fragment_not_unrelated_low_quality_fragment(self) -> None:
+        reference = _sprint_reference(
+            [
+                {
+                    "peak_sustained_speed_kmh": 24.0,
+                    "speed_quality": "high",
+                    "detected_time_sec": 180.0,
+                },
+                {
+                    "peak_sustained_speed_kmh": 8.0,
+                    "speed_quality": "low",
+                    "detected_time_sec": 2.0,
+                },
+            ]
+        )
+        policy = reviewed_sprint_policy(detected_time_sec=182.0, **reference)
+        self.assertEqual(policy["reference_source"], "current_match_peak_sustained")
+        self.assertEqual(policy["start_threshold_kmh"], 19.68)
+
+    def test_unreliable_peak_fragment_still_uses_the_absolute_fallback(self) -> None:
+        reference = _sprint_reference(
+            [{"peak_sustained_speed_kmh": 24.0, "speed_quality": "low", "detected_time_sec": 2.0}]
+        )
+        policy = reviewed_sprint_policy(detected_time_sec=180.0, **reference)
+        self.assertEqual(policy["reference_source"], "fallback_absolute")
+        self.assertEqual(policy["start_threshold_kmh"], 18.0)
+
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_team_distance_uses_safe_anonymous_evidence_without_u_or_double_counting(
         self, metadata
@@ -33,7 +61,8 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                         "tracklets": [
                             _tracklet("named", [0, 1, 2]),
                             _tracklet("anonymous", [3, 4, 5]),
-                            _tracklet("unknown-team", [6, 7, 8]),
+                            _tracklet("named-two", [6, 7, 8]),
+                            _tracklet("unknown-team", [9, 10, 11]),
                         ]
                     }
                 ),
@@ -48,6 +77,7 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                     "semantic_digest": "snapshot",
                     "tracklet_assignments": [
                         _assignment("named", "confirmed", "p1"),
+                        _assignment("named-two", "confirmed", "p2"),
                         anonymous,
                         unknown_team,
                     ],
@@ -57,14 +87,16 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 },
                 _match_document(),
             )
-            player = documents["reviewed_player_stats.json"]["players"][0]
+            players = documents["reviewed_player_stats.json"]["players"]
             teams = {
                 row["team_label"]: row
                 for row in documents["reviewed_player_stats.json"]["teams"]
             }
-            self.assertGreater(teams["A"]["total_distance_m"], player["total_distance_m"])
-            self.assertAlmostEqual(teams["A"]["total_distance_m"], 0.4, places=2)
-            self.assertEqual(teams["A"]["safe_observation_count"], 6)
+            named_total = sum(player["total_distance_m"] for player in players)
+            self.assertGreater(teams["A"]["total_distance_m"], named_total)
+            self.assertGreaterEqual(teams["A"]["total_distance_m"] + 0.01, named_total)
+            self.assertAlmostEqual(teams["A"]["total_distance_m"], 0.6, places=2)
+            self.assertEqual(teams["A"]["safe_observation_count"], 9)
             self.assertEqual(teams["B"]["total_distance_m"], 0.0)
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
@@ -314,6 +346,10 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertEqual(player["speed"]["top_speed_kmh"], player["speed"]["peak_sustained_speed_kmh"])
             self.assertEqual(player["intensity"]["high_intensity_distance_m"], 0.0)
             self.assertEqual(player["intensity"]["sprint_count"], 0)
+            self.assertNotIn("sprint_threshold_kmh", player["intensity"])
+            self.assertNotIn("min_sprint_duration_sec", player["intensity"])
+            self.assertEqual(player["intensity"]["sprint_detection"]["policy"], "player_relative_v1")
+            self.assertEqual(player["intensity"]["sprint_detection"]["minimum_duration_sec"], 0.4)
             self.assertEqual(player["readiness"]["speed"], "experimental")
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")

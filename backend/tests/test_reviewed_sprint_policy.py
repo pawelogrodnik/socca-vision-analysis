@@ -61,6 +61,20 @@ class ReviewedSprintPolicyTests(unittest.TestCase):
         self.assertEqual(SPRINT_MIN_DURATION_SEC, 0.4)
         self.assertEqual(classify_reviewed_sprints([exact], fps=10.0, policy=policy)["sprint_count"], 1)
 
+    def test_classifier_uses_the_supplied_policy_and_exposes_dynamic_diagnostics(self) -> None:
+        policy = reviewed_sprint_policy(
+            peak_sustained_speed_kmh=24.0, speed_quality="high", detected_time_sec=120.0
+        )
+        policy["minimum_duration_sec"] = 0.5
+        result = classify_reviewed_sprints([_rows([6.0, 6.0, 6.0, 6.0])], fps=10.0, policy=policy)
+        self.assertEqual(result["sprint_count"], 0)
+        self.assertEqual(result["rejected_sprint_candidate_count"], 1)
+        self.assertEqual(result["best_sprint_candidate_reason"], "too_short")
+        self.assertEqual(result["best_rejected_sprint_candidate"]["reason"], "too_short")
+        self.assertEqual(result["best_sprint_candidate_speed_kmh"], 21.6)
+        self.assertEqual(result["best_sprint_candidate_duration_sec"], 0.4)
+        self.assertEqual(result["best_sprint_candidate_distance_m"], 2.4)
+
 
 def _rows(
     speeds_mps: list[float],

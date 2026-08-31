@@ -72,42 +72,54 @@ def classify_reviewed_sprints(
     a trusted run and is never counted as sprint duration or distance.
     """
     events: list[dict[str, Any]] = []
-    candidate_count = 0
-    rejected_count = 0
+    candidates: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
     for fragment in fragments:
         result = _classify_fragment(fragment, fps=max(float(fps), 0.001), policy=policy)
         events.extend(result["events"])
-        candidate_count += result["candidate_count"]
-        rejected_count += result["rejected_count"]
+        candidates.extend(result["candidates"])
+        rejected.extend(result["rejected"])
     total_time = sum(float(event["qualifying_time_sec"]) for event in events)
     total_distance = sum(float(event["qualifying_distance_m"]) for event in events)
     max_speed_kmh = max((float(event["max_speed_mps"]) * 3.6 for event in events), default=0.0)
+    best_candidate = _best_candidate(candidates)
+    best_rejected = _best_candidate(rejected)
     return {
         "events": events,
         "sprint_count": len(events),
         "sprint_time_sec": round(total_time, 3),
         "sprint_distance_m": round(total_distance, 2),
         "max_sprint_speed_kmh": round(max_speed_kmh, 2),
-        "sprint_candidate_count": candidate_count,
-        "rejected_sprint_candidate_count": rejected_count,
+        "sprint_candidate_count": len(candidates),
+        "rejected_sprint_candidate_count": len(rejected),
+        "best_sprint_candidate_speed_kmh": _candidate_speed_kmh(best_candidate),
+        "best_sprint_candidate_duration_sec": _candidate_duration(best_candidate),
+        "best_sprint_candidate_distance_m": _candidate_distance(best_candidate),
+        "best_sprint_candidate_reason": str(best_candidate.get("reason") or "none") if best_candidate else "none",
+        "best_rejected_sprint_candidate": _serialize_candidate(best_rejected),
     }
 
 
 def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[str, Any]) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
-    candidate_count = 0
-    rejected_count = 0
+    candidates: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     grace_sec = 0.0
+    minimum_duration = _policy_number(policy, "minimum_duration_sec", SPRINT_MIN_DURATION_SEC)
+    allowed_dip = _policy_number(policy, "allowed_dip_sec", SPRINT_ALLOWED_DIP_SEC)
 
     def close_current() -> None:
-        nonlocal current, grace_sec, rejected_count
+        nonlocal current, grace_sec
         if current is None:
             return
-        if current["qualifying_time_sec"] >= SPRINT_MIN_DURATION_SEC:
+        if current["qualifying_time_sec"] >= minimum_duration:
+            current["reason"] = "accepted"
             events.append(current)
         else:
-            rejected_count += 1
+            current["reason"] = "too_short"
+            rejected.append(current)
+        candidates.append(current)
         current = None
         grace_sec = 0.0
 
@@ -122,22 +134,20 @@ def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[s
         duration = float(segment["duration_sec"])
         if current is None:
             if speed_kmh >= float(policy["start_threshold_kmh"]):
-                candidate_count += 1
                 current = _new_event(segment)
             continue
         if speed_kmh >= float(policy["continue_threshold_kmh"]):
             _append_qualifying(current, segment)
             grace_sec = 0.0
             continue
-        if grace_sec + duration <= SPRINT_ALLOWED_DIP_SEC:
+        if grace_sec + duration <= allowed_dip:
             grace_sec += duration
             continue
         close_current()
         if speed_kmh >= float(policy["start_threshold_kmh"]):
-            candidate_count += 1
             current = _new_event(segment)
     close_current()
-    return {"events": events, "candidate_count": candidate_count, "rejected_count": rejected_count}
+    return {"events": events, "candidates": candidates, "rejected": rejected}
 
 
 def _trusted_segment(left: dict[str, Any], right: dict[str, Any], fps: float) -> dict[str, Any] | None:
@@ -193,6 +203,53 @@ def _append_qualifying(event: dict[str, Any], segment: dict[str, Any]) -> None:
     event["qualifying_time_sec"] += segment["duration_sec"]
     event["qualifying_distance_m"] += segment["distance_m"]
     event["max_speed_mps"] = max(float(event["max_speed_mps"]), float(segment["speed_mps"]))
+
+
+def _policy_number(policy: dict[str, Any], key: str, default: float) -> float:
+    try:
+        value = float(policy.get(key))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+def _best_candidate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return max(
+        rows,
+        key=lambda row: (
+            float(row.get("max_speed_mps") or 0.0),
+            float(row.get("qualifying_time_sec") or 0.0),
+            float(row.get("qualifying_distance_m") or 0.0),
+        ),
+        default={},
+    )
+
+
+def _candidate_speed_kmh(row: dict[str, Any]) -> float:
+    return round(float(row.get("max_speed_mps") or 0.0) * 3.6, 2)
+
+
+def _candidate_duration(row: dict[str, Any]) -> float:
+    return round(float(row.get("qualifying_time_sec") or 0.0), 3)
+
+
+def _candidate_distance(row: dict[str, Any]) -> float:
+    return round(float(row.get("qualifying_distance_m") or 0.0), 2)
+
+
+def _serialize_candidate(row: dict[str, Any]) -> dict[str, Any]:
+    if not row:
+        return {}
+    return {
+        "start_frame": int(row.get("start_frame") or 0),
+        "end_frame": int(row.get("end_frame") or 0),
+        "start_time_sec": round(float(row.get("start_time_sec") or 0.0), 3),
+        "end_time_sec": round(float(row.get("end_time_sec") or 0.0), 3),
+        "duration_sec": _candidate_duration(row),
+        "distance_m": _candidate_distance(row),
+        "max_speed_kmh": _candidate_speed_kmh(row),
+        "reason": str(row.get("reason") or "unknown"),
+    }
 
 
 def _time(row: dict[str, Any], fps: float) -> float:
