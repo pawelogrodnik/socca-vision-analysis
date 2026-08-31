@@ -399,12 +399,18 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             "effective_team_label": "B",
             "coverage_team_label": "B",
             "detected_team_labels": ["B"],
+            "operator_impact_kind": "named_coverage",
+            "operator_impact_observation_gain": 120,
+            "operator_impact_pp": 2.4,
         }
 
         public = _public_unit(full_unit)
 
         self.assertNotIn("detected_team_labels", public)
         self.assertEqual(public["filter_team_label"], "B")
+        self.assertEqual(public["operator_impact_kind"], "named_coverage")
+        self.assertEqual(public["operator_impact_observation_gain"], 120)
+        self.assertEqual(public["operator_impact_pp"], 2.4)
 
     def test_short_unnamed_team_a_and_team_b_subjects_are_safe_anonymous(self) -> None:
         with _workspace() as root:

@@ -1792,7 +1792,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         residual = policy["residual_by_team"]["A"]
         self.assertGreater(residual["required_named_gain"], residual["independently_required_named_gain"])
         self.assertEqual(policy["coverage_blockers"], 1)
-        self.assertEqual(policy["next_cases"][-1]["candidate_subject_id"], "ordinary")
+        self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], "ordinary")
         self.assertEqual(residual["remaining_uncovered_named_gain"], 0)
 
     def test_material_and_ordinary_overlap_use_unique_pair_gain(self) -> None:
@@ -1965,7 +1965,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], "huge")
         self.assertEqual(policy["next_cases"][0]["potential_named_observation_gain"], 100)
 
-    def test_semantic_conflicts_are_ranked_before_coverage_debt(self) -> None:
+    def test_larger_coverage_impact_ranks_before_a_smaller_semantic_conflict(self) -> None:
         rows = [
             _observation("semantic", frame, "A", "conflicted", None)
             for frame in range(5)
@@ -1992,8 +1992,211 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             [large, semantic], coverage, pair_index, _match()
         )
 
-        self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], "semantic-subject")
-        self.assertEqual(policy["next_cases"][0]["priority"], "high")
+        self.assertEqual(policy["next_cases"][0]["candidate_subject_id"], "large-subject")
+        self.assertEqual(policy["next_cases"][0]["priority"], "coverage")
+
+    def test_required_queue_globally_ranks_selected_categories_by_operator_impact(self) -> None:
+        match = _scoped_match()
+        match["identity_review_scope"]["teams"]["B"] = "complete_roster"
+        pair_index: dict[tuple[str, int], dict] = {}
+        next_frame = 0
+
+        def pairs_for(subject_id: str, count: int, team: str) -> list[tuple[str, int]]:
+            nonlocal next_frame
+            pairs = [(subject_id, frame) for frame in range(next_frame, next_frame + count)]
+            next_frame += count
+            pair_index.update({
+                pair: {
+                    "team_label": team,
+                    "identity_status": "unresolved",
+                    "canonical_player_id": None,
+                }
+                for pair in pairs
+            })
+            return pairs
+
+        def semantic(subject_id: str, count: int, team: str) -> dict:
+            unit = _unit(subject_id, pairs_for(subject_id, count, team), visual=True)
+            unit.update({
+                "source_team_label": team,
+                "effective_team_label": team,
+                "current_resolution_status": "pending_high_priority",
+                "priority": "high",
+                "reason_codes": ["identity_conflict"],
+            })
+            return unit
+
+        def material(subject_id: str, count: int, team: str) -> dict:
+            pairs = pairs_for(subject_id, count, team)
+            unit = _material_case(subject_id, range(pairs[0][1], pairs[-1][1] + 1))
+            unit.update({"source_team_label": team, "effective_team_label": team})
+            return unit
+
+        def coverage(subject_id: str, count: int, team: str) -> dict:
+            unit = _unit(subject_id, pairs_for(subject_id, count, team), visual=True)
+            unit.update({"source_team_label": team, "effective_team_label": team})
+            return unit
+
+        units = [
+            semantic("semantic-3", 60, "A"),
+            semantic("semantic-1", 20, "A"),
+            semantic("semantic-0.1", 2, "A"),
+            material("material-2", 40, "B"),
+            material("material-0.5", 10, "A"),
+            coverage("coverage-1.5", 30, "A"),
+            coverage("coverage-0.75", 15, "B"),
+            coverage("coverage-0.05", 1, "B"),
+        ]
+        coverage_state = {
+            "reliable_observations": 4_000,
+            "per_team": {
+                "A": {"reliable_observations": 2_000, "confirmed_named_observations": 1_600},
+                "B": {"reliable_observations": 2_000, "confirmed_named_observations": 1_600},
+            },
+        }
+
+        policy = apply_coverage_policy(units, coverage_state, pair_index, match)
+
+        self.assertEqual(policy["semantic_blockers"], 3)
+        self.assertEqual(policy["material_continuity_blockers"], 2)
+        self.assertEqual(policy["coverage_blockers"], 3)
+        self.assertEqual(len(policy["next_cases"]), 8)
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in policy["next_cases"]],
+            [
+                "semantic-3",
+                "material-2",
+                "coverage-1.5",
+                "semantic-1",
+                "coverage-0.75",
+                "material-0.5",
+                "semantic-0.1",
+                "coverage-0.05",
+            ],
+        )
+        self.assertEqual(
+            [row["operator_impact_pp"] for row in policy["next_cases"]],
+            [3.0, 2.0, 1.5, 1.0, 0.75, 0.5, 0.1, 0.05],
+        )
+
+        first_page = paginate_progress(policy, limit=3)
+        second_page = paginate_progress(policy, offset=3, limit=3)
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in first_page["next_cases"]],
+            ["semantic-3", "material-2", "coverage-1.5"],
+        )
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in second_page["next_cases"]],
+            ["semantic-1", "coverage-0.75", "material-0.5"],
+        )
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in paginate_progress(policy, team_label="A")["next_cases"]],
+            ["semantic-3", "coverage-1.5", "semantic-1", "material-0.5", "semantic-0.1"],
+        )
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in paginate_progress(policy, team_label="B")["next_cases"]],
+            ["material-2", "coverage-0.75", "coverage-0.05"],
+        )
+
+    def test_percentage_point_impact_wins_over_larger_raw_observation_count(self) -> None:
+        match = _scoped_match()
+        match["identity_review_scope"]["teams"]["B"] = "complete_roster"
+        pair_index = {
+            **{
+                ("a-large", frame): {
+                    "team_label": "A",
+                    "identity_status": "unresolved",
+                    "canonical_player_id": None,
+                }
+                for frame in range(500)
+            },
+            **{
+                ("b-higher-pp", frame): {
+                    "team_label": "B",
+                    "identity_status": "unresolved",
+                    "canonical_player_id": None,
+                }
+                for frame in range(800)
+            },
+        }
+        a_large = _unit("a-large", [("a-large", frame) for frame in range(500)], visual=True)
+        a_large.update({
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["identity_conflict"],
+        })
+        b_higher_pp = _unit("b-higher-pp", [("b-higher-pp", frame) for frame in range(800)], visual=True)
+        b_higher_pp.update({
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["identity_conflict"],
+        })
+
+        policy = apply_coverage_policy(
+            [a_large, b_higher_pp],
+            {
+                "reliable_observations": 45_000,
+                "per_team": {
+                    "A": {"reliable_observations": 25_000, "confirmed_named_observations": 0},
+                    "B": {"reliable_observations": 20_000, "confirmed_named_observations": 0},
+                },
+            },
+            pair_index,
+            match,
+        )
+
+        self.assertEqual(
+            [row["candidate_subject_id"] for row in policy["next_cases"]],
+            ["b-higher-pp", "a-large"],
+        )
+        self.assertEqual(
+            [row["operator_impact_pp"] for row in policy["next_cases"]],
+            [4.0, 2.0],
+        )
+
+    def test_team_u_operator_impact_uses_team_known_coverage_not_named_coverage(self) -> None:
+        pair_index = {
+            ("unknown-team", frame): {
+                "team_label": "U",
+                "identity_status": "unresolved",
+                "canonical_player_id": None,
+            }
+            for frame in range(5)
+        }
+        team_unknown = _unit(
+            "unknown-team",
+            [("unknown-team", frame) for frame in range(5)],
+            visual=True,
+        )
+        team_unknown.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["team_attribution_uncertain"],
+        })
+
+        policy = apply_coverage_policy(
+            [team_unknown],
+            {
+                "reliable_observations": 100,
+                "per_team": {"U": {"reliable_observations": 5, "confirmed_named_observations": 0}},
+            },
+            pair_index,
+            _scoped_match(),
+        )
+
+        case = policy["next_cases"][0]
+        self.assertEqual(case["operator_impact_kind"], "team_known")
+        self.assertEqual(case["operator_impact_observation_gain"], 5)
+        self.assertEqual(case["operator_impact_pp"], 5.0)
+        self.assertEqual(case["potential_named_observation_gain"], 0)
+        self.assertEqual(case["potential_named_coverage_gain_pp"], 0.0)
+        public_case = paginate_progress(policy)["next_cases"][0]
+        self.assertEqual(public_case["operator_impact_kind"], "team_known")
+        self.assertEqual(public_case["potential_team_known_coverage_gain_pp"], 5.0)
 
     def test_team_only_decision_acknowledges_partial_roster_but_not_complete_roster(self) -> None:
         rows = [
