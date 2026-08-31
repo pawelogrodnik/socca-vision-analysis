@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app.services.identity_reviewed_snapshot import (
     _slot_roster_bindings,
@@ -12,6 +13,7 @@ from app.services.identity_reviewed_snapshot import (
     reviewed_assignment_at,
 )
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_slot_review import save_reviewed_slot_assignments
 
 
@@ -92,10 +94,78 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
     def test_cross_team_and_invalid_player_are_not_named(self) -> None:
         with _workspace() as root:
             _write_inputs(root, decisions=[_decision("s1", "assign_roster_player", "p2"), _decision("s2", "assign_roster_player", "gone")])
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            tracklets["tracklets"][0]["positions_m"] = [
+                {
+                    "frame": frame,
+                    "status": "detected",
+                    "source": "detected",
+                    "pitch_m": [float(frame), 10.0],
+                    "smoothed_pitch_m": [float(frame), 10.0],
+                    "play_area_status": "inside_play",
+                }
+                for frame in (0, 1)
+            ]
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
             result = finalize_reviewed_identity(root, _match())
             rows = {row["tracklet_id"]: row for row in result["tracklet_assignments"]}
             self.assertEqual(rows["t1"]["identity_status"], "conflicted")
+            self.assertEqual(
+                rows["t1"]["reviewed_team_attribution_state"], "cross_team"
+            )
             self.assertEqual(rows["t2"]["identity_status"], "blocked")
+            with patch(
+                "app.services.identity_reviewed_stats.read_match_video_metadata",
+                return_value={
+                    "fps": 25.0,
+                    "frame_count": 2,
+                    "duration_sec": 0.08,
+                    "source": "test",
+                    "filename": "video.mp4",
+                },
+            ):
+                stats = build_reviewed_stats(root, result, _match())
+            team_a = next(
+                row
+                for row in stats["reviewed_player_stats.json"]["teams"]
+                if row["team_label"] == "A"
+            )
+            for field in (
+                "safe_observation_count",
+                "observed_distance_m",
+                "total_distance_m",
+                "high_intensity_distance_m",
+            ):
+                self.assertEqual(team_a[field], 0)
+
+    def test_snapshot_projects_genuine_a_b_subject_conflict_for_effective_observations(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            tracklets["tracklets"][0]["team_label"] = "B"
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
+            (root / "identity_candidate_shadow.json").write_text(
+                json.dumps(
+                    {
+                        "subjects": [
+                            {
+                                "candidate_subject_id": "s1",
+                                "tracklet_ids": ["t1", "t2"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            result = finalize_reviewed_identity(root, _match())
+
+            self.assertEqual(
+                {
+                    row["tracklet_id"]: row["reviewed_team_attribution_state"]
+                    for row in result["tracklet_assignments"]
+                },
+                {"t1": "cross_team", "t2": "cross_team"},
+            )
 
     def test_conflicting_explicit_decisions_are_not_silently_resolved(self) -> None:
         with _workspace() as root:

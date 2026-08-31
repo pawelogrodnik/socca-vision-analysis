@@ -228,10 +228,16 @@ class ReviewedIdentitySegmentTests(unittest.TestCase):
             by_frame = {int(row["frame"]): row for row in rows}
             self.assertEqual(set(by_frame), {1, 2, 3, 4})
             self.assertEqual(by_frame[1]["canonical_player_id"], "p1")
+            self.assertEqual(
+                by_frame[1]["reviewed_team_attribution_state"], "certain_A"
+            )
             self.assertNotIn(5, by_frame)
             self.assertNotIn(6, by_frame)
             self.assertIsNone(by_frame[3]["canonical_player_id"])
             self.assertEqual(by_frame[3]["team_label"], "B")
+            self.assertEqual(
+                by_frame[3]["reviewed_team_attribution_state"], "certain_B"
+            )
             self.assertEqual(by_frame[3]["display_label"], "B?")
             self.assertNotEqual(
                 a03_first["review_target_id"], a03_second["review_target_id"]

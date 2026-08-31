@@ -29,6 +29,12 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(report["players"][0]["heatmap"]["path"], "")
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")
             self.assertEqual(report["teams"][0]["total_distance_m"], 140.0)
+            self.assertEqual(report["teams"][0]["high_intensity_distance_m"], 100.0)
+            self.assertEqual(report["teams"][0]["sprint_count"], 3)
+            self.assertLessEqual(
+                report["teams"][0]["high_intensity_distance_m"],
+                report["teams"][0]["total_distance_m"],
+            )
             self.assertEqual(report["teams"][0]["movement_authority"], "reviewed_safe_team_observations")
 
     def test_report_rejects_mismatched_reviewed_digests(self) -> None:
@@ -122,7 +128,7 @@ class ReviewedMatchReportTests(unittest.TestCase):
             root / "team_stats.json",
             {
                 "teams": [
-                    {"team_label": "A", "team_id": "team-a", "playing_time_sec": 630.0, "total_distance_m": 700.0},
+                    {"team_label": "A", "team_id": "team-a", "playing_time_sec": 630.0, "total_distance_m": 700.0, "sprint_count": 3},
                     {"team_label": "B", "team_id": "team-b", "playing_time_sec": 540.0, "total_distance_m": 680.0},
                 ]
             },
@@ -164,6 +170,8 @@ class ReviewedMatchReportTests(unittest.TestCase):
                         "total_distance_m": 140.0,
                         "observed_distance_m": 130.0,
                         "estimated_short_gap_distance_m": 10.0,
+                        "high_intensity_distance_m": 100.0,
+                        "sprint_count": 2,
                     },
                     {
                         "team_label": "B",
@@ -171,6 +179,8 @@ class ReviewedMatchReportTests(unittest.TestCase):
                         "total_distance_m": 90.0,
                         "observed_distance_m": 90.0,
                         "estimated_short_gap_distance_m": 0.0,
+                        "high_intensity_distance_m": 40.0,
+                        "sprint_count": 1,
                     },
                 ],
             },

@@ -289,7 +289,14 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
                 "observed_distance_m": _round(reviewed.get("observed_distance_m")) if reviewed else None,
                 "estimated_short_gap_distance_m": _round(reviewed.get("estimated_short_gap_distance_m")) if reviewed else None,
                 "movement_authority": reviewed.get("movement_authority") if reviewed else "legacy_team_stats",
-                "high_intensity_distance_m": _round(team.get("high_intensity_distance_m")),
+                "high_intensity_distance_m": _round(
+                    reviewed.get("high_intensity_distance_m")
+                    if reviewed and reviewed.get("high_intensity_distance_m") is not None
+                    else team.get("high_intensity_distance_m")
+                ),
+                # Team sprint classification remains the legacy team-stats
+                # authority.  Reviewed movement currently provides only the
+                # safe team distance and common high-intensity aggregate.
                 "sprint_count": int(team.get("sprint_count") or 0),
                 "avg_speed_kmh": _round(team.get("avg_speed_kmh") or team.get("average_speed_kmh")),
                 "peak_speed_kmh": _round(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh")),

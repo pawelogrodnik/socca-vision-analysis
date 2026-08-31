@@ -828,6 +828,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
             "team_label": str(player["team_label"]),
+            "reviewed_team_attribution_state": f"certain_{player['team_label']}",
             "fallback_label": slot_id or f"{player['team_label']}?",
             "identity_status": "confirmed",
             "canonical_player_id": str(decision.get("player_id")),
@@ -842,6 +843,9 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": None,
             "stable_anonymous_entity_id": None,
             "team_label": team,
+            "reviewed_team_attribution_state": (
+                f"certain_{team}" if team in {"A", "B"} else "unknown"
+            ),
             "fallback_label": f"{team}?",
             "display_label": f"{team}?",
             "identity_status": "unresolved",
@@ -854,6 +858,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
             "team_label": slot_id[0],
+            "reviewed_team_attribution_state": f"certain_{slot_id[0]}",
             "fallback_label": slot_id,
             "display_label": slot_id,
             "identity_status": "stable_anonymous",
@@ -866,6 +871,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": None,
             "stable_anonymous_entity_id": None,
             "team_label": "U",
+            "reviewed_team_attribution_state": "unknown",
             "fallback_label": "Sędzia",
             "display_label": "Sędzia",
             "identity_status": "referee",
@@ -878,6 +884,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": None,
             "stable_anonymous_entity_id": None,
             "team_label": "U",
+            "reviewed_team_attribution_state": "unknown",
             "fallback_label": "Fałszywa detekcja",
             "display_label": "Fałszywa detekcja",
             "identity_status": "false_detection",
@@ -892,6 +899,13 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": slot_id if action == "unresolved" else None,
             "stable_anonymous_entity_id": slot_id if action == "unresolved" else None,
             "team_label": unknown_team,
+            "reviewed_team_attribution_state": (
+                "unknown"
+                if action == "team_unknown"
+                else f"certain_{unknown_team}"
+                if unknown_team in {"A", "B"}
+                else "unknown"
+            ),
             "fallback_label": fallback,
             "display_label": fallback,
             "identity_status": "team_unknown" if action == "team_unknown" else "unresolved",
