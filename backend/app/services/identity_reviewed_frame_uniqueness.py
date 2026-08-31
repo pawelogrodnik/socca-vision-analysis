@@ -206,6 +206,9 @@ def _demote(
         "fallback_label": fallback,
         "display_label": f"{fallback} !",
         "identity_source": "frame_observation_uniqueness_guard",
+        # This is a current physical-ownership rejection, not ordinary
+        # same-team identity uncertainty.  Team movement must not count it.
+        "reviewed_team_movement_exclusion": "duplicate_owner",
         "conflicts": conflicts,
     }
 

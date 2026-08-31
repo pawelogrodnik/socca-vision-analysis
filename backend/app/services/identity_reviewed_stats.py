@@ -257,17 +257,19 @@ def reviewed_team_movement_exclusion_reason(effective: dict[str, Any]) -> str | 
     if team_state != f"certain_{label}":
         return "team_unknown"
 
+    if effective.get("reviewed_team_movement_exclusion") == "duplicate_owner":
+        return "duplicate_owner"
+
     identity_status = str(effective.get("identity_status") or "unresolved")
     if identity_status in {"referee", "false_detection", "ignored"}:
         return "non_player"
-    if identity_status == "team_unknown":
-        return "team_unknown"
     if identity_status not in {
         "confirmed",
         "stable_anonymous",
         "unresolved",
         "conflicted",
         "blocked",
+        "team_unknown",
     }:
         return "other_identity_status"
     if effective.get("visual_trusted") is False:

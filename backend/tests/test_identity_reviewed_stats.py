@@ -11,6 +11,12 @@ from app.services.identity_reviewed_stats import (
     build_reviewed_stats,
     reviewed_team_movement_exclusion_reason,
 )
+from app.services.identity_reviewed_frame_uniqueness import (
+    build_frame_slot_demotions,
+)
+from app.services.identity_reviewed_snapshot_observations import (
+    build_observation_overrides,
+)
 from app.services.reviewed_sprint_policy import reviewed_sprint_policy
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import identity_review_scope_digest
@@ -267,11 +273,27 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             ),
             "cross_team_conflict",
         )
-        self.assertEqual(
+        self.assertIsNone(
             reviewed_team_movement_exclusion_reason(
                 {**base, "identity_status": "team_unknown"}
+            )
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {
+                    **base,
+                    "team_label": "U",
+                    "reviewed_team_attribution_state": "unknown",
+                    "identity_status": "team_unknown",
+                }
             ),
             "team_unknown",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "reviewed_team_movement_exclusion": "duplicate_owner"}
+            ),
+            "duplicate_owner",
         )
         self.assertEqual(
             reviewed_team_movement_exclusion_reason(
@@ -297,6 +319,180 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             ),
             "invalid_pitch_point",
         )
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_exact_team_unknown_actions_keep_certain_team_movement(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 6,
+            "duration_sec": 0.24,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tracklets = {
+                row["tracklet_id"]: row
+                for row in [
+                    _tracklet("team-a", [0, 1]),
+                    _tracklet("team-b", [2, 3]),
+                    _tracklet("team-u", [4, 5]),
+                ]
+            }
+            for tracklet_id, label in (
+                ("team-a", "A"),
+                ("team-b", "B"),
+                ("team-u", "U"),
+            ):
+                tracklets[tracklet_id]["team_label"] = label
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": list(tracklets.values())}), encoding="utf-8"
+            )
+            seeds = {
+                "decisions": [
+                    {
+                        "observation_key": f"{tracklet_id}:{frame}",
+                        "frame_number": frame,
+                        "action": action,
+                        "assigned_team": (
+                            {"team_label": label}
+                            if label in {"A", "B"}
+                            else None
+                        ),
+                        "provenance": {"tracklet_id": tracklet_id},
+                    }
+                    for tracklet_id, label, action, frames in (
+                        ("team-a", "A", "team_a_unknown", (0, 1)),
+                        ("team-b", "B", "team_b_unknown", (2, 3)),
+                        ("team-u", "U", "skip", (4, 5)),
+                    )
+                    for frame in frames
+                ]
+            }
+            overrides = build_observation_overrides(seeds, tracklets, {})
+            by_tracklet = {
+                tracklet_id: [
+                    row
+                    for row in overrides
+                    if row["tracklet_id"] == tracklet_id
+                ]
+                for tracklet_id in tracklets
+            }
+            self.assertTrue(
+                all(
+                    row["reviewed_team_attribution_state"] == "certain_A"
+                    for row in by_tracklet["team-a"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["reviewed_team_attribution_state"] == "certain_B"
+                    for row in by_tracklet["team-b"]
+                )
+            )
+            snapshot = {
+                "semantic_digest": "snapshot",
+                "tracklet_assignments": [
+                    _assignment("team-a", "unresolved", None),
+                    {
+                        **_assignment("team-b", "unresolved", None),
+                        "team_label": "B",
+                        "reviewed_team_attribution_state": "certain_B",
+                    },
+                    {
+                        **_assignment("team-u", "unresolved", None),
+                        "team_label": "U",
+                        "reviewed_team_attribution_state": "unknown",
+                    },
+                ],
+                "observation_overrides": overrides,
+                "observation_demotions": [],
+                "summary": {},
+            }
+            teams = {
+                row["team_label"]: row
+                for row in build_reviewed_stats(root, snapshot, _match_document())[
+                    "reviewed_player_stats.json"
+                ]["teams"]
+            }
+            self.assertEqual(teams["A"]["safe_observation_count"], 2)
+            self.assertEqual(teams["B"]["safe_observation_count"], 2)
+            self.assertEqual(teams["A"]["total_distance_m"], 0.1)
+            self.assertEqual(teams["B"]["total_distance_m"], 0.1)
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_frame_uniqueness_losers_do_not_double_count_team_movement(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 2,
+            "duration_sec": 0.08,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        for claim_kind in ("canonical_player", "stable_slot"):
+            with self.subTest(
+                claim_kind=claim_kind
+            ), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                tracklets = {
+                    "winner": _tracklet("winner", [0, 1]),
+                    "loser": _tracklet("loser", [0, 1]),
+                }
+                (root / "tracklets.json").write_text(
+                    json.dumps({"tracklets": list(tracklets.values())}), encoding="utf-8"
+                )
+                common = {
+                    "team_label": "A",
+                    "reviewed_team_attribution_state": "certain_A",
+                    "stable_anonymous_slot_id": "A03",
+                    "identity_status": (
+                        "stable_anonymous"
+                        if claim_kind == "stable_slot"
+                        else "confirmed"
+                    ),
+                    "canonical_player_id": None if claim_kind == "stable_slot" else "p1",
+                }
+                assignments = [
+                    {
+                        "tracklet_id": "winner",
+                        "identity_source": "manual_review",
+                        **common,
+                    },
+                    {
+                        "tracklet_id": "loser",
+                        "identity_source": "candidate_shadow",
+                        **common,
+                    },
+                ]
+                demotions, diagnostics = build_frame_slot_demotions(tracklets, assignments)
+                self.assertEqual(diagnostics["demoted_observation_claims"], 2)
+                self.assertTrue(
+                    all(
+                        row["reviewed_team_movement_exclusion"]
+                        == "duplicate_owner"
+                        for row in demotions
+                    )
+                )
+                teams = {
+                    row["team_label"]: row
+                    for row in build_reviewed_stats(
+                        root,
+                        {
+                            "semantic_digest": "snapshot",
+                            "tracklet_assignments": assignments,
+                            "observation_overrides": [],
+                            "observation_demotions": demotions,
+                            "summary": {},
+                        },
+                        _match_document(),
+                    )["reviewed_player_stats.json"]["teams"]
+                }
+                self.assertEqual(teams["A"]["safe_observation_count"], 2)
+                self.assertEqual(teams["A"]["total_distance_m"], 0.1)
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_coverage_readiness_blocks_new_stats_until_queue_is_complete(

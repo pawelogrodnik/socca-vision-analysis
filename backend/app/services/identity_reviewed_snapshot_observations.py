@@ -57,9 +57,7 @@ def build_observation_overrides(
                 "identity_status": status,
                 "team_label": team,
                 "reviewed_team_attribution_state": (
-                    "unknown"
-                    if action in {"team_a_unknown", "team_b_unknown"}
-                    else "cross_team"
+                    "cross_team"
                     if "cross_team_confirmed_assignment" in blockers
                     else f"certain_{team}"
                     if team in {"A", "B"}

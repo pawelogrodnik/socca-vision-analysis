@@ -3256,7 +3256,7 @@
     "restart_passes": 1,
     "same_team_pass_candidates": 75
   },
-  "generated_at": "2026-08-31T15:15:11.323624+00:00",
+  "generated_at": "2026-08-31T16:31:13.175245+00:00",
   "id": "published-6d8fc20c",
   "identity_coverage": {
     "confirmed_named_observations": 118641,
@@ -43794,7 +43794,7 @@
     }
   ],
   "report_type": "public_match_report",
-  "reviewed_identity_digest": "75ba01b837b7851395408b98c724b3d1e763c231808cd699b9cf18360cfd712d",
+  "reviewed_identity_digest": "2da56b80b72265db9c9b8bba2d7cc7ba89d2717a3a8c2b1449d1e0adb50a5c86",
   "schema_version": "0.1.0",
   "source_match_id": "6d8fc20c",
   "stats_semantics": {
@@ -43813,11 +43813,11 @@
       "completed_passes": 33,
       "completion_rate": 50.8,
       "display_color": "#98999c",
-      "estimated_short_gap_distance_m": 46.4,
+      "estimated_short_gap_distance_m": 31.45,
       "failed_passes": 32,
-      "high_intensity_distance_m": 1014.9,
+      "high_intensity_distance_m": 975.08,
       "movement_authority": "reviewed_safe_team_observations",
-      "observed_distance_m": 6439.46,
+      "observed_distance_m": 6256.33,
       "pass_attempts": 65,
       "pass_candidates": 91,
       "peak_speed_kmh": 22.55,
@@ -43830,7 +43830,7 @@
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
-      "total_distance_m": 6485.86,
+      "total_distance_m": 6287.78,
       "turnover_or_interception_candidates": 47
     },
     {
@@ -43839,11 +43839,11 @@
       "completed_passes": 27,
       "completion_rate": 42.9,
       "display_color": "#353e5c",
-      "estimated_short_gap_distance_m": 43.2,
+      "estimated_short_gap_distance_m": 42.36,
       "failed_passes": 36,
-      "high_intensity_distance_m": 1339.56,
+      "high_intensity_distance_m": 1282.03,
       "movement_authority": "reviewed_safe_team_observations",
-      "observed_distance_m": 6948.11,
+      "observed_distance_m": 6620.82,
       "pass_attempts": 63,
       "pass_candidates": 81,
       "peak_speed_kmh": 22.84,
@@ -43856,7 +43856,7 @@
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",
-      "total_distance_m": 6991.31,
+      "total_distance_m": 6663.18,
       "turnover_or_interception_candidates": 50
     }
   ]

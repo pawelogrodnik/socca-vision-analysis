@@ -55,7 +55,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v13-team-attribution-projection"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v14-team-movement-safety-projection"
 
 logger = logging.getLogger(__name__)
 
@@ -190,14 +190,6 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         player = roster.get(player_id or "")
         if player and team_label == "U":
             team_label = str(player["team_label"])
-        reviewed_team_attribution_state = _reviewed_team_attribution_state(
-            stable_row,
-            subject_ids,
-            subject_detected_team_labels,
-            decision,
-            manual_action,
-            team_label,
-        )
         assignment_conflicts: list[dict[str, Any]] = []
         propagation_conflicted_stable_slot_ids: list[str] = []
         if len(accepted_seeds) > 1:
@@ -227,6 +219,18 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
                 {"code": "cross_team_confirmed_assignment", "player_id": player_id}
             )
             status, player_id = "conflicted", None
+        # Project team truth only after every current assignment check.  In
+        # particular, a roster player from the opposite team turns this into a
+        # live A/B conflict even when the original tracker label was certain.
+        reviewed_team_attribution_state = _reviewed_team_attribution_state(
+            stable_row,
+            subject_ids,
+            subject_detected_team_labels,
+            decision,
+            manual_action,
+            team_label,
+            assignment_conflicts,
+        )
         fallback = str(stable_row["fallback_label"])
         display = (
             player["name"]
@@ -542,12 +546,19 @@ def _reviewed_team_attribution_state(
     decision: dict[str, Any] | None,
     manual_action: str | None,
     effective_team_label: str,
+    assignment_conflicts: list[dict[str, Any]] | None = None,
 ) -> str:
     """Freeze current team truth for a compact reviewed snapshot assignment.
 
     Diagnostic reason strings are intentionally excluded.  They can describe
     a prior failure even after the exact source has been safely resolved.
     """
+    if any(
+        str(conflict.get("code") or "") == "cross_team_confirmed_assignment"
+        for conflict in assignment_conflicts or []
+        if isinstance(conflict, dict)
+    ):
+        return "cross_team"
     current_decision = dict(decision or {})
     if "action" not in current_decision and current_decision.get("decision"):
         current_decision["action"] = current_decision["decision"]
