@@ -84,12 +84,15 @@ is unique, so a source observation cannot be counted twice. This means the
 safe team total can include team-known anonymous evidence and must not be
 replaced by the sum of named players.
 
-Player-relative sprint detection is `player_relative_v1`: it keeps the fixed
+Player-relative sprint detection is `player_relative_v2`: it keeps the fixed
 15 km/h high-intensity metric, uses a reliable player's sustained peak to set
 start/continuation thresholds, and otherwise uses conservative 18/16 km/h
 fallback thresholds. A sprint never crosses a tracklet, evidence or detection
-gap. The exact accepted events are also the only source for five-minute sprint
-counts.
+gap. Both threshold crossing and public `Max sprint` use the same conservative
+0.5–1.25 second sustained-speed window as player peak speed; the raw
+point-to-point safety ceiling is only an outlier rejection bound, never a
+public performance value. The exact accepted events are also the only source
+for five-minute sprint counts.
 
 ## Experimental completion policy v1
 

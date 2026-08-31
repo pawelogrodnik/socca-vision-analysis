@@ -105,6 +105,8 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             "sprint_time_sec": sprint_result["sprint_time_sec"],
             "sprint_distance_m": sprint_result["sprint_distance_m"],
             "max_sprint_speed_kmh": sprint_result["max_sprint_speed_kmh"],
+            "validated_sprint_peak_kmh": sprint_result["max_sprint_speed_kmh"],
+            "raw_sprint_segment_peak_kmh": sprint_result["raw_sprint_segment_peak_kmh"],
             "sprint_candidate_count": sprint_result["sprint_candidate_count"],
             "rejected_sprint_candidate_count": sprint_result["rejected_sprint_candidate_count"],
             "best_sprint_candidate_speed_kmh": sprint_result["best_sprint_candidate_speed_kmh"],

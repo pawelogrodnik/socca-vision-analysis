@@ -50,7 +50,7 @@ export function PublicPlayerStatsSection({ players, teamName }: PublicPlayerStat
       ) : (
         <div className='stats-table-wrap'>
           <table className='stats-table workload-stats-table'>
-            <thead><tr><th>Zawodnik</th><th title='Średni dystans przeliczony na 5 minut czasu wykrytego.'>Dystans / 5 min</th><th title='Dystans wysokiej intensywności przeliczony na 5 minut czasu wykrytego.'>HI / 5 min</th><th title='Liczba zaakceptowanych sprintów przeliczona na 5 minut czasu wykrytego.'>Sprinty / 5 min</th><th title='Udział dystansu wysokiej intensywności w całkowitym dystansie.'>HI %</th><th>Dystans sprintem</th><th>Czas sprintu</th><th>Max sprint</th><th>Najlepsze okno</th></tr></thead>
+            <thead><tr><th>Zawodnik</th><th title='Średni dystans przeliczony na 5 minut czasu wykrytego.'>Dystans / 5 min</th><th title='Dystans wysokiej intensywności przeliczony na 5 minut czasu wykrytego.'>HI / 5 min</th><th title='Liczba zaakceptowanych sprintów przeliczona na 5 minut czasu wykrytego.'>Sprinty / 5 min</th><th title='Udział dystansu wysokiej intensywności w całkowitym dystansie.'>HI %</th><th>Dystans sprintem</th><th>Czas sprintu</th><th title='Najwyższa wiarygodna prędkość utrzymana podczas zaakceptowanego sprintu.'>Max sprint</th><th>Najlepsze okno</th></tr></thead>
             <tbody>
               {players.map((player) => {
                 const workload = player.workload;

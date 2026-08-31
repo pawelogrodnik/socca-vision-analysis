@@ -14,10 +14,11 @@ from app.services.global_identity import (
     MAX_STATS_SPEED_MPS,
     STATS_OBSERVED_GAP_FRAMES,
     STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC,
+    sustained_speed_windows,
 )
 
 
-SPRINT_POLICY = "player_relative_v1"
+SPRINT_POLICY = "player_relative_v2"
 SPRINT_START_RATIO = 0.82
 SPRINT_START_FLOOR_KMH = 16.5
 SPRINT_CONTINUE_RATIO = 0.75
@@ -82,6 +83,10 @@ def classify_reviewed_sprints(
     total_time = sum(float(event["qualifying_time_sec"]) for event in events)
     total_distance = sum(float(event["qualifying_distance_m"]) for event in events)
     max_speed_kmh = max((float(event["max_speed_mps"]) * 3.6 for event in events), default=0.0)
+    raw_segment_peak_kmh = max(
+        (float(event["raw_segment_peak_mps"]) * 3.6 for event in events),
+        default=0.0,
+    )
     best_candidate = _best_candidate(candidates)
     best_rejected = _best_candidate(rejected)
     return {
@@ -90,6 +95,7 @@ def classify_reviewed_sprints(
         "sprint_time_sec": round(total_time, 3),
         "sprint_distance_m": round(total_distance, 2),
         "max_sprint_speed_kmh": round(max_speed_kmh, 2),
+        "raw_sprint_segment_peak_kmh": round(raw_segment_peak_kmh, 2),
         "sprint_candidate_count": len(candidates),
         "rejected_sprint_candidate_count": len(rejected),
         "best_sprint_candidate_speed_kmh": _candidate_speed_kmh(best_candidate),
@@ -123,6 +129,14 @@ def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[s
         current = None
         grace_sec = 0.0
 
+    segments = [
+        segment
+        for left, right in zip(rows, rows[1:])
+        if (segment := _trusted_segment(left, right, fps)) is not None
+        and int(segment["frame_gap"]) == 1
+    ]
+    sustained_by_end_frame = _sustained_window_by_end_frame(rows, segments, fps)
+
     for left, right in zip(rows, rows[1:]):
         segment = _trusted_segment(left, right, fps)
         # A non-contiguous or untrusted pair is a hard evidence boundary.  It
@@ -130,22 +144,28 @@ def _classify_fragment(rows: list[dict[str, Any]], *, fps: float, policy: dict[s
         if segment is None or segment["frame_gap"] != 1:
             close_current()
             continue
-        speed_kmh = float(segment["speed_mps"]) * 3.6
+        sustained_window = sustained_by_end_frame.get(int(segment["end_frame"]))
+        sustained_speed_mps = (
+            float(sustained_window["speed_mps"])
+            if sustained_window is not None
+            else None
+        )
+        speed_kmh = float(sustained_speed_mps or 0.0) * 3.6
         duration = float(segment["duration_sec"])
         if current is None:
-            if speed_kmh >= float(policy["start_threshold_kmh"]):
-                current = _new_event(segment)
+            if sustained_speed_mps is not None and speed_kmh >= float(policy["start_threshold_kmh"]):
+                current = _new_event(sustained_window, segments)
             continue
-        if speed_kmh >= float(policy["continue_threshold_kmh"]):
-            _append_qualifying(current, segment)
+        if sustained_speed_mps is not None and speed_kmh >= float(policy["continue_threshold_kmh"]):
+            _append_qualifying(current, segment, sustained_speed_mps)
             grace_sec = 0.0
             continue
         if grace_sec + duration <= allowed_dip:
             grace_sec += duration
             continue
         close_current()
-        if speed_kmh >= float(policy["start_threshold_kmh"]):
-            current = _new_event(segment)
+        if sustained_speed_mps is not None and speed_kmh >= float(policy["start_threshold_kmh"]):
+            current = _new_event(sustained_window, segments)
     close_current()
     return {"events": events, "candidates": candidates, "rejected": rejected}
 
@@ -184,25 +204,76 @@ def _trusted_segment(left: dict[str, Any], right: dict[str, Any], fps: float) ->
     }
 
 
-def _new_event(segment: dict[str, Any]) -> dict[str, Any]:
+def _sustained_window_by_end_frame(
+    rows: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    fps: float,
+) -> dict[int, dict[str, float | int]]:
+    """Index the same conservative peak-speed windows by their evidence end.
+
+    A single raw point-to-point segment cannot cross the sprint threshold on
+    its own: at least the shared sustained-speed window must support it.
+    """
+    movement_segments = [
+        {
+            "start_frame": segment["start_frame"],
+            "end_frame": segment["end_frame"],
+            "dt": segment["duration_sec"],
+            "speed": segment["speed_mps"],
+        }
+        for segment in segments
+    ]
+    by_end_frame: dict[int, dict[str, float | int]] = {}
+    for window in sustained_speed_windows(rows, movement_segments, fps):
+        end_frame = int(window["end_frame"])
+        current = by_end_frame.get(end_frame)
+        if current is None or float(window["speed_mps"]) > float(current["speed_mps"]):
+            by_end_frame[end_frame] = window
+    return by_end_frame
+
+
+def _new_event(
+    sustained_window: dict[str, float | int], segments: list[dict[str, Any]]
+) -> dict[str, Any]:
+    start_frame = int(sustained_window["start_frame"])
+    end_frame = int(sustained_window["end_frame"])
+    qualifying_segments = [
+        segment
+        for segment in segments
+        if start_frame <= int(segment["start_frame"]) and int(segment["end_frame"]) <= end_frame
+    ]
+    if not qualifying_segments:
+        raise ValueError("Sustained sprint window must contain trusted segments")
     return {
-        "start_frame": segment["start_frame"],
-        "end_frame": segment["end_frame"],
-        "start_time_sec": segment["start_time_sec"],
-        "end_time_sec": segment["end_time_sec"],
-        "tracklet_id": segment["tracklet_id"],
-        "qualifying_time_sec": segment["duration_sec"],
-        "qualifying_distance_m": segment["distance_m"],
-        "max_speed_mps": segment["speed_mps"],
+        "start_frame": start_frame,
+        "end_frame": end_frame,
+        "start_time_sec": float(sustained_window["start_time_sec"]),
+        "end_time_sec": float(sustained_window["end_time_sec"]),
+        "tracklet_id": qualifying_segments[0]["tracklet_id"],
+        "qualifying_time_sec": sum(float(segment["duration_sec"]) for segment in qualifying_segments),
+        "qualifying_distance_m": sum(float(segment["distance_m"]) for segment in qualifying_segments),
+        # This is intentionally the public event peak: a conservative speed
+        # sustained over the same 0.5–1.25s authority as whole-player peak.
+        "max_speed_mps": float(sustained_window["speed_mps"]),
+        "raw_segment_peak_mps": max(
+            float(segment["speed_mps"]) for segment in qualifying_segments
+        ),
+        "qualifying_segment_count": len(qualifying_segments),
     }
 
 
-def _append_qualifying(event: dict[str, Any], segment: dict[str, Any]) -> None:
+def _append_qualifying(
+    event: dict[str, Any], segment: dict[str, Any], sustained_speed_mps: float
+) -> None:
     event["end_frame"] = segment["end_frame"]
     event["end_time_sec"] = segment["end_time_sec"]
     event["qualifying_time_sec"] += segment["duration_sec"]
     event["qualifying_distance_m"] += segment["distance_m"]
-    event["max_speed_mps"] = max(float(event["max_speed_mps"]), float(segment["speed_mps"]))
+    event["max_speed_mps"] = max(float(event["max_speed_mps"]), sustained_speed_mps)
+    event["raw_segment_peak_mps"] = max(
+        float(event["raw_segment_peak_mps"]), float(segment["speed_mps"])
+    )
+    event["qualifying_segment_count"] = int(event["qualifying_segment_count"]) + 1
 
 
 def _policy_number(policy: dict[str, Any], key: str, default: float) -> float:

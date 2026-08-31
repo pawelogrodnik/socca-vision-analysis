@@ -24,6 +24,7 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(report["players"][0]["peak_speed_kmh"], 18.4)
             self.assertEqual(report["players"][0]["high_intensity_distance_m"], 11.2)
             self.assertEqual(report["players"][0]["sprint_count"], 1)
+            self.assertEqual(report["players"][0]["max_sprint_speed_kmh"], 21.0)
             self.assertGreater(len(report["players"][0]["heatmap"]["interactive"]["points"]), 0)
             self.assertEqual(report["players"][0]["heatmap"]["path"], "")
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")

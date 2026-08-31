@@ -2776,8 +2776,23 @@ def _peak_sustained_speed_mps(
     speed_segments: list[dict[str, Any]],
     fps: float,
 ) -> tuple[float, int]:
-    best = 0.0
-    windows = 0
+    windows = sustained_speed_windows(detected_rows, speed_segments, fps)
+    return max((float(window["speed_mps"]) for window in windows), default=0.0), len(windows)
+
+
+def sustained_speed_windows(
+    detected_rows: list[dict[str, Any]],
+    speed_segments: list[dict[str, Any]],
+    fps: float,
+) -> list[dict[str, float | int]]:
+    """Return conservative contiguous speed windows used by Reviewed peak speed.
+
+    A window is valid only when every adjacent observed segment is short-gap
+    and below the sustained-safety ceiling.  Keeping this authority shared
+    prevents sprint presentation from promoting an otherwise rejected raw
+    point-to-point spike into a public player-speed metric.
+    """
+    windows: list[dict[str, float | int]] = []
     segment_by_pair = {
         (int(segment["start_frame"]), int(segment["end_frame"])): segment
         for segment in speed_segments
@@ -2807,11 +2822,19 @@ def _peak_sustained_speed_mps(
                 previous = end
                 continue
             speed = distance / max(dt, 0.001)
-            windows += 1
             if speed <= MAX_STATS_SUSTAINED_SPEED_MPS:
-                best = max(best, speed)
+                windows.append(
+                    {
+                        "start_frame": start_frame,
+                        "end_frame": end_frame,
+                        "start_time_sec": start_time,
+                        "end_time_sec": end_time,
+                        "duration_sec": dt,
+                        "speed_mps": speed,
+                    }
+                )
             previous = end
-    return best, windows
+    return windows
 
 
 def _intensity_metrics(speed_segments: list[dict[str, Any]], total_distance_m: float) -> dict[str, Any]:

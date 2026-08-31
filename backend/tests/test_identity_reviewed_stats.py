@@ -348,9 +348,56 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertEqual(player["intensity"]["sprint_count"], 0)
             self.assertNotIn("sprint_threshold_kmh", player["intensity"])
             self.assertNotIn("min_sprint_duration_sec", player["intensity"])
-            self.assertEqual(player["intensity"]["sprint_detection"]["policy"], "player_relative_v1")
+            self.assertEqual(player["intensity"]["sprint_detection"]["policy"], "player_relative_v2")
             self.assertEqual(player["intensity"]["sprint_detection"]["minimum_duration_sec"], 0.4)
             self.assertEqual(player["readiness"]["speed"], "experimental")
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_player_and_workload_share_the_validated_sprint_event_totals(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 200,
+            "duration_sec": 8.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet_with_positions(
+                                "runner",
+                                [(frame, frame * 0.25) for frame in range(200)],
+                            )
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(root, _confirmed_snapshot("runner"), {})
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            intensity = player["intensity"]
+            workload = player["workload"]
+            self.assertGreater(intensity["sprint_count"], 0)
+            self.assertLessEqual(
+                intensity["max_sprint_speed_kmh"],
+                player["speed"]["peak_sustained_speed_kmh"] + 0.01,
+            )
+            self.assertEqual(workload["sprint_count"], intensity["sprint_count"])
+            self.assertEqual(workload["sprint_time_sec"], intensity["sprint_time_sec"])
+            self.assertEqual(workload["sprint_distance_m"], intensity["sprint_distance_m"])
+            self.assertEqual(
+                workload["max_sprint_speed_kmh"], intensity["max_sprint_speed_kmh"]
+            )
+            self.assertEqual(
+                intensity["validated_sprint_peak_kmh"], intensity["max_sprint_speed_kmh"]
+            )
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_single_frame_position_spike_does_not_leak_into_reviewed_or_public_max_speed(

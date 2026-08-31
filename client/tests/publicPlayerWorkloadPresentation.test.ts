@@ -123,6 +123,20 @@ test('activity matrix renders actual windows, a valid zero sprint and safety cop
   assert.match(html, /nie próbuje sztucznie odtwarzać brakujących minut/);
 });
 
+test('workload table labels Max sprint as a validated speed and keeps zero as unavailable', () => {
+  const zeroSprintPlayer = {
+    ...player,
+    max_sprint_speed_kmh: 0,
+  } as PublicReportPlayer;
+  const html = renderToStaticMarkup(
+    createElement(PublicPlayerStatsSection, { players: [zeroSprintPlayer], teamName: 'Corgi' }),
+  );
+
+  assert.match(html, /Najwyższa wiarygodna prędkość utrzymana podczas zaakceptowanego sprintu/);
+  assert.match(html, /Max sprint/);
+  assert.match(html, /—/);
+});
+
 test('legacy player data without workload keeps the existing basic stats section', () => {
   const legacyPlayer = { ...player, workload: undefined } as PublicReportPlayer;
   const html = renderToStaticMarkup(
