@@ -15,6 +15,59 @@ from app.services.reviewed_match_report import build_reviewed_match_report
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_team_distance_uses_safe_anonymous_evidence_without_u_or_double_counting(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 20,
+            "duration_sec": 0.8,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet("named", [0, 1, 2]),
+                            _tracklet("anonymous", [3, 4, 5]),
+                            _tracklet("unknown-team", [6, 7, 8]),
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            anonymous = _assignment("anonymous", "stable_anonymous", None)
+            unknown_team = _assignment("unknown-team", "stable_anonymous", None)
+            unknown_team["team_label"] = "U"
+            documents = build_reviewed_stats(
+                root,
+                {
+                    "semantic_digest": "snapshot",
+                    "tracklet_assignments": [
+                        _assignment("named", "confirmed", "p1"),
+                        anonymous,
+                        unknown_team,
+                    ],
+                    "observation_overrides": [],
+                    "observation_demotions": [],
+                    "summary": {},
+                },
+                _match_document(),
+            )
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            teams = {
+                row["team_label"]: row
+                for row in documents["reviewed_player_stats.json"]["teams"]
+            }
+            self.assertGreater(teams["A"]["total_distance_m"], player["total_distance_m"])
+            self.assertAlmostEqual(teams["A"]["total_distance_m"], 0.4, places=2)
+            self.assertEqual(teams["A"]["safe_observation_count"], 6)
+            self.assertEqual(teams["B"]["total_distance_m"], 0.0)
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_team_stats_only_omits_opponent_player_rows_but_keeps_scope_metadata(
         self, metadata
     ) -> None:
@@ -59,6 +112,12 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             scope = documents["reviewed_stats_readiness.json"]["identity_review_scope"]
             self.assertEqual(scope["teams"]["B"]["player_stats_status"], "not_reviewed_by_scope")
             self.assertTrue(scope["teams"]["B"]["team_stats_required"])
+            teams = {
+                row["team_label"]: row
+                for row in documents["reviewed_player_stats.json"]["teams"]
+            }
+            self.assertGreater(teams["B"]["total_distance_m"], 0.0)
+            self.assertEqual(teams["B"]["movement_authority"], "reviewed_safe_team_observations")
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_coverage_readiness_blocks_new_stats_until_queue_is_complete(

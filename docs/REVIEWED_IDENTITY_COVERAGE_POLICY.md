@@ -73,6 +73,24 @@ observations remain valid for team statistics but never count as named.
 Coverage is exposed globally and per effective team. Distance coverage remains
 diagnostic only.
 
+## Reviewed report movement authority
+
+For a newly generated Reviewed report, a team distance is derived from the
+same effective-observation snapshot as the player table. It includes only
+in-play, visually trusted `confirmed` and `stable_anonymous` Team A/B
+observations; Team U, unresolved/conflicted ownership, referees, false
+detections and out-of-play observations are excluded. Tracklet/frame ownership
+is unique, so a source observation cannot be counted twice. This means the
+safe team total can include team-known anonymous evidence and must not be
+replaced by the sum of named players.
+
+Player-relative sprint detection is `player_relative_v1`: it keeps the fixed
+15 km/h high-intensity metric, uses a reliable player's sustained peak to set
+start/continuation thresholds, and otherwise uses conservative 18/16 km/h
+fallback thresholds. A sprint never crosses a tracklet, evidence or detection
+gap. The exact accepted events are also the only source for five-minute sprint
+counts.
+
 ## Experimental completion policy v1
 
 The local calibration set contains one easy 90-second match, two difficult

@@ -80,6 +80,12 @@ def apply_reviewed_identity_to_report_package(
     package["resolved_player_stats"] = _reviewed_resolved_player_stats(package)
     package["identity_report_source"] = "reviewed_identity"
     package["reviewed_identity_digest"] = status["digest"]
+    stats = package.get("reviewed_player_stats") or {}
+    readiness = package.get("reviewed_stats_readiness") or {}
+    package["reviewed_team_movement"] = stats.get("teams") if isinstance(stats.get("teams"), list) else []
+    package["identity_coverage"] = stats.get("identity_coverage") or readiness.get("identity_coverage")
+    package["identity_coverage_readiness"] = readiness.get("coverage_readiness")
+    package["identity_review_scope"] = readiness.get("identity_review_scope") or stats.get("identity_review_scope")
     return package
 
 

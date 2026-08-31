@@ -2,6 +2,7 @@ import type { PublicPlayerActivityWindow, PublicPlayerWorkload, PublicReportPlay
 
 export type WorkloadMetric = 'distance' | 'detectedTime' | 'highIntensity' | 'sprints';
 export type ReportablePlayerWorkloadMetric = 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5';
+export type PublicPlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5' | 'peakSpeed';
 
 export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distance', label: 'Dystans' },
@@ -29,8 +30,20 @@ export function hasReportablePlayerChartMetric(
       : metric === 'highIntensityPer5'
         ? workload?.high_intensity_distance_per_5min_m
         : workload?.sprints_per_5min;
-    return value !== null && value !== undefined;
+    return metric === 'sprintsPer5'
+      ? Number(value || 0) > 0
+      : value !== null && value !== undefined;
   });
+}
+
+export function visiblePlayerChartMetric(
+  selected: PublicPlayerChartMetric,
+  available: PublicPlayerChartMetric[],
+): PublicPlayerChartMetric {
+  if (available.includes(selected)) return selected;
+  if (available.includes('distancePer5')) return 'distancePer5';
+  if (available.includes('distanceKm')) return 'distanceKm';
+  return 'minutes';
 }
 
 export function playerChartEmptyMessage(metric: string): string {

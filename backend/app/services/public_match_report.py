@@ -252,6 +252,13 @@ def _resolved_team_names(package: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
     team_stats = package.get("team_stats") if isinstance(package.get("team_stats"), dict) else {}
     team_rows = team_stats.get("teams") if isinstance(team_stats.get("teams"), list) else []
+    reviewed_movement = {
+        str(row.get("team_label") or ""): row
+        for row in package.get("reviewed_team_movement") or []
+        if isinstance(row, dict)
+    }
+    if not team_rows and reviewed_movement:
+        team_rows = [{"team_label": label} for label in ("A", "B") if label in reviewed_movement]
     match = package.get("match") if isinstance(package.get("match"), dict) else {}
     video = match.get("video") if isinstance(match.get("video"), dict) else {}
     match_duration_sec = _round(video.get("duration_sec"))
@@ -265,6 +272,7 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
         team_id = team.get("team_id")
         display_row = display.get(str(team_id or "")) or display.get(team_label) or {}
         resolved_team = resolved_names.get(team_label) or {}
+        reviewed = reviewed_movement.get(team_label)
         rows.append(
             {
                 "team_label": team_label,
@@ -275,7 +283,12 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
                 or f"Team {team_label}",
                 "display_color": display_row.get("display_color") or team.get("display_color"),
                 "playing_time_sec": match_duration_sec,
-                "total_distance_m": _round(team.get("total_distance_m")),
+                "total_distance_m": _round(
+                    reviewed.get("total_distance_m") if reviewed else team.get("total_distance_m")
+                ),
+                "observed_distance_m": _round(reviewed.get("observed_distance_m")) if reviewed else None,
+                "estimated_short_gap_distance_m": _round(reviewed.get("estimated_short_gap_distance_m")) if reviewed else None,
+                "movement_authority": reviewed.get("movement_authority") if reviewed else "legacy_team_stats",
                 "high_intensity_distance_m": _round(team.get("high_intensity_distance_m")),
                 "sprint_count": int(team.get("sprint_count") or 0),
                 "avg_speed_kmh": _round(team.get("avg_speed_kmh") or team.get("average_speed_kmh")),
@@ -736,6 +749,7 @@ def build_public_match_report(
                 "player_time": "confirmed_detected_observations",
                 "team_time": "source_video_duration",
                 "team_tracking": "named_and_anonymous_team_observations",
+                "team_distance": "reviewed_safe_team_observations",
                 "ball": "experimental_candidates",
                 "technical_debug": "excluded",
             }
@@ -790,6 +804,9 @@ def build_public_match_report(
         report["team_shape"] = team_shape
     if uses_reviewed_identity:
         report["reviewed_identity_digest"] = package.get("reviewed_identity_digest")
+        report["identity_coverage"] = package.get("identity_coverage")
+        report["identity_coverage_readiness"] = package.get("identity_coverage_readiness")
+        report["identity_review_scope"] = package.get("identity_review_scope")
     return report
 
 

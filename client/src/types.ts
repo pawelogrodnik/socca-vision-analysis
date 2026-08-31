@@ -2862,6 +2862,9 @@ export type PublicReportTeam = {
   display_color?: string | null;
   playing_time_sec: number;
   total_distance_m: number;
+  observed_distance_m?: number | null;
+  estimated_short_gap_distance_m?: number | null;
+  movement_authority?: string | null;
   high_intensity_distance_m: number;
   sprint_count: number;
   avg_speed_kmh: number;
@@ -2953,6 +2956,7 @@ export type PublicPlayerWorkload = {
   semantics: string;
   rate_window_sec: number;
   minimum_rate_sample_sec: number;
+  minimum_best_window_sample_sec?: number;
   detected_time_sec: number;
   distance_per_5min_m: number | null;
   high_intensity_distance_per_5min_m: number | null;
@@ -2989,6 +2993,16 @@ export type PublicMatchReport = {
   reviewed_identity_digest?: string | null;
   identity_coverage?: ReviewedIdentityCoverage | null;
   identity_coverage_readiness?: ReviewedIdentityCoverageReadiness | null;
+  identity_review_scope?: {
+    schema_version?: string;
+    explicit?: boolean;
+    teams: Record<string, {
+      scope: IdentityReviewTeamScope;
+      named_player_review_required?: boolean;
+      team_stats_required?: boolean;
+      player_stats_status?: 'reviewed' | 'not_reviewed_by_scope';
+    }>;
+  } | null;
   match: {
     id: string;
     title: string;

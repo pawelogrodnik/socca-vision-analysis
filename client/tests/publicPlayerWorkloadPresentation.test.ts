@@ -12,6 +12,7 @@ import {
   hasReportablePlayerChartMetric,
   hasWorkloadMetrics,
   playerChartEmptyMessage,
+  visiblePlayerChartMetric,
   windowValue,
 } from '../src/lib/publicPlayerWorkloadPresentation.ts';
 import type { PublicReportPlayer } from '../src/types.ts';
@@ -64,6 +65,17 @@ test('workload presentation preserves null versus valid zero and final partial w
   assert.equal(windowValue(window, 'sprints'), '0');
 });
 
+test('hidden sprint selection falls back to the available distance metric', () => {
+  assert.equal(
+    visiblePlayerChartMetric('sprintsPer5', ['minutes', 'distancePer5', 'distanceKm']),
+    'distancePer5',
+  );
+  assert.equal(
+    visiblePlayerChartMetric('sprintsPer5', ['minutes', 'distanceKm']),
+    'distanceKm',
+  );
+});
+
 test('normalized player-chart metric availability is specific to the selected metric', () => {
   const unavailable = {
     ...player,
@@ -80,7 +92,13 @@ test('normalized player-chart metric availability is specific to the selected me
   } as PublicReportPlayer;
 
   assert.equal(hasReportablePlayerChartMetric([unavailable], 'distancePer5'), false);
-  assert.equal(hasReportablePlayerChartMetric([zeroSprint], 'sprintsPer5'), true);
+  assert.equal(hasReportablePlayerChartMetric([zeroSprint], 'sprintsPer5'), false);
+  assert.equal(
+    hasReportablePlayerChartMetric([
+      { ...zeroSprint, workload: { ...zeroSprint.workload!, sprints_per_5min: 0.1 } },
+    ], 'sprintsPer5'),
+    true,
+  );
   assert.equal(hasReportablePlayerChartMetric([unavailable, player], 'highIntensityPer5'), true);
   assert.equal(hasReportablePlayerChartMetric([unavailable, { ...unavailable }], 'highIntensityPer5'), false);
   assert.equal(

@@ -21,6 +21,10 @@ from app.services.identity_reviewed_effective_observation import (
 from app.services.identity_reviewed_coverage import summarize_effective_observations
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_reviewed_workload import build_reviewed_player_workload
+from app.services.reviewed_sprint_policy import (
+    classify_reviewed_sprints,
+    reviewed_sprint_policy,
+)
 from app.services.identity_review_scope import (
     TEAM_STATS_ONLY,
     identity_review_scope_digest,
@@ -50,6 +54,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         match_doc,
     )
     observations_by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    observations_by_safe_team: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for effective in effective_observations:
         if (
             effective.get("identity_status") != "confirmed"
@@ -60,23 +65,22 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             continue
         if team_review_scope(match_doc, str(effective.get("team_label") or "U")) == TEAM_STATS_ONLY:
             continue
-        pitch_m = effective.get("smoothed_pitch_m") or effective.get("pitch_m")
-        if not _valid_pitch_point(pitch_m):
+        movement_position = _movement_position(effective)
+        if movement_position is None:
             continue
-        movement_position = {
-            **effective,
-            "pitch_m": pitch_m,
-            "source": "detected",
-            "status": "detected",
-            "visual_trusted": effective.get("visual_trusted", True),
-            "play_area_status": effective.get("play_area_status") or "inside_play",
-            "observation_identity_source": effective.get("identity_source"),
-            "eligible_for_distance": True,
-            "eligible_for_heatmap": True,
-        }
-        observations_by_player[str(effective["canonical_player_id"])].append(
-            movement_position
-        )
+        observations_by_player[str(effective["canonical_player_id"])].append(movement_position)
+    # Team movement deliberately has a wider, still-safe authority than the
+    # named-player table: confirmed names plus stable anonymous observations.
+    # This prevents team totals from omitting safe Team A/B evidence while
+    # never admitting U, unresolved, conflicted, referee, false or untrusted
+    # observations.
+    for effective in effective_observations:
+        label = str(effective.get("team_label") or "")
+        if label not in {"A", "B"} or effective.get("identity_status") not in {"confirmed", "stable_anonymous"}:
+            continue
+        movement_position = _movement_position(effective)
+        if movement_position is not None:
+            observations_by_safe_team[label].append(movement_position)
     players = []
     heatmaps = []
     timeline = []
@@ -89,6 +93,21 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
         movement_summary = _aggregate_movement_stats(movement)
         intensity_summary = movement_summary.get("intensity") if isinstance(movement_summary.get("intensity"), dict) else {}
+        speed_summary = movement_summary.get("speed") if isinstance(movement_summary.get("speed"), dict) else {}
+        sprint_detection = reviewed_sprint_policy(
+            peak_sustained_speed_kmh=float(speed_summary.get("peak_sustained_speed_kmh") or 0.0),
+            speed_quality=str(speed_summary.get("speed_quality") or "not_available"),
+            detected_time_sec=detected_time_sec,
+        )
+        sprint_result = classify_reviewed_sprints(fragments, fps=fps, policy=sprint_detection)
+        intensity_summary.update({
+            "sprint_count": sprint_result["sprint_count"],
+            "sprint_time_sec": sprint_result["sprint_time_sec"],
+            "sprint_distance_m": sprint_result["sprint_distance_m"],
+            "max_sprint_speed_kmh": sprint_result["max_sprint_speed_kmh"],
+            "sprint_candidate_count": sprint_result["sprint_candidate_count"],
+            "rejected_sprint_candidate_count": sprint_result["rejected_sprint_candidate_count"],
+        })
         workload = build_reviewed_player_workload(
             fragments,
             fps=fps,
@@ -102,8 +121,10 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
                 "sprint_time_sec": intensity_summary.get("sprint_time_sec"),
                 "sprint_distance_m": intensity_summary.get("sprint_distance_m"),
                 "max_sprint_speed_kmh": intensity_summary.get("max_sprint_speed_kmh"),
+                "sprint_events": sprint_result["events"],
             },
         )
+        workload["sprint_detection"] = sprint_detection
         expected_movement_segments = sum(
             _expected_movement_segments(fragment, fps) for fragment in fragments
         )
@@ -150,6 +171,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         players.append(player)
         timeline.append({"player_id": player_id, "player_name": player["player_name"], "team_label": player["team_label"], "observations": rows})
         heatmaps.append({"player_id": player_id, "team_label": player["team_label"], "samples": len(positions), "positions_m": positions, "bin_dimensions": [12, 8]})
+    teams = _reviewed_team_movement(observations_by_safe_team, fps)
     snapshot_digest = str(snapshot["semantic_digest"])
     coverage = _coverage(snapshot)
     progress = _load(match_path / "reviewed_identity_progress.json")
@@ -166,7 +188,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         else "incomplete_identity_coverage"
     )
     shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "source_review_scope_digest": identity_review_scope_digest(match_doc), "identity_review_scope": identity_review_scope_read_model(match_doc), "video_timing": {"fps": fps, "frame_count": video_metadata["frame_count"], "duration_sec": video_metadata["duration_sec"], "source": video_metadata["source"], "filename": video_metadata["filename"]}, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
-    documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "global_coverage": coverage, "identity_coverage": identity_coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_stats_readiness.json": {**shared, "schema_version": "2.0.0" if coverage_readiness else shared["schema_version"], "status": stats_status, "global_coverage": coverage, "identity_coverage": identity_coverage, "coverage_readiness": coverage_readiness, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
+    documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "teams": teams, "global_coverage": coverage, "identity_coverage": identity_coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_stats_readiness.json": {**shared, "schema_version": "2.0.0" if coverage_readiness else shared["schema_version"], "status": stats_status, "global_coverage": coverage, "identity_coverage": identity_coverage, "coverage_readiness": coverage_readiness, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
     for name, document in documents.items(): write_identity_json_atomic(match_path / name, document)
     return documents
 
@@ -174,6 +196,60 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
 def _coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
     summary = snapshot.get("summary") or {}
     return {"coverage_unit": summary.get("coverage_unit"), "reliable_player_observations_total": summary.get("reliable_player_observations_total"), "confirmed_observations": summary.get("confirmed_detected_observations"), "unresolved_observations": summary.get("unresolved_detected_observations"), "conflicted_observations": summary.get("conflicted_detected_observations"), "ignored_observations": summary.get("ignored_detected_observations"), "confirmed_ratio": summary.get("confirmed_detected_observation_ratio"), "unresolved_ratio": summary.get("unresolved_detected_observation_ratio")}
+
+
+def _movement_position(effective: dict[str, Any]) -> dict[str, Any] | None:
+    if (
+        effective.get("visual_trusted") is False
+        or effective.get("play_area_status", "inside_play") != "inside_play"
+    ):
+        return None
+    pitch_m = effective.get("smoothed_pitch_m") or effective.get("pitch_m")
+    if not _valid_pitch_point(pitch_m):
+        return None
+    return {
+        **effective,
+        "pitch_m": pitch_m,
+        "source": "detected",
+        "status": "detected",
+        "visual_trusted": effective.get("visual_trusted", True),
+        "play_area_status": effective.get("play_area_status") or "inside_play",
+        "observation_identity_source": effective.get("identity_source"),
+        "eligible_for_distance": True,
+        "eligible_for_heatmap": True,
+    }
+
+
+def _reviewed_team_movement(
+    observations_by_team: dict[str, list[dict[str, Any]]], fps: float
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for team_label in ("A", "B"):
+        seen: set[tuple[str, int]] = set()
+        positions = []
+        for row in observations_by_team.get(team_label, []):
+            key = (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            if key in seen:
+                continue
+            seen.add(key)
+            positions.append(row)
+        positions.sort(key=lambda row: (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)))
+        fragments = _fragments(positions)
+        movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
+        summary = _aggregate_movement_stats(movement)
+        rows.append(
+            {
+                "team_label": team_label,
+                "movement_authority": "reviewed_safe_team_observations",
+                "safe_identity_statuses": ["confirmed", "stable_anonymous"],
+                "total_distance_m": summary["total_distance_m"],
+                "observed_distance_m": summary["observed_distance_m"],
+                "estimated_short_gap_distance_m": summary["estimated_short_gap_distance_m"],
+                "accepted_movement_segments": summary["accepted_movement_segments"],
+                "safe_observation_count": len(positions),
+            }
+        )
+    return rows
 
 
 def _aggregate_movement_stats(movement: list[dict[str, Any]]) -> dict[str, Any]:

@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PublicMatchReport, PublicReportPlayer, PublicReportTeam } from '../types';
 import { AttackingMomentumChart } from './AttackingMomentumChart';
 import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
@@ -28,6 +28,8 @@ import {
 import {
   hasReportablePlayerChartMetric,
   playerChartEmptyMessage,
+  visiblePlayerChartMetric,
+  type PublicPlayerChartMetric,
   type ReportablePlayerWorkloadMetric,
 } from '../lib/publicPlayerWorkloadPresentation';
 
@@ -36,7 +38,7 @@ type PublicMatchReportContentProps = {
   assetHref?: (path: string) => string;
 };
 
-type PlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5' | 'peakSpeed';
+type PlayerChartMetric = PublicPlayerChartMetric;
 
 const REPORTABLE_WORKLOAD_CHART_METRICS = new Set<ReportablePlayerWorkloadMetric>([
   'distancePer5',
@@ -306,11 +308,15 @@ export function PublicMatchReportContent({
           metric.key as ReportablePlayerWorkloadMetric,
         ),
   );
-  const effectivePlayerChartMetric = playerChartMetrics.some(
-    (metric) => metric.key === playerChartMetric,
-  )
-    ? playerChartMetric
-    : 'minutes';
+  const effectivePlayerChartMetric = visiblePlayerChartMetric(
+    playerChartMetric,
+    playerChartMetrics.map((metric) => metric.key),
+  );
+  useEffect(() => {
+    if (playerChartMetric !== effectivePlayerChartMetric) {
+      setPlayerChartMetric(effectivePlayerChartMetric);
+    }
+  }, [effectivePlayerChartMetric, playerChartMetric]);
   const playerMetricConfig =
     PLAYER_CHART_METRICS.find((metric) => metric.key === effectivePlayerChartMetric) ||
     PLAYER_CHART_METRICS[0];
@@ -360,8 +366,9 @@ export function PublicMatchReportContent({
           <div className='public-identity-coverage-grid'>
             {Object.entries(report.identity_coverage.per_team)
               .filter(([team]) => team === 'A' || team === 'B')
+              .filter(([team]) => report.identity_review_scope?.teams?.[team]?.scope !== 'team_stats_only')
               .map(([team, row]) => <div key={team}>
-                <strong>Team {team}</strong>
+                <strong>{report.teams.find((candidate) => candidate.team_label === team)?.team_name || `Team ${team}`}</strong>
                 <span>Imiennie: {Math.round((row.named_observation_coverage || 0) * 100)}%</span>
                 <span>Drużyna znana: {Math.round((row.team_known_observation_coverage || 0) * 100)}%</span>
               </div>)}

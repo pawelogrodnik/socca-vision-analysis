@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.services.identity_reviewed_workload import (
+    WORKLOAD_BEST_WINDOW_MIN_SAMPLE_SEC,
     WORKLOAD_MIN_RATE_SAMPLE_SEC,
     build_reviewed_player_workload,
 )
@@ -76,7 +77,12 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
     def test_segment_crossing_window_boundary_is_owned_once_by_its_start_window(self) -> None:
         rows = [_row(2990, 0.0, fps=10.0), _row(3010, 2.0, fps=10.0)]
         workload = build_reviewed_player_workload(
-            [rows], fps=10.0, video_duration_sec=600.0, canonical=_canonical()
+            [rows],
+            fps=10.0,
+            video_duration_sec=600.0,
+            canonical=_canonical(
+                sprint_events=[{"start_time_sec": 299.0}],
+            ),
         )
 
         first, second = workload["activity_windows"]
@@ -88,7 +94,10 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
         # A three-second 6m/s sprint crosses 05:00 but belongs to its 04:59 start window.
         rows = [_row(2990 + index, index * 0.6, fps=10.0) for index in range(31)]
         workload = build_reviewed_player_workload(
-            [rows], fps=10.0, video_duration_sec=600.0, canonical=_canonical()
+            [rows],
+            fps=10.0,
+            video_duration_sec=600.0,
+            canonical=_canonical(sprint_events=[{"start_time_sec": 299.0}]),
         )
 
         self.assertEqual([window["sprint_count"] for window in workload["activity_windows"]], [1, 0])
@@ -178,8 +187,8 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
 
     def test_best_window_uses_highest_reportable_window_rate(self) -> None:
         fragments = [
-            _rows(0, 120, fps=1.0, meters_per_frame=1.0),
-            _rows(300, 120, fps=1.0, meters_per_frame=2.0),
+            _rows(0, 180, fps=1.0, meters_per_frame=1.0),
+            _rows(300, 240, fps=1.0, meters_per_frame=2.0),
         ]
         workload = build_reviewed_player_workload(
             fragments,
@@ -189,7 +198,28 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
         )
 
         self.assertEqual(workload["best_activity_window"]["window_index"], 1)
-        self.assertEqual(workload["best_activity_window"]["distance_per_5min_m"], 595.0)
+        self.assertEqual(workload["best_activity_window"]["distance_per_5min_m"], 597.5)
+
+    def test_best_window_requires_three_minutes_even_when_rate_is_reportable(self) -> None:
+        fragments = [
+            _rows(0, 179, fps=1.0, meters_per_frame=3.0),
+            _rows(300, 240, fps=1.0, meters_per_frame=2.0),
+        ]
+        workload = build_reviewed_player_workload(
+            fragments, fps=1.0, video_duration_sec=600.0, canonical=_canonical()
+        )
+        self.assertEqual(workload["minimum_best_window_sample_sec"], WORKLOAD_BEST_WINDOW_MIN_SAMPLE_SEC)
+        self.assertIsNotNone(workload["activity_windows"][0]["distance_per_5min_m"])
+        self.assertEqual(workload["best_activity_window"]["window_index"], 1)
+
+    def test_exact_three_minute_window_is_eligible_for_best_window(self) -> None:
+        workload = build_reviewed_player_workload(
+            [_rows(0, 180, fps=1.0, meters_per_frame=1.0)],
+            fps=1.0,
+            video_duration_sec=300.0,
+            canonical=_canonical(),
+        )
+        self.assertEqual(workload["best_activity_window"]["window_index"], 0)
 
 
 def _rows(start_frame: int, count: int, *, fps: float, meters_per_frame: float) -> list[dict[str, object]]:
@@ -211,7 +241,8 @@ def _canonical(
     total_distance_m: float = 0.0,
     high_intensity_distance_m: float = 0.0,
     sprint_count: int = 0,
-) -> dict[str, float | int]:
+    sprint_events: list[dict[str, float]] | None = None,
+) -> dict[str, object]:
     return {
         "detected_time_sec": detected_time_sec,
         "total_distance_m": total_distance_m,
@@ -221,6 +252,7 @@ def _canonical(
         "sprint_time_sec": 0.0,
         "sprint_distance_m": 0.0,
         "max_sprint_speed_kmh": 0.0,
+        "sprint_events": sprint_events or [],
     }
 
 
