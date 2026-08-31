@@ -13,8 +13,6 @@ from app.services.global_identity import (
     HIGH_INTENSITY_THRESHOLD_KMH,
     MAX_STATS_ESTIMATED_GAP_SEC,
     MAX_STATS_SPEED_MPS,
-    SPRINT_MIN_DURATION_SEC,
-    SPRINT_THRESHOLD_KMH,
     STATS_OBSERVED_GAP_FRAMES,
     STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC,
 )
@@ -22,6 +20,7 @@ from app.services.global_identity import (
 
 RATE_WINDOW_SEC = 300.0
 WORKLOAD_MIN_RATE_SAMPLE_SEC = 120.0
+WORKLOAD_BEST_WINDOW_MIN_SAMPLE_SEC = 180.0
 WORKLOAD_SEMANTICS = "reviewed_confirmed_detected_in_play"
 
 
@@ -70,8 +69,11 @@ def build_reviewed_player_workload(
             window["high_intensity_distance_m"] += distance
             window["high_intensity_time_sec"] += float(segment["end_time_sec"]) - float(segment["start_time_sec"])
 
-    sprints = _accepted_sprints(accepted_segments)
-    for sprint in sprints:
+    # The event list is supplied by the Reviewed sprint classifier.  Windows
+    # only allocate that canonical result; they must never re-classify sprints.
+    for sprint in canonical.get("sprint_events") or []:
+        if not isinstance(sprint, dict):
+            continue
         _window_for_time(windows, float(sprint["start_time_sec"]))["sprint_count"] += 1
 
     for window in windows:
@@ -100,7 +102,12 @@ def build_reviewed_player_workload(
     sprint_count = int(canonical.get("sprint_count") or 0)
     eligible_total = detected_time >= WORKLOAD_MIN_RATE_SAMPLE_SEC
     best = max(
-        (window for window in windows if window["distance_per_5min_m"] is not None),
+        (
+            window
+            for window in windows
+            if window["distance_per_5min_m"] is not None
+            and window["detected_time_sec"] >= WORKLOAD_BEST_WINDOW_MIN_SAMPLE_SEC
+        ),
         key=lambda window: float(window["distance_per_5min_m"]),
         default=None,
     )
@@ -108,6 +115,7 @@ def build_reviewed_player_workload(
         "semantics": WORKLOAD_SEMANTICS,
         "rate_window_sec": RATE_WINDOW_SEC,
         "minimum_rate_sample_sec": WORKLOAD_MIN_RATE_SAMPLE_SEC,
+        "minimum_best_window_sample_sec": WORKLOAD_BEST_WINDOW_MIN_SAMPLE_SEC,
         "detected_time_sec": detected_time,
         "distance_per_5min_m": _rate(total_distance, detected_time, eligible_total),
         "high_intensity_distance_per_5min_m": _rate(
@@ -203,45 +211,6 @@ def _accepted_segments(rows: list[dict[str, Any]], fps: float) -> list[dict[str,
             }
         )
     return accepted
-
-
-def _accepted_sprints(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    threshold = SPRINT_THRESHOLD_KMH / 3.6
-    runs: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    previous_end_frame: int | None = None
-    for segment in sorted(segments, key=lambda row: (row["start_frame"], row["end_frame"])):
-        starts_after_previous = (
-            previous_end_frame is not None
-            and segment["start_frame"] == previous_end_frame
-            and current is not None
-            and segment["tracklet_id"] == current["tracklet_id"]
-        )
-        if (
-            segment["kind"] == "observed"
-            and segment["end_time_sec"] - segment["start_time_sec"] <= STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC
-            and segment["speed_mps"] >= threshold
-        ):
-            if current is None or not starts_after_previous:
-                if current is not None:
-                    runs.append(current)
-                current = {
-                    "start_time_sec": segment["start_time_sec"],
-                    "duration_sec": 0.0,
-                    "distance_m": 0.0,
-                    "max_speed_mps": 0.0,
-                    "tracklet_id": segment["tracklet_id"],
-                }
-            current["duration_sec"] += segment["end_time_sec"] - segment["start_time_sec"]
-            current["distance_m"] += segment["distance_m"]
-            current["max_speed_mps"] = max(current["max_speed_mps"], segment["speed_mps"])
-        elif current is not None:
-            runs.append(current)
-            current = None
-        previous_end_frame = segment["end_frame"]
-    if current is not None:
-        runs.append(current)
-    return [run for run in runs if run["duration_sec"] >= SPRINT_MIN_DURATION_SEC]
 
 
 def _rate(value: float | int, detected_time_sec: float, eligible: bool) -> float | None:

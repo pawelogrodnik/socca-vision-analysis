@@ -27,6 +27,8 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertGreater(len(report["players"][0]["heatmap"]["interactive"]["points"]), 0)
             self.assertEqual(report["players"][0]["heatmap"]["path"], "")
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")
+            self.assertEqual(report["teams"][0]["total_distance_m"], 140.0)
+            self.assertEqual(report["teams"][0]["movement_authority"], "reviewed_safe_team_observations")
 
     def test_report_rejects_mismatched_reviewed_digests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,6 +155,22 @@ class ReviewedMatchReportTests(unittest.TestCase):
                         },
                     },
                     {"player_id": "B03", "player_name": "B03", "team_label": "B", "detected_time_sec": 60.0, "total_distance_m": 90.0},
+                ],
+                "teams": [
+                    {
+                        "team_label": "A",
+                        "movement_authority": "reviewed_safe_team_observations",
+                        "total_distance_m": 140.0,
+                        "observed_distance_m": 130.0,
+                        "estimated_short_gap_distance_m": 10.0,
+                    },
+                    {
+                        "team_label": "B",
+                        "movement_authority": "reviewed_safe_team_observations",
+                        "total_distance_m": 90.0,
+                        "observed_distance_m": 90.0,
+                        "estimated_short_gap_distance_m": 0.0,
+                    },
                 ],
             },
         )

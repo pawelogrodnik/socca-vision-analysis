@@ -87,6 +87,7 @@ export function PublicPlayerWorkloadSection({
         <p>Macierz pokazuje kolejne pięciominutowe fragmenty dostępnego nagrania. Ostatnie okno może być krótsze.</p>
         <p>Jeśli część meczu nie znajduje się w materiale, raport nie próbuje sztucznie odtwarzać brakujących minut.</p>
         <p>Puste pole oznacza brak potwierdzonych danych zawodnika w danym fragmencie, a nie automatycznie pobyt na ławce.</p>
+        <p>Sprint jest liczony z zachowaniem ciągłości wiarygodnych obserwacji i progu dopasowanego do bezpiecznie zmierzonego tempa zawodnika.</p>
       </div>
     </section>
   );
