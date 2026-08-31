@@ -44,6 +44,7 @@ from app.services.identity_reviewed_material_continuity import (
     trim_resolved_material_pairs_from_whole_subject_units,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    classify_team_attribution_evidence_status,
     evidence_status_for_unit,
     load_team_attribution_evidence,
     source_ownership_digest as team_attribution_source_ownership_digest,
@@ -878,9 +879,26 @@ def _attach_team_attribution_evidence(
                 }
             )
         unit["team_attribution_evidence_source_digest"] = current_digest
+        persisted_status = evidence_status_for_unit(
+            document,
+            candidate_subject_id=subject_id,
+            detected_pairs=detected_pairs,
+        )
         if unit.get("has_operator_visual_evidence"):
-            # Stronger identity evidence is sufficient, but the digest above
-            # still records the current exact Team-attribution source scope.
+            # A regular identity crop can be enough to display the unit, but
+            # it does not erase a durable terminal or technical result from
+            # the narrower Team-attribution evidence channel.  In particular,
+            # retaining a technical status here prevents a retry from
+            # returning to a false "not materialized" state merely because a
+            # separate identity crop happened to exist.
+            if classify_team_attribution_evidence_status(
+                persisted_status
+            ) != "remediable_not_established":
+                unit["team_attribution_evidence_status"] = persisted_status
+                unit["reason_codes"] = sorted(
+                    set(unit.get("reason_codes") or [])
+                    | {"team_attribution_evidence_unavailable"}
+                )
             continue
         evidence = visual_evidence_for_unit(
             document,
@@ -888,11 +906,7 @@ def _attach_team_attribution_evidence(
             detected_pairs=detected_pairs,
         )
         if evidence is None:
-            unit["team_attribution_evidence_status"] = evidence_status_for_unit(
-                document,
-                candidate_subject_id=subject_id,
-                detected_pairs=detected_pairs,
-            )
+            unit["team_attribution_evidence_status"] = persisted_status
             unit["reason_codes"] = sorted(
                 set(unit.get("reason_codes") or [])
                 | {"team_attribution_evidence_unavailable"}

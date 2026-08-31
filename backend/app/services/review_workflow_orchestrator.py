@@ -146,6 +146,22 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     progress: dict[str, Any] | None = None
     durable_progress: dict[str, Any] | None = None
     focused_sources: list[dict[str, Any]] | None = None
+    # A terminal Team-U recovery is allowed to touch only exact sources, but
+    # it must still converge.  Keep the pre-recovery identities so the final
+    # projection can prove that it did not merely rediscover the same generic
+    # ``not_materialized`` rows.
+    remediation_source_keys: set[tuple[str, str, str, str, str]] = set()
+    remediation_diagnostics: dict[str, int] = {
+        "pre_retry_exact_source_count": 0,
+        "requested_focused_sources": 0,
+        "selector_unresolved_sources": 0,
+        "materialized_actionable": 0,
+        "terminal_unavailable": 0,
+        "technical_failure": 0,
+        "source_drift_or_replaced": 0,
+        "post_retry_remediable_not_established": 0,
+    }
+    recovery_changed_durable_evidence = False
     try:
         if rebuild_seeded_candidates:
             # Callers that mutate actual seed inputs may request this JSON-only
@@ -238,12 +254,64 @@ def _refresh_review_after_identity_mutation_scoped_inner(
             completion_evidence=completion_evidence,
         )
         timings["initial_workflow_ms"] = _elapsed_ms(phase_started)
+        remediation_descriptors = _remediable_team_attribution_descriptors(
+            workflow,
+            progress,
+            include_technical_failures=retry_technical_team_attribution_evidence,
+        )
         focused_sources = _not_materialized_team_attribution_sources(
             workflow,
             progress,
             include_technical_failures=retry_technical_team_attribution_evidence,
         )
+        remediation_source_keys = {
+            key
+            for row in remediation_descriptors
+            if (key := _team_evidence_source_key(row)) is not None
+        }
+        remediation_diagnostics["pre_retry_exact_source_count"] = len(
+            remediation_source_keys
+        )
+        selected_keys = {
+            key
+            for row in focused_sources
+            if (key := _team_evidence_source_key(row)) is not None
+        }
+        unresolved_descriptors = [
+            _team_attribution_failure_source(row)
+            for row in remediation_descriptors
+            if _team_evidence_source_key(row) not in selected_keys
+        ]
+        if unresolved_descriptors:
+            # Readiness identified an exact remediable source, but the focused
+            # selector could not reconstruct it from current canonical units.
+            # Persist an explicit technical result instead of returning the
+            # same generic materialization state.  The following authoritative
+            # projection either drops an obsolete source or attaches this
+            # exact status to a still-current one.
+            mark_team_attribution_evidence_technical_failure(
+                match_path,
+                unresolved_descriptors,
+                status="team_attribution_evidence_recovery_incomplete",
+            )
+            remediation_diagnostics["selector_unresolved_sources"] = len(
+                unresolved_descriptors
+            )
+            remediation_diagnostics["technical_failure"] += len(
+                unresolved_descriptors
+            )
+            recovery_changed_durable_evidence = True
+    elif focused_sources is not None:
+        remediation_source_keys = {
+            key
+            for row in focused_sources
+            if (key := _team_evidence_source_key(row)) is not None
+        }
+        remediation_diagnostics["pre_retry_exact_source_count"] = len(
+            remediation_source_keys
+        )
     if focused_sources:
+        remediation_diagnostics["requested_focused_sources"] = len(focused_sources)
         phase_started = time.perf_counter()
         try:
             focused_evidence = materialize_team_attribution_evidence(
@@ -264,7 +332,11 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 focused_sources,
                 status="team_attribution_evidence_materialization_failed",
             )
+            remediation_diagnostics["technical_failure"] += len(focused_sources)
         else:
+            remediation_diagnostics.update(
+                _focused_evidence_outcome_counts(focused_sources, focused_evidence)
+            )
             unresolved_sources = _focused_sources_without_durable_outcome(
                 focused_sources,
                 focused_evidence,
@@ -278,7 +350,10 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                     unresolved_sources,
                     status="team_attribution_evidence_recovery_incomplete",
                 )
+                remediation_diagnostics["technical_failure"] += len(unresolved_sources)
+        recovery_changed_durable_evidence = True
         timings["focused_team_attribution_evidence_ms"] = _elapsed_ms(phase_started)
+    if recovery_changed_durable_evidence:
         # The first progress projection was intentionally built without this
         # evidence. Drop only request-local derived values, then rebuild the
         # affected authoritative projection once from current durable inputs.
@@ -292,6 +367,59 @@ def _refresh_review_after_identity_mutation_scoped_inner(
         )
         timings["focused_progress_rebuild_ms"] = _elapsed_ms(phase_started)
         durable_progress = _durable_progress_for_snapshot(progress, snapshot, source)
+        still_remediable = _same_remediable_team_attribution_sources(
+            progress,
+            remediation_source_keys,
+        )
+        remediation_diagnostics["post_retry_remediable_not_established"] = len(
+            still_remediable
+        )
+        if still_remediable:
+            # A successful materializer plus rebuild is still not enough if
+            # the *same exact source* remains generic. Convert only those
+            # sources to the durable technical status and reproject once more
+            # so the response cannot expose another identical Retry loop.
+            failure_sources = [
+                _team_attribution_failure_source(row)
+                for row in still_remediable
+            ]
+            mark_team_attribution_evidence_technical_failure(
+                match_path,
+                failure_sources,
+                status="team_attribution_evidence_recovery_incomplete",
+            )
+            remediation_diagnostics["technical_failure"] += len(failure_sources)
+            scoped_memo_invalidate("__review_units__")
+            scoped_memo_invalidate("__authoritative_progress__")
+            phase_started = time.perf_counter()
+            progress = build_reviewed_identity_progress(
+                match_path,
+                match_doc,
+                include_internal_units=True,
+            )
+            timings["recovery_guard_progress_rebuild_ms"] = _elapsed_ms(
+                phase_started
+            )
+            durable_progress = _durable_progress_for_snapshot(
+                progress,
+                snapshot,
+                source,
+            )
+            unresolved_after_guard = _same_remediable_team_attribution_sources(
+                progress,
+                remediation_source_keys,
+            )
+            remediation_diagnostics["post_retry_remediable_not_established"] = len(
+                unresolved_after_guard
+            )
+            if unresolved_after_guard:
+                # Never acknowledge a retry as successful when its exact
+                # source cannot leave generic materialization state. The
+                # durable technical evidence above remains diagnostic, while
+                # the HTTP failure makes the consistency fault explicit.
+                raise ReviewWorkflowRecomputeError(
+                    "team-attribution recovery did not converge for exact source"
+                )
     assert progress is not None and durable_progress is not None
     phase_started = time.perf_counter()
     write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
@@ -321,6 +449,8 @@ def _refresh_review_after_identity_mutation_scoped_inner(
         completion_evidence=completion_evidence,
     )
     timings["final_workflow_ms"] = _elapsed_ms(phase_started)
+    if remediation_diagnostics["pre_retry_exact_source_count"]:
+        timings["team_attribution_remediation"] = remediation_diagnostics
     timings["total_ms"] = _elapsed_ms(started)
     clear_reviewed_identity_recompute_required(match_path)
     logger.info(
@@ -415,13 +545,15 @@ def _technical_retry_sources_from_current_durable_progress(
     match_path: Path,
     snapshot: dict[str, Any],
 ) -> list[dict[str, Any]] | None:
-    """Resolve only current technical descriptors, or request full fallback.
+    """Resolve current terminal remediation descriptors, or request fallback.
 
-    This is deliberately stricter than the compact retry authorization. The
-    durable artifact has to belong to the exact snapshot just freshness-checked
-    above, and every candidate source must be reconstructed from canonical
-    inputs with an equal digest. Any absence, drift or unsupported scope is a
-    safe ``None`` fallback to the existing full progress pass.
+    A terminal state can contain an earlier technical failure *and* a separate
+    exact source still awaiting materialization. Repairing only the former
+    would return another generic Retry state even though the operator asked
+    for one authoritative recovery. Resolve both lifecycle classes in one
+    bounded pass, while retaining the same strict snapshot/digest proof. Any
+    absence, drift or unsupported scope is a safe ``None`` fallback to the
+    existing full progress pass.
     """
     snapshot_digest = str(snapshot.get("semantic_digest") or "")
     progress = load_json_object(match_path / PROGRESS_FILENAME)
@@ -440,7 +572,7 @@ def _technical_retry_sources_from_current_durable_progress(
         if isinstance(case, dict)
         and classify_team_attribution_evidence_status(
             case.get("team_attribution_evidence_status")
-        ) == "technical_failure"
+        ) in {"technical_failure", "remediable_not_established"}
     ]
     return resolve_current_team_attribution_sources(match_path, descriptors)
 
@@ -466,22 +598,15 @@ def _not_materialized_team_attribution_sources(
         or int(issues.get("mixed_blocking") or 0) > 0
     ):
         return []
-    required_keys: set[tuple[str, str, str, str, str]] = set()
-    for residual in (progress.get("coverage_residuals") or {}).values():
-        if not isinstance(residual, dict):
-            continue
-        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []:
-            if not isinstance(case, dict):
-                continue
-            classification = classify_team_attribution_evidence_status(
-                case.get("team_attribution_evidence_status")
-            )
-            if classification == "remediable_not_established" or (
-                include_technical_failures and classification == "technical_failure"
-            ):
-                key = _team_evidence_source_key(case)
-                if key is not None:
-                    required_keys.add(key)
+    required_keys = {
+        key
+        for row in _remediable_team_attribution_descriptors(
+            workflow,
+            progress,
+            include_technical_failures=include_technical_failures,
+        )
+        if (key := _team_evidence_source_key(row)) is not None
+    }
     if not required_keys:
         return []
     sources = []
@@ -507,6 +632,115 @@ def _not_materialized_team_attribution_sources(
             }
         )
     return sorted(sources, key=lambda row: _team_evidence_source_key(row) or ("",) * 5)
+
+
+def _remediable_team_attribution_descriptors(
+    workflow: dict[str, Any],
+    progress: dict[str, Any],
+    *,
+    include_technical_failures: bool = False,
+) -> list[dict[str, Any]]:
+    """Return exact residual descriptors which this transaction may repair.
+
+    Coverage owns the declaration that remediation is necessary.  Keeping
+    these descriptors separate from the raw-pair selector lets the caller
+    distinguish "nothing needs recovery" from "recovery was required but
+    could not safely reconstruct its exact source".
+    """
+    issues = workflow.get("issues") or {}
+    if (
+        not issues.get("coverage_readiness_blocked")
+        or int(issues.get("normal_blocking") or 0) > 0
+        or int(issues.get("mixed_blocking") or 0) > 0
+    ):
+        return []
+    descriptors: list[dict[str, Any]] = []
+    for residual in (progress.get("coverage_residuals") or {}).values():
+        if not isinstance(residual, dict):
+            continue
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []:
+            if not isinstance(case, dict):
+                continue
+            classification = classify_team_attribution_evidence_status(
+                case.get("team_attribution_evidence_status")
+            )
+            if classification == "remediable_not_established" or (
+                include_technical_failures and classification == "technical_failure"
+            ):
+                if _team_evidence_source_key(case) is not None:
+                    descriptors.append(dict(case))
+    return sorted(
+        descriptors,
+        key=lambda row: _team_evidence_source_key(row) or ("",) * 5,
+    )
+
+
+def _team_attribution_failure_source(row: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a compact residual descriptor to the exact evidence contract."""
+    return {
+        **row,
+        "source_ownership_digest": row.get(
+            "team_attribution_evidence_source_digest"
+        )
+        or row.get("source_ownership_digest"),
+    }
+
+
+def _same_remediable_team_attribution_sources(
+    progress: dict[str, Any],
+    source_keys: set[tuple[str, str, str, str, str]],
+) -> list[dict[str, Any]]:
+    """Return only pre-retry exact sources still generically remediable."""
+    if not source_keys:
+        return []
+    remaining: list[dict[str, Any]] = []
+    for residual in (progress.get("coverage_residuals") or {}).values():
+        if not isinstance(residual, dict):
+            continue
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []:
+            if not isinstance(case, dict):
+                continue
+            key = _team_evidence_source_key(case)
+            if (
+                key in source_keys
+                and classify_team_attribution_evidence_status(
+                    case.get("team_attribution_evidence_status")
+                )
+                == "remediable_not_established"
+            ):
+                remaining.append(dict(case))
+    return sorted(
+        remaining,
+        key=lambda row: _team_evidence_source_key(row) or ("",) * 5,
+    )
+
+
+def _focused_evidence_outcome_counts(
+    focused_sources: list[dict[str, Any]],
+    document: dict[str, Any],
+) -> dict[str, int]:
+    """Summarize only exact focused outcomes for compact retry diagnostics."""
+    requested_keys = {
+        _team_evidence_source_key(row)
+        for row in focused_sources
+        if _team_evidence_source_key(row) is not None
+    }
+    counts = {
+        "materialized_actionable": 0,
+        "terminal_unavailable": 0,
+        "technical_failure": 0,
+    }
+    for case in document.get("cases") or []:
+        if not isinstance(case, dict) or _team_evidence_source_key(case) not in requested_keys:
+            continue
+        status = str(case.get("status") or "")
+        if status == "ready_for_team_attribution":
+            counts["materialized_actionable"] += 1
+        elif classify_team_attribution_evidence_status(status) == "terminal_unavailable":
+            counts["terminal_unavailable"] += 1
+        elif classify_team_attribution_evidence_status(status) == "technical_failure":
+            counts["technical_failure"] += 1
+    return counts
 
 
 def _team_evidence_source_key(

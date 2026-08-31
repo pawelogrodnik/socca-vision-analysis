@@ -11,9 +11,47 @@ from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
     project_reviewed_identity_progress,
 )
+from app.services.identity_reviewed_team_attribution_evidence import (
+    source_ownership_digest,
+)
 
 
 class ReviewedIdentityProgressTests(unittest.TestCase):
+    def test_existing_identity_crop_preserves_exact_technical_team_evidence_status(self) -> None:
+        """A separate crop must not turn a durable technical result generic."""
+        with _workspace() as root:
+            _single_subject(
+                root,
+                team="U",
+                frames=range(1, 4),
+                card={
+                    "review_status": "blocked_conflict",
+                    "requires_operator_review": True,
+                    "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "identity"}]},
+                },
+            )
+            pairs = [("tracklet", frame) for frame in range(1, 4)]
+            _write(root / "reviewed_identity_team_attribution_evidence.json", {
+                "cases": [{
+                    "candidate_subject_id": "subject",
+                    "source_ownership_digest": source_ownership_digest("subject", pairs),
+                    "status": "team_attribution_evidence_recovery_incomplete",
+                }],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            unit = _unit(progress, "subject")
+            self.assertTrue(unit["has_operator_visual_evidence"])
+            self.assertEqual(
+                unit["team_attribution_evidence_status"],
+                "team_attribution_evidence_recovery_incomplete",
+            )
+            self.assertEqual(
+                progress["coverage_readiness"]["team_attribution_residual"]["status"],
+                "technical_evidence_failure",
+            )
+
     def test_progress_uses_candidate_subjects_and_real_detected_positions(self) -> None:
         with _workspace() as root:
             _fixture(root)
