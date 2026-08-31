@@ -1401,7 +1401,7 @@ summary:focus-visible {
 .identity-review-queue-switch button { border: 1px solid #475569; background: #0f172a; }
 .identity-review-queue-switch button.active { border-color: #38bdf8; background: rgba(14, 116, 144, 0.24); }
 .identity-review-mandatory-queues { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
-.identity-review-mandatory-queues button { border: 1px solid #475569; background: #0f172a; font-weight: 700; }
+.identity-review-mandatory-queues button { border: 1px solid #475569; background: #0f172a; font-weight: 700; color: #fff}
 .identity-review-mandatory-queues button.active { border-color: #38bdf8; background: rgba(14, 116, 144, 0.24); }
 .identity-review-mandatory-queues span { margin-left: 6px; color: #bae6fd; }
 
