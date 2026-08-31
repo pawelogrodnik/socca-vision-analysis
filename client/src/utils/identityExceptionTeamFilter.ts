@@ -33,6 +33,7 @@ export function teamReviewFilterOptions(
     { value: 'all', label: 'Wszystkie', count: counts.all },
     { value: 'A', label: matchTeamName(teams, 'A'), count: counts.A },
     { value: 'B', label: matchTeamName(teams, 'B'), count: counts.B },
+    { value: 'U', label: 'Drużyna / konflikt', count: counts.U },
   ];
 }
 

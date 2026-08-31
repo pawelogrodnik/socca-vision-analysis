@@ -57,7 +57,32 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(policy["material_continuity_blockers"], 1)
         self.assertEqual(policy["semantic_blockers"], 2)
 
-    def test_real_shape_scope_regression_removes_41_certain_team_b_identity_cases(self) -> None:
+    def test_certain_team_b_anonymous_keeps_team_stats_without_named_player_debt(self) -> None:
+        rows = [
+            _observation("b-anonymous", frame, "B", "unresolved", None)
+            for frame in range(5)
+        ]
+        match = _scoped_match()
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        unit = _unit("b-anonymous", [("b-anonymous", frame) for frame in range(5)], visual=True)
+        unit.update({
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "detected_team_labels": ["B"],
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["identity_conflict"],
+            "canonical_player_id": None,
+        })
+
+        policy = apply_coverage_policy([unit], coverage, pair_index, match)
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(coverage["per_team"]["B"]["team_known_observations"], 5)
+        self.assertEqual(coverage["per_team"]["B"]["confirmed_named_observations"], 0)
+        self.assertEqual(coverage["per_team"]["B"]["named_coverage_status"], "not_required_by_scope")
+
+    def test_real_shape_scope_regression_removes_stale_diagnostic_team_b_cases(self) -> None:
         pair_index = {
             ("a", frame): {"team_label": "A", "identity_status": "unresolved", "canonical_player_id": None}
             for frame in range(6)
@@ -80,6 +105,18 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             unit = _unit(f"b-identity-{frame}", [("b", frame)], visual=True)
             unit.update({"effective_team_label": "B", "source_team_label": "B", "current_resolution_status": "pending_high_priority", "priority": "high"})
             opponent_identity.append(unit)
+        stale_diagnostic_b = []
+        for frame in range(2, 21):
+            unit = _unit(f"b-stale-diagnostic-{frame}", [("b", frame)], visual=True)
+            unit.update({
+                "source_team_label": "B",
+                "effective_team_label": "B",
+                "detected_team_labels": ["B"],
+                "current_resolution_status": "pending_high_priority",
+                "priority": "high",
+                "reason_codes": ["team_mismatch", "identity_conflict"],
+            })
+            stale_diagnostic_b.append(unit)
         opponent_continuity = []
         for frame in range(23, 43):
             unit = _material_case(f"b-continuity-{frame}", range(frame, frame + 1))
@@ -90,13 +127,13 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             "B": {"reliable_observations": 43, "confirmed_named_observations": 0},
         }}
         policy = apply_coverage_policy(
-            [*corgi, *safety, *opponent_identity, *opponent_continuity],
+            [*corgi, *safety, *opponent_identity, *stale_diagnostic_b, *opponent_continuity],
             coverage,
             pair_index,
             _scoped_match(),
         )
         debt = build_coverage_debt(
-            [*corgi, *safety, *opponent_identity, *opponent_continuity],
+            [*corgi, *safety, *opponent_identity, *stale_diagnostic_b, *opponent_continuity],
             coverage,
             pair_index,
             _scoped_match(),
@@ -109,6 +146,20 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(debt["actual_required_queue"]["per_team"]["A"]["total_cases"], 6)
         self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["total_cases"], 2)
         self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["unexpected_by_scope"], 0)
+
+    def test_cross_team_case_is_exposed_through_the_uncertain_team_filter(self) -> None:
+        cross_team = _queue_unit("cross-team", "B")
+        cross_team.update({
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "coverage_team_label": "B",
+            "detected_team_labels": ["A", "B"],
+        })
+
+        page = paginate_progress({"next_cases": [cross_team]}, team_label="U")
+
+        self.assertEqual(page["filters"]["counts"], {"all": 1, "A": 0, "B": 0, "U": 1})
+        self.assertEqual(page["next_cases"][0]["filter_team_label"], "U")
 
     def test_coverage_debt_partitions_unnamed_pairs_with_exact_mixed_ownership(self) -> None:
         pair_index = {
@@ -1374,7 +1425,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(page["coverage_readiness"], progress["coverage_readiness"])
         self.assertEqual(page["workload"], progress["workload"])
 
-    def test_team_filters_select_a_or_b_and_leave_unknown_only_in_all(self) -> None:
+    def test_team_filters_select_a_b_or_uncertain_team(self) -> None:
         cases = [
             _queue_unit("a", "A"),
             _queue_unit("b", "B"),
@@ -1383,6 +1434,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
         page_a = paginate_progress({"next_cases": cases}, team_label="A")
         page_b = paginate_progress({"next_cases": cases}, team_label="B")
+        page_u = paginate_progress({"next_cases": cases}, team_label="U")
 
         self.assertEqual(
             [row["candidate_subject_id"] for row in page_a["next_cases"]],
@@ -1394,6 +1446,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         )
         self.assertEqual(page_a["pagination"]["total_remaining"], 1)
         self.assertEqual(page_b["pagination"]["total_remaining"], 1)
+        self.assertEqual([row["candidate_subject_id"] for row in page_u["next_cases"]], ["unknown"])
         self.assertEqual(page_a["pagination"]["global_total_remaining"], 3)
         self.assertEqual(page_a["filters"]["counts"]["U"], 1)
         self.assertEqual(
@@ -1401,14 +1454,14 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             page_a["filters"]["counts"]["all"],
         )
 
-    def test_filter_team_precedence_is_canonical_and_backend_owned(self) -> None:
+    def test_filter_keeps_conflicting_or_unknown_team_evidence_out_of_named_team_tabs(self) -> None:
         self.assertEqual(
             review_case_team_label({
                 "coverage_team_label": "B",
                 "effective_team_label": "A",
                 "source_team_label": "A",
             }),
-            "B",
+            "U",
         )
         self.assertEqual(
             review_case_team_label({
@@ -1416,14 +1469,14 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
                 "effective_team_label": "A",
                 "source_team_label": "B",
             }),
-            "A",
+            "U",
         )
         self.assertEqual(
             review_case_team_label({
                 "effective_team_label": "U",
                 "source_team_label": "B",
             }),
-            "B",
+            "U",
         )
         self.assertEqual(review_case_team_label({}), "U")
 
@@ -1475,7 +1528,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         )
 
     def test_invalid_filter_is_rejected_instead_of_returning_an_empty_page(self) -> None:
-        with self.assertRaisesRegex(ValueError, "team_label must be A or B"):
+        with self.assertRaisesRegex(ValueError, "team_label must be A, B or U"):
             paginate_progress({"next_cases": []}, team_label="Corgi")
 
     def test_empty_team_filter_does_not_mutate_global_completion_state(self) -> None:

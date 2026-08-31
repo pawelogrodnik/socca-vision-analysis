@@ -2112,7 +2112,7 @@ def get_match_reviewed_identity_progress(
     response: Response,
     offset: int = 0,
     limit: int = 20,
-    team_label: Literal["A", "B"] | None = None,
+    team_label: Literal["A", "B", "U"] | None = None,
     queue: Literal["required", "optional_audit"] = "required",
 ) -> dict[str, Any]:
     path = match_dir(match_id)

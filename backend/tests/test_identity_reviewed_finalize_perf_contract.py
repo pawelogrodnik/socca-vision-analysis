@@ -141,6 +141,7 @@ class ReviewProgressPayloadContractTests(unittest.TestCase):
             {
                 **LARGE_UNIT_BASE,
                 "candidate_subject_id": f"subject-{index}",
+                "source_team_label": "B" if index % 2 else "A",
                 "effective_team_label": "B" if index % 2 else "A",
                 "coverage_team_label": "B" if index % 2 else "A",
             }

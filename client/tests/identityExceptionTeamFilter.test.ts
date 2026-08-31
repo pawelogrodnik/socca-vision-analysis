@@ -27,6 +27,7 @@ test('team review options use real match names and canonical full-queue counts',
     { value: 'all', label: 'Wszystkie', count: 531 },
     { value: 'A', label: 'Red FC', count: 147 },
     { value: 'B', label: 'Blue FC', count: 302 },
+    { value: 'U', label: 'Drużyna / konflikt', count: 82 },
   ]);
   assert.equal(filters.counts.A + filters.counts.B + filters.counts.U, filters.counts.all);
 });
@@ -38,10 +39,11 @@ test('missing match names fall back safely to Team A and Team B', () => {
 });
 
 
-test('All omits the API filter while team tabs send A or B', () => {
+test('All omits the API filter while team and uncertainty tabs preserve their label', () => {
   assert.equal(apiTeamFilter('all'), undefined);
   assert.equal(apiTeamFilter('A'), 'A');
   assert.equal(apiTeamFilter('B'), 'B');
+  assert.equal(apiTeamFilter('U'), 'U');
 });
 
 

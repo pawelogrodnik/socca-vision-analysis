@@ -939,7 +939,7 @@ def public_review_case(unit: dict[str, Any]) -> dict[str, Any]:
     correction context endpoint; navigation needs none of them.
     """
     public = {key: unit.get(key) for key in PUBLIC_REVIEW_CASE_FIELDS}
-    public["filter_team_label"] = review_case_team_label(unit)
+    public["filter_team_label"] = _projected_filter_team_label(unit)
     return public
 
 
@@ -993,7 +993,7 @@ def paginate_progress(
     cases = list(progress.get(source_key) or [])
     active_team_label = _validated_filter_team_label(team_label)
     classified_cases = [
-        (unit, review_case_team_label(unit))
+        (unit, _projected_filter_team_label(unit))
         for unit in cases
     ]
     filter_counts = Counter(label for _, label in classified_cases)
@@ -1043,7 +1043,14 @@ def paginate_progress(
 
 
 def review_case_team_label(unit: dict[str, Any]) -> str:
-    """Return the authoritative navigation team without changing case meaning."""
+    """Return the authoritative navigation team without changing case meaning.
+
+    A current best-label must not make an A/B conflict look like ordinary Team
+    B work.  Those cases are deliberately exposed through the explicit ``U``
+    filter, where the operator can see that team attribution is the blocker.
+    """
+    if has_team_attribution_uncertainty(unit):
+        return "U"
     for field in (
         "coverage_team_label",
         "effective_team_label",
@@ -1055,12 +1062,20 @@ def review_case_team_label(unit: dict[str, Any]) -> str:
     return "U"
 
 
+def _projected_filter_team_label(unit: dict[str, Any]) -> str:
+    """Use the full-unit classification retained by the hot queue projection."""
+    projected = str(unit.get("filter_team_label") or "").upper()
+    if projected in {"A", "B", "U"}:
+        return projected
+    return review_case_team_label(unit)
+
+
 def _validated_filter_team_label(team_label: str | None) -> str | None:
     if team_label is None:
         return None
     normalized = str(team_label)
-    if normalized not in {"A", "B"}:
-        raise ValueError("team_label must be A or B")
+    if normalized not in {"A", "B", "U"}:
+        raise ValueError("team_label must be A, B or U")
     return normalized
 
 
