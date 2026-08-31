@@ -4,7 +4,7 @@ import { afterEach, test } from 'node:test';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 
-import type { Match, ReviewWorkflow } from '../src/types.ts';
+import type { Match, ReviewedIdentityReviewUnit, ReviewWorkflow } from '../src/types.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -73,6 +73,71 @@ function emptyProgress() {
     },
     filters: { counts: { all: 0 } },
   };
+}
+
+function requiredUnit(subject: string): ReviewedIdentityReviewUnit {
+  return {
+    candidate_subject_id: subject,
+    tracklet_ids: ['track-1'],
+    tracklet_count: 1,
+    source_team_label: 'A',
+    effective_team_label: 'A',
+    frame_start: 1,
+    frame_end: 2,
+    detected_frame_count: 2,
+    detected_observation_count: 2,
+    detected_time_sec: 0.1,
+    current_resolution_status: 'pending_high_priority',
+    priority: 'high',
+    reason_codes: [],
+    visual_evidence: {
+      status: 'ready',
+      anchor_crops: [{
+        anchor_crop_id: `crop-${subject}`,
+        artifact: `reviewed/${subject}.jpg`,
+        frame: 1,
+        time_sec: 0.1,
+      }],
+    },
+  };
+}
+
+function progressFor(units: ReviewedIdentityReviewUnit[], total = units.length) {
+  return {
+    next_cases: units,
+    pagination: {
+      offset: 0,
+      total_remaining: total,
+      global_total_remaining: total,
+      has_more: false,
+    },
+    filters: { counts: { all: total } },
+  };
+}
+
+function workflowWithCounts(normal: number, mixed: number): ReviewWorkflow {
+  return {
+    ...mandatoryWorkflow(normal > 0 ? 'exceptions' : 'mixed_players'),
+    phase: normal > 0 ? 'exceptions' : 'mixed_players',
+    current_step_id: normal > 0 ? 'exceptions' : 'mixed_players',
+    issues: {
+      blocking: normal + mixed,
+      normal_blocking: normal,
+      mixed_blocking: mixed,
+      important: normal + mixed,
+      optional: 0,
+    },
+    allowed_actions: [
+      ...(normal > 0 ? ['review_identity_issue' as const] : []),
+      ...(mixed > 0 ? ['review_mixed_players' as const] : []),
+    ],
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => { resolve = nextResolve; });
+  return { promise, resolve };
 }
 
 function installWorkspaceFetch(workflow: ReviewWorkflow): string[] {
@@ -249,6 +314,137 @@ test('switching Required to Mixed starts no additional Required progress request
       requests.filter((url) => url.includes('review-progress') && url.includes('queue=required')).length,
       requiredBefore,
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('last Required save keeps Mixed unmounted until completion synchronization returns Required', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  const completion = deferred<Response>();
+  const initial = workflowWithCounts(1, 0);
+  const interim = workflowWithCounts(0, 19);
+  const authoritative = workflowWithCounts(30, 19);
+  const subject = 'completion-race-required';
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes('/reviewed-identity/corrections/context')) {
+      return new Response(JSON.stringify({
+        candidate_subject_id: subject,
+        team_label: 'A',
+        source_team_label: 'A',
+        effective_team_label: 'A',
+        available_team_labels: ['A', 'B'],
+        tracklet_ids: ['track-1'],
+        review_card_key: null,
+        roster_options: [],
+        slot_options: [],
+        current_decision: null,
+        semantic_decision_digest: 'decision',
+        action_capabilities: { referee: { allowed: true } },
+        review_state_version: 1,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.endsWith('/reviewed-identity/corrections')) {
+      return new Response(JSON.stringify({
+        saved_decision: {}, effective_action: 'referee', allocated_stable_slot_id: null,
+        semantic_decision_digest: 'decision', recompute_deferred: true, workflow: interim,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.endsWith('/reviewed-identity/corrections/finalize')) return completion.promise;
+    if (url.includes('/reviewed-identity/review-progress')) {
+      return new Response(JSON.stringify(
+        requests.some((request) => request.endsWith('/reviewed-identity/corrections/finalize'))
+          ? progressFor([requiredUnit('authoritative-required')], 30)
+          : progressFor([requiredUnit(subject)], 1),
+      ), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.includes('/review-workflow')) return new Response(JSON.stringify(initial), { headers: { 'Content-Type': 'application/json' } });
+    if (url.includes('/identity-roster-subject-review')) return new Response(JSON.stringify({ cards: [] }), { headers: { 'Content-Type': 'application/json' } });
+    if (url.includes('/reviewed-identity/mixed-players')) return new Response(JSON.stringify({ cases: [] }), { headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const view = renderWorkspace(initial);
+    await waitFor(() => assert.ok(view.getByRole('radio', { name: 'Sędzia' })));
+    fireEvent.click(view.getByRole('radio', { name: 'Sędzia' }));
+    await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Zapisz + następny' })); });
+    await waitFor(() => assert.ok(view.getByRole('status', { name: '' }).textContent?.includes('Synchronizuję Review')));
+    assert.equal(requests.some((url) => url.includes('/reviewed-identity/mixed-players')), false);
+    assert.equal(view.getByRole('button', { name: /Zmieszani gracze/ }).hasAttribute('disabled'), true);
+
+    await act(async () => {
+      completion.resolve(new Response(JSON.stringify({
+        workflow: authoritative,
+        reviewed_identity: {}, review_progress: {}, recompute_deferred: false,
+      }), { headers: { 'Content-Type': 'application/json' } }));
+    });
+    await waitFor(() => assert.ok(view.getByRole('button', { name: /Wymagane przypadki 30/ })));
+    assert.equal(requests.some((url) => url.includes('/reviewed-identity/mixed-players')), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Mixed mounts only after completion synchronization authoritatively leaves no Required cases', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  const completion = deferred<Response>();
+  const initial = workflowWithCounts(1, 0);
+  const interim = workflowWithCounts(0, 19);
+  const authoritative = workflowWithCounts(0, 19);
+  const subject = 'completion-race-mixed';
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.includes('/reviewed-identity/corrections/context')) {
+      return new Response(JSON.stringify({
+        candidate_subject_id: subject, team_label: 'A', source_team_label: 'A', effective_team_label: 'A',
+        available_team_labels: ['A', 'B'], tracklet_ids: ['track-1'], review_card_key: null,
+        roster_options: [], slot_options: [], current_decision: null, semantic_decision_digest: 'decision',
+        action_capabilities: { referee: { allowed: true } }, review_state_version: 1,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.endsWith('/reviewed-identity/corrections')) {
+      return new Response(JSON.stringify({
+        saved_decision: {}, effective_action: 'referee', allocated_stable_slot_id: null,
+        semantic_decision_digest: 'decision', recompute_deferred: true, workflow: interim,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.endsWith('/reviewed-identity/corrections/finalize')) return completion.promise;
+    if (url.includes('/reviewed-identity/review-progress')) {
+      return new Response(JSON.stringify(
+        requests.some((request) => request.endsWith('/reviewed-identity/corrections/finalize'))
+          ? progressFor([], 0)
+          : progressFor([requiredUnit(subject)], 1),
+      ), { headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url.includes('/review-workflow')) return new Response(JSON.stringify(initial), { headers: { 'Content-Type': 'application/json' } });
+    if (url.includes('/identity-roster-subject-review')) return new Response(JSON.stringify({ cards: [] }), { headers: { 'Content-Type': 'application/json' } });
+    if (url.includes('/reviewed-identity/mixed-players')) return new Response(JSON.stringify({
+      schema_version: '1.0.0', mode: 'mixed', match_id: match.id,
+      summary: { total: 0, unresolved: 0, resolved: 0, complex_unresolved: 0 },
+      assignment_options: { roster: [], slots: [] }, cases: [],
+    }), { headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({}), { headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const view = renderWorkspace(initial);
+    await waitFor(() => assert.ok(view.getByRole('radio', { name: 'Sędzia' })));
+    fireEvent.click(view.getByRole('radio', { name: 'Sędzia' }));
+    await act(async () => { fireEvent.click(view.getByRole('button', { name: 'Zapisz + następny' })); });
+    await waitFor(() => assert.ok(view.getByText(/Synchronizuję Review/)));
+    assert.equal(requests.some((url) => url.includes('/reviewed-identity/mixed-players')), false);
+
+    await act(async () => {
+      completion.resolve(new Response(JSON.stringify({
+        workflow: authoritative,
+        reviewed_identity: {}, review_progress: {}, recompute_deferred: false,
+      }), { headers: { 'Content-Type': 'application/json' } }));
+    });
+    await waitFor(() => assert.ok(requests.some((url) => url.includes('/reviewed-identity/mixed-players'))));
   } finally {
     globalThis.fetch = originalFetch;
   }

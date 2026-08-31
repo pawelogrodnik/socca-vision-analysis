@@ -78,12 +78,15 @@ export function IdentityReviewWorkspace({
   const [mixedFocusCaseId, setMixedFocusCaseId] = useState<string | null>(null);
   const [mixedEntryMode, setMixedEntryMode] = useState<'manual' | 'resolve_now'>('manual');
   const [requiredTeamFilter, setRequiredTeamFilter] = useState<TeamReviewFilter>('all');
+  const [completionSynchronizing, setCompletionSynchronizing] = useState(false);
+  const completionSynchronizingRef = useRef(false);
   const mixedLeaveGuardRef = useRef<() => boolean>(() => true);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
     setActiveMandatoryQueue((current) => (
-      current === 'required' && initialMandatoryQueue(next) === 'mixed'
+      !completionSynchronizingRef.current
+        && current === 'required' && initialMandatoryQueue(next) === 'mixed'
         ? 'mixed'
         : current
     ));
@@ -91,6 +94,21 @@ export function IdentityReviewWorkspace({
     setOptionalSummaryRefreshError(false);
     setProcessingJob(next.processing || null);
     onWorkflowChanged(next);
+  }
+
+  function setRequiredCompletionSynchronization(
+    synchronizing: boolean,
+    authoritativeWorkflow?: ReviewWorkflow,
+  ) {
+    completionSynchronizingRef.current = synchronizing;
+    setCompletionSynchronizing(synchronizing);
+    if (!synchronizing && authoritativeWorkflow) {
+      setActiveMandatoryQueue((current) => (
+        current === 'required' && initialMandatoryQueue(authoritativeWorkflow) === 'mixed'
+          ? 'mixed'
+          : current
+      ));
+    }
   }
 
   async function refreshWorkflow() {
@@ -113,6 +131,8 @@ export function IdentityReviewWorkspace({
     setMixedFocusCaseId(null);
     setMixedEntryMode('manual');
     setRequiredTeamFilter('all');
+    completionSynchronizingRef.current = false;
+    setCompletionSynchronizing(false);
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -281,18 +301,24 @@ export function IdentityReviewWorkspace({
       <ReviewedIdentityQueueTabs
         workflow={workflow}
         activeQueue={activeMandatoryQueue}
+        disabled={completionSynchronizing}
         onSelect={(queue) => {
+          if (completionSynchronizing) return;
           if (queue === 'required' && activeMandatoryQueue === 'mixed' && !mixedLeaveGuardRef.current()) return;
           setMixedFocusCaseId(null);
           setMixedEntryMode('manual');
           setActiveMandatoryQueue(queue);
         }}
       />
+      {completionSynchronizing && <p className='loading-line' role='status'>
+        <span className='spinner' /> Synchronizuję Review po zapisaniu decyzji…
+      </p>}
       {activeMandatoryQueue === 'required' && <IdentityExceptionReviewPanel
         match={match}
         workflow={workflow}
         showPrimaryQueueSwitch={false}
         onMixedResolveNow={(caseId) => {
+          if (completionSynchronizing) return;
           setMixedFocusCaseId(caseId);
           setMixedEntryMode('resolve_now');
           setActiveMandatoryQueue('mixed');
@@ -303,6 +329,7 @@ export function IdentityReviewWorkspace({
           if (next) applyWorkflow(next);
           else void refreshWorkflow();
         }}
+        onCompletionSynchronizationChange={setRequiredCompletionSynchronization}
         onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
           ? () => retry('retry_review_recompute')
           : undefined}

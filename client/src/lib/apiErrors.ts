@@ -31,6 +31,13 @@ export function isTemporalSplitNotSeparable(error: unknown): boolean {
     && error.code === 'temporal_split_not_separable';
 }
 
+/** A global Review generation changed outside this Mixed editor. */
+export function isReviewProgressStale(error: unknown): boolean {
+  return error instanceof ApiRequestError
+    && error.status === 409
+    && error.code === 'review_progress_stale';
+}
+
 const RECOVERABLE_CONCURRENT_LANE_CONFLICT_CODES = new Set([
   'mixed_player_case_stale',
   'review_target_stale',

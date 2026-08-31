@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { artifactUrl, getConcurrentLaneRefinement, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, getReviewWorkflow, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
-import { isRecoverableConcurrentLaneConflict, isTemporalSplitNotSeparable } from '../lib/apiErrors';
+import { isRecoverableConcurrentLaneConflict, isReviewProgressStale, isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
 import type { ConcurrentLaneResolution, Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
@@ -248,6 +248,8 @@ export function MixedPlayersReviewPanel({
     } catch (error) {
       if (isTemporalSplitNotSeparable(error)) {
         await recoverAfterTopologyConflict();
+      } else if (isReviewProgressStale(error)) {
+        await recoverAfterReviewProgressStale();
       } else {
         setMessage(errorMessage(error));
       }
@@ -272,6 +274,8 @@ export function MixedPlayersReviewPanel({
     } catch (error) {
       if (isRecoverableConcurrentLaneConflict(error)) {
         await recoverAfterConcurrentLaneConflict();
+      } else if (isReviewProgressStale(error)) {
+        await recoverAfterReviewProgressStale();
       } else {
         setMessage(errorMessage(error));
       }
@@ -297,7 +301,11 @@ export function MixedPlayersReviewPanel({
         await materializeAndFocusCase(index + 1, true);
       }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (isReviewProgressStale(error)) {
+        await recoverAfterReviewProgressStale();
+      } else {
+        setMessage(errorMessage(error));
+      }
     } finally {
       setBusy(false);
     }
@@ -331,6 +339,53 @@ export function MixedPlayersReviewPanel({
       setMessage('Ten materiał nie ma już prostego podziału czasowego, a dokładny przypadek zmienił się podczas odświeżenia. Odśwież Review.');
     } catch {
       setMessage('Ten materiał nie ma już potwierdzonego prostego podziału czasowego. Nie udało się odświeżyć aktualnego przypadku. Odśwież Review przed dalszą próbą podziału.');
+    }
+  }
+
+  async function recoverAfterReviewProgressStale() {
+    const currentCase = reviewCase;
+    const currentQueue = queue;
+    const caseId = currentCase?.case_id;
+    if (!currentCase || !currentQueue || !caseId) {
+      setMessage('Review zmienił się poza tym ekranem. Odśwież Review przed kolejną decyzją.');
+      return;
+    }
+    setMessage('Synchronizuję Review po zmianie poza tym ekranem…');
+    try {
+      const [nextWorkflow, focused] = await Promise.all([
+        api.getWorkflow(match.id),
+        loadExactMixedFocus(
+          (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+          caseId,
+        ),
+      ]);
+      onWorkflowChanged(nextWorkflow);
+      if (
+        focused.kind !== 'visible'
+        || focused.response.status !== 'current_blocking'
+        || !showFocusedCase(currentQueue, caseId, focused)
+      ) {
+        setQueue(null);
+        setIndex(0);
+        setFocusMissing(true);
+        setMessage('Ten przypadek Mixed nie jest już aktualny. Nie zapisano drugiej decyzji ani nie odtworzono starego podziału.');
+        return;
+      }
+      const topologyUnchanged = JSON.stringify(currentCase.temporal_topology || null)
+        === JSON.stringify(focused.case.temporal_topology || null);
+      const sourceUnchanged = currentCase.source_subject_digest === focused.case.source_subject_digest;
+      if (!sourceUnchanged || !topologyUnchanged) {
+        setBoundaries([]);
+        setAssignments([]);
+        setSelectedSegment(0);
+        setHasUnsavedChanges(false);
+        setRefinement(null);
+        setMessage('Przypadek został zaktualizowany. Stary podział odrzucono — sprawdź aktualne widoki przed ponownym zapisem.');
+        return;
+      }
+      setMessage('Review został zsynchronizowany. Niezapisany podział zachowano; możesz zapisać go ponownie wyłącznie po sprawdzeniu aktualnych widoków.');
+    } catch (error) {
+      setMessage(`Nie udało się zsynchronizować aktualnego przypadku Mixed. ${errorMessage(error)}`);
     }
   }
 

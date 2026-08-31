@@ -107,7 +107,7 @@ test('optional Save + Next stays in optional audit and never auto-finalizes an e
 });
 
 
-test('last local case triggers one finalize and advances without queue reload', async () => {
+test('completion waits for one authoritative progress refresh before exposing workflow', async () => {
   let finalizeCalls = 0;
   let reloadCalls = 0;
   let workflowUpdates = 0;
@@ -123,7 +123,7 @@ test('last local case triggers one finalize and advances without queue reload', 
     () => { workflowUpdates += 1; },
   );
   assert.equal(finalizeCalls, 1);
-  assert.equal(reloadCalls, 0);
+  assert.equal(reloadCalls, 1);
   assert.equal(workflowUpdates, 1);
   assert.deepEqual(result.cases, []);
 });
