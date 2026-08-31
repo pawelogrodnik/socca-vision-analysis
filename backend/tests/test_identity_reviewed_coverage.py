@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.services.identity_reviewed_coverage import (
+    _coverage_impact,
     apply_coverage_policy,
     build_coverage_debt,
     paginate_progress,
@@ -12,9 +13,11 @@ from app.services.identity_reviewed_coverage import (
     summarize_effective_observations,
     target_named_observations,
 )
+from app.services.identity_ownership_compact import CompactPairIndexView
 from app.services.identity_reviewed_material_continuity import (
     coalesce_material_continuity_units,
 )
+from app.services.identity_reviewed_scope_eligibility import team_attribution_state
 from app.services.identity_reviewed_progress import reviewed_snapshot_file_fingerprint
 
 
@@ -81,6 +84,126 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(coverage["per_team"]["B"]["team_known_observations"], 5)
         self.assertEqual(coverage["per_team"]["B"]["confirmed_named_observations"], 0)
         self.assertEqual(coverage["per_team"]["B"]["named_coverage_status"], "not_required_by_scope")
+
+    def test_coverage_team_authority_ignores_a_raw_u_majority_in_pair_and_compact_paths(self) -> None:
+        coverage = {
+            "reliable_observations": 208,
+            "per_team": {
+                "A": {"reliable_observations": 100, "confirmed_named_observations": 0},
+                "B": {"reliable_observations": 100, "confirmed_named_observations": 0},
+                "U": {"reliable_observations": 8, "confirmed_named_observations": 0},
+            },
+        }
+
+        def impact_variants(
+            subject_id: str,
+            labels: list[str],
+            **team_evidence: object,
+        ) -> tuple[dict, dict, dict, dict]:
+            pair_index = {
+                (subject_id, frame): {
+                    "team_label": team,
+                    "identity_status": "unresolved",
+                    "canonical_player_id": None,
+                }
+                for frame, team in enumerate(labels)
+            }
+            unit = _unit(
+                subject_id,
+                [(subject_id, frame) for frame in range(len(labels))],
+                visual=True,
+            )
+            unit.update({
+                **team_evidence,
+                "current_resolution_status": "pending_high_priority",
+                "priority": "high",
+            })
+            compact = CompactPairIndexView({
+                subject_id: [
+                    [frame, frame, pair_index[(subject_id, frame)]]
+                    for frame in range(len(labels))
+                ],
+            })
+            compact_unit = {
+                **unit,
+                "detected_pair_runs": {subject_id: [[0, len(labels) - 1]]},
+            }
+            return (
+                unit,
+                pair_index,
+                _coverage_impact(unit, pair_index, coverage),
+                _coverage_impact(compact_unit, compact, coverage),
+            )
+
+        a_unit, a_index, a_pair, a_compact = impact_variants(
+            "a-u-majority",
+            ["A", "A", *(["U"] * 8)],
+            source_team_label="A",
+            effective_team_label="A",
+            coverage_team_label="A",
+            detected_team_labels=["A"],
+        )
+        self.assertEqual(team_attribution_state(a_unit), "certain_A")
+        self.assertEqual(a_pair["coverage_team_label"], "A")
+        self.assertEqual(a_pair["potential_named_observation_gain"], 2)
+        self.assertEqual(a_pair["operator_impact_pp"], 2.0)
+        self.assertEqual(
+            {key: a_pair[key] for key in ("coverage_team_label", "potential_named_observation_gain", "operator_impact_pp")},
+            {key: a_compact[key] for key in ("coverage_team_label", "potential_named_observation_gain", "operator_impact_pp")},
+        )
+        a_policy = apply_coverage_policy([a_unit], coverage, a_index, _scoped_match())
+        self.assertEqual(a_policy["next_cases"][0]["coverage_team_label"], "A")
+        self.assertEqual(a_policy["next_cases"][0]["potential_named_observation_gain"], 2)
+
+        b_unit, b_index, b_pair, b_compact = impact_variants(
+            "b-u-majority",
+            ["B", "B", *(["U"] * 8)],
+            source_team_label="B",
+            effective_team_label="B",
+            coverage_team_label="B",
+            detected_team_labels=["B"],
+        )
+        self.assertEqual(team_attribution_state(b_unit), "certain_B")
+        self.assertEqual(b_pair["coverage_team_label"], "B")
+        self.assertEqual(b_pair["potential_named_observation_gain"], 2)
+        self.assertEqual(
+            {key: b_pair[key] for key in ("coverage_team_label", "potential_named_observation_gain", "operator_impact_pp")},
+            {key: b_compact[key] for key in ("coverage_team_label", "potential_named_observation_gain", "operator_impact_pp")},
+        )
+        self.assertEqual(apply_coverage_policy([b_unit], coverage, b_index, _scoped_match())["next_cases"], [])
+
+        cross_unit, cross_index, cross_pair, cross_compact = impact_variants(
+            "a-b-u-conflict",
+            ["A", "B", *(["U"] * 8)],
+            source_team_label="B",
+            effective_team_label="B",
+            coverage_team_label="B",
+            detected_team_labels=["A", "B"],
+        )
+        self.assertEqual(team_attribution_state(cross_unit), "cross_team")
+        self.assertEqual(cross_pair["coverage_team_label"], "U")
+        self.assertEqual(cross_compact["coverage_team_label"], "U")
+        cross_policy = apply_coverage_policy([cross_unit], coverage, cross_index, _scoped_match())
+        self.assertEqual(cross_policy["next_cases"][0]["candidate_subject_id"], "a-b-u-conflict")
+        self.assertEqual(
+            paginate_progress(cross_policy, team_label="U")["next_cases"][0]["filter_team_label"],
+            "U",
+        )
+
+        u_unit, u_index, u_pair, u_compact = impact_variants(
+            "u-only",
+            ["U"] * 4,
+            source_team_label="U",
+            effective_team_label="U",
+            coverage_team_label="U",
+            detected_team_labels=[],
+        )
+        self.assertEqual(team_attribution_state(u_unit), "unknown")
+        self.assertEqual(u_pair["coverage_team_label"], "U")
+        self.assertEqual(u_compact["coverage_team_label"], "U")
+        u_policy = apply_coverage_policy([u_unit], coverage, u_index, _scoped_match())
+        self.assertEqual(u_policy["next_cases"], [])
+        self.assertFalse(u_policy["readiness"]["allows_finalize"])
 
     def test_real_shape_scope_regression_removes_stale_diagnostic_team_b_cases(self) -> None:
         pair_index = {
@@ -1027,7 +1150,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
         self.assertEqual(policy["next_cases"], [])
         self.assertFalse(policy["readiness"]["allows_finalize"])
-        cases = policy["residual_by_team"]["B"][
+        cases = policy["residual_by_team"]["U"][
             "non_actionable_required_team_uncertainty_cases"
         ]
         self.assertEqual(cases[0]["candidate_subject_id"], "unknown-without-crops")

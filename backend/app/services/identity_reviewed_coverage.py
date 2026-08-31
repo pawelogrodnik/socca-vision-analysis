@@ -38,6 +38,7 @@ from app.services.identity_reviewed_material_continuity import (
 from app.services.identity_reviewed_scope_eligibility import (
     has_team_attribution_uncertainty,
     required_review_relevant_for_scope,
+    team_attribution_state,
     unit_team_label,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
@@ -1092,10 +1093,11 @@ def _coverage_impact(
     pair_index: Mapping[tuple[str, int], dict[str, Any]],
     coverage: dict[str, Any],
 ) -> dict[str, Any]:
+    team = _coverage_team_authority(unit)
     compact_runs = unit.get("detected_pair_runs")
     if isinstance(compact_runs, dict):
-        team, named_gain_pairs, unnamed, reliable_source_observations = _impact_from_compact_runs(
-            compact_runs, pair_index
+        named_gain_pairs, unnamed, reliable_source_observations = _impact_from_compact_runs(
+            compact_runs, pair_index, team
         )
     else:
         pairs = {
@@ -1104,12 +1106,6 @@ def _coverage_impact(
             if isinstance(pair, (list, tuple)) and len(pair) >= 2
         }
         present_rows = [(pair, pair_index[pair]) for pair in pairs if pair in pair_index]
-        team_counts = Counter(_team_label(row.get("team_label")) for _pair, row in present_rows)
-        team = (
-            team_counts.most_common(1)[0][0]
-            if team_counts
-            else _team_label(unit.get("effective_team_label"))
-        )
         named_gain_pairs = {
             pair
             for pair, observation in present_rows
@@ -1190,18 +1186,19 @@ def _coverage_impact(
 def _impact_from_compact_runs(
     detected_runs: dict[str, list[list[int]]],
     pair_index: "CompactPairIndexView | Mapping[tuple[str, int], dict[str, Any]]",
-) -> tuple[str, dict[str, list[list[int]]], int, int]:
+    coverage_team: str,
+) -> tuple[dict[str, list[list[int]]], int, int]:
     """Evaluate unit impact via interval sweeps over validated index segments.
 
-    Never materializes per-frame pairs: team attribution and the exact
-    named-gain runs are computed from run intersections only.
+    Never materializes per-frame pairs. Team authority comes from the exact
+    Review unit; this sweep only finds pairs whose current Reviewed projection
+    already has that same team meaning.
     """
     segments: Mapping[str, list[list[Any]]] | None = (
         pair_index.tracklets()
         if isinstance(pair_index, CompactPairIndexView)
         else None
     )
-    team_counts: Counter[str] = Counter()
     if segments is None:
         # Legacy mapping input: fall back to per-pair joins for this unit.
         pairs = {
@@ -1211,13 +1208,10 @@ def _impact_from_compact_runs(
             for frame in range(start, end + 1)
         }
         present = [(pair, pair_index[pair]) for pair in pairs if pair in pair_index]
-        for _pair, row in present:
-            team_counts[_team_label(row.get("team_label"))] += 1
-        majority = _majority_or(team_counts)
         gain_pairs = {
             pair
             for pair, row in present
-            if _team_label(row.get("team_label")) == majority
+            if _team_label(row.get("team_label")) == coverage_team
             and str(row.get("identity_status") or "unresolved") in RELIABLE_STATUSES
             and not row.get("canonical_player_id")
         }
@@ -1226,7 +1220,7 @@ def _impact_from_compact_runs(
             for _pair, row in present
             if str(row.get("identity_status") or "unresolved") in RELIABLE_STATUSES
         )
-        return majority, encode_pair_runs(gain_pairs), len(gain_pairs), reliable_source_observations
+        return encode_pair_runs(gain_pairs), len(gain_pairs), reliable_source_observations
     gain_intervals: dict[str, list[list[int]]] = {}
     unnamed_total = 0
     reliable_source_observations = 0
@@ -1242,22 +1236,18 @@ def _impact_from_compact_runs(
                 overlap_start = max(start, seg_start)
                 overlap_end = min(end, seg_end)
                 if overlap_start <= overlap_end:
-                    team_counts[_team_label(value.get("team_label"))] += (
-                        overlap_end - overlap_start + 1
-                    )
                     if str(value.get("identity_status") or "unresolved") in RELIABLE_STATUSES:
                         reliable_source_observations += overlap_end - overlap_start + 1
                 walk += 1
-    majority = _majority_or(team_counts)
-    # Mirror the legacy semantics exactly: gains are bound to the attributed
-    # (majority) team, so collect them in a second filtered sweep.
+    # The compact and pair-index paths use the same exact projected team
+    # filter. A raw U majority must never override certain_A/certain_B.
     for tracklet_id, tracklet_runs in detected_runs.items():
         for start, end in tracklet_runs:
             for seg_start, seg_end, value in segments.get(tracklet_id) or []:
                 if seg_end < start or seg_start > end:
                     continue
                 if (
-                    _team_label(value.get("team_label")) != majority
+                    _team_label(value.get("team_label")) != coverage_team
                     or str(value.get("identity_status") or "unresolved") not in RELIABLE_STATUSES
                     or value.get("canonical_player_id")
                 ):
@@ -1271,11 +1261,22 @@ def _impact_from_compact_runs(
                     bucket.append([overlap_start, overlap_end])
                 unnamed_total += overlap_end - overlap_start + 1
     return (
-        majority,
         {tid: runs for tid, runs in sorted(gain_intervals.items())},
         unnamed_total,
         reliable_source_observations,
     )
+
+
+def _coverage_team_authority(unit: Mapping[str, Any]) -> str:
+    """Keep coverage accounting aligned with exact Review team attribution."""
+    state = team_attribution_state(dict(unit))
+    if state == "certain_A":
+        return "A"
+    if state == "certain_B":
+        return "B"
+    # Neither cross-team evidence nor U-only evidence may be attributed to an
+    # A/B majority solely for coverage selection or named-player gain.
+    return "U"
 
 
 def _global_reliable_observations(coverage: Mapping[str, Any]) -> int:
@@ -1314,12 +1315,6 @@ def _required_queue_sort_key(unit: dict[str, Any]) -> tuple[Any, ...]:
         category_rank,
         str(unit.get("review_target_id") or unit.get("candidate_subject_id") or ""),
     )
-
-
-def _majority_or(counts: Counter[str], fallback: str | None = None) -> str:
-    if counts:
-        return counts.most_common(1)[0][0]
-    return fallback if fallback is not None else "U"
 
 
 def target_named_observations(reliable_observations: int, target_ratio: float) -> int:

@@ -33,6 +33,7 @@ from app.services.identity_reviewed_mixed_resolution import (
 )
 from app.services.identity_reviewed_mixed_topology import MixedTemporalTopologyError
 from app.services.identity_reviewed_mixed_store import (
+    _source_team_for_observations,
     build_focused_mixed_review_case,
     current_mixed_subject_digest,
     load_mixed_player_cases,
@@ -79,6 +80,24 @@ from app.services.review_workflow_state import WorkflowActionError
 
 
 class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
+    def test_child_target_team_keeps_single_known_team_despite_neutral_observations(self) -> None:
+        self.assertEqual(
+            _source_team_for_observations(
+                [
+                    {"team_label": "A"},
+                    {"team_label": "A"},
+                    *[{"team_label": "U"} for _ in range(8)],
+                ]
+            ),
+            "A",
+        )
+        self.assertEqual(
+            _source_team_for_observations(
+                [{"team_label": "A"}, {"team_label": "B"}, {"team_label": "U"}]
+            ),
+            "U",
+        )
+
     def test_concurrent_lane_resolution_reaches_snapshot_and_reviewed_stats(self) -> None:
         with _workspace() as root:
             match = _fixture(root)
