@@ -2098,35 +2098,43 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             ["material-2", "coverage-0.75", "coverage-0.05"],
         )
 
-    def test_percentage_point_impact_wins_over_larger_raw_observation_count(self) -> None:
+    def test_smaller_raw_case_with_higher_percentage_point_impact_ranks_first(self) -> None:
         match = _scoped_match()
         match["identity_review_scope"]["teams"]["B"] = "complete_roster"
         pair_index = {
             **{
-                ("a-large", frame): {
+                ("a-larger-raw-lower-pp", frame): {
                     "team_label": "A",
-                    "identity_status": "unresolved",
-                    "canonical_player_id": None,
-                }
-                for frame in range(500)
-            },
-            **{
-                ("b-higher-pp", frame): {
-                    "team_label": "B",
                     "identity_status": "unresolved",
                     "canonical_player_id": None,
                 }
                 for frame in range(800)
             },
+            **{
+                ("b-smaller-raw-higher-pp", frame): {
+                    "team_label": "B",
+                    "identity_status": "unresolved",
+                    "canonical_player_id": None,
+                }
+                for frame in range(500)
+            },
         }
-        a_large = _unit("a-large", [("a-large", frame) for frame in range(500)], visual=True)
-        a_large.update({
+        a_larger_raw_lower_pp = _unit(
+            "a-larger-raw-lower-pp",
+            [("a-larger-raw-lower-pp", frame) for frame in range(800)],
+            visual=True,
+        )
+        a_larger_raw_lower_pp.update({
             "current_resolution_status": "pending_high_priority",
             "priority": "high",
             "reason_codes": ["identity_conflict"],
         })
-        b_higher_pp = _unit("b-higher-pp", [("b-higher-pp", frame) for frame in range(800)], visual=True)
-        b_higher_pp.update({
+        b_smaller_raw_higher_pp = _unit(
+            "b-smaller-raw-higher-pp",
+            [("b-smaller-raw-higher-pp", frame) for frame in range(500)],
+            visual=True,
+        )
+        b_smaller_raw_higher_pp.update({
             "source_team_label": "B",
             "effective_team_label": "B",
             "current_resolution_status": "pending_high_priority",
@@ -2135,12 +2143,12 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         })
 
         policy = apply_coverage_policy(
-            [a_large, b_higher_pp],
+            [a_larger_raw_lower_pp, b_smaller_raw_higher_pp],
             {
-                "reliable_observations": 45_000,
+                "reliable_observations": 50_000,
                 "per_team": {
-                    "A": {"reliable_observations": 25_000, "confirmed_named_observations": 0},
-                    "B": {"reliable_observations": 20_000, "confirmed_named_observations": 0},
+                    "A": {"reliable_observations": 40_000, "confirmed_named_observations": 0},
+                    "B": {"reliable_observations": 10_000, "confirmed_named_observations": 0},
                 },
             },
             pair_index,
@@ -2149,11 +2157,15 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
         self.assertEqual(
             [row["candidate_subject_id"] for row in policy["next_cases"]],
-            ["b-higher-pp", "a-large"],
+            ["b-smaller-raw-higher-pp", "a-larger-raw-lower-pp"],
         )
         self.assertEqual(
             [row["operator_impact_pp"] for row in policy["next_cases"]],
-            [4.0, 2.0],
+            [5.0, 2.0],
+        )
+        self.assertEqual(
+            [row["detected_observation_count"] for row in policy["next_cases"]],
+            [500, 800],
         )
 
     def test_team_u_operator_impact_uses_team_known_coverage_not_named_coverage(self) -> None:
