@@ -48,6 +48,9 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     source_ownership_digest as team_attribution_source_ownership_digest,
     visual_evidence_for_unit,
 )
+from app.services.identity_reviewed_scope_eligibility import (
+    has_team_attribution_uncertainty,
+)
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     identity_review_scope_read_model,
@@ -822,20 +825,7 @@ def _attach_team_attribution_evidence(
 ) -> None:
     """Attach evidence only for each unit's current exact detected-pair scope."""
     for unit in units:
-        reasons = [str(value).lower() for value in unit.get("reason_codes") or []]
-        requires_team_attribution = (
-            str(unit.get("source_team_label") or "").upper() == "U"
-            or any(
-                marker in reason
-                for reason in reasons
-                for marker in (
-                    "cross_team",
-                    "team_mismatch",
-                    "team_attribution",
-                    "team_conflict",
-                )
-            )
-        )
+        requires_team_attribution = has_team_attribution_uncertainty(unit)
         if not requires_team_attribution:
             # A prior transformation may have changed this unit from Team-U
             # or cross-team to a single known team. Never carry stale

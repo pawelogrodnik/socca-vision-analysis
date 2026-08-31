@@ -304,7 +304,9 @@ export function IdentityExceptionReviewPanel({
   );
   const activeTeamName = activeTeamFilter === 'all'
     ? 'Wszystkie'
-    : matchTeamName(match.teams || [], activeTeamFilter);
+    : activeTeamFilter === 'U'
+      ? 'Drużyna / konflikt'
+      : matchTeamName(match.teams || [], activeTeamFilter);
   const globalRemaining = activeQueue === 'required'
     ? requiredReviewLifecycleRef.current.knownRemaining
     : reviewFilters?.counts.all ?? totalRemaining;

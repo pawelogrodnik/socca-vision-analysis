@@ -2083,7 +2083,7 @@ export type ReviewedIdentityReviewUnit = {
   filter_team_label?: 'A' | 'B' | 'U';
 };
 
-export type ReviewedIdentityTeamFilterLabel = 'A' | 'B';
+export type ReviewedIdentityTeamFilterLabel = 'A' | 'B' | 'U';
 export type ReviewedIdentityReviewQueue = 'required' | 'optional_audit';
 
 export type ReviewedIdentityReviewFilters = {

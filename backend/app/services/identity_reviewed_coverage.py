@@ -1043,7 +1043,14 @@ def paginate_progress(
 
 
 def review_case_team_label(unit: dict[str, Any]) -> str:
-    """Return the authoritative navigation team without changing case meaning."""
+    """Return the authoritative navigation team without changing case meaning.
+
+    A current best-label must not make an A/B conflict look like ordinary Team
+    B work.  Those cases are deliberately exposed through the explicit ``U``
+    filter, where the operator can see that team attribution is the blocker.
+    """
+    if has_team_attribution_uncertainty(unit):
+        return "U"
     for field in (
         "coverage_team_label",
         "effective_team_label",
@@ -1059,8 +1066,8 @@ def _validated_filter_team_label(team_label: str | None) -> str | None:
     if team_label is None:
         return None
     normalized = str(team_label)
-    if normalized not in {"A", "B"}:
-        raise ValueError("team_label must be A or B")
+    if normalized not in {"A", "B", "U"}:
+        raise ValueError("team_label must be A, B or U")
     return normalized
 
 
