@@ -32,6 +32,7 @@ from app.services.identity_review_scope import (
     review_scope_dependency_matches,
     team_review_scope,
 )
+from app.services.identity_reviewed_scope_eligibility import team_attribution_state
 from app.services.video import read_match_video_metadata
 
 
@@ -69,18 +70,16 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         if movement_position is None:
             continue
         observations_by_player[str(effective["canonical_player_id"])].append(movement_position)
-    # Team movement deliberately has a wider, still-safe authority than the
-    # named-player table: confirmed names plus stable anonymous observations.
-    # This prevents team totals from omitting safe Team A/B evidence while
-    # never admitting U, unresolved, conflicted, referee, false or untrusted
-    # observations.
+    # Team movement is deliberately independent from player-name eligibility.
+    # A current canonical A/B attribution remains useful to team statistics
+    # even when the player's identity is unresolved or conflicts with another
+    # player from that same team.
     for effective in effective_observations:
-        label = str(effective.get("team_label") or "")
-        if label not in {"A", "B"} or effective.get("identity_status") not in {"confirmed", "stable_anonymous"}:
-            continue
-        movement_position = _movement_position(effective)
-        if movement_position is not None:
-            observations_by_safe_team[label].append(movement_position)
+        safe_team_position = reviewed_safe_team_movement_observation(effective)
+        if safe_team_position is not None:
+            observations_by_safe_team[str(safe_team_position["team_label"])].append(
+                safe_team_position
+            )
     players = []
     heatmaps = []
     timeline = []
@@ -228,6 +227,63 @@ def _movement_position(effective: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def reviewed_safe_team_movement_observation(
+    effective: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return one safe movement observation for a canonically known team.
+
+    Team movement must be governed by current team attribution, not whether a
+    person has been named. This is intentionally stricter than merely checking
+    ``team_label``: explicit Team-U and live A/B contradictions remain out of
+    both team totals, while player-only conflicts within a known team stay in.
+    """
+    if reviewed_team_movement_exclusion_reason(effective) is not None:
+        return None
+    return _movement_position(effective)
+
+
+def reviewed_team_movement_exclusion_reason(effective: dict[str, Any]) -> str | None:
+    """Explain why an effective observation cannot contribute team movement."""
+    label = str(effective.get("team_label") or "").upper()
+    if label not in {"A", "B"}:
+        return "team_unknown"
+
+    team_state = team_attribution_state(
+        {
+            "effective_team_label": label,
+            "detected_team_labels": effective.get("detected_team_labels"),
+            "mixed_hint": effective.get("mixed_hint"),
+            "current_decision": effective.get("current_decision"),
+        }
+    )
+    if team_state == "cross_team":
+        return "cross_team_conflict"
+    if team_state != f"certain_{label}":
+        return "team_unknown"
+
+    identity_status = str(effective.get("identity_status") or "unresolved")
+    if identity_status in {"referee", "false_detection", "ignored"}:
+        return "non_player"
+    if identity_status == "team_unknown":
+        return "team_unknown"
+    if identity_status not in {
+        "confirmed",
+        "stable_anonymous",
+        "unresolved",
+        "conflicted",
+        "blocked",
+    }:
+        return "other_identity_status"
+    if effective.get("visual_trusted") is False:
+        return "visually_untrusted"
+    if effective.get("play_area_status", "inside_play") != "inside_play":
+        return "outside_play"
+    pitch_m = effective.get("smoothed_pitch_m") or effective.get("pitch_m")
+    if not _valid_pitch_point(pitch_m):
+        return "invalid_pitch_point"
+    return None
+
+
 def _reviewed_team_movement(
     observations_by_team: dict[str, list[dict[str, Any]]], fps: float
 ) -> list[dict[str, Any]]:
@@ -245,16 +301,20 @@ def _reviewed_team_movement(
         fragments = _fragments(positions)
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
         summary = _aggregate_movement_stats(movement)
+        intensity = summary["intensity"]
         rows.append(
             {
                 "team_label": team_label,
                 "movement_authority": "reviewed_safe_team_observations",
-                "safe_identity_statuses": ["confirmed", "stable_anonymous"],
+                "team_attribution_contract": "canonical_certain_team_without_required_player_name",
                 "total_distance_m": summary["total_distance_m"],
                 "observed_distance_m": summary["observed_distance_m"],
                 "estimated_short_gap_distance_m": summary["estimated_short_gap_distance_m"],
                 "accepted_movement_segments": summary["accepted_movement_segments"],
                 "safe_observation_count": len(positions),
+                "high_intensity_distance_m": intensity["high_intensity_distance_m"],
+                "sprint_distance_m": intensity["sprint_distance_m"],
+                "sprint_count": intensity["sprint_count"],
             }
         )
     return rows

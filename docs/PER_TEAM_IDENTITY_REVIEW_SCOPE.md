@@ -27,9 +27,12 @@ workload or finalization readiness, but it retains all correction actions,
 including assignment to a player from the other team.
 
 Public reviewed reports omit individual player rows for a `team_stats_only`
-team and expose `player_stats_status: not_reviewed_by_scope`. Team aggregates
-continue to include named and anonymous team-known observations. Matches and
-reports without explicit scope preserve the previous coverage policy.
+team and expose `player_stats_status: not_reviewed_by_scope`. Team movement
+continues to include safely team-attributed reviewed observations, including
+unnamed and same-team player-conflicted observations. Team U, live A/B
+attribution conflicts, non-player labels, untrusted views, outside-play
+observations and invalid pitch positions remain excluded. Matches and reports
+without explicit scope preserve the previous coverage policy.
 
 Changing scope preserves all operator decisions. It changes the semantic scope
 digest, invalidates `reviewed_identity_progress.json`, and rebuilds only the

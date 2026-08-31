@@ -3256,7 +3256,7 @@
     "restart_passes": 1,
     "same_team_pass_candidates": 75
   },
-  "generated_at": "2026-08-31T12:20:24.675865+00:00",
+  "generated_at": "2026-08-31T14:33:08.222007+00:00",
   "id": "published-6d8fc20c",
   "identity_coverage": {
     "confirmed_named_observations": 118641,
@@ -43813,11 +43813,11 @@
       "completed_passes": 33,
       "completion_rate": 50.8,
       "display_color": "#98999c",
-      "estimated_short_gap_distance_m": 23.42,
+      "estimated_short_gap_distance_m": 46.4,
       "failed_passes": 32,
-      "high_intensity_distance_m": 835.0,
+      "high_intensity_distance_m": 1014.9,
       "movement_authority": "reviewed_safe_team_observations",
-      "observed_distance_m": 6103.62,
+      "observed_distance_m": 6439.46,
       "pass_attempts": 65,
       "pass_candidates": 91,
       "peak_speed_kmh": 22.55,
@@ -43830,7 +43830,7 @@
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
-      "total_distance_m": 6127.04,
+      "total_distance_m": 6485.86,
       "turnover_or_interception_candidates": 47
     },
     {
@@ -43839,11 +43839,11 @@
       "completed_passes": 27,
       "completion_rate": 42.9,
       "display_color": "#353e5c",
-      "estimated_short_gap_distance_m": 0.0,
+      "estimated_short_gap_distance_m": 43.33,
       "failed_passes": 36,
-      "high_intensity_distance_m": 1173.51,
+      "high_intensity_distance_m": 1342.59,
       "movement_authority": "reviewed_safe_team_observations",
-      "observed_distance_m": 0.0,
+      "observed_distance_m": 6968.84,
       "pass_attempts": 63,
       "pass_candidates": 81,
       "peak_speed_kmh": 22.84,
@@ -43856,7 +43856,7 @@
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",
-      "total_distance_m": 0.0,
+      "total_distance_m": 7012.17,
       "turnover_or_interception_candidates": 50
     }
   ]
