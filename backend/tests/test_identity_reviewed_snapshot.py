@@ -97,6 +97,35 @@ class ReviewedIdentitySnapshotTests(unittest.TestCase):
             self.assertEqual(rows["t1"]["identity_status"], "conflicted")
             self.assertEqual(rows["t2"]["identity_status"], "blocked")
 
+    def test_snapshot_projects_genuine_a_b_subject_conflict_for_effective_observations(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            tracklets["tracklets"][0]["team_label"] = "B"
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
+            (root / "identity_candidate_shadow.json").write_text(
+                json.dumps(
+                    {
+                        "subjects": [
+                            {
+                                "candidate_subject_id": "s1",
+                                "tracklet_ids": ["t1", "t2"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            result = finalize_reviewed_identity(root, _match())
+
+            self.assertEqual(
+                {
+                    row["tracklet_id"]: row["reviewed_team_attribution_state"]
+                    for row in result["tracklet_assignments"]
+                },
+                {"t1": "cross_team", "t2": "cross_team"},
+            )
+
     def test_conflicting_explicit_decisions_are_not_silently_resolved(self) -> None:
         with _workspace() as root:
             _write_inputs(root, decisions=[_decision("s1", "assign_roster_player", "p1"), _decision("s1", "mark_unresolved")])

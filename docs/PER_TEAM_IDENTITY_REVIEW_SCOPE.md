@@ -34,6 +34,11 @@ attribution conflicts, non-player labels, untrusted views, outside-play
 observations and invalid pitch positions remain excluded. Matches and reports
 without explicit scope preserve the previous coverage policy.
 
+Reviewed team movement currently supplies safe distance and high-intensity
+distance. Team sprint counts remain on the existing legacy team-statistics
+authority until one shared sprint classifier is available for both player and
+team reporting.
+
 Changing scope preserves all operator decisions. It changes the semantic scope
 digest, invalidates `reviewed_identity_progress.json`, and rebuilds only the
 identity policy/readiness view. It does not rerun detection, tracking, render or

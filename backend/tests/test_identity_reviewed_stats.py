@@ -121,7 +121,11 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 encoding="utf-8",
             )
             b_assignment = _assignment("b", "confirmed", "p2")
-            b_assignment.update({"team_label": "B", "player_name": "Opponent"})
+            b_assignment.update({
+                "team_label": "B",
+                "player_name": "Opponent",
+                "reviewed_team_attribution_state": "certain_B",
+            })
             snapshot = {
                 "semantic_digest": "snapshot",
                 "tracklet_assignments": [_assignment("a", "confirmed", "p1"), b_assignment],
@@ -176,15 +180,30 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 json.dumps({"tracklets": tracklets}), encoding="utf-8"
             )
             b_unnamed = _assignment("b-unnamed", "unresolved", None)
-            b_unnamed["team_label"] = "B"
+            b_unnamed.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "certain_B",
+            })
             b_and_u = _assignment("b-and-u", "unresolved", None)
-            b_and_u.update({"team_label": "B", "detected_team_labels": ["B", "U"]})
+            b_and_u.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "certain_B",
+            })
             b_player_conflict = _assignment("b-player-conflict", "conflicted", None)
-            b_player_conflict["team_label"] = "B"
+            b_player_conflict.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "certain_B",
+            })
             u_only = _assignment("u-only", "unresolved", None)
-            u_only["team_label"] = "U"
+            u_only.update({
+                "team_label": "U",
+                "reviewed_team_attribution_state": "unknown",
+            })
             a_b_conflict = _assignment("a-b-conflict", "conflicted", None)
-            a_b_conflict.update({"team_label": "B", "detected_team_labels": ["A", "B"]})
+            a_b_conflict.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "cross_team",
+            })
             documents = build_reviewed_stats(
                 root,
                 {
@@ -218,15 +237,15 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 teams["B"]["high_intensity_distance_m"],
                 teams["B"]["total_distance_m"],
             )
-            self.assertLessEqual(
-                teams["B"]["sprint_distance_m"], teams["B"]["total_distance_m"]
-            )
+            self.assertNotIn("sprint_count", teams["B"])
+            self.assertNotIn("sprint_distance_m", teams["B"])
 
     def test_team_movement_requires_safe_team_attribution_not_named_player_identity(
         self,
     ) -> None:
         base = {
             "team_label": "B",
+            "reviewed_team_attribution_state": "certain_B",
             "identity_status": "unresolved",
             "pitch_m": [5.0, 10.0],
             "smoothed_pitch_m": [5.0, 10.0],
@@ -238,18 +257,13 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 {**base, "identity_status": "conflicted"}
             )
         )
-        self.assertIsNone(
-            reviewed_team_movement_exclusion_reason(
-                {**base, "detected_team_labels": ["B", "U"]}
-            )
-        )
         self.assertEqual(
             reviewed_team_movement_exclusion_reason({**base, "team_label": "U"}),
             "team_unknown",
         )
         self.assertEqual(
             reviewed_team_movement_exclusion_reason(
-                {**base, "detected_team_labels": ["A", "B"]}
+                {**base, "reviewed_team_attribution_state": "cross_team"}
             ),
             "cross_team_conflict",
         )
@@ -798,6 +812,7 @@ def _assignment(tracklet_id: str, status: str, player_id: str | None) -> dict:
         "tracklet_id": tracklet_id,
         "candidate_subject_id": f"subject-{tracklet_id}",
         "team_label": "A",
+        "reviewed_team_attribution_state": "certain_A",
         "identity_status": status,
         "canonical_player_id": player_id,
         "player_name": "Player One" if player_id else None,

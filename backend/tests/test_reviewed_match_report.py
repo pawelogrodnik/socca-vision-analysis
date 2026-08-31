@@ -30,7 +30,7 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")
             self.assertEqual(report["teams"][0]["total_distance_m"], 140.0)
             self.assertEqual(report["teams"][0]["high_intensity_distance_m"], 100.0)
-            self.assertEqual(report["teams"][0]["sprint_count"], 2)
+            self.assertEqual(report["teams"][0]["sprint_count"], 3)
             self.assertLessEqual(
                 report["teams"][0]["high_intensity_distance_m"],
                 report["teams"][0]["total_distance_m"],
@@ -128,7 +128,7 @@ class ReviewedMatchReportTests(unittest.TestCase):
             root / "team_stats.json",
             {
                 "teams": [
-                    {"team_label": "A", "team_id": "team-a", "playing_time_sec": 630.0, "total_distance_m": 700.0},
+                    {"team_label": "A", "team_id": "team-a", "playing_time_sec": 630.0, "total_distance_m": 700.0, "sprint_count": 3},
                     {"team_label": "B", "team_id": "team-b", "playing_time_sec": 540.0, "total_distance_m": 680.0},
                 ]
             },

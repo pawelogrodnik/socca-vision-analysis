@@ -40,6 +40,9 @@ from app.services.identity_reviewed_material_continuity import (
     load_material_continuity_decisions,
     material_continuity_observation_assignments,
 )
+from app.services.identity_reviewed_scope_eligibility import (
+    team_attribution_state as classify_team_attribution_state,
+)
 from app.services.identity_seeded_candidate_assignments import load_combined_operator_seeds
 from app.services.identity_seeded_review_reduction import load_fresh_seeded_assignments
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
@@ -52,7 +55,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
-ALGORITHM_VERSION = "reviewed_identity_snapshot:v11-slot-scoped-propagation"
+ALGORITHM_VERSION = "reviewed_identity_snapshot:v13-team-attribution-projection"
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +117,9 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         for row in documents["tracklets"].get("tracklets") or []
         if row.get("tracklet_id")
     }
+    subject_detected_team_labels = _subject_detected_team_labels(
+        documents["subjects"], tracklets
+    )
     stable, fragmentation = resolve_stable_anonymous_entities(
         match_path,
         tracklets,
@@ -184,6 +190,14 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
         player = roster.get(player_id or "")
         if player and team_label == "U":
             team_label = str(player["team_label"])
+        reviewed_team_attribution_state = _reviewed_team_attribution_state(
+            stable_row,
+            subject_ids,
+            subject_detected_team_labels,
+            decision,
+            manual_action,
+            team_label,
+        )
         assignment_conflicts: list[dict[str, Any]] = []
         propagation_conflicted_stable_slot_ids: list[str] = []
         if len(accepted_seeds) > 1:
@@ -240,6 +254,11 @@ def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> d
             "ephemeral_anonymous_entity": stable_row["ephemeral"],
             "team_id": team_id,
             "team_label": team_label,
+            # This compact state is deliberately projected while the canonical
+            # candidate/tracklet evidence is still available.  Effective
+            # reviewed observations later carry only their current identity
+            # projection, where re-inferring A/B certainty would be lossy.
+            "reviewed_team_attribution_state": reviewed_team_attribution_state,
             "canonical_player_id": player_id if status == "confirmed" else None,
             "player_name": player["name"] if player and status == "confirmed" else None,
             "roster_number": player.get("number") if player and status == "confirmed" else None,
@@ -494,6 +513,61 @@ def _source_documents(path: Path) -> dict[str, dict[str, Any]]:
     }
 
 
+def _subject_detected_team_labels(
+    candidate_document: dict[str, Any],
+    tracklets: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Return canonical A/B evidence for each current candidate subject."""
+    labels_by_subject: dict[str, set[str]] = defaultdict(set)
+    for subject in candidate_document.get("subjects") or []:
+        subject_id = str(subject.get("candidate_subject_id") or "")
+        if not subject_id:
+            continue
+        for tracklet_id in subject.get("tracklet_ids") or []:
+            label = str(
+                tracklets.get(str(tracklet_id), {}).get("team_label") or "U"
+            ).upper()
+            if label in {"A", "B"}:
+                labels_by_subject[subject_id].add(label)
+    return {
+        subject_id: sorted(labels)
+        for subject_id, labels in labels_by_subject.items()
+    }
+
+
+def _reviewed_team_attribution_state(
+    stable_row: dict[str, Any],
+    subject_ids: list[str],
+    subject_detected_team_labels: dict[str, list[str]],
+    decision: dict[str, Any] | None,
+    manual_action: str | None,
+    effective_team_label: str,
+) -> str:
+    """Freeze current team truth for a compact reviewed snapshot assignment.
+
+    Diagnostic reason strings are intentionally excluded.  They can describe
+    a prior failure even after the exact source has been safely resolved.
+    """
+    current_decision = dict(decision or {})
+    if "action" not in current_decision and current_decision.get("decision"):
+        current_decision["action"] = current_decision["decision"]
+    if manual_action:
+        current_decision["action"] = manual_action
+    detected_labels = {
+        label
+        for subject_id in subject_ids
+        for label in subject_detected_team_labels.get(str(subject_id), [])
+    }
+    return classify_team_attribution_state(
+        {
+            "source_team_label": stable_row.get("source_team_label"),
+            "effective_team_label": effective_team_label,
+            "detected_team_labels": sorted(detected_labels),
+            "current_decision": current_decision,
+        }
+    )
+
+
 def _source_descriptor(
     documents: dict[str, dict[str, Any]],
     match_doc: dict[str, Any],
@@ -730,6 +804,19 @@ def _canonical_observation_assignments(
                 None,
                 "structural_safety",
             )
+        base_team_state = str(
+            base.get("reviewed_team_attribution_state") or "unknown"
+        )
+        claim_team = str(claim.get("team_label") or "U")
+        reviewed_team_state = (
+            "cross_team"
+            if local_team in {"A", "B"} and local_team != claim_team
+            else base_team_state
+            if base_team_state in {"certain_A", "certain_B", "cross_team"}
+            else f"certain_{claim_team}"
+            if claim_team in {"A", "B"}
+            else "unknown"
+        )
         output.append(
             {
                 "tracklet_id": tracklet_id,
@@ -753,6 +840,7 @@ def _canonical_observation_assignments(
                     if status == "conflicted" and local_team in {"A", "B"}
                     else str(claim["team_label"])
                 ),
+                "reviewed_team_attribution_state": reviewed_team_state,
                 "fallback_label": (
                     f"{local_team}?"
                     if status == "conflicted" and local_team in {"A", "B"}

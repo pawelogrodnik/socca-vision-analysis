@@ -294,11 +294,10 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
                     if reviewed and reviewed.get("high_intensity_distance_m") is not None
                     else team.get("high_intensity_distance_m")
                 ),
-                "sprint_count": int(
-                    reviewed.get("sprint_count")
-                    if reviewed and reviewed.get("sprint_count") is not None
-                    else team.get("sprint_count") or 0
-                ),
+                # Team sprint classification remains the legacy team-stats
+                # authority.  Reviewed movement currently provides only the
+                # safe team distance and common high-intensity aggregate.
+                "sprint_count": int(team.get("sprint_count") or 0),
                 "avg_speed_kmh": _round(team.get("avg_speed_kmh") or team.get("average_speed_kmh")),
                 "peak_speed_kmh": _round(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh")),
                 "possession_share_percent": _possession_share(package, team_label),

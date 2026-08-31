@@ -32,7 +32,6 @@ from app.services.identity_review_scope import (
     review_scope_dependency_matches,
     team_review_scope,
 )
-from app.services.identity_reviewed_scope_eligibility import team_attribution_state
 from app.services.video import read_match_video_metadata
 
 
@@ -248,14 +247,11 @@ def reviewed_team_movement_exclusion_reason(effective: dict[str, Any]) -> str | 
     if label not in {"A", "B"}:
         return "team_unknown"
 
-    team_state = team_attribution_state(
-        {
-            "effective_team_label": label,
-            "detected_team_labels": effective.get("detected_team_labels"),
-            "mixed_hint": effective.get("mixed_hint"),
-            "current_decision": effective.get("current_decision"),
-        }
-    )
+    # The snapshot freezes this while the full canonical review source is
+    # available.  Do not reclassify a compact effective observation from its
+    # label or diagnostic strings: that would turn a genuine A/B conflict into
+    # a false certain-B contribution.
+    team_state = str(effective.get("reviewed_team_attribution_state") or "unknown")
     if team_state == "cross_team":
         return "cross_team_conflict"
     if team_state != f"certain_{label}":
@@ -313,8 +309,6 @@ def _reviewed_team_movement(
                 "accepted_movement_segments": summary["accepted_movement_segments"],
                 "safe_observation_count": len(positions),
                 "high_intensity_distance_m": intensity["high_intensity_distance_m"],
-                "sprint_distance_m": intensity["sprint_distance_m"],
-                "sprint_count": intensity["sprint_count"],
             }
         )
     return rows

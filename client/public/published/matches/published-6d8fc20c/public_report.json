@@ -3256,7 +3256,7 @@
     "restart_passes": 1,
     "same_team_pass_candidates": 75
   },
-  "generated_at": "2026-08-31T14:33:08.222007+00:00",
+  "generated_at": "2026-08-31T15:15:11.323624+00:00",
   "id": "published-6d8fc20c",
   "identity_coverage": {
     "confirmed_named_observations": 118641,
@@ -43794,7 +43794,7 @@
     }
   ],
   "report_type": "public_match_report",
-  "reviewed_identity_digest": "a3b9d7fb47154f4a4d3e3ec93d0cf983aab07ca0d5e988f84ed0c85fdd258eea",
+  "reviewed_identity_digest": "75ba01b837b7851395408b98c724b3d1e763c231808cd699b9cf18360cfd712d",
   "schema_version": "0.1.0",
   "source_match_id": "6d8fc20c",
   "stats_semantics": {
@@ -43839,11 +43839,11 @@
       "completed_passes": 27,
       "completion_rate": 42.9,
       "display_color": "#353e5c",
-      "estimated_short_gap_distance_m": 43.33,
+      "estimated_short_gap_distance_m": 43.2,
       "failed_passes": 36,
-      "high_intensity_distance_m": 1342.59,
+      "high_intensity_distance_m": 1339.56,
       "movement_authority": "reviewed_safe_team_observations",
-      "observed_distance_m": 6968.84,
+      "observed_distance_m": 6948.11,
       "pass_attempts": 63,
       "pass_candidates": 81,
       "peak_speed_kmh": 22.84,
@@ -43856,7 +43856,7 @@
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",
-      "total_distance_m": 7012.17,
+      "total_distance_m": 6991.31,
       "turnover_or_interception_candidates": 50
     }
   ]
