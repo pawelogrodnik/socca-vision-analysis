@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { afterEach, test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { JSDOM } from 'jsdom';
 
 import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import { PublicPlayerStatsSection } from '../src/components/PublicPlayerStatsSection.tsx';
@@ -16,6 +17,18 @@ import {
   windowValue,
 } from '../src/lib/publicPlayerWorkloadPresentation.ts';
 import type { PublicReportPlayer } from '../src/types.ts';
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
+Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.window.document });
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: dom.window.HTMLElement });
+Object.defineProperty(globalThis, 'Node', { configurable: true, value: dom.window.Node });
+Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true, writable: true });
+
+const { act, cleanup, fireEvent, render } = await import('@testing-library/react');
+
+afterEach(() => cleanup());
 
 const window = {
   window_index: 7,
@@ -123,18 +136,22 @@ test('activity matrix renders actual windows, a valid zero sprint and safety cop
   assert.match(html, /nie próbuje sztucznie odtwarzać brakujących minut/);
 });
 
-test('workload table labels Max sprint as a validated speed and keeps zero as unavailable', () => {
+test('workload table labels Max sprint as a validated speed and keeps zero as unavailable', async () => {
   const zeroSprintPlayer = {
     ...player,
     max_sprint_speed_kmh: 0,
   } as PublicReportPlayer;
-  const html = renderToStaticMarkup(
+  const view = render(
     createElement(PublicPlayerStatsSection, { players: [zeroSprintPlayer], teamName: 'Corgi' }),
   );
 
-  assert.match(html, /Najwyższa wiarygodna prędkość utrzymana podczas zaakceptowanego sprintu/);
-  assert.match(html, /Max sprint/);
-  assert.match(html, /—/);
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Obciążenie' }));
+  });
+
+  assert.match(view.container.innerHTML, /Najwyższa wiarygodna prędkość utrzymana podczas zaakceptowanego sprintu/);
+  assert.match(view.container.innerHTML, /Max sprint/);
+  assert.match(view.container.innerHTML, /—/);
 });
 
 test('legacy player data without workload keeps the existing basic stats section', () => {
