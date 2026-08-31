@@ -22,6 +22,7 @@ from app.services.identity_reviewed_coverage import (
     OPTIONAL_MAX_POLICY_VERSION,
     apply_coverage_policy,
     load_effective_coverage_context,
+    review_case_team_label,
 )
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_slot_review import (
@@ -814,6 +815,10 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "has_operator_visual_evidence", "team_attribution_evidence_status",
     )
     result = {key: unit.get(key) for key in keys}
+    # The hot/public queue intentionally omits exact team evidence.  Preserve
+    # its classification while that evidence is still available rather than
+    # asking pagination to infer team certainty from a lossy projection.
+    result["filter_team_label"] = review_case_team_label(unit)
     if include_pairs:
         result["detected_pairs"] = unit.get("detected_pairs")
     return result
