@@ -707,7 +707,8 @@ def _unit(
         for tracklet_id in on_pitch_tracklet_ids
         if tracklet_id in tracklets
     }
-    detected_team_labels = sorted(teams & {"A", "B"})
+    known_teams = teams & {"A", "B"}
+    detected_team_labels = sorted(known_teams)
     reason_codes: list[str] = []
     structural = False
     if any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
@@ -717,12 +718,15 @@ def _unit(
         ambiguous_membership=structural,
         detected_team_labels=set(detected_team_labels),
     )
-    team_conflict = len(teams) > 1
+    # U means that a tracklet's team is unknown. It is neutral evidence when
+    # the exact source also contains one known A or B label; only competing
+    # known teams make this a real attribution conflict.
+    team_conflict = len(known_teams) > 1
     if team_conflict:
         reason_codes.append("conflicting_detected_team_labels")
     action = str((decision or {}).get("action") or "")
     player_id = str((decision or {}).get("player_id") or "") or None
-    source_team = next(iter(teams), "U") if len(teams) == 1 else "U"
+    source_team = next(iter(known_teams), "U") if len(known_teams) == 1 else "U"
     if stable_slot_id and source_team in {"A", "B"} and not stable_slot_id.startswith(source_team):
         stable_slot_id = None
     effective_team = str((decision or {}).get("team_label") or "").upper()

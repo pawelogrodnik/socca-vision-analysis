@@ -201,7 +201,10 @@ def apply_coverage_policy(
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
     non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for unit in units:
-        if unit in semantic_candidates or _has_explicit_disposition(unit, match_doc):
+        if (
+            unit in semantic_candidates
+            and required_review_relevant_for_scope(unit, match_doc)
+        ) or _has_explicit_disposition(unit, match_doc):
             continue
         # A raw subject may have a diagnostic card while every observation is
         # outside the product play area.  It cannot become a team-attribution
@@ -219,7 +222,11 @@ def apply_coverage_policy(
                 set(enriched.get("reason_codes") or [])
                 | {"team_attribution_uncertain"}
             )
-            if operator_actionable and enriched.get("has_operator_visual_evidence"):
+            if (
+                required_review_relevant_for_scope(enriched, match_doc)
+                and operator_actionable
+                and enriched.get("has_operator_visual_evidence")
+            ):
                 enriched["current_resolution_status"] = "pending_high_priority"
                 enriched["priority"] = "high"
                 semantic.append(enriched)

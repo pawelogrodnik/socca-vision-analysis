@@ -327,6 +327,38 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                 },
             )
 
+    def test_b_and_u_tracklets_form_one_certain_team_b_source(self) -> None:
+        with _workspace() as root:
+            _write(root / "tracklets.json", {"tracklets": [
+                _tracklet("b-first", "B", [1, 2]),
+                _tracklet("unknown", "U", [3]),
+                _tracklet("b-last", "B", [4, 5]),
+            ]})
+            _write(root / "identity_candidate_shadow.json", {"subjects": [{
+                "candidate_subject_id": "b-u-b",
+                "tracklet_ids": ["b-first", "unknown", "b-last"],
+            }]})
+
+            progress = build_reviewed_identity_progress(root, {
+                "id": "progress",
+                "identity_review_scope": {
+                    "teams": {"A": "complete_roster", "B": "team_stats_only"},
+                },
+                "teams": [{"team_label": "A"}, {"team_label": "B"}],
+            })
+            unit = _unit(progress, "b-u-b")
+
+            self.assertEqual(unit["source_team_label"], "B")
+            self.assertEqual(unit["effective_team_label"], "B")
+            self.assertNotIn("conflicting_detected_team_labels", unit["reason_codes"])
+            context_subject = next(
+                row
+                for row in progress["deferred_correction_context"]["subjects"]
+                if row["candidate_subject_id"] == "b-u-b"
+            )
+            self.assertEqual(context_subject["detected_team_labels"], ["B"])
+            self.assertEqual(progress["next_cases"], [])
+
     def test_projected_queue_retains_conflict_filter_after_exact_team_evidence_is_stripped(self) -> None:
         match = {
             "id": "team-filter-projection",

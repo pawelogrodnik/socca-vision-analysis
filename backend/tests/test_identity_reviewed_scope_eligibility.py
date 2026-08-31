@@ -28,21 +28,80 @@ class ReviewedIdentityScopeEligibilityTests(unittest.TestCase):
             "reason_codes": ["identity_conflict"],
         }, self.match))
 
-    def test_team_u_and_cross_team_attribution_remain_required(self) -> None:
-        self.assertTrue(required_review_relevant_for_scope({
-            "source_team_label": "B",
-            "effective_team_label": "U",
-        }, self.match))
-        self.assertTrue(required_review_relevant_for_scope({
-            "source_team_label": "U",
-            "effective_team_label": "U",
-        }, self.match))
-        self.assertTrue(required_review_relevant_for_scope({
-            "source_team_label": "B",
-            "effective_team_label": "B",
-            "detected_team_labels": ["A", "B"],
-            "reason_codes": ["identity_conflict"],
-        }, self.match))
+    def test_known_team_evidence_treats_u_as_neutral(self) -> None:
+        cases = (
+            (
+                "certain B from B/U evidence",
+                {
+                    "source_team_label": "B",
+                    "effective_team_label": "B",
+                    "coverage_team_label": "B",
+                    "detected_team_labels": ["B"],
+                },
+                "certain_B",
+                False,
+            ),
+            (
+                "certain B from unknown source and B evidence",
+                {
+                    "source_team_label": "U",
+                    "effective_team_label": "B",
+                    "coverage_team_label": "B",
+                    "detected_team_labels": ["B"],
+                },
+                "certain_B",
+                False,
+            ),
+            (
+                "certain A from A/U evidence",
+                {
+                    "source_team_label": "A",
+                    "effective_team_label": "U",
+                    "coverage_team_label": "A",
+                    "detected_team_labels": ["A"],
+                },
+                "certain_A",
+                True,
+            ),
+            (
+                "cross-team A/B evidence",
+                {
+                    "source_team_label": "B",
+                    "effective_team_label": "B",
+                    "coverage_team_label": "B",
+                    "detected_team_labels": ["A", "B"],
+                },
+                "cross_team",
+                True,
+            ),
+            (
+                "cross-team A/B/U evidence",
+                {
+                    "source_team_label": "U",
+                    "effective_team_label": "B",
+                    "coverage_team_label": "B",
+                    "detected_team_labels": ["A", "B"],
+                },
+                "cross_team",
+                True,
+            ),
+            (
+                "U-only evidence",
+                {
+                    "source_team_label": "U",
+                    "effective_team_label": "U",
+                    "coverage_team_label": "U",
+                    "detected_team_labels": [],
+                },
+                "unknown",
+                False,
+            ),
+        )
+
+        for name, value, expected_state, required in cases:
+            with self.subTest(name=name):
+                self.assertEqual(team_attribution_state(value), expected_state)
+                self.assertEqual(required_review_relevant_for_scope(value, self.match), required)
 
     def test_current_canonical_team_evidence_not_reason_text_classifies_certainty(self) -> None:
         certain_b_with_stale_diagnostic = {
@@ -57,18 +116,27 @@ class ReviewedIdentityScopeEligibilityTests(unittest.TestCase):
         self.assertFalse(has_team_attribution_uncertainty(certain_b_with_stale_diagnostic))
         self.assertFalse(required_review_relevant_for_scope(certain_b_with_stale_diagnostic, self.match))
 
-    def test_structured_team_attribution_states_fail_closed_for_unknown_and_cross_team(self) -> None:
-        self.assertEqual(team_attribution_state({
-            "source_team_label": "B",
-            "effective_team_label": "U",
-            "detected_team_labels": ["B"],
-        }), "uncertain")
+    def test_explicit_team_unknown_never_infers_a_known_team(self) -> None:
         self.assertEqual(team_attribution_state({
             "source_team_label": "B",
             "effective_team_label": "B",
-            "detected_team_labels": ["A", "B"],
+            "detected_team_labels": ["B"],
+            "current_decision": {"action": "team_unknown"},
+        }), "unknown")
+        self.assertFalse(required_review_relevant_for_scope({
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "detected_team_labels": ["B"],
+            "current_decision": {"action": "team_unknown"},
+        }, self.match))
+
+    def test_contradictory_operator_assignment_fails_closed(self) -> None:
+        self.assertEqual(team_attribution_state({
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "detected_team_labels": ["B"],
+            "current_decision": {"action": "assign_team", "team_label": "A"},
         }), "cross_team")
-        self.assertEqual(team_attribution_state({}), "unknown")
 
     def test_mixed_scope_is_evaluated_per_exact_source(self) -> None:
         certain_b = {"mixed_hint": "same_team_b", "source": {"effective_team_label": "B"}}
@@ -79,7 +147,28 @@ class ReviewedIdentityScopeEligibilityTests(unittest.TestCase):
         self.assertFalse(mixed_review_relevant_for_scope(certain_b, [{"team_label": "B"}, {"team_label": "B"}], self.match))
         self.assertTrue(mixed_review_relevant_for_scope(certain_a, [{"team_label": "A"}, {"team_label": "A"}], self.match))
         self.assertTrue(mixed_review_relevant_for_scope(cross_team, [{"team_label": "B"}, {"team_label": "B"}], self.match))
-        self.assertTrue(mixed_review_relevant_for_scope(team_u, [{"team_label": "U"}, {"team_label": "U"}], self.match))
+        self.assertFalse(mixed_review_relevant_for_scope(team_u, [{"team_label": "U"}, {"team_label": "U"}], self.match))
+
+    def test_b_and_u_only_mixed_source_is_nonmandatory_but_cross_team_is_mandatory(self) -> None:
+        b_and_u = {
+            "mixed_hint": "same_team_b",
+            "source": {"effective_team_label": "B", "coverage_team_label": "B"},
+        }
+        a_b_and_u = {
+            "mixed_hint": "cross_team",
+            "source": {"effective_team_label": "B", "coverage_team_label": "B"},
+        }
+
+        self.assertFalse(mixed_review_relevant_for_scope(
+            b_and_u,
+            [{"team_label": "B"}, {"team_label": "U"}],
+            self.match,
+        ))
+        self.assertTrue(mixed_review_relevant_for_scope(
+            a_b_and_u,
+            [{"team_label": "A"}, {"team_label": "B"}, {"team_label": "U"}],
+            self.match,
+        ))
 
     def test_b_only_player_continuity_and_identity_changes_do_not_make_mixed_required(self) -> None:
         b_only = {
