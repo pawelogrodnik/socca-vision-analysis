@@ -14,7 +14,11 @@ from app.services.identity_canonical_io import load_json_cached
 from app.services.identity_canonical_ownership import global_observation_ownership
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
-from app.services.identity_reviewed_mixed_store import operator_mixed_targets
+from app.services.identity_reviewed_mixed_store import (
+    load_mixed_player_cases,
+    operator_mixed_targets,
+    resolved_inline_temporal_split_source_keys,
+)
 from app.services.identity_reviewed_slot_registry import (
     build_reviewed_slot_registry,
     next_free_reviewed_slot,
@@ -234,7 +238,8 @@ def build_segment_review_document(
             }
 
     operator_targets_started = time.perf_counter()
-    for target in operator_mixed_targets(match_path):
+    operator_targets = operator_mixed_targets(match_path)
+    for target in operator_targets:
         target_id = str(target["review_target_id"])
         decision = stored_decisions.get(target_id)
         decision_current = bool(
@@ -248,6 +253,26 @@ def build_segment_review_document(
         target["decision_status"] = "reviewed" if decision_current else "pending"
         target["stale_decision"] = bool(decision and not decision_current)
         targets.append(target)
+
+    mixed_cases = [
+        dict(row)
+        for row in load_mixed_player_cases(match_path).get("cases") or []
+        if isinstance(row, dict)
+    ]
+    retired_source_keys = resolved_inline_temporal_split_source_keys(
+        mixed_cases,
+        stored_decisions,
+        operator_targets,
+    )
+    if retired_source_keys:
+        targets = [
+            target
+            for target in targets
+            if (
+                str(target.get("review_target_id") or ""),
+                str(target.get("source_ownership_digest") or ""),
+            ) not in retired_source_keys
+        ]
 
     if performance is not None:
         performance["segment_review_operator_targets_ms"] = round(
@@ -362,6 +387,26 @@ def project_segment_decisions_onto_materialized_review(
         target["decision_status"] = "reviewed" if current else "pending"
         target["stale_decision"] = bool(decision and not current)
 
+    mixed_cases = [
+        dict(row)
+        for row in load_mixed_player_cases(match_path).get("cases") or []
+        if isinstance(row, dict)
+    ]
+    retired_source_keys = resolved_inline_temporal_split_source_keys(
+        mixed_cases,
+        stored,
+        targets,
+    )
+    if retired_source_keys:
+        targets = [
+            target
+            for target in targets
+            if (
+                str(target.get("review_target_id") or ""),
+                str(target.get("source_ownership_digest") or ""),
+            ) not in retired_source_keys
+        ]
+
     orphaned = len(set(stored) - matched)
     summary = dict(document.get("summary") or {})
     summary.update(
@@ -372,6 +417,7 @@ def project_segment_decisions_onto_materialized_review(
             "orphaned_decisions_requiring_review": orphaned,
         }
     )
+    document["targets"] = targets
     document["summary"] = summary
     source = dict(document.get("source") or {})
     source["decisions_digest"] = canonical_digest(decisions_document.get("decisions") or [])

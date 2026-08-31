@@ -80,7 +80,11 @@ export function reviewWorkflowErrorMessage(workflow: ReviewWorkflow): string {
   const code = workflow.blockers[0]?.code || workflow.required_action?.type;
   if (code === 'render_failed') return 'Nie udało się przygotować wideo do sprawdzenia.';
   if (code === 'review_recompute_failed') return 'Nie udało się odświeżyć review.';
-  if (code === 'review_progress_missing' || code === 'review_progress_stale') {
+  if (
+    code === 'review_progress_missing'
+    || code === 'review_progress_stale'
+    || code === 'review_progress_recompute_required'
+  ) {
     return 'Review wymaga odświeżenia przed kolejną decyzją.';
   }
   if (

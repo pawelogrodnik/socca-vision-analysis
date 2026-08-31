@@ -13,6 +13,9 @@ from app.services.identity_reviewed_progress import (
     PROGRESS_SCHEMA_VERSION,
     required_queue_descriptor,
 )
+from app.services.identity_reviewed_recompute_state import (
+    load_reviewed_identity_recompute_state,
+)
 from app.services.identity_reviewed_team_attribution_evidence import (
     classify_team_attribution_evidence_status,
 )
@@ -303,13 +306,21 @@ def get_review_workflow_state(
         and output_manifest
         and output_manifest.get("stale") is not True
     )
+    recompute_state = {} if progress is not None else load_reviewed_identity_recompute_state(match_path)
+    recompute_pending = recompute_state.get("status") == "required"
     if progress is None:
-        progress, progress_reason = _current_cached_progress(
-            match_path,
-            snapshot,
-            match_doc,
-        )
+        if recompute_pending:
+            progress, progress_reason = None, "review_progress_recompute_required"
+        else:
+            progress, progress_reason = _current_cached_progress(
+                match_path,
+                snapshot,
+                match_doc,
+            )
     else:
+        # Callers that pass progress are in the authoritative recompute
+        # transaction itself; that exact in-flight generation is safe to
+        # derive before the marker is cleared at commit.
         progress_reason = None
     initial = (
         completion_evidence
@@ -329,6 +340,11 @@ def get_review_workflow_state(
             "qa_approval_current": approval_is_current(approval, fingerprints) and output_current and stats_current,
             "review_progress_current": progress is not None,
             "review_progress_reason": progress_reason,
+            "review_progress_recompute_generation": (
+                str(recompute_state.get("semantic_decision_digest") or "")
+                if recompute_pending
+                else None
+            ),
         },
         "render": _public_render(job),
         "recompute_failed": bool(load_json_object(match_path / "review_workflow_recompute_failure.json")),
@@ -371,6 +387,7 @@ def build_compact_review_workflow_state(
                 "qa_approval_current": False,
                 "review_progress_current": False,
                 "review_progress_reason": "review_progress_missing",
+                "review_progress_recompute_generation": None,
             },
             "render": {"status": "missing"},
             "recompute_failed": recompute_failed,
@@ -378,6 +395,7 @@ def build_compact_review_workflow_state(
 
     report = load_json_object(match_path / "reviewed_identity_report.json")
     snapshot_digest = str((report or {}).get("snapshot_digest") or "")
+    recompute_state = load_reviewed_identity_recompute_state(match_path)
     return _compact_workflow_state_for_generation(
         match_path,
         match_doc,
@@ -391,6 +409,7 @@ def build_compact_review_workflow_state(
             )
         ),
         recompute_failed=recompute_failed,
+        recompute_state=recompute_state,
     )
 
 
@@ -402,13 +421,27 @@ def _compact_workflow_state_for_generation(
     snapshot_digest: str,
     canonical_generation_current: bool,
     recompute_failed: bool,
+    recompute_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Use report/progress generation evidence to derive public workflow."""
-    progress, progress_reason = _current_cached_progress_for_snapshot_digest(
-        match_path,
-        snapshot_digest,
-        match_doc,
-    )
+    recompute_state = recompute_state or {}
+    recompute_pending = recompute_state.get("status") == "required"
+    # A structural Review mutation invalidates the durable queue before its
+    # canonical replacement is committed.  The hot projection may already
+    # contain the current topology, but the compact workflow must never expose
+    # the previous durable queue as current operator work in that interval.
+    #
+    # Do not delete the durable document: it remains useful provenance for the
+    # recompute transaction.  Its generation is simply not publishable through
+    # the compact workflow while this explicit marker exists.
+    if recompute_pending:
+        progress, progress_reason = None, "review_progress_recompute_required"
+    else:
+        progress, progress_reason = _current_cached_progress_for_snapshot_digest(
+            match_path,
+            snapshot_digest,
+            match_doc,
+        )
     stats = load_json_object(match_path / "reviewed_player_stats.json")
     stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
     output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
@@ -451,6 +484,11 @@ def _compact_workflow_state_for_generation(
             ),
             "review_progress_current": progress is not None,
             "review_progress_reason": progress_reason,
+            "review_progress_recompute_generation": (
+                str(recompute_state.get("semantic_decision_digest") or "")
+                if recompute_pending
+                else None
+            ),
         },
         "render": _public_render(job),
         "recompute_failed": recompute_failed,

@@ -1838,6 +1838,8 @@ export type ReviewWorkflow = {
     qa_approval_current: boolean;
     review_progress_current?: boolean;
     review_progress_reason?: string | null;
+    /** Stable deferred-mutation marker used to bound automatic recovery. */
+    review_progress_recompute_generation?: string | null;
   };
   processing?: ReviewedOutputJob | null;
   blockers: Array<{ code: string; step_id: string; user_actionable: boolean; details: Record<string, unknown> }>;

@@ -20,6 +20,9 @@ from app.services.identity_reviewed_progress import (
     PROGRESS_SCHEMA_VERSION,
     required_queue_descriptor,
 )
+from app.services.identity_reviewed_recompute_state import (
+    mark_reviewed_identity_recompute_required,
+)
 from app.services.identity_seeded_review_reduction import (
     build_initial_audit_completion_evidence,
 )
@@ -74,6 +77,77 @@ def _public_workflow_semantics(state: dict) -> dict:
 
 
 class ReviewWorkflowStateTests(unittest.TestCase):
+    def test_compact_workflow_never_advertises_durable_required_queue_while_recompute_is_pending(self) -> None:
+        """Regression for the Mixed structural-save dead-end from match 6d8fc20c.
+
+        The persisted generation had four Required cases, while the current
+        hot topology had none and the structural mutation still required a
+        canonical recompute.  Compact workflow may retain the old artifact as
+        provenance, but cannot expose it as an actionable current queue.
+        """
+        complete = {"prepared": True, "complete": True, "completed": 8, "total": 8, "remaining": 0}
+        durable_required = {
+            "schema_version": PROGRESS_SCHEMA_VERSION,
+            "policy": {"version": COVERAGE_POLICY_VERSION},
+            "source_snapshot_digest": "snapshot",
+            "next_cases": [{
+                "candidate_subject_id": f"old-required-{index}",
+                "source_ownership_digest": f"old-source-{index}",
+            } for index in range(4)],
+            "summary": {"important_decisions_remaining": 4},
+            "mixed_players": {"summary": {"unresolved": 0}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_json(root / "reviewed_identity_report.json", {
+                "snapshot_digest": "snapshot",
+                "source_file_fingerprints": {},
+            })
+            write_json(root / "reviewed_identity_progress.json", durable_required)
+            mark_reviewed_identity_recompute_required(
+                root,
+                semantic_decision_digest="mixed-structural-generation",
+            )
+            with patch(
+                "app.services.review_workflow_state._analysis_completed", return_value=True
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence", return_value=complete
+            ), patch(
+                "app.services.review_workflow_state.canonical_generation_maybe_current", return_value=True
+            ), patch(
+                "app.services.review_workflow_state.review_scope_dependency_matches", return_value=True
+            ):
+                state = build_compact_review_workflow_state(
+                    root,
+                    {"id": "m1", "status": "analyzed"},
+                )
+                authoritative = get_review_workflow_state(
+                    root,
+                    {"id": "m1", "status": "analyzed"},
+                    snapshot={"status": "partial_reviewed", "semantic_digest": "snapshot"},
+                    completion_evidence=complete,
+                )
+
+        self.assertFalse(state["freshness"]["review_progress_current"])
+        self.assertEqual(
+            state["freshness"]["review_progress_reason"],
+            "review_progress_recompute_required",
+        )
+        self.assertEqual(
+            state["freshness"]["review_progress_recompute_generation"],
+            "mixed-structural-generation",
+        )
+        self.assertEqual(state["issues"]["normal_blocking"], 0)
+        self.assertEqual(state["issues"]["required_queue"].get("count"), 0)
+        self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
+        self.assertEqual(state["required_action"]["type"], "retry_review_recompute")
+        self.assertNotIn("review_identity_issue", state["allowed_actions"])
+        self.assertEqual(
+            authoritative["freshness"]["review_progress_reason"],
+            state["freshness"]["review_progress_reason"],
+        )
+        self.assertEqual(authoritative["issues"]["required_queue"], state["issues"]["required_queue"])
+
     def test_compact_workflow_matches_authoritative_lifecycle_semantics(self) -> None:
         complete = {"prepared": True, "complete": True, "completed": 8, "total": 8, "remaining": 0}
         base_progress = {
