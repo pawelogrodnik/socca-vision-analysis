@@ -252,6 +252,75 @@ def resolved_material_continuity_observation_pairs(
     return active_pairs
 
 
+def resolved_inline_temporal_split_source_keys(
+    cases: list[dict[str, Any]],
+    decisions: dict[str, dict[str, Any]],
+    targets: list[dict[str, Any]],
+) -> set[tuple[str, str]]:
+    """Return exact parent targets retired by complete resolved child splits.
+
+    An inline split is authoritative only when every persisted child target is
+    still present, every child has a current decision, and the children cover
+    precisely the parent source observations.  This is intentionally stricter
+    than the case's ``resolved`` flag: a stale or incomplete child set must
+    leave the original canonical target visible for safe operator review.
+
+    The returned tuple contains the source target id and its ownership digest,
+    so an unrelated canonical target for the same raw subject can never be
+    hidden.
+    """
+    targets_by_parent: dict[str, dict[str, dict[str, Any]]] = {}
+    for target in targets:
+        parent_id = str(target.get("split_parent_case_id") or "")
+        target_id = str(target.get("review_target_id") or "")
+        if parent_id and target_id:
+            targets_by_parent.setdefault(parent_id, {})[target_id] = target
+
+    retired: set[tuple[str, str]] = set()
+    for case in cases:
+        source = case.get("source")
+        if (
+            not isinstance(source, dict)
+            or str(case.get("resolution_status") or "") != "resolved"
+            or (
+                str(case.get("original_issue") or "") != "inline_temporal_split"
+                and str(case.get("resolution_model") or "") != "concurrent_lanes"
+            )
+        ):
+            continue
+        source_target_id = str(source.get("review_target_id") or "")
+        source_digest = str(source.get("source_ownership_digest") or "")
+        source_pairs = _owned_observation_pairs(source.get("owned_observations"))
+        child_target_ids = {
+            str(value) for value in case.get("segment_target_ids") or [] if str(value)
+        }
+        children = targets_by_parent.get(str(case.get("case_id") or ""), {})
+        if (
+            not source_target_id
+            or not source_digest
+            or not source_pairs
+            or not child_target_ids
+            or set(children) != child_target_ids
+        ):
+            continue
+
+        child_pairs: set[tuple[str, int]] = set()
+        for target_id in child_target_ids:
+            target = children[target_id]
+            decision = decisions.get(target_id)
+            if (
+                not isinstance(decision, dict)
+                or str(decision.get("source_ownership_digest") or "")
+                != str(target.get("source_ownership_digest") or "")
+            ):
+                break
+            child_pairs.update(_owned_observation_pairs(target.get("owned_observations")))
+        else:
+            if child_pairs == source_pairs:
+                retired.add((source_target_id, source_digest))
+    return retired
+
+
 def mixed_case_summary(
     rows: list[dict[str, Any]],
     blocking_case_ids: set[str],

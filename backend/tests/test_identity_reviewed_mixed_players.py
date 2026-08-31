@@ -2028,6 +2028,69 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 },
             )
 
+    def test_resolved_inline_split_retires_its_exact_canonical_parent_target(self) -> None:
+        """A split's reviewed children must replace, not duplicate, its parent."""
+        with _workspace() as root:
+            match = _fixture(root)
+            _make_single_canonical_parent_target(root)
+            parent = next(
+                row
+                for row in build_segment_review_document(root, match)["targets"]
+                if row["source_team_label"] == "A"
+            )
+
+            result = save_inline_temporal_split(
+                root,
+                match,
+                {
+                    "candidate_subject_id": "subject-mixed",
+                    "review_target_id": parent["review_target_id"],
+                    "source_ownership_digest": parent["source_ownership_digest"],
+                    "resolution": "split",
+                    "split_after_frames": [4],
+                    "segment_assignments": [
+                        {"action": "assign_team", "team_label": "B"},
+                        {"action": "assign_roster_player", "player_id": "player-a"},
+                    ],
+                },
+            )
+
+            child_target_ids = set(result["saved_case"]["segment_target_ids"])
+            projected = load_segment_review(root)
+            rebuilt = build_segment_review_document(root, match)
+            progress = build_reviewed_identity_progress(root, match, include_internal_units=True)
+
+            for review in (projected, rebuilt):
+                target_ids = {str(row["review_target_id"]) for row in review["targets"]}
+                self.assertNotIn(parent["review_target_id"], target_ids)
+                self.assertTrue(child_target_ids.issubset(target_ids))
+                self.assertTrue(all(
+                    row["decision_status"] == "reviewed"
+                    for row in review["targets"]
+                    if row["review_target_id"] in child_target_ids
+                ))
+            self.assertFalse(any(
+                row.get("review_target_id") == parent["review_target_id"]
+                for row in progress["_internal_review_units"]
+            ))
+            self.assertTrue(all(
+                row.get("review_target_id") != parent["review_target_id"]
+                for row in progress["next_cases"]
+            ))
+
+            decisions = load_segment_decisions(root)
+            decisions["decisions"] = [
+                row
+                for row in decisions["decisions"]
+                if row["review_target_id"] != result["saved_case"]["segment_target_ids"][0]
+            ]
+            _write(root / "reviewed_identity_segment_decisions.json", decisions)
+            fail_closed = build_segment_review_document(root, match)
+            self.assertIn(
+                parent["review_target_id"],
+                {row["review_target_id"] for row in fail_closed["targets"]},
+            )
+
     def test_focused_serial_targets_match_global_parent_targets(self) -> None:
         def assert_equivalent(split_after_frames: list[int], assignments: list[dict]) -> None:
             with _workspace() as root:
@@ -2814,6 +2877,46 @@ def _make_concurrent(root: Path) -> None:
         ],
     })
     _write(root / "tracklets.json", tracklets)
+
+
+def _make_single_canonical_parent_target(root: Path) -> None:
+    """Make t1 a canonical mixed-owner target over its complete frame range."""
+    tracklets = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+    tracklets["tracklets"][0]["positions_m"].append(
+        {
+            "frame": 10,
+            "time_sec": 10.0,
+            "x_m": 10.0,
+            "y_m": 1.0,
+            "pitch_m": [10.0, 1.0],
+            "detected": True,
+            "play_area_status": "inside_play",
+            "bbox_xyxy": [10, 10, 20, 30],
+        }
+    )
+    _write(root / "tracklets.json", tracklets)
+    _write(
+        root / "global_identity.json",
+        {
+            "slots": [
+                {
+                    "stable_player_id": "A01",
+                    "team_label": "A",
+                    "tracklet_ids": ["t1"],
+                    "positions_m": [
+                        {"tracklet_id": "t1", "frame": frame}
+                        for frame in range(1, 9)
+                    ],
+                },
+                {
+                    "stable_player_id": "B01",
+                    "team_label": "B",
+                    "tracklet_ids": ["t1"],
+                    "positions_m": [{"tracklet_id": "t1", "frame": 10}],
+                },
+            ]
+        },
+    )
 
 
 def _split_state_paths(root: Path) -> list[Path]:
