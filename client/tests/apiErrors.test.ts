@@ -5,6 +5,7 @@ import {
   ApiRequestError,
   isRecoverableConcurrentLaneConflict,
   isRecoverableReviewQueueConflict,
+  isReviewProgressStale,
 } from '../src/lib/apiErrors.ts';
 import { isRequestAbortError, request } from '../src/api.ts';
 
@@ -43,6 +44,13 @@ test('recognizes only explicit concurrent lane refresh conflicts', () => {
   assert.equal(isRecoverableConcurrentLaneConflict(new ApiRequestError(409, 'scope', 'invalid_action_scope')), false);
   assert.equal(isRecoverableConcurrentLaneConflict(new ApiRequestError(400, 'stale', 'concurrent_lane_set_stale')), false);
   assert.equal(isRecoverableConcurrentLaneConflict(new Error('409: stale')), false);
+});
+
+test('recognizes only the global Review-progress stale conflict for Mixed recovery', () => {
+  assert.equal(isReviewProgressStale(new ApiRequestError(409, 'stale', 'review_progress_stale')), true);
+  assert.equal(isReviewProgressStale(new ApiRequestError(409, 'other', 'review_queue_stale')), false);
+  assert.equal(isReviewProgressStale(new ApiRequestError(400, 'stale', 'review_progress_stale')), false);
+  assert.equal(isReviewProgressStale(new Error('409: review_progress_stale')), false);
 });
 
 test('request preserves structured FastAPI conflict code', async () => {

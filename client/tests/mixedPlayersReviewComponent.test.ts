@@ -963,6 +963,42 @@ test('serial-to-concurrent save race refreshes exact case without retry or fake 
   assert.ok(view.getByText(/Pokazano aktualny przypadek/));
 });
 
+test('review-progress stale split refreshes workflow and exact case without replaying the mutation', async () => {
+  const current = splittableMixedCase('M-progress-stale');
+  let saves = 0;
+  let focusedReads = 0;
+  let workflowReads = 0;
+  let reprojects = 0;
+  const view = renderPanel({
+    getQueue: async () => queue([current]),
+    saveResolution: async () => {
+      saves += 1;
+      throw new ApiRequestError(409, 'review progress changed', 'review_progress_stale');
+    },
+    getFocusedCase: async () => {
+      focusedReads += 1;
+      return focusedResponse('M-progress-stale', 'current_blocking', current);
+    },
+    getWorkflow: async () => {
+      workflowReads += 1;
+      return workflowWithBlocking(0, 1);
+    },
+    reprojectWorkflow: async () => {
+      reprojects += 1;
+      return workflow;
+    },
+  });
+
+  await submitValidStructuralSplit(view);
+  await waitFor(() => assert.ok(view.getByText(/Niezapisany podział zachowano/)));
+
+  assert.equal(saves, 1);
+  assert.equal(focusedReads, 1);
+  assert.equal(workflowReads, 1);
+  assert.equal(reprojects, 0);
+  assert.equal(view.getByRole('button', { name: 'Zapisz podział + następny' }).hasAttribute('disabled'), false);
+});
+
 test('stale concurrent lane save exact-refreshes once and never retries the POST automatically', async () => {
   const stale = concurrentMixedCase('M-lane-stale');
   const fresh = {

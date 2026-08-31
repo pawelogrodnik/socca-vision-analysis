@@ -67,6 +67,10 @@ type Props = {
   match: Match;
   workflow: ReviewWorkflow;
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
+  onCompletionSynchronizationChange?: (
+    synchronizing: boolean,
+    authoritativeWorkflow?: ReviewWorkflow,
+  ) => void;
   onRetryReview?: () => Promise<void>;
   initialQueue?: ReviewedIdentityReviewQueue;
   onOptionalAuditSummaryChanged?: (summary: ReviewedIdentityOptionalAudit) => void;
@@ -138,6 +142,7 @@ export function IdentityExceptionReviewPanel({
   match,
   workflow,
   onWorkflowChanged,
+  onCompletionSynchronizationChange,
   onRetryReview,
   initialQueue = 'required',
   onOptionalAuditSummaryChanged,
@@ -386,8 +391,8 @@ export function IdentityExceptionReviewPanel({
 
   function saved(result: ReviewedCorrectionResponse) {
     if (result.coverage_debt) setCoverageDebt(result.coverage_debt);
-    if (result.workflow) onWorkflowChanged(result.workflow);
     if (!reviewCase || !result.recompute_deferred) {
+      if (result.workflow) onWorkflowChanged(result.workflow);
       return;
     }
     if (result.idempotent_replay) {
@@ -408,6 +413,7 @@ export function IdentityExceptionReviewPanel({
       setFinalizeFailed(false);
       requiredReviewLifecycleRef.current = beginRequiredReviewLifecycle(0);
       setMessage('Zapisano decyzję. Odświeżam przypadki po zmianie struktury…');
+      if (result.workflow) onWorkflowChanged(result.workflow);
       void loadCases(
         undefined,
         true,
@@ -429,6 +435,7 @@ export function IdentityExceptionReviewPanel({
     setMessage('Zapisano decyzję.');
     setTotalRemaining((remaining) => Math.max(0, remaining - 1));
     if (activeQueue === 'optional_audit') {
+      if (result.workflow) onWorkflowChanged(result.workflow);
       // Coverage is never inferred in the client. The new queue and complete
       // MAX summary come from the read-only progress endpoint after every save.
       void loadCases(undefined, true, 0, 0, 'all', 'optional_audit');
@@ -439,7 +446,10 @@ export function IdentityExceptionReviewPanel({
         // Canonical synchronization is an authoritative completion/recovery
         // operation, never periodic hot-queue batching.
         void finalizeCorrections(activeTeamFilter, activeQueue);
-      } else if (transition.synchronization === 'replenish') {
+        return;
+      }
+      if (result.workflow) onWorkflowChanged(result.workflow);
+      if (transition.synchronization === 'replenish') {
         // Required Review is a shrinking queue. Refresh its current head from
         // the valid hot projection; this does not call corrections/finalize.
         void loadCases(
@@ -509,15 +519,18 @@ export function IdentityExceptionReviewPanel({
   ) {
     if (finalizeInFlight.current) return;
     finalizeInFlight.current = true;
+    onCompletionSynchronizationChange?.(true);
     setFinalizing(true);
     setFinalizeFailed(false);
     setMessage('Przeliczam Review po zapisaniu decyzji…');
+    let authoritativeWorkflow: ReviewWorkflow | undefined;
     try {
       const { result, cases: refreshedCases } = await finalizeDeferredReviewBatch(
         () => finalizeReviewedIdentityCorrections(match.id),
         () => loadCases(undefined, true, 0, 0, teamFilter, queue),
         onWorkflowChanged,
       );
+      authoritativeWorkflow = result.workflow;
       if (refreshedCases.length === 0) {
         setCases([]);
         setIndex(0);
@@ -534,6 +547,7 @@ export function IdentityExceptionReviewPanel({
     } finally {
       finalizeInFlight.current = false;
       setFinalizing(false);
+      onCompletionSynchronizationChange?.(false, authoritativeWorkflow);
     }
   }
 

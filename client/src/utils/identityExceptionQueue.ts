@@ -219,9 +219,14 @@ export async function finalizeDeferredReviewBatch<T extends ReviewCaseWithUnit>(
   onWorkflowChanged: (workflow: ReviewWorkflow) => void,
 ): Promise<{ result: ReviewedCorrectionFinalizeResponse; cases: T[] }> {
   const result = await finalize();
+  // Completion synchronization is a transition boundary. Refresh the
+  // authoritative Required projection before exposing its workflow to the
+  // peer Mixed queue, otherwise an interim deferred-save workflow can mount
+  // Mixed while this finalize is still rebuilding the generation.
+  const cases = await reloadCases();
   onWorkflowChanged(result.workflow);
   return {
     result,
-    cases: result.workflow.phase === 'exceptions' ? await reloadCases() : [],
+    cases,
   };
 }
