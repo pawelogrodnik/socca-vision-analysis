@@ -10,7 +10,7 @@ from app.services.identity_review_scope import TEAM_STATS_ONLY, team_review_scop
 
 TeamAttributionState = str
 
-UNCERTAIN_TEAM_STATES = frozenset({"uncertain", "cross_team", "unknown"})
+UNCERTAIN_TEAM_STATES = frozenset({"cross_team", "unknown"})
 
 
 def team_attribution_state(value: dict[str, Any]) -> TeamAttributionState:
@@ -20,38 +20,28 @@ def team_attribution_state(value: dict[str, Any]) -> TeamAttributionState:
     state.  They are deliberately not evidence: a historical ``team_mismatch``
     must not turn a currently all-B source back into a Required team decision.
     """
-    source = _team_label(value.get("source_team_label"))
-    effective = _team_label(value.get("effective_team_label"))
-    coverage = _team_label(value.get("coverage_team_label"))
-    source_is_explicitly_unknown = _explicitly_unknown(value, "source_team_label")
-    effective_is_explicitly_unknown = _explicitly_unknown(value, "effective_team_label")
-    detected = _detected_team_labels(value.get("detected_team_labels"))
+    if _is_explicit_team_unknown_decision(value):
+        return "unknown"
 
-    if str(value.get("mixed_hint") or "") == "cross_team" or detected == {"A", "B"}:
+    established = {
+        team
+        for team in (
+            _team_label(value.get("source_team_label")),
+            _team_label(value.get("effective_team_label")),
+            _team_label(value.get("coverage_team_label")),
+        )
+        if team in {"A", "B"}
+    }
+    established |= _detected_team_labels(value.get("detected_team_labels"))
+    explicit_decision_team = _explicit_decision_team(value)
+    if explicit_decision_team:
+        established.add(explicit_decision_team)
+
+    if str(value.get("mixed_hint") or "") == "cross_team" or len(established) > 1:
         return "cross_team"
-
-    established = {team for team in (source, effective, coverage) if team in {"A", "B"}}
-    if len(established) > 1:
-        return "cross_team"
-
-    if detected:
-        detected_team = next(iter(detected))
-        if established and detected_team not in established:
-            return "cross_team"
-        established.add(detected_team)
 
     if len(established) == 1:
-        team = next(iter(established))
-        # A current unknown source is not made safe merely because a display
-        # or coverage projection has a best-known team.  ``certain`` requires
-        # its source and effective canonical labels to agree with the exact
-        # detected evidence when that evidence is available.
-        if (
-            (source_is_explicitly_unknown or effective_is_explicitly_unknown)
-            and not _has_explicit_team_decision(value, team)
-        ):
-            return "uncertain"
-        return f"certain_{team}"
+        return f"certain_{next(iter(established))}"
 
     return "unknown"
 
@@ -72,10 +62,16 @@ def required_review_relevant_for_scope(
     A/B attribution uncertainty remains mandatory regardless of its current
     best team label.
     """
-    if has_team_attribution_uncertainty(unit):
+    state = team_attribution_state(unit)
+    if state == "cross_team":
         return True
+    # Team-U is an explicit unknown output, not a request to guess an A/B
+    # assignment. It can remain a terminal residual, but never becomes an
+    # ordinary Required operator card merely because it is unknown.
+    if state == "unknown":
+        return False
     team = unit_team_label(unit)
-    return team == "U" or team_review_scope(match_doc, team) != TEAM_STATS_ONLY
+    return team_review_scope(match_doc, team) != TEAM_STATS_ONLY
 
 
 def mixed_review_relevant_for_scope(
@@ -100,11 +96,16 @@ def mixed_review_relevant_for_scope(
         and _team_label(context.get("effective_team_label")) in {"A", "B"}
     ):
         context["source_team_label"] = context["effective_team_label"]
-    if has_team_attribution_uncertainty(context):
+    if not labels:
+        # Missing exact owned observations is stale/unclassifiable data, not
+        # a Team-U observation. Preserve the existing fail-closed path.
         return True
-    if "U" in labels or len(labels) != 1:
+    state = team_attribution_state(context)
+    if state == "cross_team":
         return True
-    team = next(iter(labels))
+    if state == "unknown":
+        return False
+    team = unit_team_label(context)
     return team_review_scope(match_doc, team) != TEAM_STATS_ONLY
 
 
@@ -114,6 +115,8 @@ def unit_team_label(unit: dict[str, Any]) -> str:
         return "A"
     if state == "certain_B":
         return "B"
+    if state == "unknown":
+        return "U"
     for field in ("coverage_team_label", "effective_team_label", "source_team_label"):
         team = _team_label(unit.get(field))
         if team in {"A", "B"}:
@@ -127,17 +130,19 @@ def _detected_team_labels(value: Any) -> set[str]:
     return {_team_label(team) for team in value} & {"A", "B"}
 
 
-def _explicitly_unknown(value: dict[str, Any], field: str) -> bool:
-    return field in value and _team_label(value.get(field)) == "U"
-
-
-def _has_explicit_team_decision(value: dict[str, Any], team: str) -> bool:
+def _explicit_decision_team(value: dict[str, Any]) -> str | None:
     decision = value.get("current_decision")
-    return (
-        isinstance(decision, dict)
-        and str(decision.get("action") or "") in {"assign_team", "assign_roster_player"}
-        and _team_label(decision.get("team_label")) == team
-    )
+    if not isinstance(decision, dict):
+        return None
+    if str(decision.get("action") or "") not in {"assign_team", "assign_roster_player"}:
+        return None
+    team = _team_label(decision.get("team_label"))
+    return team if team in {"A", "B"} else None
+
+
+def _is_explicit_team_unknown_decision(value: dict[str, Any]) -> bool:
+    decision = value.get("current_decision")
+    return isinstance(decision, dict) and str(decision.get("action") or "") == "team_unknown"
 
 
 def _team_label(value: Any) -> str:

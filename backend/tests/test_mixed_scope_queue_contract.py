@@ -84,6 +84,34 @@ class MixedScopeQueueContractTests(unittest.TestCase):
             self.assertEqual(stale["scope_status"], "stale_or_unclassifiable_blocking")
             self.assertEqual(queue["summary"]["nonblocking_by_scope"], 0)
 
+    def test_b_and_u_only_mixed_source_is_nonblocking_under_team_stats_only(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            match = _match()
+            _write_tracklets(root, a_frames=set(), b_frames={1}, u_frames={2})
+            marker = {
+                **_exact_marker("b-u", "b", 1, "same_team_b", "B"),
+                "source": {
+                    "candidate_subject_id": "subject-b-u",
+                    "source_team_label": "B",
+                    "effective_team_label": "B",
+                    "coverage_team_label": "B",
+                    "source_ownership_digest": "ownership-b-u",
+                    "owned_observations": [
+                        {"tracklet_id": "b", "frame": 1},
+                        {"tracklet_id": "u", "frame": 2},
+                    ],
+                },
+            }
+            _write(root / "reviewed_identity_mixed_players.json", {"cases": [marker]})
+
+            queue = build_mixed_review_queue(root, match)
+
+            self.assertEqual(queue["cases"], [])
+            self.assertEqual(queue["summary"]["unresolved"], 0)
+            self.assertEqual(queue["summary"]["unresolved_total"], 1)
+            self.assertEqual(queue["summary"]["nonblocking_by_scope"], 1)
+
 
 def _match() -> dict:
     return {
@@ -112,9 +140,21 @@ def _exact_marker(case_id: str, tracklet_id: str, frame: int, hint: str, team: s
     }
 
 
-def _write_tracklets(root: Path, *, a_frames: set[int], b_frames: set[int]) -> None:
+def _write_tracklets(
+    root: Path,
+    *,
+    a_frames: set[int],
+    b_frames: set[int],
+    u_frames: set[int] | None = None,
+) -> None:
     rows = []
-    for tracklet_id, team, frames in (("a", "A", a_frames), ("b", "B", b_frames)):
+    for tracklet_id, team, frames in (
+        ("a", "A", a_frames),
+        ("b", "B", b_frames),
+        ("u", "U", u_frames or set()),
+    ):
+        if not frames:
+            continue
         rows.append({
             "tracklet_id": tracklet_id,
             "team_label": team,

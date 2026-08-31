@@ -1006,8 +1006,7 @@ def operator_targets_for_mixed_marker(
 
     targets: list[dict[str, Any]] = []
     for index, group in enumerate(_split_observations(observations, split_frames)):
-        teams = {str(row.get("team_label") or "U") for row in group}
-        source_team = next(iter(teams)) if len(teams) == 1 else "U"
+        source_team = _source_team_for_observations(group)
         ownership_payload = [
             {"tracklet_id": row["tracklet_id"], "frame": row["frame"]}
             for row in group
@@ -1106,8 +1105,7 @@ def operator_concurrent_targets_for_marker(
             }
         )
         frames = [int(row["frame"]) for row in group]
-        teams = {str(row.get("team_label") or "U") for row in group}
-        source_team = next(iter(teams)) if len(teams) == 1 else "U"
+        source_team = _source_team_for_observations(group)
         crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
         targets.append(
             {
@@ -1353,6 +1351,15 @@ def _split_observations(
         index = sum(frame > boundary for boundary in split_frames)
         groups[index].append(observation)
     return groups
+
+
+def _source_team_for_observations(observations: list[dict[str, Any]]) -> str:
+    """Return a known team unless exact observations genuinely conflict."""
+    known_teams = {
+        str(row.get("team_label") or "U").upper()
+        for row in observations
+    } & {"A", "B"}
+    return next(iter(known_teams)) if len(known_teams) == 1 else "U"
 
 
 def _temporal_evidence(
