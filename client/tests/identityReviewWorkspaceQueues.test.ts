@@ -239,6 +239,84 @@ test('technical Team-attribution failure explains recovery and exposes only serv
   }
 });
 
+test('a pending recompute generation recovers once before mounting any mandatory queue', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  const pending: ReviewWorkflow = {
+    ...mandatoryWorkflow('exceptions'),
+    status: 'error',
+    required_action: { type: 'retry_review_recompute', step_id: 'exceptions' },
+    issues: {
+      blocking: 0,
+      normal_blocking: 0,
+      mixed_blocking: 0,
+      important: 0,
+      optional: 0,
+    },
+    freshness: {
+      reviewed_identity_current: true,
+      reviewed_stats_current: false,
+      reviewed_output_current: false,
+      qa_approval_current: false,
+      review_progress_current: false,
+      review_progress_reason: 'review_progress_recompute_required',
+      review_progress_recompute_generation: 'mixed-structural-generation',
+    },
+    blockers: [{
+      code: 'review_progress_recompute_required',
+      step_id: 'exceptions',
+      user_actionable: true,
+      details: {},
+    }],
+    allowed_actions: ['retry_review_recompute'],
+  };
+  const recovered: ReviewWorkflow = {
+    ...pending,
+    phase: 'ready_to_finalize',
+    status: 'ready',
+    current_step_id: 'finalize',
+    required_action: { type: 'finalize_identity', step_id: 'finalize' },
+    freshness: {
+      ...pending.freshness,
+      review_progress_current: true,
+      review_progress_reason: null,
+      review_progress_recompute_generation: null,
+    },
+    blockers: [],
+    allowed_actions: ['finalize_identity'],
+  };
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    const body = url.includes('/retry-recompute')
+      ? { workflow: recovered }
+      : url.includes('/review-workflow')
+        ? pending
+        : {};
+    return new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  try {
+    const view = renderWorkspace(pending);
+    await waitFor(() => assert.equal(
+      requests.filter((url) => url.includes('/retry-recompute')).length,
+      1,
+    ));
+    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Wymagany przegląd zakończony' })));
+    assert.equal(
+      requests.some((url) => url.includes('/reviewed-identity/review-progress')),
+      false,
+    );
+    assert.equal(
+      requests.some((url) => url.includes('/reviewed-identity/mixed-players')),
+      false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('StrictMode remount shares one pending Required progress request', async () => {
   const originalFetch = globalThis.fetch;
   let progressCalls = 0;

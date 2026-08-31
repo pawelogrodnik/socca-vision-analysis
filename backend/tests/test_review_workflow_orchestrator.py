@@ -71,6 +71,37 @@ def _focused_terminal_progress_and_workflow() -> tuple[dict, dict]:
 
 
 class ReviewWorkflowOrchestratorTests(unittest.TestCase):
+    def test_pending_recompute_rebuilds_the_generation_instead_of_reusing_stale_progress(self) -> None:
+        pending = {
+            "allowed_actions": ["retry_review_recompute"],
+            "freshness": {
+                "review_progress_current": False,
+                "review_progress_reason": "review_progress_recompute_required",
+                "reviewed_identity_current": True,
+            },
+            "issues": {"normal_blocking": 0, "mixed_blocking": 0},
+        }
+        refreshed = {"workflow": {"issues": {"normal_blocking": 0}}}
+        with patch(
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
+            return_value=pending,
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ) as refresh:
+            result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
+
+        self.assertEqual(result["workflow"], refreshed["workflow"])
+        refresh.assert_called_once_with(
+            Path("/tmp/match"),
+            {"id": "m1"},
+            source="retry",
+            operator_evidence=True,
+            leave_hot_state_warm=True,
+            reuse_current_snapshot=False,
+            retry_technical_team_attribution_evidence=False,
+        )
+
     def test_retry_commits_and_warms_the_generation_before_returning_workflow(self) -> None:
         retryable = {
             "allowed_actions": ["retry_review_recompute"],

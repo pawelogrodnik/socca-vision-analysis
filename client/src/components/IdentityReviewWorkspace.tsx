@@ -80,6 +80,8 @@ export function IdentityReviewWorkspace({
   const [requiredTeamFilter, setRequiredTeamFilter] = useState<TeamReviewFilter>('all');
   const [completionSynchronizing, setCompletionSynchronizing] = useState(false);
   const completionSynchronizingRef = useRef(false);
+  const recoveredRecomputeGenerationRef = useRef<string | null>(null);
+  const workflowRequestIdRef = useRef(0);
   const mixedLeaveGuardRef = useRef<() => boolean>(() => true);
 
   function applyWorkflow(next: ReviewWorkflow) {
@@ -112,10 +114,12 @@ export function IdentityReviewWorkspace({
   }
 
   async function refreshWorkflow() {
+    const requestId = ++workflowRequestIdRef.current;
     try {
-      applyWorkflow(await getReviewWorkflow(match.id));
+      const next = await getReviewWorkflow(match.id);
+      if (requestId === workflowRequestIdRef.current) applyWorkflow(next);
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (requestId === workflowRequestIdRef.current) setMessage(errorMessage(error));
     }
   }
 
@@ -133,6 +137,8 @@ export function IdentityReviewWorkspace({
     setRequiredTeamFilter('all');
     completionSynchronizingRef.current = false;
     setCompletionSynchronizing(false);
+    recoveredRecomputeGenerationRef.current = null;
+    setBusy(false);
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -234,18 +240,45 @@ export function IdentityReviewWorkspace({
 
   async function retry(action: 'retry_render' | 'retry_review_recompute') {
     if (!workflowAllows(workflow, action)) return;
+    // A recovery is authoritative over an older background workflow GET.
+    // Without this token, a slow pre-recovery read can overwrite the fresh
+    // response and put the operator back on the stale recovery screen.
+    const requestId = ++workflowRequestIdRef.current;
     setBusy(true);
     try {
-      applyWorkflow(action === 'retry_render'
+      const next = action === 'retry_render'
         ? await retryReviewRender(match.id)
-        : await retryReviewRecompute(match.id));
-      setMessage('Odświeżanie zostało uruchomione ponownie.');
+        : await retryReviewRecompute(match.id);
+      if (requestId === workflowRequestIdRef.current) {
+        applyWorkflow(next);
+        setMessage('Odświeżanie zostało uruchomione ponownie.');
+      }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (requestId === workflowRequestIdRef.current) setMessage(errorMessage(error));
     } finally {
-      setBusy(false);
+      if (requestId === workflowRequestIdRef.current) setBusy(false);
     }
   }
+
+  const recomputeGeneration = workflow?.freshness.review_progress_recompute_generation;
+  const recomputeRecoveryPending = workflow?.freshness.review_progress_reason
+    === 'review_progress_recompute_required'
+    && workflowAllows(workflow, 'retry_review_recompute');
+
+  useEffect(() => {
+    if (!recomputeRecoveryPending) return;
+    // The backend publishes this token only while a specific deferred Review
+    // generation is pending.  Recover exactly once for that generation: the
+    // returned workflow decides the next queue, and an error remains a visible
+    // explicit retry instead of a client-side recompute loop.
+    const generation = recomputeGeneration || `${match.id}:pending`;
+    if (recoveredRecomputeGenerationRef.current === generation) return;
+    recoveredRecomputeGenerationRef.current = generation;
+    setMessage('Synchronizuję Review…');
+    void retry('retry_review_recompute');
+    // `retry` intentionally uses the current match session and workflow gate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.id, recomputeGeneration, recomputeRecoveryPending]);
 
   return <section className={`identity-review-workspace${['remaining_issues', 'mixed_players'].includes(stage) ? ' remaining-issues-active' : ''}`}>
     <div className='identity-review-workspace-chrome'>
