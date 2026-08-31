@@ -2076,6 +2076,11 @@ export type ReviewedIdentityReviewUnit = {
   marginal_named_observation_gain?: number | null;
   potential_team_unnamed_share?: number | null;
   potential_named_coverage_gain_pp?: number | null;
+  potential_team_known_observation_gain?: number | null;
+  potential_team_known_coverage_gain_pp?: number | null;
+  operator_impact_kind?: 'named_coverage' | 'team_known' | null;
+  operator_impact_observation_gain?: number | null;
+  operator_impact_pp?: number | null;
   optional_max_rank?: number | null;
   optional_max_marginal_coverage_gain_pp?: number | null;
   named_coverage_before?: number | null;

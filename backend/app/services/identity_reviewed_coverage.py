@@ -48,7 +48,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v11-fail-closed-evidence-status"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v12-global-operator-impact-order"
 OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
 COVERAGE_DEBT_POLICY_VERSION = "reviewed-identity-coverage-debt:v2-queue-observability"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
@@ -407,42 +407,24 @@ def apply_coverage_policy(
             ],
         }
 
-    semantic_sorted = sorted(
-        semantic,
-        key=lambda unit: (
-            0 if "conflict" in " ".join(unit.get("reason_codes") or []) else 1,
-            -int(unit.get("detected_observation_count") or 0),
-            -float(unit.get("detected_time_sec") or 0.0),
-            str(unit.get("candidate_subject_id") or ""),
-        ),
+    # Selection remains category-aware because each class has different safety
+    # rules. Navigation is deliberately category-agnostic: once the exact
+    # Required set is known, the operator should see the largest safe impact
+    # first rather than restarting from a new impact scale at every boundary.
+    required_cases = _rank_required_cases(
+        [*semantic, *material_continuity, *coverage_blockers]
     )
-    coverage_sorted = sorted(
-        coverage_blockers,
-        key=lambda unit: (
-            -int(unit.get("potential_named_observation_gain") or 0),
-            -float(unit.get("detected_time_sec") or 0.0),
-            str(unit.get("candidate_subject_id") or ""),
-        ),
-    )
-    material_sorted = sorted(
-        material_continuity,
-        key=lambda unit: (
-            -float(unit.get("continuity_span_sec") or unit.get("detected_time_sec") or 0.0),
-            -int(unit.get("potential_named_observation_gain") or 0),
-            str(unit.get("candidate_subject_id") or ""),
-        ),
-    )
-    workload_count = len(semantic_sorted) + len(material_sorted) + len(coverage_sorted)
+    workload_count = len(required_cases)
     readiness = _readiness(
         coverage,
         residual_by_team,
         match_doc,
-        semantic_count=len(semantic_sorted),
-        material_continuity_count=len(material_sorted),
-        coverage_count=len(coverage_sorted),
+        semantic_count=len(semantic),
+        material_continuity_count=len(material_continuity),
+        coverage_count=len(coverage_blockers),
         non_actionable_team_uncertainty=non_actionable_team_uncertainty,
     )
-    required_keys = {_unit_key(unit) for unit in [*semantic_sorted, *material_sorted, *coverage_sorted]}
+    required_keys = {_unit_key(unit) for unit in required_cases}
     deferred_named_pairs = _deferred_named_gain_pairs(units, pair_index, match_doc)
     for unit in units:
         enriched = _coverage_impact(unit, pair_index, coverage)
@@ -481,11 +463,11 @@ def apply_coverage_policy(
             len(optional_sorted) if team == "A" else 0
         )
     return {
-        "next_cases": [*semantic_sorted, *material_sorted, *coverage_sorted],
+        "next_cases": required_cases,
         "optional_audit_cases": optional_sorted,
-        "semantic_blockers": len(semantic_sorted),
-        "material_continuity_blockers": len(material_sorted),
-        "coverage_blockers": len(coverage_sorted),
+        "semantic_blockers": len(semantic),
+        "material_continuity_blockers": len(material_continuity),
+        "coverage_blockers": len(coverage_blockers),
         "residual_by_team": residual_by_team,
         "readiness": readiness,
         "workload": {
@@ -922,6 +904,11 @@ PUBLIC_REVIEW_CASE_FIELDS = (
     "potential_named_observation_gain",
     "marginal_named_observation_gain",
     "potential_named_coverage_gain_pp",
+    "potential_team_known_observation_gain",
+    "potential_team_known_coverage_gain_pp",
+    "operator_impact_kind",
+    "operator_impact_observation_gain",
+    "operator_impact_pp",
     "coverage_rank_within_team",
     "optional_max_rank",
     "optional_max_marginal_coverage_gain_pp",
@@ -1100,7 +1087,7 @@ def _coverage_impact(
 ) -> dict[str, Any]:
     compact_runs = unit.get("detected_pair_runs")
     if isinstance(compact_runs, dict):
-        team, named_gain_pairs, unnamed = _impact_from_compact_runs(
+        team, named_gain_pairs, unnamed, reliable_source_observations = _impact_from_compact_runs(
             compact_runs, pair_index
         )
     else:
@@ -1125,6 +1112,11 @@ def _coverage_impact(
             and not observation.get("canonical_player_id")
         }
         unnamed = len(named_gain_pairs)
+        reliable_source_observations = sum(
+            1
+            for _pair, observation in present_rows
+            if str(observation.get("identity_status") or "unresolved") in RELIABLE_STATUSES
+        )
     reliable = int(
         ((coverage.get("per_team") or {}).get(team) or {}).get(
             "reliable_observations"
@@ -1137,15 +1129,52 @@ def _coverage_impact(
         )
         or 0
     )
+    team_attribution_case = has_team_attribution_uncertainty(unit)
+    potential_team_known_observation_gain = (
+        reliable_source_observations if team_attribution_case else 0
+    )
+    global_reliable_observations = _global_reliable_observations(coverage)
+    potential_team_known_coverage_gain_pp = (
+        round(
+            100.0
+            * potential_team_known_observation_gain
+            / global_reliable_observations,
+            2,
+        )
+        if global_reliable_observations
+        else 0.0
+    )
+    potential_named_coverage_gain_pp = (
+        round(100.0 * unnamed / reliable, 2) if reliable else 0.0
+    )
+    # A Team-U or cross-team case is first a team-attribution decision. Keep
+    # its exact named-pair set for internal debt accounting, but never present
+    # an inferred player-name gain as its operator impact.
+    operator_impact_kind = "team_known" if team_attribution_case else "named_coverage"
+    operator_impact_observation_gain = (
+        potential_team_known_observation_gain
+        if team_attribution_case
+        else unnamed
+    )
+    operator_impact_pp = (
+        potential_team_known_coverage_gain_pp
+        if team_attribution_case
+        else potential_named_coverage_gain_pp
+    )
     return {
         **unit,
         "coverage_team_label": team,
-        "potential_named_observation_gain": unnamed,
+        "potential_named_observation_gain": 0 if team_attribution_case else unnamed,
         "_potential_named_observation_pairs": named_gain_pairs,
         "potential_team_unnamed_share": _ratio(unnamed, reliable),
-        "potential_named_coverage_gain_pp": round(100.0 * unnamed / reliable, 2)
-        if reliable
-        else 0.0,
+        "potential_named_coverage_gain_pp": (
+            0.0 if team_attribution_case else potential_named_coverage_gain_pp
+        ),
+        "potential_team_known_observation_gain": potential_team_known_observation_gain,
+        "potential_team_known_coverage_gain_pp": potential_team_known_coverage_gain_pp,
+        "operator_impact_kind": operator_impact_kind,
+        "operator_impact_observation_gain": operator_impact_observation_gain,
+        "operator_impact_pp": operator_impact_pp,
         "named_coverage_before": _ratio(current_named, reliable),
         "named_coverage_after_max": _ratio(current_named + unnamed, reliable),
     }
@@ -1154,7 +1183,7 @@ def _coverage_impact(
 def _impact_from_compact_runs(
     detected_runs: dict[str, list[list[int]]],
     pair_index: "CompactPairIndexView | Mapping[tuple[str, int], dict[str, Any]]",
-) -> tuple[str, dict[str, list[list[int]]], int]:
+) -> tuple[str, dict[str, list[list[int]]], int, int]:
     """Evaluate unit impact via interval sweeps over validated index segments.
 
     Never materializes per-frame pairs: team attribution and the exact
@@ -1185,9 +1214,15 @@ def _impact_from_compact_runs(
             and str(row.get("identity_status") or "unresolved") in RELIABLE_STATUSES
             and not row.get("canonical_player_id")
         }
-        return majority, encode_pair_runs(gain_pairs), len(gain_pairs)
+        reliable_source_observations = sum(
+            1
+            for _pair, row in present
+            if str(row.get("identity_status") or "unresolved") in RELIABLE_STATUSES
+        )
+        return majority, encode_pair_runs(gain_pairs), len(gain_pairs), reliable_source_observations
     gain_intervals: dict[str, list[list[int]]] = {}
     unnamed_total = 0
+    reliable_source_observations = 0
     for tracklet_id, tracklet_runs in detected_runs.items():
         entries = segments.get(tracklet_id) or []
         entry_index = 0
@@ -1203,6 +1238,8 @@ def _impact_from_compact_runs(
                     team_counts[_team_label(value.get("team_label"))] += (
                         overlap_end - overlap_start + 1
                     )
+                    if str(value.get("identity_status") or "unresolved") in RELIABLE_STATUSES:
+                        reliable_source_observations += overlap_end - overlap_start + 1
                 walk += 1
     majority = _majority_or(team_counts)
     # Mirror the legacy semantics exactly: gains are bound to the attributed
@@ -1226,7 +1263,50 @@ def _impact_from_compact_runs(
                 else:
                     bucket.append([overlap_start, overlap_end])
                 unnamed_total += overlap_end - overlap_start + 1
-    return majority, {tid: runs for tid, runs in sorted(gain_intervals.items())}, unnamed_total
+    return (
+        majority,
+        {tid: runs for tid, runs in sorted(gain_intervals.items())},
+        unnamed_total,
+        reliable_source_observations,
+    )
+
+
+def _global_reliable_observations(coverage: Mapping[str, Any]) -> int:
+    """Return the denominator for a team-attribution coverage improvement."""
+    explicit = coverage.get("reliable_observations")
+    if explicit is not None:
+        return max(0, int(explicit or 0))
+    return sum(
+        max(0, int((row or {}).get("reliable_observations") or 0))
+        for row in (coverage.get("per_team") or {}).values()
+        if isinstance(row, Mapping)
+    )
+
+
+def _rank_required_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Apply the one authoritative global navigation order for Required."""
+    return sorted(cases, key=_required_queue_sort_key)
+
+
+def _required_queue_sort_key(unit: dict[str, Any]) -> tuple[Any, ...]:
+    """Prefer percentage-point operator impact before raw source size.
+
+    Category stays as a deterministic safety/explanation tie-breaker only;
+    it must never reset the operator-impact ordering between selected cases.
+    """
+    priority = str(unit.get("priority") or "")
+    category_rank = {"high": 0, "continuity": 1, "coverage": 2}.get(priority, 3)
+    reasons = " ".join(str(value) for value in unit.get("reason_codes") or [])
+    conflict_rank = 0 if "conflict" in reasons else 1
+    return (
+        -float(unit.get("operator_impact_pp") or 0.0),
+        -int(unit.get("operator_impact_observation_gain") or 0),
+        -int(unit.get("detected_observation_count") or 0),
+        -float(unit.get("detected_time_sec") or 0.0),
+        conflict_rank,
+        category_rank,
+        str(unit.get("review_target_id") or unit.get("candidate_subject_id") or ""),
+    )
 
 
 def _majority_or(counts: Counter[str], fallback: str | None = None) -> str:
