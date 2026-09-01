@@ -11,6 +11,8 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_ownership_compact import CompactOwnershipError, decode_pair_runs
 from app.services.identity_reviewed_team_attribution_policy import team_evidence_features
 
 
@@ -136,16 +138,25 @@ def backfill_review_decision_audit(match_path: Path) -> dict[str, Any]:
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            features = _reconstruct_team_features(row, reconstruction_context)
+            exact_pairs = _exact_source_pairs(row)
+            features = _reconstruct_team_features(row, reconstruction_context, exact_pairs)
             feature_provenance = "RECONSTRUCTED" if features is not None else "UNAVAILABLE"
             reconstructed += int(features is not None)
-            decisions.append({"source_file": filename, "provenance": "EXACT_PERSISTED", "decision": row, "team_features_provenance": feature_provenance, "team_features": features})
+            decisions.append({
+                "source_file": filename,
+                "provenance": "EXACT_PERSISTED",
+                "decision_record_provenance": "EXACT_PERSISTED",
+                "decision": row,
+                "exact_source_linkage": exact_pairs is not None and _current_source_digest_matches(row, reconstruction_context, exact_pairs),
+                "team_features_provenance": feature_provenance,
+                "team_features": features,
+            })
     report = {
         "schema_version": AUDIT_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "read_only": True,
         "decisions_recovered": len(decisions),
-        "exact_source_linkage": sum(bool((row["decision"].get("source_ownership_digest") or row["decision"].get("candidate_subject_id"))) for row in decisions),
+        "exact_source_linkage": sum(bool(row["exact_source_linkage"]) for row in decisions),
         "reconstructed_team_features": reconstructed,
         "unavailable_records": unavailable,
         "records": decisions,
@@ -177,28 +188,66 @@ def _reconstruction_context(match_path: Path) -> dict[str, Any] | None:
     return {"subjects": subjects, "observations": observations}
 
 
-def _reconstruct_team_features(decision: Mapping[str, Any], context: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _exact_source_pairs(decision: Mapping[str, Any]) -> list[tuple[str, int]] | None:
+    """Return persisted exact ownership only; never infer a whole subject."""
+    source = decision.get("source") if isinstance(decision.get("source"), Mapping) else decision
+    raw_pairs = source.get("detected_pairs") or source.get("observation_pairs")
+    if isinstance(raw_pairs, list):
+        pairs = sorted({
+            (str(row[0]), int(row[1]))
+            for row in raw_pairs
+            if isinstance(row, (list, tuple)) and len(row) >= 2
+        })
+    elif isinstance(source.get("detected_pair_runs"), dict):
+        try:
+            pairs = decode_pair_runs(source["detected_pair_runs"])
+        except CompactOwnershipError:
+            return None
+    else:
+        return None
+    return pairs or None
+
+
+def _current_source_digest_matches(
+    decision: Mapping[str, Any], context: Mapping[str, Any] | None,
+    pairs: list[tuple[str, int]] | None,
+) -> bool:
+    if context is None or not pairs:
+        return False
+    source = decision.get("source") if isinstance(decision.get("source"), Mapping) else decision
+    digest = str(source.get("source_ownership_digest") or decision.get("source_ownership_digest") or "")
+    candidate_subject_id = str(source.get("candidate_subject_id") or decision.get("candidate_subject_id") or "")
+    if not digest or not candidate_subject_id:
+        return False
+    tracklet_ids = sorted({tracklet_id for tracklet_id, _frame in pairs})
+    observations = [{"tracklet_id": tracklet_id, "frame": frame} for tracklet_id, frame in pairs]
+    return digest in {
+        canonical_digest({"candidate_subject_id": candidate_subject_id, "pairs": pairs}),
+        canonical_digest({
+            "candidate_subject_id": candidate_subject_id,
+            "tracklet_ids": tracklet_ids,
+            "observations": observations,
+        }),
+    }
+
+
+def _reconstruct_team_features(
+    decision: Mapping[str, Any], context: Mapping[str, Any] | None,
+    pairs: list[tuple[str, int]] | None,
+) -> dict[str, Any] | None:
     """Recompute only immutable upstream label features; never relabel history."""
     if context is None:
         return None
-    source = decision.get("source") if isinstance(decision.get("source"), Mapping) else {}
-    tracklet_ids = {
-        str(value) for value in (
-            source.get("tracklet_ids")
-            or decision.get("source_tracklet_ids")
-            or decision.get("tracklet_ids")
-            or []
-        ) if str(value)
-    }
-    if not tracklet_ids:
-        tracklet_ids = set((context.get("subjects") or {}).get(str(decision.get("candidate_subject_id") or "")) or [])
-    if not tracklet_ids:
+    if not _current_source_digest_matches(decision, context, pairs):
         return None
+    assert pairs is not None
+    requested = set(pairs)
     observations = [
-        row for tracklet_id in tracklet_ids
+        row for tracklet_id, frame in requested
         for row in (context.get("observations") or {}).get(tracklet_id, [])
+        if int(row.get("frame") if row.get("frame") is not None else -1) == frame
     ]
-    return team_evidence_features(observations) if observations else None
+    return team_evidence_features(observations) if len(observations) == len(requested) else None
 
 
 def _load_audit(match_path: Path) -> dict[str, Any]:

@@ -18,6 +18,29 @@ from app.services.identity_reviewed_slot_review import save_reviewed_slot_assign
 
 
 class ReviewedIdentitySnapshotTests(unittest.TestCase):
+    def test_safe_short_track_projection_is_authoritative_for_effective_team_truth(self) -> None:
+        with _workspace() as root:
+            _write_inputs(root, decisions=[])
+            tracklets = json.loads((root / "tracklets.json").read_text())
+            by_id = {row["tracklet_id"]: row for row in tracklets["tracklets"]}
+            by_id["t1"].update({
+                "team_label": "B", "team_id": "tb",
+                "positions_m": [{"frame": frame, "status": "detected", "play_area_status": "inside_play"} for frame in range(30)],
+            })
+            by_id["t2"].update({
+                "team_label": "A", "team_id": "ta",
+                "positions_m": [{"frame": frame, "status": "detected", "play_area_status": "inside_play"} for frame in (30, 31)],
+            })
+            (root / "tracklets.json").write_text(json.dumps(tracklets))
+            (root / "identity_candidate_shadow.json").write_text(json.dumps({
+                "subjects": [{"candidate_subject_id": "s1", "tracklet_ids": ["t1", "t2"]}]
+            }))
+            snapshot = finalize_reviewed_identity(root, _match())
+            rows = {row["tracklet_id"]: row for row in snapshot["tracklet_assignments"]}
+            self.assertEqual({rows["t1"]["team_label"], rows["t2"]["team_label"]}, {"B"})
+            self.assertEqual(rows["t1"]["automatic_team_assignment"]["provenance"], "short_track_dominant_team_v1")
+            self.assertEqual(snapshot["automatic_team_assignments"][0]["team_label"], "B")
+
     def test_off_pitch_only_tracklet_does_not_block_product_completion(self) -> None:
         with _workspace() as root:
             _write_inputs(

@@ -1706,6 +1706,33 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertTrue((root / "reviewed_identity_recompute_required.json").exists())
             self.assertFalse((root / "reviewed_identity_snapshot.json").exists())
 
+    def test_deferred_authorized_save_appends_one_predecision_audit_event(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            payload = {
+                "candidate_subject_id": "s1",
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "defer_recompute": True,
+            }
+            authorized_unit = {
+                "candidate_subject_id": "s1",
+                "scope_kind": "whole_subject",
+                "_hot_state_authorized": True,
+            }
+            with patch(
+                "app.services.identity_reviewed_corrections.append_operator_decision_audit"
+            ) as audit:
+                persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    payload,
+                    authorized_review_unit=authorized_unit,
+                )
+            audit.assert_called_once()
+            self.assertEqual(audit.call_args.kwargs["unit"]["candidate_subject_id"], "s1")
+
     def test_materialized_context_gap_for_unrelated_subject_does_not_block_save(
         self,
     ) -> None:

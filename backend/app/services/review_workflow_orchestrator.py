@@ -43,9 +43,6 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     resolve_current_team_attribution_sources,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
-from app.services.identity_reviewed_team_attribution_policy import (
-    persist_automatic_team_assignments,
-)
 from app.services.identity_seeded_review_reduction import load_initial_audit_completion_evidence
 from app.services.identity_seeded_candidate_assignments import (    rebuild_identity_seeded_candidate_assignments,
 )
@@ -431,9 +428,6 @@ def _refresh_review_after_identity_mutation_scoped_inner(
                 )
     assert progress is not None and durable_progress is not None
     phase_started = time.perf_counter()
-    persist_automatic_team_assignments(
-        match_path, progress.get("_internal_review_units") or []
-    )
     write_identity_json_atomic(match_path / PROGRESS_FILENAME, durable_progress, compact=True)
     invalidate_cached_json(match_path / PROGRESS_FILENAME)
     timings["durable_progress_write_ms"] = _elapsed_ms(phase_started)

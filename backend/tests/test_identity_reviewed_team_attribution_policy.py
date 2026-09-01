@@ -19,6 +19,7 @@ from app.services.identity_reviewed_team_attribution_policy import (
     short_track_dominant_team_assignment,
     team_evidence_features,
 )
+from app.services.identity_jersey_number_common import canonical_digest
 
 
 class TeamAttributionPolicyTests(unittest.TestCase):
@@ -44,6 +45,17 @@ class TeamAttributionPolicyTests(unittest.TestCase):
         )
         self.assertIsNone(short_track_dominant_team_assignment(weak))
         self.assertIsNone(short_track_dominant_team_assignment(sustained))
+
+    def test_highly_alternating_votes_are_not_treated_as_isolated_noise(self) -> None:
+        # B still has a high vote ratio, but the repeated A/B switches are a
+        # temporal-structure hazard rather than a safe short-track majority.
+        labels = ["A" if frame in {5, 15, 25, 35, 45, 55, 65} else "B" for frame in range(80)]
+        features = team_evidence_features(
+            [{"frame": frame, "tracklet_id": "t", "team_label": label} for frame, label in enumerate(labels)]
+        )
+        self.assertGreater(features["dominant_ratio"], .85)
+        self.assertGreater(features["team_switch_count"], 6)
+        self.assertIsNone(short_track_dominant_team_assignment(features))
 
     def test_audit_is_append_only_and_benchmark_reports_dominant_agreement(self) -> None:
         with TemporaryDirectory() as directory:
@@ -74,6 +86,21 @@ class TeamAttributionPolicyTests(unittest.TestCase):
             self.assertEqual(report["records"][0]["provenance"], "EXACT_PERSISTED")
             self.assertEqual(json.loads((path / "reviewed_identity_slot_assignments.json").read_text(encoding="utf-8")), legacy)
             self.assertTrue((path / BACKFILL_REPORT_FILENAME).exists())
+
+    def test_backfill_uses_only_proven_exact_segment_frames(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            positions = [{"frame": frame} for frame in range(100)]
+            (path / "tracklets.json").write_text(json.dumps({"tracklets": [{"tracklet_id": "t", "team_label": "B", "positions_m": positions}]}), encoding="utf-8")
+            (path / "identity_candidate_shadow.json").write_text(json.dumps({"subjects": [{"candidate_subject_id": "s", "tracklet_ids": ["t"]}]}), encoding="utf-8")
+            pairs = [["t", frame] for frame in range(30)]
+            digest = canonical_digest({"candidate_subject_id": "s", "tracklet_ids": ["t"], "observations": [{"tracklet_id": "t", "frame": frame} for frame in range(30)]})
+            decision = {"candidate_subject_id": "s", "source": {"candidate_subject_id": "s", "source_ownership_digest": digest, "detected_pairs": pairs}}
+            (path / "reviewed_identity_segment_decisions.json").write_text(json.dumps({"decisions": [decision]}), encoding="utf-8")
+            report = backfill_review_decision_audit(path)
+            record = report["records"][0]
+            self.assertTrue(record["exact_source_linkage"])
+            self.assertEqual(record["team_features"]["B_observations"], 30)
 
 
 if __name__ == "__main__":

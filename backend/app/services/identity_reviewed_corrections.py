@@ -105,9 +105,6 @@ def save_reviewed_identity_correction(
     action = str(payload.get("action") or "").strip()
     try:
         progress_before = build_reviewed_identity_progress(match_path, match_doc)
-        audit_progress_before = build_reviewed_identity_progress(
-            match_path, match_doc, include_internal_units=True
-        )
         authorized_review_unit = review_unit_for_payload(progress_before, payload)
         if (
             isinstance(authorized_review_unit, dict)
@@ -125,19 +122,13 @@ def save_reviewed_identity_correction(
             payload,
             use_materialized_context=False,
             authorized_review_unit=authorized_review_unit,
+            audit_required=_audit_unit_is_required(progress_before, authorized_review_unit),
         )
         review_target_id = str(payload.get("review_target_id") or "").strip() or None
         if review_target_id:
             build_segment_review_document(match_path, match_doc)
         snapshot = get_reviewed_identity_status(match_path)
         progress_after = build_reviewed_identity_progress(match_path, match_doc)
-        audit_unit = _audit_review_unit(audit_progress_before, payload)
-        append_operator_decision_audit(
-            match_path,
-            unit=audit_unit,
-            payload=payload,
-            required=bool(audit_unit and _audit_unit_is_required(progress_before, audit_unit)),
-        )
         impact = decision_impact(
             progress_before,
             progress_after,
@@ -184,20 +175,51 @@ def save_reviewed_identity_correction(
         raise
 
 
-def _audit_review_unit(progress: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
-    subject_id = str(payload.get("candidate_subject_id") or "")
-    target_id = str(payload.get("review_target_id") or "")
-    for unit in progress.get("_internal_review_units") or []:
-        if not isinstance(unit, dict):
-            continue
-        if target_id and str(unit.get("review_target_id") or "") == target_id:
-            return unit
-        if not target_id and str(unit.get("candidate_subject_id") or "") == subject_id:
-            return unit
-    return None
+def persist_reviewed_identity_correction(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    use_materialized_context: bool = True,
+    trusted_materialized_detected_team_labels: dict[str, set[str]] | None = None,
+    authorized_review_unit: dict[str, Any] | None = None,
+    audit_required: bool | None = None,
+) -> dict[str, Any]:
+    """Persist one human mutation and append its exact pre-save audit event.
+
+    API deferred saves call this function directly, so this is the only
+    boundary where audit capture can be complete without double-counting the
+    legacy wrapper.  The supplied hot-state unit is preferred because it is
+    the exact source the operator saw before the write.
+    """
+    audit_unit = dict(authorized_review_unit) if isinstance(authorized_review_unit, dict) else None
+    result = _persist_reviewed_identity_correction_with_topology(
+        match_path,
+        match_doc,
+        payload,
+        use_materialized_context=use_materialized_context,
+        trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+        authorized_review_unit=authorized_review_unit,
+    )
+    # A rejected/stale/idempotent request never reaches this successful return.
+    # The transport-level idempotent replay is short-circuited before calling
+    # this boundary, so each durable human mutation contributes exactly once.
+    if audit_unit is not None:
+        # The deferred gate and the legacy service both authorize this only
+        # from the current Required unit. Do not reopen progress just for an
+        # audit label: that would violate deferred-save performance.
+        append_operator_decision_audit(
+            match_path,
+            unit=audit_unit,
+            payload=payload,
+            required=True if audit_required is None else bool(audit_required),
+        )
+    return result
 
 
-def _audit_unit_is_required(progress: dict[str, Any], unit: dict[str, Any]) -> bool:
+def _audit_unit_is_required(progress: dict[str, Any], unit: dict[str, Any] | None) -> bool:
+    if not isinstance(unit, dict):
+        return False
     key = str(unit.get("review_target_id") or unit.get("candidate_subject_id") or "")
     return any(
         str(row.get("review_target_id") or row.get("candidate_subject_id") or "") == key
@@ -206,7 +228,7 @@ def _audit_unit_is_required(progress: dict[str, Any], unit: dict[str, Any]) -> b
     )
 
 
-def persist_reviewed_identity_correction(
+def _persist_reviewed_identity_correction_with_topology(
     match_path: Path,
     match_doc: dict[str, Any],
     payload: dict[str, Any],

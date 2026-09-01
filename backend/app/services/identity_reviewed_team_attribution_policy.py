@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
+from app.services.identity_jersey_number_common import canonical_digest
+from app.services.play_area import is_on_pitch_product_observation
 
 
 SHORT_TRACK_DOMINANT_TEAM_POLICY_VERSION = "short_track_dominant_team_v1"
@@ -20,6 +22,9 @@ SHORT_TRACK_MIN_DOMINANT_RATIO = 0.85
 # A minority run longer than this is evidence of a possible real merge/switch,
 # not harmless isolated classifier noise.  Keep the first version conservative.
 SHORT_TRACK_MAX_MINORITY_RUN = 8
+# A large number of alternating A/B runs is not equivalent to a few isolated
+# noisy votes, even if the dominant ratio is high.
+SHORT_TRACK_MAX_TEAM_SWITCHES = 6
 TEAM_ATTRIBUTION_POLICY_FILENAME = "reviewed_team_attribution_policy.json"
 
 
@@ -92,12 +97,74 @@ def short_track_dominant_team_assignment(
     minority = "B" if dominant == "A" else "A"
     if int(features.get(f"longest_{minority}_run") or 0) > SHORT_TRACK_MAX_MINORITY_RUN:
         return None
+    if int(features.get("team_switch_count") or 0) > SHORT_TRACK_MAX_TEAM_SWITCHES:
+        return None
     return {
         "team_label": dominant,
         "provenance": SHORT_TRACK_DOMINANT_TEAM_POLICY_VERSION,
         "policy_version": SHORT_TRACK_DOMINANT_TEAM_POLICY_VERSION,
         "features": dict(features),
     }
+
+
+def derive_short_track_team_projection(
+    tracklets: Mapping[str, Mapping[str, Any]],
+    subjects_document: Mapping[str, Any],
+    *,
+    excluded_subject_ids: set[str] | None = None,
+    fps: float | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Derive exact subject-source team projections for a snapshot build.
+
+    The return value is keyed by tracklet id only after the full candidate
+    source has passed the gates.  Each value retains the exact source digest
+    and all source tracklets, so a later source-topology change invalidates the
+    projection as part of the normal snapshot rebuild.
+    """
+    excluded = excluded_subject_ids or set()
+    memberships: dict[str, set[str]] = {}
+    subjects: list[tuple[str, set[str]]] = []
+    for row in subjects_document.get("subjects") or []:
+        if not isinstance(row, Mapping):
+            continue
+        subject_id = str(row.get("candidate_subject_id") or "")
+        tracklet_ids = {str(value) for value in row.get("tracklet_ids") or [] if str(value) in tracklets}
+        if not subject_id or not tracklet_ids:
+            continue
+        subjects.append((subject_id, tracklet_ids))
+        for tracklet_id in tracklet_ids:
+            memberships.setdefault(tracklet_id, set()).add(subject_id)
+    output: dict[str, dict[str, Any]] = {}
+    for subject_id, tracklet_ids in subjects:
+        if subject_id in excluded or any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
+            continue
+        observations = [
+            {"tracklet_id": tracklet_id, "frame": position.get("frame"), "team_label": tracklet.get("team_label")}
+            for tracklet_id in sorted(tracklet_ids)
+            for tracklet in [tracklets[tracklet_id]]
+            for position in tracklet.get("positions_m") or []
+            if isinstance(position, Mapping)
+            and is_on_pitch_product_observation(position)
+            and str(position.get("status") or "detected") == "detected"
+            and str(position.get("source") or "detected") not in {"predicted", "interpolated", "unknown", "missing", "ambiguous"}
+        ]
+        labels = {str(row["team_label"] or "U").upper() for row in observations} & {"A", "B"}
+        if len(labels) < 2:
+            continue
+        features = team_evidence_features(observations, fps=fps)
+        assignment = short_track_dominant_team_assignment(features)
+        if assignment is None:
+            continue
+        pairs = sorted((str(row["tracklet_id"]), int(row["frame"] or 0)) for row in observations)
+        projection = {
+            **assignment,
+            "candidate_subject_id": subject_id,
+            "tracklet_ids": sorted(tracklet_ids),
+            "source_ownership_digest": canonical_digest({"candidate_subject_id": subject_id, "pairs": pairs}),
+        }
+        for tracklet_id in tracklet_ids:
+            output[tracklet_id] = projection
+    return output
 
 
 def persist_automatic_team_assignments(match_path, units: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -110,7 +177,10 @@ def persist_automatic_team_assignments(match_path, units: Iterable[Mapping[str, 
         assignments.append({
             "candidate_subject_id": unit.get("candidate_subject_id"),
             "review_target_id": unit.get("review_target_id"),
-            "source_ownership_digest": unit.get("source_ownership_digest"),
+            "source_ownership_digest": (
+                assignment.get("source_ownership_digest")
+                or unit.get("source_ownership_digest")
+            ),
             "tracklet_ids": list(unit.get("tracklet_ids") or []),
             "assignment": dict(assignment),
         })

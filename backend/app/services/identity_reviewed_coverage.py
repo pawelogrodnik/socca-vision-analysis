@@ -216,6 +216,7 @@ def apply_coverage_policy(
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
     team_attribution_candidates: list[dict[str, Any]] = []
     team_attribution_unavailable: list[dict[str, Any]] = []
+    structural_team_attribution_unavailable: list[dict[str, Any]] = []
     for unit in units:
         if (
             unit in semantic_candidates
@@ -248,7 +249,7 @@ def apply_coverage_policy(
                     enriched["priority"] = "high"
                     semantic.append(enriched)
                 else:
-                    team_attribution_unavailable.append(enriched)
+                    structural_team_attribution_unavailable.append(enriched)
                 continue
             if (
                 operator_actionable
@@ -416,7 +417,11 @@ def apply_coverage_policy(
         reliable_global, REVIEWED_OBSERVATION_TARGET_RATIO
     )
     required_team_known_gain = max(0, target_team_known - current_team_known)
-    for row in [*team_attribution_candidates, *team_attribution_unavailable]:
+    for row in [
+        *team_attribution_candidates,
+        *team_attribution_unavailable,
+        *structural_team_attribution_unavailable,
+    ]:
         gain = _team_known_gain_pairs(row, pair_index)
         row["_potential_team_known_observation_pairs"] = gain
         row["potential_team_known_observation_gain"] = len(_gain_pairs_set(gain))
@@ -432,9 +437,10 @@ def apply_coverage_policy(
     )
     coverage_blockers.extend(selected_team_rows)
     unresolved_team_gain = max(0, required_team_known_gain - len(selected_team_pairs))
-    required_non_actionable_team_uncertainty = (
-        team_attribution_unavailable if unresolved_team_gain else []
-    )
+    required_non_actionable_team_uncertainty = [
+        *structural_team_attribution_unavailable,
+        *(team_attribution_unavailable if unresolved_team_gain else []),
+    ]
     optional_team_uncertainty = (
         team_attribution_unavailable if not unresolved_team_gain else []
     )
@@ -1857,10 +1863,6 @@ def _readiness(
         team_attribution_evidence_lifecycle(unit)
         for unit in team_attribution_units
     ]
-    all_team_attribution_lifecycles = [
-        team_attribution_evidence_lifecycle(unit)
-        for unit in all_team_attribution_units
-    ]
     team_attribution_statuses = [
         _team_attribution_readiness_status(unit, lifecycle)
         for unit, lifecycle in zip(team_attribution_units, team_attribution_lifecycles)
@@ -1872,7 +1874,7 @@ def _readiness(
     )
     team_attribution_has_technical_failure = any(
         lifecycle == TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE
-        for lifecycle in all_team_attribution_lifecycles
+        for lifecycle in team_attribution_lifecycles
     )
     reliable_observations = int(coverage.get("reliable_observations") or 0)
     # These units are exact final Review ownership scopes. Count them rather
