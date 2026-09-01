@@ -222,7 +222,7 @@ test('technical Team-attribution failure explains recovery and exposes only serv
       details: {},
     }],
     allowed_actions: ['retry_review_recompute'],
-    mandatory_operator_review_complete: false,
+    mandatory_operator_review_complete: true,
     data_quality_ready_for_output: false,
   };
   installWorkspaceFetch(technical);
@@ -230,9 +230,64 @@ test('technical Team-attribution failure explains recovery and exposes only serv
     const view = renderWorkspace(technical);
     await waitFor(() => assert.ok(view.getByRole('button', { name: 'Spróbuj ponownie' })));
     assert.ok(view.getByText(/Nie udało się przygotować bezpiecznych widoków/));
+    assert.ok(view.getByText(/Sprawdź dostępność pliku wideo/));
     assert.equal(view.queryByText('Nie udało się przygotować kolejnego kroku review.'), null);
-    assert.equal(view.queryByText(/Wymagany Review zakończony/), null);
+    assert.ok(view.getByText(/Wymagany Review zakończony/));
     assert.equal(view.queryByText(/Wymagane przypadki =/), null);
+    assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('terminal technical Team-attribution failure does not promise an unavailable retry', async () => {
+  const originalFetch = globalThis.fetch;
+  const retryable: ReviewWorkflow = {
+    ...mandatoryWorkflow('exceptions'),
+    status: 'error',
+    required_action: { type: 'coverage_evidence_technical_failure', step_id: 'exceptions' },
+    issues: {
+      blocking: 0,
+      normal_blocking: 0,
+      mixed_blocking: 0,
+      important: 0,
+      optional: 0,
+      coverage_readiness_blocked: true,
+      team_attribution_evidence_technical_failure: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        policy_version: 'test',
+        allows_finalize: false,
+        roster_scope: {},
+        blockers: [{ code: 'team_attribution_evidence_technical_failure' }],
+        team_attribution_residual: {
+          status: 'technical_evidence_failure',
+          units: 50,
+          observations: 6814,
+          residual_budget_observations: 14982,
+          within_tolerance: true,
+          evidence_status_counts: { team_attribution_evidence_recovery_incomplete: 50 },
+        },
+      },
+    },
+    blockers: [{
+      code: 'team_attribution_evidence_technical_failure',
+      step_id: 'exceptions',
+      user_actionable: false,
+      details: {},
+    }],
+    allowed_actions: [],
+    mandatory_operator_review_complete: true,
+    data_quality_ready_for_output: false,
+  };
+  installWorkspaceFetch(retryable);
+  try {
+    const view = renderWorkspace(retryable);
+    await waitFor(() => assert.ok(view.getByText(/Wymagany Review zakończony/)));
+    assert.ok(view.getByText(/Nie ma już kolejnych bezpiecznych decyzji manualnych/));
+    assert.ok(view.getByText(/Automatyczne ponowienie Review nie może naprawić/));
+    assert.equal(view.queryByRole('button', { name: 'Spróbuj ponownie' }), null);
+    assert.equal(view.queryByText(/Sprawdź dostępność pliku wideo/), null);
     assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
   } finally {
     globalThis.fetch = originalFetch;
@@ -570,6 +625,82 @@ test('a remediation blocker remains separate from an empty Required queue badge'
       workspace.container.textContent || '',
       /System musi jeszcze przygotować bezpieczne widoki/,
     ));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('retry replaces generic materialization copy with the backend technical outcome', async () => {
+  const remediation: ReviewWorkflow = {
+    ...mandatoryWorkflow('exceptions'),
+    status: 'error',
+    issues: {
+      ...mandatoryWorkflow('exceptions').issues,
+      blocking: 0,
+      normal_blocking: 0,
+      mixed_blocking: 0,
+      coverage_readiness_blocked: true,
+      team_attribution_evidence_not_materialized: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        allows_finalize: false,
+        blockers: [{ code: 'team_attribution_evidence_not_materialized' }],
+        team_attribution_residual: { status: 'materialization_required' },
+      },
+    },
+    blockers: [{
+      code: 'identity_coverage_unresolved_without_reviewable_evidence',
+      step_id: 'exceptions',
+      user_actionable: true,
+      details: {},
+    }],
+    allowed_actions: ['retry_review_recompute'],
+    required_action: { type: 'retry_review_recompute', step_id: 'exceptions' },
+    mandatory_operator_review_complete: true,
+    data_quality_ready_for_output: false,
+  };
+  const technical: ReviewWorkflow = {
+    ...remediation,
+    issues: {
+      ...remediation.issues,
+      team_attribution_evidence_not_materialized: false,
+      team_attribution_evidence_technical_failure: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        allows_finalize: false,
+        blockers: [{ code: 'team_attribution_evidence_technical_failure' }],
+        team_attribution_residual: { status: 'technical_evidence_failure' },
+      },
+    },
+    blockers: [{
+      code: 'team_attribution_evidence_technical_failure',
+      step_id: 'exceptions',
+      user_actionable: true,
+      details: {},
+    }],
+    required_action: { type: 'coverage_evidence_technical_failure', step_id: 'exceptions' },
+  };
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      const body = url.includes('/retry-recompute')
+        ? { workflow: technical }
+        : url.includes('/review-workflow')
+          ? remediation
+          : {};
+      return new Response(JSON.stringify(body), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const view = renderWorkspace(remediation);
+    await waitFor(() => assert.ok(view.getByRole('button', { name: 'Spróbuj ponownie' })));
+    await act(async () => {
+      fireEvent.click(view.getByRole('button', { name: 'Spróbuj ponownie' }));
+    });
+    await waitFor(() => assert.ok(view.getByText(/Nie udało się przygotować bezpiecznych widoków/)));
+    assert.equal(view.queryByText(/System musi jeszcze przygotować bezpieczne widoki/), null);
+    assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -173,11 +173,16 @@ class ReviewWorkflowStateTests(unittest.TestCase):
                 {
                     **base_progress,
                     "next_cases": [],
-                    "coverage_readiness": {"allows_finalize": False},
+                    "coverage_readiness": {
+                        "allows_finalize": False,
+                        "team_attribution_residual": {
+                            "evidence_status_counts": {"source_video_unavailable": 1},
+                        },
+                    },
                     "coverage_residuals": {"U": {
                         "non_actionable_required_team_uncertainty_cases": [{
                             "candidate_subject_id": "u",
-                            "team_attribution_evidence_status": "team_attribution_evidence_recovery_incomplete",
+                            "team_attribution_evidence_status": "source_video_unavailable",
                         }]
                     }},
                 },
@@ -241,7 +246,6 @@ class ReviewWorkflowStateTests(unittest.TestCase):
                 )
                 for state in (authoritative, compact):
                     if name == "technical_evidence_retry":
-                        self.assertIn("retry_review_recompute", state["allowed_actions"])
                         self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
                     if mixed_allowed:
                         assert_workflow_action_allowed(state, "review_mixed_players")
@@ -496,6 +500,9 @@ class ReviewWorkflowStateTests(unittest.TestCase):
                 "status": "incomplete",
                 "allows_finalize": False,
                 "blockers": [{"code": "team_attribution_evidence_technical_failure"}],
+                "team_attribution_residual": {
+                    "evidence_status_counts": {"source_video_unavailable": 1},
+                },
             },
         }
         state = derive_review_workflow_state(evidence(issues=issues))
@@ -504,9 +511,43 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
         self.assertEqual(state["required_action"]["type"], "coverage_evidence_technical_failure")
         self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
-        self.assertFalse(state["mandatory_operator_review_complete"])
+        self.assertTrue(state["blockers"][0]["user_actionable"])
+        # No safe Required or Mixed decision exists. The technical fault blocks
+        # output readiness, not completion of the operator's mandatory work.
+        self.assertTrue(state["mandatory_operator_review_complete"])
         self.assertFalse(state["data_quality_ready_for_output"])
         self.assertNotIn("finalize_identity", state["allowed_actions"])
+
+    def test_recovery_incomplete_technical_failure_is_terminal_without_retry_loop(self) -> None:
+        issues = {
+            "blocking": 0,
+            "normal_blocking": 0,
+            "mixed_blocking": 0,
+            "coverage_readiness_blocked": True,
+            "team_attribution_evidence_not_materialized": False,
+            "team_attribution_evidence_technical_failure": True,
+            "coverage_readiness": {
+                "status": "incomplete",
+                "allows_finalize": False,
+                "blockers": [{"code": "team_attribution_evidence_technical_failure"}],
+                "team_attribution_residual": {
+                    "evidence_status_counts": {
+                        "team_attribution_evidence_recovery_incomplete": 1,
+                    },
+                },
+            },
+        }
+
+        state = derive_review_workflow_state(evidence(issues=issues))
+
+        self.assertTrue(state["mandatory_operator_review_complete"])
+        self.assertFalse(state["data_quality_ready_for_output"])
+        self.assertEqual(state["allowed_actions"], [])
+        self.assertFalse(state["blockers"][0]["user_actionable"])
+        self.assertEqual(
+            state["required_action"],
+            {"type": "coverage_evidence_technical_failure", "step_id": "exceptions"},
+        )
 
     def test_workflow_carries_the_exact_required_queue_descriptor(self) -> None:
         progress = {
