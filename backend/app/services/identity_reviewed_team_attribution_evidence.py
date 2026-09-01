@@ -30,6 +30,13 @@ SCHEMA_VERSION = "1.0.0"
 # Cached crops are operator-facing evidence.  Bump this when their selection
 # policy changes, so unchanged source observations cannot preserve stale crops.
 EVIDENCE_SELECTION_VERSION = "1.2.0"
+# This version owns the lifecycle interpretation shared by progress, coverage
+# readiness and focused recovery.  A persisted progress projection which lacks
+# it may have classified an exact normal Review crop as a technical failure,
+# so it must be reprojected through the supported retry path.
+TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION = (
+    "team-attribution-evidence-lifecycle:v2-exact-normal-review-crops"
+)
 MAX_CROPS_PER_CASE = 5
 MIN_CROPS_PER_CASE = 3
 MIN_BBOX_WIDTH_PX = 8

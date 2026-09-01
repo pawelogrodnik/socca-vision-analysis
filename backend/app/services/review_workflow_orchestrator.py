@@ -36,6 +36,7 @@ from app.services.identity_reviewed_mixed_store import (
     render_mixed_review_evidence,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    FOCUSED_SOURCE_ALREADY_ACTIONABLE,
     classify_team_attribution_evidence_status,
     mark_team_attribution_evidence_technical_failure,
     materialize_team_attribution_evidence,
@@ -739,7 +740,10 @@ def _focused_evidence_outcome_counts(
         if not isinstance(case, dict) or _team_evidence_source_key(case) not in requested_keys:
             continue
         status = str(case.get("status") or "")
-        if status == "ready_for_team_attribution":
+        if status in {
+            "ready_for_team_attribution",
+            FOCUSED_SOURCE_ALREADY_ACTIONABLE,
+        }:
             counts["materialized_actionable"] += 1
         elif classify_team_attribution_evidence_status(status) == "terminal_unavailable":
             counts["terminal_unavailable"] += 1
@@ -799,7 +803,10 @@ def _focused_sources_without_durable_outcome(
             unresolved.append(source)
             continue
         status = str(case.get("status") or "")
-        if status == "ready_for_team_attribution":
+        if status in {
+            "ready_for_team_attribution",
+            FOCUSED_SOURCE_ALREADY_ACTIONABLE,
+        }:
             continue
         if classify_team_attribution_evidence_status(status) in {
             "terminal_unavailable",
@@ -1013,6 +1020,7 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
     assert_workflow_action_allowed(state, "retry_review_recompute")
     retry_preflight_ms = _elapsed_ms(preflight_started)
     technical_evidence_retry = _is_evidence_only_technical_retry(state)
+    lifecycle_migration = _is_team_attribution_evidence_lifecycle_migration(state)
     # Retry is the boundary between an old operator projection and the next
     # one. Commit and warm the exact same generation before returning it so an
     # immediate Required offset-0 GET cannot observe a different queue.
@@ -1024,7 +1032,9 @@ def retry_review_recompute(match_path: Path, match_doc: dict[str, Any]) -> dict[
         operator_evidence=_retry_requires_global_operator_evidence(state),
         leave_hot_state_warm=True,
         reuse_current_snapshot=_retry_can_reuse_current_snapshot(state),
-        retry_technical_team_attribution_evidence=technical_evidence_retry,
+        retry_technical_team_attribution_evidence=(
+            technical_evidence_retry or lifecycle_migration
+        ),
     )
     performance = dict(refreshed.get("performance") or {})
     performance.update({
@@ -1047,6 +1057,7 @@ def _retry_requires_global_operator_evidence(state: dict[str, Any]) -> bool:
     return (
         reason != "review_progress_policy_stale"
         and not _is_evidence_only_technical_retry(state)
+        and not _is_team_attribution_evidence_lifecycle_migration(state)
     )
 
 
@@ -1058,7 +1069,18 @@ def _retry_can_reuse_current_snapshot(state: dict[str, Any]) -> bool:
     return (
         str(freshness.get("review_progress_reason") or "")
         == "review_progress_policy_stale"
+        or _is_team_attribution_evidence_lifecycle_migration(state)
         or _is_evidence_only_technical_retry(state)
+    )
+
+
+def _is_team_attribution_evidence_lifecycle_migration(state: dict[str, Any]) -> bool:
+    """Recognize the one bounded retry for the exact-evidence lifecycle fix."""
+    freshness = state.get("freshness") or {}
+    return (
+        str(freshness.get("review_progress_reason") or "")
+        == "review_progress_team_attribution_evidence_lifecycle_stale"
+        and bool(freshness.get("reviewed_identity_current"))
     )
 
 

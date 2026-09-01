@@ -45,6 +45,7 @@ from app.services.identity_reviewed_material_continuity import (
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
     TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE,
+    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION,
     classify_team_attribution_evidence_status,
     evidence_status_for_unit,
     load_team_attribution_evidence,
@@ -642,6 +643,9 @@ def project_reviewed_identity_progress(
         "technical_diagnostics": projection_inputs.get("technical_diagnostics") or {},
         "policy": {
             "version": COVERAGE_POLICY_VERSION,
+            "team_attribution_evidence_lifecycle_version": (
+                TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION
+            ),
             "optional_max_version": OPTIONAL_MAX_POLICY_VERSION,
             "material_continuity_version": MATERIAL_CONTINUITY_POLICY_VERSION,
             "optional_min_detected_sec": OPTIONAL_MIN_DETECTED_SEC,
