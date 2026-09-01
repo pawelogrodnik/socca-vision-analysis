@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-09-01T12:05:02.476223+00:00",
+  "overall": {
+    "total_operator_decisions": 90,
+    "mandatory_decisions": 0,
+    "optional_decisions": 0,
+    "requiredness_unavailable": 90,
+    "decision_counts_by_stage": {
+      "player_identity": 54,
+      "team_attribution": 30,
+      "temporal_split": 6
+    },
+    "decision_counts_by_action": {
+      "assign_roster_player": 54,
+      "assign_team": 22,
+      "false_detection": 7,
+      "referee": 1,
+      "unknown": 6
+    },
+    "operator_result_distribution": {
+      "team_A": 54,
+      "team_B": 22,
+      "unknown": 0,
+      "referee": 1,
+      "false_detection": 7,
+      "other": 6
+    },
+    "average_source_duration_sec": 0.0,
+    "median_source_duration_sec": 0.0,
+    "average_observation_count": 0.0,
+    "median_observation_count": 0.0
+  },
+  "team_attribution": {
+    "operator_decisions": 30,
+    "eligible_dominant_signal_cases": 0,
+    "dominant_upstream_signal_cases": 0,
+    "operator_agreed_with_dominant_signal": 0,
+    "operator_overrode_dominant_signal": 0,
+    "agreement_by_dominant_ratio": {},
+    "agreement_by_source_length": {},
+    "short_high_dominance": {
+      "total": 0,
+      "agreed": 0,
+      "overrode": 0
+    },
+    "unavailable_team_features": 90
+  },
+  "decision_paths": {
+    "unknown->assign_roster_player": 54,
+    "unknown->assign_team": 22,
+    "unknown->false_detection": 7,
+    "unknown->referee": 1,
+    "unknown->unknown": 6
+  },
+  "historical_backfill": {
+    "exact_source_linkable_count": 0,
+    "reconstructed_team_feature_count": 0,
+    "unavailable_team_feature_count": 90
+  }
+}
