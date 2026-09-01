@@ -26,6 +26,68 @@ SHORT_TRACK_MAX_MINORITY_RUN = 8
 # noisy votes, even if the dominant ratio is high.
 SHORT_TRACK_MAX_TEAM_SWITCHES = 6
 TEAM_ATTRIBUTION_POLICY_FILENAME = "reviewed_team_attribution_policy.json"
+STRUCTURAL_TEAM_ATTRIBUTION_REASON_CODES = frozenset({
+    "ambiguous_candidate_subject_membership",
+    "duplicate_physical_ownership",
+    "cross_team_conflict",
+    "conflicting_explicit_operator_decisions",
+    "conflicting_stable_slot_roster_bindings",
+    "conflicting_subject_and_stable_slot_roster_binding",
+    "duplicate_exact_ownership",
+    "incompatible_committed_ownership",
+    "multiple_manual_players",
+    "same_exact_ownership_conflict",
+})
+
+
+def short_track_projection_scope_is_eligible(scope_kind: Any) -> bool:
+    """Whether this Review scope participates in the production projection."""
+    return str(scope_kind or "") == "whole_subject"
+
+
+def short_track_projection_is_applicable(
+    scope_kind: Any,
+    *,
+    excluded_from_projection: bool = False,
+    structural_conflict: bool = False,
+    operator_contradiction: bool = False,
+) -> bool:
+    """Apply the production eligibility gates before scoring short tracks.
+
+    ``excluded_from_projection`` represents the snapshot builder's
+    ``auto_projection_exclusions`` set.  Keeping it explicit lets audit
+    counterfactuals use the same applicability contract without replaying a
+    mutation or reconstructing a snapshot.
+    """
+    return (
+        short_track_projection_scope_is_eligible(scope_kind)
+        and not excluded_from_projection
+        and not structural_conflict
+        and not operator_contradiction
+    )
+
+
+def has_structural_team_attribution_conflict(value: Mapping[str, Any]) -> bool:
+    """Shared structural gate for coverage and policy counterfactuals."""
+    if str(value.get("scope_kind") or "") == "material_continuity":
+        return True
+    return bool(
+        STRUCTURAL_TEAM_ATTRIBUTION_REASON_CODES
+        & {str(reason) for reason in value.get("reason_codes") or []}
+    )
+
+
+def has_operator_contradiction(value: Mapping[str, Any]) -> bool:
+    decision = value.get("current_decision") or {}
+    return bool(isinstance(decision, Mapping) and decision.get("operator_contradiction"))
+
+
+def is_structural_team_attribution_conflict(value: Mapping[str, Any]) -> bool:
+    """Current production blocking semantics, including operator conflict."""
+    return (
+        has_structural_team_attribution_conflict(value)
+        or has_operator_contradiction(value)
+    )
 
 
 def team_evidence_features(
@@ -113,6 +175,7 @@ def derive_short_track_team_projection(
     *,
     excluded_subject_ids: set[str] | None = None,
     fps: float | None = None,
+    source_scope_kind: str = "whole_subject",
 ) -> dict[str, dict[str, Any]]:
     """Derive exact subject-source team projections for a snapshot build.
 
@@ -121,6 +184,8 @@ def derive_short_track_team_projection(
     and all source tracklets, so a later source-topology change invalidates the
     projection as part of the normal snapshot rebuild.
     """
+    if not short_track_projection_is_applicable(source_scope_kind):
+        return {}
     excluded = excluded_subject_ids or set()
     memberships: dict[str, set[str]] = {}
     subjects: list[tuple[str, set[str]]] = []
@@ -136,7 +201,13 @@ def derive_short_track_team_projection(
             memberships.setdefault(tracklet_id, set()).add(subject_id)
     output: dict[str, dict[str, Any]] = {}
     for subject_id, tracklet_ids in subjects:
-        if subject_id in excluded or any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
+        if (
+            not short_track_projection_is_applicable(
+                source_scope_kind,
+                excluded_from_projection=subject_id in excluded,
+            )
+            or any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids)
+        ):
             continue
         observations = [
             {"tracklet_id": tracklet_id, "frame": position.get("frame"), "team_label": tracklet.get("team_label")}

@@ -475,6 +475,15 @@ def _persist_reviewed_identity_correction(
             if use_exact_materialized_context
             else build_subject_context(match_path, subject_id)
         )
+        authoritative_source_ownership_digest = (
+            str(authorized_review_unit.get("source_ownership_digest") or "")
+            if isinstance(authorized_review_unit, dict)
+            and str(authorized_review_unit.get("scope_kind") or "whole_subject")
+            == "whole_subject"
+            and str(authorized_review_unit.get("candidate_subject_id") or "")
+            == subject_id
+            else None
+        )
         card_key = review_card_key(match_path, subject_id)
         comment = str(payload.get("comment") or "").strip() or None
         if action == "assign_roster_player":
@@ -528,6 +537,7 @@ def _persist_reviewed_identity_correction(
                     detected_team_labels if use_exact_materialized_context else None
                 ),
                 allow_detected_team_override=corrects_detected_team,
+                authoritative_source_ownership_digest=authoritative_source_ownership_digest,
             )
             # The legacy card store intentionally exposes same-team choices only.
             # A cross-team named correction is fully represented by the reviewed
@@ -578,6 +588,7 @@ def _persist_reviewed_identity_correction(
                     detected_team_labels if use_exact_materialized_context else None
                 ),
                 allow_detected_team_override=corrects_detected_team,
+                authoritative_source_ownership_digest=authoritative_source_ownership_digest,
             )
             if action == "create_new_stable_player":
                 _validate_new_player_active_cap(

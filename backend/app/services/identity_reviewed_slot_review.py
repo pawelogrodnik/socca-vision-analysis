@@ -103,6 +103,7 @@ def prepare_reviewed_slot_assignments(
     use_materialized_candidate_context: bool = False,
     materialized_detected_team_labels: dict[str, set[str]] | None = None,
     allow_detected_team_override: bool = False,
+    authoritative_source_ownership_digest: str | None = None,
 ) -> dict[str, Any]:
     existing = load_reviewed_slot_assignments(match_path)
     decisions = {
@@ -281,6 +282,10 @@ def prepare_reviewed_slot_assignments(
             ),
             "reviewed_at": _now(),
         }
+        if authoritative_source_ownership_digest:
+            # Taken only from the server-authorized Review unit. This persists
+            # the exact source used by a new whole-subject operator decision.
+            decision["source_ownership_digest"] = authoritative_source_ownership_digest
         if action == "assign_roster_player":
             decision["player_id"] = str(raw.get("player_id") or "") or None
             source_team_label = str(raw.get("source_team_label") or "U").upper()

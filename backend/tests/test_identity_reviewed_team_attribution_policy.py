@@ -81,7 +81,11 @@ class TeamAttributionPolicyTests(unittest.TestCase):
             benchmark = json.loads((path / BENCHMARK_FILENAME).read_text(encoding="utf-8"))
             self.assertEqual(len(audit["events"]), 2)
             self.assertTrue(audit["events"][1]["operator_result"]["replaces_prior_operator_decision"])
-            self.assertEqual(benchmark["team_attribution"]["operator_agreed_with_dominant_signal"], 1)
+            # The direct append helper deliberately bypasses the durable
+            # mutation commit.  It remains useful for the legacy audit
+            # benchmark, but cannot manufacture an exact calibration label.
+            self.assertEqual(benchmark["team_attribution"]["eligible_calibration_samples"], 0)
+            self.assertEqual(benchmark["team_attribution"]["operator_agreed_with_dominant_signal"], 0)
             self.assertEqual(
                 benchmark["overall"]["operator_result_distribution"],
                 {"team_A": 0, "team_B": 1, "unknown": 1, "referee": 0, "false_detection": 0, "other": 0},
