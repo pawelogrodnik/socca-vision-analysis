@@ -17,6 +17,7 @@ from app.services.identity_reviewed_recompute_state import (
     load_reviewed_identity_recompute_state,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION,
     classify_team_attribution_evidence_status,
 )
 from app.services.identity_review_scope import (
@@ -662,6 +663,16 @@ def _current_cached_progress_for_snapshot_digest(
         return None, "review_progress_policy_stale"
     if (progress.get("policy") or {}).get("version") != COVERAGE_POLICY_VERSION:
         return None, "review_progress_policy_stale"
+    if (
+        (progress.get("policy") or {}).get(
+            "team_attribution_evidence_lifecycle_version"
+        )
+        != TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION
+    ):
+        # This is an explicit migration boundary, not an ordinary missing
+        # cache.  Its retry performs one exact-source evidence re-evaluation
+        # before committing the refreshed projection.
+        return None, "review_progress_team_attribution_evidence_lifecycle_stale"
     if not review_scope_dependency_matches(match_doc, progress):
         return None, "review_progress_scope_stale"
     return progress, None

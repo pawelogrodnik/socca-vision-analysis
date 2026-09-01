@@ -247,6 +247,44 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             retry_technical_team_attribution_evidence=True,
         )
 
+    def test_lifecycle_migration_reprojects_old_recovery_incomplete_sources(self) -> None:
+        """A pre-#82 terminal progress retry rematerializes exact evidence once."""
+        migration_state = {
+            "allowed_actions": ["retry_review_recompute"],
+            "freshness": {
+                "review_progress_reason": (
+                    "review_progress_team_attribution_evidence_lifecycle_stale"
+                ),
+                "reviewed_identity_current": True,
+            },
+            "issues": {"normal_blocking": 0, "mixed_blocking": 0},
+        }
+        refreshed = {
+            "workflow": {
+                "issues": {"normal_blocking": 1, "mixed_blocking": 0},
+                "allowed_actions": ["review_identity_issue"],
+            }
+        }
+        with patch(
+            "app.services.review_workflow_orchestrator.build_compact_review_workflow_state",
+            return_value=migration_state,
+        ), patch(
+            "app.services.review_workflow_orchestrator.refresh_review_after_identity_mutation",
+            return_value=refreshed,
+        ) as refresh:
+            result = retry_review_recompute(Path("/tmp/match"), {"id": "m1"})
+
+        self.assertEqual(result["workflow"], refreshed["workflow"])
+        refresh.assert_called_once_with(
+            Path("/tmp/match"),
+            {"id": "m1"},
+            source="retry",
+            operator_evidence=False,
+            leave_hot_state_warm=True,
+            reuse_current_snapshot=True,
+            retry_technical_team_attribution_evidence=True,
+        )
+
     def test_technical_retry_selects_current_exact_sources_but_normal_refresh_does_not(self) -> None:
         source_digest = "exact-evidence-digest"
         workflow = {
@@ -548,6 +586,65 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual(result["workflow"]["issues"]["normal_blocking"], 2)
         self.assertFalse(result["workflow"]["mandatory_operator_review_complete"])
+
+    def test_focused_existing_normal_evidence_is_actionable_and_never_rewritten(self) -> None:
+        """Focused recovery may discover an existing exact Required crop."""
+        initial_progress, blocked = _focused_terminal_progress_and_workflow()
+        required_progress = {
+            "summary": {"important_decisions_remaining": 1},
+            "mixed_players": {"summary": {"unresolved": 0}},
+            "coverage_residuals": {"B": {"non_actionable_required_team_uncertainty_cases": []}},
+            "next_cases": [{"candidate_subject_id": "cross-team-b"}],
+            "_internal_review_units": [],
+        }
+        required_workflow = {
+            "issues": {
+                "blocking": 1,
+                "normal_blocking": 1,
+                "mixed_blocking": 0,
+                "coverage_readiness_blocked": False,
+            },
+            "allowed_actions": ["review_identity_issue"],
+            "phase": "exceptions",
+            "status": "action_required",
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=[initial_progress, required_progress],
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            side_effect=[blocked, required_workflow],
+        ), patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={
+                "cases": [{
+                    "candidate_subject_id": "cross-team-b",
+                    "scope_kind": "whole_subject",
+                    "source_ownership_digest": "evidence-digest",
+                    "status": "focused_source_already_actionable",
+                }]
+            },
+        ), patch(
+            "app.services.review_workflow_orchestrator.mark_team_attribution_evidence_technical_failure",
+        ) as mark_technical:
+            result = refresh_review_after_identity_mutation(
+                Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False
+            )
+
+        mark_technical.assert_not_called()
+        self.assertEqual(result["workflow"], required_workflow)
+        self.assertEqual(result["performance"]["team_attribution_remediation"], {
+            "pre_retry_exact_source_count": 1,
+            "requested_focused_sources": 1,
+            "selector_unresolved_sources": 0,
+            "materialized_actionable": 1,
+            "terminal_unavailable": 0,
+            "technical_failure": 0,
+            "post_retry_remediable_not_established": 0,
+        })
 
     def test_retry_reports_orchestration_timings_in_the_returned_performance(self) -> None:
         retryable = {

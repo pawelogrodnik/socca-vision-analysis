@@ -10,6 +10,7 @@ candidate identity, tracklets, or reviewed output.
 """
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 import hashlib
 import json
 from pathlib import Path
@@ -29,6 +30,13 @@ SCHEMA_VERSION = "1.0.0"
 # Cached crops are operator-facing evidence.  Bump this when their selection
 # policy changes, so unchanged source observations cannot preserve stale crops.
 EVIDENCE_SELECTION_VERSION = "1.2.0"
+# This version owns the lifecycle interpretation shared by progress, coverage
+# readiness and focused recovery.  A persisted progress projection which lacks
+# it may have classified an exact normal Review crop as a technical failure,
+# so it must be reprojected through the supported retry path.
+TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION = (
+    "team-attribution-evidence-lifecycle:v2-exact-normal-review-crops"
+)
 MAX_CROPS_PER_CASE = 5
 MIN_CROPS_PER_CASE = 3
 MIN_BBOX_WIDTH_PX = 8
@@ -60,7 +68,14 @@ TECHNICAL_TEAM_ATTRIBUTION_EVIDENCE_STATUSES = frozenset({
     "focused_source_pairs_stale",
     "focused_source_digest_mismatch",
     "focused_source_not_reviewable",
+    "team_attribution_evidence_source_digest_mismatch",
 })
+
+TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE = "actionable"
+TEAM_ATTRIBUTION_EVIDENCE_TERMINAL_UNAVAILABLE = "terminal_unavailable"
+TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE = "technical_failure"
+TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_NOT_MATERIALIZED = "not_materialized"
+FOCUSED_SOURCE_ALREADY_ACTIONABLE = "focused_source_already_actionable"
 
 
 def classify_team_attribution_evidence_status(value: object) -> str:
@@ -88,6 +103,71 @@ def normalized_team_attribution_evidence_status(value: object) -> str:
     }:
         return status
     return TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED
+
+
+def team_attribution_evidence_lifecycle(unit: Mapping[str, Any]) -> str:
+    """Classify whether the current exact Team-attribution source is usable.
+
+    The progress pipeline may establish evidence either through the dedicated
+    Team-attribution renderer or through an existing, server-authorized normal
+    operator crop.  Both are valid only when their crops still belong to the
+    exact current ownership scope.  Readiness must use this same predicate so
+    an attached proof cannot regress into an absent-status cache miss.
+    """
+    visual_evidence = unit.get("visual_evidence")
+    if isinstance(visual_evidence, Mapping):
+        evidence_kind = str(visual_evidence.get("kind") or "")
+        expected_digest = str(unit.get("team_attribution_evidence_source_digest") or "")
+        evidence_digest = str(visual_evidence.get("source_ownership_digest") or "")
+        if evidence_kind == "team_attribution" and expected_digest and evidence_digest:
+            if evidence_digest != expected_digest:
+                return TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE
+        if _has_exact_safe_operator_visual_evidence(unit, visual_evidence):
+            return TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE
+
+    classification = classify_team_attribution_evidence_status(
+        unit.get("team_attribution_evidence_status")
+    )
+    if classification == "terminal_unavailable":
+        return TEAM_ATTRIBUTION_EVIDENCE_TERMINAL_UNAVAILABLE
+    if classification == "technical_failure":
+        return TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE
+    return TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_NOT_MATERIALIZED
+
+
+def _has_exact_safe_operator_visual_evidence(
+    unit: Mapping[str, Any],
+    visual_evidence: Mapping[str, Any],
+) -> bool:
+    """Accept only server-owned crops that are still inside this exact unit."""
+    if not unit.get("has_operator_visual_evidence"):
+        return False
+    pairs = {
+        (str(pair[0]), int(pair[1]))
+        for pair in unit.get("detected_pairs") or []
+        if isinstance(pair, (list, tuple)) and len(pair) == 2
+    }
+    if not pairs:
+        return False
+    valid_crops = [
+        crop
+        for crop in visual_evidence.get("anchor_crops") or []
+        if isinstance(crop, Mapping)
+        and crop.get("selection_eligible") is not False
+        and str(crop.get("artifact") or "")
+        and _crop_belongs_to_pairs(crop, pairs)
+    ]
+    return len(valid_crops) >= MIN_CROPS_PER_CASE
+
+
+def _crop_belongs_to_pairs(
+    crop: Mapping[str, Any],
+    pairs: set[tuple[str, int]],
+) -> bool:
+    frame = crop.get("frame")
+    return isinstance(frame, int) and (
+        str(crop.get("tracklet_id") or ""), frame
+    ) in pairs
 
 
 def mark_team_attribution_evidence_technical_failure(
@@ -136,7 +216,17 @@ def mark_team_attribution_evidence_technical_failure(
             "cases": len(cases),
             "source_observations": sum(int(row.get("detected_observation_count") or 0) for row in cases),
             "reviewable_cases": sum(row.get("status") == "ready_for_team_attribution" for row in cases),
-            "unavailable_cases": sum(row.get("status") != "ready_for_team_attribution" for row in cases),
+            "unavailable_cases": sum(
+                row.get("status") not in {
+                    "ready_for_team_attribution",
+                    FOCUSED_SOURCE_ALREADY_ACTIONABLE,
+                }
+                for row in cases
+            ),
+            "already_actionable_cases": sum(
+                row.get("status") == FOCUSED_SOURCE_ALREADY_ACTIONABLE
+                for row in cases
+            ),
             "rendered_reviewable_cases": sum(len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE for row in cases),
         },
     }
@@ -295,7 +385,15 @@ def build_team_attribution_evidence(
                 row.get("status") == "ready_for_team_attribution" for row in cases
             ),
             "unavailable_cases": sum(
-                row.get("status") != "ready_for_team_attribution" for row in cases
+                row.get("status") not in {
+                    "ready_for_team_attribution",
+                    FOCUSED_SOURCE_ALREADY_ACTIONABLE,
+                }
+                for row in cases
+            ),
+            "already_actionable_cases": sum(
+                row.get("status") == FOCUSED_SOURCE_ALREADY_ACTIONABLE
+                for row in cases
             ),
         },
         "cases": cases,
@@ -472,6 +570,8 @@ def _focused_source_failure_status(
     if source_ownership_digest(subject_id, pairs) != str(source.get("source_ownership_digest") or ""):
         return "focused_source_digest_mismatch"
     card = cards.get(subject_id) or {}
+    if _card_has_exact_safe_operator_visual_evidence(card, pairs):
+        return FOCUSED_SOURCE_ALREADY_ACTIONABLE
     if (
         str(card.get("review_status") or "") != "no_visual_evidence"
         or card.get("requires_operator_review") is False
@@ -480,6 +580,22 @@ def _focused_source_failure_status(
     # The normal builder should have emitted this source. Keep the generic
     # safety fallback only for impossible future implementation drift.
     return "team_attribution_evidence_recovery_incomplete"
+
+
+def _card_has_exact_safe_operator_visual_evidence(
+    card: Mapping[str, Any],
+    pairs: list[tuple[str, int]],
+) -> bool:
+    if card.get("requires_operator_review") is False:
+        return False
+    visual_evidence = card.get("visual_evidence")
+    return isinstance(visual_evidence, Mapping) and _has_exact_safe_operator_visual_evidence(
+        {
+            "has_operator_visual_evidence": True,
+            "detected_pairs": pairs,
+        },
+        visual_evidence,
+    )
 
 
 def _merge_focused_evidence(
@@ -529,7 +645,15 @@ def _merge_focused_evidence(
             row.get("status") == "ready_for_team_attribution" for row in cases
         ),
         "unavailable_cases": sum(
-            row.get("status") != "ready_for_team_attribution" for row in cases
+            row.get("status") not in {
+                "ready_for_team_attribution",
+                FOCUSED_SOURCE_ALREADY_ACTIONABLE,
+            }
+            for row in cases
+        ),
+        "already_actionable_cases": sum(
+            row.get("status") == FOCUSED_SOURCE_ALREADY_ACTIONABLE
+            for row in cases
         ),
         "rendered_reviewable_cases": sum(
             len(row.get("rendered_anchor_crops") or []) >= MIN_CROPS_PER_CASE

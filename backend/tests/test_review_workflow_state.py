@@ -20,6 +20,9 @@ from app.services.identity_reviewed_progress import (
     PROGRESS_SCHEMA_VERSION,
     required_queue_descriptor,
 )
+from app.services.identity_reviewed_team_attribution_evidence import (
+    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION,
+)
 from app.services.identity_reviewed_recompute_state import (
     mark_reviewed_identity_recompute_required,
 )
@@ -88,7 +91,12 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         complete = {"prepared": True, "complete": True, "completed": 8, "total": 8, "remaining": 0}
         durable_required = {
             "schema_version": PROGRESS_SCHEMA_VERSION,
-            "policy": {"version": COVERAGE_POLICY_VERSION},
+            "policy": {
+                "version": COVERAGE_POLICY_VERSION,
+                "team_attribution_evidence_lifecycle_version": (
+                    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION
+                ),
+            },
             "source_snapshot_digest": "snapshot",
             "next_cases": [{
                 "candidate_subject_id": f"old-required-{index}",
@@ -152,7 +160,12 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         complete = {"prepared": True, "complete": True, "completed": 8, "total": 8, "remaining": 0}
         base_progress = {
             "schema_version": PROGRESS_SCHEMA_VERSION,
-            "policy": {"version": COVERAGE_POLICY_VERSION},
+            "policy": {
+                "version": COVERAGE_POLICY_VERSION,
+                "team_attribution_evidence_lifecycle_version": (
+                    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION
+                ),
+            },
             "source_snapshot_digest": "snapshot",
             "summary": {"important_decisions_remaining": 0},
             "mixed_players": {"summary": {"unresolved": 0, "total": 0, "resolved": 0}},
@@ -785,6 +798,28 @@ class ReviewWorkflowStateTests(unittest.TestCase):
 
             self.assertIsNone(current)
             self.assertEqual(reason, "review_progress_policy_stale")
+
+    def test_cached_progress_without_evidence_lifecycle_version_requests_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            progress = {
+                "schema_version": PROGRESS_SCHEMA_VERSION,
+                "source_snapshot_digest": "identity",
+                "policy": {"version": COVERAGE_POLICY_VERSION},
+            }
+            write_json(root / "reviewed_identity_progress.json", progress)
+
+            current, reason = _current_cached_progress(
+                root,
+                {"semantic_digest": "identity"},
+                {"teams": []},
+            )
+
+            self.assertIsNone(current)
+            self.assertEqual(
+                reason,
+                "review_progress_team_attribution_evidence_lifecycle_stale",
+            )
 
     def test_get_state_does_not_recover_or_write_an_interrupted_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

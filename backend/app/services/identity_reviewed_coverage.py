@@ -42,8 +42,14 @@ from app.services.identity_reviewed_scope_eligibility import (
     unit_team_label,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE,
+    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_NOT_MATERIALIZED,
+    TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED,
+    TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE,
+    TEAM_ATTRIBUTION_EVIDENCE_TERMINAL_UNAVAILABLE,
     classify_team_attribution_evidence_status,
     normalized_team_attribution_evidence_status,
+    team_attribution_evidence_lifecycle,
 )
 from app.services.play_area import is_on_pitch_product_observation
 
@@ -224,9 +230,9 @@ def apply_coverage_policy(
                 | {"team_attribution_uncertain"}
             )
             if (
-                required_review_relevant_for_scope(enriched, match_doc)
-                and operator_actionable
-                and enriched.get("has_operator_visual_evidence")
+                operator_actionable
+                and team_attribution_evidence_lifecycle(enriched)
+                == TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE
             ):
                 enriched["current_resolution_status"] = "pending_high_priority"
                 enriched["priority"] = "high"
@@ -1644,6 +1650,23 @@ def _has_explicit_disposition(unit: dict[str, Any], match_doc: dict[str, Any]) -
     return roster_scope(match_doc, team) != "complete_roster"
 
 
+def _team_attribution_readiness_status(
+    unit: dict[str, Any],
+    lifecycle: str,
+) -> str:
+    """Project the shared lifecycle into the compact readiness diagnostics."""
+    if lifecycle == TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE:
+        status = str(unit.get("team_attribution_evidence_status") or "")
+        if classify_team_attribution_evidence_status(status) == "technical_failure":
+            return status
+        return "team_attribution_evidence_source_digest_mismatch"
+    if lifecycle == TEAM_ATTRIBUTION_EVIDENCE_TERMINAL_UNAVAILABLE:
+        return normalized_team_attribution_evidence_status(
+            unit.get("team_attribution_evidence_status")
+        )
+    return TEAM_ATTRIBUTION_EVIDENCE_NOT_MATERIALIZED
+
+
 def _readiness(
     coverage: dict[str, Any],
     residual_by_team: dict[str, dict[str, Any]],
@@ -1671,26 +1694,22 @@ def _readiness(
         for units in non_actionable_team_uncertainty.values()
         for unit in units
     ]
-    team_attribution_statuses = [
-        normalized_team_attribution_evidence_status(
-            unit.get("team_attribution_evidence_status")
-        )
+    team_attribution_lifecycles = [
+        team_attribution_evidence_lifecycle(unit)
         for unit in team_attribution_units
+    ]
+    team_attribution_statuses = [
+        _team_attribution_readiness_status(unit, lifecycle)
+        for unit, lifecycle in zip(team_attribution_units, team_attribution_lifecycles)
     ]
     team_attribution_status_counts = Counter(team_attribution_statuses)
     team_attribution_requires_materialization = any(
-        classify_team_attribution_evidence_status(
-            unit.get("team_attribution_evidence_status")
-        )
-        == "remediable_not_established"
-        for unit in team_attribution_units
+        lifecycle == TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_NOT_MATERIALIZED
+        for lifecycle in team_attribution_lifecycles
     )
     team_attribution_has_technical_failure = any(
-        classify_team_attribution_evidence_status(
-            unit.get("team_attribution_evidence_status")
-        )
-        == "technical_failure"
-        for unit in team_attribution_units
+        lifecycle == TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE
+        for lifecycle in team_attribution_lifecycles
     )
     reliable_observations = int(coverage.get("reliable_observations") or 0)
     # These units are exact final Review ownership scopes. Count them rather
