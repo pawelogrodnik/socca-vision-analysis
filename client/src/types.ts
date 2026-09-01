@@ -3179,6 +3179,57 @@ export type MatchGroupRecord = {
   report?: AggregatePublicMatchReport;
 };
 
+export type MatchGroupReportResponse = {
+  report: AggregatePublicMatchReport;
+  validation: MatchGroupCompatibility;
+};
+
+export type AggregateMovement = {
+  status: string;
+  total_distance_m?: number;
+  observed_distance_m?: number;
+  estimated_short_gap_distance_m?: number;
+  movement_time_sec?: number;
+  detected_time_sec?: number;
+  high_intensity_distance_m?: number;
+  sprint_count?: number;
+  avg_speed_kmh?: number | null;
+  peak_speed_kmh?: number;
+};
+
+export type AggregateReportTeam = {
+  team_id: string;
+  team_name?: string;
+  display_color?: string;
+  movement: AggregateMovement;
+};
+
+export type AggregateReportPlayer = {
+  player_id: string;
+  team_id: string;
+  player_name?: string;
+  player_number?: string;
+  movement: AggregateMovement;
+};
+
+export type AggregatePossession = {
+  status: string;
+  controlled_frames_by_team_id?: Record<string, number>;
+  possession_share_percent_by_team_id?: Record<string, number | null>;
+  known_frames?: number;
+  free_frames?: number;
+  unknown_frames?: number;
+  contested_frames?: number;
+};
+
+export type AggregatePasses = {
+  status: string;
+  attempts?: number;
+  completed?: number;
+  failed?: number;
+  completion_rate_percent?: number | null;
+};
+
 export type AggregatePublicMatchReport = {
   schema_version: string;
   report_type: 'public_aggregate_match_report';
@@ -3198,12 +3249,25 @@ export type AggregatePublicMatchReport = {
     heatmaps: { status: string; reason?: string };
     team_shape: { status: string; reason?: string };
   };
-  timelines?: {
-    attacking_momentum?: { product_readiness?: string; status?: string };
+  teams: AggregateReportTeam[];
+  players: AggregateReportPlayer[];
+  ball?: { possession?: AggregatePossession; passes?: AggregatePasses };
+  identity_coverage?: {
+    status: string;
+    coverage_unit?: string;
+    confirmed_observations?: number;
+    reliable_observations?: number;
+    unresolved_observations?: number;
+    conflicted_observations?: number;
+    confirmed_coverage_percent?: number | null;
   };
-  teams: Array<Record<string, unknown>>;
-  players: Array<Record<string, unknown>>;
-  ball?: Record<string, unknown>;
+  timelines?: {
+    possession?: {
+      status?: string;
+      windows?: Array<{ start_time_sec: number; end_time_sec: number; possession_share_percent_by_team_id?: Record<string, number | null> }>;
+    };
+    attacking_momentum?: { product_readiness?: string; status?: string; points?: Array<{ start_time_sec: number; end_time_sec: number; intensity?: number }> };
+  };
 };
 
 export type PhysicalPublicMatchReport = PublicMatchReport & {

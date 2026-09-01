@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from app.config import PUBLISHED_DIR
@@ -119,6 +120,40 @@ def update_match_group(
     )
     _atomic_write_json(manifest_path, manifest)
     return manifest
+
+
+def update_match_group_and_generate_report(
+    group_id: str,
+    *,
+    member_published_ids: list[str],
+    metadata: dict[str, Any],
+    generate_report: Callable[[str], dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Restore prior coherent group bytes when regeneration cannot complete."""
+
+    normalized_group_id = _validated_group_id(group_id)
+    directory = _group_dir(normalized_group_id)
+    manifest_path = directory / "manifest.json"
+    report_path = directory / "public_report.json"
+    if not manifest_path.exists():
+        raise KeyError(normalized_group_id)
+    previous_manifest = manifest_path.read_bytes()
+    previous_report = report_path.read_bytes() if report_path.exists() else None
+    group = update_match_group(
+        normalized_group_id,
+        member_published_ids=member_published_ids,
+        metadata=metadata,
+    )
+    try:
+        report = generate_report(normalized_group_id)
+    except Exception:
+        _atomic_write_bytes(manifest_path, previous_manifest)
+        if previous_report is not None:
+            _atomic_write_bytes(report_path, previous_report)
+        elif report_path.exists():
+            report_path.unlink()
+        raise
+    return group, report
 
 
 def delete_match_group(group_id: str) -> dict[str, Any]:
@@ -540,6 +575,13 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(f"{path.suffix}.tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _atomic_write_bytes(path: Path, value: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f"{path.suffix}.rollback.tmp")
+    temporary.write_bytes(value)
     temporary.replace(path)
 
 

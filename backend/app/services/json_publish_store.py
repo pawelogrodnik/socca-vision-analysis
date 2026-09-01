@@ -206,6 +206,10 @@ def _summary_from_package(
         "season": match.get("season"),
         "venue": match.get("venue"),
         "format": match.get("format"),
+        "teams": [
+            {"id": str(team.get("id") or ""), "name": str(team.get("name") or team.get("id") or "")}
+            for team in teams
+        ],
         "status": "published",
         "schema_version": str(package.get("schema_version") or "unknown"),
         "team_count": int(package.get("team_count") or len(teams)),
@@ -317,12 +321,17 @@ def list_eligible_match_group_sources() -> list[dict[str, Any]]:
             if report_type != "public_match_report":
                 continue
             timing = aggregate.get("timing") if isinstance(aggregate.get("timing"), dict) else {}
+            compact_teams = summary.get("teams") if isinstance(summary.get("teams"), list) else []
             rows.append({
                 "id": published_id,
                 "source_match_id": str(summary.get("source_match_id") or ""),
                 "title": str(summary.get("title") or "Untitled match"),
                 "match_date": summary.get("match_date"),
-                "teams": [str(team.get("name") or team.get("id") or "") for team in _match_teams(_load_json_object(summary_path.parent / "package.json"))],
+                "teams": [
+                    str(team.get("name") or team.get("id") or "")
+                    for team in compact_teams
+                    if isinstance(team, dict)
+                ],
                 "analyzed_duration_sec": float(timing.get("analyzed_duration_sec") or 0),
                 "status": str(summary.get("status") or "published"),
                 "report_type": report_type,

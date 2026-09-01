@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { JSDOM } from 'jsdom';
 import React from 'react';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { MatchGroupsPage } from '../src/components/MatchGroupsPage.tsx';
+import { AggregateMatchReportContent } from '../src/components/AggregateMatchReportContent.tsx';
+import { AggregateMatchReportPage } from '../src/components/AggregateMatchReportPage.tsx';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/match-groups' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -50,5 +52,47 @@ test('match-group page selects physical sources, orders IDs and submits no stati
     assert.deepEqual(create.body.member_published_ids, ['physical-b', 'physical-a']);
     assert.deepEqual(Object.keys(create.body).sort(), ['member_published_ids', 'metadata']);
     assert.deepEqual(create.body.metadata, { title: '' });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('aggregate content renders metrics, source links and explicit unavailable semantics', () => {
+  const view = render(React.createElement(BrowserRouter, null, React.createElement(AggregateMatchReportContent, {
+    report: {
+      schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Full match' },
+      source_match_ids: ['m1'], source_published_ids: ['p1'],
+      sources: [{ published_id: 'p1', source_match_id: 'm1', sequence_index: 0, logical_offset_sec: 0 }],
+      timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' },
+      stats_semantics: { ball: 'experimental_candidates' },
+      spatial: { heatmaps: { status: 'not_available', reason: 'orientation' }, team_shape: { status: 'not_available', reason: 'orientation' } },
+      teams: [{ team_id: 'a', team_name: 'Corgi', movement: { status: 'ready', total_distance_m: 123, sprint_count: 2 } }],
+      players: [{ player_id: 'p', player_name: 'Piotr', team_id: 'a', movement: { status: 'ready', total_distance_m: 88, avg_speed_kmh: 10 } }],
+      ball: { possession: { status: 'ready', known_frames: 20, possession_share_percent_by_team_id: { a: 60 } }, passes: { status: 'ready', attempts: 8, completed: 5, failed: 3, completion_rate_percent: 62.5 } },
+      identity_coverage: { status: 'ready', confirmed_observations: 10, reliable_observations: 12, confirmed_coverage_percent: 83.3 },
+      timelines: { possession: { status: 'ready', windows: [] }, attacking_momentum: { status: 'completed', product_readiness: 'experimental', points: [] } },
+    },
+  })));
+  assert.ok(view.getByText('Podsumowanie drużyn'));
+  assert.ok(view.getByText('Piotr'));
+  assert.ok(view.getByText(/eksperymentalne/));
+  assert.ok(view.getByText(/Heatmapy: not_available/));
+  assert.equal((view.getByRole('link', { name: 'Fragment 1' }) as HTMLAnchorElement).getAttribute('href'), '/published/matches/p1/report');
+});
+
+test('aggregate page shows server-authoritative stale reason above its last coherent report', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    report: {
+      schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Old report' }, source_match_ids: [], source_published_ids: [], sources: [],
+      timing: { analyzed_duration_sec: 0, timeline_span_sec: 0, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [],
+    },
+    validation: { status: 'stale', blocking_reasons: [{ code: 'source_generation_changed', detail: 'Jeden z raportów źródłowych został ponownie opublikowany.' }] },
+  });
+  try {
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    )));
+    await waitFor(() => assert.ok(view.getByText('Raport jest nieaktualny.')));
+    assert.ok(view.getByText('Jeden z raportów źródłowych został ponownie opublikowany.'));
+    assert.ok(view.getByText('Old report'));
   } finally { globalThis.fetch = originalFetch; }
 });

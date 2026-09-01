@@ -200,7 +200,7 @@ from app.services.match_groups import (
     get_match_group,
     list_match_groups,
     preview_match_group,
-    update_match_group,
+    update_match_group_and_generate_report,
     validate_match_group,
 )
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
@@ -3604,12 +3604,12 @@ def api_get_match_group(group_id: str) -> dict[str, Any]:
 @app.put("/api/published/match-groups/{group_id}")
 def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[str, Any]:
     try:
-        group = update_match_group(
+        group, report = update_match_group_and_generate_report(
             group_id,
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
+            generate_report=generate_match_group_report,
         )
-        report = generate_match_group_report(group_id)
         return {**_group_with_validation(group), "report": report}
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
@@ -3641,7 +3641,10 @@ def api_delete_match_group(group_id: str) -> dict[str, Any]:
 @app.get("/api/published/match-groups/{group_id}/report")
 def api_get_match_group_report(group_id: str) -> dict[str, Any]:
     try:
-        return load_match_group_report(group_id)
+        return {
+            "report": load_match_group_report(group_id),
+            "validation": validate_match_group(group_id),
+        }
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except FileNotFoundError as error:

@@ -30,7 +30,6 @@ import type {
   PlayerIdentityReviewState,
   PlayerProfileStatsDocument,
   PublicMatchReport,
-  AggregatePublicMatchReport,
   ResolvedPlayerStatsDocument,
   RuntimeInfo,
   TeamProfileStatsDocument,
@@ -41,6 +40,7 @@ import type {
   MatchGroupMetadata,
   MatchGroupPreview,
   MatchGroupRecord,
+  MatchGroupReportResponse,
   MatchGroupSource,
   StablePlayerReviewPayload,
   StablePlayersReviewState,
@@ -948,6 +948,6 @@ export async function deleteMatchGroup(groupId: string): Promise<{ status: strin
   return request<{ status: string }>(`/api/published/match-groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' });
 }
 
-export async function getMatchGroupReport(groupId: string): Promise<AggregatePublicMatchReport> {
-  return request<AggregatePublicMatchReport>(`/api/published/match-groups/${encodeURIComponent(groupId)}/report`);
+export async function getMatchGroupReport(groupId: string): Promise<MatchGroupReportResponse> {
+  return request<MatchGroupReportResponse>(`/api/published/match-groups/${encodeURIComponent(groupId)}/report`);
 }

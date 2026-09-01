@@ -138,6 +138,25 @@ class JsonPublishStoreTests(unittest.TestCase):
                 self.assertIn("T", second["updated_at"])
                 self.assertEqual(second["title"], "Updated match")
 
+    def test_eligible_group_sources_use_current_compact_summary_without_package_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            published_dir = Path(tmp) / "published" / "matches"
+            source_dir = published_dir / "published-one"
+            source_dir.mkdir(parents=True)
+            (source_dir / "summary.json").write_text(json.dumps({
+                "id": "published-one", "source_match_id": "match-one", "title": "Part one",
+                "match_date": "2026-08-20", "status": "published", "report_type": "public_match_report",
+                "teams": [{"id": "team-a", "name": "Corgi"}, {"id": "team-b", "name": "Verisk"}],
+            }), encoding="utf-8")
+            (source_dir / "aggregate_inputs.json").write_text(json.dumps({"timing": {"analyzed_duration_sec": 120}}), encoding="utf-8")
+            with patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", published_dir):
+                rows = json_publish_store.list_eligible_match_group_sources()
+            self.assertEqual(rows, [{
+                "id": "published-one", "source_match_id": "match-one", "title": "Part one",
+                "match_date": "2026-08-20", "teams": ["Corgi", "Verisk"],
+                "analyzed_duration_sec": 120.0, "status": "published", "report_type": "public_match_report",
+            }])
+
 
 if __name__ == "__main__":
     unittest.main()
