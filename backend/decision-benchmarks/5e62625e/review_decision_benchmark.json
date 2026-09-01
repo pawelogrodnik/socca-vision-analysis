@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "generated_at": "2026-09-01T12:05:02.476223+00:00",
+  "generated_at": "2026-09-01T13:41:33.323190+00:00",
   "overall": {
     "total_operator_decisions": 90,
     "mandatory_decisions": 0,
@@ -33,16 +33,21 @@
   },
   "team_attribution": {
     "operator_decisions": 30,
+    "eligible_calibration_samples": 0,
     "eligible_dominant_signal_cases": 0,
     "dominant_upstream_signal_cases": 0,
     "operator_agreed_with_dominant_signal": 0,
     "operator_overrode_dominant_signal": 0,
+    "operator_non_binary_final_disposition": 0,
     "agreement_by_dominant_ratio": {},
     "agreement_by_source_length": {},
+    "agreement_by_switch_count": {},
+    "agreement_by_minority_run": {},
     "short_high_dominance": {
       "total": 0,
       "agreed": 0,
-      "overrode": 0
+      "overrode": 0,
+      "non_binary": 0
     },
     "unavailable_team_features": 90
   },

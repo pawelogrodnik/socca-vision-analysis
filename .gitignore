@@ -91,3 +91,4 @@ backend/decision-benchmarks/**
 !backend/decision-benchmarks/*/
 !backend/decision-benchmarks/*/match.json
 !backend/decision-benchmarks/*/review_decision_benchmark.json
+!backend/decision-benchmarks/*/review_decision_calibration_samples.jsonl

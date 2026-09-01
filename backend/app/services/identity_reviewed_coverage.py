@@ -51,6 +51,9 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     normalized_team_attribution_evidence_status,
     team_attribution_evidence_lifecycle,
 )
+from app.services.identity_reviewed_team_attribution_policy import (
+    is_structural_team_attribution_conflict,
+)
 from app.services.play_area import is_on_pitch_product_observation
 
 
@@ -203,7 +206,7 @@ def apply_coverage_policy(
         )
         and (
             not has_team_attribution_uncertainty(enriched)
-            or _is_structural_team_attribution_conflict(enriched)
+            or is_structural_team_attribution_conflict(enriched)
         )
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -223,7 +226,7 @@ def apply_coverage_policy(
             and required_review_relevant_for_scope(unit, match_doc)
             and (
                 not has_team_attribution_uncertainty(unit)
-                or _is_structural_team_attribution_conflict(unit)
+                or is_structural_team_attribution_conflict(unit)
             )
         ) or _has_explicit_disposition(unit, match_doc):
             continue
@@ -243,7 +246,7 @@ def apply_coverage_policy(
                 set(enriched.get("reason_codes") or [])
                 | {"team_attribution_uncertain"}
             )
-            if _is_structural_team_attribution_conflict(enriched):
+            if is_structural_team_attribution_conflict(enriched):
                 if operator_actionable and team_attribution_evidence_lifecycle(enriched) == TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE:
                     enriched["current_resolution_status"] = "pending_high_priority"
                     enriched["priority"] = "high"
@@ -1513,33 +1516,6 @@ def _select_required_team_attribution_cases(
         )
         selected.append(row)
     return selected, selected_pairs
-
-
-def _is_structural_team_attribution_conflict(unit: Mapping[str, Any]) -> bool:
-    """Distinguish unsafe ownership contradictions from noisy A/B votes."""
-    if str(unit.get("scope_kind") or "") == "material_continuity":
-        return True
-    # These are authoritative *proof* codes, never fuzzy diagnostic text.
-    # In particular, ``semantic_identity_conflict`` describes ordinary noisy
-    # A/B evidence and must go through the 90% marginal-gain policy.
-    structural_markers = {
-        "ambiguous_candidate_subject_membership",
-        "duplicate_physical_ownership",
-        "cross_team_conflict",
-        "conflicting_explicit_operator_decisions",
-        "conflicting_stable_slot_roster_bindings",
-        "conflicting_subject_and_stable_slot_roster_binding",
-        "duplicate_exact_ownership",
-        "incompatible_committed_ownership",
-        "multiple_manual_players",
-        "same_exact_ownership_conflict",
-    }
-    if structural_markers & {
-        str(value) for value in unit.get("reason_codes") or []
-    }:
-        return True
-    decision = unit.get("current_decision") or {}
-    return bool(isinstance(decision, Mapping) and decision.get("operator_contradiction"))
 
 
 def _team_uncertainty_diagnostic(row: Mapping[str, Any]) -> dict[str, Any]:
