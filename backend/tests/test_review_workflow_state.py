@@ -511,6 +511,7 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertEqual(state["allowed_actions"], ["retry_review_recompute"])
         self.assertEqual(state["required_action"]["type"], "coverage_evidence_technical_failure")
         self.assertTrue(state["issues"]["team_attribution_evidence_technical_failure"])
+        self.assertTrue(state["blockers"][0]["user_actionable"])
         # No safe Required or Mixed decision exists. The technical fault blocks
         # output readiness, not completion of the operator's mandatory work.
         self.assertTrue(state["mandatory_operator_review_complete"])
@@ -542,6 +543,7 @@ class ReviewWorkflowStateTests(unittest.TestCase):
         self.assertTrue(state["mandatory_operator_review_complete"])
         self.assertFalse(state["data_quality_ready_for_output"])
         self.assertEqual(state["allowed_actions"], [])
+        self.assertFalse(state["blockers"][0]["user_actionable"])
         self.assertEqual(
             state["required_action"],
             {"type": "coverage_evidence_technical_failure", "step_id": "exceptions"},

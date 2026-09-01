@@ -91,6 +91,9 @@ export function reviewWorkflowErrorMessage(workflow: ReviewWorkflow): string {
     code === 'team_attribution_evidence_technical_failure'
     || code === 'coverage_evidence_technical_failure'
   ) {
+    if (!workflowAllows(workflow, 'retry_review_recompute')) {
+      return 'Nie udało się bezpiecznie przygotować danych dla części nierozstrzygniętych obserwacji. Automatyczne ponowienie Review nie może naprawić tego stanu przy obecnych artefaktach analizy.';
+    }
     return 'Nie udało się przygotować bezpiecznych widoków dla nierozstrzygniętych obserwacji. Sprawdź dostępność pliku wideo i artefaktów analizy, a następnie spróbuj ponownie.';
   }
   if (code === 'identity_coverage_unresolved_without_reviewable_evidence') {

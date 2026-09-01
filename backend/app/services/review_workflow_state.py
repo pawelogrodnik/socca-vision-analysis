@@ -216,7 +216,13 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 blocker_code,
                 "exceptions",
                 details,
-                user_actionable=team_attribution_not_materialized and not team_attribution_technical_failure,
+                user_actionable=(
+                    team_attribution_not_materialized
+                    or (
+                        team_attribution_technical_failure
+                        and technical_retry_available
+                    )
+                ),
             )
         )
         # Technical evidence failures are fail-closed for finalization. Retry

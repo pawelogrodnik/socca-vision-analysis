@@ -230,9 +230,64 @@ test('technical Team-attribution failure explains recovery and exposes only serv
     const view = renderWorkspace(technical);
     await waitFor(() => assert.ok(view.getByRole('button', { name: 'Spróbuj ponownie' })));
     assert.ok(view.getByText(/Nie udało się przygotować bezpiecznych widoków/));
+    assert.ok(view.getByText(/Sprawdź dostępność pliku wideo/));
     assert.equal(view.queryByText('Nie udało się przygotować kolejnego kroku review.'), null);
     assert.ok(view.getByText(/Wymagany Review zakończony/));
     assert.equal(view.queryByText(/Wymagane przypadki =/), null);
+    assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('terminal technical Team-attribution failure does not promise an unavailable retry', async () => {
+  const originalFetch = globalThis.fetch;
+  const retryable: ReviewWorkflow = {
+    ...mandatoryWorkflow('exceptions'),
+    status: 'error',
+    required_action: { type: 'coverage_evidence_technical_failure', step_id: 'exceptions' },
+    issues: {
+      blocking: 0,
+      normal_blocking: 0,
+      mixed_blocking: 0,
+      important: 0,
+      optional: 0,
+      coverage_readiness_blocked: true,
+      team_attribution_evidence_technical_failure: true,
+      coverage_readiness: {
+        status: 'incomplete',
+        policy_version: 'test',
+        allows_finalize: false,
+        roster_scope: {},
+        blockers: [{ code: 'team_attribution_evidence_technical_failure' }],
+        team_attribution_residual: {
+          status: 'technical_evidence_failure',
+          units: 50,
+          observations: 6814,
+          residual_budget_observations: 14982,
+          within_tolerance: true,
+          evidence_status_counts: { team_attribution_evidence_recovery_incomplete: 50 },
+        },
+      },
+    },
+    blockers: [{
+      code: 'team_attribution_evidence_technical_failure',
+      step_id: 'exceptions',
+      user_actionable: false,
+      details: {},
+    }],
+    allowed_actions: [],
+    mandatory_operator_review_complete: true,
+    data_quality_ready_for_output: false,
+  };
+  installWorkspaceFetch(retryable);
+  try {
+    const view = renderWorkspace(retryable);
+    await waitFor(() => assert.ok(view.getByText(/Wymagany Review zakończony/)));
+    assert.ok(view.getByText(/Nie ma już kolejnych bezpiecznych decyzji manualnych/));
+    assert.ok(view.getByText(/Automatyczne ponowienie Review nie może naprawić/));
+    assert.equal(view.queryByRole('button', { name: 'Spróbuj ponownie' }), null);
+    assert.equal(view.queryByText(/Sprawdź dostępność pliku wideo/), null);
     assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
   } finally {
     globalThis.fetch = originalFetch;
