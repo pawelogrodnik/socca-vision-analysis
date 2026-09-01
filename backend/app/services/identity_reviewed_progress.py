@@ -44,10 +44,12 @@ from app.services.identity_reviewed_material_continuity import (
     trim_resolved_material_pairs_from_whole_subject_units,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE,
     classify_team_attribution_evidence_status,
     evidence_status_for_unit,
     load_team_attribution_evidence,
     source_ownership_digest as team_attribution_source_ownership_digest,
+    team_attribution_evidence_lifecycle,
     visual_evidence_for_unit,
 )
 from app.services.identity_reviewed_scope_eligibility import (
@@ -879,6 +881,13 @@ def _attach_team_attribution_evidence(
                 }
             )
         unit["team_attribution_evidence_source_digest"] = current_digest
+        if team_attribution_evidence_lifecycle(unit) == TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE:
+            unit.pop("team_attribution_evidence_status", None)
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                - {"team_attribution_evidence_unavailable"}
+            )
+            continue
         persisted_status = evidence_status_for_unit(
             document,
             candidate_subject_id=subject_id,

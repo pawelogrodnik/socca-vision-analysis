@@ -1306,6 +1306,8 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(after["optional_audit_cases"], [])
 
     def test_team_u_with_evidence_is_a_terminal_residual_not_a_required_card(self) -> None:
+        # ``has_operator_visual_evidence`` alone is not proof. The anchor
+        # crops still have to belong to this exact Team-U ownership scope.
         rows = [_observation("u", frame, "U", "unresolved", None) for frame in range(12)]
         match = _scoped_match()
         coverage, pair_index = summarize_effective_observations(rows, match)
@@ -1322,6 +1324,85 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             "materialization_required",
         )
         self.assertFalse(policy["readiness"]["allows_finalize"])
+
+    def test_exact_rendered_team_attribution_evidence_becomes_required(self) -> None:
+        pairs = [("u", frame) for frame in range(12)]
+        rows = [_observation("u", frame, "U", "unresolved", None) for _, frame in pairs]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        unit = _unit("team-evidence", pairs, visual=True)
+        unit.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "team_attribution_evidence_source_digest": "current-source",
+            "visual_evidence": _safe_team_attribution_evidence(
+                pairs,
+                source_digest="current-source",
+            ),
+        })
+
+        policy = apply_coverage_policy([unit], coverage, pair_index, _scoped_match())
+
+        self.assertEqual(policy["semantic_blockers"], 1)
+        self.assertEqual(
+            [case["candidate_subject_id"] for case in policy["next_cases"]],
+            ["team-evidence"],
+        )
+        self.assertEqual(
+            policy["readiness"]["team_attribution_residual"]["status"],
+            "none",
+        )
+
+    def test_exact_ordinary_operator_evidence_for_team_u_becomes_required(self) -> None:
+        pairs = [("u", frame) for frame in range(12)]
+        rows = [_observation("u", frame, "U", "unresolved", None) for _, frame in pairs]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        unit = _unit("ordinary-evidence", pairs, visual=True)
+        unit.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "team_attribution_evidence_source_digest": "current-source",
+            "visual_evidence": _safe_ordinary_operator_evidence(pairs),
+            "team_attribution_evidence_status": "focused_source_not_reviewable",
+        })
+
+        policy = apply_coverage_policy([unit], coverage, pair_index, _scoped_match())
+
+        self.assertEqual(policy["semantic_blockers"], 1)
+        self.assertEqual(
+            [case["candidate_subject_id"] for case in policy["next_cases"]],
+            ["ordinary-evidence"],
+        )
+        self.assertEqual(
+            policy["readiness"]["team_attribution_residual"]["status"],
+            "none",
+        )
+
+    def test_stale_team_attribution_evidence_stays_a_technical_failure(self) -> None:
+        pairs = [("u", frame) for frame in range(12)]
+        rows = [_observation("u", frame, "U", "unresolved", None) for _, frame in pairs]
+        coverage, pair_index = summarize_effective_observations(rows, _scoped_match())
+        unit = _unit("stale-evidence", pairs, visual=True)
+        unit.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "team_attribution_evidence_source_digest": "current-source",
+            "visual_evidence": _safe_team_attribution_evidence(
+                pairs,
+                source_digest="stale-source",
+            ),
+        })
+
+        policy = apply_coverage_policy([unit], coverage, pair_index, _scoped_match())
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(
+            policy["readiness"]["team_attribution_residual"]["status"],
+            "technical_evidence_failure",
+        )
+        self.assertEqual(
+            policy["readiness"]["team_attribution_residual"]["evidence_status_counts"],
+            {"team_attribution_evidence_source_digest_mismatch": 1},
+        )
 
     def test_team_u_team_assignment_or_non_player_disposition_leaves_safety_queue(self) -> None:
         match = _scoped_match()
@@ -2510,6 +2591,38 @@ def _unit(subject_id: str, pairs: list[tuple[str, int]], *, visual: bool) -> dic
         "has_operator_visual_evidence": visual,
         "detected_pairs": pairs,
     }
+
+
+def _safe_team_attribution_evidence(
+    pairs: list[tuple[str, int]],
+    *,
+    source_digest: str,
+) -> dict:
+    return {
+        "kind": "team_attribution",
+        "status": "ready_for_team_attribution",
+        "source_ownership_digest": source_digest,
+        "anchor_crops": _exact_anchor_crops(pairs),
+    }
+
+
+def _safe_ordinary_operator_evidence(pairs: list[tuple[str, int]]) -> dict:
+    return {
+        "status": "ready_for_visual_audit",
+        "anchor_crops": _exact_anchor_crops(pairs),
+    }
+
+
+def _exact_anchor_crops(pairs: list[tuple[str, int]]) -> list[dict]:
+    return [
+        {
+            "tracklet_id": tracklet_id,
+            "frame": frame,
+            "artifact": f"anchor_crops/{tracklet_id}/{frame}.jpg",
+            "selection_eligible": True,
+        }
+        for tracklet_id, frame in pairs[:3]
+    ]
 
 
 def _continuity_members(

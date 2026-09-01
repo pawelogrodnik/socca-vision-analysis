@@ -10,7 +10,10 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
 from app.main import get_artifact
+from app.services.identity_reviewed_coverage import apply_coverage_policy
 from app.services.identity_reviewed_team_attribution_evidence import (
+    FOCUSED_SOURCE_ALREADY_ACTIONABLE,
+    _focused_source_failure_status,
     build_team_attribution_evidence,
     evidence_status_for_unit,
     materialize_team_attribution_evidence,
@@ -19,6 +22,7 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     visual_evidence_for_unit,
 )
 from app.services.identity_reviewed_progress import (
+    _attach_team_attribution_evidence,
     materialize_reviewed_identity_units,
 )
 from app.services.review_workflow_orchestrator import (
@@ -140,6 +144,34 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
         self.assertEqual(unit["visual_evidence"]["kind"], "team_attribution")
         self.assertNotIn("team_attribution_evidence_status", unit)
 
+        policy = apply_coverage_policy(
+            [unit],
+            {
+                "reliable_observations": 4,
+                "per_team": {
+                    "U": {
+                        "reliable_observations": 4,
+                        "confirmed_named_observations": 0,
+                    }
+                },
+            },
+            {
+                pair: {
+                    "team_label": "U",
+                    "identity_status": "unresolved",
+                    "canonical_player_id": None,
+                }
+                for pair in current_pairs
+            },
+            _team_u_match(),
+        )
+
+        self.assertEqual(
+            [case["candidate_subject_id"] for case in policy["next_cases"]],
+            ["u"],
+        )
+        self.assertEqual(policy["readiness"]["team_attribution_residual"]["status"], "none")
+
     def test_progress_materialization_attaches_team_evidence_metadata_to_canonical_segment(self) -> None:
         segment = {
             "candidate_subject_id": "segment-subject",
@@ -174,6 +206,71 @@ class TeamAttributionEvidenceTests(unittest.TestCase):
             unit["team_attribution_evidence_status"],
             "team_attribution_evidence_not_materialized",
         )
+
+    def test_progress_keeps_exact_ordinary_evidence_out_of_focused_failure_state(self) -> None:
+        pairs = [("t", frame) for frame in range(1, 5)]
+        source_digest = source_ownership_digest("u", pairs)
+        unit = {
+            "candidate_subject_id": "u",
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "has_operator_visual_evidence": True,
+            "detected_pairs": pairs,
+            "visual_evidence": {
+                "status": "ready_for_visual_audit",
+                "anchor_crops": [
+                    {
+                        "tracklet_id": tracklet_id,
+                        "frame": frame,
+                        "artifact": f"anchor_crops/u/{frame}.jpg",
+                        "selection_eligible": True,
+                    }
+                    for tracklet_id, frame in pairs[:3]
+                ],
+            },
+            "reason_codes": ["team_attribution_evidence_unavailable"],
+        }
+        document = {
+            "cases": [{
+                "candidate_subject_id": "u",
+                "source_ownership_digest": source_digest,
+                "status": "focused_source_not_reviewable",
+            }]
+        }
+
+        _attach_team_attribution_evidence([unit], document)
+
+        self.assertEqual(unit["team_attribution_evidence_source_digest"], source_digest)
+        self.assertNotIn("team_attribution_evidence_status", unit)
+        self.assertNotIn("team_attribution_evidence_unavailable", unit["reason_codes"])
+
+    def test_focused_source_with_exact_normal_evidence_is_already_actionable(self) -> None:
+        pairs = [("t", frame) for frame in range(1, 5)]
+        status = _focused_source_failure_status(
+            _focused_source("u", pairs),
+            {"u": _candidate_document()["subjects"][0]},
+            {"t": {"tracklet_id": "t", "positions_m": [_position(frame) for frame in range(1, 5)]}},
+            {
+                "u": {
+                    "review_status": "ready_for_operator_review",
+                    "requires_operator_review": True,
+                    "visual_evidence": {
+                        "status": "ready_for_visual_audit",
+                        "anchor_crops": [
+                            {
+                                "tracklet_id": tracklet_id,
+                                "frame": frame,
+                                "artifact": f"anchor_crops/u/{frame}.jpg",
+                                "selection_eligible": True,
+                            }
+                            for tracklet_id, frame in pairs[:3]
+                        ],
+                    },
+                }
+            },
+        )
+
+        self.assertEqual(status, FOCUSED_SOURCE_ALREADY_ACTIONABLE)
 
     def test_generated_team_attribution_crop_is_available_through_match_artifact_route(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -608,6 +705,20 @@ def _review_cards_document() -> dict:
         "candidate_subject_id": "u",
         "review_status": "no_visual_evidence",
     }]}
+
+
+def _team_u_match() -> dict:
+    return {
+        "id": "match",
+        "teams": [
+            {"team_label": "A", "players": []},
+            {"team_label": "B", "players": []},
+        ],
+        "identity_review_scope": {
+            "schema_version": "1.0.0",
+            "teams": {"A": "complete_roster", "B": "team_stats_only"},
+        },
+    }
 
 
 def _focused_source(
