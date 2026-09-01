@@ -55,10 +55,10 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
         self.assertEqual(
             {unit["candidate_subject_id"] for unit in policy["next_cases"]},
-            {"a-semantic", "a-coverage", "a-material", "b-uncertain"},
+            {"a-semantic", "a-coverage", "a-material"},
         )
         self.assertEqual(policy["material_continuity_blockers"], 1)
-        self.assertEqual(policy["semantic_blockers"], 2)
+        self.assertEqual(policy["semantic_blockers"], 1)
 
     def test_certain_team_b_anonymous_keeps_team_stats_without_named_player_debt(self) -> None:
         rows = [
@@ -184,11 +184,7 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(cross_pair["coverage_team_label"], "U")
         self.assertEqual(cross_compact["coverage_team_label"], "U")
         cross_policy = apply_coverage_policy([cross_unit], coverage, cross_index, _scoped_match())
-        self.assertEqual(cross_policy["next_cases"][0]["candidate_subject_id"], "a-b-u-conflict")
-        self.assertEqual(
-            paginate_progress(cross_policy, team_label="U")["next_cases"][0]["filter_team_label"],
-            "U",
-        )
+        self.assertEqual(cross_policy["next_cases"], [])
 
         u_unit, u_index, u_pair, u_compact = impact_variants(
             "u-only",
@@ -264,10 +260,10 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
             {"cases": []},
         )
 
-        self.assertEqual(len(policy["next_cases"]), 8)
-        self.assertEqual(debt["actual_required_queue"]["total_cases"], 8)
+        self.assertEqual(len(policy["next_cases"]), 6)
+        self.assertEqual(debt["actual_required_queue"]["total_cases"], 6)
         self.assertEqual(debt["actual_required_queue"]["per_team"]["A"]["total_cases"], 6)
-        self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["total_cases"], 2)
+        self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["total_cases"], 0)
         self.assertEqual(debt["actual_required_queue"]["per_team"]["B"]["unexpected_by_scope"], 0)
 
     def test_cross_team_case_is_exposed_through_the_uncertain_team_filter(self) -> None:
@@ -1149,12 +1145,8 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         policy = apply_coverage_policy([uncertain], coverage, pair_index, match)
 
         self.assertEqual(policy["next_cases"], [])
-        self.assertFalse(policy["readiness"]["allows_finalize"])
-        cases = policy["residual_by_team"]["U"][
-            "non_actionable_required_team_uncertainty_cases"
-        ]
-        self.assertEqual(cases[0]["candidate_subject_id"], "unknown-without-crops")
-        self.assertIn("team_attribution_uncertain", cases[0]["reason_codes"])
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+        self.assertEqual(policy["readiness"]["team_attribution_residual"]["ordinary_optional_units"], 1)
 
     def test_bounded_genuinely_unavailable_team_u_residual_does_not_block_finalize(self) -> None:
         # Mirrors the observed terminal state: complete-roster A is already
@@ -1256,13 +1248,13 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
                     [uncertain], coverage, pair_index, _scoped_match()
                 )
 
-                self.assertFalse(policy["readiness"]["allows_finalize"])
+                self.assertTrue(policy["readiness"]["allows_finalize"])
                 residual = policy["readiness"]["team_attribution_residual"]
-                self.assertEqual(residual["status"], "materialization_required")
+                self.assertEqual(residual["status"], "accepted_within_tolerance")
                 self.assertTrue(residual["within_tolerance"])
                 self.assertEqual(
                     residual["evidence_status_counts"],
-                    {"team_attribution_evidence_not_materialized": 1},
+                    {},
                 )
 
     def test_technical_team_evidence_failures_do_not_consume_residual_tolerance(self) -> None:
@@ -1342,7 +1334,8 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
         policy = apply_coverage_policy([unit], coverage, pair_index, _scoped_match())
 
-        self.assertEqual(policy["semantic_blockers"], 1)
+        self.assertEqual(policy["semantic_blockers"], 0)
+        self.assertEqual(policy["coverage_blockers"], 1)
         self.assertEqual(
             [case["candidate_subject_id"] for case in policy["next_cases"]],
             ["team-evidence"],
@@ -1367,7 +1360,8 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
 
         policy = apply_coverage_policy([unit], coverage, pair_index, _scoped_match())
 
-        self.assertEqual(policy["semantic_blockers"], 1)
+        self.assertEqual(policy["semantic_blockers"], 0)
+        self.assertEqual(policy["coverage_blockers"], 1)
         self.assertEqual(
             [case["candidate_subject_id"] for case in policy["next_cases"]],
             ["ordinary-evidence"],
@@ -1557,6 +1551,64 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         self.assertEqual(
             coverage["per_team"]["U"]["team_known_observation_coverage"], 0.0
         )
+
+    def test_ordinary_team_u_is_optional_when_global_team_known_target_is_met(self) -> None:
+        match = _scoped_match()
+        match["identity_review_scope"]["teams"] = {"A": "team_stats_only", "B": "team_stats_only"}
+        rows = [
+            _observation("known", frame, "B", "unresolved", None)
+            for frame in range(900)
+        ] + [
+            _observation("u", frame, "U", "unresolved", None)
+            for frame in range(100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        units = []
+        for index in range(50):
+            pairs = [("u", index * 2), ("u", index * 2 + 1)]
+            unit = _unit(f"u-{index}", pairs, visual=True)
+            unit.update({"source_team_label": "U", "effective_team_label": "U", "detected_team_labels": ["A", "B"], "current_resolution_status": "pending_high_priority", "team_attribution_evidence_source_digest": f"u-{index}", "visual_evidence": _safe_team_attribution_evidence(pairs, source_digest=f"u-{index}")})
+            units.append(unit)
+        policy = apply_coverage_policy(units, coverage, pair_index, match)
+        self.assertEqual(policy["next_cases"], [])
+        self.assertTrue(policy["readiness"]["allows_finalize"])
+        self.assertEqual(policy["readiness"]["team_attribution_residual"]["ordinary_optional_units"], 50)
+        # Accepted residual is not silently converted into team-owned stats.
+        self.assertEqual(pair_index[("u", 0)]["team_label"], "U")
+
+    def test_team_u_selects_minimum_cases_by_marginal_unique_gain(self) -> None:
+        match = _scoped_match()
+        match["identity_review_scope"]["teams"] = {"A": "team_stats_only", "B": "team_stats_only"}
+        rows = [
+            _observation("known", frame, "B", "unresolved", None)
+            for frame in range(850)
+        ] + [
+            _observation("u", frame, "U", "unresolved", None)
+            for frame in range(150)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        def uncertain(name: str, frames: list[int]) -> dict:
+            pairs = [("u", frame) for frame in frames]
+            value = _unit(name, pairs, visual=True)
+            value.update({"source_team_label": "U", "effective_team_label": "U", "detected_team_labels": ["A", "B"], "current_resolution_status": "pending_high_priority", "team_attribution_evidence_source_digest": name, "visual_evidence": _safe_team_attribution_evidence(pairs, source_digest=name)})
+            return value
+        # The second source overlaps the first heavily. A raw-size sort would
+        # choose it next, whereas marginal selection must prefer c (30 new).
+        policy = apply_coverage_policy(
+            [uncertain("a", list(range(0, 40))), uncertain("b", list(range(10, 60))), uncertain("c", list(range(60, 110)))],
+            coverage, pair_index, match,
+        )
+        self.assertEqual([row["candidate_subject_id"] for row in policy["next_cases"]], ["c"])
+        self.assertEqual(policy["team_attribution_selection"]["selected_required_team_known_gain"], 50)
+
+    def test_structural_team_conflict_remains_required_above_target(self) -> None:
+        match = _scoped_match()
+        rows = [_observation("known", frame, "A", "unresolved", None) for frame in range(95)] + [_observation("u", frame, "U", "unresolved", None) for frame in range(5)]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        unit = _unit("structural", [("u", frame) for frame in range(5)], visual=True)
+        unit.update({"source_team_label": "U", "effective_team_label": "U", "detected_team_labels": ["A", "B"], "current_resolution_status": "pending_high_priority", "reason_codes": ["duplicate_physical_ownership"]})
+        policy = apply_coverage_policy([unit], coverage, pair_index, match)
+        self.assertEqual([row["candidate_subject_id"] for row in policy["next_cases"]], ["structural"])
 
     def test_large_queue_is_ranked_by_observation_gain_and_never_capped(self) -> None:
         rows = []

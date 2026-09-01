@@ -56,6 +56,10 @@ from app.services.identity_reviewed_team_attribution_evidence import (
 from app.services.identity_reviewed_scope_eligibility import (
     has_team_attribution_uncertainty,
 )
+from app.services.identity_reviewed_team_attribution_policy import (
+    short_track_dominant_team_assignment,
+    team_evidence_features,
+)
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     identity_review_scope_read_model,
@@ -778,6 +782,21 @@ def _unit(
         canonical_player_id = str((seeded.get("assigned_player") or {}).get("player_id") or "") or canonical_player_id
         if canonical_player_id:
             effective_team = roster_teams.get(canonical_player_id, effective_team)
+    team_observations = [
+        {
+            "tracklet_id": tracklet_id,
+            "frame": frame,
+            "team_label": tracklets.get(tracklet_id, {}).get("team_label") or "U",
+        }
+        for tracklet_id, frame in pairs
+    ]
+    team_features = team_evidence_features(team_observations, fps=fps)
+    automatic_team_assignment = short_track_dominant_team_assignment(
+        team_features,
+        structural_conflict=structural or card_conflict,
+        operator_contradiction=action in REVIEWED_ACTIONS,
+        stale_source=False,
+    )
     return {
         "candidate_subject_id": subject_id,
         "tracklet_ids": sorted(tracklet_ids),
@@ -796,6 +815,8 @@ def _unit(
         "stable_slot_id": stable_slot_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
+        "team_attribution_features": team_features,
+        "automatic_team_assignment": automatic_team_assignment,
         "scope_kind": "whole_subject",
         "correction_scope": "whole_subject",
         "operator_actionable": bool(reviewability["actionable"]),
@@ -828,6 +849,7 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "cumulative_selected_named_gain",
         "correction_scope", "operator_actionable", "non_actionable_reason",
         "has_operator_visual_evidence", "team_attribution_evidence_status",
+        "automatic_team_assignment", "team_attribution_features",
     )
     result = {key: unit.get(key) for key in keys}
     # The hot/public queue intentionally omits exact team evidence.  Preserve

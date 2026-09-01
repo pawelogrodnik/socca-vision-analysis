@@ -76,6 +76,7 @@ from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
+from app.services.identity_reviewed_decision_audit import append_operator_decision_audit
 
 
 CORRECTION_ACTIONS = frozenset(
@@ -104,6 +105,9 @@ def save_reviewed_identity_correction(
     action = str(payload.get("action") or "").strip()
     try:
         progress_before = build_reviewed_identity_progress(match_path, match_doc)
+        audit_progress_before = build_reviewed_identity_progress(
+            match_path, match_doc, include_internal_units=True
+        )
         authorized_review_unit = review_unit_for_payload(progress_before, payload)
         if (
             isinstance(authorized_review_unit, dict)
@@ -127,6 +131,13 @@ def save_reviewed_identity_correction(
             build_segment_review_document(match_path, match_doc)
         snapshot = get_reviewed_identity_status(match_path)
         progress_after = build_reviewed_identity_progress(match_path, match_doc)
+        audit_unit = _audit_review_unit(audit_progress_before, payload)
+        append_operator_decision_audit(
+            match_path,
+            unit=audit_unit,
+            payload=payload,
+            required=bool(audit_unit and _audit_unit_is_required(progress_before, audit_unit)),
+        )
         impact = decision_impact(
             progress_before,
             progress_after,
@@ -171,6 +182,28 @@ def save_reviewed_identity_correction(
             str(exc).replace(" ", "_")[:160],
         )
         raise
+
+
+def _audit_review_unit(progress: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
+    subject_id = str(payload.get("candidate_subject_id") or "")
+    target_id = str(payload.get("review_target_id") or "")
+    for unit in progress.get("_internal_review_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        if target_id and str(unit.get("review_target_id") or "") == target_id:
+            return unit
+        if not target_id and str(unit.get("candidate_subject_id") or "") == subject_id:
+            return unit
+    return None
+
+
+def _audit_unit_is_required(progress: dict[str, Any], unit: dict[str, Any]) -> bool:
+    key = str(unit.get("review_target_id") or unit.get("candidate_subject_id") or "")
+    return any(
+        str(row.get("review_target_id") or row.get("candidate_subject_id") or "") == key
+        for row in progress.get("next_cases") or []
+        if isinstance(row, dict)
+    )
 
 
 def persist_reviewed_identity_correction(

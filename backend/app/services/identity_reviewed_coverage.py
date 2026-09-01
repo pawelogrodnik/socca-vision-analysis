@@ -55,7 +55,7 @@ from app.services.play_area import is_on_pitch_product_observation
 
 
 COVERAGE_SCHEMA_VERSION = "1.0.0"
-COVERAGE_POLICY_VERSION = "coverage-driven-review:v12-global-operator-impact-order"
+COVERAGE_POLICY_VERSION = "coverage-driven-review:v13-team-attribution-minimal-gain"
 OPTIONAL_MAX_POLICY_VERSION = "optional-reviewed-identity-max:v3-authoritative-roster-projection"
 COVERAGE_DEBT_POLICY_VERSION = "reviewed-identity-coverage-debt:v2-queue-observability"
 COVERAGE_UNIT = "unique_detected_tracklet_frame_observation"
@@ -190,12 +190,20 @@ def apply_coverage_policy(
         if unit.get("current_resolution_status") == "pending_high_priority"
         and unit.get("operator_actionable") is not False
     ]
+    # A cross-team label alone is not necessarily a structural ownership
+    # conflict.  Keep only true structural failures in the unconditional
+    # semantic queue; ordinary Team-U work is selected below from the same
+    # 90% coverage contract as all other required work.
     semantic = [
         enriched
         for unit in semantic_candidates
         if required_review_relevant_for_scope(
             enriched := _coverage_impact(unit, pair_index, coverage),
             match_doc,
+        )
+        and (
+            not has_team_attribution_uncertainty(enriched)
+            or _is_structural_team_attribution_conflict(enriched)
         )
     ]
     candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -206,11 +214,16 @@ def apply_coverage_policy(
     optional_max_candidates: list[dict[str, Any]] = []
     optional_max_unavailable: list[dict[str, Any]] = []
     unreviewable: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    team_attribution_candidates: list[dict[str, Any]] = []
+    team_attribution_unavailable: list[dict[str, Any]] = []
     for unit in units:
         if (
             unit in semantic_candidates
             and required_review_relevant_for_scope(unit, match_doc)
+            and (
+                not has_team_attribution_uncertainty(unit)
+                or _is_structural_team_attribution_conflict(unit)
+            )
         ) or _has_explicit_disposition(unit, match_doc):
             continue
         # A raw subject may have a diagnostic card while every observation is
@@ -229,16 +242,22 @@ def apply_coverage_policy(
                 set(enriched.get("reason_codes") or [])
                 | {"team_attribution_uncertain"}
             )
+            if _is_structural_team_attribution_conflict(enriched):
+                if operator_actionable and team_attribution_evidence_lifecycle(enriched) == TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE:
+                    enriched["current_resolution_status"] = "pending_high_priority"
+                    enriched["priority"] = "high"
+                    semantic.append(enriched)
+                else:
+                    team_attribution_unavailable.append(enriched)
+                continue
             if (
                 operator_actionable
                 and team_attribution_evidence_lifecycle(enriched)
                 == TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE
             ):
-                enriched["current_resolution_status"] = "pending_high_priority"
-                enriched["priority"] = "high"
-                semantic.append(enriched)
+                team_attribution_candidates.append(enriched)
             else:
-                non_actionable_team_uncertainty[team].append(enriched)
+                team_attribution_unavailable.append(enriched)
             continue
         # Aggregate coverage is deliberately not allowed to hide a severe,
         # safe, Team-A continuity break.  This is independent of the 90%
@@ -287,7 +306,6 @@ def apply_coverage_policy(
         set((coverage.get("per_team") or {}).keys())
         | set(candidates)
         | set(unreviewable)
-        | set(non_actionable_team_uncertainty)
         | set(independently_required)
     ):
         team_coverage = (coverage.get("per_team") or {}).get(team) or {}
@@ -384,42 +402,68 @@ def apply_coverage_policy(
                 sorted(unreviewable_observations_by_reason.items())
             ),
             "optional_audit_cases": 0,
-            "non_actionable_required_team_uncertainty_units": len(
-                non_actionable_team_uncertainty.get(team, [])
-            ),
-            "non_actionable_required_team_uncertainty_observations": sum(
-                int(row.get("detected_observation_count") or 0)
-                for row in non_actionable_team_uncertainty.get(team, [])
-            ),
-            "non_actionable_required_team_uncertainty_cases": [
-                {
-                    "candidate_subject_id": row.get("candidate_subject_id"),
-                    "scope_kind": row.get("scope_kind"),
-                    "review_target_id": row.get("review_target_id"),
-                    "continuity_group_id": row.get("continuity_group_id"),
-                    "source_ownership_digest": row.get("source_ownership_digest"),
-                    "team_attribution_evidence_source_digest": row.get(
-                        "team_attribution_evidence_source_digest"
-                    ),
-                    "detected_observation_count": int(
-                        row.get("detected_observation_count") or 0
-                    ),
-                    "coverage_team_label": row.get("coverage_team_label"),
-                    "effective_team_label": row.get("effective_team_label"),
-                    "reason_codes": list(row.get("reason_codes") or []),
-                    "team_attribution_evidence_status": row.get(
-                        "team_attribution_evidence_status"
-                    ),
-                }
-                for row in sorted(
-                    non_actionable_team_uncertainty.get(team, []),
-                    key=lambda value: (
-                        -int(value.get("detected_observation_count") or 0),
-                        str(value.get("candidate_subject_id") or ""),
-                    ),
-                )
-            ],
+            "non_actionable_required_team_uncertainty_units": 0,
+            "non_actionable_required_team_uncertainty_observations": 0,
+            "non_actionable_required_team_uncertainty_cases": [],
         }
+
+    # Team-U is a global, not per-roster, coverage target.  Only the exact
+    # pairs that are currently Team-U can become newly team-known, and every
+    # subsequent selection is re-ranked by marginal *unique* gain.
+    reliable_global = _global_reliable_observations(coverage)
+    current_team_known = int(coverage.get("team_known_observations") or 0)
+    target_team_known = target_named_observations(
+        reliable_global, REVIEWED_OBSERVATION_TARGET_RATIO
+    )
+    required_team_known_gain = max(0, target_team_known - current_team_known)
+    for row in [*team_attribution_candidates, *team_attribution_unavailable]:
+        gain = _team_known_gain_pairs(row, pair_index)
+        row["_potential_team_known_observation_pairs"] = gain
+        row["potential_team_known_observation_gain"] = len(_gain_pairs_set(gain))
+        row["potential_team_known_coverage_gain_pp"] = (
+            round(100.0 * row["potential_team_known_observation_gain"] / reliable_global, 2)
+            if reliable_global else 0.0
+        )
+        row["operator_impact_kind"] = "team_known"
+        row["operator_impact_observation_gain"] = row["potential_team_known_observation_gain"]
+        row["operator_impact_pp"] = row["potential_team_known_coverage_gain_pp"]
+    selected_team_rows, selected_team_pairs = _select_required_team_attribution_cases(
+        team_attribution_candidates, required_team_known_gain
+    )
+    coverage_blockers.extend(selected_team_rows)
+    unresolved_team_gain = max(0, required_team_known_gain - len(selected_team_pairs))
+    required_non_actionable_team_uncertainty = (
+        team_attribution_unavailable if unresolved_team_gain else []
+    )
+    optional_team_uncertainty = (
+        team_attribution_unavailable if not unresolved_team_gain else []
+    )
+    optional_team_uncertainty.extend(
+        row for row in team_attribution_candidates if row not in selected_team_rows
+    )
+    team_attribution_residual_by_policy = {
+        "current_team_known_observations": current_team_known,
+        "target_team_known_observations": target_team_known,
+        "required_team_known_gain": required_team_known_gain,
+        "selected_required_team_known_gain": len(selected_team_pairs),
+        "ordinary_optional_units": len(optional_team_uncertainty),
+        "ordinary_optional_observations": sum(
+            int(row.get("detected_observation_count") or 0)
+            for row in optional_team_uncertainty
+        ),
+    }
+    # Retain a compact diagnostic projection for the explicit Team/conflict
+    # bucket.  This is not a second queue authority; it explains why a source
+    # is Required versus intentionally optional after the global selection.
+    team_residual = residual_by_team.setdefault("U", {})
+    team_residual.update({
+        "non_actionable_required_team_uncertainty_units": len(required_non_actionable_team_uncertainty),
+        "non_actionable_required_team_uncertainty_observations": sum(int(row.get("detected_observation_count") or 0) for row in required_non_actionable_team_uncertainty),
+        "ordinary_optional_team_uncertainty_units": len(optional_team_uncertainty),
+        "ordinary_optional_team_uncertainty_observations": team_attribution_residual_by_policy["ordinary_optional_observations"],
+        "selected_team_attribution_coverage_cases": len(selected_team_rows),
+        "non_actionable_required_team_uncertainty_cases": [_team_uncertainty_diagnostic(row) for row in required_non_actionable_team_uncertainty],
+    })
 
     # Selection remains category-aware because each class has different safety
     # rules. Navigation is deliberately category-agnostic: once the exact
@@ -436,7 +480,9 @@ def apply_coverage_policy(
         semantic_count=len(semantic),
         material_continuity_count=len(material_continuity),
         coverage_count=len(coverage_blockers),
-        non_actionable_team_uncertainty=non_actionable_team_uncertainty,
+        non_actionable_team_uncertainty=required_non_actionable_team_uncertainty,
+        optional_team_uncertainty=optional_team_uncertainty,
+        team_attribution_selection=team_attribution_residual_by_policy,
     )
     required_keys = {_unit_key(unit) for unit in required_cases}
     deferred_named_pairs = _deferred_named_gain_pairs(units, pair_index, match_doc)
@@ -483,6 +529,7 @@ def apply_coverage_policy(
         "material_continuity_blockers": len(material_continuity),
         "coverage_blockers": len(coverage_blockers),
         "residual_by_team": residual_by_team,
+        "team_attribution_selection": team_attribution_residual_by_policy,
         "readiness": readiness,
         "workload": {
             "remaining_cases": workload_count,
@@ -1388,6 +1435,116 @@ def _select_required_coverage_cases(
     return selected_rows, selected_pairs
 
 
+def _team_known_gain_pairs(
+    unit: dict[str, Any],
+    pair_index: Mapping[tuple[str, int], dict[str, Any]],
+) -> set[tuple[str, int]] | dict[str, list[list[int]]]:
+    """Return exact reliable Team-U pairs that one attribution can improve."""
+    compact_runs = unit.get("detected_pair_runs")
+    if isinstance(compact_runs, dict) and isinstance(pair_index, CompactPairIndexView):
+        intervals: dict[str, list[list[int]]] = {}
+        for tracklet_id, source_runs in compact_runs.items():
+            for start, end in source_runs:
+                for segment_start, segment_end, value in pair_index.tracklets().get(tracklet_id) or []:
+                    if segment_end < start or segment_start > end:
+                        continue
+                    if (
+                        _team_label(value.get("team_label")) != "U"
+                        or str(value.get("identity_status") or "unresolved") not in RELIABLE_STATUSES
+                    ):
+                        continue
+                    overlap_start, overlap_end = max(start, segment_start), min(end, segment_end)
+                    bucket = intervals.setdefault(tracklet_id, [])
+                    if bucket and bucket[-1][1] + 1 >= overlap_start:
+                        bucket[-1][1] = max(bucket[-1][1], overlap_end)
+                    else:
+                        bucket.append([overlap_start, overlap_end])
+        return intervals
+    pairs = {
+        (str(pair[0]), int(pair[1]))
+        for pair in unit.get("detected_pairs") or []
+        if isinstance(pair, (list, tuple)) and len(pair) >= 2
+    }
+    return {
+        pair for pair in pairs
+        if pair in pair_index
+        and _team_label(pair_index[pair].get("team_label")) == "U"
+        and str(pair_index[pair].get("identity_status") or "unresolved") in RELIABLE_STATUSES
+    }
+
+
+def _select_required_team_attribution_cases(
+    rows: list[dict[str, Any]], required_gain: int,
+) -> tuple[list[dict[str, Any]], set[tuple[str, int]]]:
+    """Greedily select the smallest queue by current marginal exact-pair gain."""
+    selected: list[dict[str, Any]] = []
+    selected_pairs: set[tuple[str, int]] = set()
+    remaining = list(rows)
+    while remaining and len(selected_pairs) < required_gain:
+        ranked: list[tuple[int, dict[str, Any], set[tuple[str, int]]]] = []
+        for row in remaining:
+            marginal = _gain_pairs_set(row.get("_potential_team_known_observation_pairs")) - selected_pairs
+            if marginal:
+                ranked.append((len(marginal), row, marginal))
+        if not ranked:
+            break
+        _gain, row, marginal = max(
+            ranked,
+            key=lambda item: (
+                item[0],
+                int(item[1].get("detected_observation_count") or 0),
+                float(item[1].get("detected_time_sec") or 0.0),
+                str(item[1].get("review_target_id") or item[1].get("candidate_subject_id") or ""),
+            ),
+        )
+        remaining.remove(row)
+        selected_pairs |= marginal
+        row["current_resolution_status"] = "pending_team_attribution_coverage_review"
+        row["priority"] = "coverage"
+        row["marginal_team_known_observation_gain"] = len(marginal)
+        row["reason_codes"] = sorted(
+            set(row.get("reason_codes") or []) | {"team_attribution_coverage_debt"}
+        )
+        selected.append(row)
+    return selected, selected_pairs
+
+
+def _is_structural_team_attribution_conflict(unit: Mapping[str, Any]) -> bool:
+    """Distinguish unsafe ownership contradictions from noisy A/B votes."""
+    if str(unit.get("scope_kind") or "") == "material_continuity":
+        return True
+    markers = " ".join(str(value).lower() for value in unit.get("reason_codes") or [])
+    structural_markers = (
+        "ambiguous_candidate_subject_membership",
+        "duplicate_physical_ownership",
+        "identity_conflict",
+        "review_card_conflict",
+        "cross_team_conflict",
+        "incompatible",
+        "contradict",
+        "multiple_manual",
+        "same_exact",
+    )
+    if any(marker in markers for marker in structural_markers):
+        return True
+    decision = unit.get("current_decision") or {}
+    return bool(isinstance(decision, Mapping) and decision.get("operator_contradiction"))
+
+
+def _team_uncertainty_diagnostic(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "candidate_subject_id": row.get("candidate_subject_id"),
+        "scope_kind": row.get("scope_kind"),
+        "review_target_id": row.get("review_target_id"),
+        "continuity_group_id": row.get("continuity_group_id"),
+        "source_ownership_digest": row.get("source_ownership_digest"),
+        "team_attribution_evidence_source_digest": row.get("team_attribution_evidence_source_digest"),
+        "detected_observation_count": int(row.get("detected_observation_count") or 0),
+        "reason_codes": list(row.get("reason_codes") or []),
+        "team_attribution_evidence_status": row.get("team_attribution_evidence_status"),
+    }
+
+
 def _unit_key(unit: dict[str, Any]) -> str:
     return str(unit.get("review_target_id") or unit.get("candidate_subject_id") or "")
 
@@ -1675,7 +1832,9 @@ def _readiness(
     semantic_count: int,
     material_continuity_count: int,
     coverage_count: int,
-    non_actionable_team_uncertainty: dict[str, list[dict[str, Any]]],
+    non_actionable_team_uncertainty: list[dict[str, Any]],
+    optional_team_uncertainty: list[dict[str, Any]],
+    team_attribution_selection: dict[str, Any],
 ) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     if semantic_count:
@@ -1689,14 +1848,18 @@ def _readiness(
         )
     if coverage_count:
         blockers.append({"code": "significant_named_coverage_debt", "count": coverage_count})
-    team_attribution_units = [
-        unit
-        for units in non_actionable_team_uncertainty.values()
-        for unit in units
-    ]
+    # Only a Team-U source needed for the 90% target may block on unavailable
+    # evidence.  Ordinary residual sources stay explicitly unknown and out of
+    # team-dependent statistics; they do not force a fake operator decision.
+    team_attribution_units = list(non_actionable_team_uncertainty)
+    all_team_attribution_units = [*team_attribution_units, *optional_team_uncertainty]
     team_attribution_lifecycles = [
         team_attribution_evidence_lifecycle(unit)
         for unit in team_attribution_units
+    ]
+    all_team_attribution_lifecycles = [
+        team_attribution_evidence_lifecycle(unit)
+        for unit in all_team_attribution_units
     ]
     team_attribution_statuses = [
         _team_attribution_readiness_status(unit, lifecycle)
@@ -1709,7 +1872,7 @@ def _readiness(
     )
     team_attribution_has_technical_failure = any(
         lifecycle == TEAM_ATTRIBUTION_EVIDENCE_TECHNICAL_FAILURE
-        for lifecycle in team_attribution_lifecycles
+        for lifecycle in all_team_attribution_lifecycles
     )
     reliable_observations = int(coverage.get("reliable_observations") or 0)
     # These units are exact final Review ownership scopes. Count them rather
@@ -1736,13 +1899,22 @@ def _readiness(
         ),
     )
     team_attribution_residual = {
-        "units": len(team_attribution_units),
-        "observations": unknown_team_observations,
+        "units": len(all_team_attribution_units),
+        "observations": sum(
+            int(unit.get("detected_observation_count") or 0)
+            for unit in all_team_attribution_units
+        ),
+        "required_units": len(team_attribution_units),
+        "required_observations": unknown_team_observations,
+        "ordinary_optional_units": int(team_attribution_selection.get("ordinary_optional_units") or 0),
+        "ordinary_optional_observations": int(team_attribution_selection.get("ordinary_optional_observations") or 0),
+        "current_team_known_observations": int(team_attribution_selection.get("current_team_known_observations") or 0),
+        "target_team_known_observations": int(team_attribution_selection.get("target_team_known_observations") or 0),
         "residual_budget_observations": unknown_team_budget,
         "within_tolerance": unknown_team_observations <= unknown_team_budget,
         "evidence_status_counts": dict(sorted(team_attribution_status_counts.items())),
     }
-    if team_attribution_units:
+    if team_attribution_units or team_attribution_has_technical_failure:
         if team_attribution_has_technical_failure:
             # A video/render failure is not evidence that the operator cannot
             # decide. Keep it visible and fail closed rather than spending the
@@ -1777,6 +1949,8 @@ def _readiness(
             # Genuine no-safe-evidence residuals remain explicitly Team-U and
             # stay out of unsafe stats; they are accepted only inside policy.
             team_attribution_residual["status"] = "accepted_within_tolerance"
+    elif optional_team_uncertainty:
+        team_attribution_residual["status"] = "accepted_within_tolerance"
     else:
         team_attribution_residual["status"] = "none"
     for team, row in residual_by_team.items():

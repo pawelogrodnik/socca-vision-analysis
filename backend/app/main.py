@@ -137,7 +137,9 @@ from app.services.identity_reviewed_mixed_store import (
     inline_temporal_split_for_source,
     materialize_mixed_review_artifact,
     render_mixed_review_evidence,
+    load_mixed_player_cases,
 )
+from app.services.identity_reviewed_decision_audit import append_operator_decision_audit
 from app.services.identity_canonical_io import review_build_context
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
@@ -2797,9 +2799,32 @@ def post_match_reviewed_identity_mixed_resolution(
         match_document = read_match_meta(path)
         state = build_compact_review_workflow_state(path, match_document)
         assert_workflow_action_allowed(state, "review_mixed_players")
+        case_id = str(payload.get("case_id") or payload.get("candidate_subject_id") or "")
+        audit_case = next(
+            (
+                dict(row)
+                for row in load_mixed_player_cases(path).get("cases") or []
+                if str(row.get("case_id") or row.get("candidate_subject_id") or "") == case_id
+            ),
+            None,
+        )
         workflow_gate_ms = round((time.perf_counter() - gate_started) * 1000, 1)
         with review_build_context():
             result = save_mixed_player_resolution(path, match_document, payload)
+        if audit_case is not None:
+            source = audit_case.get("source") if isinstance(audit_case.get("source"), dict) else {}
+            append_operator_decision_audit(
+                path,
+                unit={
+                    **source,
+                    "candidate_subject_id": audit_case.get("candidate_subject_id"),
+                    "scope_kind": "mixed",
+                    "detected_observation_count": audit_case.get("observation_count"),
+                    "current_decision": audit_case.get("current_decision"),
+                },
+                payload={**payload, "action": "mixed_players"},
+                required=True,
+            )
         # Resolving a staged marker creates/removes exact child targets.  Do
         # not let a browser retain a queue projected before that topology
         # change; the following progress read materializes it once.
