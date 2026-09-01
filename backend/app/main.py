@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.logging_config import configure_application_logging
-from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload, PitchConfigPayload
+from app.models import AnalyzePayload, BallAnalyzePayload, MatchGroupPayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
 from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, mark_interrupted_analysis_jobs, start_analysis_job
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
@@ -188,8 +188,20 @@ from app.services.json_publish_store import (
     get_published_match,
     import_match_package,
     init_publish_store,
+    list_eligible_match_group_sources,
     list_published_matches,
     publish_store_health,
+)
+from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report as load_match_group_report
+from app.services.match_groups import (
+    MatchGroupError,
+    create_match_group,
+    delete_match_group,
+    get_match_group,
+    list_match_groups,
+    preview_match_group,
+    update_match_group,
+    validate_match_group,
 )
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
 from app.services.pass_review import load_pass_candidates_review, save_pass_candidate_reviews
@@ -3530,6 +3542,112 @@ def publish_local_match(match_id: str, replace: bool = Query(False)) -> dict[str
 @app.get("/api/published/matches")
 def api_list_published_matches() -> list[dict[str, Any]]:
     return list_published_matches()
+
+
+def _match_group_error_response(error: MatchGroupError) -> HTTPException:
+    return HTTPException(status_code=409, detail=error.reason())
+
+
+def _group_with_validation(group: dict[str, Any]) -> dict[str, Any]:
+    return {"group": group, "validation": validate_match_group(str(group["group_id"]))}
+
+
+@app.get("/api/published/match-groups/eligible-sources")
+def api_list_eligible_match_group_sources() -> list[dict[str, Any]]:
+    return list_eligible_match_group_sources()
+
+
+@app.post("/api/published/match-groups/preview")
+def api_preview_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
+    try:
+        return preview_match_group(
+            member_published_ids=payload.member_published_ids,
+            metadata=payload.metadata.model_dump(),
+        )
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups")
+def api_list_match_groups() -> list[dict[str, Any]]:
+    return [_group_with_validation(group) for group in list_match_groups()]
+
+
+@app.post("/api/published/match-groups")
+def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
+    try:
+        group = create_match_group(
+            member_published_ids=payload.member_published_ids,
+            metadata=payload.metadata.model_dump(),
+        )
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+    try:
+        report = generate_match_group_report(str(group["group_id"]))
+    except MatchGroupError as error:
+        # A newly-created group has no prior coherent report to preserve.
+        delete_match_group(str(group["group_id"]))
+        raise _match_group_error_response(error) from error
+    return {**_group_with_validation(group), "report": report}
+
+
+@app.get("/api/published/match-groups/{group_id}")
+def api_get_match_group(group_id: str) -> dict[str, Any]:
+    try:
+        return _group_with_validation(get_match_group(group_id))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.put("/api/published/match-groups/{group_id}")
+def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[str, Any]:
+    try:
+        group = update_match_group(
+            group_id,
+            member_published_ids=payload.member_published_ids,
+            metadata=payload.metadata.model_dump(),
+        )
+        report = generate_match_group_report(group_id)
+        return {**_group_with_validation(group), "report": report}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.post("/api/published/match-groups/{group_id}/regenerate")
+def api_regenerate_match_group(group_id: str) -> dict[str, Any]:
+    try:
+        report = generate_match_group_report(group_id)
+        return {**_group_with_validation(get_match_group(group_id)), "report": report}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.delete("/api/published/match-groups/{group_id}")
+def api_delete_match_group(group_id: str) -> dict[str, Any]:
+    try:
+        return {"status": "deleted", "group": delete_match_group(group_id)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/report")
+def api_get_match_group_report(group_id: str) -> dict[str, Any]:
+    try:
+        return load_match_group_report(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "aggregate_report_not_generated", "detail": "Aggregate report has not been generated."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
 
 
 @app.get("/api/published/matches/{published_match_id}")

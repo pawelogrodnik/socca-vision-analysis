@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.model_defaults import DEFAULT_BALL_YOLO_MODEL, DEFAULT_PLAYER_YOLO_MODEL
 
@@ -90,3 +90,17 @@ class BallAnalyzePayload(BaseModel):
     yolo_conf: float = 0.05
     yolo_imgsz: int = 960
     yolo_device: str | None = None
+
+
+class MatchGroupMetadataPayload(BaseModel):
+    title: str | None = None
+    match_date: str | None = None
+    season: str | None = None
+    venue: str | None = None
+    format: str | None = None
+
+
+class MatchGroupPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    member_published_ids: list[str] = Field(min_length=2)
+    metadata: MatchGroupMetadataPayload

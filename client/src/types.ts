@@ -3125,3 +3125,89 @@ export type PublishedMatchDetail = PublishedMatch & {
   players: Array<Record<string, unknown>>;
   stable_players?: Array<Record<string, unknown>>;
 };
+
+export type MatchGroupMetadata = {
+  title?: string | null;
+  match_date?: string | null;
+  season?: string | null;
+  venue?: string | null;
+  format?: string | null;
+};
+
+export type MatchGroupSource = {
+  id: string;
+  source_match_id: string;
+  title: string;
+  match_date?: string | null;
+  teams: string[];
+  analyzed_duration_sec: number;
+  status: string;
+  report_type: 'public_match_report';
+};
+
+export type MatchGroupManifest = {
+  group_id: string;
+  metadata: MatchGroupMetadata;
+  members: Array<{
+    published_id: string;
+    source_match_id: string;
+    sequence_index: number;
+    analyzed_duration_sec: number;
+    logical_start_sec: number;
+    logical_end_sec: number;
+  }>;
+  timing: { analyzed_duration_sec: number; timeline_span_sec: number; mapping: string };
+  compatibility: MatchGroupCompatibility;
+};
+
+export type MatchGroupCompatibility = {
+  status: 'compatible' | 'stale' | 'incompatible' | 'invalid';
+  blocking_reasons: Array<{ code: string; detail: string; member?: string }>;
+  capabilities?: Record<string, unknown>;
+};
+
+export type MatchGroupPreview = {
+  status: 'compatible';
+  compatibility: MatchGroupCompatibility;
+  timing: MatchGroupManifest['timing'];
+  members: MatchGroupManifest['members'];
+};
+
+export type MatchGroupRecord = {
+  group: MatchGroupManifest;
+  validation: MatchGroupCompatibility;
+  report?: AggregatePublicMatchReport;
+};
+
+export type AggregatePublicMatchReport = {
+  schema_version: string;
+  report_type: 'public_aggregate_match_report';
+  group_id: string;
+  match: MatchGroupMetadata;
+  source_match_ids: string[];
+  source_published_ids: string[];
+  sources: Array<{
+    published_id: string;
+    source_match_id: string;
+    sequence_index: number;
+    logical_offset_sec: number;
+  }>;
+  timing: { analyzed_duration_sec: number; timeline_span_sec: number; mapping: string };
+  stats_semantics?: Record<string, string>;
+  spatial: {
+    heatmaps: { status: string; reason?: string };
+    team_shape: { status: string; reason?: string };
+  };
+  timelines?: {
+    attacking_momentum?: { product_readiness?: string; status?: string };
+  };
+  teams: Array<Record<string, unknown>>;
+  players: Array<Record<string, unknown>>;
+  ball?: Record<string, unknown>;
+};
+
+export type PhysicalPublicMatchReport = PublicMatchReport & {
+  report_type: 'public_match_report';
+};
+
+export type AnyPublicMatchReport = PhysicalPublicMatchReport | AggregatePublicMatchReport;

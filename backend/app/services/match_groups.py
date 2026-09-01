@@ -66,6 +66,22 @@ def create_match_group(*, member_published_ids: list[str], metadata: dict[str, A
     return manifest
 
 
+def preview_match_group(*, member_published_ids: list[str], metadata: dict[str, Any]) -> dict[str, Any]:
+    """Build the server-authoritative compatibility preview without persisting it."""
+
+    manifest = _build_manifest(
+        group_id="match-group-preview",
+        member_published_ids=member_published_ids,
+        metadata=metadata,
+    )
+    return {
+        "status": manifest["compatibility"]["status"],
+        "compatibility": manifest["compatibility"],
+        "timing": manifest["timing"],
+        "members": manifest["members"],
+    }
+
+
 def get_match_group(group_id: str) -> dict[str, Any]:
     return _load_manifest(_group_dir(_validated_group_id(group_id)) / "manifest.json")
 
