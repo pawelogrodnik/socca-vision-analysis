@@ -26,7 +26,10 @@ from app.services.identity_reviewed_action_scope import (
 )
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
-from app.services.identity_reviewed_decision_audit import AUDIT_FILENAME
+from app.services.identity_reviewed_decision_audit import (
+    AUDIT_FILENAME,
+    recover_staged_operator_decision_audits,
+)
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
     save_inline_temporal_split,
@@ -472,6 +475,65 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
             hot_state.assert_not_called()
             invalidate.assert_not_called()
             self.assertEqual(_path_snapshots(_split_state_paths(root)), before)
+
+    def test_mixed_resolution_recovers_a_staged_audit_after_post_save_failure(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            marker = _classify(root, match)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "case_id": marker.get("case_id") or marker["candidate_subject_id"],
+                "source_subject_digest": marker["source_subject_digest"],
+                "resolution": "unresolved_complex_mix",
+            }
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.build_compact_review_workflow_state",
+                    return_value={"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]},
+                ),
+                patch("app.main.commit_staged_operator_decision_audit", side_effect=OSError("injected audit failure")),
+            ):
+                with self.assertRaises(OSError):
+                    post_match_reviewed_identity_mixed_resolution("m1", Response(), payload)
+
+            self.assertEqual(recover_staged_operator_decision_audits(root), 1)
+            self.assertEqual(recover_staged_operator_decision_audits(root), 0)
+            audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(audit["events"]), 1)
+            self.assertEqual(audit["events"][0]["decision_stage"], "mixed")
+
+    def test_temporal_split_recovers_a_staged_audit_after_post_save_failure(self) -> None:
+        with _workspace() as root:
+            match = _fixture(root)
+            payload = {
+                "candidate_subject_id": "subject-mixed",
+                "source_ownership_digest": current_mixed_subject_digest(root, "subject-mixed"),
+                "resolution": "split",
+                "split_after_frames": [4],
+                "segment_assignments": [
+                    {"action": "assign_team", "team_label": "A"},
+                    {"action": "assign_team", "team_label": "B"},
+                ],
+            }
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=match),
+                patch(
+                    "app.main.get_review_workflow_state",
+                    return_value={"phase": "exceptions", "allowed_actions": ["review_identity_issue"]},
+                ),
+                patch("app.main.commit_staged_operator_decision_audit", side_effect=OSError("injected audit failure")),
+            ):
+                with self.assertRaises(OSError):
+                    post_match_reviewed_identity_temporal_split("m1", payload)
+
+            self.assertEqual(recover_staged_operator_decision_audits(root), 1)
+            self.assertEqual(recover_staged_operator_decision_audits(root), 0)
+            audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(audit["events"]), 1)
+            self.assertEqual(audit["events"][0]["decision_stage"], "temporal_split")
 
     def test_historical_unsafe_split_is_read_only_until_explicit_lane_repair(self) -> None:
         with _workspace() as root:

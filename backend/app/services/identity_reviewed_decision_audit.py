@@ -36,17 +36,32 @@ def append_operator_decision_audit(
 
 
 def prepare_operator_decision_audit_event(
-    *, unit: Mapping[str, Any] | None, payload: Mapping[str, Any], required: bool,
+    *,
+    unit: Mapping[str, Any] | None,
+    payload: Mapping[str, Any],
+    required: bool,
+    mutation_kind: str = "correction",
 ) -> dict[str, Any]:
     """Capture a pre-mutation human event without persisting it yet."""
     source = dict(unit or {})
     features = _features_from_unit(source)
     action = str(payload.get("action") or "")
+    semantic_result = {
+        "action": action,
+        "resolution": payload.get("resolution"),
+        "team_label": payload.get("team_label"),
+        "player_id": payload.get("player_id"),
+        "stable_slot_id": payload.get("stable_slot_id") or payload.get("existing_slot_id"),
+    }
     previous = source.get("current_decision")
     return {
         "event_id": uuid4().hex,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "provenance": "EXACT_PERSISTED",
+        "mutation": {
+            "kind": mutation_kind,
+            "semantic": semantic_result,
+        },
         "decision_stage": _stage(source, action),
         "required": bool(required),
         "required_reason": list(source.get("reason_codes") or []),
@@ -74,10 +89,7 @@ def prepare_operator_decision_audit_event(
             "automatic_team_assignment_shadow": source.get("automatic_team_assignment"),
         },
         "operator_result": {
-            "action": action,
-            "resolution": payload.get("resolution"),
-            "team_label": payload.get("team_label"),
-            "player_id": payload.get("player_id"),
+            **semantic_result,
             "replaces_prior_operator_decision": bool(isinstance(previous, Mapping) and previous.get("action")),
         },
     }
@@ -93,10 +105,12 @@ def stage_operator_decision_audit(match_path: Path, event: Mapping[str, Any]) ->
 
 
 def commit_staged_operator_decision_audit(match_path: Path, event_id: str) -> dict[str, Any] | None:
-    """Promote one staged event exactly once; benchmark is rebuildable only."""
+    """Promote one staged event only after its canonical mutation is proven."""
     pending = _load_pending_audit(match_path)
     event = next((row for row in pending["events"] if str(row.get("event_id") or "") == event_id), None)
     if not isinstance(event, dict):
+        return None
+    if not canonical_mutation_persisted(match_path, event):
         return None
     _append_audit_event(match_path, event)
     pending["events"] = [row for row in pending["events"] if str(row.get("event_id") or "") != event_id]
@@ -104,10 +118,14 @@ def commit_staged_operator_decision_audit(match_path: Path, event_id: str) -> di
     return event
 
 
-def recover_staged_operator_decision_audits(match_path: Path) -> int:
+def recover_staged_operator_decision_audits(
+    match_path: Path, *, event_id: str | None = None,
+) -> int:
     """Complete prior successful mutations whose audit write was interrupted."""
     recovered = 0
     for event in list(_load_pending_audit(match_path)["events"]):
+        if event_id is not None and str(event.get("event_id") or "") != event_id:
+            continue
         if commit_staged_operator_decision_audit(match_path, str(event.get("event_id") or "")):
             recovered += 1
     return recovered
@@ -136,6 +154,110 @@ def _append_audit_event(match_path: Path, event: Mapping[str, Any]) -> None:
         pass
 
 
+def canonical_mutation_persisted(match_path: Path, event: Mapping[str, Any]) -> bool:
+    """Prove a staged event against the current canonical decision stores.
+
+    A pending file is a write-ahead record, not operator truth.  It may only
+    become append-only audit history after the matching canonical mutation is
+    visible.  This also makes a scan during an unrelated retry safe.
+    """
+    mutation = event.get("mutation") if isinstance(event.get("mutation"), Mapping) else {}
+    kind = str(mutation.get("kind") or "correction")
+    if kind in {"mixed_resolution", "temporal_split"}:
+        return _persisted_split_resolution_matches(match_path, event)
+    return _persisted_correction_matches(match_path, event)
+
+
+def _persisted_correction_matches(match_path: Path, event: Mapping[str, Any]) -> bool:
+    expected = event.get("operator_result") if isinstance(event.get("operator_result"), Mapping) else {}
+    action = str(expected.get("action") or "")
+    source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+    if action == "mixed_players":
+        return any(
+            _source_matches_event(row, source)
+            and str(row.get("original_issue") or "") in {"mixed_players", "inline_temporal_split"}
+            for row in _canonical_rows(match_path, "reviewed_identity_mixed_players.json", "cases")
+        )
+    for filename, key in (
+        ("reviewed_identity_slot_assignments.json", "decisions"),
+        ("reviewed_identity_segment_decisions.json", "decisions"),
+        ("reviewed_identity_material_continuity_decisions.json", "decisions"),
+        ("identity_roster_subject_review_decisions_shadow.json", "decisions"),
+    ):
+        for row in _canonical_rows(match_path, filename, key):
+            if _source_matches_event(row, source) and _semantic_result_matches(row, expected):
+                return True
+    return False
+
+
+def _persisted_split_resolution_matches(match_path: Path, event: Mapping[str, Any]) -> bool:
+    source = event.get("source") if isinstance(event.get("source"), Mapping) else {}
+    result = event.get("operator_result") if isinstance(event.get("operator_result"), Mapping) else {}
+    expected_resolution = str(result.get("resolution") or "split")
+    for row in _canonical_rows(match_path, "reviewed_identity_mixed_players.json", "cases"):
+        if not _source_matches_event(row, source):
+            continue
+        status = str(row.get("resolution_status") or "")
+        if expected_resolution == "unresolved_complex_mix":
+            return status == "unresolved_complex_mix"
+        if expected_resolution == "concurrent_lanes":
+            return status == "resolved" and str(row.get("resolution_model") or "") == "concurrent_lanes"
+        if expected_resolution == "split":
+            return status == "resolved" and str(row.get("resolution_model") or "") != "concurrent_lanes"
+    return False
+
+
+def _canonical_rows(match_path: Path, filename: str, key: str) -> list[dict[str, Any]]:
+    try:
+        document = json.loads((match_path / filename).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [dict(row) for row in document.get(key) or [] if isinstance(row, Mapping)]
+
+
+def _source_matches_event(row: Mapping[str, Any], source: Mapping[str, Any]) -> bool:
+    row_source = row.get("source") if isinstance(row.get("source"), Mapping) else row
+    event_subject = str(source.get("candidate_subject_id") or "")
+    event_target = str(source.get("review_target_id") or "")
+    event_group = str(source.get("continuity_group_id") or "")
+    event_digest = str(source.get("source_ownership_digest") or "")
+    if event_subject and str(row.get("candidate_subject_id") or row_source.get("candidate_subject_id") or "") != event_subject:
+        return False
+    if event_target and str(row.get("review_target_id") or row_source.get("review_target_id") or row.get("case_id") or "") != event_target:
+        return False
+    if event_group and str(row.get("continuity_group_id") or row_source.get("continuity_group_id") or "") != event_group:
+        return False
+    if event_digest:
+        row_digest = str(
+            row.get("source_ownership_digest")
+            or row.get("source_subject_digest")
+            or row_source.get("source_ownership_digest")
+            or ""
+        )
+        # Whole-subject slot stores intentionally predate exact-source digest
+        # persistence; their canonical key is the unique subject decision.
+        if row_digest and row_digest != event_digest:
+            return False
+    return bool(event_subject or event_target or event_group)
+
+
+def _semantic_result_matches(row: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    action = str(expected.get("action") or "")
+    row_action = str(row.get("action") or "")
+    if action and row_action != action:
+        return False
+    for key in ("team_label", "player_id", "stable_slot_id"):
+        expected_value = expected.get(key)
+        if expected_value is None or expected_value == "":
+            continue
+        row_value = row.get(key)
+        if row_value is None and key == "stable_slot_id":
+            row_value = row.get("existing_slot_id")
+        if str(row_value or "") != str(expected_value):
+            return False
+    return True
+
+
 def build_review_decision_benchmark(
     match_path: Path,
     *,
@@ -155,8 +277,9 @@ def build_review_decision_benchmark(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "overall": {
             "total_operator_decisions": len(events),
-            "mandatory_decisions": sum(bool(event.get("required")) for event in events),
-            "optional_decisions": sum(not bool(event.get("required")) for event in events),
+            "mandatory_decisions": sum(event.get("required") is True for event in events),
+            "optional_decisions": sum(event.get("required") is False for event in events),
+            "requiredness_unavailable": sum(event.get("required") is None for event in events),
             "decision_counts_by_stage": dict(sorted(stages.items())),
             "decision_counts_by_action": dict(sorted(actions.items())),
             "operator_result_distribution": _operator_result_distribution(events),
@@ -470,16 +593,14 @@ def _historical_event(record: Mapping[str, Any]) -> dict[str, Any]:
         **team_evidence_features([]),
     }
     scope_kind = str(source.get("scope_kind") or "")
-    stage = (
-        "mixed" if "mixed" in str(record.get("source_file") or "")
-        else "temporal_split" if "segment" in str(record.get("source_file") or "")
-        else "team_attribution" if action in {"assign_team", "team_unknown", "referee", "false_detection"}
-        else "player_identity"
-    )
+    stage = _historical_stage(decision, action)
     return {
         "event_id": f"historical:{record.get('source_file')}:{canonical_digest(decision)}",
         "provenance": "HISTORICAL_BACKFILL",
+        "history_availability": "recovered_persisted_decision_record",
         "decision_stage": stage,
+        # Legacy stores preserve current canonical state, not the queue
+        # classification at the original operator click.
         "required": None,
         "scope_policy": scope_kind or None,
         "source": {
@@ -498,3 +619,28 @@ def _historical_event(record: Mapping[str, Any]) -> dict[str, Any]:
             "player_id": decision.get("player_id"),
         },
     }
+
+
+def _historical_stage(decision: Mapping[str, Any], action: str) -> str:
+    if action in {"assign_team", "team_unknown", "referee", "false_detection"}:
+        return "team_attribution"
+    if action in {
+        "assign_roster_player",
+        "assign_existing_slot",
+        "create_new_stable_player",
+    }:
+        return "player_identity"
+    if action in {"mixed_players", "unresolved_complex_mix"}:
+        return "mixed"
+    if (
+        str(decision.get("original_issue") or "") == "inline_temporal_split"
+        or str(decision.get("resolution_model") or "") == "concurrent_lanes"
+        or str(decision.get("resolution_status") or "") in {
+            "resolved",
+            "unresolved_complex_mix",
+        }
+    ):
+        return "temporal_split"
+    # A canonical child in the segment file can be an ordinary correction.
+    # Preserve its scope separately and do not infer a parent split event.
+    return "unknown"
