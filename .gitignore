@@ -84,3 +84,10 @@ runs/
 Thumbs.db
 matches_video/*
 .vscode
+
+# Decision benchmarks — keep only compact durable summaries
+backend/decision-benchmarks/**
+
+!backend/decision-benchmarks/*/
+!backend/decision-benchmarks/*/match.json
+!backend/decision-benchmarks/*/review_decision_benchmark.json

@@ -448,6 +448,52 @@ class ReviewWorkflowApiTests(unittest.TestCase):
             persist.call_args.kwargs["trusted_materialized_detected_team_labels"],
             {"subject-1": {"A", "B"}},
         )
+        self.assertFalse(persist.call_args.kwargs["audit_required"])
+        workflow_state.assert_not_called()
+        legacy_save.assert_not_called()
+        refresh.assert_not_called()
+        video_qa.assert_not_called()
+        progress_build.assert_not_called()
+        finalize_snapshot.assert_not_called()
+        seeded_rebuild.assert_not_called()
+
+    def test_deferred_required_authorization_marks_audit_as_required(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        persisted = {
+            "saved_decision": {"candidate_subject_id": "subject-1"},
+            "effective_action": "assign_team",
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "persistence": {"status": "saved", "downstream_recompute_triggered": False},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "idempotent_replay": False,
+                "audit_required": True,
+                "detected_team_labels_by_subject": {"subject-1": {"A"}},
+            },
+        ), patch(
+            "app.main.persist_reviewed_identity_correction", return_value=persisted
+        ) as persist, patch("app.main.get_review_workflow_state") as workflow_state, patch(
+            "app.main.save_reviewed_identity_correction"
+        ) as legacy_save, patch("app.main.refresh_review_after_identity_mutation") as refresh, patch(
+            "app.main.after_video_qa_correction"
+        ) as video_qa, patch("app.main.build_reviewed_identity_progress") as progress_build, patch(
+            "app.main.finalize_reviewed_identity"
+        ) as finalize_snapshot, patch(
+            "app.main.rebuild_identity_seeded_candidate_assignments"
+        ) as seeded_rebuild:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "assign_team", "defer_recompute": True},
+            )
+
+        self.assertTrue(response["recompute_deferred"])
+        self.assertTrue(persist.call_args.kwargs["audit_required"])
         workflow_state.assert_not_called()
         legacy_save.assert_not_called()
         refresh.assert_not_called()

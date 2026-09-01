@@ -56,6 +56,7 @@ from app.services.identity_reviewed_team_attribution_evidence import (
 from app.services.identity_reviewed_scope_eligibility import (
     has_team_attribution_uncertainty,
 )
+from app.services.identity_reviewed_team_attribution_policy import team_evidence_features
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     identity_review_scope_read_model,
@@ -351,6 +352,7 @@ def _build_reviewed_identity_progress_uncached(
     """Build progress from frozen identity artifacts without writing anything."""
     materialized = _materialize_review_units_scoped(match_path, match_doc)
     units = materialized["units"]
+    units = _apply_snapshot_team_projections(match_path, units)
     tracklets = materialized["tracklets"]
     subjects = materialized["subjects"]
     # Snapshot-dependent projection half: effective coverage, pair index,
@@ -778,6 +780,15 @@ def _unit(
         canonical_player_id = str((seeded.get("assigned_player") or {}).get("player_id") or "") or canonical_player_id
         if canonical_player_id:
             effective_team = roster_teams.get(canonical_player_id, effective_team)
+    team_observations = [
+        {
+            "tracklet_id": tracklet_id,
+            "frame": frame,
+            "team_label": tracklets.get(tracklet_id, {}).get("team_label") or "U",
+        }
+        for tracklet_id, frame in pairs
+    ]
+    team_features = team_evidence_features(team_observations, fps=fps)
     return {
         "candidate_subject_id": subject_id,
         "tracklet_ids": sorted(tracklet_ids),
@@ -796,6 +807,11 @@ def _unit(
         "stable_slot_id": stable_slot_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
+        "team_attribution_features": team_features,
+        # Only the reviewed snapshot may introduce this field.  Progress must
+        # never independently make a source certain while effective output
+        # remains Team-U.
+        "automatic_team_assignment": None,
         "scope_kind": "whole_subject",
         "correction_scope": "whole_subject",
         "operator_actionable": bool(reviewability["actionable"]),
@@ -828,6 +844,7 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "cumulative_selected_named_gain",
         "correction_scope", "operator_actionable", "non_actionable_reason",
         "has_operator_visual_evidence", "team_attribution_evidence_status",
+        "automatic_team_assignment", "team_attribution_features",
     )
     result = {key: unit.get(key) for key in keys}
     # The hot/public queue intentionally omits exact team evidence.  Preserve
@@ -1234,6 +1251,47 @@ def _all_detected_pairs(tracklets: dict[str, dict[str, Any]]) -> set[tuple[str, 
         if is_real_detected_position(position)
         and is_on_pitch_product_observation(position)
     }
+
+
+def _apply_snapshot_team_projections(
+    match_path: Path, units: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Join only exact whole-source derived team truth from the snapshot.
+
+    Canonical children intentionally do not inherit a parent projection: their
+    ownership is smaller and must be independently proven on a later snapshot
+    rebuild. This prevents a short historical segment from borrowing a whole
+    tracklet's automatic team assignment.
+    """
+    snapshot = _load(match_path / "reviewed_identity_snapshot.json")
+    projections = snapshot.get("automatic_team_assignments") or []
+    by_source = {
+        (
+            str(row.get("candidate_subject_id") or ""),
+            tuple(sorted(str(value) for value in row.get("tracklet_ids") or [])),
+        ): row
+        for row in projections
+        if isinstance(row, dict)
+        and str(row.get("team_label") or "") in {"A", "B"}
+    }
+    result: list[dict[str, Any]] = []
+    for unit in units:
+        if str(unit.get("scope_kind") or "whole_subject") != "whole_subject":
+            result.append(unit)
+            continue
+        projection = by_source.get((
+            str(unit.get("candidate_subject_id") or ""),
+            tuple(sorted(str(value) for value in unit.get("tracklet_ids") or [])),
+        ))
+        if not projection:
+            result.append(unit)
+            continue
+        result.append({
+            **unit,
+            "effective_team_label": projection["team_label"],
+            "automatic_team_assignment": dict(projection),
+        })
+    return result
 
 
 def _technical_unresolved(path: Path, fallback: int) -> int:

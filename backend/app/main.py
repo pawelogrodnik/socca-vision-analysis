@@ -137,6 +137,14 @@ from app.services.identity_reviewed_mixed_store import (
     inline_temporal_split_for_source,
     materialize_mixed_review_artifact,
     render_mixed_review_evidence,
+    load_mixed_player_cases,
+)
+from app.services.identity_reviewed_decision_audit import (
+    commit_staged_operator_decision_audit,
+    discard_staged_operator_decision_audit,
+    prepare_operator_decision_audit_event,
+    recover_staged_operator_decision_audits,
+    stage_operator_decision_audit,
 )
 from app.services.identity_canonical_io import review_build_context
 from app.services.identity_reviewed_mixed_resolution import (
@@ -155,6 +163,7 @@ from app.services.identity_reviewed_review_source import (
     build_concurrent_lane_boundary_refinement,
     build_review_source_boundary_refinement,
     resolve_review_source,
+    source_case_id,
 )
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
@@ -2320,6 +2329,7 @@ def post_match_reviewed_identity_correction(
     path = match_dir(match_id)
     try:
         match_document = read_match_meta(path)
+        recover_staged_operator_decision_audits(path)
         if payload.get("defer_recompute") is True:
             started = time.perf_counter()
             deferred_gate = validate_deferred_review_action(
@@ -2333,6 +2343,10 @@ def post_match_reviewed_identity_correction(
                 # canonical decisions or patch the hot projection again: the
                 # caller must obtain the current authoritative queue instead
                 # of treating this replay as a second successful decision.
+                # The prior canonical write may have succeeded immediately
+                # before an audit filesystem failure. Replaying the same
+                # decision repairs only the staged append-only audit event.
+                recover_staged_operator_decision_audits(path)
                 hot_state = deferred_gate.get("hot_state")
                 return {
                     "saved_decision": deferred_gate.get("saved_decision"),
@@ -2377,6 +2391,7 @@ def post_match_reviewed_identity_correction(
                     "detected_team_labels_by_subject"
                 ),
                 authorized_review_unit=deferred_gate.get("review_unit"),
+                audit_required=bool(deferred_gate.get("audit_required")),
             )
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             hot_started = time.perf_counter()
@@ -2509,6 +2524,7 @@ def post_match_reviewed_identity_temporal_split(
     path = match_dir(match_id)
     try:
         match_document = read_match_meta(path)
+        recover_staged_operator_decision_audits(path)
         state_before = get_review_workflow_state(path, match_document)
         if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
             assert_workflow_action_allowed(state_before, "review_identity_issue")
@@ -2561,14 +2577,37 @@ def post_match_reviewed_identity_temporal_split(
         capabilities = reviewed_identity_action_capabilities(review_unit)
         if not isinstance(review_unit, dict) or not capabilities["split"].get("allowed"):
             raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
-        with review_build_context():
-            result = save_inline_temporal_split(
-                path,
-                match_document,
-                payload,
-                materialized_review_unit=materialized_review_unit,
-                resolved_source=resolved_source,
-            )
+        audit_event = prepare_operator_decision_audit_event(
+            unit={
+                **(materialized_review_unit or {}),
+                "candidate_subject_id": resolved_source.get("candidate_subject_id"),
+                "review_target_id": source_case_id(resolved_source),
+                "scope_kind": resolved_source.get("scope_kind"),
+                "continuity_group_id": resolved_source.get("continuity_group_id"),
+                "source_ownership_digest": resolved_source.get("source_ownership_digest"),
+                "tracklet_ids": resolved_source.get("tracklet_ids"),
+                "frame_start": resolved_source.get("frame_start"),
+                "frame_end": resolved_source.get("frame_end"),
+                "detected_observation_count": resolved_source.get("detected_observation_count"),
+            },
+            payload={**payload, "action": "temporal_split"},
+            required=True,
+            mutation_kind="temporal_split",
+        )
+        stage_operator_decision_audit(path, audit_event)
+        try:
+            with review_build_context():
+                result = save_inline_temporal_split(
+                    path,
+                    match_document,
+                    payload,
+                    materialized_review_unit=materialized_review_unit,
+                    resolved_source=resolved_source,
+                )
+        except Exception:
+            discard_staged_operator_decision_audit(path, str(audit_event["event_id"]))
+            raise
+        commit_staged_operator_decision_audit(path, str(audit_event["event_id"]))
         # A split changes the number and exact ownership of review units, so
         # this is deliberately a cache invalidation, not a guessed incremental
         # queue mutation. The next request safely materializes canonical state.
@@ -2795,11 +2834,45 @@ def post_match_reviewed_identity_mixed_resolution(
     try:
         gate_started = time.perf_counter()
         match_document = read_match_meta(path)
+        recover_staged_operator_decision_audits(path)
         state = build_compact_review_workflow_state(path, match_document)
         assert_workflow_action_allowed(state, "review_mixed_players")
+        case_id = str(payload.get("case_id") or payload.get("candidate_subject_id") or "")
+        audit_case = next(
+            (
+                dict(row)
+                for row in load_mixed_player_cases(path).get("cases") or []
+                if str(row.get("case_id") or row.get("candidate_subject_id") or "") == case_id
+            ),
+            None,
+        )
         workflow_gate_ms = round((time.perf_counter() - gate_started) * 1000, 1)
-        with review_build_context():
-            result = save_mixed_player_resolution(path, match_document, payload)
+        audit_event = None
+        if audit_case is not None:
+            source = audit_case.get("source") if isinstance(audit_case.get("source"), dict) else {}
+            audit_event = prepare_operator_decision_audit_event(
+                unit={
+                    **source,
+                    "candidate_subject_id": audit_case.get("candidate_subject_id"),
+                    "review_target_id": audit_case.get("case_id"),
+                    "scope_kind": "mixed",
+                    "detected_observation_count": audit_case.get("observation_count"),
+                    "current_decision": audit_case.get("current_decision"),
+                },
+                payload={**payload, "action": "mixed_players"},
+                required=True,
+                mutation_kind="mixed_resolution",
+            )
+            stage_operator_decision_audit(path, audit_event)
+        try:
+            with review_build_context():
+                result = save_mixed_player_resolution(path, match_document, payload)
+        except Exception:
+            if audit_event is not None:
+                discard_staged_operator_decision_audit(path, str(audit_event["event_id"]))
+            raise
+        if audit_event is not None:
+            commit_staged_operator_decision_audit(path, str(audit_event["event_id"]))
         # Resolving a staged marker creates/removes exact child targets.  Do
         # not let a browser retain a queue projected before that topology
         # change; the following progress read materializes it once.

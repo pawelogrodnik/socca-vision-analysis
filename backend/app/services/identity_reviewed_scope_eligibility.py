@@ -23,6 +23,15 @@ def team_attribution_state(value: dict[str, Any]) -> TeamAttributionState:
     if _is_explicit_team_unknown_decision(value):
         return "unknown"
 
+    # This is a derived, versioned team fact for a short non-structural
+    # source.  It is intentionally checked before raw noisy votes, while the
+    # raw evidence remains available separately for audit and diagnostics.
+    automatic = value.get("automatic_team_assignment")
+    if isinstance(automatic, dict) and str(automatic.get("provenance") or "") == "short_track_dominant_team_v1":
+        automatic_team = _team_label(automatic.get("team_label"))
+        if automatic_team in {"A", "B"}:
+            return f"certain_{automatic_team}"
+
     established = {
         team
         for team in (
