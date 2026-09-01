@@ -17,6 +17,7 @@ from app.services.identity_reviewed_team_attribution_policy import team_evidence
 
 
 AUDIT_FILENAME = "review_operator_decision_audit.json"
+PENDING_AUDIT_FILENAME = "review_operator_decision_audit_pending.json"
 BENCHMARK_FILENAME = "review_decision_benchmark.json"
 BACKFILL_REPORT_FILENAME = "review_operator_decision_backfill_report.json"
 AUDIT_SCHEMA_VERSION = "1.0.0"
@@ -27,12 +28,22 @@ def append_operator_decision_audit(
     required: bool,
 ) -> dict[str, Any]:
     """Append the before-state and final human choice; never rewrite history."""
-    document = _load_audit(match_path)
+    event = prepare_operator_decision_audit_event(
+        unit=unit, payload=payload, required=required
+    )
+    _append_audit_event(match_path, event)
+    return event
+
+
+def prepare_operator_decision_audit_event(
+    *, unit: Mapping[str, Any] | None, payload: Mapping[str, Any], required: bool,
+) -> dict[str, Any]:
+    """Capture a pre-mutation human event without persisting it yet."""
     source = dict(unit or {})
     features = _features_from_unit(source)
     action = str(payload.get("action") or "")
     previous = source.get("current_decision")
-    event = {
+    return {
         "event_id": uuid4().hex,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "provenance": "EXACT_PERSISTED",
@@ -70,13 +81,67 @@ def append_operator_decision_audit(
             "replaces_prior_operator_decision": bool(isinstance(previous, Mapping) and previous.get("action")),
         },
     }
-    document["events"].append(event)
-    write_identity_json_atomic(match_path / AUDIT_FILENAME, document)
-    build_review_decision_benchmark(match_path, document=document)
+
+
+def stage_operator_decision_audit(match_path: Path, event: Mapping[str, Any]) -> None:
+    """Durably stage an audit event before its canonical human mutation."""
+    document = _load_pending_audit(match_path)
+    event_id = str(event.get("event_id") or "")
+    if event_id and all(str(row.get("event_id") or "") != event_id for row in document["events"]):
+        document["events"].append(dict(event))
+        write_identity_json_atomic(match_path / PENDING_AUDIT_FILENAME, document)
+
+
+def commit_staged_operator_decision_audit(match_path: Path, event_id: str) -> dict[str, Any] | None:
+    """Promote one staged event exactly once; benchmark is rebuildable only."""
+    pending = _load_pending_audit(match_path)
+    event = next((row for row in pending["events"] if str(row.get("event_id") or "") == event_id), None)
+    if not isinstance(event, dict):
+        return None
+    _append_audit_event(match_path, event)
+    pending["events"] = [row for row in pending["events"] if str(row.get("event_id") or "") != event_id]
+    write_identity_json_atomic(match_path / PENDING_AUDIT_FILENAME, pending)
     return event
 
 
-def build_review_decision_benchmark(match_path: Path, *, document: dict[str, Any] | None = None) -> dict[str, Any]:
+def recover_staged_operator_decision_audits(match_path: Path) -> int:
+    """Complete prior successful mutations whose audit write was interrupted."""
+    recovered = 0
+    for event in list(_load_pending_audit(match_path)["events"]):
+        if commit_staged_operator_decision_audit(match_path, str(event.get("event_id") or "")):
+            recovered += 1
+    return recovered
+
+
+def discard_staged_operator_decision_audit(match_path: Path, event_id: str) -> None:
+    pending = _load_pending_audit(match_path)
+    retained = [row for row in pending["events"] if str(row.get("event_id") or "") != event_id]
+    if len(retained) != len(pending["events"]):
+        pending["events"] = retained
+        write_identity_json_atomic(match_path / PENDING_AUDIT_FILENAME, pending)
+
+
+def _append_audit_event(match_path: Path, event: Mapping[str, Any]) -> None:
+    document = _load_audit(match_path)
+    event_id = str(event.get("event_id") or "")
+    if event_id and any(str(row.get("event_id") or "") == event_id for row in document["events"]):
+        return
+    document["events"].append(dict(event))
+    write_identity_json_atomic(match_path / AUDIT_FILENAME, document)
+    # A benchmark can always be regenerated from the append-only event log;
+    # never let its failure erase or roll back the human decision record.
+    try:
+        build_review_decision_benchmark(match_path, document=document)
+    except OSError:
+        pass
+
+
+def build_review_decision_benchmark(
+    match_path: Path,
+    *,
+    document: dict[str, Any] | None = None,
+    historical_provenance: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
     events = list((document or _load_audit(match_path)).get("events") or [])
     durations = [float(((event.get("source") or {}).get("duration_sec") or 0)) for event in events]
     observations = [int(((event.get("source") or {}).get("observation_count") or 0)) for event in events]
@@ -94,6 +159,7 @@ def build_review_decision_benchmark(match_path: Path, *, document: dict[str, Any
             "optional_decisions": sum(not bool(event.get("required")) for event in events),
             "decision_counts_by_stage": dict(sorted(stages.items())),
             "decision_counts_by_action": dict(sorted(actions.items())),
+            "operator_result_distribution": _operator_result_distribution(events),
             "average_source_duration_sec": _mean(durations),
             "median_source_duration_sec": _median(durations),
             "average_observation_count": _mean(observations),
@@ -101,6 +167,7 @@ def build_review_decision_benchmark(match_path: Path, *, document: dict[str, Any
         },
         "team_attribution": {
             "operator_decisions": len(team_events),
+            "eligible_dominant_signal_cases": len(dominant),
             "dominant_upstream_signal_cases": len(dominant),
             "operator_agreed_with_dominant_signal": matched,
             "operator_overrode_dominant_signal": len(dominant) - matched,
@@ -110,6 +177,15 @@ def build_review_decision_benchmark(match_path: Path, *, document: dict[str, Any
         },
         "decision_paths": dict(sorted(Counter(_path(event) for event in events).items())),
     }
+    if historical_provenance is not None:
+        benchmark["historical_backfill"] = {
+            "exact_source_linkable_count": int(historical_provenance.get("exact_source_linkable_count") or 0),
+            "reconstructed_team_feature_count": int(historical_provenance.get("reconstructed_team_feature_count") or 0),
+            "unavailable_team_feature_count": int(historical_provenance.get("unavailable_team_feature_count") or 0),
+        }
+        benchmark["team_attribution"]["unavailable_team_features"] = int(
+            historical_provenance.get("unavailable_team_feature_count") or 0
+        )
     write_identity_json_atomic(match_path / BENCHMARK_FILENAME, benchmark)
     return benchmark
 
@@ -162,6 +238,19 @@ def backfill_review_decision_audit(match_path: Path) -> dict[str, Any]:
         "records": decisions,
     }
     write_identity_json_atomic(match_path / BACKFILL_REPORT_FILENAME, report)
+    historical_events = [_historical_event(record) for record in decisions]
+    build_review_decision_benchmark(
+        match_path,
+        document={"schema_version": AUDIT_SCHEMA_VERSION, "events": historical_events},
+        historical_provenance={
+            "exact_source_linkable_count": report["exact_source_linkage"],
+            "reconstructed_team_feature_count": report["reconstructed_team_features"],
+            "unavailable_team_feature_count": sum(
+                1 for record in decisions
+                if record["team_features_provenance"] == "UNAVAILABLE"
+            ),
+        },
+    )
     return report
 
 
@@ -258,6 +347,17 @@ def _load_audit(match_path: Path) -> dict[str, Any]:
     return document if isinstance(document, dict) and isinstance(document.get("events"), list) else {"schema_version": AUDIT_SCHEMA_VERSION, "events": []}
 
 
+def _load_pending_audit(match_path: Path) -> dict[str, Any]:
+    path = match_path / PENDING_AUDIT_FILENAME
+    if not path.exists():
+        return {"schema_version": AUDIT_SCHEMA_VERSION, "events": []}
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"schema_version": AUDIT_SCHEMA_VERSION, "events": []}
+    return document if isinstance(document, dict) and isinstance(document.get("events"), list) else {"schema_version": AUDIT_SCHEMA_VERSION, "events": []}
+
+
 def _features_from_unit(unit: Mapping[str, Any]) -> dict[str, Any]:
     features = unit.get("team_attribution_features")
     if isinstance(features, dict):
@@ -266,6 +366,8 @@ def _features_from_unit(unit: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _stage(unit: Mapping[str, Any], action: str) -> str:
+    if action in {"temporal_split", "split", "concurrent_lanes"}:
+        return "temporal_split"
     if action == "mixed_players" or str(unit.get("scope_kind") or "") == "mixed":
         return "mixed"
     if action in {"referee", "false_detection", "team_unknown", "assign_team"}:
@@ -323,3 +425,76 @@ def _path(event: dict[str, Any]) -> str:
     state = str(event.get("reviewed_team_attribution_state") or "unknown")
     action = str((event.get("operator_result") or {}).get("action") or "unknown")
     return f"{state}->{action}"
+
+
+def _operator_result_distribution(events: list[dict[str, Any]]) -> dict[str, int]:
+    """Report operator choices without inventing unavailable upstream features."""
+    counts = Counter({
+        "team_A": 0,
+        "team_B": 0,
+        "unknown": 0,
+        "referee": 0,
+        "false_detection": 0,
+        "other": 0,
+    })
+    for event in events:
+        result = event.get("operator_result") or {}
+        action = str(result.get("action") or "")
+        team_label = str(result.get("team_label") or "").upper()
+        if team_label == "A":
+            counts["team_A"] += 1
+        elif team_label == "B":
+            counts["team_B"] += 1
+        elif action in {"team_unknown", "unresolved"} or team_label == "U":
+            counts["unknown"] += 1
+        elif action == "referee":
+            counts["referee"] += 1
+        elif action == "false_detection":
+            counts["false_detection"] += 1
+        else:
+            counts["other"] += 1
+    return dict(counts)
+
+
+def _historical_event(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a persisted decision into an auditable historical benchmark row.
+
+    This projection deliberately carries only exact persisted source fields. It
+    never promotes a legacy whole-subject decision into synthetic evidence.
+    """
+    decision = record.get("decision") if isinstance(record.get("decision"), Mapping) else {}
+    source = decision.get("source") if isinstance(decision.get("source"), Mapping) else decision
+    action = str(decision.get("action") or decision.get("resolution") or decision.get("decision") or "unknown")
+    features = record.get("team_features") if isinstance(record.get("team_features"), Mapping) else {
+        "provenance": "UNAVAILABLE",
+        **team_evidence_features([]),
+    }
+    scope_kind = str(source.get("scope_kind") or "")
+    stage = (
+        "mixed" if "mixed" in str(record.get("source_file") or "")
+        else "temporal_split" if "segment" in str(record.get("source_file") or "")
+        else "team_attribution" if action in {"assign_team", "team_unknown", "referee", "false_detection"}
+        else "player_identity"
+    )
+    return {
+        "event_id": f"historical:{record.get('source_file')}:{canonical_digest(decision)}",
+        "provenance": "HISTORICAL_BACKFILL",
+        "decision_stage": stage,
+        "required": None,
+        "scope_policy": scope_kind or None,
+        "source": {
+            "candidate_subject_id": source.get("candidate_subject_id"),
+            "review_target_id": source.get("review_target_id"),
+            "scope_kind": scope_kind or None,
+            "source_ownership_digest": source.get("source_ownership_digest"),
+            "observation_count": source.get("detected_observation_count") or source.get("observation_count"),
+            "duration_sec": source.get("detected_time_sec") or source.get("duration_sec"),
+        },
+        "team_evidence_before": dict(features),
+        "operator_result": {
+            "action": action,
+            "resolution": decision.get("resolution"),
+            "team_label": decision.get("team_label"),
+            "player_id": decision.get("player_id"),
+        },
+    }

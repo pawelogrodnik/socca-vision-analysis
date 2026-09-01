@@ -11,6 +11,10 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
+from app.services.identity_reviewed_decision_audit import (
+    AUDIT_FILENAME,
+    recover_staged_operator_decision_audits,
+)
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
@@ -1706,7 +1710,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertTrue((root / "reviewed_identity_recompute_required.json").exists())
             self.assertFalse((root / "reviewed_identity_snapshot.json").exists())
 
-    def test_deferred_authorized_save_appends_one_predecision_audit_event(self) -> None:
+    def test_deferred_authorized_save_recovers_one_audit_after_post_write_failure(self) -> None:
         with _workspace() as root:
             _fixture(root)
             _enable_materialized_candidate_context(root)
@@ -1721,17 +1725,48 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 "scope_kind": "whole_subject",
                 "_hot_state_authorized": True,
             }
-            with patch(
-                "app.services.identity_reviewed_corrections.append_operator_decision_audit"
-            ) as audit:
+            with self.assertRaises(OSError), patch(
+                "app.services.identity_reviewed_corrections.commit_staged_operator_decision_audit",
+                side_effect=OSError("injected audit write failure"),
+            ):
                 persist_reviewed_identity_correction(
                     root,
                     _match(),
                     payload,
                     authorized_review_unit=authorized_unit,
                 )
-            audit.assert_called_once()
-            self.assertEqual(audit.call_args.kwargs["unit"]["candidate_subject_id"], "s1")
+            # Canonical correction is durable even though the append event has
+            # not yet been promoted; an idempotent replay can recover it.
+            self.assertTrue((root / "reviewed_identity_slot_assignments.json").exists())
+            self.assertEqual(recover_staged_operator_decision_audits(root), 1)
+            self.assertEqual(recover_staged_operator_decision_audits(root), 0)
+            audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(audit["events"]), 1)
+            self.assertEqual(audit["events"][0]["source"]["candidate_subject_id"], "s1")
+
+    def test_deferred_optional_save_records_non_required_audit_provenance(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                    "defer_recompute": True,
+                },
+                authorized_review_unit={
+                    "candidate_subject_id": "s1",
+                    "scope_kind": "whole_subject",
+                    "_hot_state_authorized": True,
+                },
+                audit_required=False,
+            )
+            audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(audit["events"]), 1)
+            self.assertFalse(audit["events"][0]["required"])
 
     def test_materialized_context_gap_for_unrelated_subject_does_not_block_save(
         self,

@@ -76,7 +76,12 @@ from app.services.identity_roster_subject_review_store import (
     save_identity_roster_subject_review,
 )
 from app.services.identity_stable_anonymous import resolve_stable_anonymous_entities
-from app.services.identity_reviewed_decision_audit import append_operator_decision_audit
+from app.services.identity_reviewed_decision_audit import (
+    commit_staged_operator_decision_audit,
+    discard_staged_operator_decision_audit,
+    prepare_operator_decision_audit_event,
+    stage_operator_decision_audit,
+)
 
 
 CORRECTION_ACTIONS = frozenset(
@@ -192,28 +197,35 @@ def persist_reviewed_identity_correction(
     legacy wrapper.  The supplied hot-state unit is preferred because it is
     the exact source the operator saw before the write.
     """
-    audit_unit = dict(authorized_review_unit) if isinstance(authorized_review_unit, dict) else None
-    result = _persist_reviewed_identity_correction_with_topology(
-        match_path,
-        match_doc,
-        payload,
-        use_materialized_context=use_materialized_context,
-        trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
-        authorized_review_unit=authorized_review_unit,
-    )
-    # A rejected/stale/idempotent request never reaches this successful return.
-    # The transport-level idempotent replay is short-circuited before calling
-    # this boundary, so each durable human mutation contributes exactly once.
-    if audit_unit is not None:
-        # The deferred gate and the legacy service both authorize this only
-        # from the current Required unit. Do not reopen progress just for an
-        # audit label: that would violate deferred-save performance.
-        append_operator_decision_audit(
-            match_path,
-            unit=audit_unit,
+    audit_event = (
+        prepare_operator_decision_audit_event(
+            unit=authorized_review_unit,
             payload=payload,
             required=True if audit_required is None else bool(audit_required),
         )
+        if isinstance(authorized_review_unit, dict)
+        else None
+    )
+    if audit_event is not None:
+        # Stage before the canonical write. If the process stops after the
+        # decision persists, an idempotent replay can finish this exact event.
+        stage_operator_decision_audit(match_path, audit_event)
+    try:
+        result = _persist_reviewed_identity_correction_with_topology(
+            match_path,
+            match_doc,
+            payload,
+            use_materialized_context=use_materialized_context,
+            trusted_materialized_detected_team_labels=trusted_materialized_detected_team_labels,
+            authorized_review_unit=authorized_review_unit,
+        )
+    except Exception:
+        if audit_event is not None:
+            # This event was pre-staged but its human mutation was rejected.
+            discard_staged_operator_decision_audit(match_path, str(audit_event["event_id"]))
+        raise
+    if audit_event is not None:
+        commit_staged_operator_decision_audit(match_path, str(audit_event["event_id"]))
     return result
 
 

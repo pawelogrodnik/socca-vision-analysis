@@ -1610,6 +1610,86 @@ class ReviewedIdentityCoverageTests(unittest.TestCase):
         policy = apply_coverage_policy([unit], coverage, pair_index, match)
         self.assertEqual([row["candidate_subject_id"] for row in policy["next_cases"]], ["structural"])
 
+    def test_explicit_operator_contradiction_remains_required_above_target(self) -> None:
+        match = _scoped_match()
+        rows = [_observation("known", frame, "A", "unresolved", None) for frame in range(95)] + [_observation("u", frame, "U", "unresolved", None) for frame in range(5)]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        unit = _unit("contradiction", [("u", frame) for frame in range(5)], visual=True)
+        unit.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "detected_team_labels": ["A", "B"],
+            "current_resolution_status": "pending_high_priority",
+            "current_decision": {"operator_contradiction": True},
+        })
+        policy = apply_coverage_policy([unit], coverage, pair_index, match)
+        self.assertEqual([row["candidate_subject_id"] for row in policy["next_cases"]], ["contradiction"])
+
+    def test_ordinary_ab_visual_conflict_is_optional_when_team_known_target_is_met(self) -> None:
+        """Regression for _unit()'s production semantic_identity_conflict code."""
+        match = _scoped_match()
+        match["identity_review_scope"]["teams"] = {"A": "team_stats_only", "B": "team_stats_only"}
+        rows = [
+            _observation("known", frame, "B", "unresolved", None)
+            for frame in range(95)
+        ] + [
+            _observation("noisy", frame, "U", "unresolved", None)
+            for frame in range(95, 100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        noisy = _unit("noisy", [("noisy", frame) for frame in range(95, 100)], visual=True)
+        noisy.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "detected_team_labels": ["A", "B"],
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["conflicting_detected_team_labels", "semantic_identity_conflict"],
+            "team_attribution_evidence_source_digest": "noisy-source",
+            "visual_evidence": _safe_team_attribution_evidence(
+                [("noisy", frame) for frame in range(95, 100)],
+                source_digest="noisy-source",
+            ),
+        })
+
+        policy = apply_coverage_policy([noisy], coverage, pair_index, match)
+
+        self.assertEqual(policy["next_cases"], [])
+        self.assertEqual(
+            policy["team_attribution_selection"]["ordinary_optional_units"], 1
+        )
+
+    def test_ordinary_ab_visual_conflict_is_selected_only_for_missing_team_known_gain(self) -> None:
+        match = _scoped_match()
+        match["identity_review_scope"]["teams"] = {"A": "team_stats_only", "B": "team_stats_only"}
+        rows = [
+            _observation("known", frame, "B", "unresolved", None)
+            for frame in range(85)
+        ] + [
+            _observation("noisy", frame, "U", "unresolved", None)
+            for frame in range(85, 100)
+        ]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        noisy = _unit("noisy", [("noisy", frame) for frame in range(85, 100)], visual=True)
+        noisy.update({
+            "source_team_label": "U",
+            "effective_team_label": "U",
+            "detected_team_labels": ["A", "B"],
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "reason_codes": ["conflicting_detected_team_labels", "semantic_identity_conflict"],
+            "team_attribution_evidence_source_digest": "noisy-source",
+            "visual_evidence": _safe_team_attribution_evidence(
+                [("noisy", frame) for frame in range(85, 100)],
+                source_digest="noisy-source",
+            ),
+        })
+
+        policy = apply_coverage_policy([noisy], coverage, pair_index, match)
+
+        self.assertEqual([row["candidate_subject_id"] for row in policy["next_cases"]], ["noisy"])
+        self.assertEqual(policy["team_attribution_selection"]["selected_required_team_known_gain"], 15)
+
     def test_large_queue_is_ranked_by_observation_gain_and_never_capped(self) -> None:
         rows = []
         units = []

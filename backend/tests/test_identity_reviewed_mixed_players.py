@@ -26,6 +26,7 @@ from app.services.identity_reviewed_action_scope import (
 )
 from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_corrections import persist_reviewed_identity_correction
+from app.services.identity_reviewed_decision_audit import AUDIT_FILENAME
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
     save_inline_temporal_split,
@@ -1401,6 +1402,12 @@ class ReviewedIdentityMixedPlayersTests(unittest.TestCase):
                 self.assertEqual(result["saved_case"]["resolution_status"], "resolved")
                 self.assertTrue(result["recompute_deferred"])
                 self.assertTrue(result["review_state_rebuild_required"])
+                audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+                self.assertEqual(audit["events"][-1]["decision_stage"], "temporal_split")
+                self.assertEqual(
+                    audit["events"][-1]["source"]["source_ownership_digest"],
+                    payload["source_ownership_digest"],
+                )
 
     def test_temporal_split_route_rejects_concurrency_before_hot_state_generation(self) -> None:
         with _workspace() as root:

@@ -75,6 +75,10 @@ class TeamAttributionPolicyTests(unittest.TestCase):
             self.assertEqual(len(audit["events"]), 2)
             self.assertTrue(audit["events"][1]["operator_result"]["replaces_prior_operator_decision"])
             self.assertEqual(benchmark["team_attribution"]["operator_agreed_with_dominant_signal"], 1)
+            self.assertEqual(
+                benchmark["overall"]["operator_result_distribution"],
+                {"team_A": 0, "team_B": 1, "unknown": 1, "referee": 0, "false_detection": 0, "other": 0},
+            )
 
     def test_backfill_never_mutates_legacy_decision_and_marks_exact_persisted(self) -> None:
         with TemporaryDirectory() as directory:
@@ -86,6 +90,11 @@ class TeamAttributionPolicyTests(unittest.TestCase):
             self.assertEqual(report["records"][0]["provenance"], "EXACT_PERSISTED")
             self.assertEqual(json.loads((path / "reviewed_identity_slot_assignments.json").read_text(encoding="utf-8")), legacy)
             self.assertTrue((path / BACKFILL_REPORT_FILENAME).exists())
+            benchmark = json.loads((path / BENCHMARK_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(benchmark["overall"]["total_operator_decisions"], 1)
+            self.assertEqual(benchmark["overall"]["operator_result_distribution"]["unknown"], 1)
+            self.assertEqual(benchmark["team_attribution"]["eligible_dominant_signal_cases"], 0)
+            self.assertEqual(benchmark["team_attribution"]["unavailable_team_features"], 1)
 
     def test_backfill_uses_only_proven_exact_segment_frames(self) -> None:
         with TemporaryDirectory() as directory:
@@ -101,6 +110,9 @@ class TeamAttributionPolicyTests(unittest.TestCase):
             record = report["records"][0]
             self.assertTrue(record["exact_source_linkage"])
             self.assertEqual(record["team_features"]["B_observations"], 30)
+            benchmark = json.loads((path / BENCHMARK_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(benchmark["historical_backfill"]["exact_source_linkable_count"], 1)
+            self.assertEqual(benchmark["historical_backfill"]["reconstructed_team_feature_count"], 1)
 
 
 if __name__ == "__main__":

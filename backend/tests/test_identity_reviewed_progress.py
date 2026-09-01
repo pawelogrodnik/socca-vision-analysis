@@ -17,8 +17,8 @@ from app.services.identity_reviewed_team_attribution_evidence import (
 
 
 class ReviewedIdentityProgressTests(unittest.TestCase):
-    def test_existing_identity_crop_preserves_exact_technical_team_evidence_status(self) -> None:
-        """A separate crop must not turn a durable technical result generic."""
+    def test_optional_technical_team_evidence_stays_explicit_without_blocking_finalize(self) -> None:
+        """An ordinary residual must not become structural merely from a stale crop."""
         with _workspace() as root:
             _single_subject(
                 root,
@@ -49,7 +49,7 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             )
             self.assertEqual(
                 progress["coverage_readiness"]["team_attribution_residual"]["status"],
-                "technical_evidence_failure",
+                "accepted_within_tolerance",
             )
 
     def test_progress_uses_candidate_subjects_and_real_detected_positions(self) -> None:
@@ -433,7 +433,7 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
             "operator_actionable": True,
             "has_operator_visual_evidence": True,
             "visual_evidence": {"anchor_crops": [{"artifact": "crop.jpg"}]},
-            "reason_codes": ["identity_conflict"],
+            "reason_codes": ["cross_team_conflict"],
         }
         inputs = {
             "match_id": match["id"],

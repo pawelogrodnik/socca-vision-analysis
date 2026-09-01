@@ -1519,19 +1519,24 @@ def _is_structural_team_attribution_conflict(unit: Mapping[str, Any]) -> bool:
     """Distinguish unsafe ownership contradictions from noisy A/B votes."""
     if str(unit.get("scope_kind") or "") == "material_continuity":
         return True
-    markers = " ".join(str(value).lower() for value in unit.get("reason_codes") or [])
-    structural_markers = (
+    # These are authoritative *proof* codes, never fuzzy diagnostic text.
+    # In particular, ``semantic_identity_conflict`` describes ordinary noisy
+    # A/B evidence and must go through the 90% marginal-gain policy.
+    structural_markers = {
         "ambiguous_candidate_subject_membership",
         "duplicate_physical_ownership",
-        "identity_conflict",
-        "review_card_conflict",
         "cross_team_conflict",
-        "incompatible",
-        "contradict",
-        "multiple_manual",
-        "same_exact",
-    )
-    if any(marker in markers for marker in structural_markers):
+        "conflicting_explicit_operator_decisions",
+        "conflicting_stable_slot_roster_bindings",
+        "conflicting_subject_and_stable_slot_roster_binding",
+        "duplicate_exact_ownership",
+        "incompatible_committed_ownership",
+        "multiple_manual_players",
+        "same_exact_ownership_conflict",
+    }
+    if structural_markers & {
+        str(value) for value in unit.get("reason_codes") or []
+    }:
         return True
     decision = unit.get("current_decision") or {}
     return bool(isinstance(decision, Mapping) and decision.get("operator_contradiction"))
