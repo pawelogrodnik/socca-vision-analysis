@@ -541,7 +541,7 @@ export function AdminPanel() {
     setStatus(replace ? 'Nadpisuje mecz w bazie...' : 'Importuje mecz do SQLite...');
     try {
       const published = await publishLocalMatch(selectedId, replace);
-      setStatus(`Mecz opublikowany w bazie jako ${published.id}.`);
+      setStatus(`<p>Mecz opublikowany w bazie jako ${published.id}. <a href="/published/matches/${published.id}/report">Link do raportu</a></p>`);
       await refreshSelected('publish');
     } catch (error) {
       setStatus(errorMessage(error));
