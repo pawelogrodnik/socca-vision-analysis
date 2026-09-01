@@ -41,6 +41,11 @@ WORKFLOW_SCHEMA_VERSION = "1.0.0"
 STEP_IDS = ("initial_audit", "exceptions", "mixed_players", "finalize", "video_qa")
 PROCESSING_RENDER_STATUSES = {"queued", "running"}
 RECOMPUTE_FAILURE_FILENAME = "review_workflow_recompute_failure.json"
+RETRYABLE_TEAM_ATTRIBUTION_TECHNICAL_STATUSES = {
+    "source_video_unavailable",
+    "team_attribution_crops_unavailable",
+    "team_attribution_evidence_materialization_failed",
+}
 
 
 class WorkflowActionError(ValueError):
@@ -173,6 +178,9 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     steps["mixed_players"] = _step("mixed_players", "completed", remaining=0, total=issues.get("mixed_total"), completed=issues.get("mixed_resolved"))
     if coverage_readiness_blocked:
         readiness = issues.get("coverage_readiness") or {}
+        technical_retry_available = _has_retryable_team_attribution_technical_status(
+            readiness
+        )
         details = {
             "readiness_status": readiness.get("status"),
             "blockers": list(readiness.get("blockers") or []),
@@ -211,11 +219,17 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                 user_actionable=team_attribution_not_materialized and not team_attribution_technical_failure,
             )
         )
-        # Technical evidence failures are fail-closed for finalization, but
-        # not permanent dead-ends: after restoring the video/artifact an
-        # operator can explicitly re-run the server-authorized recompute.
+        # Technical evidence failures are fail-closed for finalization. Retry
+        # stays available only for a status whose prerequisite can plausibly
+        # change (for example a restored source video), not for the durable
+        # recovery-incomplete outcome produced by the bounded convergence
+        # guard.
         allowed = ["retry_review_recompute"] if (
-            team_attribution_not_materialized or team_attribution_technical_failure
+            team_attribution_not_materialized
+            or (
+                team_attribution_technical_failure
+                and technical_retry_available
+            )
         ) else []
         return _state(
             match_id,
@@ -241,7 +255,10 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
                     "step_id": "exceptions",
                 }
             ),
-            terminal_data_quality_error=not team_attribution_technical_failure,
+            # This is an authoritative terminal-quality branch: both queues
+            # are exhausted. A technical evidence fault blocks output but
+            # never reopens manual operator work.
+            terminal_data_quality_error=True,
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -357,6 +374,17 @@ def get_review_workflow_state(
         "raw_structural_blockers": int(((progress or {}).get("summary") or {}).get("structural_blockers") or 0),
     }
     return state
+
+
+def _has_retryable_team_attribution_technical_status(
+    readiness: dict[str, Any],
+) -> bool:
+    residual = readiness.get("team_attribution_residual") or {}
+    status_counts = residual.get("evidence_status_counts") or {}
+    return any(
+        int(status_counts.get(status) or 0) > 0
+        for status in RETRYABLE_TEAM_ATTRIBUTION_TECHNICAL_STATUSES
+    )
 
 
 def build_compact_review_workflow_state(

@@ -116,7 +116,12 @@ def _refresh_review_after_identity_mutation_scoped(
             reuse_current_snapshot=reuse_current_snapshot,
             retry_technical_team_attribution_evidence=retry_technical_team_attribution_evidence,
         )
-    except ReviewWorkflowRecomputeError:
+    except ReviewWorkflowRecomputeError as exc:
+        # The final exact-source convergence guard can raise after persisting
+        # its narrow technical evidence. It must also persist the controlled
+        # workflow failure envelope so subsequent reads cannot fall back to a
+        # stale generic materialization-required generation.
+        _persist_review_recompute_failure(match_path, source, exc)
         raise
     except Exception as exc:
         _raise_review_recompute_failure(match_path, match_doc, source, exc)
@@ -158,7 +163,6 @@ def _refresh_review_after_identity_mutation_scoped_inner(
         "materialized_actionable": 0,
         "terminal_unavailable": 0,
         "technical_failure": 0,
-        "source_drift_or_replaced": 0,
         "post_retry_remediable_not_established": 0,
     }
     recovery_changed_durable_evidence = False
@@ -334,8 +338,9 @@ def _refresh_review_after_identity_mutation_scoped_inner(
             )
             remediation_diagnostics["technical_failure"] += len(focused_sources)
         else:
-            remediation_diagnostics.update(
-                _focused_evidence_outcome_counts(focused_sources, focused_evidence)
+            _accumulate_remediation_outcomes(
+                remediation_diagnostics,
+                _focused_evidence_outcome_counts(focused_sources, focused_evidence),
             )
             unresolved_sources = _focused_sources_without_durable_outcome(
                 focused_sources,
@@ -743,6 +748,15 @@ def _focused_evidence_outcome_counts(
     return counts
 
 
+def _accumulate_remediation_outcomes(
+    diagnostics: dict[str, int],
+    outcomes: dict[str, int],
+) -> None:
+    """Add overlapping evidence outcomes without discarding earlier failures."""
+    for key, value in outcomes.items():
+        diagnostics[key] = int(diagnostics.get(key) or 0) + int(value or 0)
+
+
 def _team_evidence_source_key(
     row: dict[str, Any],
 ) -> tuple[str, str, str, str, str] | None:
@@ -803,6 +817,22 @@ def _raise_review_recompute_failure(
     exc: Exception,
 ) -> None:
     """Persist the one fail-closed envelope for every reproject phase."""
+    _persist_review_recompute_failure(match_path, source, exc)
+    logger.info(
+        "review_workflow action=refresh_failed match=%s source=%s error=%s",
+        match_doc.get("id") or match_path.name,
+        source,
+        type(exc).__name__,
+    )
+    raise ReviewWorkflowRecomputeError(str(exc)) from exc
+
+
+def _persist_review_recompute_failure(
+    match_path: Path,
+    source: str,
+    exc: Exception,
+) -> None:
+    """Write the durable fail-closed envelope without changing exception flow."""
     write_identity_json_atomic(
         match_path / RECOMPUTE_FAILURE_FILENAME,
         {
@@ -812,13 +842,6 @@ def _raise_review_recompute_failure(
             "error": f"{type(exc).__name__}: {exc}",
         },
     )
-    logger.info(
-        "review_workflow action=refresh_failed match=%s source=%s error=%s",
-        match_doc.get("id") or match_path.name,
-        source,
-        type(exc).__name__,
-    )
-    raise ReviewWorkflowRecomputeError(str(exc)) from exc
 
 
 def _flatten_phase_timings(prefix: str, phases: dict[str, Any]) -> dict[str, float]:

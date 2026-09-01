@@ -115,6 +115,7 @@ export function isTerminalDataQualityBlocker(workflow: ReviewWorkflow | null): b
     && workflow.issues.coverage_readiness_blocked
     && workflow.blockers.some((blocker) => (
       blocker.code === 'identity_coverage_unresolved_without_reviewable_evidence'
+      || blocker.code === 'team_attribution_evidence_technical_failure'
     )),
   );
 }

@@ -16,6 +16,7 @@ from app.services.review_workflow_orchestrator import (
     retry_review_recompute,
 )
 from app.services.review_workflow_state import WorkflowActionError
+from app.services.review_workflow_state import build_compact_review_workflow_state
 from app.services.identity_reviewed_recompute_state import (
     mark_reviewed_identity_recompute_required,
 )
@@ -728,10 +729,62 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
                 "materialized_actionable": 0,
                 "terminal_unavailable": 1,
                 "technical_failure": 1,
-                "source_drift_or_replaced": 0,
                 "post_retry_remediable_not_established": 0,
             },
         )
+
+    def test_ultimate_convergence_failure_persists_controlled_failure_envelope(self) -> None:
+        """The next workflow read must not expose the older generic retry."""
+        initial_progress, blocked = _focused_terminal_progress_and_workflow()
+        still_generic = {
+            **initial_progress,
+            "_internal_review_units": list(initial_progress["_internal_review_units"]),
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=[initial_progress, still_generic, still_generic],
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=blocked,
+        ), patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={"cases": [{
+                "candidate_subject_id": "cross-team-b",
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": "evidence-digest",
+                "status": "no_team_attribution_evidence",
+            }]},
+        ), patch(
+            "app.services.review_workflow_orchestrator.mark_team_attribution_evidence_technical_failure",
+        ):
+            root = Path(tmp)
+            with self.assertRaises(ReviewWorkflowRecomputeError):
+                refresh_review_after_identity_mutation(
+                    root, {"id": "m1"}, source="retry", operator_evidence=False
+                )
+
+            failure = json.loads(
+                (root / "review_workflow_recompute_failure.json").read_text()
+            )
+
+            self.assertEqual(failure["code"], "review_recompute_failed")
+            self.assertEqual(failure["source"], "retry")
+            self.assertIn("did not converge", failure["error"])
+            with patch(
+                "app.services.review_workflow_state._analysis_completed", return_value=True
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value={"complete": True},
+            ):
+                independent_read = build_compact_review_workflow_state(
+                    root, {"id": "m1"}
+                )
+            self.assertEqual(
+                independent_read["blockers"][0]["code"], "review_recompute_failed"
+            )
 
     def test_selector_disagreement_becomes_durable_technical_failure_not_generic_retry(self) -> None:
         """Coverage may not authorize a source that focused recovery cannot own."""
@@ -799,6 +852,80 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             ],
             1,
         )
+
+    def test_remediation_diagnostics_accumulate_selector_and_materializer_outcomes(self) -> None:
+        """A selector fault must not overwrite a successful focused outcome."""
+        initial_progress, blocked = _focused_terminal_progress_and_workflow()
+        selector_only = {
+            "candidate_subject_id": "selector-only",
+            "scope_kind": "whole_subject",
+            "team_attribution_evidence_source_digest": "selector-digest",
+            "team_attribution_evidence_status": (
+                "team_attribution_evidence_not_materialized"
+            ),
+        }
+        initial_progress["coverage_residuals"]["B"][
+            "non_actionable_required_team_uncertainty_cases"
+        ].append(selector_only)
+        terminal_progress = {
+            **initial_progress,
+            "coverage_residuals": {
+                "B": {
+                    "non_actionable_required_team_uncertainty_cases": [
+                        {
+                            **initial_progress["coverage_residuals"]["B"][
+                                "non_actionable_required_team_uncertainty_cases"
+                            ][0],
+                            "team_attribution_evidence_status": (
+                                "no_team_attribution_evidence"
+                            ),
+                        },
+                        {
+                            **selector_only,
+                            "team_attribution_evidence_status": (
+                                "team_attribution_evidence_recovery_incomplete"
+                            ),
+                        },
+                    ]
+                }
+            },
+        }
+        terminal_workflow = {
+            **blocked,
+            "issues": {
+                **blocked["issues"],
+                "team_attribution_evidence_technical_failure": True,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            side_effect=[initial_progress, terminal_progress],
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            side_effect=[blocked, terminal_workflow],
+        ), patch(
+            "app.services.review_workflow_orchestrator.materialize_team_attribution_evidence",
+            return_value={"cases": [{
+                "candidate_subject_id": "cross-team-b",
+                "scope_kind": "whole_subject",
+                "source_ownership_digest": "evidence-digest",
+                "status": "ready_for_team_attribution",
+            }]},
+        ), patch(
+            "app.services.review_workflow_orchestrator.mark_team_attribution_evidence_technical_failure",
+        ) as mark_technical:
+            result = refresh_review_after_identity_mutation(
+                Path(tmp), {"id": "m1"}, source="retry", operator_evidence=False
+            )
+
+        mark_technical.assert_called_once()
+        diagnostics = result["performance"]["team_attribution_remediation"]
+        self.assertEqual(diagnostics["selector_unresolved_sources"], 1)
+        self.assertEqual(diagnostics["materialized_actionable"], 1)
+        self.assertEqual(diagnostics["technical_failure"], 1)
 
     def test_lightweight_identity_refresh_does_not_build_stats_or_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch(

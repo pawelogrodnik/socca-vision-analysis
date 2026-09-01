@@ -222,7 +222,7 @@ test('technical Team-attribution failure explains recovery and exposes only serv
       details: {},
     }],
     allowed_actions: ['retry_review_recompute'],
-    mandatory_operator_review_complete: false,
+    mandatory_operator_review_complete: true,
     data_quality_ready_for_output: false,
   };
   installWorkspaceFetch(technical);
@@ -231,7 +231,7 @@ test('technical Team-attribution failure explains recovery and exposes only serv
     await waitFor(() => assert.ok(view.getByRole('button', { name: 'Spróbuj ponownie' })));
     assert.ok(view.getByText(/Nie udało się przygotować bezpiecznych widoków/));
     assert.equal(view.queryByText('Nie udało się przygotować kolejnego kroku review.'), null);
-    assert.equal(view.queryByText(/Wymagany Review zakończony/), null);
+    assert.ok(view.getByText(/Wymagany Review zakończony/));
     assert.equal(view.queryByText(/Wymagane przypadki =/), null);
     assert.equal(view.queryByRole('button', { name: /Przygotuj wynik/ }), null);
   } finally {
