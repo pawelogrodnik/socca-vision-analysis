@@ -3,10 +3,14 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.main import (
     api_create_match_group,
+    api_generate_match_group_video,
+    api_get_match_group_video_file,
+    api_get_match_group_video,
     api_get_match_group_report,
     api_list_eligible_match_group_sources,
     app,
@@ -62,6 +66,26 @@ class MatchGroupApiTests(unittest.TestCase):
     def test_api_exposes_dedicated_aggregate_report_route(self) -> None:
         operation = app.openapi()["paths"]["/api/published/match-groups/{group_id}/report"]["get"]
         self.assertEqual(operation["summary"], "Api Get Match Group Report")
+
+    def test_api_exposes_status_and_background_generation_for_group_video(self) -> None:
+        status = {"group_id": "match-group-1", "status": "not_generated", "artifact_url": None}
+        queued = {"group_id": "match-group-1", "status": "generating"}
+        with patch("app.main.get_match_group_video_status", return_value=status), patch(
+            "app.main.submit_match_group_video_generation", return_value=queued
+        ):
+            self.assertEqual(api_get_match_group_video("match-group-1"), status)
+            self.assertEqual(api_generate_match_group_video("match-group-1"), queued)
+        paths = app.openapi()["paths"]
+        self.assertIn("/api/published/match-groups/{group_id}/video", paths)
+        self.assertIn("/api/published/match-groups/{group_id}/video/generate", paths)
+        self.assertIn("/api/published/match-groups/{group_id}/video/file", paths)
+
+    def test_stale_combined_video_is_never_served_as_current(self) -> None:
+        with patch("app.main.get_match_group_video_status", return_value={"status": "stale"}):
+            with self.assertRaises(HTTPException) as error:
+                api_get_match_group_video_file("match-group-1")
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(error.exception.detail["code"], "combined_video_not_current")
 
 
 if __name__ == "__main__":

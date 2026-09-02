@@ -193,6 +193,13 @@ from app.services.json_publish_store import (
     publish_store_health,
 )
 from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report as load_match_group_report
+from app.services.match_group_video import (
+    COMBINED_VIDEO_FILENAME,
+    MatchGroupVideoError,
+    combined_video_path,
+    get_match_group_video_status,
+    submit_match_group_video_generation,
+)
 from app.services.match_groups import (
     MatchGroupError,
     create_match_group_and_generate_report,
@@ -3309,6 +3316,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "reviewed_player_heatmaps": None,
         "reviewed_stats_readiness": None,
         "reviewed_output_manifest": None,
+        "published_video": None,
         "identity_report_source": None,
         "reviewed_identity_digest": None,
         "player_heatmaps": None,
@@ -3355,6 +3363,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         apply_reviewed_identity_to_report_package(package)
     except ValueError as exc:
         package["reviewed_identity_error"] = str(exc)
+    from app.services.published_video import build_publication_video_descriptor
+    package["published_video"] = build_publication_video_descriptor(path)
     if (path / "heatmap_all_tracks.png").exists():
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
@@ -3631,6 +3641,43 @@ def api_delete_match_group(group_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/video")
+def api_get_match_group_video(group_id: str) -> dict[str, Any]:
+    try:
+        return get_match_group_video_status(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.post("/api/published/match-groups/{group_id}/video/generate")
+def api_generate_match_group_video(group_id: str) -> dict[str, Any]:
+    try:
+        return submit_match_group_video_generation(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupVideoError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/video/file")
+def api_get_match_group_video_file(group_id: str) -> FileResponse:
+    try:
+        status = get_match_group_video_status(group_id)
+        if status.get("status") != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "combined_video_not_current",
+                    "detail": "The combined video is not current for this logical match.",
+                },
+            )
+        return FileResponse(combined_video_path(group_id), media_type="video/mp4", filename=COMBINED_VIDEO_FILENAME)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "combined_video_not_found", "detail": "Combined video not found."}) from error
 
 
 @app.get("/api/published/match-groups/{group_id}/report")

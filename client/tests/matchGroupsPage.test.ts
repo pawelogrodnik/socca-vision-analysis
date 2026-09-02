@@ -55,6 +55,30 @@ test('match-group page selects physical sources, orders IDs and submits no stati
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('match-group page exposes background combined-video generation without treating missing source video as ready', async () => {
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    calls.push(path);
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([{
+      group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
+      validation: { status: 'compatible', blocking_reasons: [] },
+    }]);
+    if (path.endsWith('/group-1/video') && init?.method === 'POST') return Response.json({ group_id: 'group-1', status: 'generating' });
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'unavailable_source_video', reason: 'unavailable_source_video' });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Brak wideo źródłowego/)));
+    fireEvent.click(view.getByRole('button', { name: 'Generuj wideo' }));
+    await waitFor(() => assert.ok(calls.some((path) => path.endsWith('/group-1/video/generate'))));
+    assert.equal(view.queryByRole('link', { name: 'Otwórz wideo' }), null);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('aggregate content renders per-team passes and server-rebased timelines', () => {
   const view = render(React.createElement(BrowserRouter, null, React.createElement(AggregateMatchReportContent, {
     report: {
