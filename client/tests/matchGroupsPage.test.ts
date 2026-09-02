@@ -55,7 +55,7 @@ test('match-group page selects physical sources, orders IDs and submits no stati
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('aggregate content renders metrics, source links and explicit unavailable semantics', () => {
+test('aggregate content renders per-team passes and server-rebased timelines', () => {
   const view = render(React.createElement(BrowserRouter, null, React.createElement(AggregateMatchReportContent, {
     report: {
       schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Full match' },
@@ -64,16 +64,39 @@ test('aggregate content renders metrics, source links and explicit unavailable s
       timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' },
       stats_semantics: { ball: 'experimental_candidates' },
       spatial: { heatmaps: { status: 'not_available', reason: 'orientation' }, team_shape: { status: 'not_available', reason: 'orientation' } },
-      teams: [{ team_id: 'a', team_name: 'Corgi', movement: { status: 'ready', total_distance_m: 123, sprint_count: 2 } }],
+      teams: [
+        { team_id: 'a', team_name: 'Corgi', movement: { status: 'ready', total_distance_m: 123, sprint_count: 2 } },
+        { team_id: 'b', team_name: 'Verisk', movement: { status: 'ready', total_distance_m: 99, sprint_count: 1 } },
+      ],
       players: [{ player_id: 'p', player_name: 'Piotr', team_id: 'a', movement: { status: 'ready', total_distance_m: 88, avg_speed_kmh: 10 } }],
-      ball: { possession: { status: 'ready', known_frames: 20, possession_share_percent_by_team_id: { a: 60 } }, passes: { status: 'ready', attempts: 8, completed: 5, failed: 3, completion_rate_percent: 62.5 } },
+      ball: {
+        possession: { status: 'ready', known_frames: 20, possession_share_percent_by_team_id: { a: 60 } },
+        passes: {
+          status: 'ready', attempts: 8, completed: 5, failed: 3, completion_rate_percent: 62.5,
+          attempts_by_team_id: { a: 5 }, completed_by_team_id: { a: 3 }, failed_by_team_id: { a: 2 }, completion_rate_percent_by_team_id: { a: 60 },
+        },
+      },
       identity_coverage: { status: 'ready', confirmed_observations: 10, reliable_observations: 12, confirmed_coverage_percent: 83.3 },
-      timelines: { possession: { status: 'ready', windows: [] }, attacking_momentum: { status: 'completed', product_readiness: 'experimental', points: [] } },
+      timelines: {
+        possession: { status: 'ready', windows: [
+          { start_time_sec: 0, end_time_sec: 60, possession_share_percent_by_team_id: { a: 60 } },
+          { start_time_sec: 60, end_time_sec: 120, possession_share_percent_by_team_id: { a: 40 } },
+        ] },
+        attacking_momentum: { product_readiness: 'experimental', status: 'completed', points: [
+          { start_time_sec: 0, end_time_sec: 60, team_values_by_team_id: { a: 1.5 } },
+          { start_time_sec: 60, end_time_sec: 120, team_values_by_team_id: { a: 0.75 } },
+        ] },
+      },
     },
   })));
   assert.ok(view.getByText('Podsumowanie drużyn'));
   assert.ok(view.getByText('Piotr'));
-  assert.ok(view.getByText(/eksperymentalne/));
+  assert.ok(view.getByText('5.0 / 3.0 / 2.0'));
+  assert.equal(view.getAllByText('60.0%').length, 2);
+  assert.match(view.getByText('Verisk').closest('tr')?.textContent || '', /— \/ — \/ —/);
+  assert.ok(view.getByText('Posiadanie w czasie'));
+  assert.ok(view.getByText(/Atakujące momentum/));
+  assert.equal(view.getAllByText(/eksperymentalne/).length, 2);
   assert.ok(view.getByText(/Heatmapy: not_available/));
   assert.equal((view.getByRole('link', { name: 'Fragment 1' }) as HTMLAnchorElement).getAttribute('href'), '/published/matches/p1/report');
 });

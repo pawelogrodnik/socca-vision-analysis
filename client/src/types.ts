@@ -3228,6 +3228,10 @@ export type AggregatePasses = {
   completed?: number;
   failed?: number;
   completion_rate_percent?: number | null;
+  attempts_by_team_id?: Record<string, number>;
+  completed_by_team_id?: Record<string, number>;
+  failed_by_team_id?: Record<string, number>;
+  completion_rate_percent_by_team_id?: Record<string, number | null>;
 };
 
 export type AggregatePublicMatchReport = {
@@ -3266,7 +3270,7 @@ export type AggregatePublicMatchReport = {
       status?: string;
       windows?: Array<{ start_time_sec: number; end_time_sec: number; possession_share_percent_by_team_id?: Record<string, number | null> }>;
     };
-    attacking_momentum?: { product_readiness?: string; status?: string; points?: Array<{ start_time_sec: number; end_time_sec: number; intensity?: number }> };
+    attacking_momentum?: { product_readiness?: string; status?: string; points?: Array<{ start_time_sec: number; end_time_sec: number; team_values_by_team_id?: Record<string, number> }> };
   };
 };
 

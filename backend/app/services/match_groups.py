@@ -67,6 +67,28 @@ def create_match_group(*, member_published_ids: list[str], metadata: dict[str, A
     return manifest
 
 
+def create_match_group_and_generate_report(
+    *,
+    member_published_ids: list[str],
+    metadata: dict[str, Any],
+    generate_report: Callable[[str], dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create a group only when its first public report is coherent too."""
+
+    group = create_match_group(member_published_ids=member_published_ids, metadata=metadata)
+    group_id = str(group["group_id"])
+    try:
+        return group, generate_report(group_id)
+    except Exception:
+        # This directory belongs solely to a group created in this operation;
+        # physical source publications are never touched by cleanup.
+        try:
+            shutil.rmtree(_group_dir(group_id))
+        except OSError:
+            pass
+        raise
+
+
 def preview_match_group(*, member_published_ids: list[str], metadata: dict[str, Any]) -> dict[str, Any]:
     """Build the server-authoritative compatibility preview without persisting it."""
 

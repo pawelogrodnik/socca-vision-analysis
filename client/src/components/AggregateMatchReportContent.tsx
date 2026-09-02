@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { AggregateMovement, AggregatePublicMatchReport } from '../types';
+import { AggregateMatchTimeline } from './AggregateMatchTimeline';
 
 function number(value: number | null | undefined, suffix = ''): string {
   return value == null ? '—' : `${value.toFixed(1)}${suffix}`;
@@ -26,15 +27,16 @@ export function AggregateMatchReportContent({ report }: { report: AggregatePubli
   const passes = report.ball?.passes;
   const identity = report.identity_coverage;
   const experimental = report.stats_semantics?.ball === 'experimental_candidates';
-  const momentum = report.timelines?.attacking_momentum;
 
   return <>
     <section className='panel'>
       <h2>Podsumowanie drużyn</h2>
-      <div className='table-wrap'><table><thead><tr><th>Drużyna</th><th>Dystans</th><th>Wysoka intensywność</th><th>Sprinty</th><th>Prędkość max.</th><th>Posiadanie</th></tr></thead>
+      <div className='table-wrap'><table><thead><tr><th>Drużyna</th><th>Dystans</th><th>Wysoka intensywność</th><th>Sprinty</th><th>Prędkość max.</th><th>Posiadanie</th><th>Podania (próby / udane / nieudane)</th><th>Skuteczność podań</th></tr></thead>
         <tbody>{report.teams.map((team) => <tr key={team.team_id}>
           <td>{team.team_name || team.team_id}</td>{movementCells(team.movement)}
           <td>{number(possession?.possession_share_percent_by_team_id?.[team.team_id], '%')}</td>
+          <td>{number(passes?.attempts_by_team_id?.[team.team_id])} / {number(passes?.completed_by_team_id?.[team.team_id])} / {number(passes?.failed_by_team_id?.[team.team_id])}</td>
+          <td>{number(passes?.completion_rate_percent_by_team_id?.[team.team_id], '%')}</td>
         </tr>)}</tbody>
       </table></div>
     </section>
@@ -64,11 +66,7 @@ export function AggregateMatchReportContent({ report }: { report: AggregatePubli
       <p>{identity?.status || 'not_available'} · potwierdzone {number(identity?.confirmed_observations)} / wiarygodne {number(identity?.reliable_observations)} · pokrycie {number(identity?.confirmed_coverage_percent, '%')} · nierozstrzygnięte {number(identity?.unresolved_observations)}.</p>
     </section>
 
-    <section className='panel'>
-      <h2>Timeline</h2>
-      <p>Posiadanie: {report.timelines?.possession?.status || 'not_available'} · {report.timelines?.possession?.windows?.length || 0} okien.</p>
-      {momentum?.status === 'completed' || momentum?.status === 'ready' ? <p>Atakujący momentum: {momentum.product_readiness || 'not_available'} · {momentum.points?.length || 0} punktów.</p> : <p>Atakujący momentum: {momentum?.status || 'not_available'}.</p>}
-    </section>
+    <AggregateMatchTimeline report={report} />
 
     <section className='panel'>
       <h2>Źródłowe fragmenty</h2>

@@ -195,7 +195,7 @@ from app.services.json_publish_store import (
 from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report as load_match_group_report
 from app.services.match_groups import (
     MatchGroupError,
-    create_match_group,
+    create_match_group_and_generate_report,
     delete_match_group,
     get_match_group,
     list_match_groups,
@@ -3576,17 +3576,12 @@ def api_list_match_groups() -> list[dict[str, Any]]:
 @app.post("/api/published/match-groups")
 def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
     try:
-        group = create_match_group(
+        group, report = create_match_group_and_generate_report(
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
+            generate_report=generate_match_group_report,
         )
     except MatchGroupError as error:
-        raise _match_group_error_response(error) from error
-    try:
-        report = generate_match_group_report(str(group["group_id"]))
-    except MatchGroupError as error:
-        # A newly-created group has no prior coherent report to preserve.
-        delete_match_group(str(group["group_id"]))
         raise _match_group_error_response(error) from error
     return {**_group_with_validation(group), "report": report}
 

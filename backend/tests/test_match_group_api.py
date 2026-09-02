@@ -30,13 +30,15 @@ class MatchGroupApiTests(unittest.TestCase):
             "timing": {"analyzed_duration_sec": 20},
             "compatibility": {"status": "compatible"},
         }
-        with patch("app.main.create_match_group", return_value=group) as create, patch(
-            "app.main.generate_match_group_report", return_value={"report_type": "public_aggregate_match_report"}
-        ), patch("app.main.validate_match_group", return_value={"status": "compatible", "blocking_reasons": []}):
+        report = {"report_type": "public_aggregate_match_report"}
+        with patch("app.main.create_match_group_and_generate_report", return_value=(group, report)) as create, patch(
+            "app.main.validate_match_group", return_value={"status": "compatible", "blocking_reasons": []}
+        ):
             response = api_create_match_group(MatchGroupPayload.model_validate({
                 "member_published_ids": ["one", "two"], "metadata": {"title": "Full match"},
             }))
         self.assertEqual(create.call_args.kwargs["member_published_ids"], ["one", "two"])
+        self.assertTrue(callable(create.call_args.kwargs["generate_report"]))
         self.assertEqual(response["report"]["report_type"], "public_aggregate_match_report")
 
     def test_forged_aggregate_statistics_are_rejected_by_request_contract(self) -> None:
