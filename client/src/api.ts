@@ -37,6 +37,11 @@ import type {
   PlayerAssignmentsDocument,
   PublishedMatch,
   PublishedMatchDetail,
+  MatchGroupMetadata,
+  MatchGroupPreview,
+  MatchGroupRecord,
+  MatchGroupReportResponse,
+  MatchGroupSource,
   StablePlayerReviewPayload,
   StablePlayersReviewState,
   Team,
@@ -907,4 +912,42 @@ export async function getReviewedMatchReport(matchId: string): Promise<PublicMat
 
 export async function deletePublishedMatch(matchId: string): Promise<{ status: string; match: PublishedMatch }> {
   return request<{ status: string; match: PublishedMatch }>(`/api/published/matches/${matchId}`, { method: 'DELETE' });
+}
+
+export async function listEligibleMatchGroupSources(): Promise<MatchGroupSource[]> {
+  return request<MatchGroupSource[]>('/api/published/match-groups/eligible-sources');
+}
+
+export async function previewMatchGroup(payload: {
+  member_published_ids: string[];
+  metadata: MatchGroupMetadata;
+}): Promise<MatchGroupPreview> {
+  return request<MatchGroupPreview>('/api/published/match-groups/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function listMatchGroups(): Promise<MatchGroupRecord[]> {
+  return request<MatchGroupRecord[]>('/api/published/match-groups');
+}
+
+export async function createMatchGroup(payload: {
+  member_published_ids: string[];
+  metadata: MatchGroupMetadata;
+}): Promise<MatchGroupRecord> {
+  return request<MatchGroupRecord>('/api/published/match-groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function regenerateMatchGroup(groupId: string): Promise<MatchGroupRecord> {
+  return request<MatchGroupRecord>(`/api/published/match-groups/${encodeURIComponent(groupId)}/regenerate`, { method: 'POST' });
+}
+
+export async function deleteMatchGroup(groupId: string): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/published/match-groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' });
+}
+
+export async function getMatchGroupReport(groupId: string): Promise<MatchGroupReportResponse> {
+  return request<MatchGroupReportResponse>(`/api/published/match-groups/${encodeURIComponent(groupId)}/report`);
 }

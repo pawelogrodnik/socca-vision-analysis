@@ -93,6 +93,16 @@ def generate_match_group_report(group_id: str) -> dict[str, Any]:
     return report
 
 
+def get_match_group_report(group_id: str) -> dict[str, Any]:
+    """Read a generated aggregate public report without regenerating it."""
+
+    get_match_group(group_id)
+    path = MATCH_GROUPS_DIR / group_id / "public_report.json"
+    if not path.is_file():
+        raise FileNotFoundError(group_id)
+    return _load_json(path, group_id)
+
+
 def build_match_group_public_report(
     manifest: Mapping[str, Any],
     sources: list[dict[str, Any]],

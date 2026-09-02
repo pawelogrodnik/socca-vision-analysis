@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict';
+import { afterEach, test } from 'node:test';
+import { JSDOM } from 'jsdom';
+import React from 'react';
+import { BrowserRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
+
+import { MatchGroupsPage } from '../src/components/MatchGroupsPage.tsx';
+import { AggregateMatchReportContent } from '../src/components/AggregateMatchReportContent.tsx';
+import { AggregateMatchReportPage } from '../src/components/AggregateMatchReportPage.tsx';
+
+const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/match-groups' });
+Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
+Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.window.document });
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: dom.window.HTMLElement });
+Object.defineProperty(globalThis, 'Node', { configurable: true, value: dom.window.Node });
+Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true, writable: true });
+
+const { cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
+
+afterEach(() => cleanup());
+
+const sources = [
+  { id: 'physical-a', source_match_id: 'a', title: 'Pierwsza połowa', match_date: '2026-08-20', teams: ['Corgi', 'Verisk'], analyzed_duration_sec: 600, status: 'published', report_type: 'public_match_report' },
+  { id: 'physical-b', source_match_id: 'b', title: 'Końcówka', match_date: '2026-08-20', teams: ['Corgi', 'Verisk'], analyzed_duration_sec: 300, status: 'published', report_type: 'public_match_report' },
+];
+
+test('match-group page selects physical sources, orders IDs and submits no statistics', async () => {
+  const calls: Array<{ path: string; body?: unknown }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    calls.push({ path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (path.endsWith('/eligible-sources')) return Response.json(sources);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([]);
+    if (path.endsWith('/preview')) return Response.json({ status: 'compatible', compatibility: { status: 'compatible', blocking_reasons: [] }, timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, members: [] });
+    if (path.endsWith('/match-groups')) return Response.json({ group: { group_id: 'new-group', metadata: {}, members: [], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } }, validation: { status: 'compatible', blocking_reasons: [] }, report: { report_type: 'public_aggregate_match_report' } });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Pierwsza połowa/)));
+    const checks = view.getAllByRole('checkbox');
+    fireEvent.click(checks[0]);
+    fireEvent.click(checks[1]);
+    await waitFor(() => assert.ok(view.getByText(/Zgodne źródła/)));
+    fireEvent.click(view.getAllByRole('button', { name: 'Przenieś wyżej' })[1]);
+    await waitFor(() => assert.equal(view.getByRole('button', { name: 'Utwórz scalony raport' }).hasAttribute('disabled'), false));
+    fireEvent.click(view.getByRole('button', { name: 'Utwórz scalony raport' }));
+    await waitFor(() => assert.ok(calls.some((call) => call.path.endsWith('/match-groups') && call.body)));
+    const create = calls.filter((call) => call.path.endsWith('/match-groups') && call.body).at(-1) as { body: { member_published_ids: string[]; metadata: { title: string } } };
+    assert.deepEqual(create.body.member_published_ids, ['physical-b', 'physical-a']);
+    assert.deepEqual(Object.keys(create.body).sort(), ['member_published_ids', 'metadata']);
+    assert.deepEqual(create.body.metadata, { title: '' });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('aggregate content renders per-team passes and server-rebased timelines', () => {
+  const view = render(React.createElement(BrowserRouter, null, React.createElement(AggregateMatchReportContent, {
+    report: {
+      schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Full match' },
+      source_match_ids: ['m1'], source_published_ids: ['p1'],
+      sources: [{ published_id: 'p1', source_match_id: 'm1', sequence_index: 0, logical_offset_sec: 0 }],
+      timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' },
+      stats_semantics: { ball: 'experimental_candidates' },
+      spatial: { heatmaps: { status: 'not_available', reason: 'orientation' }, team_shape: { status: 'not_available', reason: 'orientation' } },
+      teams: [
+        { team_id: 'a', team_name: 'Corgi', movement: { status: 'ready', total_distance_m: 123, sprint_count: 2 } },
+        { team_id: 'b', team_name: 'Verisk', movement: { status: 'ready', total_distance_m: 99, sprint_count: 1 } },
+      ],
+      players: [{ player_id: 'p', player_name: 'Piotr', team_id: 'a', movement: { status: 'ready', total_distance_m: 88, avg_speed_kmh: 10 } }],
+      ball: {
+        possession: { status: 'ready', known_frames: 20, possession_share_percent_by_team_id: { a: 60 } },
+        passes: {
+          status: 'ready', attempts: 8, completed: 5, failed: 3, completion_rate_percent: 62.5,
+          attempts_by_team_id: { a: 5 }, completed_by_team_id: { a: 3 }, failed_by_team_id: { a: 2 }, completion_rate_percent_by_team_id: { a: 60 },
+        },
+      },
+      identity_coverage: { status: 'ready', confirmed_observations: 10, reliable_observations: 12, confirmed_coverage_percent: 83.3 },
+      timelines: {
+        possession: { status: 'ready', windows: [
+          { start_time_sec: 0, end_time_sec: 60, possession_share_percent_by_team_id: { a: 60 } },
+          { start_time_sec: 60, end_time_sec: 120, possession_share_percent_by_team_id: { a: 40 } },
+        ] },
+        attacking_momentum: { product_readiness: 'experimental', status: 'completed', points: [
+          { start_time_sec: 0, end_time_sec: 60, team_values_by_team_id: { a: 1.5 } },
+          { start_time_sec: 60, end_time_sec: 120, team_values_by_team_id: { a: 0.75 } },
+        ] },
+      },
+    },
+  })));
+  assert.ok(view.getByText('Podsumowanie drużyn'));
+  assert.ok(view.getByText('Piotr'));
+  assert.ok(view.getByText('5.0 / 3.0 / 2.0'));
+  assert.equal(view.getAllByText('60.0%').length, 2);
+  assert.match(view.getByText('Verisk').closest('tr')?.textContent || '', /— \/ — \/ —/);
+  assert.ok(view.getByText('Posiadanie w czasie'));
+  assert.ok(view.getByText(/Atakujące momentum/));
+  assert.equal(view.getAllByText(/eksperymentalne/).length, 2);
+  assert.ok(view.getByText(/Heatmapy: not_available/));
+  assert.equal((view.getByRole('link', { name: 'Fragment 1' }) as HTMLAnchorElement).getAttribute('href'), '/published/matches/p1/report');
+});
+
+test('aggregate page shows server-authoritative stale reason above its last coherent report', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    report: {
+      schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Old report' }, source_match_ids: [], source_published_ids: [], sources: [],
+      timing: { analyzed_duration_sec: 0, timeline_span_sec: 0, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [],
+    },
+    validation: { status: 'stale', blocking_reasons: [{ code: 'source_generation_changed', detail: 'Jeden z raportów źródłowych został ponownie opublikowany.' }] },
+  });
+  try {
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    )));
+    await waitFor(() => assert.ok(view.getByText('Raport jest nieaktualny.')));
+    assert.ok(view.getByText('Jeden z raportów źródłowych został ponownie opublikowany.'));
+    assert.ok(view.getByText('Old report'));
+  } finally { globalThis.fetch = originalFetch; }
+});

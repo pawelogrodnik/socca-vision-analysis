@@ -9,7 +9,12 @@ from unittest.mock import patch
 
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.match_group_aggregation import generate_match_group_report
-from app.services.match_groups import MatchGroupError, create_match_group
+from app.services.match_groups import (
+    MatchGroupError,
+    create_match_group,
+    create_match_group_and_generate_report,
+    update_match_group_and_generate_report,
+)
 from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION, PUBLIC_MATCH_REPORT_TYPE
 
 
@@ -121,6 +126,54 @@ class MatchGroupAggregationTests(unittest.TestCase):
             with self.assertRaisesRegex(MatchGroupError, "semantic digest"):
                 generate_match_group_report(manifest["group_id"])
             self.assertEqual(report_path.read_bytes(), before)
+
+    def test_failed_update_generation_restores_the_previous_manifest_and_report_bytes(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one")
+            _write_source(root, "published-two", "physical-two")
+            _write_source(root, "published-three", "physical-three")
+            manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            generate_match_group_report(manifest["group_id"])
+            group_dir = root / "groups" / manifest["group_id"]
+            before_manifest = (group_dir / "manifest.json").read_bytes()
+            before_report = (group_dir / "public_report.json").read_bytes()
+
+            with self.assertRaisesRegex(MatchGroupError, "generation failed"):
+                update_match_group_and_generate_report(
+                    manifest["group_id"],
+                    member_published_ids=["published-one", "published-three"],
+                    metadata={**_metadata(), "title": "Changed"},
+                    generate_report=lambda _: (_ for _ in ()).throw(MatchGroupError("generation_failed", "generation failed")),
+                )
+
+            self.assertEqual((group_dir / "manifest.json").read_bytes(), before_manifest)
+            self.assertEqual((group_dir / "public_report.json").read_bytes(), before_report)
+
+    def test_create_generation_oserror_removes_new_group_without_touching_physical_sources(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one")
+            _write_source(root, "published-two", "physical-two")
+            published_root = root / "published"
+            source_bytes_before = {
+                str(path.relative_to(published_root)): path.read_bytes()
+                for path in published_root.rglob("*")
+                if path.is_file()
+            }
+
+            with self.assertRaisesRegex(OSError, "disk full"):
+                create_match_group_and_generate_report(
+                    member_published_ids=["published-one", "published-two"],
+                    metadata=_metadata(),
+                    generate_report=lambda _group_id: (_ for _ in ()).throw(OSError("disk full")),
+                )
+
+            self.assertEqual(list((root / "groups").glob("match-group-*")), [])
+            source_bytes_after = {
+                str(path.relative_to(published_root)): path.read_bytes()
+                for path in published_root.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(source_bytes_after, source_bytes_before)
 
     def test_semantic_digest_changes_with_order_but_not_generated_at(self) -> None:
         with self._store() as root:
