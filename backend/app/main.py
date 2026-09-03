@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.logging_config import configure_application_logging
@@ -196,14 +196,14 @@ from app.services.match_group_aggregation import generate_match_group_report, ge
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
     MatchGroupVideoError,
-    combined_video_path,
+    delete_match_group_when_video_idle,
+    generation_video,
     get_match_group_video_status,
     submit_match_group_video_generation,
 )
 from app.services.match_groups import (
     MatchGroupError,
     create_match_group_and_generate_report,
-    delete_match_group,
     get_match_group,
     list_match_groups,
     preview_match_group,
@@ -3636,7 +3636,7 @@ def api_regenerate_match_group(group_id: str) -> dict[str, Any]:
 @app.delete("/api/published/match-groups/{group_id}")
 def api_delete_match_group(group_id: str) -> dict[str, Any]:
     try:
-        return {"status": "deleted", "group": delete_match_group(group_id)}
+        return {"status": "deleted", "group": delete_match_group_when_video_idle(group_id)}
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3662,7 +3662,7 @@ def api_generate_match_group_video(group_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/published/match-groups/{group_id}/video/file")
-def api_get_match_group_video_file(group_id: str) -> FileResponse:
+def api_get_match_group_video_file(group_id: str) -> RedirectResponse:
     try:
         status = get_match_group_video_status(group_id)
         if status.get("status") != "ready":
@@ -3673,11 +3673,28 @@ def api_get_match_group_video_file(group_id: str) -> FileResponse:
                     "detail": "The combined video is not current for this logical match.",
                 },
             )
-        return FileResponse(combined_video_path(group_id), media_type="video/mp4", filename=COMBINED_VIDEO_FILENAME)
+        return RedirectResponse(str(status["artifact_url"]), status_code=307)
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail={"code": "combined_video_not_found", "detail": "Combined video not found."}) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/video/generations/{generation_id}/file")
+def api_get_match_group_video_generation_file(group_id: str, generation_id: str) -> FileResponse:
+    try:
+        generation = generation_video(group_id, generation_id)
+        digest = str(generation["manifest"].get("output", {}).get("semantic_digest") or "")
+        return FileResponse(
+            generation["video_path"],
+            media_type="video/mp4",
+            filename=COMBINED_VIDEO_FILENAME,
+            headers={"ETag": digest},
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "combined_video_not_found", "detail": "Combined video generation not found."}) from error
 
 
 @app.get("/api/published/match-groups/{group_id}/report")

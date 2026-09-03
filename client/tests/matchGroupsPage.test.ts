@@ -79,6 +79,24 @@ test('match-group page exposes background combined-video generation without trea
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('match-group page disables deletion while an initial combined-video generation is active', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([{
+      group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
+      validation: { status: 'compatible', blocking_reasons: [] },
+    }]);
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'generating', last_attempt: { status: 'generating' } });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.equal(view.getByRole('button', { name: 'Usuń' }).hasAttribute('disabled'), true));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('match-group page keeps polling a ready video while its replacement regenerates', async () => {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = window.setTimeout;
@@ -98,19 +116,21 @@ test('match-group page keeps polling a ready video while its replacement regener
     if (path.endsWith('/group-1/video')) {
       videoReads += 1;
       return Response.json(videoReads === 1
-        ? { group_id: 'group-1', status: 'ready', artifact_url: '/old-video.mp4', last_attempt: { status: 'generating' } }
-        : { group_id: 'group-1', status: 'ready', artifact_url: '/new-video.mp4' });
+        ? { group_id: 'group-1', status: 'ready', generation_id: 'generation-a', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-a/file', last_attempt: { status: 'generating' } }
+        : { group_id: 'group-1', status: 'ready', generation_id: 'generation-b', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-b/file' });
     }
     throw new Error(`Unexpected ${path}`);
   };
   try {
     const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
     await waitFor(() => assert.ok(view.getByText(/Gotowe.*trwa regeneracja/)));
-    assert.equal((view.getByRole('link', { name: 'Otwórz wideo' }) as HTMLAnchorElement).getAttribute('href'), '/old-video.mp4');
+    assert.equal((view.getByRole('link', { name: 'Otwórz wideo' }) as HTMLAnchorElement).getAttribute('href'), '/api/published/match-groups/group-1/video/generations/generation-a/file');
+    assert.equal(view.getByRole('button', { name: 'Usuń' }).hasAttribute('disabled'), true);
     scheduled.shift()?.();
     await waitFor(() => assert.ok(view.getByRole('link', { name: 'Otwórz wideo' })));
     assert.equal(videoReads, 2);
-    assert.equal((view.getByRole('link', { name: 'Otwórz wideo' }) as HTMLAnchorElement).getAttribute('href'), '/new-video.mp4');
+    assert.equal((view.getByRole('link', { name: 'Otwórz wideo' }) as HTMLAnchorElement).getAttribute('href'), '/api/published/match-groups/group-1/video/generations/generation-b/file');
+    assert.equal(view.getByRole('button', { name: 'Usuń' }).hasAttribute('disabled'), false);
   } finally {
     globalThis.fetch = originalFetch;
     window.setTimeout = originalSetTimeout;
@@ -136,8 +156,8 @@ test('match-group page keeps the old video visible after a failed regeneration',
     if (path.endsWith('/group-1/video')) {
       videoReads += 1;
       return Response.json(videoReads === 1
-        ? { group_id: 'group-1', status: 'ready', artifact_url: '/old-video.mp4', last_attempt: { status: 'generating' } }
-        : { group_id: 'group-1', status: 'ready', artifact_url: '/old-video.mp4', last_attempt: { status: 'failed', reason: 'video_generation_failed' } });
+        ? { group_id: 'group-1', status: 'ready', generation_id: 'generation-a', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-a/file', last_attempt: { status: 'generating' } }
+        : { group_id: 'group-1', status: 'ready', generation_id: 'generation-a', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-a/file', last_attempt: { status: 'failed', reason: 'video_generation_failed' } });
     }
     throw new Error(`Unexpected ${path}`);
   };
@@ -146,7 +166,8 @@ test('match-group page keeps the old video visible after a failed regeneration',
     await waitFor(() => assert.ok(view.getByText(/Gotowe.*trwa regeneracja/)));
     scheduled.shift()?.();
     await waitFor(() => assert.ok(view.getByText(/ostatnia regeneracja nie powiodła się/)));
-    assert.equal((view.getByRole('link', { name: 'Otwórz wideo' }) as HTMLAnchorElement).getAttribute('href'), '/old-video.mp4');
+    assert.equal((view.getByRole('link', { name: 'Otwórz wideo' }) as HTMLAnchorElement).getAttribute('href'), '/api/published/match-groups/group-1/video/generations/generation-a/file');
+    assert.equal(view.getByRole('button', { name: 'Usuń' }).hasAttribute('disabled'), false);
   } finally {
     globalThis.fetch = originalFetch;
     window.setTimeout = originalSetTimeout;
@@ -232,8 +253,8 @@ test('aggregate page polls a ready prior generation and switches to its replacem
     if (path.endsWith('/video')) {
       videoReads += 1;
       return Response.json(videoReads === 1
-        ? { group_id: 'group-1', status: 'ready', artifact_url: '/old-video.mp4', last_attempt: { status: 'generating' } }
-        : { group_id: 'group-1', status: 'ready', artifact_url: '/new-video.mp4' });
+        ? { group_id: 'group-1', status: 'ready', generation_id: 'generation-a', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-a/file', last_attempt: { status: 'generating' } }
+        : { group_id: 'group-1', status: 'ready', generation_id: 'generation-b', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-b/file' });
     }
     return Response.json({
       report: { schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' }, source_match_ids: [], source_published_ids: [], sources: [], timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [] },
@@ -245,11 +266,11 @@ test('aggregate page polls a ready prior generation and switches to its replacem
       React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
     )));
     await waitFor(() => assert.ok(view.getByText(/trwa regeneracja nowszej wersji/)));
-    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/old-video.mp4');
+    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/api/published/match-groups/group-1/video/generations/generation-a/file');
     scheduled.shift()?.();
     await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Pełne wideo meczu' })));
     assert.equal(videoReads, 2);
-    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/new-video.mp4');
+    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/api/published/match-groups/group-1/video/generations/generation-b/file');
   } finally {
     globalThis.fetch = originalFetch;
     window.setTimeout = originalSetTimeout;

@@ -189,7 +189,7 @@ export function MatchGroupsPage() {
           <button type='button' disabled={busy || validation.status !== 'compatible'} onClick={() => void regenerate(group.group_id)}>Regeneruj</button>
           {videos[group.group_id]?.status === 'ready' && videos[group.group_id]?.artifact_url && <a href={videos[group.group_id].artifact_url!}>Otwórz wideo</a>}
           <button type='button' disabled={busy || validation.status !== 'compatible' || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void generateVideo(group.group_id)}>{videos[group.group_id]?.status === 'ready' ? 'Regeneruj wideo' : 'Generuj wideo'}</button>
-          <button type='button' disabled={busy} onClick={() => void remove(group.group_id)}>Usuń</button>
+          <button type='button' disabled={busy || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void remove(group.group_id)}>Usuń</button>
         </div>
       </article>)}
       {!groups.length && <p>Nie utworzono jeszcze scalonych raportów.</p>}

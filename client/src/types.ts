@@ -3189,6 +3189,7 @@ export type MatchGroupVideoStatus = {
   status: 'not_generated' | 'generating' | 'ready' | 'stale' | 'failed' | 'unavailable_source_video';
   reason?: string | null;
   detail?: string | null;
+  generation_id?: string | null;
   artifact_url?: string | null;
   manifest?: { output?: { duration_sec?: number } } | null;
   last_attempt?: {

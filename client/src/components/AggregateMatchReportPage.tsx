@@ -60,7 +60,7 @@ export function AggregateMatchReportPage() {
     {!report && !status && <p className='loading-line'>Ładuję scalony raport…</p>}
     {report && <>
       <section className='panel'><h2>Podsumowanie</h2><p>Łączny analizowany czas: <strong>{duration(report.timing.analyzed_duration_sec)}</strong></p></section>
-      {video?.status === 'ready' && video.artifact_url && <section className='panel'><h2>Pełne wideo meczu</h2><video className='reviewed-video' controls src={video.artifact_url} /><p>{duration(report.timing.timeline_span_sec)}</p></section>}
+      {video?.status === 'ready' && video.artifact_url && <section className='panel'><h2>Pełne wideo meczu</h2><video key={video.generation_id ?? video.artifact_url} className='reviewed-video' controls src={video.artifact_url} /><p>{duration(report.timing.timeline_span_sec)}</p></section>}
       {video?.status === 'ready' && video.last_attempt?.status === 'generating' && <section className='panel'><p>Pełne wideo meczu jest gotowe — trwa regeneracja nowszej wersji.</p></section>}
       {video && video.status !== 'ready' && <section className='panel'><p>Łączne wideo: {videoMessage(video)}</p></section>}
       <AggregateMatchReportContent report={report} />

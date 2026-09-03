@@ -25,11 +25,13 @@ from app.services.match_group_video import (
     _group_dir,
     _write as write_video_document,
     combined_video_path,
+    delete_match_group_when_video_idle,
+    generation_video,
     generate_match_group_video,
     get_match_group_video_status,
     submit_match_group_video_generation,
 )
-from app.services.match_groups import create_match_group, delete_match_group, update_match_group
+from app.services.match_groups import create_match_group, update_match_group
 from app.services.published_video import PUBLISHED_VIDEO_ARTIFACT, PUBLISHED_VIDEO_DESCRIPTOR_FILENAME, sha256_file
 
 
@@ -165,7 +167,7 @@ class MatchGroupVideoTests(unittest.TestCase):
             group_video.parent.mkdir(parents=True)
             group_video.write_bytes(b"derived")
 
-            delete_match_group(group["group_id"])
+            delete_match_group_when_video_idle(group["group_id"])
 
             self.assertFalse(group_video.exists())
             self.assertEqual((root / "published" / "published-a" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"A")
@@ -360,7 +362,7 @@ class MatchGroupVideoTests(unittest.TestCase):
             generation_dir = combined_video_path(group["group_id"]).parent
             self.assertEqual(sorted(path.name for path in generation_dir.iterdir()), [COMBINED_VIDEO_FILENAME, VIDEO_MANIFEST_FILENAME])
 
-    def test_successful_regeneration_retains_only_the_new_current_generation(self) -> None:
+    def test_successful_regeneration_retains_current_and_previous_generation(self) -> None:
         with self._store() as root:
             self._source(root, "published-a", "a", duration=10, payload=b"A")
             self._source(root, "published-b", "b", duration=10, payload=b"B")
@@ -372,9 +374,80 @@ class MatchGroupVideoTests(unittest.TestCase):
 
             current = combined_video_path(group["group_id"])
             generations_root = current.parent.parent
+            status = get_match_group_video_status(group["group_id"])
             self.assertEqual(current.read_bytes(), b"new")
-            self.assertFalse(old_generation.exists())
-            self.assertEqual([path.name for path in generations_root.iterdir() if path.is_dir()], [current.parent.name])
+            self.assertEqual(
+                status["artifact_url"],
+                f"/api/published/match-groups/{group['group_id']}/video/generations/{status['generation_id']}/file",
+            )
+            self.assertTrue(old_generation.exists())
+            self.assertEqual(
+                generation_video(group["group_id"], old_generation.name)["video_path"].read_bytes(),
+                b"old",
+            )
+            self.assertEqual(
+                {path.name for path in generations_root.iterdir() if path.is_dir()},
+                {old_generation.name, current.parent.name},
+            )
+
+    def test_third_generation_removes_only_the_oldest_and_exact_previous_remains_readable(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"A")
+            generation_a = get_match_group_video_status(group["group_id"])["generation_id"]
+            self._generate_with_fake_media(group["group_id"], b"B")
+            generation_b = get_match_group_video_status(group["group_id"])["generation_id"]
+            self._generate_with_fake_media(group["group_id"], b"C")
+            generation_c = get_match_group_video_status(group["group_id"])["generation_id"]
+
+            self.assertEqual(generation_video(group["group_id"], str(generation_b))["video_path"].read_bytes(), b"B")
+            with self.assertRaises(FileNotFoundError):
+                generation_video(group["group_id"], str(generation_a))
+            self.assertEqual(combined_video_path(group["group_id"]).read_bytes(), b"C")
+            self.assertNotEqual(generation_b, generation_c)
+
+    def test_generation_lookup_rejects_wrong_group_and_traversal(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"current")
+            generation_id = str(get_match_group_video_status(group["group_id"])["generation_id"])
+            with self.assertRaises(FileNotFoundError):
+                generation_video(group["group_id"], "../" + generation_id)
+            wrong_group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            with self.assertRaises(FileNotFoundError):
+                generation_video(wrong_group["group_id"], generation_id)
+
+    def test_delete_is_rejected_while_a_durable_generation_job_is_active(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            with patch("app.services.match_group_video._background_generate"):
+                submit_match_group_video_generation(group["group_id"])
+            with self.assertRaises(MatchGroupVideoError) as failure:
+                delete_match_group_when_video_idle(group["group_id"])
+            self.assertEqual(failure.exception.code, "video_generation_in_progress")
+            self.assertTrue((root / "groups" / group["group_id"] / "manifest.json").exists())
+            _active_job_keys.clear()
+
+    def test_deleted_group_is_not_resurrected_by_a_render_that_loses_its_group_midflight(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            group_dir = root / "groups" / group["group_id"]
+
+            def delete_before_commit(*args: object) -> None:
+                shutil.rmtree(group_dir)
+                raise KeyError(group["group_id"])
+
+            with patch("app.services.match_group_video._validate_pre_commit", side_effect=delete_before_commit), self.assertRaises(KeyError):
+                self._generate_with_fake_media(group["group_id"], b"candidate")
+            self.assertFalse(group_dir.exists())
 
     def test_superseded_generation_cleanup_failure_cannot_rollback_new_current_video(self) -> None:
         with self._store() as root:
@@ -383,6 +456,7 @@ class MatchGroupVideoTests(unittest.TestCase):
             group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
             self._generate_with_fake_media(group["group_id"], b"old")
             old_generation = combined_video_path(group["group_id"]).parent
+            self._generate_with_fake_media(group["group_id"], b"previous")
             original_remove = shutil.rmtree
 
             def fail_old_generation(path: str | Path, *args: object, **kwargs: object) -> None:

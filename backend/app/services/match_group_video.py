@@ -19,7 +19,14 @@ from pathlib import Path
 from typing import Any
 
 from app.services.artifact_lineage import canonical_json_sha256
-from app.services.match_groups import MATCH_GROUPS_DIR, PUBLISHED_MATCHES_DIR, MatchGroupError, get_match_group, validate_match_group
+from app.services.match_groups import (
+    MATCH_GROUPS_DIR,
+    PUBLISHED_MATCHES_DIR,
+    MatchGroupError,
+    delete_match_group,
+    get_match_group,
+    validate_match_group,
+)
 from app.services.published_video import PUBLISHED_VIDEO_ARTIFACT, load_published_video, sha256_file
 
 
@@ -99,7 +106,7 @@ def generate_match_group_video(group_id: str, *, job: dict[str, Any] | None = No
         return _render_generation(group, job)
     finally:
         if owned_here:
-            _finish_job(_group_dir(group), job)
+            _finish_job(_group_path(str(group["group_id"])), job)
 
 
 def combined_video_path(group_id: str) -> Path:
@@ -108,6 +115,45 @@ def combined_video_path(group_id: str) -> Path:
     if not current:
         raise FileNotFoundError(group_id)
     return current["video_path"]
+
+
+def generation_video(group_id: str, generation_id: str) -> dict[str, Any]:
+    """Return one proven immutable generation; never follow the current pointer."""
+
+    group = get_match_group(group_id)
+    group_dir = _group_dir(group)
+    normalized_generation_id = _validated_generation_id(generation_id)
+    generation_dir = _generation_dir(group_dir, normalized_generation_id)
+    manifest = _load(generation_dir / VIDEO_MANIFEST_FILENAME)
+    if (
+        manifest.get("group_id") != group["group_id"]
+        or manifest.get("generation_id") != normalized_generation_id
+        or not _generation_is_valid(generation_dir, manifest)
+    ):
+        raise FileNotFoundError(normalized_generation_id)
+    return {"manifest": manifest, "video_path": generation_dir / COMBINED_VIDEO_FILENAME}
+
+
+def delete_match_group_when_video_idle(group_id: str) -> dict[str, Any]:
+    """Delete only after taking the same durable lock used by render workers."""
+
+    group = get_match_group(group_id)
+    group_dir = _group_dir(group)
+    with _submission_lock:
+        job = _recover_interrupted_job(group_dir)
+        if job.get("status") == "generating":
+            raise MatchGroupVideoError("video_generation_in_progress", "Cannot delete a logical match while its combined video is generating.")
+        job_key = f"delete-{uuid.uuid4().hex}"
+        owner = {"pid": os.getpid(), "job_key": job_key, "created_at": _now(), "ownership_mode": "single_host_filesystem_pid_lock"}
+        lock_path = group_dir / VIDEO_LOCK_FILENAME
+        if not _acquire_lock(lock_path, owner):
+            raise MatchGroupVideoError("video_generation_in_progress", "Cannot delete a logical match while its combined video is generating.")
+        _active_job_keys.add(_active_token(group_dir, job_key))
+        try:
+            return delete_match_group(group_id)
+        finally:
+            _active_job_keys.discard(_active_token(group_dir, job_key))
+            _release_lock(lock_path, job_key)
 
 
 def _begin_generation(group: dict[str, Any]) -> dict[str, Any]:
@@ -182,27 +228,32 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
         if not _generation_is_valid(generation_dir, manifest, verify_content=True):
             raise MatchGroupVideoError("output_video_invalid", "Generated video could not be verified before publication.")
         _validate_pre_commit(group, job, inputs)
+        previous = _current_generation(group_dir)
+        previous_generation_id = str(previous["manifest"].get("generation_id") or "") if previous else None
         # One atomic pointer chooses a fully written immutable video+manifest pair.
         _write(group_dir / CURRENT_GENERATION_FILENAME, {"schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id, "input_semantic_digest": input_digest, "published_at": completed_at})
     except Exception as error:
         shutil.rmtree(generation_dir, ignore_errors=True)
-        _write(group_dir / VIDEO_JOB_FILENAME, {**job, "status": "failed", "failed_at": _now(), "reason": error.code if isinstance(error, MatchGroupVideoError) else "video_generation_failed", "detail": str(error)})
+        # Deleting the group wins over a background render: do not recreate a
+        # manifest-less directory or leave a new durable job behind.
+        if _group_manifest_exists(group_dir):
+            _write(group_dir / VIDEO_JOB_FILENAME, {**job, "status": "failed", "failed_at": _now(), "reason": error.code if isinstance(error, MatchGroupVideoError) else "video_generation_failed", "detail": str(error)})
         raise
 
     # The pointer is the commit point.  Never roll back this immutable
     # generation because best-effort cleanup of the now-obsolete job failed.
-    cleanup_job = _post_commit_cleanup(group_dir, generation_id, job, completed_at)
+    cleanup_job = _post_commit_cleanup(group_dir, generation_id, previous_generation_id, job, completed_at)
     return _state("ready", group, current={"manifest": manifest, "video_path": output}, job=cleanup_job)
 
 
 def _background_generate(group_id: str, job: dict[str, Any]) -> None:
-    group = get_match_group(group_id)
+    group_dir = _group_path(group_id)
     try:
-        _render_generation(group, job)
+        _render_generation(get_match_group(group_id), job)
     except Exception:
         pass
     finally:
-        _finish_job(_group_dir(group), job)
+        _finish_job(group_dir, job)
 
 
 def _finish_job(group_dir: Path, job: dict[str, Any]) -> None:
@@ -226,6 +277,7 @@ def _current_generation(group_dir: Path) -> dict[str, Any] | None:
 def _post_commit_cleanup(
     group_dir: Path,
     generation_id: str,
+    previous_generation_id: str | None,
     job: dict[str, Any],
     completed_at: str,
 ) -> dict[str, Any] | None:
@@ -237,7 +289,7 @@ def _post_commit_cleanup(
     except OSError as error:
         warnings.append(f"job cleanup: {error}")
     try:
-        _remove_superseded_generations(group_dir, generation_id)
+        _remove_superseded_generations(group_dir, generation_id, previous_generation_id)
     except OSError as error:
         warnings.append(f"superseded generation cleanup: {error}")
     if not warnings:
@@ -257,12 +309,16 @@ def _post_commit_cleanup(
     return completed
 
 
-def _remove_superseded_generations(group_dir: Path, current_generation_id: str) -> None:
+def _remove_superseded_generations(
+    group_dir: Path,
+    current_generation_id: str,
+    previous_generation_id: str | None,
+) -> None:
     root = group_dir / VIDEO_GENERATIONS_DIRECTORY
     if not root.is_dir():
         return
     for candidate in root.iterdir():
-        if candidate.is_dir() and candidate.name != current_generation_id:
+        if candidate.is_dir() and candidate.name not in {current_generation_id, previous_generation_id}:
             shutil.rmtree(candidate)
 
 
@@ -380,7 +436,8 @@ def _recover_interrupted_job(group_dir: Path) -> dict[str, Any]:
     if lock.get("job_key") == job_key and _lock_owner_alive(group_dir, lock):
         return job
     interrupted = {**job, "status": "failed", "failed_at": _now(), "reason": "video_generation_interrupted", "detail": "Persisted combined-video owner is no longer alive; generation may be retried."}
-    _write(group_dir / VIDEO_JOB_FILENAME, interrupted)
+    if _group_manifest_exists(group_dir):
+        _write(group_dir / VIDEO_JOB_FILENAME, interrupted)
     _release_lock(group_dir / VIDEO_LOCK_FILENAME, job_key)
     return interrupted
 
@@ -506,7 +563,16 @@ def _run_ffmpeg(command: list[str]) -> None:
 
 
 def _state(status: str, group: dict[str, Any], *, reason: str | None = None, current: dict[str, Any] | None = None, job: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {"group_id": group["group_id"], "status": status, "reason": reason, "manifest": current["manifest"] if current else None, "artifact_url": _artifact_url(group["group_id"]) if current else None, "last_attempt": _public_job(job) if job else None}
+    generation_id = str(current["manifest"].get("generation_id") or "") if current else None
+    return {
+        "group_id": group["group_id"],
+        "status": status,
+        "reason": reason,
+        "generation_id": generation_id,
+        "manifest": current["manifest"] if current else None,
+        "artifact_url": _artifact_url(group["group_id"], generation_id) if generation_id else None,
+        "last_attempt": _public_job(job) if job else None,
+    }
 
 
 def _public_job(job: dict[str, Any]) -> dict[str, Any] | None:
@@ -517,14 +583,30 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any] | None:
     )}
 
 
-def _artifact_url(group_id: str) -> str:
-    return f"/api/published/match-groups/{group_id}/video/file"
+def _artifact_url(group_id: str, generation_id: str) -> str:
+    return f"/api/published/match-groups/{group_id}/video/generations/{generation_id}/file"
 
 
 def _group_dir(group: dict[str, Any]) -> Path:
-    path = MATCH_GROUPS_DIR / str(group["group_id"])
-    path.mkdir(parents=True, exist_ok=True)
+    path = _group_path(str(group["group_id"]))
+    if not _group_manifest_exists(path):
+        raise KeyError(str(group["group_id"]))
     return path
+
+
+def _group_path(group_id: str) -> Path:
+    return MATCH_GROUPS_DIR / group_id
+
+
+def _group_manifest_exists(group_dir: Path) -> bool:
+    return (group_dir / "manifest.json").is_file()
+
+
+def _validated_generation_id(value: str) -> str:
+    generation_id = str(value or "").strip()
+    if not generation_id or Path(generation_id).name != generation_id or generation_id in {".", ".."}:
+        raise FileNotFoundError(generation_id)
+    return generation_id
 
 
 def _generation_dir(group_dir: Path, generation_id: str) -> Path:
