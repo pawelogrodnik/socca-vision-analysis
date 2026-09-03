@@ -206,6 +206,57 @@ class MatchGroupVideoTests(unittest.TestCase):
             run.assert_called_once()
             _active_job_keys.clear()
 
+    def test_status_during_job_publication_keeps_the_same_process_owner_alive(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            group_dir = root / "groups" / group["group_id"]
+            original_write = match_group_video._write
+            observed: dict[str, object] = {}
+
+            def observe_status_after_job_write(path: Path, document: dict[str, object]) -> None:
+                original_write(path, document)
+                if path.name == VIDEO_JOB_FILENAME and document.get("status") == "generating":
+                    observed["status"] = get_match_group_video_status(group["group_id"])
+                    observed["lock_exists"] = (group_dir / VIDEO_LOCK_FILENAME).exists()
+
+            with (
+                patch("app.services.match_group_video._write", side_effect=observe_status_after_job_write),
+                patch("app.services.match_group_video.threading.Thread") as start_thread,
+            ):
+                result = submit_match_group_video_generation(group["group_id"])
+
+            self.assertEqual(result["status"], "generating")
+            self.assertEqual(observed["status"]["status"], "generating")
+            self.assertTrue(observed["lock_exists"])
+            self.assertTrue((group_dir / VIDEO_LOCK_FILENAME).exists())
+            start_thread.return_value.start.assert_called_once()
+            match_group_video._finish_job(group_dir, self._load(group_dir / VIDEO_JOB_FILENAME))
+
+    def test_thread_start_failure_releases_owner_and_allows_retry(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            group_dir = root / "groups" / group["group_id"]
+
+            with patch("app.services.match_group_video.threading.Thread") as start_thread:
+                start_thread.return_value.start.side_effect = RuntimeError("cannot start thread")
+                with self.assertRaises(MatchGroupVideoError) as failure:
+                    submit_match_group_video_generation(group["group_id"])
+
+            self.assertEqual(failure.exception.code, "video_generation_start_failed")
+            self.assertEqual(self._load(group_dir / VIDEO_JOB_FILENAME)["status"], "failed")
+            self.assertFalse((group_dir / VIDEO_LOCK_FILENAME).exists())
+            self.assertFalse(_active_job_keys)
+            self.assertFalse((group_dir / "video-generations").exists())
+            with patch("app.services.match_group_video.threading.Thread") as retry_thread:
+                retry = submit_match_group_video_generation(group["group_id"])
+            self.assertEqual(retry["status"], "generating")
+            retry_thread.return_value.start.assert_called_once()
+            match_group_video._finish_job(group_dir, self._load(group_dir / VIDEO_JOB_FILENAME))
+
     def test_persisted_lock_allows_only_one_service_owner(self) -> None:
         with self._store() as root:
             lock = root / "groups" / "group" / VIDEO_LOCK_FILENAME

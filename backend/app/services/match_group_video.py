@@ -84,8 +84,11 @@ def submit_match_group_video_generation(group_id: str) -> dict[str, Any]:
         group, job = _begin_generation(group_id)
         if job.get("already_running"):
             return _state("generating", group, job=job)
-        _active_job_keys.add(_active_token(_group_dir(group), str(job["job_key"])))
-        threading.Thread(target=_background_generate, args=(group_id, job), daemon=True).start()
+        try:
+            threading.Thread(target=_background_generate, args=(group_id, job), daemon=True).start()
+        except Exception as error:
+            _fail_generation_start(_group_path(str(group["group_id"])), job, error)
+            raise MatchGroupVideoError("video_generation_start_failed", "Could not start the combined-video generation worker.") from error
         return _state("generating", group, job=job)
 
 
@@ -98,7 +101,6 @@ def generate_match_group_video(group_id: str, *, job: dict[str, Any] | None = No
             group, job = _begin_generation(group_id)
             if job.get("already_running"):
                 return _state("generating", group, job=job)
-            _active_job_keys.add(_active_token(_group_dir(group), str(job["job_key"])))
     else:
         group = get_match_group(group_id)
     assert job is not None
@@ -184,6 +186,8 @@ def _begin_generation(group_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
                 "already_running": True,
             }
         raise MatchGroupVideoError("video_generation_busy", "Combined video generation is already owned by another local worker.")
+    active_token = _active_token(group_dir, job_key)
+    _active_job_keys.add(active_token)
     try:
         if not _group_manifest_exists(group_dir):
             raise KeyError(group_id)
@@ -203,6 +207,7 @@ def _begin_generation(group_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         _write(group_dir / VIDEO_JOB_FILENAME, job)
         return group, job
     except Exception:
+        _active_job_keys.discard(active_token)
         _release_lock(lock_path, job_key)
         raise
 
@@ -284,6 +289,24 @@ def _finish_job(group_dir: Path, job: dict[str, Any]) -> None:
     job_key = str(job.get("job_key") or "")
     _active_job_keys.discard(_active_token(group_dir, job_key))
     _release_lock(group_dir / VIDEO_LOCK_FILENAME, job_key)
+
+
+def _fail_generation_start(group_dir: Path, job: dict[str, Any], error: Exception) -> None:
+    if _group_manifest_exists(group_dir):
+        try:
+            _write(
+                group_dir / VIDEO_JOB_FILENAME,
+                {
+                    **job,
+                    "status": "failed",
+                    "failed_at": _now(),
+                    "reason": "video_generation_start_failed",
+                    "detail": str(error),
+                },
+            )
+        except OSError:
+            pass
+    _finish_job(group_dir, job)
 
 
 def _current_generation(group_dir: Path) -> dict[str, Any] | None:
