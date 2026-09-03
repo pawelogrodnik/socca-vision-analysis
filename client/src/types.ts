@@ -3182,6 +3182,7 @@ export type MatchGroupRecord = {
 export type MatchGroupReportResponse = {
   report: AggregatePublicMatchReport;
   validation: MatchGroupCompatibility;
+  external_video: MatchGroupExternalVideoStatus;
 };
 
 export type MatchGroupVideoStatus = {
@@ -3199,6 +3200,25 @@ export type MatchGroupVideoStatus = {
     completed_at?: string;
     reason?: string;
     cleanup_warning?: string;
+  } | null;
+};
+
+export type MatchGroupExternalVideoStatus = {
+  group_id: string;
+  status: 'not_configured' | 'current' | 'stale' | 'invalid';
+  reason?: string | null;
+  external_video?: {
+    provider: 'youtube';
+    video_id: string;
+    source_url: string;
+    embed_url?: string | null;
+    linked_video: {
+      generation_id: string;
+      input_semantic_digest: string;
+      output_semantic_digest: string;
+      timeline_span_sec: number;
+    };
+    updated_at: string;
   } | null;
 };
 

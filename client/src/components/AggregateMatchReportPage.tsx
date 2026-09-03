@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { getMatchGroupReport, getMatchGroupVideo } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { AggregatePublicMatchReport, MatchGroupCompatibility, MatchGroupVideoStatus } from '../types';
+import type { AggregatePublicMatchReport, MatchGroupCompatibility, MatchGroupExternalVideoStatus, MatchGroupVideoStatus } from '../types';
 import { AggregateMatchReportContent } from './AggregateMatchReportContent';
 
 function duration(seconds: number): string {
@@ -15,11 +15,12 @@ export function AggregateMatchReportPage() {
   const [report, setReport] = useState<AggregatePublicMatchReport | null>(null);
   const [validation, setValidation] = useState<MatchGroupCompatibility | null>(null);
   const [video, setVideo] = useState<MatchGroupVideoStatus | null>(null);
+  const [externalVideo, setExternalVideo] = useState<MatchGroupExternalVideoStatus | null>(null);
   const [status, setStatus] = useState('');
   useEffect(() => {
     if (!groupId) return;
     void Promise.all([getMatchGroupReport(groupId), getMatchGroupVideo(groupId)]).then(([response, videoStatus]) => {
-      setReport(response.report); setValidation(response.validation); setVideo(videoStatus);
+      setReport(response.report); setValidation(response.validation); setExternalVideo(response.external_video); setVideo(videoStatus);
     }).catch((error: unknown) => setStatus(errorMessage(error)));
   }, [groupId]);
   useEffect(() => {
@@ -60,12 +61,22 @@ export function AggregateMatchReportPage() {
     {!report && !status && <p className='loading-line'>Ładuję scalony raport…</p>}
     {report && <>
       <section className='panel'><h2>Podsumowanie</h2><p>Łączny analizowany czas: <strong>{duration(report.timing.analyzed_duration_sec)}</strong></p></section>
-      {video?.status === 'ready' && video.artifact_url && <section className='panel'><h2>Pełne wideo meczu</h2><video key={video.generation_id ?? video.artifact_url} className='reviewed-video' controls src={video.artifact_url} /><p>{duration(report.timing.timeline_span_sec)}</p></section>}
+      <MatchGroupReportVideo video={video} externalVideo={externalVideo} durationText={duration(report.timing.timeline_span_sec)} />
       {video?.status === 'ready' && video.last_attempt?.status === 'generating' && <section className='panel'><p>Pełne wideo meczu jest gotowe — trwa regeneracja nowszej wersji.</p></section>}
       {video && video.status !== 'ready' && <section className='panel'><p>Łączne wideo: {videoMessage(video)}</p></section>}
       <AggregateMatchReportContent report={report} />
     </>}
   </main>;
+}
+
+function MatchGroupReportVideo({ video, externalVideo, durationText }: { video: MatchGroupVideoStatus | null; externalVideo: MatchGroupExternalVideoStatus | null; durationText: string }) {
+  const external = externalVideo?.external_video;
+  if (externalVideo?.status === 'current' && external?.embed_url) return <section className='panel'><h2>Pełne wideo meczu</h2><iframe className='external-video-frame' src={external.embed_url} title='Pełne wideo meczu na YouTube' allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share' allowFullScreen referrerPolicy='strict-origin-when-cross-origin' /><p><a href={external.source_url}>Otwórz na YouTube</a>{video?.status === 'ready' && video.artifact_url && <> · <a href={video.artifact_url}>Otwórz lokalne wideo</a></>} · {durationText}</p></section>;
+  return <>
+    {externalVideo?.status === 'stale' && <section className='panel'><p>Link YouTube dotyczy starszej wersji łącznego wideo. <a href={external?.source_url}>Otwórz poprzedni link na YouTube</a></p></section>}
+    {externalVideo?.status === 'invalid' && <section className='panel'><p>Konfiguracja linku YouTube jest nieprawidłowa i nie została osadzona.</p></section>}
+    {video?.status === 'ready' && video.artifact_url && <section className='panel'><h2>Pełne wideo meczu</h2><video key={video.generation_id ?? video.artifact_url} className='reviewed-video' controls src={video.artifact_url} /><p>{durationText}</p></section>}
+  </>;
 }
 
 function videoMessage(video: MatchGroupVideoStatus): string {

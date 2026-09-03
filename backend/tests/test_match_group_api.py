@@ -15,10 +15,12 @@ from app.main import (
     api_get_match_group_video_file,
     api_get_match_group_video,
     api_get_match_group_report,
+    api_get_match_group_external_video,
+    api_save_match_group_external_video,
     api_list_eligible_match_group_sources,
     app,
 )
-from app.models import MatchGroupPayload
+from app.models import MatchGroupExternalVideoPayload, MatchGroupPayload
 from app.services.match_group_video import MatchGroupVideoError
 
 
@@ -60,12 +62,17 @@ class MatchGroupApiTests(unittest.TestCase):
     def test_report_returns_last_coherent_bytes_with_authoritative_stale_validation(self) -> None:
         report = {"report_type": "public_aggregate_match_report"}
         validation = {"status": "stale", "blocking_reasons": [{"code": "source_generation_changed", "detail": "Republished."}]}
-        with patch("app.main.load_match_group_report", return_value=report), patch(
-            "app.main.validate_match_group", return_value=validation
-        ):
+        with patch("app.main.load_match_group_report", return_value=report), patch("app.main.validate_match_group", return_value=validation), patch("app.main.get_match_group_external_video", return_value={"status": "not_configured"}):
             response = api_get_match_group_report("match-group-1")
         self.assertEqual(response["report"], report)
         self.assertEqual(response["validation"]["status"], "stale")
+
+    def test_external_video_routes_expose_only_the_server_projection(self) -> None:
+        state = {"group_id": "match-group-1", "status": "current", "external_video": {"embed_url": "https://www.youtube-nocookie.com/embed/AbCdEfGhI_1"}}
+        with patch("app.main.get_match_group_external_video", return_value=state), patch("app.main.save_match_group_external_video", return_value=state) as save:
+            self.assertEqual(api_get_match_group_external_video("match-group-1"), state)
+            self.assertEqual(api_save_match_group_external_video("match-group-1", MatchGroupExternalVideoPayload(url="https://youtu.be/AbCdEfGhI_1")), state)
+        self.assertEqual(save.call_args.args, ("match-group-1", "https://youtu.be/AbCdEfGhI_1"))
 
     def test_api_exposes_dedicated_aggregate_report_route(self) -> None:
         operation = app.openapi()["paths"]["/api/published/match-groups/{group_id}/report"]["get"]

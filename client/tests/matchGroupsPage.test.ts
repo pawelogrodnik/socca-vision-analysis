@@ -7,6 +7,7 @@ import { BrowserRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MatchGroupsPage } from '../src/components/MatchGroupsPage.tsx';
 import { AggregateMatchReportContent } from '../src/components/AggregateMatchReportContent.tsx';
 import { AggregateMatchReportPage } from '../src/components/AggregateMatchReportPage.tsx';
+import { MatchGroupExternalVideoSection } from '../src/components/MatchGroupExternalVideoSection.tsx';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/match-groups' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -16,7 +17,7 @@ Object.defineProperty(globalThis, 'HTMLElement', { configurable: true, value: do
 Object.defineProperty(globalThis, 'Node', { configurable: true, value: dom.window.Node });
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true, writable: true });
 
-const { cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
+const { act, cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
 
 afterEach(() => cleanup());
 
@@ -77,6 +78,20 @@ test('match-group page exposes background combined-video generation without trea
     await waitFor(() => assert.ok(calls.some((path) => path.endsWith('/group-1/video/generate'))));
     assert.equal(view.queryByRole('link', { name: 'Otwórz wideo' }), null);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('YouTube settings submit only when the local combined video is ready', async () => {
+  const saves: Array<[string, string]> = [];
+  let view: ReturnType<typeof render>;
+  await act(async () => {
+    view = render(React.createElement(MatchGroupExternalVideoSection, {
+      groupId: 'group-1', localVideo: { group_id: 'group-1', status: 'ready' }, externalVideo: { group_id: 'group-1', status: 'stale', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://youtu.be/AbCdEfGhI_1', linked_video: { generation_id: 'old', input_semantic_digest: 'old', output_semantic_digest: 'old', timeline_span_sec: 10 }, updated_at: 'now' } }, busy: false,
+      onSave: async (...args: [string, string]) => { saves.push(args); }, onRemove: async () => undefined,
+    }));
+  });
+  await waitFor(() => assert.equal(view!.getByRole('button', { name: 'Zapisz link YouTube' }).hasAttribute('disabled'), false));
+  fireEvent.click(view!.getByRole('button', { name: 'Zapisz link YouTube' }));
+  await waitFor(() => assert.deepEqual(saves, [['group-1', 'https://youtu.be/AbCdEfGhI_1']]));
 });
 
 test('match-group page disables deletion while an initial combined-video generation is active', async () => {
@@ -236,6 +251,27 @@ test('aggregate page shows server-authoritative stale reason above its last cohe
     await waitFor(() => assert.ok(view.getByText('Raport jest nieaktualny.')));
     assert.ok(view.getByText('Jeden z raportów źródłowych został ponownie opublikowany.'));
     assert.ok(view.getByText('Old report'));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('aggregate page embeds only the server-derived current YouTube URL and keeps local fallback', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path.endsWith('/video')) return Response.json({ group_id: 'group-1', status: 'ready', artifact_url: '/local-video.mp4' });
+    return Response.json({
+      report: { schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' }, source_match_ids: [], source_published_ids: [], sources: [], timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [] },
+      validation: { status: 'compatible', blocking_reasons: [] },
+      external_video: { group_id: 'group-1', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1', linked_video: { generation_id: 'a', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 120 }, updated_at: 'now' } },
+    });
+  };
+  try {
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    )));
+    await waitFor(() => assert.equal(view.container.querySelector('iframe')?.getAttribute('src'), 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1'));
+    assert.equal(view.container.querySelector('iframe')?.hasAttribute('allowfullscreen'), true);
+    assert.equal((view.getByRole('link', { name: 'Otwórz lokalne wideo' }) as HTMLAnchorElement).getAttribute('href'), '/local-video.mp4');
   } finally { globalThis.fetch = originalFetch; }
 });
 

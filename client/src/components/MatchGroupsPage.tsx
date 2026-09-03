@@ -3,15 +3,19 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   createMatchGroup,
   deleteMatchGroup,
+  deleteMatchGroupExternalVideo,
   generateMatchGroupVideo,
+  getMatchGroupExternalVideo,
   getMatchGroupVideo,
   listEligibleMatchGroupSources,
   listMatchGroups,
   previewMatchGroup,
   regenerateMatchGroup,
+  saveMatchGroupExternalVideo,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { MatchGroupPreview, MatchGroupRecord, MatchGroupSource, MatchGroupVideoStatus } from '../types';
+import type { MatchGroupExternalVideoStatus, MatchGroupPreview, MatchGroupRecord, MatchGroupSource, MatchGroupVideoStatus } from '../types';
+import { MatchGroupExternalVideoSection } from './MatchGroupExternalVideoSection';
 
 function formatDuration(value: number): string {
   const seconds = Math.max(0, Math.round(value));
@@ -23,6 +27,7 @@ export function MatchGroupsPage() {
   const [sources, setSources] = useState<MatchGroupSource[]>([]);
   const [groups, setGroups] = useState<MatchGroupRecord[]>([]);
   const [videos, setVideos] = useState<Record<string, MatchGroupVideoStatus>>({});
+  const [externalVideos, setExternalVideos] = useState<Record<string, MatchGroupExternalVideoStatus>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [query, setQuery] = useState('');
@@ -36,7 +41,9 @@ export function MatchGroupsPage() {
     setSources(nextSources);
     setGroups(nextGroups);
     const videoRows = await Promise.all(nextGroups.map(async ({ group }) => [group.group_id, await getMatchGroupVideo(group.group_id)] as const));
+    const externalRows = await Promise.all(nextGroups.map(async ({ group }) => [group.group_id, await getMatchGroupExternalVideo(group.group_id).catch(() => ({ group_id: group.group_id, status: 'not_configured' as const }))] as const));
     setVideos(Object.fromEntries(videoRows));
+    setExternalVideos(Object.fromEntries(externalRows));
   };
 
   useEffect(() => { void load().catch((error: unknown) => setStatus(errorMessage(error))); }, []);
@@ -141,6 +148,22 @@ export function MatchGroupsPage() {
     catch (error) { setStatus(errorMessage(error)); }
     finally { setBusy(false); }
   };
+  const saveExternalVideo = async (groupId: string, url: string) => {
+    setBusy(true); setStatus('');
+    try {
+      const next = await saveMatchGroupExternalVideo(groupId, url);
+      setExternalVideos((current) => ({ ...current, [groupId]: next }));
+    } catch (error) { setStatus(errorMessage(error)); }
+    finally { setBusy(false); }
+  };
+  const removeExternalVideo = async (groupId: string) => {
+    setBusy(true); setStatus('');
+    try {
+      const next = await deleteMatchGroupExternalVideo(groupId);
+      setExternalVideos((current) => ({ ...current, [groupId]: next }));
+    } catch (error) { setStatus(errorMessage(error)); }
+    finally { setBusy(false); }
+  };
 
   return <main className='app'>
     <section className='hero compact-hero'>
@@ -191,6 +214,7 @@ export function MatchGroupsPage() {
           <button type='button' disabled={busy || validation.status !== 'compatible' || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void generateVideo(group.group_id)}>{videos[group.group_id]?.status === 'ready' ? 'Regeneruj wideo' : 'Generuj wideo'}</button>
           <button type='button' disabled={busy || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void remove(group.group_id)}>Usuń</button>
         </div>
+        <MatchGroupExternalVideoSection groupId={group.group_id} localVideo={videos[group.group_id]} externalVideo={externalVideos[group.group_id]} busy={busy} onSave={saveExternalVideo} onRemove={removeExternalVideo} />
       </article>)}
       {!groups.length && <p>Nie utworzono jeszcze scalonych raportów.</p>}
     </section>

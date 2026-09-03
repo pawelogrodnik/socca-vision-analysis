@@ -250,6 +250,17 @@ a { color: #93c5fd; }
   background: #020617;
   box-shadow: 0 16px 36px rgba(0, 0, 0, 0.26);
 }
+.external-video-frame {
+  display: block;
+  width: 100%;
+  max-width: 1280px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #4b6b7c;
+  border-radius: 16px;
+  background: #020617;
+}
+.external-video-settings { display: grid; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #334155; }
+.external-video-settings small { color: #cbd5e1; }
 .reviewed-inspect-button { width: fit-content; }
 
 .reviewed-at-time { gap: 12px; padding-top: 6px; }
