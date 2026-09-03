@@ -15,11 +15,14 @@ from app.services.identity_ownership_compact import (
     encode_pair_runs,
 )
 from app.services.identity_reviewed_active_cap import build_reviewed_active_cap_context
+from app.services.identity_jersey_number_common import canonical_digest
 from app.services.identity_reviewed_coverage import (
+    build_coverage_debt,
     COVERAGE_POLICY_VERSION,
     OPTIONAL_MAX_POLICY_VERSION,
     apply_coverage_policy,
     load_effective_coverage_context,
+    review_case_team_label,
 )
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_slot_review import (
@@ -41,10 +44,19 @@ from app.services.identity_reviewed_material_continuity import (
     trim_resolved_material_pairs_from_whole_subject_units,
 )
 from app.services.identity_reviewed_team_attribution_evidence import (
+    TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE,
+    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION,
+    classify_team_attribution_evidence_status,
     evidence_status_for_unit,
     load_team_attribution_evidence,
+    source_ownership_digest as team_attribution_source_ownership_digest,
+    team_attribution_evidence_lifecycle,
     visual_evidence_for_unit,
 )
+from app.services.identity_reviewed_scope_eligibility import (
+    has_team_attribution_uncertainty,
+)
+from app.services.identity_reviewed_team_attribution_policy import team_evidence_features
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     identity_review_scope_read_model,
@@ -56,7 +68,7 @@ from app.services.video import read_match_video_metadata
 
 OPTIONAL_MIN_DETECTED_SEC = 0.5
 OPTIONAL_MIN_OBSERVATIONS = 15
-PROGRESS_SCHEMA_VERSION = "2.8.0"
+PROGRESS_SCHEMA_VERSION = "2.13.0"
 REVIEWED_ACTIONS = frozenset(
     {
         "assign_roster_player",
@@ -80,6 +92,53 @@ SEMANTIC_CONFLICT_REASON_MARKERS = (
     "cross_team",
     "team_mismatch",
 )
+
+
+# The Required queue is the only authority for mandatory whole-subject work.
+# Keep the identity deliberately separate from presentation pagination so
+# workflow, durable progress and the hot read model can prove they describe
+# the exact same current sources without duplicating full case payloads.
+REQUIRED_QUEUE_SOURCE_FIELDS = (
+    "candidate_subject_id",
+    "scope_kind",
+    "review_target_id",
+    "continuity_group_id",
+    "source_ownership_digest",
+)
+
+
+def required_queue_source_keys(progress: Mapping[str, Any] | None) -> list[dict[str, str]]:
+    """Return the exact, stable Required sources from the public queue.
+
+    ``summary.important_decisions_remaining`` is a convenience counter, not
+    an independent source of truth. Reading the keys from ``next_cases``
+    prevents a lifecycle path from reporting mandatory operator debt which
+    the authoritative queue cannot actually open.
+    """
+    by_key: dict[tuple[str, ...], dict[str, str]] = {}
+    for row in (progress or {}).get("next_cases") or []:
+        if not isinstance(row, Mapping):
+            continue
+        value = {
+            field: str(row.get(field) or "")
+            for field in REQUIRED_QUEUE_SOURCE_FIELDS
+        }
+        # A Required source without a subject cannot be retrieved or acted on;
+        # it must never inflate the operator queue count.
+        if not value["candidate_subject_id"]:
+            continue
+        key = tuple(value[field] for field in REQUIRED_QUEUE_SOURCE_FIELDS)
+        by_key[key] = value
+    return [by_key[key] for key in sorted(by_key)]
+
+
+def required_queue_descriptor(progress: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Compact exact-source handshake shared by every Review read model."""
+    sources = required_queue_source_keys(progress)
+    return {
+        "count": len(sources),
+        "source_keys_digest": canonical_digest(sources),
+    }
 
 
 def reviewed_snapshot_file_fingerprint(match_path: Path) -> dict[str, int] | None:
@@ -236,10 +295,6 @@ def _materialize_review_units(
         )
         for subject_id, tracklet_ids in sorted(subjects.items())
     ]
-    _attach_team_attribution_evidence(
-        whole_subject_units,
-        load_team_attribution_evidence(match_path),
-    )
     resolved_material_pairs = resolved_material_continuity_observation_pairs(
         match_path
     )
@@ -272,6 +327,14 @@ def _materialize_review_units(
         unit for unit in units
         if not any(_unit_matches_staged_source(unit, source) for source in staged_sources)
     ]
+    # Team-attribution evidence is bound to a Review unit's exact ownership.
+    # Do this only after trimming parents, adding canonical segments and the
+    # remaining presentation shaping: a parent digest must never leak into a
+    # child with a smaller detected-pair scope.
+    _attach_team_attribution_evidence(
+        units,
+        load_team_attribution_evidence(match_path),
+    )
     return {
         "units": units,
         "whole_subject_units": whole_subject_units,
@@ -289,6 +352,7 @@ def _build_reviewed_identity_progress_uncached(
     """Build progress from frozen identity artifacts without writing anything."""
     materialized = _materialize_review_units_scoped(match_path, match_doc)
     units = materialized["units"]
+    units = _apply_snapshot_team_projections(match_path, units)
     tracklets = materialized["tracklets"]
     subjects = materialized["subjects"]
     # Snapshot-dependent projection half: effective coverage, pair index,
@@ -456,6 +520,14 @@ def project_reviewed_identity_progress(
         pair_index,
         match_doc,
     )
+    coverage_debt = build_coverage_debt(
+        units,
+        coverage,
+        pair_index,
+        match_doc,
+        coverage_policy,
+        projection_inputs.get("mixed_players") or {},
+    )
     queue_by_key = {
         _unit_key(unit): unit
         for unit in [
@@ -509,11 +581,11 @@ def project_reviewed_identity_progress(
         + counts["resolved_automatically"]
         + counts["safe_anonymous"]
     )
-    important_remaining = (
-        int(coverage_policy["semantic_blockers"])
-        + int(coverage_policy["coverage_blockers"])
-        + int(coverage_policy["material_continuity_blockers"])
-    )
+    # The exact Required queue is the one and only mandatory-work authority.
+    # Never promote a coverage-debt diagnostic into a second count: remediation
+    # sources without safe evidence are intentionally absent from this queue.
+    required_queue = required_queue_descriptor({"next_cases": coverage_policy["next_cases"]})
+    important_remaining = int(required_queue["count"])
     queue_total = completed + important_remaining
     result = {
         "schema_version": PROGRESS_SCHEMA_VERSION,
@@ -561,6 +633,8 @@ def project_reviewed_identity_progress(
         "identity_coverage": coverage,
         "coverage_readiness": coverage_policy["readiness"],
         "coverage_residuals": coverage_policy["residual_by_team"],
+        "coverage_debt": coverage_debt,
+        "required_queue": required_queue,
         "workload": coverage_policy["workload"],
         "optional_audit": coverage_policy["optional_audit"],
         "next_cases": [_public_unit(unit) for unit in next_cases],
@@ -571,6 +645,9 @@ def project_reviewed_identity_progress(
         "technical_diagnostics": projection_inputs.get("technical_diagnostics") or {},
         "policy": {
             "version": COVERAGE_POLICY_VERSION,
+            "team_attribution_evidence_lifecycle_version": (
+                TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION
+            ),
             "optional_max_version": OPTIONAL_MAX_POLICY_VERSION,
             "material_continuity_version": MATERIAL_CONTINUITY_POLICY_VERSION,
             "optional_min_detected_sec": OPTIONAL_MIN_DETECTED_SEC,
@@ -639,7 +716,8 @@ def _unit(
         for tracklet_id in on_pitch_tracklet_ids
         if tracklet_id in tracklets
     }
-    detected_team_labels = sorted(teams & {"A", "B"})
+    known_teams = teams & {"A", "B"}
+    detected_team_labels = sorted(known_teams)
     reason_codes: list[str] = []
     structural = False
     if any(len(memberships.get(tracklet_id) or set()) > 1 for tracklet_id in tracklet_ids):
@@ -649,12 +727,15 @@ def _unit(
         ambiguous_membership=structural,
         detected_team_labels=set(detected_team_labels),
     )
-    team_conflict = len(teams) > 1
+    # U means that a tracklet's team is unknown. It is neutral evidence when
+    # the exact source also contains one known A or B label; only competing
+    # known teams make this a real attribution conflict.
+    team_conflict = len(known_teams) > 1
     if team_conflict:
         reason_codes.append("conflicting_detected_team_labels")
     action = str((decision or {}).get("action") or "")
     player_id = str((decision or {}).get("player_id") or "") or None
-    source_team = next(iter(teams), "U") if len(teams) == 1 else "U"
+    source_team = next(iter(known_teams), "U") if len(known_teams) == 1 else "U"
     if stable_slot_id and source_team in {"A", "B"} and not stable_slot_id.startswith(source_team):
         stable_slot_id = None
     effective_team = str((decision or {}).get("team_label") or "").upper()
@@ -699,6 +780,15 @@ def _unit(
         canonical_player_id = str((seeded.get("assigned_player") or {}).get("player_id") or "") or canonical_player_id
         if canonical_player_id:
             effective_team = roster_teams.get(canonical_player_id, effective_team)
+    team_observations = [
+        {
+            "tracklet_id": tracklet_id,
+            "frame": frame,
+            "team_label": tracklets.get(tracklet_id, {}).get("team_label") or "U",
+        }
+        for tracklet_id, frame in pairs
+    ]
+    team_features = team_evidence_features(team_observations, fps=fps)
     return {
         "candidate_subject_id": subject_id,
         "tracklet_ids": sorted(tracklet_ids),
@@ -717,6 +807,12 @@ def _unit(
         "stable_slot_id": stable_slot_id,
         "priority": "high" if status == "pending_high_priority" else "optional" if status == "pending_optional" else None,
         "reason_codes": sorted(set(reason_codes)),
+        "team_attribution_features": team_features,
+        # Only the reviewed snapshot may introduce this field.  Progress must
+        # never independently make a source certain while effective output
+        # remains Team-U.
+        "automatic_team_assignment": None,
+        "scope_kind": "whole_subject",
         "correction_scope": "whole_subject",
         "operator_actionable": bool(reviewability["actionable"]),
         "non_actionable_reason": reviewability["reason"],
@@ -738,14 +834,23 @@ def _public_unit(unit: dict[str, Any], *, include_pairs: bool = False) -> dict[s
         "visual_evidence", "legacy_suggestion",
         "coverage_team_label", "potential_named_observation_gain",
         "potential_team_unnamed_share", "potential_named_coverage_gain_pp",
+        "potential_team_known_observation_gain",
+        "potential_team_known_coverage_gain_pp",
+        "operator_impact_kind", "operator_impact_observation_gain",
+        "operator_impact_pp",
         "named_coverage_before", "named_coverage_after_max",
         "coverage_rank_within_team", "marginal_named_observation_gain",
         "optional_max_rank", "optional_max_marginal_coverage_gain_pp",
         "cumulative_selected_named_gain",
         "correction_scope", "operator_actionable", "non_actionable_reason",
         "has_operator_visual_evidence", "team_attribution_evidence_status",
+        "automatic_team_assignment", "team_attribution_features",
     )
     result = {key: unit.get(key) for key in keys}
+    # The hot/public queue intentionally omits exact team evidence.  Preserve
+    # its classification while that evidence is still available rather than
+    # asking pagination to infer team certainty from a lossy projection.
+    result["filter_team_label"] = review_case_team_label(unit)
     if include_pairs:
         result["detected_pairs"] = unit.get("detected_pairs")
     return result
@@ -755,30 +860,89 @@ def _attach_team_attribution_evidence(
     units: list[dict[str, Any]],
     document: dict[str, Any],
 ) -> None:
-    """Add Team-U-only crops without replacing stricter naming evidence."""
+    """Attach evidence only for each unit's current exact detected-pair scope."""
     for unit in units:
-        if (
-            str(unit.get("source_team_label") or "").upper() != "U"
-            or unit.get("has_operator_visual_evidence")
-        ):
+        requires_team_attribution = has_team_attribution_uncertainty(unit)
+        if not requires_team_attribution:
+            # A prior transformation may have changed this unit from Team-U
+            # or cross-team to a single known team. Never carry stale
+            # attribution metadata into that final presentation unit.
+            unit.pop("team_attribution_evidence_source_digest", None)
+            unit.pop("team_attribution_evidence_status", None)
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                - {
+                    "team_attribution_evidence_unavailable",
+                    "team_attribution_evidence_recovered",
+                }
+            )
             continue
         subject_id = str(unit.get("candidate_subject_id") or "")
+        detected_pairs = unit.get("detected_pairs") or []
+        current_digest = (
+            team_attribution_source_ownership_digest(subject_id, detected_pairs)
+            if subject_id and detected_pairs
+            else None
+        )
+        previous_digest = unit.get("team_attribution_evidence_source_digest")
+        if previous_digest != current_digest:
+            # This is defensive for callers that deliberately attach at an
+            # earlier stage. A trim/coalesce must never retain an artifact or
+            # status for the parent ownership scope.
+            unit.pop("team_attribution_evidence_status", None)
+            visual_evidence = unit.get("visual_evidence") or {}
+            if visual_evidence.get("kind") == "team_attribution":
+                unit["visual_evidence"] = {}
+                unit["has_operator_visual_evidence"] = False
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                - {
+                    "team_attribution_evidence_unavailable",
+                    "team_attribution_evidence_recovered",
+                }
+            )
+        unit["team_attribution_evidence_source_digest"] = current_digest
+        if team_attribution_evidence_lifecycle(unit) == TEAM_ATTRIBUTION_EVIDENCE_ACTIONABLE:
+            unit.pop("team_attribution_evidence_status", None)
+            unit["reason_codes"] = sorted(
+                set(unit.get("reason_codes") or [])
+                - {"team_attribution_evidence_unavailable"}
+            )
+            continue
+        persisted_status = evidence_status_for_unit(
+            document,
+            candidate_subject_id=subject_id,
+            detected_pairs=detected_pairs,
+        )
+        if unit.get("has_operator_visual_evidence"):
+            # A regular identity crop can be enough to display the unit, but
+            # it does not erase a durable terminal or technical result from
+            # the narrower Team-attribution evidence channel.  In particular,
+            # retaining a technical status here prevents a retry from
+            # returning to a false "not materialized" state merely because a
+            # separate identity crop happened to exist.
+            if classify_team_attribution_evidence_status(
+                persisted_status
+            ) != "remediable_not_established":
+                unit["team_attribution_evidence_status"] = persisted_status
+                unit["reason_codes"] = sorted(
+                    set(unit.get("reason_codes") or [])
+                    | {"team_attribution_evidence_unavailable"}
+                )
+            continue
         evidence = visual_evidence_for_unit(
             document,
             candidate_subject_id=subject_id,
-            detected_pairs=unit.get("detected_pairs") or [],
+            detected_pairs=detected_pairs,
         )
         if evidence is None:
-            unit["team_attribution_evidence_status"] = evidence_status_for_unit(
-                document,
-                candidate_subject_id=subject_id,
-                detected_pairs=unit.get("detected_pairs") or [],
-            )
+            unit["team_attribution_evidence_status"] = persisted_status
             unit["reason_codes"] = sorted(
                 set(unit.get("reason_codes") or [])
                 | {"team_attribution_evidence_unavailable"}
             )
             continue
+        unit.pop("team_attribution_evidence_status", None)
         unit["visual_evidence"] = evidence
         unit["has_operator_visual_evidence"] = True
         unit["reason_codes"] = sorted(
@@ -858,6 +1022,7 @@ def _segment_units(
                 "stable_slot_id": target.get("stable_slot_id"),
                 "visual_evidence": target.get("visual_evidence") or {},
                 "legacy_suggestion": target.get("legacy_suggestion"),
+                "split_parent_case_id": target.get("split_parent_case_id"),
                 "has_operator_visual_evidence": has_operator_visual_evidence,
                 "detected_pairs": sorted(pairs),
             }
@@ -1086,6 +1251,47 @@ def _all_detected_pairs(tracklets: dict[str, dict[str, Any]]) -> set[tuple[str, 
         if is_real_detected_position(position)
         and is_on_pitch_product_observation(position)
     }
+
+
+def _apply_snapshot_team_projections(
+    match_path: Path, units: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Join only exact whole-source derived team truth from the snapshot.
+
+    Canonical children intentionally do not inherit a parent projection: their
+    ownership is smaller and must be independently proven on a later snapshot
+    rebuild. This prevents a short historical segment from borrowing a whole
+    tracklet's automatic team assignment.
+    """
+    snapshot = _load(match_path / "reviewed_identity_snapshot.json")
+    projections = snapshot.get("automatic_team_assignments") or []
+    by_source = {
+        (
+            str(row.get("candidate_subject_id") or ""),
+            tuple(sorted(str(value) for value in row.get("tracklet_ids") or [])),
+        ): row
+        for row in projections
+        if isinstance(row, dict)
+        and str(row.get("team_label") or "") in {"A", "B"}
+    }
+    result: list[dict[str, Any]] = []
+    for unit in units:
+        if str(unit.get("scope_kind") or "whole_subject") != "whole_subject":
+            result.append(unit)
+            continue
+        projection = by_source.get((
+            str(unit.get("candidate_subject_id") or ""),
+            tuple(sorted(str(value) for value in unit.get("tracklet_ids") or [])),
+        ))
+        if not projection:
+            result.append(unit)
+            continue
+        result.append({
+            **unit,
+            "effective_team_label": projection["team_label"],
+            "automatic_team_assignment": dict(projection),
+        })
+    return result
 
 
 def _technical_unresolved(path: Path, fallback: int) -> int:

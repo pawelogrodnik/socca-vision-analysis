@@ -12,11 +12,11 @@ from typing import Any, Literal
 
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.logging_config import configure_application_logging
-from app.models import AnalyzePayload, BallAnalyzePayload, MatchMetadataPayload, PitchConfigPayload
+from app.models import AnalyzePayload, BallAnalyzePayload, MatchGroupExternalVideoPayload, MatchGroupPayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
 from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, mark_interrupted_analysis_jobs, start_analysis_job
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
@@ -97,6 +97,9 @@ from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
     reviewed_snapshot_file_fingerprint,
 )
+from app.services.identity_reviewed_correction_context import (
+    reviewed_decisions_semantic_digest,
+)
 from app.services.identity_review_scope import (
     identity_review_scope_digest,
     validate_identity_review_scope,
@@ -107,6 +110,7 @@ from app.services.identity_reviewed_recompute_state import (
 from app.services.identity_reviewed_hot_state import (
     ReviewedIdentityHotStateError,
     hot_context,
+    hot_historical_split_repair_context,
     hot_progress,
     hot_review_unit,
     invalidate_review_hot_state,
@@ -127,18 +131,39 @@ from app.services.identity_reviewed_slot_review import (
 )
 from app.services.identity_reviewed_segments import SegmentTargetError
 from app.services.identity_reviewed_mixed_store import (
+    build_focused_mixed_review_case,
     build_mixed_boundary_refinement,
     build_mixed_review_queue,
     inline_temporal_split_for_source,
+    materialize_mixed_review_artifact,
+    render_mixed_review_evidence,
+    load_mixed_player_cases,
 )
+from app.services.identity_reviewed_decision_audit import (
+    commit_staged_operator_decision_audit,
+    discard_staged_operator_decision_audit,
+    prepare_operator_decision_audit_event,
+    recover_staged_operator_decision_audits,
+    stage_operator_decision_audit,
+)
+from app.services.identity_canonical_io import review_build_context
 from app.services.identity_reviewed_mixed_resolution import (
     MixedPlayerTargetError,
     save_inline_temporal_split,
     save_mixed_player_resolution,
+    validate_concurrent_lane_resolution_request,
+)
+from app.services.identity_reviewed_concurrent_lanes import ConcurrentLaneResolutionError
+from app.services.identity_reviewed_mixed_topology import (
+    MixedTemporalTopologyError,
+    require_simple_temporal_split,
 )
 from app.services.identity_reviewed_review_source import (
+    ReviewedIdentityReviewSourceError,
+    build_concurrent_lane_boundary_refinement,
     build_review_source_boundary_refinement,
     resolve_review_source,
+    source_case_id,
 )
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
@@ -154,6 +179,8 @@ from app.services.review_workflow_orchestrator import (
 from app.services.review_workflow_state import (
     WorkflowActionError,
     assert_workflow_action_allowed,
+    build_compact_review_workflow_state,
+    build_cheap_finalize_preflight_state,
     get_review_workflow_state,
 )
 from app.services.json_publish_store import (
@@ -161,8 +188,33 @@ from app.services.json_publish_store import (
     get_published_match,
     import_match_package,
     init_publish_store,
+    list_eligible_match_group_sources,
     list_published_matches,
     publish_store_health,
+)
+from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report as load_match_group_report
+from app.services.match_group_video import (
+    COMBINED_VIDEO_FILENAME,
+    MatchGroupVideoError,
+    delete_match_group_when_video_idle,
+    generation_video,
+    get_match_group_video_status,
+    submit_match_group_video_generation,
+)
+from app.services.match_group_external_video import (
+    MatchGroupExternalVideoError,
+    delete_match_group_external_video,
+    get_match_group_external_video,
+    save_match_group_external_video,
+)
+from app.services.match_groups import (
+    MatchGroupError,
+    create_match_group_and_generate_report,
+    get_match_group,
+    list_match_groups,
+    preview_match_group,
+    update_match_group_and_generate_report,
+    validate_match_group,
 )
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
 from app.services.pass_review import load_pass_candidates_review, save_pass_candidate_reviews
@@ -1176,7 +1228,6 @@ def get_match(match_id: str) -> dict[str, Any]:
         "team_shape.json",
         "change_candidates.json",
         "change_review_report.json",
-        "tracklets.json",
         "tracking_quality_report.json",
         "ball_analysis_report.json",
         "ball_tracking_report.json",
@@ -1992,7 +2043,10 @@ def get_reviewed_identity(match_id: str) -> dict[str, Any]:
 @app.get("/api/matches/{match_id}/review-workflow")
 def get_match_review_workflow(match_id: str) -> dict[str, Any]:
     path = match_dir(match_id)
-    return get_review_workflow_state(path, read_match_meta(path))
+    # Normal browser reads must not parse the observation-level snapshot just
+    # to derive a workflow card. This compact path is conservative on stale
+    # generations and keeps authoritative recomputation at mutation/finalize.
+    return build_compact_review_workflow_state(path, read_match_meta(path))
 
 
 @app.post("/api/matches/{match_id}/review-workflow/finalize")
@@ -2032,12 +2086,56 @@ def retry_match_review_render(match_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/matches/{match_id}/review-workflow/retry-recompute")
-def retry_match_review_recompute(match_id: str) -> dict[str, Any]:
+def retry_match_review_recompute(match_id: str, response: Response) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return retry_review_recompute(path, read_match_meta(path))
+        refreshed = retry_review_recompute(path, read_match_meta(path))
+        performance = dict(refreshed.get("performance") or {})
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        # Full snapshot/progress stays in the service result for authoritative
+        # in-process consumers. The browser only needs the bounded workflow.
+        return {"workflow": refreshed["workflow"], "performance": performance}
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
+    except ReviewWorkflowRecomputeError as exc:
+        raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@app.post("/api/matches/{match_id}/review-workflow/reproject")
+def reproject_match_review_workflow(match_id: str, response: Response) -> dict[str, Any]:
+    """Refresh durable Review projections after a structural Review mutation.
+
+    This is deliberately separate from finalization and from the operator
+    retry action. A Mixed temporal split invalidates topology, coverage and
+    Required pagination; it therefore needs one authoritative projection even
+    while other Required work remains.
+    """
+    path = match_dir(match_id)
+    try:
+        refreshed = refresh_review_after_identity_mutation(
+            path,
+            read_match_meta(path),
+            source="mixed_players_reproject",
+            # Structural Mixed saves already invalidate the old generation.
+            # Reproject exactly once, leave that authoritative generation warm
+            # for Required offset-0 navigation, and do not globally render
+            # every possible Review crop on this click path.
+            operator_evidence=False,
+            leave_hot_state_warm=True,
+        )
+        performance = dict(refreshed.get("performance") or {})
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        # The in-process service retains full snapshot/progress data for
+        # authoritative callers. The browser needs only this bounded result.
+        return {"workflow": refreshed["workflow"], "performance": performance}
     except ReviewWorkflowRecomputeError as exc:
         raise HTTPException(status_code=500, detail={"code": exc.code, "message": str(exc)}) from exc
 
@@ -2048,7 +2146,7 @@ def get_match_reviewed_identity_progress(
     response: Response,
     offset: int = 0,
     limit: int = 20,
-    team_label: Literal["A", "B"] | None = None,
+    team_label: Literal["A", "B", "U"] | None = None,
     queue: Literal["required", "optional_audit"] = "required",
 ) -> dict[str, Any]:
     path = match_dir(match_id)
@@ -2165,7 +2263,13 @@ def get_match_reviewed_correction_context(
     started = time.perf_counter()
     try:
         state_started = time.perf_counter()
-        state = load_or_rebuild_review_hot_state(path, read_match_meta(path))
+        # Context is a read for the card selected by progress. It must never
+        # cold-rebuild the shared queue: concurrent prefetches previously
+        # raced a save and changed the review-state version underneath the
+        # operator. Progress owns authoritative recovery materialization.
+        state = load_existing_fresh_hot_state(path, read_match_meta(path))
+        if state is None:
+            raise ReviewedIdentityHotStateError("review_state_stale")
         state_ms = round((time.perf_counter() - state_started) * 1000, 1)
         context_started = time.perf_counter()
         result = hot_context(state, candidate_subject_id, review_target_id)
@@ -2180,10 +2284,66 @@ def get_match_reviewed_correction_context(
             "total_ms": elapsed_ms,
         }
         return result
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": "Stan Review zmienił się. Synchronizuję kolejkę Review.",
+            },
+        ) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/corrections/historical-split/{case_id}")
+def get_match_reviewed_historical_split_repair_context(
+    match_id: str,
+    case_id: str,
+    response: Response,
+) -> dict[str, Any]:
+    """Read one correction-only historical parent from fresh hot state."""
+    path = match_dir(match_id)
+    started = time.perf_counter()
+    try:
+        state_started = time.perf_counter()
+        state = load_existing_fresh_hot_state(path, read_match_meta(path))
+        if state is None:
+            raise ReviewedIdentityHotStateError("review_state_stale")
+        state_ms = round((time.perf_counter() - state_started) * 1000, 1)
+        context_started = time.perf_counter()
+        result = hot_historical_split_repair_context(state, case_id)
+        context_ms = round((time.perf_counter() - context_started) * 1000, 1)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        response.headers["Server-Timing"] = (
+            f"review_hot_state;dur={state_ms}, review_context;dur={context_ms}, total;dur={elapsed_ms}"
+        )
+        result["server_timing"] = {
+            "review_hot_state_ms": state_ms,
+            "review_context_ms": context_ms,
+            "total_ms": elapsed_ms,
+        }
+        return result
+    except ReviewedIdentityHotStateError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "message": "Stan Review zmienił się. Synchronizuję kolejkę Review.",
+            },
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "historical_split_repair_unavailable",
+                "message": "Pierwotny podział nie jest już dostępny do bezpiecznej naprawy.",
+            },
+        ) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/corrections")
@@ -2194,6 +2354,7 @@ def post_match_reviewed_identity_correction(
     path = match_dir(match_id)
     try:
         match_document = read_match_meta(path)
+        recover_staged_operator_decision_audits(path)
         if payload.get("defer_recompute") is True:
             started = time.perf_counter()
             deferred_gate = validate_deferred_review_action(
@@ -2202,6 +2363,50 @@ def post_match_reviewed_identity_correction(
                 payload,
             )
             deferred_gate_ms = round((time.perf_counter() - started) * 1000, 1)
+            if deferred_gate.get("idempotent_replay") is True:
+                # The mutation was already durably accepted. Do not touch
+                # canonical decisions or patch the hot projection again: the
+                # caller must obtain the current authoritative queue instead
+                # of treating this replay as a second successful decision.
+                # The prior canonical write may have succeeded immediately
+                # before an audit filesystem failure. Replaying the same
+                # decision repairs only the staged append-only audit event.
+                recover_staged_operator_decision_audits(path)
+                hot_state = deferred_gate.get("hot_state")
+                return {
+                    "saved_decision": deferred_gate.get("saved_decision"),
+                    "effective_action": str(payload.get("action") or ""),
+                    "allocated_stable_slot_id": None,
+                    "semantic_decision_digest": reviewed_decisions_semantic_digest(path),
+                    "recompute_deferred": True,
+                    "idempotent_replay": True,
+                    "review_state_version": (
+                        hot_state.get("state_version")
+                        if isinstance(hot_state, dict)
+                        else None
+                    ),
+                    "coverage_debt": (
+                        dict((hot_state.get("progress") or {}).get("coverage_debt") or {})
+                        if isinstance(hot_state, dict)
+                        else None
+                    ),
+                    "persistence": {
+                        "status": "already_saved",
+                        "downstream_recompute_triggered": False,
+                    },
+                    "performance": {
+                        "workflow_validation_ms": 0.0,
+                        "deferred_gate_ms": deferred_gate_ms,
+                        "persist_decision_ms": 0.0,
+                        "hot_state_update_ms": 0.0,
+                        "seeded_candidate_rebuild_ms": 0.0,
+                        "finalize_reviewed_identity_ms": 0.0,
+                        "segment_evidence_ms": 0.0,
+                        "progress_build_ms": 0.0,
+                        "final_workflow_ms": 0.0,
+                        "total_ms": round((time.perf_counter() - started) * 1000, 1),
+                    },
+                }
             persist_started = time.perf_counter()
             result = persist_reviewed_identity_correction(
                 path,
@@ -2211,6 +2416,7 @@ def post_match_reviewed_identity_correction(
                     "detected_team_labels_by_subject"
                 ),
                 authorized_review_unit=deferred_gate.get("review_unit"),
+                audit_required=bool(deferred_gate.get("audit_required")),
             )
             persist_ms = round((time.perf_counter() - persist_started) * 1000, 1)
             hot_started = time.perf_counter()
@@ -2233,12 +2439,25 @@ def post_match_reviewed_identity_correction(
                             str(result.get("semantic_decision_digest") or ""),
                         )
                         result["review_state_version"] = hot_state.get("state_version")
+                        result["coverage_debt"] = dict(
+                            (hot_state.get("progress") or {}).get("coverage_debt") or {}
+                        )
                     except (OSError, ValueError):
                         # Canonical persistence already succeeded. Never keep a
                         # potentially contradictory cache: the next read will
                         # rebuild from canonical artifacts.
                         invalidate_review_hot_state(path)
                         result["review_state_rebuild_required"] = True
+            if isinstance(hot_state, dict) and result.get("review_state_rebuild_required") is not True:
+                # A versioned deferred save has an authoritative hot
+                # projection already. Return its workflow view so Required
+                # and Mixed badges do not display a stale durable snapshot
+                # while the later structural reprojection is still pending.
+                result["workflow"] = get_review_workflow_state(
+                    path,
+                    match_document,
+                    progress=hot_progress(hot_state),
+                )
             hot_state_ms = round((time.perf_counter() - hot_started) * 1000, 1)
             total_ms = round((time.perf_counter() - started) * 1000, 1)
             logger.info(
@@ -2330,9 +2549,35 @@ def post_match_reviewed_identity_temporal_split(
     path = match_dir(match_id)
     try:
         match_document = read_match_meta(path)
+        recover_staged_operator_decision_audits(path)
         state_before = get_review_workflow_state(path, match_document)
         if "correct_video_identity" not in set(state_before.get("allowed_actions") or []):
             assert_workflow_action_allowed(state_before, "review_identity_issue")
+        resolved_source = resolve_review_source(
+            path,
+            match_document,
+            candidate_subject_id=str(payload.get("candidate_subject_id") or ""),
+            review_target_id=str(payload.get("review_target_id") or "") or None,
+            continuity_group_id=str(payload.get("continuity_group_id") or "") or None,
+            source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
+        )
+        resolution = str(payload.get("resolution") or "split")
+        if resolution == "split":
+            # Reject a structurally impossible split before loading or
+            # generating a hot Review state. The same resolved source is
+            # reused by persistence to avoid a second exact-source parse.
+            require_simple_temporal_split(list(resolved_source["observations"]))
+        elif resolution == "concurrent_lanes":
+            existing_inline = inline_temporal_split_for_source(path, resolved_source)
+            validate_concurrent_lane_resolution_request(
+                resolved_source,
+                payload,
+                case_id=(
+                    str(existing_inline.get("case_id") or "")
+                    if isinstance(existing_inline, dict)
+                    else None
+                ),
+            )
         hot_state = load_or_rebuild_review_hot_state(path, match_document)
         from app.services.identity_reviewed_hot_state import assert_hot_state_version
 
@@ -2347,30 +2592,47 @@ def post_match_reviewed_identity_temporal_split(
         # output, provided that its exact source and semantic version match.
         materialized_review_unit = review_unit if isinstance(review_unit, dict) else None
         if not isinstance(review_unit, dict):
-            source = resolve_review_source(
-                path,
-                match_document,
-                candidate_subject_id=str(payload.get("candidate_subject_id") or ""),
-                review_target_id=str(payload.get("review_target_id") or "") or None,
-                continuity_group_id=str(payload.get("continuity_group_id") or "") or None,
-                source_ownership_digest=str(payload.get("source_ownership_digest") or ""),
-            )
-            existing_split = inline_temporal_split_for_source(path, source)
+            existing_split = inline_temporal_split_for_source(path, resolved_source)
             if not isinstance(existing_split, dict) or str(existing_split.get("resolution_status") or "") != "resolved":
                 raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
             review_unit = {
-                "scope_kind": source["scope_kind"],
-                "detected_observation_count": source["detected_observation_count"],
+                "scope_kind": resolved_source["scope_kind"],
+                "detected_observation_count": resolved_source["detected_observation_count"],
             }
         capabilities = reviewed_identity_action_capabilities(review_unit)
         if not isinstance(review_unit, dict) or not capabilities["split"].get("allowed"):
             raise ReviewedIdentityActionScopeError("reviewed_identity_split_not_allowed")
-        result = save_inline_temporal_split(
-            path,
-            match_document,
-            payload,
-            materialized_review_unit=materialized_review_unit,
+        audit_event = prepare_operator_decision_audit_event(
+            unit={
+                **(materialized_review_unit or {}),
+                "candidate_subject_id": resolved_source.get("candidate_subject_id"),
+                "review_target_id": source_case_id(resolved_source),
+                "scope_kind": resolved_source.get("scope_kind"),
+                "continuity_group_id": resolved_source.get("continuity_group_id"),
+                "source_ownership_digest": resolved_source.get("source_ownership_digest"),
+                "tracklet_ids": resolved_source.get("tracklet_ids"),
+                "frame_start": resolved_source.get("frame_start"),
+                "frame_end": resolved_source.get("frame_end"),
+                "detected_observation_count": resolved_source.get("detected_observation_count"),
+            },
+            payload={**payload, "action": "temporal_split"},
+            required=True,
+            mutation_kind="temporal_split",
         )
+        stage_operator_decision_audit(path, audit_event)
+        try:
+            with review_build_context():
+                result = save_inline_temporal_split(
+                    path,
+                    match_document,
+                    payload,
+                    materialized_review_unit=materialized_review_unit,
+                    resolved_source=resolved_source,
+                )
+        except Exception:
+            discard_staged_operator_decision_audit(path, str(audit_event["event_id"]))
+            raise
+        commit_staged_operator_decision_audit(path, str(audit_event["event_id"]))
         # A split changes the number and exact ownership of review units, so
         # this is deliberately a cache invalidation, not a guessed incremental
         # queue mutation. The next request safely materializes canonical state.
@@ -2380,6 +2642,10 @@ def post_match_reviewed_identity_temporal_split(
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:
         raise HTTPException(status_code=409, detail={"code": str(exc), "message": str(exc)}) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ConcurrentLaneResolutionError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ReviewedIdentityActionScopeError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
     except SegmentTargetError as exc:
@@ -2419,10 +2685,56 @@ def get_match_reviewed_identity_temporal_split_refinement(
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         code = str(exc)
         status = 409 if code in {"review_target_stale", "material_continuity_target_stale"} else 400
         raise HTTPException(status_code=status, detail={"code": code, "message": code}) from exc
+
+
+@app.get("/api/matches/{match_id}/reviewed-identity/concurrent-lanes/refine")
+def get_match_reviewed_identity_concurrent_lane_refinement(
+    match_id: str,
+    candidate_subject_id: str = Query(..., min_length=1),
+    parent_case_id: str = Query(..., min_length=1),
+    parent_source_digest: str = Query(..., min_length=1),
+    lane_id: str = Query(..., min_length=1),
+    lane_source_digest: str = Query(..., min_length=1),
+    after_frame: int = Query(..., ge=0),
+    before_frame: int = Query(..., ge=1),
+    review_target_id: str | None = Query(default=None),
+    continuity_group_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    try:
+        return build_concurrent_lane_boundary_refinement(
+            path,
+            read_match_meta(path),
+            candidate_subject_id=candidate_subject_id,
+            parent_case_id=parent_case_id,
+            parent_source_digest=parent_source_digest,
+            lane_id=lane_id,
+            lane_source_digest=lane_source_digest,
+            after_frame=after_frame,
+            before_frame=before_frame,
+            review_target_id=review_target_id,
+            continuity_group_id=continuity_group_id,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConcurrentLaneResolutionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ReviewedIdentityReviewSourceError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/matches/{match_id}/reviewed-identity/corrections/finalize")
@@ -2454,10 +2766,24 @@ def finalize_match_reviewed_identity_corrections(match_id: str) -> dict[str, Any
 
 
 @app.get("/api/matches/{match_id}/reviewed-identity/mixed-players")
-def get_match_reviewed_identity_mixed_players(match_id: str) -> dict[str, Any]:
+def get_match_reviewed_identity_mixed_players(
+    match_id: str,
+) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return build_mixed_review_queue(path, read_match_meta(path))
+        with review_build_context():
+            match_document = read_match_meta(path)
+            queue = build_mixed_review_queue(path, match_document)
+            # Manual entry needs authoritative membership and ordering, but
+            # still materializes evidence only for its first visible card.
+            evidence_case = next(iter(queue.get("cases") or []), None)
+            if isinstance(evidence_case, dict):
+                render_mixed_review_evidence(
+                    path,
+                    match_document,
+                    {"cases": [evidence_case]},
+                )
+            return queue
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2474,36 +2800,123 @@ def get_match_reviewed_identity_mixed_boundary_refinement(
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        return build_mixed_boundary_refinement(
-            path,
-            read_match_meta(path),
-            candidate_subject_id,
-            after_frame,
-            before_frame,
-            case_id=case_id if isinstance(case_id, str) else None,
-        )
+        with review_build_context():
+            return build_mixed_boundary_refinement(
+                path,
+                read_match_meta(path),
+                candidate_subject_id,
+                after_frame,
+                before_frame,
+                case_id=case_id if isinstance(case_id, str) else None,
+            )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ConcurrentLaneResolutionError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except ValueError as exc:
         status = 409 if str(exc) == "mixed_player_case_stale" else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
-@app.post("/api/matches/{match_id}/reviewed-identity/mixed-players/resolve")
-def post_match_reviewed_identity_mixed_resolution(
+@app.get("/api/matches/{match_id}/reviewed-identity/mixed-players/{case_id}")
+def get_match_reviewed_identity_mixed_player_case(
     match_id: str,
-    payload: dict[str, Any] = Body(...),
+    case_id: str,
 ) -> dict[str, Any]:
     path = match_dir(match_id)
     try:
-        state = get_review_workflow_state(path, read_match_meta(path))
+        with review_build_context():
+            match_document = read_match_meta(path)
+            focused = build_focused_mixed_review_case(
+                path,
+                match_document,
+                case_id,
+            )
+            exact_case = focused.get("case")
+            if isinstance(exact_case, dict):
+                render_mixed_review_evidence(
+                    path,
+                    match_document,
+                    {"cases": [exact_case]},
+                )
+            return focused
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/matches/{match_id}/reviewed-identity/mixed-players/resolve")
+def post_match_reviewed_identity_mixed_resolution(
+    match_id: str,
+    response: Response,
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    path = match_dir(match_id)
+    started = time.perf_counter()
+    try:
+        gate_started = time.perf_counter()
+        match_document = read_match_meta(path)
+        recover_staged_operator_decision_audits(path)
+        state = build_compact_review_workflow_state(path, match_document)
         assert_workflow_action_allowed(state, "review_mixed_players")
-        result = save_mixed_player_resolution(path, read_match_meta(path), payload)
+        case_id = str(payload.get("case_id") or payload.get("candidate_subject_id") or "")
+        audit_case = next(
+            (
+                dict(row)
+                for row in load_mixed_player_cases(path).get("cases") or []
+                if str(row.get("case_id") or row.get("candidate_subject_id") or "") == case_id
+            ),
+            None,
+        )
+        workflow_gate_ms = round((time.perf_counter() - gate_started) * 1000, 1)
+        audit_event = None
+        if audit_case is not None:
+            source = audit_case.get("source") if isinstance(audit_case.get("source"), dict) else {}
+            audit_event = prepare_operator_decision_audit_event(
+                unit={
+                    **source,
+                    "candidate_subject_id": audit_case.get("candidate_subject_id"),
+                    "review_target_id": audit_case.get("case_id"),
+                    "scope_kind": "mixed",
+                    "detected_observation_count": audit_case.get("observation_count"),
+                    "current_decision": audit_case.get("current_decision"),
+                },
+                payload={**payload, "action": "mixed_players"},
+                required=True,
+                mutation_kind="mixed_resolution",
+            )
+            stage_operator_decision_audit(path, audit_event)
+        try:
+            with review_build_context():
+                result = save_mixed_player_resolution(path, match_document, payload)
+        except Exception:
+            if audit_event is not None:
+                discard_staged_operator_decision_audit(path, str(audit_event["event_id"]))
+            raise
+        if audit_event is not None:
+            commit_staged_operator_decision_audit(path, str(audit_event["event_id"]))
         # Resolving a staged marker creates/removes exact child targets.  Do
         # not let a browser retain a queue projected before that topology
         # change; the following progress read materializes it once.
         invalidate_review_hot_state(path)
-        return {**result, "review_state_rebuild_required": True}
+        performance = {
+            **dict(result.get("performance") or {}),
+            "workflow_gate_ms": workflow_gate_ms,
+            "total_ms": round((time.perf_counter() - started) * 1000, 1),
+        }
+        response.headers["Server-Timing"] = ", ".join(
+            f"{key.removesuffix('_ms')};dur={value}"
+            for key, value in performance.items()
+            if key.endswith("_ms") and isinstance(value, (int, float))
+        )
+        return {
+            **result,
+            "performance": performance,
+            "review_state_rebuild_required": True,
+        }
     except WorkflowActionError as exc:
         raise _workflow_http_error(exc) from exc
     except MixedPlayerTargetError as exc:
@@ -2511,6 +2924,10 @@ def post_match_reviewed_identity_mixed_resolution(
             status_code=409,
             detail={"code": str(exc), "message": str(exc)},
         ) from exc
+    except MixedTemporalTopologyError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+    except ConcurrentLaneResolutionError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -2905,6 +3322,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "reviewed_player_heatmaps": None,
         "reviewed_stats_readiness": None,
         "reviewed_output_manifest": None,
+        "published_video": None,
         "identity_report_source": None,
         "reviewed_identity_digest": None,
         "player_heatmaps": None,
@@ -2951,6 +3369,8 @@ def build_match_package(path: Path) -> dict[str, Any]:
         apply_reviewed_identity_to_report_package(package)
     except ValueError as exc:
         package["reviewed_identity_error"] = str(exc)
+    from app.services.published_video import build_publication_video_descriptor
+    package["published_video"] = build_publication_video_descriptor(path)
     if (path / "heatmap_all_tracks.png").exists():
         package["assets"]["heatmap_all_tracks"] = "heatmap_all_tracks.png"
     if (path / "tracks.json").exists():
@@ -3140,6 +3560,193 @@ def api_list_published_matches() -> list[dict[str, Any]]:
     return list_published_matches()
 
 
+def _match_group_error_response(error: MatchGroupError) -> HTTPException:
+    return HTTPException(status_code=409, detail=error.reason())
+
+
+def _group_with_validation(group: dict[str, Any]) -> dict[str, Any]:
+    return {"group": group, "validation": validate_match_group(str(group["group_id"]))}
+
+
+@app.get("/api/published/match-groups/eligible-sources")
+def api_list_eligible_match_group_sources() -> list[dict[str, Any]]:
+    return list_eligible_match_group_sources()
+
+
+@app.post("/api/published/match-groups/preview")
+def api_preview_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
+    try:
+        return preview_match_group(
+            member_published_ids=payload.member_published_ids,
+            metadata=payload.metadata.model_dump(),
+        )
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups")
+def api_list_match_groups() -> list[dict[str, Any]]:
+    return [_group_with_validation(group) for group in list_match_groups()]
+
+
+@app.post("/api/published/match-groups")
+def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
+    try:
+        group, report = create_match_group_and_generate_report(
+            member_published_ids=payload.member_published_ids,
+            metadata=payload.metadata.model_dump(),
+            generate_report=generate_match_group_report,
+        )
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+    return {**_group_with_validation(group), "report": report}
+
+
+@app.get("/api/published/match-groups/{group_id}")
+def api_get_match_group(group_id: str) -> dict[str, Any]:
+    try:
+        return _group_with_validation(get_match_group(group_id))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.put("/api/published/match-groups/{group_id}")
+def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[str, Any]:
+    try:
+        group, report = update_match_group_and_generate_report(
+            group_id,
+            member_published_ids=payload.member_published_ids,
+            metadata=payload.metadata.model_dump(),
+            generate_report=generate_match_group_report,
+        )
+        return {**_group_with_validation(group), "report": report}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.post("/api/published/match-groups/{group_id}/regenerate")
+def api_regenerate_match_group(group_id: str) -> dict[str, Any]:
+    try:
+        report = generate_match_group_report(group_id)
+        return {**_group_with_validation(get_match_group(group_id)), "report": report}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.delete("/api/published/match-groups/{group_id}")
+def api_delete_match_group(group_id: str) -> dict[str, Any]:
+    try:
+        return {"status": "deleted", "group": delete_match_group_when_video_idle(group_id)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/video")
+def api_get_match_group_video(group_id: str) -> dict[str, Any]:
+    try:
+        return get_match_group_video_status(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.post("/api/published/match-groups/{group_id}/video/generate")
+def api_generate_match_group_video(group_id: str) -> dict[str, Any]:
+    try:
+        return submit_match_group_video_generation(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupVideoError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/external-video")
+def api_get_match_group_external_video(group_id: str) -> dict[str, Any]:
+    try:
+        return get_match_group_external_video(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.put("/api/published/match-groups/{group_id}/external-video")
+def api_save_match_group_external_video(group_id: str, payload: MatchGroupExternalVideoPayload) -> dict[str, Any]:
+    try:
+        return save_match_group_external_video(group_id, payload.url)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupExternalVideoError as error:
+        if error.code == "unsupported_youtube_url":
+            raise HTTPException(status_code=422, detail={"code": error.code, "detail": error.detail}) from error
+        raise _match_group_error_response(error) from error
+
+
+@app.delete("/api/published/match-groups/{group_id}/external-video")
+def api_delete_match_group_external_video(group_id: str) -> dict[str, Any]:
+    try:
+        return delete_match_group_external_video(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/video/file")
+def api_get_match_group_video_file(group_id: str) -> RedirectResponse:
+    try:
+        status = get_match_group_video_status(group_id)
+        if status.get("status") != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "combined_video_not_current",
+                    "detail": "The combined video is not current for this logical match.",
+                },
+            )
+        return RedirectResponse(str(status["artifact_url"]), status_code=307)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "combined_video_not_found", "detail": "Combined video not found."}) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/video/generations/{generation_id}/file")
+def api_get_match_group_video_generation_file(group_id: str, generation_id: str) -> FileResponse:
+    try:
+        generation = generation_video(group_id, generation_id)
+        digest = str(generation["manifest"].get("output", {}).get("semantic_digest") or "")
+        return FileResponse(
+            generation["video_path"],
+            media_type="video/mp4",
+            filename=COMBINED_VIDEO_FILENAME,
+            headers={"ETag": digest},
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "combined_video_not_found", "detail": "Combined video generation not found."}) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/report")
+def api_get_match_group_report(group_id: str) -> dict[str, Any]:
+    try:
+        return {
+            "report": load_match_group_report(group_id),
+            "validation": validate_match_group(group_id),
+            "external_video": get_match_group_external_video(group_id),
+        }
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "aggregate_report_not_generated", "detail": "Aggregate report has not been generated."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
 @app.get("/api/published/matches/{published_match_id}")
 def api_get_published_match(published_match_id: str) -> dict[str, Any]:
     try:
@@ -3272,11 +3879,13 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     ):
         allowed[artifact_basename] = "image/jpeg"
     if (
-        len(artifact_rel.parts) == 3
+        len(artifact_rel.parts) == 4
         and artifact_rel.parts[0] == "team_attribution_evidence"
-        and artifact_rel.parts[1].startswith("shadow-u-")
-        and len(artifact_rel.parts[1]) == len("shadow-u-") + 16
-        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][len("shadow-u-"):])
+        and artifact_rel.parts[1][:9] in {"shadow-a-", "shadow-b-", "shadow-u-"}
+        and len(artifact_rel.parts[1]) == len("shadow-a-") + 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[1][9:])
+        and len(artifact_rel.parts[2]) == 16
+        and all(character in "0123456789abcdef" for character in artifact_rel.parts[2])
         and artifact_basename.lower().endswith((".jpg", ".jpeg"))
     ):
         allowed[artifact_basename] = "image/jpeg"
@@ -3300,8 +3909,33 @@ def get_artifact(match_id: str, artifact_name: str) -> FileResponse:
     match_root = path.resolve()
     if artifact_path != match_root and match_root not in artifact_path.parents:
         raise HTTPException(status_code=404, detail="Artifact not available")
+    if (
+        not artifact_path.exists()
+        and artifact_rel.parts
+        and artifact_rel.parts[0] == "reviewed_identity_mixed"
+    ):
+        # The card can legitimately outlive just-in-time evidence generation
+        # in a local/HMR workspace. Recover only the exact current card; do
+        # not make image delivery a path to old or nonmandatory review data.
+        materialize_mixed_review_artifact(path, read_match_meta(path), artifact_name)
     if not artifact_path.exists():
-        raise HTTPException(status_code=404, detail="Artifact not generated yet")
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact not generated yet",
+            headers=(
+                {"Cache-Control": "no-store"}
+                if artifact_rel.parts and artifact_rel.parts[0] == "reviewed_identity_mixed"
+                else None
+            ),
+        )
     if artifact_path.stat().st_size == 0:
         raise HTTPException(status_code=410, detail=f"Artifact {artifact_name} exists but is empty. Rerun analysis and check backend logs.")
-    return FileResponse(artifact_path, media_type=allowed[artifact_basename])
+    # Mixed-review crops are materialized just in time for the current card.
+    # A transient 404 must never become a sticky browser cache entry: the
+    # client can safely retry the same immutable crop once rendering finishes.
+    headers = (
+        {"Cache-Control": "no-store"}
+        if artifact_rel.parts and artifact_rel.parts[0] == "reviewed_identity_mixed"
+        else None
+    )
+    return FileResponse(artifact_path, media_type=allowed[artifact_basename], headers=headers)

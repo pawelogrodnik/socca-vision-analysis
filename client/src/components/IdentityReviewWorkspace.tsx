@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   finalizeReviewWorkflow,
@@ -13,6 +13,8 @@ import type { Match, ReviewedIdentityOptionalAudit, ReviewedOutputJob, ReviewWor
 import {
   identityReviewProgress,
   identityReviewStage,
+  initialMandatoryQueue,
+  isTerminalDataQualityBlocker,
   reviewWorkflowErrorMessage,
   workflowAllows,
 } from '../utils/identityReviewWorkspace';
@@ -26,7 +28,12 @@ import { MixedPlayersReviewPanel } from './MixedPlayersReviewPanel';
 import { InitialIdentityAuditPanel } from './InitialIdentityAuditPanel';
 import { ReviewedVideoQaPanel } from './ReviewedVideoQaPanel';
 import { ReviewedIdentityMaxSummary } from './ReviewedIdentityMaxSummary';
+import {
+  ReviewedIdentityQueueTabs,
+  type ReviewedIdentityMandatoryQueue,
+} from './ReviewedIdentityQueueTabs';
 import { matchTeamName } from '../utils/identityExceptionTeamFilter';
+import type { TeamReviewFilter } from '../utils/identityExceptionTeamFilter';
 import { formatReviewedIdentityPercent } from '../utils/reviewedIdentityMaxPresentation';
 
 type Props = {
@@ -65,20 +72,54 @@ export function IdentityReviewWorkspace({
   const [liveOptionalAuditSummary, setLiveOptionalAuditSummary] = useState<ReviewedIdentityOptionalAudit | null>(null);
   const [optionalSummaryRefreshError, setOptionalSummaryRefreshError] = useState(false);
   const [optionalSummaryRefreshAttempt, setOptionalSummaryRefreshAttempt] = useState(0);
+  const [activeMandatoryQueue, setActiveMandatoryQueue] = useState<ReviewedIdentityMandatoryQueue>(
+    () => initialMandatoryQueue(initialWorkflow),
+  );
+  const [mixedFocusCaseId, setMixedFocusCaseId] = useState<string | null>(null);
+  const [mixedEntryMode, setMixedEntryMode] = useState<'manual' | 'resolve_now'>('manual');
+  const [requiredTeamFilter, setRequiredTeamFilter] = useState<TeamReviewFilter>('all');
+  const [completionSynchronizing, setCompletionSynchronizing] = useState(false);
+  const completionSynchronizingRef = useRef(false);
+  const recoveredRecomputeGenerationRef = useRef<string | null>(null);
+  const workflowRequestIdRef = useRef(0);
+  const mixedLeaveGuardRef = useRef<() => boolean>(() => true);
 
   function applyWorkflow(next: ReviewWorkflow) {
     setWorkflow(next);
+    setActiveMandatoryQueue((current) => (
+      !completionSynchronizingRef.current
+        && current === 'required' && initialMandatoryQueue(next) === 'mixed'
+        ? 'mixed'
+        : current
+    ));
     setLiveOptionalAuditSummary(null);
     setOptionalSummaryRefreshError(false);
     setProcessingJob(next.processing || null);
     onWorkflowChanged(next);
   }
 
+  function setRequiredCompletionSynchronization(
+    synchronizing: boolean,
+    authoritativeWorkflow?: ReviewWorkflow,
+  ) {
+    completionSynchronizingRef.current = synchronizing;
+    setCompletionSynchronizing(synchronizing);
+    if (!synchronizing && authoritativeWorkflow) {
+      setActiveMandatoryQueue((current) => (
+        current === 'required' && initialMandatoryQueue(authoritativeWorkflow) === 'mixed'
+          ? 'mixed'
+          : current
+      ));
+    }
+  }
+
   async function refreshWorkflow() {
+    const requestId = ++workflowRequestIdRef.current;
     try {
-      applyWorkflow(await getReviewWorkflow(match.id));
+      const next = await getReviewWorkflow(match.id);
+      if (requestId === workflowRequestIdRef.current) applyWorkflow(next);
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (requestId === workflowRequestIdRef.current) setMessage(errorMessage(error));
     }
   }
 
@@ -90,6 +131,14 @@ export function IdentityReviewWorkspace({
     setOptionalSummaryRefreshAttempt(0);
     setShowOptionalAudit(false);
     setShowOptionalFinishConfirmation(false);
+    setActiveMandatoryQueue(initialMandatoryQueue(initialWorkflow));
+    setMixedFocusCaseId(null);
+    setMixedEntryMode('manual');
+    setRequiredTeamFilter('all');
+    completionSynchronizingRef.current = false;
+    setCompletionSynchronizing(false);
+    recoveredRecomputeGenerationRef.current = null;
+    setBusy(false);
     setMessage('');
     void refreshWorkflow();
     // The persisted match ID determines the workflow session. The callback is stable at the call site.
@@ -101,6 +150,11 @@ export function IdentityReviewWorkspace({
   }, [workflow?.phase]);
 
   const stage = identityReviewStage(workflow);
+  const mandatoryReviewActive = stage === 'remaining_issues' || stage === 'mixed_players';
+
+  useEffect(() => {
+    if (!mandatoryReviewActive) setMixedFocusCaseId(null);
+  }, [mandatoryReviewActive]);
   const optionalSummaryFingerprint = workflow?.issues.optional_audit_summary
     ? [
       workflow.issues.optional_audit_summary.current_named_observations,
@@ -131,13 +185,13 @@ export function IdentityReviewWorkspace({
   }
 
   useEffect(() => {
-    if (!['remaining_issues', 'mixed_players'].includes(stage)) return undefined;
-    const className = stage === 'mixed_players'
+    if (!mandatoryReviewActive) return undefined;
+    const className = activeMandatoryQueue === 'mixed'
       ? 'identity-mixed-workspace-active'
       : 'identity-exception-workspace-active';
     document.body.classList.add(className);
     return () => document.body.classList.remove(className);
-  }, [stage]);
+  }, [activeMandatoryQueue, mandatoryReviewActive]);
 
   useEffect(() => {
     if (stage !== 'rendering' || !isReviewedRenderInProgress(processingJob?.status)) return undefined;
@@ -178,21 +232,53 @@ export function IdentityReviewWorkspace({
 
   const optionalAudit = liveOptionalAuditSummary || workflow?.issues.optional_audit_summary;
   const teamAName = matchTeamName(match.teams || [], 'A');
+  const acceptedTeamAttributionResidual = workflow?.issues.coverage_readiness
+    ?.team_attribution_residual?.status === 'accepted_within_tolerance'
+    ? workflow.issues.coverage_readiness.team_attribution_residual
+    : null;
+  const terminalDataQualityBlocker = isTerminalDataQualityBlocker(workflow);
 
   async function retry(action: 'retry_render' | 'retry_review_recompute') {
     if (!workflowAllows(workflow, action)) return;
+    // A recovery is authoritative over an older background workflow GET.
+    // Without this token, a slow pre-recovery read can overwrite the fresh
+    // response and put the operator back on the stale recovery screen.
+    const requestId = ++workflowRequestIdRef.current;
     setBusy(true);
     try {
-      applyWorkflow(action === 'retry_render'
+      const next = action === 'retry_render'
         ? await retryReviewRender(match.id)
-        : await retryReviewRecompute(match.id));
-      setMessage('Odświeżanie zostało uruchomione ponownie.');
+        : await retryReviewRecompute(match.id);
+      if (requestId === workflowRequestIdRef.current) {
+        applyWorkflow(next);
+        setMessage('Odświeżanie zostało uruchomione ponownie.');
+      }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (requestId === workflowRequestIdRef.current) setMessage(errorMessage(error));
     } finally {
-      setBusy(false);
+      if (requestId === workflowRequestIdRef.current) setBusy(false);
     }
   }
+
+  const recomputeGeneration = workflow?.freshness.review_progress_recompute_generation;
+  const recomputeRecoveryPending = workflow?.freshness.review_progress_reason
+    === 'review_progress_recompute_required'
+    && workflowAllows(workflow, 'retry_review_recompute');
+
+  useEffect(() => {
+    if (!recomputeRecoveryPending) return;
+    // The backend publishes this token only while a specific deferred Review
+    // generation is pending.  Recover exactly once for that generation: the
+    // returned workflow decides the next queue, and an error remains a visible
+    // explicit retry instead of a client-side recompute loop.
+    const generation = recomputeGeneration || `${match.id}:pending`;
+    if (recoveredRecomputeGenerationRef.current === generation) return;
+    recoveredRecomputeGenerationRef.current = generation;
+    setMessage('Synchronizuję Review…');
+    void retry('retry_review_recompute');
+    // `retry` intentionally uses the current match session and workflow gate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [match.id, recomputeGeneration, recomputeRecoveryPending]);
 
   return <section className={`identity-review-workspace${['remaining_issues', 'mixed_players'].includes(stage) ? ' remaining-issues-active' : ''}`}>
     <div className='identity-review-workspace-chrome'>
@@ -216,7 +302,16 @@ export function IdentityReviewWorkspace({
     {!workflow && <p className='loading-line'><span className='spinner' /> Ładuję status review…</p>}
     {stage === 'unavailable' && workflow && <div className='status'>Review będzie dostępny po zakończeniu analizy meczu.</div>}
     {stage === 'error' && workflow && <div className='reviewed-stale-banner'>
-      <div><strong>{reviewWorkflowErrorMessage(workflow)}</strong><span>Możesz bezpiecznie ponowić tylko wymagane odświeżenie.</span></div>
+      <div>{terminalDataQualityBlocker ? <>
+        <strong>Wymagany Review zakończony</strong>
+        <span>{reviewWorkflowErrorMessage(workflow)} Nie ma już kolejnych bezpiecznych decyzji manualnych.</span>
+        <details><summary>Diagnostyka jakości danych</summary>
+          <span>Pozostałe nierozstrzygnięte obserwacje są zachowane jako nieznane i wyłączone z niepewnych statystyk.</span>
+        </details>
+      </> : <>
+        <strong>{reviewWorkflowErrorMessage(workflow)}</strong>
+        <span>Możesz bezpiecznie ponowić tylko wymagane odświeżenie.</span>
+      </>}</div>
       {workflowAllows(workflow, 'retry_review_recompute') && <button type='button' onClick={() => void retry('retry_review_recompute')} disabled={busy}>Spróbuj ponownie</button>}
       {workflowAllows(workflow, 'retry_render') && <button type='button' onClick={() => void retry('retry_render')} disabled={busy}>Spróbuj ponownie</button>}
     </div>}
@@ -235,23 +330,61 @@ export function IdentityReviewWorkspace({
       />
     </section>}
 
-    {stage === 'remaining_issues' && workflow && <IdentityExceptionReviewPanel
-      match={match}
-      workflow={workflow}
-      onWorkflowChanged={(next) => {
-        if (next) applyWorkflow(next);
-        else void refreshWorkflow();
-      }}
-      onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
-        ? () => retry('retry_review_recompute')
-        : undefined}
-    />}
-
-    {stage === 'mixed_players' && workflow && <MixedPlayersReviewPanel
-      match={match}
-      workflow={workflow}
-      onWorkflowChanged={applyWorkflow}
-    />}
+    {mandatoryReviewActive && workflow && <section className='identity-review-parallel-workspace'>
+      <ReviewedIdentityQueueTabs
+        workflow={workflow}
+        activeQueue={activeMandatoryQueue}
+        disabled={completionSynchronizing}
+        onSelect={(queue) => {
+          if (completionSynchronizing) return;
+          if (queue === 'required' && activeMandatoryQueue === 'mixed' && !mixedLeaveGuardRef.current()) return;
+          setMixedFocusCaseId(null);
+          setMixedEntryMode('manual');
+          setActiveMandatoryQueue(queue);
+        }}
+      />
+      {completionSynchronizing && <p className='loading-line' role='status'>
+        <span className='spinner' /> Synchronizuję Review po zapisaniu decyzji…
+      </p>}
+      {activeMandatoryQueue === 'required' && <IdentityExceptionReviewPanel
+        match={match}
+        workflow={workflow}
+        showPrimaryQueueSwitch={false}
+        onMixedResolveNow={(caseId) => {
+          if (completionSynchronizing) return;
+          setMixedFocusCaseId(caseId);
+          setMixedEntryMode('resolve_now');
+          setActiveMandatoryQueue('mixed');
+        }}
+        requiredTeamFilter={requiredTeamFilter}
+        onRequiredTeamFilterChange={setRequiredTeamFilter}
+        onWorkflowChanged={(next) => {
+          if (next) applyWorkflow(next);
+          else void refreshWorkflow();
+        }}
+        onCompletionSynchronizationChange={setRequiredCompletionSynchronization}
+        onRetryReview={workflowAllows(workflow, 'retry_review_recompute')
+          ? () => retry('retry_review_recompute')
+          : undefined}
+      />}
+      {activeMandatoryQueue === 'mixed' && <MixedPlayersReviewPanel
+        match={match}
+        workflow={workflow}
+        focusCaseId={mixedFocusCaseId}
+        entryMode={mixedEntryMode}
+        onLeaveGuard={(guard) => { mixedLeaveGuardRef.current = guard; }}
+        onReturnToRequired={() => {
+          setMixedFocusCaseId(null);
+          setMixedEntryMode('manual');
+          setActiveMandatoryQueue('required');
+        }}
+        onResolveNowComplete={() => {
+          setMixedFocusCaseId(null);
+          setMixedEntryMode('manual');
+        }}
+        onWorkflowChanged={applyWorkflow}
+      />}
+    </section>}
 
     {stage === 'prepare_result' && workflow && !showOptionalAudit && <section className='reviewed-next-step'>
       <div>
@@ -264,6 +397,9 @@ export function IdentityReviewWorkspace({
         </p>}
         {optionalAudit?.status === 'available' && <p>Wymagany poziom jakości został osiągnięty. Możesz zakończyć Review teraz albo opcjonalnie zwiększyć dokładność indywidualnych statystyk.</p>}
         {optionalAudit?.status === 'safe_max_reached' && <p>✓ Bezpieczne maksimum osiągnięte. Nie ma więcej obserwacji, które można bezpiecznie przypisać przy obecnym materiale.</p>}
+        {acceptedTeamAttributionResidual && <p className='reviewed-residual-diagnostic'>
+          {acceptedTeamAttributionResidual.observations} obserwacji pozostało bez bezpiecznego przypisania drużyny. Mieszczą się w limicie jakości ({acceptedTeamAttributionResidual.residual_budget_observations}), pozostają oznaczone jako nieznane i nie trafiają do statystyk wymagających pewnej drużyny lub zawodnika.
+        </p>}
       </div>
       {optionalAudit?.status === 'available' && <button type='button' onClick={() => setShowOptionalAudit(true)}>
         Kontynuuj do MAX

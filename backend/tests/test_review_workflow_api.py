@@ -14,6 +14,230 @@ FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for workflow API tests")
 class ReviewWorkflowApiTests(unittest.TestCase):
+    def test_workflow_get_uses_general_compact_state_not_snapshot_workflow(self) -> None:
+        from app.main import get_match_review_workflow
+
+        compact = {"phase": "mixed_players", "allowed_actions": ["review_mixed_players"]}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.build_compact_review_workflow_state", return_value=compact
+        ) as preflight, patch(
+            "app.main.get_review_workflow_state",
+            side_effect=AssertionError("normal workflow GET must not parse the snapshot"),
+        ):
+            response = get_match_review_workflow("m1")
+
+        self.assertIs(response, compact)
+        preflight.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"})
+
+    def test_workflow_get_without_report_keeps_initial_audit_and_analysis_lifecycle(self) -> None:
+        from app.main import get_match_review_workflow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            match = {"id": "m1", "status": "analyzed"}
+            (root / "match.json").write_text(json.dumps(match), encoding="utf-8")
+            (root / "analysis_report.json").write_text(json.dumps({"status": "completed"}), encoding="utf-8")
+            incomplete = {"prepared": True, "complete": False, "completed": 1, "total": 3, "remaining": 2}
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value=match
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=incomplete,
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact initial-audit GET must not load the snapshot"),
+            ):
+                initial = get_match_review_workflow("m1")
+
+            self.assertEqual(initial["phase"], "initial_audit")
+            self.assertEqual(initial["status"], "action_required")
+            self.assertIn("identify_players", initial["allowed_actions"])
+            self.assertNotEqual(initial["phase"], "finalize")
+            self.assertNotEqual(initial["status"], "ready")
+
+            audit_complete_without_report = {
+                "prepared": True,
+                "complete": True,
+                "completed": 3,
+                "total": 3,
+                "remaining": 0,
+            }
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value=match
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=audit_complete_without_report,
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact missing-report GET must not load the snapshot"),
+            ):
+                missing_report = get_match_review_workflow("m1")
+
+            self.assertEqual(missing_report["phase"], "exceptions")
+            self.assertEqual(missing_report["status"], "error")
+            self.assertIn("retry_review_recompute", missing_report["allowed_actions"])
+            self.assertNotIn("finalize_identity", missing_report["allowed_actions"])
+
+            incomplete_analysis = {"prepared": False, "complete": False, "completed": 0, "total": 0, "remaining": 0}
+            (root / "analysis_report.json").write_text(json.dumps({"status": "running"}), encoding="utf-8")
+            with patch("app.main.match_dir", return_value=root), patch(
+                "app.main.read_match_meta", return_value={"id": "m1", "status": "pending"}
+            ), patch(
+                "app.services.review_workflow_state.load_initial_audit_completion_evidence",
+                return_value=incomplete_analysis,
+            ), patch(
+                "app.services.review_workflow_state.get_reviewed_identity_status",
+                side_effect=AssertionError("compact analysis GET must not load the snapshot"),
+            ):
+                analysis = get_match_review_workflow("m1")
+
+            self.assertFalse(analysis["available"])
+            self.assertEqual(analysis["phase"], "initial_audit")
+            self.assertNotIn("finalize_identity", analysis["allowed_actions"])
+
+    def test_mixed_save_uses_compact_authorization_and_reports_outer_timing(self) -> None:
+        from fastapi import Response
+        from app.main import post_match_reviewed_identity_mixed_resolution
+
+        saved = {"saved_case": {"case_id": "M1"}, "performance": {"total_ms": 3.0}}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.build_compact_review_workflow_state",
+            return_value={"allowed_actions": ["review_mixed_players"]},
+        ) as preflight, patch(
+            "app.main.get_review_workflow_state",
+            side_effect=AssertionError("Mixed authorization must not load the heavyweight workflow"),
+        ), patch("app.main.save_mixed_player_resolution", return_value=saved) as save, patch(
+            "app.main.invalidate_review_hot_state"
+        ) as invalidate:
+            raw_response = Response()
+            response = post_match_reviewed_identity_mixed_resolution(
+                "m1",
+                raw_response,
+                {"candidate_subject_id": "subject"},
+            )
+
+        preflight.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"})
+        save.assert_called_once()
+        invalidate.assert_called_once_with(Path("/tmp/m1"))
+        self.assertTrue(response["review_state_rebuild_required"])
+        self.assertIn("workflow_gate_ms", response["performance"])
+        self.assertIn("total;dur=", raw_response.headers["server-timing"])
+
+    def test_structural_mixed_reproject_is_not_a_finalize_request(self) -> None:
+        from fastapi import Response
+        from app.main import reproject_match_review_workflow
+
+        refreshed = {
+            "workflow": {
+                "phase": "exceptions",
+                "issues": {"normal_blocking": 4, "mixed_blocking": 0},
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.refresh_review_after_identity_mutation", return_value=refreshed
+        ) as reproject, patch("app.main.finalize_review_for_qa") as finalize:
+            response = reproject_match_review_workflow("m1", Response())
+
+        self.assertEqual(response["workflow"]["phase"], "exceptions")
+        self.assertEqual(reproject.call_args.kwargs["source"], "mixed_players_reproject")
+        self.assertFalse(reproject.call_args.kwargs["operator_evidence"])
+        self.assertTrue(reproject.call_args.kwargs["leave_hot_state_warm"])
+        finalize.assert_not_called()
+
+    def test_reproject_http_response_excludes_full_snapshot_and_internal_units(self) -> None:
+        from fastapi import Response
+        from app.main import reproject_match_review_workflow
+
+        refreshed = {
+            "snapshot": {"entities": [{"frame": 1}]},
+            "review_progress": {"_internal_review_units": [{"id": "hidden"}]},
+            "workflow": {"phase": "exceptions"},
+            "performance": {"progress_build_ms": 4.0, "total_ms": 12.5},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.refresh_review_after_identity_mutation", return_value=refreshed):
+            raw_response = Response()
+            payload = reproject_match_review_workflow("m1", raw_response)
+
+        self.assertEqual(payload, {"workflow": refreshed["workflow"], "performance": refreshed["performance"]})
+        self.assertIn("total;dur=12.5", raw_response.headers["server-timing"])
+
+    def test_retry_http_response_is_compact_and_has_server_timing(self) -> None:
+        from fastapi import Response
+        from app.main import retry_match_review_recompute
+
+        refreshed = {
+            "snapshot": {"entities": [{"frame": 1}]},
+            "review_progress": {"_internal_review_units": [{"id": "hidden"}]},
+            "completion_evidence": {"observation_keys": ["hidden"]},
+            "workflow": {"phase": "exceptions"},
+            "performance": {
+                "progress_build_ms": 4.0,
+                "retry_preflight_ms": 1.5,
+                "retry_refresh_ms": 11.0,
+                "endpoint_total_ms": 12.5,
+            },
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.retry_review_recompute", return_value=refreshed):
+            raw_response = Response()
+            payload = retry_match_review_recompute("m1", raw_response)
+
+        self.assertEqual(payload, {"workflow": refreshed["workflow"], "performance": refreshed["performance"]})
+        self.assertNotIn("snapshot", payload)
+        self.assertNotIn("review_progress", payload)
+        self.assertNotIn("completion_evidence", payload)
+        self.assertNotIn("_internal_review_units", payload)
+        self.assertIn("endpoint_total;dur=12.5", raw_response.headers["server-timing"])
+        self.assertIn("retry_preflight;dur=1.5", raw_response.headers["server-timing"])
+
+    def test_focused_mixed_read_renders_only_the_exact_case_before_returning_urls(self) -> None:
+        from app.main import get_match_reviewed_identity_mixed_player_case
+
+        focused = {"case_id": "M-new", "temporal_evidence": {"anchor_crops": [{"artifact": "new.jpg"}]}}
+        response_document = {
+            "requested_case_id": "M-new",
+            "status": "current_blocking",
+            "case": focused,
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.build_focused_mixed_review_case",
+            return_value=response_document,
+        ) as build_focused, patch("app.main.build_mixed_review_queue") as build_queue, patch(
+            "app.main.render_mixed_review_evidence"
+        ) as render:
+            response = get_match_reviewed_identity_mixed_player_case("m1", "M-new")
+
+        self.assertIs(response, response_document)
+        build_focused.assert_called_once_with(Path("/tmp/m1"), {"id": "m1"}, "M-new")
+        build_queue.assert_not_called()
+        render.assert_called_once()
+        self.assertEqual(render.call_args.args[2]["cases"], [focused])
+
+    def test_manual_mixed_read_materializes_only_the_next_authoritative_case(self) -> None:
+        from app.main import get_match_reviewed_identity_mixed_players
+
+        first = {"case_id": "M-first", "temporal_evidence": {"anchor_crops": [{"artifact": "first.jpg"}]}}
+        later = {"case_id": "M-later", "temporal_evidence": {"anchor_crops": [{"artifact": "later.jpg"}]}}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.build_mixed_review_queue", return_value={"cases": [first, later]}), patch(
+            "app.main.render_mixed_review_evidence"
+        ) as render:
+            get_match_reviewed_identity_mixed_players("m1")
+
+        self.assertEqual(render.call_args.args[2]["cases"], [first])
+
     def test_scope_change_rebuilds_only_progress_and_preserves_identity_decisions(self) -> None:
         from app.main import update_match_metadata
         from app.models import MatchMetadataPayload
@@ -224,6 +448,7 @@ class ReviewWorkflowApiTests(unittest.TestCase):
             persist.call_args.kwargs["trusted_materialized_detected_team_labels"],
             {"subject-1": {"A", "B"}},
         )
+        self.assertFalse(persist.call_args.kwargs["audit_required"])
         workflow_state.assert_not_called()
         legacy_save.assert_not_called()
         refresh.assert_not_called()
@@ -231,6 +456,146 @@ class ReviewWorkflowApiTests(unittest.TestCase):
         progress_build.assert_not_called()
         finalize_snapshot.assert_not_called()
         seeded_rebuild.assert_not_called()
+
+    def test_deferred_required_authorization_marks_audit_as_required(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        persisted = {
+            "saved_decision": {"candidate_subject_id": "subject-1"},
+            "effective_action": "assign_team",
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "persistence": {"status": "saved", "downstream_recompute_triggered": False},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "idempotent_replay": False,
+                "audit_required": True,
+                "detected_team_labels_by_subject": {"subject-1": {"A"}},
+            },
+        ), patch(
+            "app.main.persist_reviewed_identity_correction", return_value=persisted
+        ) as persist, patch("app.main.get_review_workflow_state") as workflow_state, patch(
+            "app.main.save_reviewed_identity_correction"
+        ) as legacy_save, patch("app.main.refresh_review_after_identity_mutation") as refresh, patch(
+            "app.main.after_video_qa_correction"
+        ) as video_qa, patch("app.main.build_reviewed_identity_progress") as progress_build, patch(
+            "app.main.finalize_reviewed_identity"
+        ) as finalize_snapshot, patch(
+            "app.main.rebuild_identity_seeded_candidate_assignments"
+        ) as seeded_rebuild:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "assign_team", "defer_recompute": True},
+            )
+
+        self.assertTrue(response["recompute_deferred"])
+        self.assertTrue(persist.call_args.kwargs["audit_required"])
+        workflow_state.assert_not_called()
+        legacy_save.assert_not_called()
+        refresh.assert_not_called()
+        video_qa.assert_not_called()
+        progress_build.assert_not_called()
+        finalize_snapshot.assert_not_called()
+        seeded_rebuild.assert_not_called()
+
+    def test_deferred_idempotent_replay_never_persists_or_advances_hot_state(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        hot_state = {
+            "state_version": 11,
+            "progress": {"coverage_debt": {"required_cases": 3}},
+        }
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "idempotent_replay": True,
+                "saved_decision": {"candidate_subject_id": "subject-1", "action": "unresolved"},
+                "hot_state": hot_state,
+            },
+        ), patch("app.main.reviewed_decisions_semantic_digest", return_value="existing-decision"), patch(
+            "app.main.persist_reviewed_identity_correction"
+        ) as persist, patch("app.main.update_hot_state_after_deferred_save") as update_hot:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "unresolved", "defer_recompute": True},
+            )
+
+        self.assertTrue(response["idempotent_replay"])
+        self.assertEqual(response["review_state_version"], 11)
+        self.assertEqual(response["persistence"]["status"], "already_saved")
+        persist.assert_not_called()
+        update_hot.assert_not_called()
+
+    def test_correction_context_is_read_only_and_reports_a_stale_queue(self) -> None:
+        from fastapi import HTTPException, Response
+        from app.main import get_match_reviewed_correction_context
+
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch("app.main.load_existing_fresh_hot_state", return_value=None), patch(
+            "app.main.load_or_rebuild_review_hot_state"
+        ) as rebuild:
+            with self.assertRaises(HTTPException) as raised:
+                get_match_reviewed_correction_context(
+                    "m1",
+                    Response(),
+                    candidate_subject_id="subject-1",
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail["code"], "review_state_stale")
+        rebuild.assert_not_called()
+
+    def test_deferred_exact_mixed_stage_updates_hot_queue_without_structural_reload(self) -> None:
+        from app.main import post_match_reviewed_identity_correction
+
+        persisted = {
+            "saved_decision": {
+                "case_id": "mixed:source-1",
+                "candidate_subject_id": "subject-1",
+                "action": "mixed_players",
+                "original_issue": "mixed_players",
+                "resolution_status": "unresolved",
+            },
+            "effective_action": "mixed_players",
+            "allocated_stable_slot_id": None,
+            "semantic_decision_digest": "decision",
+            "recompute_deferred": True,
+            "review_topology_changed": False,
+            "persistence": {"status": "saved", "downstream_recompute_triggered": False},
+        }
+        unit = {"candidate_subject_id": "subject-1", "source_ownership_digest": "source-1"}
+        with patch("app.main.match_dir", return_value=Path("/tmp/m1")), patch(
+            "app.main.read_match_meta", return_value={"id": "m1"}
+        ), patch(
+            "app.main.validate_deferred_review_action",
+            return_value={
+                "review_unit": unit,
+                "hot_state": {"state_version": 4},
+                "detected_team_labels_by_subject": {"subject-1": {"A"}},
+                "authorization_source": "warm_hit",
+            },
+        ), patch(
+            "app.main.persist_reviewed_identity_correction", return_value=persisted
+        ), patch(
+            "app.main.update_hot_state_after_deferred_save",
+            return_value={"state_version": 5},
+        ) as update_hot, patch("app.main.invalidate_review_hot_state") as invalidate:
+            response = post_match_reviewed_identity_correction(
+                "m1",
+                {"candidate_subject_id": "subject-1", "action": "mixed_players", "defer_recompute": True},
+            )
+
+        update_hot.assert_called_once()
+        invalidate.assert_not_called()
+        self.assertEqual(response["review_state_version"], 5)
+        self.assertNotIn("review_state_rebuild_required", response)
 
     def test_optional_team_audit_deferred_payload_passes_real_action_gate(self) -> None:
         from app.main import app

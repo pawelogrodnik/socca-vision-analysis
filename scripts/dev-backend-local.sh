@@ -39,4 +39,5 @@ exec "$PYTHON_BIN" -m uvicorn app.main:app \
   --host "${BACKEND_HOST:-0.0.0.0}" \
   --port "${BACKEND_PORT:-8000}" \
   --log-level "${UVICORN_LOG_LEVEL}" \
+  --reload-dir "$ROOT_DIR/backend/app" \
   --reload

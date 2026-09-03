@@ -17,6 +17,117 @@ export type ReviewPageNavigation =
   | { kind: 'none' };
 
 
+export const REQUIRED_REVIEW_WORKING_WINDOW_SIZE = 40;
+
+
+export type RequiredReviewLifecycle = {
+  knownRemaining: number;
+  durableSavesInWindow: number;
+};
+
+
+export type RequiredReviewSaveTransition = {
+  lifecycle: RequiredReviewLifecycle;
+  synchronization: 'none' | 'replenish' | 'completion';
+};
+
+
+export type RequiredReviewNavigationState = {
+  queueMutatedSinceSnapshot: boolean;
+};
+
+
+export type RequiredReviewPageRequest = {
+  offset: number;
+  index: number;
+  reanchoredToCurrentHead: boolean;
+};
+
+
+export function beginRequiredReviewNavigation(): RequiredReviewNavigationState {
+  return { queueMutatedSinceSnapshot: false };
+}
+
+
+export function recordRequiredReviewQueueMutation(): RequiredReviewNavigationState {
+  return { queueMutatedSinceSnapshot: true };
+}
+
+
+export function resolveRequiredReviewPageRequest(
+  queue: ReviewedIdentityReviewQueue,
+  destination: Extract<ReviewPageNavigation, { kind: 'page' }>,
+  navigation: RequiredReviewNavigationState,
+): RequiredReviewPageRequest {
+  if (queue === 'required' && navigation.queueMutatedSinceSnapshot) {
+    // A durable save can shrink or rerank the queue. Its old positive offsets
+    // no longer identify the same source page, so begin from the live head.
+    return { offset: 0, index: 0, reanchoredToCurrentHead: true };
+  }
+  return {
+    offset: destination.offset,
+    index: destination.index,
+    reanchoredToCurrentHead: false,
+  };
+}
+
+
+export function shouldVerifyMutatedRequiredQueueEmpty(
+  queue: ReviewedIdentityReviewQueue,
+  localCaseCount: number,
+  navigation: RequiredReviewNavigationState,
+): boolean {
+  return queue === 'required'
+    && localCaseCount === 0
+    && navigation.queueMutatedSinceSnapshot;
+}
+
+
+export function beginRequiredReviewLifecycle(knownRemaining: number): RequiredReviewLifecycle {
+  return {
+    knownRemaining: Math.max(0, knownRemaining),
+    durableSavesInWindow: 0,
+  };
+}
+
+
+export function recordDurableRequiredReviewSave(
+  lifecycle: RequiredReviewLifecycle,
+): RequiredReviewSaveTransition {
+  const knownRemaining = Math.max(0, lifecycle.knownRemaining - 1);
+  const durableSavesInWindow = lifecycle.durableSavesInWindow + 1;
+  // Completion takes precedence over a working-window replenish: exactly 40
+  // total cases produce one canonical completion sync, never two actions.
+  if (knownRemaining === 0) {
+    return {
+      lifecycle: { knownRemaining, durableSavesInWindow: 0 },
+      synchronization: 'completion',
+    };
+  }
+  if (durableSavesInWindow >= REQUIRED_REVIEW_WORKING_WINDOW_SIZE) {
+    return {
+      lifecycle: { knownRemaining, durableSavesInWindow: 0 },
+      synchronization: 'replenish',
+    };
+  }
+  return {
+    lifecycle: { knownRemaining, durableSavesInWindow },
+    synchronization: 'none',
+  };
+}
+
+
+export function shouldRecoverRequiredReviewCompletion(
+  recomputeRequired: boolean | undefined,
+  knownRemaining: number,
+  coverageAllowsFinalize: boolean,
+): boolean {
+  return recomputeRequired === true
+    && knownRemaining === 0
+    && coverageAllowsFinalize;
+}
+
+
 export function reviewUnitKey(unit: ReviewedIdentityReviewUnit): string {
   return unit.review_target_id
     ? `segment:${unit.review_target_id}`
@@ -41,15 +152,16 @@ export function removeResolvedReviewCase<T extends ReviewCaseWithUnit>(
 
 export function shouldFinalizeDeferredReview(
   cases: ReviewCaseWithUnit[],
-  recomputeRequired = false,
+  _recomputeRequired = false,
   globalRemaining = cases.length,
   coverageAllowsFinalize = true,
 ): boolean {
-  return recomputeRequired || (
-    cases.length === 0
+  // `recompute_required` means canonical propagation is pending; it is not a
+  // claim that a versioned hot queue is unsafe. Callers finalize only at a
+  // true completion or fail-closed recovery boundary.
+  return cases.length === 0
     && globalRemaining === 0
-    && coverageAllowsFinalize
-  );
+    && coverageAllowsFinalize;
 }
 
 
@@ -107,9 +219,14 @@ export async function finalizeDeferredReviewBatch<T extends ReviewCaseWithUnit>(
   onWorkflowChanged: (workflow: ReviewWorkflow) => void,
 ): Promise<{ result: ReviewedCorrectionFinalizeResponse; cases: T[] }> {
   const result = await finalize();
+  // Completion synchronization is a transition boundary. Refresh the
+  // authoritative Required projection before exposing its workflow to the
+  // peer Mixed queue, otherwise an interim deferred-save workflow can mount
+  // Mixed while this finalize is still rebuilding the generation.
+  const cases = await reloadCases();
   onWorkflowChanged(result.workflow);
   return {
     result,
-    cases: result.workflow.phase === 'exceptions' ? await reloadCases() : [],
+    cases,
   };
 }

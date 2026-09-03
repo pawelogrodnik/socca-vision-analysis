@@ -6,7 +6,8 @@ import test from 'node:test';
 import type { MixedPlayerCase, MixedSegmentAssignment, ReviewedCorrectionContext } from '../src/types.ts';
 import { correctionContextAsSplitCase } from '../src/utils/reviewedIdentitySplitCase.ts';
 import { reviewedIdentityChildActions } from '../src/utils/reviewedIdentityActions.ts';
-import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
+import { mixedFramesPerSecond, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, toggleMixedBoundary, validMixedBoundaryFrames, validMixedResolution } from '../src/utils/mixedPlayersReview.ts';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, reconciledMixedFocusCaseId } from '../src/utils/mixedReviewNavigation.ts';
 
 const reviewCase: MixedPlayerCase = {
   candidate_subject_id: 'mixed-1',
@@ -18,6 +19,14 @@ const reviewCase: MixedPlayerCase = {
   observation_count: 50,
   frame_start: 10,
   frame_end: 50,
+  temporal_topology: {
+    kind: 'serial',
+    simple_split_allowed: true,
+    tracklet_count: 1,
+    max_concurrent_tracklets: 1,
+    overlap_ranges: [],
+    tracklets: [{ tracklet_id: 't1', frame_start: 10, frame_end: 50, observation_count: 50 }],
+  },
   temporal_evidence: {
     status: 'ready',
     anchor_crops: [40, 10, 20, 30, 50].map((frame) => ({
@@ -45,6 +54,18 @@ test('valid split requires a decision for every segment and stays inside range',
   assert.equal(validMixedResolution(reviewCase, [25], assignments), true);
   assert.equal(validMixedResolution(reviewCase, [25], [assignments[0]]), false);
   assert.equal(validMixedResolution(reviewCase, [50], assignments), false);
+});
+
+test('an end-of-track boundary never creates an empty reversed segment', () => {
+  assert.deepEqual(validMixedBoundaryFrames(reviewCase, [25, 50]), [25]);
+  assert.deepEqual(
+    mixedSegments(reviewCase, [25, 50]).map((segment) => [segment.frameStart, segment.frameEnd]),
+    [[10, 25], [26, 50]],
+  );
+  assert.equal(validMixedResolution(reviewCase, [25, 50], [
+    { action: 'assign_team', team_label: 'A' },
+    { action: 'assign_team', team_label: 'B' },
+  ]), false);
 });
 
 test('split children retain the unified safe correction vocabulary without recursive splitting', () => {
@@ -172,7 +193,7 @@ test('normal correction stages mixed players while split editing remains a full-
   assert.match(editor, /onClick=\{cancel\} disabled=\{busy\}>Wróć bez zapisu</);
   assert.doesNotMatch(form, /Podziel tutaj/);
   assert.doesNotMatch(mixed, /Team A — nieznany/);
-  assert.match(mixed, /matchTeamName\(match\.teams \|\| \[\], 'A'\)/);
+  assert.match(mixed, /MixedAssignmentControls/);
   assert.match(editor, /Doprecyzuj moment przejścia/);
   assert.match(editor, /window\.confirm/);
   assert.match(editor, /Wróć bez zapisu/);
@@ -201,6 +222,31 @@ test('mixed workspace keeps temporal evidence explicitly sorted', () => {
   assert.deepEqual(sorted.map((crop) => crop.frame), [10, 20, 30, 40, 50]);
 });
 
+test('mandatory Mixed panel uses the authoritative blocking-only queue and reprojects instead of finalizing', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('MixedPlayersReviewPanel.tsx', components), 'utf8');
+
+  assert.match(panel, /Przypadek \{index \+ 1\} z \{queue\.cases\.length\}/);
+  assert.match(panel, /api\.reprojectWorkflow\(match\.id\)/);
+  assert.match(panel, /onReturnToRequired/);
+  assert.doesNotMatch(panel, /finalizeReviewedIdentityCorrections/);
+  assert.match(panel, /stale_or_unclassifiable_blocking/);
+  assert.doesNotMatch(panel, /filter\(.*blocking/);
+});
+
+test('resolve-now targets the durable exact staged case instead of a raw subject', () => {
+  const components = new URL('../src/components/', import.meta.url);
+  const panel = readFileSync(new URL('MixedPlayersReviewPanel.tsx', components), 'utf8');
+  const form = readFileSync(new URL('ReviewedIdentityCorrectionForm.tsx', components), 'utf8');
+
+  assert.match(form, /Rozwiąż teraz/);
+  assert.match(form, /Odłóż do Mixed/);
+  assert.match(form, /result\.saved_decision\?\.case_id/);
+  assert.match(panel, /exactMixedFocusIndex/);
+  assert.match(panel, /api\.getFocusedCase\(match\.id, caseId\)/);
+  assert.doesNotMatch(panel, /getMixedPlayersReview\(match\.id, caseId\)/);
+});
+
 test('only a successful save removes the current case and advances safely', () => {
   const second = { ...reviewCase, candidate_subject_id: 'mixed-2' };
   const before = [reviewCase, second];
@@ -219,6 +265,103 @@ test('saving an exact staged source never removes a sibling with the same raw su
 
   assert.deepEqual(after.cases.map((item) => item.case_id), ['source-b']);
   assert.equal(after.index, 0);
+});
+
+test('manual Mixed batch stays in Mixed while resolve-now returns to Required only by explicit entry intent', () => {
+  assert.equal(mixedPostSaveDestination('manual', 6, 2), 'mixed');
+  assert.equal(mixedPostSaveDestination('manual', 5, 1), 'mixed');
+  assert.equal(mixedPostSaveDestination('resolve_now', 6, 2), 'required');
+  assert.equal(mixedPostSaveDestination('resolve_now', 0, 2), 'mixed');
+  assert.equal(mixedPostSaveDestination('manual', 0, 0), 'workflow');
+});
+
+test('resolve-now exact focus never falls back to the first or same-subject Mixed case', () => {
+  assert.equal(exactMixedFocusIndex(['M-older', 'M-new'], 'M-new'), 1);
+  assert.equal(exactMixedFocusIndex(['M-older', 'M-same-subject'], 'M-new'), null);
+  assert.equal(exactMixedFocusIndex(['M-older'], null), 0);
+});
+
+test('manual Mixed materializes M1, then keeps it visible until exact M2 evidence is ready', async () => {
+  type Focused = {
+    requested_case_id: string;
+    status: string;
+    case: { case_id: string } | null;
+  };
+  let release!: (response: Focused) => void;
+  const requestedCaseIds: string[] = [];
+  let visibleCaseId: string | null = null;
+  const initiallyFocused = await loadExactMixedFocus(
+    async (caseId) => {
+      requestedCaseIds.push(caseId);
+      return { requested_case_id: caseId, status: 'current_blocking', case: { case_id: 'M1' } };
+    },
+    'M1',
+  );
+  assert.equal(initiallyFocused.kind, 'visible');
+  if (initiallyFocused.kind !== 'visible') throw new Error('expected visible M1');
+  visibleCaseId = initiallyFocused.case.case_id;
+
+  const pending = loadExactMixedFocus(
+    (caseId) => {
+      requestedCaseIds.push(caseId);
+      return new Promise((resolve) => { release = resolve; });
+    },
+    'M2',
+  ).then((focused) => {
+    if (focused.kind === 'visible') visibleCaseId = focused.case.case_id;
+  });
+
+  assert.deepEqual(requestedCaseIds, ['M1', 'M2']);
+  assert.equal(visibleCaseId, 'M1');
+  release({ requested_case_id: 'M2', status: 'current_blocking', case: { case_id: 'M2' } });
+  await pending;
+  assert.equal(visibleCaseId, 'M2');
+});
+
+test('focused result distinguishes authoritative membership drift from a malformed response', async () => {
+  const focused = await loadExactMixedFocus(
+    async (caseId) => {
+      assert.equal(caseId, 'M2');
+      return { requested_case_id: 'M2', status: 'missing', case: null };
+    },
+    'M2',
+  );
+  assert.equal(focused.kind, 'membership_changed');
+});
+
+test('focused Mixed read fails closed for nonmandatory and wrong exact cases', async () => {
+  for (const status of ['no_longer_unresolved', 'not_in_mandatory_queue', 'missing']) {
+    assert.equal((await loadExactMixedFocus(
+      async () => ({ requested_case_id: 'M2', status, case: null }),
+      'M2',
+    )).kind, 'membership_changed');
+  }
+  assert.equal((await loadExactMixedFocus(
+    async () => ({
+      requested_case_id: 'M2',
+      status: 'current_blocking',
+      case: { case_id: 'same-subject-but-different-case' },
+    }),
+    'M2',
+  )).kind, 'invalid');
+});
+
+test('manual reconciliation preserves direction and never trusts the vanished local target', () => {
+  assert.equal(reconciledMixedFocusCaseId(
+    ['M1', 'M2', 'M3'],
+    'M1',
+    1,
+    ['M1', 'M3'],
+    'next',
+  ), 'M3');
+  assert.equal(reconciledMixedFocusCaseId(
+    ['M1', 'M2', 'M3'],
+    'M3',
+    1,
+    ['M1', 'M3'],
+    'previous',
+  ), 'M1');
+  assert.equal(reconciledMixedFocusCaseId(['M1'], 'M1', 0, [], 'next'), null);
 });
 
 test('segment presentation derives operator time from temporal evidence', () => {

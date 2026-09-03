@@ -9,7 +9,17 @@ from typing import Any
 from app.services.identity_reviewed_output_jobs import reviewed_output_status_read_only
 from app.services.identity_reviewed_coverage import COVERAGE_POLICY_VERSION
 from app.services.identity_reviewed_snapshot import get_reviewed_identity_status
-from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+from app.services.identity_reviewed_progress import (
+    PROGRESS_SCHEMA_VERSION,
+    required_queue_descriptor,
+)
+from app.services.identity_reviewed_recompute_state import (
+    load_reviewed_identity_recompute_state,
+)
+from app.services.identity_reviewed_team_attribution_evidence import (
+    TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION,
+    classify_team_attribution_evidence_status,
+)
 from app.services.identity_review_scope import (
     review_scope_dependency_matches,
 )
@@ -32,6 +42,11 @@ WORKFLOW_SCHEMA_VERSION = "1.0.0"
 STEP_IDS = ("initial_audit", "exceptions", "mixed_players", "finalize", "video_qa")
 PROCESSING_RENDER_STATUSES = {"queued", "running"}
 RECOMPUTE_FAILURE_FILENAME = "review_workflow_recompute_failure.json"
+RETRYABLE_TEAM_ATTRIBUTION_TECHNICAL_STATUSES = {
+    "source_video_unavailable",
+    "team_attribution_crops_unavailable",
+    "team_attribution_evidence_materialization_failed",
+}
 
 
 class WorkflowActionError(ValueError):
@@ -65,6 +80,12 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     mixed_blocking = max(0, int(issues.get("mixed_blocking") or 0))
     coverage_readiness_blocked = bool(
         issues.get("coverage_readiness_blocked")
+    )
+    team_attribution_not_materialized = bool(
+        issues.get("team_attribution_evidence_not_materialized")
+    )
+    team_attribution_technical_failure = bool(
+        issues.get("team_attribution_evidence_technical_failure")
     )
     render_status = str(render.get("status") or "missing")
     render_current = bool(freshness.get("reviewed_output_current"))
@@ -130,11 +151,22 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
 
     if normal_blocking:
         steps["exceptions"] = _step("exceptions", "current", completed=issues.get("completed"), total=issues.get("total"), remaining=normal_blocking)
-        steps["mixed_players"] = _step("mixed_players", "locked", "identity_issues_remaining", {"count": normal_blocking})
+        # Required and scope-blocking Mixed are peer queues inside one Review
+        # stage.  They can be worked in either order; only finalization stays
+        # locked until both authoritative queues are empty.
+        steps["mixed_players"] = _step(
+            "mixed_players",
+            "current" if mixed_blocking else "completed",
+            remaining=mixed_blocking,
+            total=issues.get("mixed_total"),
+            completed=issues.get("mixed_resolved"),
+        )
         steps["finalize"] = _step("finalize", "locked", "identity_issues_remaining", {"count": blocking})
         steps["video_qa"] = _step("video_qa", "locked", "identity_issues_remaining", {"count": blocking})
         blockers.append(_blocker("identity_issues_remaining", "exceptions", {"count": normal_blocking}))
         allowed = ["review_identity_issue"]
+        if mixed_blocking:
+            allowed.append("review_mixed_players")
         return _state(match_id, True, "action_required", "exceptions", steps, blockers, allowed, initial, issues, freshness, render, {"type": "review_identity_issue", "step_id": "exceptions", "remaining": normal_blocking})
 
     steps["exceptions"] = _step("exceptions", "completed", completed=issues.get("completed"), total=issues.get("total"), remaining=0)
@@ -147,6 +179,9 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
     steps["mixed_players"] = _step("mixed_players", "completed", remaining=0, total=issues.get("mixed_total"), completed=issues.get("mixed_resolved"))
     if coverage_readiness_blocked:
         readiness = issues.get("coverage_readiness") or {}
+        technical_retry_available = _has_retryable_team_attribution_technical_status(
+            readiness
+        )
         details = {
             "readiness_status": readiness.get("status"),
             "blockers": list(readiness.get("blockers") or []),
@@ -172,27 +207,65 @@ def derive_review_workflow_state(evidence: dict[str, Any]) -> dict[str, Any]:
             "identity_coverage_unresolved_without_reviewable_evidence",
             details,
         )
+        blocker_code = (
+            "team_attribution_evidence_technical_failure"
+            if team_attribution_technical_failure
+            else "identity_coverage_unresolved_without_reviewable_evidence"
+        )
         blockers.append(
             _blocker(
-                "identity_coverage_unresolved_without_reviewable_evidence",
+                blocker_code,
                 "exceptions",
                 details,
-                user_actionable=False,
+                user_actionable=(
+                    team_attribution_not_materialized
+                    or (
+                        team_attribution_technical_failure
+                        and technical_retry_available
+                    )
+                ),
             )
         )
+        # Technical evidence failures are fail-closed for finalization. Retry
+        # stays available only for a status whose prerequisite can plausibly
+        # change (for example a restored source video), not for the durable
+        # recovery-incomplete outcome produced by the bounded convergence
+        # guard.
+        allowed = ["retry_review_recompute"] if (
+            team_attribution_not_materialized
+            or (
+                team_attribution_technical_failure
+                and technical_retry_available
+            )
+        ) else []
         return _state(
             match_id,
             True,
-            "action_required",
+            "error",
             "exceptions",
             steps,
             blockers,
-            [],
+            allowed,
             initial,
             issues,
             freshness,
             render,
-            None,
+            (
+                {"type": "retry_review_recompute", "step_id": "exceptions"}
+                if team_attribution_not_materialized and not team_attribution_technical_failure
+                else {
+                    "type": (
+                        "coverage_evidence_technical_failure"
+                        if team_attribution_technical_failure
+                        else "coverage_evidence_unavailable"
+                    ),
+                    "step_id": "exceptions",
+                }
+            ),
+            # This is an authoritative terminal-quality branch: both queues
+            # are exhausted. A technical evidence fault blocks output but
+            # never reopens manual operator work.
+            terminal_data_quality_error=True,
         )
     if render_status in PROCESSING_RENDER_STATUSES:
         steps["finalize"] = _step("finalize", "processing")
@@ -257,13 +330,21 @@ def get_review_workflow_state(
         and output_manifest
         and output_manifest.get("stale") is not True
     )
+    recompute_state = {} if progress is not None else load_reviewed_identity_recompute_state(match_path)
+    recompute_pending = recompute_state.get("status") == "required"
     if progress is None:
-        progress, progress_reason = _current_cached_progress(
-            match_path,
-            snapshot,
-            match_doc,
-        )
+        if recompute_pending:
+            progress, progress_reason = None, "review_progress_recompute_required"
+        else:
+            progress, progress_reason = _current_cached_progress(
+                match_path,
+                snapshot,
+                match_doc,
+            )
     else:
+        # Callers that pass progress are in the authoritative recompute
+        # transaction itself; that exact in-flight generation is safe to
+        # derive before the marker is cleared at commit.
         progress_reason = None
     initial = (
         completion_evidence
@@ -283,6 +364,11 @@ def get_review_workflow_state(
             "qa_approval_current": approval_is_current(approval, fingerprints) and output_current and stats_current,
             "review_progress_current": progress is not None,
             "review_progress_reason": progress_reason,
+            "review_progress_recompute_generation": (
+                str(recompute_state.get("semantic_decision_digest") or "")
+                if recompute_pending
+                else None
+            ),
         },
         "render": _public_render(job),
         "recompute_failed": bool(load_json_object(match_path / "review_workflow_recompute_failure.json")),
@@ -294,6 +380,155 @@ def get_review_workflow_state(
         "review_progress_reason": progress_reason,
         "raw_structural_blockers": int(((progress or {}).get("summary") or {}).get("structural_blockers") or 0),
     }
+    return state
+
+
+def _has_retryable_team_attribution_technical_status(
+    readiness: dict[str, Any],
+) -> bool:
+    residual = readiness.get("team_attribution_residual") or {}
+    status_counts = residual.get("evidence_status_counts") or {}
+    return any(
+        int(status_counts.get(status) or 0) > 0
+        for status in RETRYABLE_TEAM_ATTRIBUTION_TECHNICAL_STATUSES
+    )
+
+
+def build_compact_review_workflow_state(
+    match_path: Path,
+    match_doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Derive public workflow state without parsing the large snapshot.
+
+    This is deliberately distinct from the finalize-only preflight below:
+    browser reads must describe analysis and initial-audit stages before a
+    Reviewed Identity report has ever been materialized.
+    """
+    analysis_completed = _analysis_completed(match_path, match_doc)
+    initial = load_initial_audit_completion_evidence(match_path)
+    recompute_failed = bool(
+        load_json_object(match_path / RECOMPUTE_FAILURE_FILENAME)
+    )
+    if not analysis_completed or not bool(initial.get("complete")):
+        return derive_review_workflow_state({
+            "match_id": str(match_doc.get("id") or match_path.name),
+            "analysis_completed": analysis_completed,
+            "initial_audit": initial,
+            "issues": _issue_evidence({}, None),
+            "freshness": {
+                "reviewed_identity_current": False,
+                "reviewed_stats_current": False,
+                "reviewed_output_current": False,
+                "qa_approval_current": False,
+                "review_progress_current": False,
+                "review_progress_reason": "review_progress_missing",
+                "review_progress_recompute_generation": None,
+            },
+            "render": {"status": "missing"},
+            "recompute_failed": recompute_failed,
+        })
+
+    report = load_json_object(match_path / "reviewed_identity_report.json")
+    snapshot_digest = str((report or {}).get("snapshot_digest") or "")
+    recompute_state = load_reviewed_identity_recompute_state(match_path)
+    return _compact_workflow_state_for_generation(
+        match_path,
+        match_doc,
+        initial=initial,
+        snapshot_digest=snapshot_digest,
+        canonical_generation_current=bool(
+            snapshot_digest
+            and canonical_generation_maybe_current(
+                (report or {}).get(FINGERPRINTS_FIELD),
+                match_path,
+            )
+        ),
+        recompute_failed=recompute_failed,
+        recompute_state=recompute_state,
+    )
+
+
+def _compact_workflow_state_for_generation(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    *,
+    initial: dict[str, Any],
+    snapshot_digest: str,
+    canonical_generation_current: bool,
+    recompute_failed: bool,
+    recompute_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Use report/progress generation evidence to derive public workflow."""
+    recompute_state = recompute_state or {}
+    recompute_pending = recompute_state.get("status") == "required"
+    # A structural Review mutation invalidates the durable queue before its
+    # canonical replacement is committed.  The hot projection may already
+    # contain the current topology, but the compact workflow must never expose
+    # the previous durable queue as current operator work in that interval.
+    #
+    # Do not delete the durable document: it remains useful provenance for the
+    # recompute transaction.  Its generation is simply not publishable through
+    # the compact workflow while this explicit marker exists.
+    if recompute_pending:
+        progress, progress_reason = None, "review_progress_recompute_required"
+    else:
+        progress, progress_reason = _current_cached_progress_for_snapshot_digest(
+            match_path,
+            snapshot_digest,
+            match_doc,
+        )
+    stats = load_json_object(match_path / "reviewed_player_stats.json")
+    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
+    output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
+    job = reviewed_output_status_read_only(
+        match_path,
+        snapshot_digest=snapshot_digest,
+    )
+    approval = load_video_qa_approval(match_path)
+    fingerprints = current_approval_fingerprint(snapshot_digest, stats, job, output_manifest)
+    stats_current = bool(
+        stats
+        and stats.get("source_snapshot_digest") == snapshot_digest
+        and review_scope_dependency_matches(match_doc, stats)
+        and (
+            not stats_readiness
+            or stats_readiness.get("status") == "completed"
+        )
+    )
+    output_current = bool(
+        job.get("status") == "completed"
+        and job.get("source_snapshot_digest") == snapshot_digest
+        and review_scope_dependency_matches(match_doc, job)
+        and output_manifest
+        and output_manifest.get("stale") is not True
+    )
+    state = derive_review_workflow_state({
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "analysis_completed": _analysis_completed(match_path, match_doc),
+        "initial_audit": initial,
+        "issues": _issue_evidence({}, progress),
+        "freshness": {
+            "reviewed_identity_current": canonical_generation_current,
+            "reviewed_stats_current": stats_current and canonical_generation_current,
+            "reviewed_output_current": output_current and canonical_generation_current,
+            "qa_approval_current": (
+                approval_is_current(approval, fingerprints)
+                and output_current
+                and stats_current
+                and canonical_generation_current
+            ),
+            "review_progress_current": progress is not None,
+            "review_progress_reason": progress_reason,
+            "review_progress_recompute_generation": (
+                str(recompute_state.get("semantic_decision_digest") or "")
+                if recompute_pending
+                else None
+            ),
+        },
+        "render": _public_render(job),
+        "recompute_failed": recompute_failed,
+    })
+    state["compact_workflow"] = True
     return state
 
 
@@ -339,64 +574,16 @@ def build_cheap_finalize_preflight_state(
         )
     )
 
-    progress, progress_reason = _current_cached_progress_for_snapshot_digest(
+    state = _compact_workflow_state_for_generation(
         match_path,
-        snapshot_digest,
         match_doc,
-    )
-
-    stats = load_json_object(match_path / "reviewed_player_stats.json")
-    stats_readiness = load_json_object(match_path / "reviewed_stats_readiness.json")
-    output_manifest = load_json_object(match_path / "reviewed_output_manifest.json")
-    job = reviewed_output_status_read_only(
-        match_path,
+        initial=load_initial_audit_completion_evidence(match_path),
         snapshot_digest=snapshot_digest,
-    )
-    approval = load_video_qa_approval(match_path)
-    fingerprints = current_approval_fingerprint(snapshot_digest, stats, job, output_manifest)
-    stats_current = bool(
-        stats
-        and stats.get("source_snapshot_digest") == snapshot_digest
-        and review_scope_dependency_matches(match_doc, stats)
-        and (
-            not stats_readiness
-            or stats_readiness.get("status") == "completed"
-        )
-    )
-    output_current = bool(
-        job.get("status") == "completed"
-        and job.get("source_snapshot_digest") == snapshot_digest
-        and review_scope_dependency_matches(match_doc, job)
-        and output_manifest
-        and output_manifest.get("stale") is not True
-    )
-    state = derive_review_workflow_state({
-        "match_id": str(match_doc.get("id") or match_path.name),
-        "analysis_completed": _analysis_completed(match_path, match_doc),
-        "initial_audit": load_initial_audit_completion_evidence(match_path),
-        "issues": _issue_evidence({}, progress),
-        "freshness": {
-            # Canonical freshness versus the current sources is approximated
-            # by the compact source-file generation fingerprints; only a
-            # matching generation keeps deferring the expensive semantic
-            # check to the authoritative pass.
-            "reviewed_identity_current": canonical_generation_current,
-            "reviewed_stats_current": stats_current and canonical_generation_current,
-            "reviewed_output_current": output_current and canonical_generation_current,
-            "qa_approval_current": (
-                approval_is_current(approval, fingerprints)
-                and output_current
-                and stats_current
-                and canonical_generation_current
-            ),
-            "review_progress_current": progress is not None,
-            "review_progress_reason": progress_reason,
-        },
-        "render": _public_render(job),
-        "recompute_failed": bool(
+        canonical_generation_current=canonical_generation_current,
+        recompute_failed=bool(
             load_json_object(match_path / RECOMPUTE_FAILURE_FILENAME)
         ),
-    })
+    )
     state["cheap_preflight"] = True
     return state
 
@@ -476,6 +663,16 @@ def _current_cached_progress_for_snapshot_digest(
         return None, "review_progress_policy_stale"
     if (progress.get("policy") or {}).get("version") != COVERAGE_POLICY_VERSION:
         return None, "review_progress_policy_stale"
+    if (
+        (progress.get("policy") or {}).get(
+            "team_attribution_evidence_lifecycle_version"
+        )
+        != TEAM_ATTRIBUTION_EVIDENCE_LIFECYCLE_VERSION
+    ):
+        # This is an explicit migration boundary, not an ordinary missing
+        # cache.  Its retry performs one exact-source evidence re-evaluation
+        # before committing the refreshed projection.
+        return None, "review_progress_team_attribution_evidence_lifecycle_stale"
     if not review_scope_dependency_matches(match_doc, progress):
         return None, "review_progress_scope_stale"
     return progress, None
@@ -483,13 +680,44 @@ def _current_cached_progress_for_snapshot_digest(
 
 def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -> dict[str, Any]:
     progress_summary = (progress or {}).get("summary") or {}
-    pending = int(progress_summary.get("important_decisions_remaining") or 0)
+    required_queue = required_queue_descriptor(progress)
+    # The public Required queue owns this count. A stale summary or a
+    # technical remediation residual must never become fake operator debt.
+    # Tiny legacy/isolated fixtures can omit the queue entirely; production
+    # progress always persists it. Retain their diagnostic fallback without
+    # allowing a real empty queue to inherit a stale summary count.
+    pending = (
+        int(required_queue["count"])
+        if isinstance(progress, dict) and "next_cases" in progress
+        else int(progress_summary.get("important_decisions_remaining") or 0)
+    )
     mixed = (progress or {}).get("mixed_players", {}).get("summary", {})
     mixed_pending = int(mixed.get("unresolved") or 0)
     coverage_readiness = (progress or {}).get("coverage_readiness")
     coverage_readiness_blocked = bool(
         isinstance(coverage_readiness, dict)
         and coverage_readiness.get("allows_finalize") is False
+    )
+    coverage_residuals = (progress or {}).get("coverage_residuals") or {}
+    team_attribution_evidence_not_materialized = any(
+        classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        )
+        == "remediable_not_established"
+        for residual in coverage_residuals.values()
+        if isinstance(residual, dict)
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
+        if isinstance(case, dict)
+    )
+    team_attribution_evidence_technical_failure = any(
+        classify_team_attribution_evidence_status(
+            case.get("team_attribution_evidence_status")
+        )
+        == "technical_failure"
+        for residual in coverage_residuals.values()
+        if isinstance(residual, dict)
+        for case in residual.get("non_actionable_required_team_uncertainty_cases") or []
+        if isinstance(case, dict)
     )
     # The progress artifact is the authoritative operator queue.  The reviewed
     # snapshot can still report technical conflicts after an operator has made
@@ -501,10 +729,13 @@ def _issue_evidence(snapshot: dict[str, Any], progress: dict[str, Any] | None) -
         "blocking": pending + mixed_pending,
         "actionable_blocking": pending + mixed_pending,
         "coverage_readiness_blocked": coverage_readiness_blocked,
+        "team_attribution_evidence_not_materialized": team_attribution_evidence_not_materialized,
+        "team_attribution_evidence_technical_failure": team_attribution_evidence_technical_failure,
         "overall_identity_blocked": bool(
             pending or mixed_pending or coverage_readiness_blocked
         ),
         "normal_blocking": pending,
+        "required_queue": required_queue,
         "mixed_blocking": mixed_pending,
         "important": pending + mixed_pending,
         "semantic": int(progress_summary.get("semantic_decisions_remaining") or 0),
@@ -550,8 +781,60 @@ def _blocker(
     }
 
 
-def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None) -> dict[str, Any]:
+def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id: dict[str, dict[str, Any]], blockers: list[dict[str, Any]], allowed_actions: list[str], initial: dict[str, Any], issues: dict[str, Any], freshness: dict[str, Any], render: dict[str, Any], required_action: dict[str, Any] | None, *, terminal_data_quality_error: bool = False) -> dict[str, Any]:
     complete = status == "complete"
+    coverage_readiness_blocked = bool(issues.get("coverage_readiness_blocked"))
+    mandatory_operator_review_complete = bool(
+        initial.get("complete")
+        and not int(issues.get("normal_blocking") or issues.get("blocking") or 0)
+        and not int(issues.get("mixed_blocking") or 0)
+        and phase not in {"initial_audit", "unavailable"}
+        # An error means operator completion only when this exact,
+        # authoritative branch reached exhausted queues and final coverage
+        # readiness. Cached coverage flags on stale/technical errors cannot
+        # turn a required refresh into a terminal data-quality state.
+        and (status != "error" or terminal_data_quality_error)
+    )
+    data_quality_ready_for_output = bool(
+        mandatory_operator_review_complete and not coverage_readiness_blocked
+    )
+    optional_summary = issues.get("optional_audit_summary") or {}
+    optional_max_available = bool(
+        data_quality_ready_for_output
+        and str(optional_summary.get("status") or "") == "available"
+        and int(optional_summary.get("remaining_cases") or 0) > 0
+    )
+    public_issues = {
+        "blocking": int(issues.get("blocking") or 0),
+        "actionable_blocking": int(
+            issues.get("actionable_blocking") or issues.get("blocking") or 0
+        ),
+        "normal_blocking": int(issues.get("normal_blocking") or 0),
+        "required_queue": dict(issues.get("required_queue") or {}),
+        "mixed_blocking": int(issues.get("mixed_blocking") or 0),
+        "mixed_total": int(issues.get("mixed_total") or 0),
+        "mixed_resolved": int(issues.get("mixed_resolved") or 0),
+        "important": int(issues.get("important") or 0),
+        "semantic": int(issues.get("semantic") or 0),
+        "coverage": int(issues.get("coverage") or 0),
+        "optional": int(issues.get("optional") or 0),
+        "optional_audit": int(issues.get("optional_audit") or 0),
+        "coverage_readiness_blocked": coverage_readiness_blocked,
+        "team_attribution_evidence_not_materialized": bool(
+            issues.get("team_attribution_evidence_not_materialized")
+        ),
+        "team_attribution_evidence_technical_failure": bool(
+            issues.get("team_attribution_evidence_technical_failure")
+        ),
+        "overall_identity_blocked": bool(
+            issues.get("overall_identity_blocked")
+            or int(issues.get("blocking") or 0)
+        ),
+        "coverage_readiness": issues.get("coverage_readiness"),
+        "identity_coverage": issues.get("identity_coverage"),
+        "workload": issues.get("workload"),
+        "optional_audit_summary": optional_summary or None,
+    }
     return {
         "schema_version": WORKFLOW_SCHEMA_VERSION,
         "match_id": match_id,
@@ -560,11 +843,14 @@ def _state(match_id: str, available: bool, status: str, phase: str, steps_by_id:
         "status": status,
         "current_step_id": phase if phase in STEP_IDS else "video_qa" if phase == "complete" else "finalize",
         "review_complete": complete,
+        "mandatory_operator_review_complete": mandatory_operator_review_complete,
+        "data_quality_ready_for_output": data_quality_ready_for_output,
+        "optional_max_available": optional_max_available,
         "can_enter_report": complete,
         "can_publish": complete,
         "steps": [steps_by_id[step_id] for step_id in STEP_IDS],
         "required_action": required_action,
-        "issues": {"blocking": int(issues.get("blocking") or 0), "actionable_blocking": int(issues.get("actionable_blocking") or issues.get("blocking") or 0), "normal_blocking": int(issues.get("normal_blocking") or 0), "mixed_blocking": int(issues.get("mixed_blocking") or 0), "mixed_total": int(issues.get("mixed_total") or 0), "mixed_resolved": int(issues.get("mixed_resolved") or 0), "important": int(issues.get("important") or 0), "semantic": int(issues.get("semantic") or 0), "coverage": int(issues.get("coverage") or 0), "optional": int(issues.get("optional") or 0), "optional_audit": int(issues.get("optional_audit") or 0), "coverage_readiness_blocked": bool(issues.get("coverage_readiness_blocked")), "overall_identity_blocked": bool(issues.get("overall_identity_blocked") or int(issues.get("blocking") or 0)), "coverage_readiness": issues.get("coverage_readiness"), "identity_coverage": issues.get("identity_coverage"), "workload": issues.get("workload"), "optional_audit_summary": issues.get("optional_audit_summary")},
+        "issues": public_issues,
         "initial_audit": initial,
         "freshness": freshness,
         "processing": render if status in {"processing", "error"} else None,

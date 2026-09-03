@@ -37,6 +37,13 @@ import type {
   PlayerAssignmentsDocument,
   PublishedMatch,
   PublishedMatchDetail,
+  MatchGroupMetadata,
+  MatchGroupPreview,
+  MatchGroupRecord,
+  MatchGroupReportResponse,
+  MatchGroupExternalVideoStatus,
+  MatchGroupVideoStatus,
+  MatchGroupSource,
   StablePlayerReviewPayload,
   StablePlayersReviewState,
   Team,
@@ -61,14 +68,68 @@ import type {
 import type {
   BoundedH2Session,
 } from './components/boundedH2ReIdTypes';
+import { ApiRequestError } from './lib/apiErrors';
 
-const API_BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_BASE_URL || '');
+const API_BASE = import.meta.env?.DEV ? '' : (import.meta.env?.VITE_API_BASE_URL || '');
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method || 'GET').toUpperCase();
+  const requestKey = `${API_BASE}${path}`;
+  if (method === 'GET') {
+    if (options?.signal?.aborted) throw createRequestAbortError();
+    const pending = inFlightGetRequests.get(requestKey);
+    if (pending) return awaitSharedGet<T>(pending, options?.signal);
+    // The shared request deliberately has no consumer-owned signal. A panel
+    // cleanup detaches only that consumer; it must not start a duplicate cold
+    // backend build when StrictMode immediately remounts another consumer.
+    const sharedOptions: RequestInit = { ...options };
+    delete sharedOptions.signal;
+    const operation = requestUncoalesced<T>(path, sharedOptions).finally(() => {
+      inFlightGetRequests.delete(requestKey);
+    });
+    inFlightGetRequests.set(requestKey, operation);
+    // A signal can already abort during a synchronous fetch mock or another
+    // caller edge case. Keep the shared rejection observed even when that
+    // consumer never gets far enough to attach its local wrapper.
+    void operation.catch(() => undefined);
+    return awaitSharedGet<T>(operation, options?.signal);
+  }
+  return requestUncoalesced<T>(path, options);
+}
+
+function awaitSharedGet<T>(
+  shared: Promise<unknown>,
+  signal?: AbortSignal | null,
+): Promise<T> {
+  if (!signal) return shared as Promise<T>;
+  if (signal.aborted) return Promise.reject(createRequestAbortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createRequestAbortError());
+    };
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    signal.addEventListener('abort', onAbort, { once: true });
+    shared.then(
+      (value) => {
+        cleanup();
+        resolve(value as T);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+async function requestUncoalesced<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, options);
   } catch (error) {
+    if (isRequestAbortError(error)) throw error;
     throw new Error(`Network error: ${error instanceof Error ? error.message : String(error)}`);
   }
 
@@ -81,9 +142,30 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const detail = typeof rawDetail === 'string'
       ? rawDetail
       : JSON.stringify(rawDetail);
-    throw new Error(`${res.status}: ${detail}`);
+    const code = typeof rawDetail === 'object'
+      && rawDetail !== null
+      && 'code' in rawDetail
+      && typeof (rawDetail as { code?: unknown }).code === 'string'
+      ? (rawDetail as { code: string }).code
+      : null;
+    throw new ApiRequestError(res.status, detail, code);
   }
   return res.json() as Promise<T>;
+}
+
+export function isRequestAbortError(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && (error as { name?: unknown }).name === 'AbortError';
+}
+
+function createRequestAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('Request was cancelled by this consumer.', 'AbortError');
+  }
+  const error = new Error('Request was cancelled by this consumer.');
+  error.name = 'AbortError';
+  return error;
 }
 
 export function artifactUrl(matchId: string, artifactName: string): string {
@@ -247,12 +329,21 @@ export async function retryReviewRecompute(matchId: string): Promise<ReviewWorkf
   return response.workflow;
 }
 
+export async function reprojectReviewWorkflow(matchId: string): Promise<ReviewWorkflow> {
+  const response = await request<{ workflow: ReviewWorkflow }>(
+    `/api/matches/${encodeURIComponent(matchId)}/review-workflow/reproject`,
+    { method: 'POST' },
+  );
+  return response.workflow;
+}
+
 export async function getReviewedIdentityReviewProgress(
   matchId: string,
   offset = 0,
   limit = 20,
   teamLabel?: import('./types').ReviewedIdentityTeamFilterLabel,
   queue: import('./types').ReviewedIdentityReviewQueue = 'required',
+  options?: Pick<RequestInit, 'signal'>,
 ): Promise<ReviewedIdentityReviewProgress> {
   const query = new URLSearchParams({
     offset: String(offset),
@@ -262,6 +353,7 @@ export async function getReviewedIdentityReviewProgress(
   query.set('queue', queue);
   return request<ReviewedIdentityReviewProgress>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/review-progress?${query}`,
+    options,
   );
 }
 
@@ -296,6 +388,15 @@ export async function getReviewedCorrectionContext(
     : '';
   return request<ReviewedCorrectionContext>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/context?candidate_subject_id=${encodeURIComponent(candidateSubjectId)}${targetQuery}`,
+  );
+}
+
+export async function getReviewedHistoricalSplitRepairContext(
+  matchId: string,
+  caseId: string,
+): Promise<ReviewedCorrectionContext> {
+  return request<ReviewedCorrectionContext>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/corrections/historical-split/${encodeURIComponent(caseId)}`,
   );
 }
 
@@ -360,9 +461,20 @@ export async function finalizeReviewedIdentityCorrections(
   );
 }
 
-export async function getMixedPlayersReview(matchId: string): Promise<import('./types').MixedPlayersReviewQueue> {
+export async function getMixedPlayersReview(
+  matchId: string,
+): Promise<import('./types').MixedPlayersReviewQueue> {
   return request<import('./types').MixedPlayersReviewQueue>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players`,
+  );
+}
+
+export async function getMixedPlayerReviewCase(
+  matchId: string,
+  caseId: string,
+): Promise<import('./types').MixedPlayerFocusedCaseResponse> {
+  return request<import('./types').MixedPlayerFocusedCaseResponse>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/${encodeURIComponent(caseId)}`,
   );
 }
 
@@ -381,6 +493,36 @@ export async function getMixedBoundaryRefinement(
   if (caseId) query.set('case_id', caseId);
   return request<import('./types').MixedBoundaryRefinement>(
     `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/mixed-players/refine?${query}`,
+  );
+}
+
+export async function getConcurrentLaneRefinement(
+  matchId: string,
+  payload: {
+    candidate_subject_id: string;
+    parent_case_id: string;
+    parent_source_digest: string;
+    lane_id: string;
+    lane_source_digest: string;
+    after_frame: number;
+    before_frame: number;
+    review_target_id?: string;
+    continuity_group_id?: string;
+  },
+): Promise<import('./types').ConcurrentLaneRefinement> {
+  const query = new URLSearchParams({
+    candidate_subject_id: payload.candidate_subject_id,
+    parent_case_id: payload.parent_case_id,
+    parent_source_digest: payload.parent_source_digest,
+    lane_id: payload.lane_id,
+    lane_source_digest: payload.lane_source_digest,
+    after_frame: String(payload.after_frame),
+    before_frame: String(payload.before_frame),
+  });
+  if (payload.review_target_id) query.set('review_target_id', payload.review_target_id);
+  if (payload.continuity_group_id) query.set('continuity_group_id', payload.continuity_group_id);
+  return request<import('./types').ConcurrentLaneRefinement>(
+    `/api/matches/${encodeURIComponent(matchId)}/reviewed-identity/concurrent-lanes/refine?${query}`,
   );
 }
 
@@ -637,8 +779,14 @@ export async function saveIdentityCropReview(
   });
 }
 
-export async function getIdentityRosterSubjectReview(matchId: string): Promise<IdentityRosterSubjectReviewDocument> {
-  return request<IdentityRosterSubjectReviewDocument>(`/api/matches/${matchId}/identity-roster-subject-review`);
+export async function getIdentityRosterSubjectReview(
+  matchId: string,
+  options?: Pick<RequestInit, 'signal'>,
+): Promise<IdentityRosterSubjectReviewDocument> {
+  return request<IdentityRosterSubjectReviewDocument>(
+    `/api/matches/${matchId}/identity-roster-subject-review`,
+    options,
+  );
 }
 
 export async function saveIdentityRosterSubjectReview(
@@ -766,4 +914,64 @@ export async function getReviewedMatchReport(matchId: string): Promise<PublicMat
 
 export async function deletePublishedMatch(matchId: string): Promise<{ status: string; match: PublishedMatch }> {
   return request<{ status: string; match: PublishedMatch }>(`/api/published/matches/${matchId}`, { method: 'DELETE' });
+}
+
+export async function listEligibleMatchGroupSources(): Promise<MatchGroupSource[]> {
+  return request<MatchGroupSource[]>('/api/published/match-groups/eligible-sources');
+}
+
+export async function previewMatchGroup(payload: {
+  member_published_ids: string[];
+  metadata: MatchGroupMetadata;
+}): Promise<MatchGroupPreview> {
+  return request<MatchGroupPreview>('/api/published/match-groups/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function listMatchGroups(): Promise<MatchGroupRecord[]> {
+  return request<MatchGroupRecord[]>('/api/published/match-groups');
+}
+
+export async function createMatchGroup(payload: {
+  member_published_ids: string[];
+  metadata: MatchGroupMetadata;
+}): Promise<MatchGroupRecord> {
+  return request<MatchGroupRecord>('/api/published/match-groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+}
+
+export async function regenerateMatchGroup(groupId: string): Promise<MatchGroupRecord> {
+  return request<MatchGroupRecord>(`/api/published/match-groups/${encodeURIComponent(groupId)}/regenerate`, { method: 'POST' });
+}
+
+export async function deleteMatchGroup(groupId: string): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/published/match-groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' });
+}
+
+export async function getMatchGroupReport(groupId: string): Promise<MatchGroupReportResponse> {
+  return request<MatchGroupReportResponse>(`/api/published/match-groups/${encodeURIComponent(groupId)}/report`);
+}
+
+export async function getMatchGroupVideo(groupId: string): Promise<MatchGroupVideoStatus> {
+  return request<MatchGroupVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/video`);
+}
+
+export async function generateMatchGroupVideo(groupId: string): Promise<MatchGroupVideoStatus> {
+  return request<MatchGroupVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/video/generate`, { method: 'POST' });
+}
+
+export async function getMatchGroupExternalVideo(groupId: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/external-video`);
+}
+
+export async function saveMatchGroupExternalVideo(groupId: string, url: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/external-video`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+  });
+}
+
+export async function deleteMatchGroupExternalVideo(groupId: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/external-video`, { method: 'DELETE' });
 }

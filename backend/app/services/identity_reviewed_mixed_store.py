@@ -4,15 +4,31 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
-from app.services.identity_canonical_io import load_json_cached_or
+from app.services.identity_canonical_io import load_json_cached_or, review_build_context
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.play_area import is_on_pitch_product_observation
 from app.services.identity_roster_anchor_crop_renderer import render_identity_roster_anchor_crops
 from app.services.identity_reviewed_slot_registry import build_reviewed_slot_registry
+from app.services.identity_reviewed_scope_eligibility import (
+    mixed_review_relevant_for_scope,
+)
+from app.services.identity_reviewed_action_scope import (
+    reviewed_identity_action_capabilities,
+)
+from app.services.identity_reviewed_mixed_topology import (
+    analyze_temporal_split_topology,
+    require_simple_temporal_split,
+)
+from app.services.identity_reviewed_concurrent_lanes import (
+    derive_concurrent_lanes,
+    expanded_concurrent_lane_segments,
+    validate_concurrent_lane_resolutions,
+)
 from app.services.video import resolve_match_video_path
 
 
@@ -22,15 +38,21 @@ MIXED_HINTS = frozenset(
     {"cross_team", "same_team_a", "same_team_b", "player_referee", "unknown"}
 )
 UNRESOLVED_STATUSES = frozenset({"unresolved", "unresolved_complex_mix"})
+MANDATORY_MIXED_CASE_STATUSES = frozenset(
+    {"current_blocking", "stale_or_unclassifiable_blocking"}
+)
+
+# An image request may arrive while a freshly reprojected local workspace still
+# holds an otherwise valid card whose crop has not been materialized yet. Keep
+# that recovery bounded to one render per match, rather than letting every
+# image element start a duplicate video pass.
+_MIXED_EVIDENCE_LOCKS_GUARD = Lock()
+_MIXED_EVIDENCE_LOCKS: dict[str, Lock] = {}
 
 
 def load_mixed_player_cases(match_path: Path) -> dict[str, Any]:
     path = match_path / FILENAME
-    if not path.exists():
-        return _document([])
-    import json
-
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = load_json_cached_or(path, _document([]))
     if not isinstance(value, dict) or not isinstance(value.get("cases"), list):
         raise ValueError(f"{FILENAME} must contain a cases array")
     return value
@@ -133,7 +155,10 @@ def inline_temporal_split_for_source(
         )
     }
     for row in load_mixed_player_cases(match_path).get("cases") or []:
-        if str(row.get("original_issue") or "") != "inline_temporal_split":
+        if (
+            str(row.get("original_issue") or "") != "inline_temporal_split"
+            and str(row.get("resolution_model") or "") != "concurrent_lanes"
+        ):
             continue
         stored = row.get("source")
         if not isinstance(stored, dict):
@@ -227,12 +252,94 @@ def resolved_material_continuity_observation_pairs(
     return active_pairs
 
 
-def mixed_case_summary(match_path: Path) -> dict[str, int]:
-    rows = load_mixed_player_cases(match_path).get("cases") or []
-    unresolved = sum(str(row.get("resolution_status")) in UNRESOLVED_STATUSES for row in rows)
+def resolved_inline_temporal_split_source_keys(
+    cases: list[dict[str, Any]],
+    decisions: dict[str, dict[str, Any]],
+    targets: list[dict[str, Any]],
+) -> set[tuple[str, str]]:
+    """Return exact parent targets retired by complete resolved child splits.
+
+    An inline split is authoritative only when every persisted child target is
+    still present, every child has a current decision, and the children cover
+    precisely the parent source observations.  This is intentionally stricter
+    than the case's ``resolved`` flag: a stale or incomplete child set must
+    leave the original canonical target visible for safe operator review.
+
+    The returned tuple contains the source target id and its ownership digest,
+    so an unrelated canonical target for the same raw subject can never be
+    hidden.
+    """
+    targets_by_parent: dict[str, dict[str, dict[str, Any]]] = {}
+    for target in targets:
+        parent_id = str(target.get("split_parent_case_id") or "")
+        target_id = str(target.get("review_target_id") or "")
+        if parent_id and target_id:
+            targets_by_parent.setdefault(parent_id, {})[target_id] = target
+
+    retired: set[tuple[str, str]] = set()
+    for case in cases:
+        source = case.get("source")
+        if (
+            not isinstance(source, dict)
+            or str(case.get("resolution_status") or "") != "resolved"
+            or (
+                str(case.get("original_issue") or "") != "inline_temporal_split"
+                and str(case.get("resolution_model") or "") != "concurrent_lanes"
+            )
+        ):
+            continue
+        source_target_id = str(source.get("review_target_id") or "")
+        source_digest = str(source.get("source_ownership_digest") or "")
+        source_pairs = _owned_observation_pairs(source.get("owned_observations"))
+        child_target_ids = {
+            str(value) for value in case.get("segment_target_ids") or [] if str(value)
+        }
+        children = targets_by_parent.get(str(case.get("case_id") or ""), {})
+        if (
+            not source_target_id
+            or not source_digest
+            or not source_pairs
+            or not child_target_ids
+            or set(children) != child_target_ids
+        ):
+            continue
+
+        child_pairs: set[tuple[str, int]] = set()
+        for target_id in child_target_ids:
+            target = children[target_id]
+            decision = decisions.get(target_id)
+            if (
+                not isinstance(decision, dict)
+                or str(decision.get("source_ownership_digest") or "")
+                != str(target.get("source_ownership_digest") or "")
+            ):
+                break
+            child_pairs.update(_owned_observation_pairs(target.get("owned_observations")))
+        else:
+            if child_pairs == source_pairs:
+                retired.add((source_target_id, source_digest))
+    return retired
+
+
+def mixed_case_summary(
+    rows: list[dict[str, Any]],
+    blocking_case_ids: set[str],
+) -> dict[str, int]:
+    unresolved_rows = [
+        row for row in rows
+        if str(row.get("resolution_status")) in UNRESOLVED_STATUSES
+    ]
+    unresolved_total = len(unresolved_rows)
+    blocking = sum(
+        str(row.get("case_id") or row.get("candidate_subject_id") or "")
+        in blocking_case_ids
+        for row in unresolved_rows
+    )
     return {
         "total": len(rows),
-        "unresolved": unresolved,
+        "unresolved": blocking,
+        "unresolved_total": unresolved_total,
+        "nonblocking_by_scope": unresolved_total - blocking,
         "resolved": sum(str(row.get("resolution_status")) == "resolved" for row in rows),
         "complex_unresolved": sum(
             str(row.get("resolution_status")) == "unresolved_complex_mix" for row in rows
@@ -256,41 +363,266 @@ def build_mixed_review_queue(
         if row.get("candidate_subject_id")
     }
     cases = []
+    blocking_case_ids: set[str] = set()
     for marker in document.get("cases") or []:
-        if str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
-            continue
+        marker_id = str(marker.get("case_id") or marker.get("candidate_subject_id") or "")
         subject_id = str(marker.get("candidate_subject_id") or "")
-        subject = subjects.get(subject_id)
-        if not subject and not isinstance(marker.get("source"), dict):
-            continue
-        observations = _observations_for_marker(match_path, marker, subject)
-        if not observations:
-            continue
-        crops = _temporal_evidence(subject_id, observations, cards.get(subject_id), limit=12)
-        cases.append(
-            {
-                **marker,
-                "reviewed_complex": str(marker.get("resolution_status")) == "unresolved_complex_mix",
-                "reviewed_complex_at": marker.get("updated_at")
-                if str(marker.get("resolution_status")) == "unresolved_complex_mix"
-                else None,
-                "temporal_evidence": {
-                    "status": "ready" if crops else "missing",
-                    "anchor_crops": crops,
-                },
-            }
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subjects.get(subject_id),
+            card=cards.get(subject_id),
         )
+        if materialized["status"] in MANDATORY_MIXED_CASE_STATUSES:
+            blocking_case_ids.add(marker_id)
+            cases.append(materialized["case"])
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_queue",
         "match_id": str(match_doc.get("id") or match_path.name),
-        "summary": mixed_case_summary(match_path),
+        "summary": mixed_case_summary(
+            list(document.get("cases") or []),
+            blocking_case_ids,
+        ),
         "assignment_options": {
             "roster": _match_roster(match_doc),
             "slots": list(build_reviewed_slot_registry(match_path).values()),
         },
         "cases": sorted(cases, key=lambda row: (int(row.get("frame_start") or 0), str(row.get("case_id") or row.get("candidate_subject_id")))),
     }
+
+
+def build_focused_mixed_review_case(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    case_id: str,
+) -> dict[str, Any]:
+    """Load and materialize one durable Mixed marker without building its peers."""
+    wanted_case_id = str(case_id or "").strip()
+    marker = next(
+        (
+            dict(row)
+            for row in load_mixed_player_cases(match_path).get("cases") or []
+            if str(row.get("case_id") or row.get("candidate_subject_id") or "")
+            == wanted_case_id
+        ),
+        None,
+    )
+    if marker is None:
+        status = "missing"
+        case = None
+    elif str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
+        status = "no_longer_unresolved"
+        case = None
+    else:
+        subject_id = str(marker.get("candidate_subject_id") or "")
+        subject = next(
+            (
+                row
+                for row in _load(match_path / "identity_candidate_shadow.json").get("subjects") or []
+                if str(row.get("candidate_subject_id") or "") == subject_id
+            ),
+            None,
+        )
+        card = next(
+            (
+                row
+                for row in _load(
+                    match_path / "identity_roster_subject_review_shadow.json"
+                ).get("cards") or []
+                if str(row.get("candidate_subject_id") or "") == subject_id
+            ),
+            None,
+        )
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subject,
+            card=card,
+        )
+        status = str(materialized["status"])
+        case = materialized["case"]
+    assignment_options = (
+        {
+            "roster": _match_roster(match_doc),
+            "slots": list(build_reviewed_slot_registry(match_path).values()),
+        }
+        if status == "current_blocking"
+        else {"roster": [], "slots": []}
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "reviewed_identity_mixed_focused_case",
+        "match_id": str(match_doc.get("id") or match_path.name),
+        "requested_case_id": wanted_case_id,
+        "status": status,
+        "case": case,
+        "assignment_options": assignment_options,
+    }
+
+
+def _materialize_mixed_review_case(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    marker: dict[str, Any],
+    *,
+    subject: dict[str, Any] | None,
+    card: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply one shared ownership/scope contract to queue and focused reads."""
+    if str(marker.get("resolution_status")) not in UNRESOLVED_STATUSES:
+        return {"status": "no_longer_unresolved", "case": None}
+    observations = (
+        _observations_for_marker(match_path, marker, subject)
+        if subject is not None or isinstance(marker.get("source"), dict)
+        else []
+    )
+    if not observations or not _mixed_marker_ownership_is_current(
+        marker,
+        subject,
+        observations,
+    ):
+        # Exact ownership deliberately fails closed. Never reinterpret an
+        # incomplete V2 marker as a whole-subject case or suppress the blocker.
+        return {
+            "status": "stale_or_unclassifiable_blocking",
+            "case": _stale_blocking_case(marker),
+        }
+    if not mixed_review_relevant_for_scope(marker, observations, match_doc):
+        return {"status": "not_in_mandatory_queue", "case": None}
+    subject_id = str(marker.get("candidate_subject_id") or "")
+    temporal_topology = analyze_temporal_split_topology(observations)
+    crops = _temporal_evidence(subject_id, observations, card, limit=12)
+    action_capabilities = _mixed_action_capabilities(marker, observations, card)
+    concurrent_resolution = (
+        materialize_concurrent_resolution(
+            subject_id,
+            str(marker.get("case_id") or subject_id),
+            str(marker.get("source_subject_digest") or ""),
+            observations,
+            marker,
+        )
+        if temporal_topology["kind"] == "concurrent"
+        else None
+    )
+    complex_unresolved = (
+        str(marker.get("resolution_status")) == "unresolved_complex_mix"
+    )
+    return {
+        "status": "current_blocking",
+        "case": {
+            **marker,
+            "blocking": True,
+            "scope_status": "blocking",
+            "reviewed_complex": complex_unresolved,
+            "reviewed_complex_at": marker.get("updated_at")
+            if complex_unresolved
+            else None,
+            "temporal_topology": temporal_topology,
+            "concurrent_resolution": concurrent_resolution,
+            "action_capabilities": action_capabilities,
+            "temporal_evidence": {
+                "status": "ready" if crops else "missing",
+                "anchor_crops": crops,
+            },
+        },
+    }
+
+
+def _mixed_marker_ownership_is_current(
+    marker: dict[str, Any],
+    subject: dict[str, Any] | None,
+    observations: list[dict[str, Any]],
+) -> bool:
+    source = marker.get("source")
+    if isinstance(source, dict):
+        digest = str(source.get("source_ownership_digest") or "")
+        scope_kind = str(source.get("scope_kind") or "")
+        if (
+            not digest
+            or str(marker.get("candidate_subject_id") or "")
+            != str(source.get("candidate_subject_id") or "")
+        ):
+            return False
+        if scope_kind and scope_kind not in {
+            "whole_subject",
+            "canonical_segment",
+            "material_continuity",
+        }:
+            return False
+        if scope_kind and str(marker.get("source_subject_digest") or "") != digest:
+            return False
+        if scope_kind == "canonical_segment" and not source.get("review_target_id"):
+            return False
+        if scope_kind == "material_continuity" and not source.get("continuity_group_id"):
+            return False
+        wanted = _owned_observation_pairs(source.get("owned_observations"))
+        found = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in observations
+        }
+        if not wanted or found != wanted:
+            return False
+        # Older exact V2 markers predate scope/bounds aliases but still own a
+        # complete server-generated pair set. Never widen them to a subject;
+        # exact pair equality above is their authoritative compatibility gate.
+        return True
+    if subject is None or str(marker.get("source_subject_digest") or "") != _subject_digest(
+        subject,
+        observations,
+    ):
+        return False
+    observed_tracklets = sorted({str(row["tracklet_id"]) for row in observations})
+    observed_frames = [int(row["frame"]) for row in observations]
+    return (
+        sorted(str(value) for value in marker.get("source_tracklet_ids") or [])
+        == observed_tracklets
+        and int(marker.get("observation_count") or 0) == len(observations)
+        and marker.get("frame_start") is not None
+        and int(marker["frame_start"]) == min(observed_frames)
+        and marker.get("frame_end") is not None
+        and int(marker["frame_end"]) == max(observed_frames)
+    )
+
+
+def _stale_blocking_case(marker: dict[str, Any]) -> dict[str, Any]:
+    complex_unresolved = (
+        str(marker.get("resolution_status")) == "unresolved_complex_mix"
+    )
+    return {
+        **marker,
+        "blocking": True,
+        "scope_status": "stale_or_unclassifiable_blocking",
+        "reviewed_complex": complex_unresolved,
+        "reviewed_complex_at": marker.get("updated_at")
+        if complex_unresolved
+        else None,
+        "temporal_topology": None,
+        "concurrent_resolution": None,
+        "temporal_evidence": {"status": "missing", "anchor_crops": []},
+    }
+
+
+def _mixed_action_capabilities(
+    marker: dict[str, Any],
+    observations: list[dict[str, Any]],
+    card: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Expose the same server-owned action gate used by concurrent saves."""
+    source = marker.get("source")
+    scope_unit = {
+        "scope_kind": (
+            str(source.get("scope_kind") or "")
+            if isinstance(source, dict)
+            else "whole_subject"
+        ) or "whole_subject",
+        "detected_observation_count": len(observations),
+    }
+    if isinstance(card, dict) and card.get("priority") is not None:
+        scope_unit["priority"] = card["priority"]
+    return reviewed_identity_action_capabilities(scope_unit)
 
 
 def build_mixed_boundary_refinement(
@@ -339,6 +671,7 @@ def build_mixed_boundary_refinement(
         observations = list(resolved_source.get("observations") or [])
     else:
         observations = _subject_observations(match_path, subject)
+    require_simple_temporal_split(observations)
     card = next(
         (
             row
@@ -347,16 +680,15 @@ def build_mixed_boundary_refinement(
         ),
         None,
     )
-    overview_frames = [
-        int(crop["frame"])
-        for crop in _temporal_evidence(subject_id, observations, card, limit=12)
-    ]
+    overview = _temporal_evidence(subject_id, observations, card, limit=12)
+    overview_frames = [int(crop["frame"]) for crop in overview]
     if (after_frame, before_frame) not in set(zip(overview_frames, overview_frames[1:])):
         raise ValueError("Refinement interval must use neighboring overview samples")
     interval = [row for row in observations if after_frame < int(row["frame"]) <= before_frame]
     if not interval:
         raise ValueError("No detected observations in the selected refinement interval")
     crops = _temporal_evidence(subject_id, interval, card, limit=max(3, min(limit, 16)))
+    boundary_crops = refinement_boundary_crops(overview, after_frame, before_frame)
     payload = {
         "schema_version": SCHEMA_VERSION,
         "mode": "reviewed_identity_mixed_boundary_refinement",
@@ -366,6 +698,7 @@ def build_mixed_boundary_refinement(
         "source_subject_digest": case.get("source_subject_digest"),
         "after_frame": after_frame,
         "before_frame": before_frame,
+        "boundary_crops": boundary_crops,
         "anchor_crops": crops,
     }
     if source:
@@ -389,7 +722,14 @@ def render_mixed_review_evidence(
     crops = [
         crop
         for case in queue.get("cases") or []
-        for crop in (case.get("temporal_evidence") or {}).get("anchor_crops") or []
+        for crop in [
+            *((case.get("temporal_evidence") or {}).get("anchor_crops") or []),
+            *(
+                crop
+                for lane in (case.get("concurrent_resolution") or {}).get("lanes") or []
+                for crop in (lane.get("evidence") or {}).get("anchor_crops") or []
+            ),
+        ]
         if crop.get("generated_for_segment_review")
         and crop.get("artifact")
         and not (match_path / str(crop["artifact"])).exists()
@@ -407,6 +747,101 @@ def render_mixed_review_evidence(
     )
 
 
+def materialize_mixed_review_artifact(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    artifact: str,
+) -> bool:
+    """Materialize one current Mixed card when its image is requested late.
+
+    Queue and focused reads normally produce this evidence before returning.
+    This narrow fallback covers a stale in-memory card after a local
+    reprojection or development hot reload. It never resurrects a no-longer
+    mandatory case: only an exact artifact belonging to the authoritative
+    current queue is rendered.
+    """
+    target = match_path / artifact
+    if target.exists() and target.stat().st_size > 0:
+        return True
+
+    with _MIXED_EVIDENCE_LOCKS_GUARD:
+        render_lock = _MIXED_EVIDENCE_LOCKS.setdefault(str(match_path.resolve()), Lock())
+
+    with render_lock:
+        if target.exists() and target.stat().st_size > 0:
+            return True
+        with review_build_context():
+            evidence_case = _current_mixed_case_for_artifact(
+                match_path,
+                match_doc,
+                artifact,
+            )
+            if not isinstance(evidence_case, dict):
+                return False
+            render_mixed_review_evidence(match_path, match_doc, {"cases": [evidence_case]})
+        return target.exists() and target.stat().st_size > 0
+
+
+def _current_mixed_case_for_artifact(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    artifact: str,
+) -> dict[str, Any] | None:
+    """Resolve one artifact without constructing every peer in the queue."""
+    artifact_parts = Path(artifact).parts
+    if len(artifact_parts) != 3 or artifact_parts[0] != "reviewed_identity_mixed":
+        return None
+    subject_digest = artifact_parts[1]
+    markers = [
+        dict(marker)
+        for marker in load_mixed_player_cases(match_path).get("cases") or []
+        if canonical_digest(str(marker.get("candidate_subject_id") or ""))[:16] == subject_digest
+        and str(marker.get("resolution_status")) in UNRESOLVED_STATUSES
+    ]
+    if not markers:
+        return None
+    subject_ids = {str(marker.get("candidate_subject_id") or "") for marker in markers}
+    subjects = {
+        str(subject.get("candidate_subject_id") or ""): subject
+        for subject in _load(match_path / "identity_candidate_shadow.json").get("subjects") or []
+        if str(subject.get("candidate_subject_id") or "") in subject_ids
+    }
+    cards = {
+        str(card.get("candidate_subject_id") or ""): card
+        for card in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+        if str(card.get("candidate_subject_id") or "") in subject_ids
+    }
+    for marker in markers:
+        subject_id = str(marker.get("candidate_subject_id") or "")
+        materialized = _materialize_mixed_review_case(
+            match_path,
+            match_doc,
+            marker,
+            subject=subjects.get(subject_id),
+            card=cards.get(subject_id),
+        )
+        case = materialized.get("case")
+        if (
+            materialized.get("status") == "current_blocking"
+            and isinstance(case, dict)
+            and _mixed_case_contains_artifact(case, artifact)
+        ):
+            return case
+    return None
+
+
+def _mixed_case_contains_artifact(case: dict[str, Any], artifact: str) -> bool:
+    crops = [
+        *((case.get("temporal_evidence") or {}).get("anchor_crops") or []),
+        *(
+            crop
+            for lane in (case.get("concurrent_resolution") or {}).get("lanes") or []
+            for crop in (lane.get("evidence") or {}).get("anchor_crops") or []
+        ),
+    ]
+    return any(str(crop.get("artifact") or "") == artifact for crop in crops)
+
+
 def temporal_evidence_for_observations(
     subject_id: str,
     observations: list[dict[str, Any]],
@@ -415,6 +850,89 @@ def temporal_evidence_for_observations(
 ) -> list[dict[str, Any]]:
     """Shared evidence selection for legacy and inline temporal split UI."""
     return _temporal_evidence(subject_id, observations, None, limit=limit)
+
+
+def refinement_boundary_crops(
+    overview: list[dict[str, Any]],
+    after_frame: int,
+    before_frame: int,
+) -> dict[str, dict[str, Any]]:
+    """Return the exact two overview observations that define a refinement.
+
+    The dense samples inside a refinement interval are useful for choosing a
+    boundary, but their rounded timestamps must never be mistaken for the two
+    authoritative endpoint observations selected in the overview.
+    """
+    by_frame = {int(crop["frame"]): crop for crop in overview}
+    after_crop = by_frame.get(after_frame)
+    before_crop = by_frame.get(before_frame)
+    if after_crop is None or before_crop is None:
+        raise ValueError("Refinement interval must use neighboring overview samples")
+    return {"after": dict(after_crop), "before": dict(before_crop)}
+
+
+def materialize_concurrent_resolution(
+    subject_id: str,
+    parent_case_id: str,
+    parent_source_digest: str,
+    observations: list[dict[str, Any]],
+    marker: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the bounded operator read model from exact server-owned lanes."""
+    _topology, lanes = derive_concurrent_lanes(
+        parent_case_id,
+        parent_source_digest,
+        observations,
+    )
+    stored = {
+        str(row.get("lane_id") or ""): dict(row)
+        for row in (marker or {}).get("lane_resolutions") or []
+        if isinstance(row, dict)
+    }
+    public_lanes = []
+    for lane in lanes:
+        current = stored.get(str(lane["lane_id"]))
+        if current and str(current.get("lane_source_digest") or "") != str(
+            lane["source_ownership_digest"]
+        ):
+            current = None
+        crops = _temporal_evidence(
+            subject_id,
+            list(lane["observations"]),
+            None,
+            limit=5,
+        )
+        public_lanes.append(
+            {
+                key: lane[key]
+                for key in (
+                    "lane_id",
+                    "tracklet_id",
+                    "source_ownership_digest",
+                    "frame_start",
+                    "frame_end",
+                    "observation_count",
+                    "split_allowed",
+                    "overlap_lane_ids",
+                )
+            }
+            | {
+                "evidence": {
+                    "status": "ready" if crops else "missing",
+                    "anchor_crops": crops,
+                },
+                "current_resolution": _public_lane_resolution(current),
+            }
+        )
+    return {
+        "status": str((marker or {}).get("resolution_status") or "unresolved"),
+        "parent_case_id": parent_case_id,
+        "parent_source_digest": parent_source_digest,
+        "resolution_semantic_digest": (marker or {}).get(
+            "resolution_semantic_digest"
+        ),
+        "lanes": public_lanes,
+    }
 
 
 def operator_mixed_targets(
@@ -434,71 +952,216 @@ def operator_mixed_targets(
     }
     targets: list[dict[str, Any]] = []
     for marker in document.get("cases") or []:
-        split_frames = sorted({int(value) for value in marker.get("split_after_frames") or []})
-        if not split_frames:
+        if not isinstance(marker, dict):
             continue
-        subject_id = str(marker.get("candidate_subject_id") or "")
-        subject = subjects.get(subject_id)
-        if not subject and not isinstance(marker.get("source"), dict):
-            continue
-        observations = _observations_for_marker(match_path, marker, subject)
-        if not observations:
-            continue
-        groups = _split_observations(observations, split_frames)
-        for index, group in enumerate(groups):
-            teams = {str(row.get("team_label") or "U") for row in group}
-            source_team = next(iter(teams)) if len(teams) == 1 else "U"
-            ownership_payload = [
-                {"tracklet_id": row["tracklet_id"], "frame": row["frame"]}
-                for row in group
-            ]
-            digest = canonical_digest(
-                {
-                    "source_case_id": marker.get("case_id") or subject_id,
-                    "source_subject_digest": marker.get("source_subject_digest"),
-                    "segment_index": index,
-                    "owned_observations": ownership_payload,
-                }
+        targets.extend(
+            operator_targets_for_mixed_marker(
+                match_path,
+                marker,
+                cards,
+                subjects.get(str(marker.get("candidate_subject_id") or "")),
             )
-            target_id = f"review-mixed-segment:v1:{digest}"
-            frames = sorted({int(row["frame"]) for row in group})
-            crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
-            targets.append(
-                {
-                    "review_target_id": target_id,
-                    "scope_kind": "canonical_segment",
-                    "target_origin": (
-                        "operator_temporal_split"
-                        if isinstance(marker.get("source"), dict)
-                        else "operator_mixed_players"
-                    ),
-                    "candidate_subject_id": subject_id,
-                    "tracklet_ids": sorted({str(row["tracklet_id"]) for row in group}),
-                    "stable_slot_id": None,
-                    "source_team_label": source_team,
-                    "effective_team_label": source_team,
-                    "frame_start": frames[0],
-                    "frame_end": frames[-1],
-                    "frame_ranges": _exact_ranges(frames),
-                    "owned_frames": frames,
-                    "owned_observations": ownership_payload,
-                    "detected_observation_count": len(group),
-                    "source_ownership_digest": digest,
-                    "reason_codes": ["operator_temporal_split"],
-                    "visual_evidence": {
-                        "status": "ready" if crops else "missing",
-                        "selected_crop_count": len(crops),
-                        "anchor_crops": crops,
-                    },
-                    "current_decision": None,
-                    "decision_status": "pending",
-                    "stale_decision": False,
-                    "legacy_suggestion": None,
-                    "mixed_segment_index": index,
-                    "split_parent_case_id": marker.get("case_id") or subject_id,
-                }
-            )
+        )
     return targets
+
+
+def operator_targets_for_mixed_marker(
+    match_path: Path,
+    marker: dict[str, Any],
+    cards: dict[str, dict[str, Any]] | None = None,
+    subject: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Materialize deterministic operator targets for one durable parent.
+
+    Structural saves already own and validate the exact parent marker.  They
+    must not enumerate every sibling Mixed case merely to select this parent.
+    The global builder intentionally reuses this helper for byte-for-byte
+    equivalent target identities and ordering.
+    """
+    if str(marker.get("resolution_model") or "") == "concurrent_lanes":
+        return operator_concurrent_targets_for_marker(match_path, marker, cards)
+
+    split_frames = sorted({int(value) for value in marker.get("split_after_frames") or []})
+    if not split_frames:
+        return []
+    subject_id = str(marker.get("candidate_subject_id") or "")
+    has_exact_source = isinstance(marker.get("source"), dict)
+    if not has_exact_source and subject is None:
+        try:
+            subject = _subject(match_path, subject_id)
+        except ValueError:
+            return []
+    try:
+        observations = _observations_for_marker(match_path, marker, subject)
+    except (TypeError, ValueError):
+        return []
+    if not observations:
+        return []
+    if cards is None:
+        cards = {
+            str(row.get("candidate_subject_id")): row
+            for row in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+            if row.get("candidate_subject_id")
+        }
+
+    targets: list[dict[str, Any]] = []
+    for index, group in enumerate(_split_observations(observations, split_frames)):
+        source_team = _source_team_for_observations(group)
+        ownership_payload = [
+            {"tracklet_id": row["tracklet_id"], "frame": row["frame"]}
+            for row in group
+        ]
+        digest = canonical_digest(
+            {
+                "source_case_id": marker.get("case_id") or subject_id,
+                "source_subject_digest": marker.get("source_subject_digest"),
+                "segment_index": index,
+                "owned_observations": ownership_payload,
+            }
+        )
+        frames = sorted({int(row["frame"]) for row in group})
+        crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
+        targets.append(
+            {
+                "review_target_id": f"review-mixed-segment:v1:{digest}",
+                "scope_kind": "canonical_segment",
+                "target_origin": (
+                    "operator_temporal_split"
+                    if isinstance(marker.get("source"), dict)
+                    else "operator_mixed_players"
+                ),
+                "candidate_subject_id": subject_id,
+                "tracklet_ids": sorted({str(row["tracklet_id"]) for row in group}),
+                "stable_slot_id": None,
+                "source_team_label": source_team,
+                "effective_team_label": source_team,
+                "frame_start": frames[0],
+                "frame_end": frames[-1],
+                "frame_ranges": _exact_ranges(frames),
+                "owned_frames": frames,
+                "owned_observations": ownership_payload,
+                "detected_observation_count": len(group),
+                "source_ownership_digest": digest,
+                "reason_codes": ["operator_temporal_split"],
+                "visual_evidence": {
+                    "status": "ready" if crops else "missing",
+                    "selected_crop_count": len(crops),
+                    "anchor_crops": crops,
+                },
+                "current_decision": None,
+                "decision_status": "pending",
+                "stale_decision": False,
+                "legacy_suggestion": None,
+                "mixed_segment_index": index,
+                "split_parent_case_id": marker.get("case_id") or subject_id,
+            }
+        )
+    return targets
+
+
+def operator_concurrent_targets_for_marker(
+    match_path: Path,
+    marker: dict[str, Any],
+    cards: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if cards is None:
+        cards = {
+            str(row.get("candidate_subject_id")): row
+            for row in _load(match_path / "identity_roster_subject_review_shadow.json").get("cards") or []
+            if row.get("candidate_subject_id")
+        }
+    subject_id = str(marker.get("candidate_subject_id") or "")
+    observations = observations_for_case(match_path, marker)
+    if not observations:
+        return []
+    try:
+        _topology, lanes = derive_concurrent_lanes(
+            str(marker.get("case_id") or subject_id),
+            str(marker.get("source_subject_digest") or ""),
+            observations,
+        )
+        resolutions = validate_concurrent_lane_resolutions(
+            lanes,
+            list(marker.get("lane_resolutions") or []),
+        )
+    except (ValueError, TypeError):
+        return []
+
+    targets: list[dict[str, Any]] = []
+    for expanded in expanded_concurrent_lane_segments(lanes, resolutions):
+        lane = expanded["lane"]
+        group = expanded["observations"]
+        ownership = [
+            {"tracklet_id": str(row["tracklet_id"]), "frame": int(row["frame"])}
+            for row in group
+        ]
+        digest = canonical_digest(
+            {
+                "source_case_id": marker.get("case_id") or subject_id,
+                "lane_id": lane["lane_id"],
+                "lane_source_digest": lane["source_ownership_digest"],
+                "segment_index": expanded["segment_index"],
+                "owned_observations": ownership,
+            }
+        )
+        frames = [int(row["frame"]) for row in group]
+        source_team = _source_team_for_observations(group)
+        crops = _temporal_evidence(subject_id, group, cards.get(subject_id), limit=5)
+        targets.append(
+            {
+                "review_target_id": f"review-mixed-lane-segment:v1:{digest}",
+                "scope_kind": "canonical_segment",
+                "target_origin": (
+                    "operator_concurrent_lane"
+                    if len(frames) == int(lane["observation_count"])
+                    else "operator_concurrent_lane_split"
+                ),
+                "candidate_subject_id": subject_id,
+                "tracklet_ids": [str(lane["tracklet_id"])],
+                "stable_slot_id": None,
+                "source_team_label": source_team,
+                "effective_team_label": source_team,
+                "frame_start": min(frames),
+                "frame_end": max(frames),
+                "frame_ranges": _exact_ranges(sorted(set(frames))),
+                "owned_frames": sorted(set(frames)),
+                "owned_observations": ownership,
+                "detected_observation_count": len(group),
+                "source_ownership_digest": digest,
+                "reason_codes": ["operator_concurrent_lane_resolution"],
+                "visual_evidence": {
+                    "status": "ready" if crops else "missing",
+                    "selected_crop_count": len(crops),
+                    "anchor_crops": crops,
+                },
+                "current_decision": None,
+                "decision_status": "pending",
+                "stale_decision": False,
+                "legacy_suggestion": None,
+                "mixed_lane_id": lane["lane_id"],
+                "mixed_lane_index": expanded["lane_index"],
+                "mixed_lane_segment_index": expanded["segment_index"],
+                "split_parent_case_id": marker.get("case_id") or subject_id,
+            }
+        )
+    return targets
+
+
+def _public_lane_resolution(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        key: value.get(key)
+        for key in (
+            "lane_id",
+            "lane_source_digest",
+            "resolution",
+            "assignment",
+            "split_after_frames",
+            "segment_assignments",
+        )
+        if value.get(key) is not None
+    }
 
 
 def validate_split_frames(observations: list[dict[str, Any]], split_frames: list[int]) -> None:
@@ -591,12 +1254,20 @@ def current_mixed_subject_digest(match_path: Path, subject_id: str) -> str:
     return _subject_digest(subject, _subject_observations(match_path, subject))
 
 
-def unresolved_mixed_observation_assignments(match_path: Path) -> list[dict[str, Any]]:
+def unresolved_mixed_observation_assignments(
+    match_path: Path,
+    match_doc: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for case in load_mixed_player_cases(match_path).get("cases") or []:
         if str(case.get("resolution_status")) not in UNRESOLVED_STATUSES:
             continue
-        for observation in observations_for_case(match_path, case):
+        observations = observations_for_case(match_path, case)
+        if match_doc is not None and not mixed_review_relevant_for_scope(
+            case, observations, match_doc,
+        ):
+            continue
+        for observation in observations:
             team = str(observation.get("team_label") or "U")
             output.append(
                 {
@@ -682,6 +1353,15 @@ def _split_observations(
     return groups
 
 
+def _source_team_for_observations(observations: list[dict[str, Any]]) -> str:
+    """Return a known team unless exact observations genuinely conflict."""
+    known_teams = {
+        str(row.get("team_label") or "U").upper()
+        for row in observations
+    } & {"A", "B"}
+    return next(iter(known_teams)) if len(known_teams) == 1 else "U"
+
+
 def _temporal_evidence(
     subject_id: str,
     observations: list[dict[str, Any]],
@@ -693,7 +1373,12 @@ def _temporal_evidence(
         (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0)): dict(row)
         for row in ((card or {}).get("visual_evidence") or {}).get("anchor_crops") or []
     }
-    selected = _representative_values(observations, limit)
+    topology = analyze_temporal_split_topology(observations)
+    selected = (
+        _representative_values(observations, limit)
+        if topology["simple_split_allowed"]
+        else _representative_temporal_lane_values(observations, topology, limit)
+    )
     crops = []
     safe_subject = canonical_digest(subject_id)[:16]
     for index, row in enumerate(selected, start=1):
@@ -705,7 +1390,11 @@ def _temporal_evidence(
                 continue
             crop = {
                 "anchor_crop_id": f"mixed-crop:{safe_subject}:{row['tracklet_id']}:{row['frame']}",
-                "artifact": f"reviewed_identity_mixed/{safe_subject}/{index:02d}_f{int(row['frame']):06d}.jpg",
+                # Concurrent lanes may contain distinct detections in the
+                # same frame.  Include the tracklet in the artifact identity
+                # so one lane can never reuse or overwrite another lane's
+                # crop while the operator is switching between lanes.
+                "artifact": f"reviewed_identity_mixed/{safe_subject}/{index:02d}_t{canonical_digest(str(row['tracklet_id']))[:10]}_f{int(row['frame']):06d}.jpg",
                 "frame": int(row["frame"]),
                 "time_sec": row.get("time_sec"),
                 "tracklet_id": row["tracklet_id"],
@@ -721,6 +1410,66 @@ def _representative_values(values: list[Any], limit: int) -> list[Any]:
         return values
     indexes = {round(index * (len(values) - 1) / (limit - 1)) for index in range(limit)}
     return [values[index] for index in sorted(indexes)]
+
+
+def _representative_temporal_lane_values(
+    observations: list[dict[str, Any]],
+    topology: dict[str, Any],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Keep concurrent evidence tracklet-aware within the existing crop budget."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for observation in observations:
+        groups.setdefault(str(observation["tracklet_id"]), []).append(observation)
+    for values in groups.values():
+        values.sort(key=lambda row: int(row["frame"]))
+
+    overlapping_ids = {
+        str(tracklet_id)
+        for overlap in topology.get("overlap_ranges") or []
+        for tracklet_id in overlap.get("tracklet_ids") or []
+    }
+    ranked_tracklets = sorted(
+        topology.get("tracklets") or [],
+        key=lambda row: (
+            0 if str(row["tracklet_id"]) in overlapping_ids else 1,
+            -int(row["observation_count"]),
+            int(row["frame_start"]),
+            str(row["tracklet_id"]),
+        ),
+    )[:limit]
+    lane_ids = [str(row["tracklet_id"]) for row in ranked_tracklets]
+
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[tuple[str, int]] = set()
+
+    def add(row: dict[str, Any]) -> None:
+        key = (str(row["tracklet_id"]), int(row["frame"]))
+        if key not in selected_keys and len(selected) < limit:
+            selected_keys.add(key)
+            selected.append(row)
+
+    for tracklet_id in lane_ids:
+        values = groups[tracklet_id]
+        add(values[len(values) // 2])
+
+    for sample_count in (2, 3, 5):
+        for tracklet_id in lane_ids:
+            for row in _representative_values(
+                groups[tracklet_id],
+                min(sample_count, len(groups[tracklet_id])),
+            ):
+                add(row)
+        if len(selected) >= limit:
+            break
+
+    if len(selected) < limit:
+        for row in _representative_values(observations, limit):
+            add(row)
+    return sorted(
+        selected,
+        key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
+    )
 
 
 def _exact_ranges(frames: list[int]) -> list[list[int]]:

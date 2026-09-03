@@ -10,7 +10,9 @@ the match-wide tracker artifact on each click.
 """
 
 import json
+from copy import deepcopy
 from pathlib import Path
+import time
 from typing import Any
 
 from app.services.identity_canonical_io import (
@@ -29,8 +31,10 @@ from app.services.identity_ownership_compact import (
     validate_v2_hot_state,
 )
 from app.services.identity_reviewed_correction_context import (
+    concurrent_correction_context_fields,
     match_roster,
     reviewed_decisions_semantic_digest,
+    temporal_split_context_for_source,
 )
 from app.services.identity_reviewed_progress import (
     build_reviewed_identity_progress,
@@ -46,6 +50,7 @@ from app.services.identity_reviewed_segments import load_segment_review
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_effective_observation import is_real_detected_position
 from app.services.identity_reviewed_mixed_store import (
+    load_mixed_player_cases,
     render_mixed_review_evidence,
     temporal_evidence_for_observations,
 )
@@ -54,7 +59,18 @@ from app.services.play_area import is_on_pitch_product_observation
 
 FILENAME = "reviewed_identity_hot_state.json"
 REVISION_FILENAME = "reviewed_identity_hot_state_revision.json"
-SCHEMA_VERSION = "2.0.0"
+# 2.4 invalidates materializations that predate correction-only historical
+# split repairs. A warm GET must never mistake an older hot document for a
+# complete repair index.
+SCHEMA_VERSION = "2.4.0"
+
+# Diagnostics only. The reproject response reads this immediately after the
+# authoritative warm write; it is never persisted in the hot-state contract.
+_LAST_REBUILD_PHASES: dict[str, float] = {}
+
+
+def last_hot_state_build_phases() -> dict[str, float]:
+    return dict(_LAST_REBUILD_PHASES)
 
 
 class ReviewedIdentityHotStateError(ValueError):
@@ -118,16 +134,21 @@ def _rebuild_review_hot_state_scoped(
     *,
     prebuilt_progress: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
+    timings: dict[str, float] = {}
     if prebuilt_progress is not None:
         # Authoritative caller already materialized progress in this request;
         # reuse it instead of a second full canonical pass.
         progress = dict(prebuilt_progress)
     else:
+        phase_started = time.perf_counter()
         progress = build_reviewed_identity_progress(
             match_path,
             match_doc,
             include_internal_units=True,
         )
+        timings["progress_build_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     candidate = _load(match_path / "identity_candidate_shadow.json") or {}
     registry = build_materialized_reviewed_slot_registry(
         candidate,
@@ -138,27 +159,53 @@ def _rebuild_review_hot_state_scoped(
             match_path,
             load_reviewed_slot_assignments(match_path),
         )
+    timings["materialized_slot_registry_ms"] = _elapsed_ms(phase_started)
     # Canonical segments intentionally retain the legacy segment registry
     # semantics. Whole subjects and material continuity use the materialized
     # registry because their source can cross automatic subject boundaries.
+    phase_started = time.perf_counter()
     canonical_segment_registry = build_reviewed_slot_registry(
         match_path,
         load_reviewed_slot_assignments(match_path),
     )
+    timings["canonical_segment_registry_ms"] = _elapsed_ms(phase_started)
     internal = list(progress.pop("_internal_review_units", []) or [])
     projection_inputs = dict(progress.pop("_projection_inputs", {}) or {})
+    phase_started = time.perf_counter()
     _attach_exact_whole_subject_digests(match_path, internal)
+    timings["exact_whole_subject_digest_attachment_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     _attach_legacy_context_fields(match_path, internal)
-    _attach_correction_temporal_evidence(match_path, match_doc, internal)
+    timings["legacy_context_attachment_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    historical_split_repairs, historical_repair_ms = _attach_correction_temporal_evidence(
+        match_path,
+        match_doc,
+        internal,
+    )
+    correction_total_ms = _elapsed_ms(phase_started)
+    timings["historical_repair_materialization_ms"] = historical_repair_ms
+    timings["correction_temporal_evidence_attachment_ms"] = round(
+        max(0.0, correction_total_ms - historical_repair_ms),
+        1,
+    )
+    phase_started = time.perf_counter()
     _attach_temporal_split_context(match_path, internal)
+    timings["temporal_split_context_attachment_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    unit_lookup = _unit_lookup(internal)
+    source_index = _source_index(internal)
+    timings["lookup_source_index_build_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
     state = {
         "schema_version": SCHEMA_VERSION,
         "state_version": _next_state_version(match_path),
         "match_id": str(match_doc.get("id") or match_path.name),
         "progress": progress,
         "internal_review_units": internal,
-        "unit_lookup": _unit_lookup(internal),
-        "source_index": _source_index(internal),
+        "unit_lookup": unit_lookup,
+        "source_index": source_index,
+        "historical_split_repairs": historical_split_repairs,
         "projection_inputs": projection_inputs,
         "roster_options": match_roster(match_doc),
         "slot_options": [registry[key] for key in sorted(registry)],
@@ -168,8 +215,17 @@ def _rebuild_review_hot_state_scoped(
         ],
         "freshness": _freshness(match_path, match_doc),
     }
-    write_identity_json_atomic(match_path / FILENAME, _encode_for_write(state), compact=True)
+    timings["freshness_calculation_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    encoded = _encode_for_write(state)
+    timings["durable_encoding_ms"] = _elapsed_ms(phase_started)
+    phase_started = time.perf_counter()
+    write_identity_json_atomic(match_path / FILENAME, encoded, compact=True)
+    timings["hot_state_json_write_ms"] = _elapsed_ms(phase_started)
     state["progress"] = _json_safe(progress)
+    timings["total_ms"] = _elapsed_ms(started)
+    _LAST_REBUILD_PHASES.clear()
+    _LAST_REBUILD_PHASES.update(timings)
     return state
 
 
@@ -240,7 +296,8 @@ def update_hot_state_after_deferred_save(
     """
     subject = str(review_unit.get("candidate_subject_id") or "")
     target = str(review_unit.get("review_target_id") or "") or None
-    decision = dict(saved_decision or {})
+    decision = _projection_decision(review_unit, saved_decision)
+    source_digest = str(review_unit.get("source_ownership_digest") or "")
     roster_teams = {
         str(row.get("player_id") or ""): str(row.get("team_label") or "U").upper()
         for row in state.get("roster_options") or []
@@ -250,17 +307,29 @@ def update_hot_state_after_deferred_save(
     # ownership from validated runs directly, so an ordinary correction never
     # materializes match-wide (tracklet_id, frame) pairs.
     updated_unit = False
-    for unit in state.get("internal_review_units") or []:
+    units = list(state.get("internal_review_units") or [])
+    action = str(decision.get("action") or "")
+    for index, unit in enumerate(units):
         if not isinstance(unit, dict):
             continue
         if str(unit.get("candidate_subject_id") or "") != subject:
             continue
         if (str(unit.get("review_target_id") or "") or None) != target:
             continue
+        if source_digest and str(unit.get("source_ownership_digest") or "") != source_digest:
+            continue
+        if action == "mixed_players":
+            # Exact staging changes queue routing, not source topology.  The
+            # durable mixed marker owns the same source tuple, so retire this
+            # one materialized Required source while leaving all siblings
+            # (including ones with the same raw candidate id) available.
+            units.pop(index)
+            _update_hot_mixed_projection(state, decision)
+            updated_unit = True
+            break
         unit["current_decision"] = decision or unit.get("current_decision")
         unit["current_resolution_status"] = "reviewed_by_operator"
         unit["priority"] = None
-        action = str(decision.get("action") or "")
         player_id = str(decision.get("player_id") or "") or None
         unit["canonical_player_id"] = player_id if action == "assign_roster_player" else None
         if player_id:
@@ -272,7 +341,7 @@ def update_hot_state_after_deferred_save(
     if not updated_unit:
         raise ReviewedIdentityHotStateError("review_queue_stale")
     projected = project_reviewed_identity_progress(
-        list(state.get("internal_review_units") or []),
+        units,
         match_doc,
         dict(state.get("projection_inputs") or {}),
         include_internal_units=True,
@@ -291,6 +360,81 @@ def update_hot_state_after_deferred_save(
     return state
 
 
+def _projection_decision(
+    review_unit: dict[str, Any],
+    saved_decision: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Normalize a transport-shaped save response for hot queue projection.
+
+    Material-continuity saves compact their exact ownership for HTTP and keep
+    the canonical correction below ``decision``. The hot queue needs that
+    canonical action at the top level to retire the just-resolved unit.
+    """
+    saved = dict(saved_decision or {})
+    nested = saved.get("decision")
+    if (
+        str(review_unit.get("scope_kind") or "") == "material_continuity"
+        and isinstance(nested, dict)
+        and nested.get("action")
+    ):
+        return dict(nested)
+    return saved
+
+
+def _update_hot_mixed_projection(
+    state: dict[str, Any],
+    saved_decision: dict[str, Any],
+) -> None:
+    """Update the compact Mixed Players read model without a cold rebuild.
+
+    The dedicated Mixed Players endpoint will materialize crops on its later
+    workflow phase.  The Required hot path only exposes the compact summary,
+    so retaining the durable marker's exact source while replacing its one
+    matching case is sufficient and avoids reopening tracker artifacts.
+    """
+    inputs = state.get("projection_inputs")
+    if not isinstance(inputs, dict):
+        raise ReviewedIdentityHotStateError("review_queue_stale")
+    mixed = deepcopy(inputs.get("mixed_players") or {})
+    cases = [
+        dict(case)
+        for case in mixed.get("cases") or []
+        if isinstance(case, dict)
+    ]
+    marker_id = str(
+        saved_decision.get("case_id")
+        or saved_decision.get("candidate_subject_id")
+        or ""
+    )
+    if not marker_id:
+        raise ReviewedIdentityHotStateError("review_queue_stale")
+    cases = [
+        case for case in cases
+        if str(case.get("case_id") or case.get("candidate_subject_id") or "") != marker_id
+    ]
+    cases.append(dict(saved_decision))
+    cases.sort(key=lambda case: (
+        int(case.get("frame_start") or 0),
+        str(case.get("case_id") or case.get("candidate_subject_id") or ""),
+    ))
+    unresolved = sum(
+        str(case.get("resolution_status") or "")
+        in {"unresolved", "unresolved_complex_mix"}
+        for case in cases
+    )
+    mixed["cases"] = cases
+    mixed["summary"] = {
+        "total": len(cases),
+        "unresolved": unresolved,
+        "resolved": sum(str(case.get("resolution_status") or "") == "resolved" for case in cases),
+        "complex_unresolved": sum(
+            str(case.get("resolution_status") or "") == "unresolved_complex_mix"
+            for case in cases
+        ),
+    }
+    inputs["mixed_players"] = mixed
+
+
 def hot_context(
     state: dict[str, Any],
     candidate_subject_id: str,
@@ -299,6 +443,24 @@ def hot_context(
     unit = hot_review_unit(state, candidate_subject_id, review_target_id)
     if not isinstance(unit, dict):
         raise ValueError(f"Unknown reviewed correction target: {candidate_subject_id}")
+    return _hot_context_from_unit(state, unit)
+
+
+def hot_historical_split_repair_context(
+    state: dict[str, Any],
+    case_id: str,
+) -> dict[str, Any]:
+    """Project one correction-only historical parent from fresh hot state."""
+    repair = (state.get("historical_split_repairs") or {}).get(case_id)
+    if not isinstance(repair, dict):
+        raise ValueError(f"Unknown historical split repair: {case_id}")
+    return _hot_context_from_unit(state, repair)
+
+
+def _hot_context_from_unit(state: dict[str, Any], unit: dict[str, Any]) -> dict[str, Any]:
+    """Cheap public projection for active units and repair-only parents."""
+    candidate_subject_id = str(unit.get("candidate_subject_id") or "")
+    review_target_id = str(unit.get("review_target_id") or "") or None
     scope_kind = str(unit.get("scope_kind") or "whole_subject")
     source_team = str(unit.get("source_team_label") or "U").upper()
     # A material continuity unit joins several safe fragments. A human may
@@ -359,6 +521,12 @@ def hot_context(
         ),
         "legacy_suggestion": unit.get("legacy_suggestion"),
         "temporal_split": unit.get("temporal_split"),
+        "temporal_topology": unit.get("temporal_topology"),
+        "concurrent_resolution": unit.get("concurrent_resolution"),
+        "historical_concurrent_repair": bool(
+            unit.get("historical_concurrent_repair")
+        ),
+        "historical_parent_repair": unit.get("historical_parent_repair"),
         "action_capabilities": _capabilities(unit),
         "scope_copy": _scope_copy(scope_kind),
         "review_state_version": int(state.get("state_version") or 0),
@@ -375,6 +543,7 @@ def _freshness(match_path: Path, match_doc: dict[str, Any], *, semantic_digest: 
             "tracklets.json", "identity_candidate_shadow.json", "reviewed_identity_segment_review.json",
             "reviewed_identity_segment_decisions.json", "reviewed_identity_material_continuity_decisions.json",
             "reviewed_identity_mixed_players.json", "reviewed_identity_snapshot.json",
+            "reviewed_identity_team_attribution_evidence.json",
         )},
     }
 
@@ -673,7 +842,7 @@ def _attach_correction_temporal_evidence(
     match_path: Path,
     match_doc: dict[str, Any],
     units: list[dict[str, Any]],
-) -> None:
+) -> tuple[dict[str, dict[str, Any]], float]:
     """Cache legacy-equivalent correction crops during cold materialization.
 
     Hot context reads must not reconstruct raw match-wide sources.  The exact
@@ -735,8 +904,34 @@ def _attach_correction_temporal_evidence(
             or evidence_kind_by_subject.get(subject_id)
             or "identity_continuity"
         )
+        source = {
+            key: unit.get(key)
+            for key in (
+                "scope_kind",
+                "candidate_subject_id",
+                "review_target_id",
+                "continuity_group_id",
+                "source_ownership_digest",
+            )
+        }
+        source["scope_kind"] = str(unit.get("scope_kind") or "whole_subject")
+        source["observations"] = observations
+        concurrent_fields = concurrent_correction_context_fields(source, match_path)
+        unit.update(concurrent_fields)
+        unit["temporal_split"] = temporal_split_context_for_source(match_path, source)
         if crops:
-            render_cases.append({"temporal_evidence": {"anchor_crops": crops}})
+            render_cases.append({
+                "temporal_evidence": {"anchor_crops": crops},
+                "concurrent_resolution": concurrent_fields["concurrent_resolution"],
+            })
+    historical_started = time.perf_counter()
+    repairs = _materialize_historical_split_repairs(
+        match_path,
+        units,
+        observations_by_pair,
+        render_cases,
+    )
+    historical_repair_ms = _elapsed_ms(historical_started)
     if render_cases:
         try:
             render_mixed_review_evidence(match_path, match_doc, {"cases": render_cases})
@@ -744,29 +939,155 @@ def _attach_correction_temporal_evidence(
             # Matches retained without a local source video can still serve
             # their cached artifact references and normal image failure UI.
             pass
+    return repairs, historical_repair_ms
+
+
+def _materialize_historical_split_repairs(
+    match_path: Path,
+    units: list[dict[str, Any]],
+    observations_by_pair: dict[tuple[str, int], dict[str, Any]],
+    render_cases: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Build correction-only contexts for unsafe resolved historical splits.
+
+    These parents are deliberately absent from normal Review progress after
+    their canonical children cover the exact source. The hot index gives those
+    children one explicit, read-only route back to the original durable parent
+    without requeueing it or storing its full observation ownership.
+    """
+    repairs: dict[str, dict[str, Any]] = {}
+    for case in load_mixed_player_cases(match_path).get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("case_id") or "")
+        source = case.get("source")
+        if (
+            not case_id
+            or str(case.get("original_issue") or "") != "inline_temporal_split"
+            or str(case.get("resolution_status") or "") != "resolved"
+            or str(case.get("resolution_model") or "") == "concurrent_lanes"
+            or not isinstance(source, dict)
+        ):
+            continue
+        pairs = {
+            (str(row.get("tracklet_id") or ""), int(row.get("frame") or 0))
+            for row in source.get("owned_observations") or []
+            if isinstance(row, dict)
+            and row.get("tracklet_id") is not None
+            and row.get("frame") is not None
+        }
+        if not pairs or any(pair not in observations_by_pair for pair in pairs):
+            continue
+        observations = sorted(
+            (observations_by_pair[pair] for pair in pairs),
+            key=lambda row: (int(row["frame"]), str(row["tracklet_id"])),
+        )
+        exact_source = {
+            key: source.get(key)
+            for key in (
+                "scope_kind",
+                "candidate_subject_id",
+                "review_target_id",
+                "continuity_group_id",
+                "source_ownership_digest",
+            )
+        }
+        if (
+            not str(exact_source.get("candidate_subject_id") or "")
+            or not str(exact_source.get("source_ownership_digest") or "")
+        ):
+            continue
+        exact_source["scope_kind"] = str(
+            exact_source.get("scope_kind") or "whole_subject"
+        )
+        exact_source["observations"] = observations
+        concurrent_fields = concurrent_correction_context_fields(
+            exact_source,
+            match_path,
+        )
+        if (
+            concurrent_fields["temporal_topology"].get("kind") != "concurrent"
+            or not concurrent_fields["historical_concurrent_repair"]
+            or str((concurrent_fields["concurrent_resolution"] or {}).get("parent_case_id") or "") != case_id
+        ):
+            continue
+        crops = temporal_evidence_for_observations(
+            str(exact_source["candidate_subject_id"]),
+            observations,
+            limit=12,
+        )
+        source_team = str(source.get("source_team_label") or "U").upper()
+        scope_kind = str(exact_source["scope_kind"])
+        repair = {
+            "candidate_subject_id": str(exact_source["candidate_subject_id"]),
+            "review_target_id": None,
+            "scope_kind": scope_kind,
+            "team_label": source_team,
+            "source_team_label": source_team,
+            "effective_team_label": source_team,
+            "available_team_labels": ["A", "B"] if source_team == "U" or scope_kind == "material_continuity" else [source_team],
+            "tracklet_ids": sorted({str(row["tracklet_id"]) for row in observations}),
+            "continuity_group_id": exact_source.get("continuity_group_id"),
+            "review_card_key": None,
+            "current_decision": None,
+            "source_ownership_digest": str(exact_source["source_ownership_digest"]),
+            "frame_ranges": [],
+            "frame_start": min(int(row["frame"]) for row in observations),
+            "frame_end": max(int(row["frame"]) for row in observations),
+            "detected_observation_count": len(observations),
+            "visual_evidence": {
+                "kind": "identity_continuity",
+                "status": "ready" if crops else "missing",
+                "selected_crop_count": len(crops),
+                "anchor_crops": crops,
+            },
+            "source_evidence_kind": "identity_continuity",
+            "legacy_suggestion": None,
+            "temporal_split": temporal_split_context_for_source(match_path, exact_source),
+            **concurrent_fields,
+        }
+        repairs[case_id] = repair
+        render_cases.append({
+            "temporal_evidence": {"anchor_crops": crops},
+            "concurrent_resolution": concurrent_fields["concurrent_resolution"],
+        })
+
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        parent_case_id = str(unit.get("split_parent_case_id") or "")
+        if parent_case_id in repairs:
+            unit["historical_parent_repair"] = {
+                "available": True,
+                "case_id": parent_case_id,
+            }
+    return repairs
 
 
 def _attach_temporal_split_context(match_path: Path, units: list[dict[str, Any]]) -> None:
-    """Keep durable split state available without re-resolving raw ownership."""
-    document = _load(match_path / "reviewed_identity_mixed_players.json") or {}
-    cases = document.get("cases") or []
-    split_by_source = {
-        _source_key(source): case
-        for case in cases
-        if isinstance(case, dict)
-        and str(case.get("original_issue") or "") == "inline_temporal_split"
-        and isinstance((source := case.get("source")), dict)
-    }
+    """Keep saved split state for compact legacy hot fixtures too.
+
+    Normally this is attached alongside exact observations above.  This small
+    no-scan pass retains the existing split read contract for units whose
+    source video/tracklet fixture has no materialized observations.
+    """
     for unit in units:
-        case = split_by_source.get(_source_key(unit))
-        if not isinstance(case, dict):
+        if not isinstance(unit, dict):
             continue
-        unit["temporal_split"] = {
-            "resolution_status": case.get("resolution_status"),
-            "split_after_frames": list(case.get("split_after_frames") or []),
-            "segment_assignments": list(case.get("segment_assignments") or []),
-            "split_semantic_digest": case.get("split_semantic_digest"),
+        source = {
+            key: unit.get(key)
+            for key in (
+                "scope_kind",
+                "candidate_subject_id",
+                "review_target_id",
+                "continuity_group_id",
+                "source_ownership_digest",
+            )
         }
+        source["scope_kind"] = str(unit.get("scope_kind") or "whole_subject")
+        split = temporal_split_context_for_source(match_path, source)
+        if split is not None:
+            unit["temporal_split"] = split
 
 
 def _lookup_key(candidate_subject_id: str, review_target_id: Any) -> str:
@@ -815,3 +1136,7 @@ def _capabilities(unit: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _scope_copy(scope_kind: str) -> str:
     from app.services.identity_reviewed_action_scope import scope_copy
     return scope_copy(scope_kind)
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)

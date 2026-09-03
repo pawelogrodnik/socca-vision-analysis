@@ -6,7 +6,7 @@ from app.main import app
 
 
 class ReviewedIdentityProgressApiTests(unittest.TestCase):
-    def test_team_filter_query_contract_accepts_only_a_or_b(self) -> None:
+    def test_team_filter_query_contract_accepts_a_b_or_uncertain_team(self) -> None:
         operation = app.openapi()["paths"][
             "/api/matches/{match_id}/reviewed-identity/review-progress"
         ]["get"]
@@ -17,7 +17,7 @@ class ReviewedIdentityProgressApiTests(unittest.TestCase):
         allowed = next(row["enum"] for row in variants if "enum" in row)
 
         self.assertFalse(parameter["required"])
-        self.assertEqual(allowed, ["A", "B"])
+        self.assertEqual(allowed, ["A", "B", "U"])
 
     def test_queue_query_defaults_to_required_and_supports_optional_audit(self) -> None:
         operation = app.openapi()["paths"]["/api/matches/{match_id}/reviewed-identity/review-progress"]["get"]

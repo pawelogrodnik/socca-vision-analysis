@@ -11,6 +11,10 @@ from app.services.identity_reviewed_corrections import (
     reviewed_correction_context,
     save_reviewed_identity_correction,
 )
+from app.services.identity_reviewed_decision_audit import (
+    AUDIT_FILENAME,
+    recover_staged_operator_decision_audits,
+)
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
@@ -31,6 +35,7 @@ from app.services.identity_reviewed_correction_context import (
 from app.services.identity_reviewed_progress import build_reviewed_identity_progress
 from app.services.identity_reviewed_hot_state import (
     hot_context,
+    hot_historical_split_repair_context,
     load_or_rebuild_review_hot_state,
 )
 from app.services.identity_reviewed_mixed_resolution import save_inline_temporal_split
@@ -60,11 +65,13 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
         from fastapi import HTTPException, Response
         from app.main import (
             get_match_reviewed_correction_context,
+            get_match_reviewed_identity_progress,
             post_match_reviewed_identity_correction,
         )
 
         with _workspace() as root:
             _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {"semantic_digest": "snapshot"})
             candidate = _load(root / "identity_candidate_shadow.json")
             candidate["subjects"] = [
                 row for row in candidate["subjects"]
@@ -76,6 +83,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
                 return_value=progress,
             ) as build_progress:
+                get_match_reviewed_identity_progress("m1", Response())
                 context = get_match_reviewed_correction_context(
                     "m1",
                     Response(),
@@ -104,6 +112,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
 
         with _workspace() as root:
             _fixture(root)
+            _write(root / "reviewed_identity_snapshot.json", {"semantic_digest": "snapshot"})
             candidate = _load(root / "identity_candidate_shadow.json")
             candidate["subjects"] = [
                 row for row in candidate["subjects"]
@@ -114,6 +123,7 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
                 "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
                 return_value=_whole_subject_hot_progress(),
             ):
+                get_match_reviewed_identity_progress("m1", Response())
                 context = get_match_reviewed_correction_context(
                     "m1",
                     Response(),
@@ -819,6 +829,205 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertNotIn(900, child_assignments)
             self.assertEqual((root / "tracklets.json").read_bytes(), raw_before)
 
+    def test_historical_concurrent_material_split_repair_stays_out_of_queue_and_replaces_children(self) -> None:
+        """Repair an old global split without reviving its material parent.
+
+        This is the production-shaped historical lifecycle: a material parent
+        was resolved by an older global time split, so the parent is trimmed
+        from ordinary Review and its canonical children hold the exact source.
+        Current evidence exposes overlapping tracklets, which makes that old
+        global split unsafe.  The correction-only hot index must lead from a
+        current child back to the durable parent and atomically replace the
+        child decisions with concurrent lanes.
+        """
+        from fastapi import Response
+        from app.main import get_match_reviewed_historical_split_repair_context
+
+        with _workspace() as root:
+            _fixture(root)
+            _add_concurrent_material_continuity_case(root)
+            parent = _materialize_natural_material_deferred_case(root)
+
+            # Simulate a durable split saved before concurrent topology was a
+            # known safety gate. New writes still reject this path normally.
+            with patch(
+                "app.services.identity_reviewed_mixed_resolution.require_simple_temporal_split"
+            ):
+                historical = save_inline_temporal_split(
+                    root,
+                    _match(),
+                    {
+                        "candidate_subject_id": parent["candidate_subject_id"],
+                        "continuity_group_id": parent["continuity_group_id"],
+                        "source_ownership_digest": parent["source_ownership_digest"],
+                        "resolution": "split",
+                        "split_after_frames": [349],
+                        "segment_assignments": [
+                            {"action": "assign_roster_player", "player_id": "p1"},
+                            {"action": "assign_team", "team_label": "B"},
+                        ],
+                    },
+                )
+
+            parent_case_id = historical["saved_case"]["case_id"]
+            old_target_ids = set(historical["saved_case"]["segment_target_ids"])
+            parent_pairs = {
+                (str(row["tracklet_id"]), int(row["frame"]))
+                for row in historical["saved_case"]["source"]["owned_observations"]
+            }
+            self.assertEqual(
+                resolved_material_continuity_observation_pairs(root),
+                parent_pairs,
+            )
+            progress = build_reviewed_identity_progress(
+                root,
+                _match(),
+                include_internal_units=True,
+            )
+            self.assertFalse(any(
+                row.get("scope_kind") == "material_continuity"
+                and row.get("continuity_group_id") == parent["continuity_group_id"]
+                for row in progress["_internal_review_units"]
+            ))
+            children = [
+                row for row in progress["_internal_review_units"]
+                if str(row.get("review_target_id") or "") in old_target_ids
+            ]
+            self.assertEqual(len(children), 2)
+
+            state = load_or_rebuild_review_hot_state(root, _match())
+            self.assertEqual(state["progress"]["summary"], progress["summary"])
+            self.assertEqual(state["progress"]["next_cases"], progress["next_cases"])
+            self.assertEqual(
+                state["progress"]["optional_audit_cases"],
+                progress["optional_audit_cases"],
+            )
+            self.assertEqual(set(state["historical_split_repairs"]), {parent_case_id})
+            self.assertTrue(all(
+                row.get("historical_parent_repair")
+                == {"available": True, "case_id": parent_case_id}
+                for row in state["internal_review_units"]
+                if str(row.get("review_target_id") or "") in old_target_ids
+            ))
+            child_context = hot_context(
+                state,
+                children[0]["candidate_subject_id"],
+                children[0]["review_target_id"],
+            )
+            self.assertEqual(
+                child_context["historical_parent_repair"],
+                {"available": True, "case_id": parent_case_id},
+            )
+            direct = hot_historical_split_repair_context(state, parent_case_id)
+            self.assertEqual(direct["candidate_subject_id"], parent["candidate_subject_id"])
+            self.assertEqual(direct["temporal_topology"]["kind"], "concurrent")
+            self.assertTrue(direct["historical_concurrent_repair"])
+            self.assertEqual(
+                direct["concurrent_resolution"]["parent_case_id"],
+                parent_case_id,
+            )
+            self.assertEqual(
+                direct["temporal_split"]["split_after_frames"],
+                [349],
+            )
+
+            guarded = [
+                root / name
+                for name in (
+                    "reviewed_identity_mixed_players.json",
+                    "reviewed_identity_segment_review.json",
+                    "reviewed_identity_segment_decisions.json",
+                    "reviewed_identity_snapshot.json",
+                    "reviewed_player_stats.json",
+                )
+            ]
+            before_read = {
+                path: path.read_bytes() if path.exists() else None
+                for path in guarded
+            }
+            with (
+                patch("app.main.match_dir", return_value=root),
+                patch("app.main.read_match_meta", return_value=_match()),
+                patch(
+                    "app.services.identity_reviewed_hot_state.build_reviewed_identity_progress",
+                    side_effect=AssertionError("historical repair GET rebuilt Review"),
+                ),
+            ):
+                public = get_match_reviewed_historical_split_repair_context(
+                    "m1",
+                    parent_case_id,
+                    Response(),
+                )
+            self.assertEqual(
+                {
+                    path: path.read_bytes() if path.exists() else None
+                    for path in guarded
+                },
+                before_read,
+            )
+            self.assertEqual(public["temporal_topology"]["kind"], "concurrent")
+            self.assertEqual(
+                public["concurrent_resolution"]["parent_case_id"],
+                parent_case_id,
+            )
+
+            lanes = public["concurrent_resolution"]["lanes"]
+            repaired = save_inline_temporal_split(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": public["candidate_subject_id"],
+                    "continuity_group_id": public["continuity_group_id"],
+                    "source_ownership_digest": public["source_ownership_digest"],
+                    "existing_split_semantic_digest": public["temporal_split"]["split_semantic_digest"],
+                    "existing_resolution_semantic_digest": public["concurrent_resolution"]["resolution_semantic_digest"],
+                    "resolution": "concurrent_lanes",
+                    "lane_resolutions": [
+                        _concurrent_lane_assignment(lanes[0], "assign_roster_player", "p1"),
+                        _concurrent_lane_assignment(lanes[1], "assign_team", "A"),
+                    ],
+                },
+            )
+            new_target_ids = set(repaired["saved_case"]["segment_target_ids"])
+            stored_decisions = {
+                str(row["review_target_id"])
+                for row in load_segment_decisions(root)["decisions"]
+            }
+            self.assertEqual(repaired["saved_case"]["case_id"], parent_case_id)
+            self.assertEqual(repaired["saved_case"]["resolution_model"], "concurrent_lanes")
+            self.assertEqual(repaired["saved_case"]["split_after_frames"], [])
+            self.assertFalse(old_target_ids & stored_decisions)
+            self.assertEqual(new_target_ids, stored_decisions & new_target_ids)
+            self.assertEqual(
+                {
+                    (str(pair["tracklet_id"]), int(pair["frame"]))
+                    for target in load_segment_review(root)["targets"]
+                    if str(target.get("review_target_id") or "") in new_target_ids
+                    for pair in target["owned_observations"]
+                },
+                parent_pairs,
+            )
+            snapshot = finalize_reviewed_identity(root, _match())
+            self.assertEqual(
+                {
+                    (str(row["tracklet_id"]), int(row["frame"]))
+                    for row in snapshot["segment_observation_assignments"]
+                },
+                parent_pairs,
+            )
+            with patch(
+                "app.services.identity_reviewed_stats.read_match_video_metadata",
+                return_value={
+                    "fps": 1.0,
+                    "frame_count": 1_000,
+                    "duration_sec": 1_000.0,
+                    "source": "test",
+                    "filename": "test.mp4",
+                },
+            ):
+                stats = build_reviewed_stats(root, snapshot, _match())
+            self.assertIn("reviewed_player_stats.json", stats)
+
     def test_unresolved_complex_material_mix_stays_a_workflow_blocker(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -1500,6 +1709,64 @@ class ReviewedIdentityCorrectionTests(unittest.TestCase):
             self.assertEqual(result["saved_decision"]["player_id"], "p1")
             self.assertTrue((root / "reviewed_identity_recompute_required.json").exists())
             self.assertFalse((root / "reviewed_identity_snapshot.json").exists())
+
+    def test_deferred_authorized_save_recovers_one_audit_after_post_write_failure(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            payload = {
+                "candidate_subject_id": "s1",
+                "action": "assign_roster_player",
+                "player_id": "p1",
+                "defer_recompute": True,
+            }
+            authorized_unit = {
+                "candidate_subject_id": "s1",
+                "scope_kind": "whole_subject",
+                "_hot_state_authorized": True,
+            }
+            with self.assertRaises(OSError), patch(
+                "app.services.identity_reviewed_corrections.commit_staged_operator_decision_audit",
+                side_effect=OSError("injected audit write failure"),
+            ):
+                persist_reviewed_identity_correction(
+                    root,
+                    _match(),
+                    payload,
+                    authorized_review_unit=authorized_unit,
+                )
+            # Canonical correction is durable even though the append event has
+            # not yet been promoted; an idempotent replay can recover it.
+            self.assertTrue((root / "reviewed_identity_slot_assignments.json").exists())
+            self.assertEqual(recover_staged_operator_decision_audits(root), 1)
+            self.assertEqual(recover_staged_operator_decision_audits(root), 0)
+            audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(audit["events"]), 1)
+            self.assertEqual(audit["events"][0]["source"]["candidate_subject_id"], "s1")
+
+    def test_deferred_optional_save_records_non_required_audit_provenance(self) -> None:
+        with _workspace() as root:
+            _fixture(root)
+            _enable_materialized_candidate_context(root)
+            persist_reviewed_identity_correction(
+                root,
+                _match(),
+                {
+                    "candidate_subject_id": "s1",
+                    "action": "assign_roster_player",
+                    "player_id": "p1",
+                    "defer_recompute": True,
+                },
+                authorized_review_unit={
+                    "candidate_subject_id": "s1",
+                    "scope_kind": "whole_subject",
+                    "_hot_state_authorized": True,
+                },
+                audit_required=False,
+            )
+            audit = json.loads((root / AUDIT_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(len(audit["events"]), 1)
+            self.assertFalse(audit["events"][0]["required"])
 
     def test_materialized_context_gap_for_unrelated_subject_does_not_block_save(
         self,
@@ -2338,6 +2605,55 @@ def _add_natural_material_continuity_case(root: Path) -> None:
     _write(root / "identity_roster_subject_review_shadow.json", cards)
 
 
+def _add_concurrent_material_continuity_case(root: Path) -> None:
+    """Extend the natural material parent with a second overlapping tracklet."""
+    _add_natural_material_continuity_case(root)
+    tracklets = _load(root / "tracklets.json")
+    candidates = _load(root / "identity_candidate_shadow.json")
+    tracklets["tracklets"].append(
+        {
+            "tracklet_id": "material-overlap",
+            "team_label": "A",
+            "team_id": "ta",
+            "positions_m": [
+                {
+                    "frame": frame,
+                    "status": "detected",
+                    "pitch_m": [3.0, 2.0],
+                    "bbox_xyxy": [10, 10, 20, 30],
+                }
+                for frame in range(300, 600)
+            ],
+        }
+    )
+    material_subject = next(
+        row
+        for row in candidates["subjects"]
+        if row.get("candidate_subject_id") == "material-subject"
+    )
+    material_subject["tracklet_ids"].append("material-overlap")
+    _write(root / "tracklets.json", tracklets)
+    _write(root / "identity_candidate_shadow.json", candidates)
+
+
+def _concurrent_lane_assignment(
+    lane: dict,
+    action: str,
+    value: str,
+) -> dict:
+    assignment = (
+        {"action": action, "player_id": value}
+        if action == "assign_roster_player"
+        else {"action": action, "team_label": value}
+    )
+    return {
+        "lane_id": lane["lane_id"],
+        "lane_source_digest": lane["source_ownership_digest"],
+        "resolution": "direct",
+        "assignment": assignment,
+    }
+
+
 def _materialize_natural_material_deferred_case(root: Path) -> dict:
     snapshot = finalize_reviewed_identity(root, _match())
     progress = build_reviewed_identity_progress(root, _match())
@@ -2529,6 +2845,10 @@ def _assert_hot_context_equivalent(
         "action_capabilities",
         "source_evidence_kind",
         "temporal_split",
+        "temporal_topology",
+        "concurrent_resolution",
+        "historical_concurrent_repair",
+        "historical_parent_repair",
         "legacy_suggestion",
         "visual_evidence",
     )

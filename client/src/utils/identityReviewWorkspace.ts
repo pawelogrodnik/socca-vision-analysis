@@ -34,7 +34,7 @@ const stageByPhase: Record<string, IdentityReviewStage> = {
 
 const progressLabels: Record<ReviewWorkflowStepId, string> = {
   initial_audit: 'Rozpoznaj zawodników',
-  exceptions: 'Pozostałe przypadki',
+  exceptions: 'Wymagane przypadki',
   mixed_players: 'Zmieszani gracze',
   finalize: 'Przygotuj wynik',
   video_qa: 'Sprawdź wideo',
@@ -44,6 +44,13 @@ export function identityReviewStage(workflow: ReviewWorkflow | null): IdentityRe
   if (!workflow?.available) return 'unavailable';
   if (workflow.status === 'error') return 'error';
   return stageByPhase[workflow.phase] || 'unavailable';
+}
+
+/** Pick the first mandatory queue before either review panel can mount. */
+export function initialMandatoryQueue(
+  workflow: ReviewWorkflow | null,
+): 'required' | 'mixed' {
+  return identityReviewStage(workflow) === 'mixed_players' ? 'mixed' : 'required';
 }
 
 export function identityReviewProgress(workflow: ReviewWorkflow | null): IdentityReviewProgressItem[] {
@@ -73,8 +80,45 @@ export function reviewWorkflowErrorMessage(workflow: ReviewWorkflow): string {
   const code = workflow.blockers[0]?.code || workflow.required_action?.type;
   if (code === 'render_failed') return 'Nie udało się przygotować wideo do sprawdzenia.';
   if (code === 'review_recompute_failed') return 'Nie udało się odświeżyć review.';
-  if (code === 'review_progress_missing' || code === 'review_progress_stale') {
+  if (
+    code === 'review_progress_missing'
+    || code === 'review_progress_stale'
+    || code === 'review_progress_recompute_required'
+  ) {
     return 'Review wymaga odświeżenia przed kolejną decyzją.';
   }
+  if (
+    code === 'team_attribution_evidence_technical_failure'
+    || code === 'coverage_evidence_technical_failure'
+  ) {
+    if (!workflowAllows(workflow, 'retry_review_recompute')) {
+      return 'Nie udało się bezpiecznie przygotować danych dla części nierozstrzygniętych obserwacji. Automatyczne ponowienie Review nie może naprawić tego stanu przy obecnych artefaktach analizy.';
+    }
+    return 'Nie udało się przygotować bezpiecznych widoków dla nierozstrzygniętych obserwacji. Sprawdź dostępność pliku wideo i artefaktów analizy, a następnie spróbuj ponownie.';
+  }
+  if (code === 'identity_coverage_unresolved_without_reviewable_evidence') {
+    const residual = workflow.issues.coverage_readiness?.team_attribution_residual;
+    if (residual?.status === 'materialization_required') {
+      return 'System musi jeszcze przygotować bezpieczne widoki dla nierozstrzygniętych obserwacji.';
+    }
+    if (residual?.status === 'exceeds_tolerance') {
+      return 'Pozostała niepewność danych przekracza bezpieczny limit dla wyniku.';
+    }
+    return 'Wynik wymaga naprawy jakości danych, zanim będzie można go przygotować.';
+  }
   return 'Nie udało się przygotować kolejnego kroku review.';
+}
+
+export function isTerminalDataQualityBlocker(workflow: ReviewWorkflow | null): boolean {
+  return Boolean(
+    workflow
+    && workflow.phase === 'exceptions'
+    && workflow.status === 'error'
+    && workflow.mandatory_operator_review_complete
+    && workflow.issues.coverage_readiness_blocked
+    && workflow.blockers.some((blocker) => (
+      blocker.code === 'identity_coverage_unresolved_without_reviewable_evidence'
+      || blocker.code === 'team_attribution_evidence_technical_failure'
+    )),
+  );
 }

@@ -49,6 +49,7 @@ function heatColor(intensity: number): [number, number, number, number] {
 export function PublicPlayerHeatmap({ alt, fallbackSrc, heatmap }: PublicPlayerHeatmapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const interactive = heatmap?.interactive;
+  const averagePosition = heatmap?.average_position;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -127,14 +128,23 @@ export function PublicPlayerHeatmap({ alt, fallbackSrc, heatmap }: PublicPlayerH
 
   if (interactive?.points.length) {
     return (
-      <div className='public-heatmap-visual' role='img' aria-label={alt}>
+      <div className='public-heatmap-visual' role='img' aria-label={averagePosition ? `${alt}. Średnia pozycja zawodnika na podstawie potwierdzonych obserwacji.` : alt}>
         <canvas className='public-heatmap-canvas' ref={canvasRef} />
         <svg className='public-heatmap-pitch-lines' viewBox='0 0 360 720' aria-hidden='true'>
           <rect x='2' y='2' width='356' height='716' />
           <line x1='2' y1='360' x2='358' y2='360' />
           <rect x='68' y='2' width='224' height='130' />
           <rect x='68' y='588' width='224' height='130' />
+          {averagePosition && (
+            <circle
+              className='public-heatmap-average-marker'
+              cx={averagePosition.x}
+              cy={averagePosition.y}
+              r='9'
+            />
+          )}
         </svg>
+        {averagePosition && <span className='public-heatmap-average-legend'>● średnia pozycja</span>}
       </div>
     );
   }

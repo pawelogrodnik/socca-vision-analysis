@@ -1,19 +1,62 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { artifactUrl, finalizeReviewedIdentityCorrections, getMixedBoundaryRefinement, getMixedPlayersReview, saveMixedPlayerResolution } from '../api';
+import { artifactUrl, getConcurrentLaneRefinement, getMixedBoundaryRefinement, getMixedPlayerReviewCase, getMixedPlayersReview, getReviewWorkflow, reprojectReviewWorkflow, saveMixedPlayerResolution } from '../api';
+import { isRecoverableConcurrentLaneConflict, isReviewProgressStale, isTemporalSplitNotSeparable } from '../lib/apiErrors';
 import { errorMessage } from '../lib/helpers';
-import type { Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
+import type { ConcurrentLaneResolution, Match, MixedBoundaryRefinement, MixedPlayersReviewQueue, MixedSegmentAssignment, ReviewWorkflow } from '../types';
 import { assignmentLabel, mixedQueueAfterSuccessfulSave, mixedSegments, mixedTimeForFrame, remapMixedAssignments, replaceMixedBoundaryInInterval, sortedMixedEvidenceCrops, validMixedResolution } from '../utils/mixedPlayersReview';
-import { matchTeamName } from '../utils/identityExceptionTeamFilter';
 import { formatReviewTime } from '../utils/reviewedOutputPresentation';
+import { exactMixedFocusIndex, loadExactMixedFocus, mixedPostSaveDestination, mixedQueueForFocusedCase, reconciledMixedFocusCaseId, type ExactMixedFocusResult, type MixedEntryMode, type MixedNavigationDirection } from '../utils/mixedReviewNavigation';
+import { MixedTemporalTopologyLanes } from './MixedTemporalTopologyLanes';
+import { ConcurrentMixedResolver } from './ConcurrentMixedResolver';
+import { MixedAssignmentControls } from './MixedAssignmentControls';
+import { MixedRefinementBoundaryEvidence } from './MixedRefinementBoundaryEvidence';
+import { ReviewedEvidenceImage } from './ReviewedEvidenceImage';
+
+export type MixedPlayersReviewApi = {
+  getBoundaryRefinement: typeof getMixedBoundaryRefinement;
+  getLaneRefinement: typeof getConcurrentLaneRefinement;
+  getFocusedCase: typeof getMixedPlayerReviewCase;
+  getQueue: typeof getMixedPlayersReview;
+  getWorkflow: typeof getReviewWorkflow;
+  reprojectWorkflow: typeof reprojectReviewWorkflow;
+  saveResolution: typeof saveMixedPlayerResolution;
+};
+
+const defaultReviewApi: MixedPlayersReviewApi = {
+  getBoundaryRefinement: getMixedBoundaryRefinement,
+  getLaneRefinement: getConcurrentLaneRefinement,
+  getFocusedCase: getMixedPlayerReviewCase,
+  getQueue: getMixedPlayersReview,
+  getWorkflow: getReviewWorkflow,
+  reprojectWorkflow: reprojectReviewWorkflow,
+  saveResolution: saveMixedPlayerResolution,
+};
 
 type Props = {
   match: Match;
   workflow: ReviewWorkflow;
   onWorkflowChanged: (workflow: ReviewWorkflow) => void;
+  focusCaseId?: string | null;
+  entryMode?: MixedEntryMode;
+  onReturnToRequired?: () => void;
+  onResolveNowComplete?: () => void;
+  onLeaveGuard?: (guard: () => boolean) => void;
+  reviewApi?: Partial<MixedPlayersReviewApi>;
 };
 
-export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: Props) {
+export function MixedPlayersReviewPanel({
+  match,
+  workflow,
+  onWorkflowChanged,
+  focusCaseId,
+  entryMode = 'manual',
+  onReturnToRequired,
+  onResolveNowComplete,
+  onLeaveGuard,
+  reviewApi,
+}: Props) {
+  const api = useMemo(() => ({ ...defaultReviewApi, ...reviewApi }), [reviewApi]);
   const [queue, setQueue] = useState<MixedPlayersReviewQueue | null>(null);
   const [index, setIndex] = useState(0);
   const reviewCase = queue?.cases[index] || null;
@@ -25,19 +68,70 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   const [refinementBusy, setRefinementBusy] = useState(false);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState('');
+  const [focusMissing, setFocusMissing] = useState(false);
+  const [reprojectFailed, setReprojectFailed] = useState(false);
+  const [topologyRejected, setTopologyRejected] = useState(false);
+  const [concurrentRecoveryRevision, setConcurrentRecoveryRevision] = useState(0);
+  const caseNavigationRequestRef = useRef(0);
+  const simpleSplitAllowed = reviewCase?.temporal_topology?.simple_split_allowed === true
+    && !topologyRejected;
   void workflow;
 
   useEffect(() => {
     let cancelled = false;
+    caseNavigationRequestRef.current += 1;
     setBusy(true);
-    getMixedPlayersReview(match.id)
-      .then((value) => { if (!cancelled) setQueue(value); })
-      .catch((error) => { if (!cancelled) setMessage(errorMessage(error)); })
-      .finally(() => { if (!cancelled) setBusy(false); });
+    setQueue(null);
+    setIndex(0);
+    setFocusMissing(false);
+    setReprojectFailed(false);
+    async function loadInitialQueue() {
+      try {
+        let value: MixedPlayersReviewQueue | null;
+        if (focusCaseId) {
+          const focused = await loadExactMixedFocus(
+            (caseId) => api.getFocusedCase(match.id, caseId),
+            focusCaseId,
+          );
+          value = focused.kind === 'visible' ? mixedQueueForFocusedCase(focused.response) : null;
+        } else {
+          value = await api.getQueue(match.id);
+        }
+        if (cancelled) return;
+        if (!value || exactMixedFocusIndex(value.cases.map((item) => item.case_id || ''), focusCaseId) === null) {
+          // Resolve-now is exact-source handoff. Never silently fall through
+          // to the first unrelated Mixed card if the durable case vanished.
+          setQueue(null);
+          setFocusMissing(true);
+          setMessage('Wybrany przypadek Mixed nie jest już aktualny. Kolejka została odświeżona bez otwierania innego przypadku.');
+          return;
+        }
+        setQueue(value);
+      } catch (error) {
+        if (!cancelled) setMessage(errorMessage(error));
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }
+    void loadInitialQueue();
     return () => { cancelled = true; };
-  }, [match.id]);
+  }, [api, focusCaseId, match.id]);
 
   useEffect(() => {
+    if (!focusCaseId || !queue || focusMissing) return;
+    const focusedIndex = exactMixedFocusIndex(queue.cases.map((item) => item.case_id || ''), focusCaseId);
+    if (focusedIndex !== null) setIndex(focusedIndex);
+  }, [focusCaseId, queue]);
+
+  useEffect(() => {
+    onLeaveGuard?.(() => !hasUnsavedChanges || window.confirm(
+      'Masz niezapisany podział lub przypisania. Przejście do pozostałych przypadków je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
+    ));
+    return () => onLeaveGuard?.(() => true);
+  }, [hasUnsavedChanges, onLeaveGuard]);
+
+  useEffect(() => {
+    setTopologyRejected(false);
     if (!reviewCase) return;
     const nextBoundaries: number[] = [];
     setBoundaries(nextBoundaries);
@@ -72,11 +166,11 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   }
 
   async function openRefinement(afterFrame: number, beforeFrame: number) {
-    if (!reviewCase) return;
+    if (!reviewCase || !simpleSplitAllowed) return;
     setRefinementBusy(true);
     setMessage('');
     try {
-      const value = await getMixedBoundaryRefinement(
+      const value = await api.getBoundaryRefinement(
         match.id,
         reviewCase.candidate_subject_id,
         afterFrame,
@@ -91,7 +185,11 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
         setRefinement(value);
       }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (isTemporalSplitNotSeparable(error)) {
+        await recoverAfterTopologyConflict();
+      } else {
+        setMessage(errorMessage(error));
+      }
     } finally {
       setRefinementBusy(false);
     }
@@ -117,6 +215,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   }
 
   function directBoundary(afterFrame: number) {
+    if (!reviewCase || !simpleSplitAllowed) return;
     applyBoundaries(boundaries.includes(afterFrame)
       ? boundaries.filter((frame) => frame !== afterFrame)
       : [...boundaries, afterFrame].sort((left, right) => left - right));
@@ -133,11 +232,11 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
   }
 
   async function saveSplit() {
-    if (!reviewCase || !validMixedResolution(reviewCase, boundaries, assignments)) return;
+    if (!reviewCase || !simpleSplitAllowed || !validMixedResolution(reviewCase, boundaries, assignments)) return;
     setBusy(true);
     setMessage('');
     try {
-      await saveMixedPlayerResolution(match.id, {
+      await api.saveResolution(match.id, {
         candidate_subject_id: reviewCase.candidate_subject_id,
         case_id: reviewCase.case_id,
         source_subject_digest: reviewCase.source_subject_digest,
@@ -147,7 +246,39 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
       });
       await advanceAfterSave();
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (isTemporalSplitNotSeparable(error)) {
+        await recoverAfterTopologyConflict();
+      } else if (isReviewProgressStale(error)) {
+        await recoverAfterReviewProgressStale();
+      } else {
+        setMessage(errorMessage(error));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveConcurrentLanes(laneResolutions: ConcurrentLaneResolution[]) {
+    if (!reviewCase?.concurrent_resolution || topologyRejected) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await api.saveResolution(match.id, {
+        candidate_subject_id: reviewCase.candidate_subject_id,
+        case_id: reviewCase.case_id,
+        source_subject_digest: reviewCase.source_subject_digest,
+        resolution: 'concurrent_lanes',
+        lane_resolutions: laneResolutions,
+      });
+      await advanceAfterSave();
+    } catch (error) {
+      if (isRecoverableConcurrentLaneConflict(error)) {
+        await recoverAfterConcurrentLaneConflict();
+      } else if (isReviewProgressStale(error)) {
+        await recoverAfterReviewProgressStale();
+      } else {
+        setMessage(errorMessage(error));
+      }
     } finally {
       setBusy(false);
     }
@@ -158,7 +289,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setBusy(true);
     setMessage('');
     try {
-      await saveMixedPlayerResolution(match.id, {
+      await api.saveResolution(match.id, {
         candidate_subject_id: reviewCase.candidate_subject_id,
         case_id: reviewCase.case_id,
         source_subject_digest: reviewCase.source_subject_digest,
@@ -166,12 +297,128 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
       });
       setHasUnsavedChanges(false);
       setMessage('Zapisano jako przypadek bez prostego podziału czasowego. Tożsamość nie została zgadnięta.');
-      if (queue && index < queue.cases.length - 1) setIndex(index + 1);
+      if (queue && index < queue.cases.length - 1) {
+        await materializeAndFocusCase(index + 1, true);
+      }
     } catch (error) {
-      setMessage(errorMessage(error));
+      if (isReviewProgressStale(error)) {
+        await recoverAfterReviewProgressStale();
+      } else {
+        setMessage(errorMessage(error));
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  async function recoverAfterTopologyConflict() {
+    setTopologyRejected(true);
+    setBoundaries([]);
+    setAssignments([]);
+    setSelectedSegment(0);
+    setHasUnsavedChanges(false);
+    setRefinement(null);
+    const caseId = reviewCase?.case_id;
+    if (!queue || !caseId) {
+      setMessage('Ten materiał nie ma już prostego podziału czasowego. Otwórz przypadek ponownie przed dalszą pracą.');
+      return;
+    }
+    try {
+      const focused = await loadExactMixedFocus(
+        (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+        caseId,
+      );
+      if (focused.kind === 'visible' && showFocusedCase(queue, caseId, focused)) {
+        setTopologyRejected(false);
+        setMessage('Ten materiał nie ma już prostego podziału czasowego, ponieważ tracklety nakładają się w czasie. Pokazano aktualny przypadek.');
+        return;
+      }
+      setQueue(null);
+      setIndex(0);
+      setFocusMissing(true);
+      setMessage('Ten materiał nie ma już prostego podziału czasowego, a dokładny przypadek zmienił się podczas odświeżenia. Odśwież Review.');
+    } catch {
+      setMessage('Ten materiał nie ma już potwierdzonego prostego podziału czasowego. Nie udało się odświeżyć aktualnego przypadku. Odśwież Review przed dalszą próbą podziału.');
+    }
+  }
+
+  async function recoverAfterReviewProgressStale() {
+    const currentCase = reviewCase;
+    const currentQueue = queue;
+    const caseId = currentCase?.case_id;
+    if (!currentCase || !currentQueue || !caseId) {
+      setMessage('Review zmienił się poza tym ekranem. Odśwież Review przed kolejną decyzją.');
+      return;
+    }
+    setMessage('Synchronizuję Review po zmianie poza tym ekranem…');
+    try {
+      const [nextWorkflow, focused] = await Promise.all([
+        api.getWorkflow(match.id),
+        loadExactMixedFocus(
+          (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+          caseId,
+        ),
+      ]);
+      onWorkflowChanged(nextWorkflow);
+      if (
+        focused.kind !== 'visible'
+        || focused.response.status !== 'current_blocking'
+        || !showFocusedCase(currentQueue, caseId, focused)
+      ) {
+        setQueue(null);
+        setIndex(0);
+        setFocusMissing(true);
+        setMessage('Ten przypadek Mixed nie jest już aktualny. Nie zapisano drugiej decyzji ani nie odtworzono starego podziału.');
+        return;
+      }
+      const topologyUnchanged = JSON.stringify(currentCase.temporal_topology || null)
+        === JSON.stringify(focused.case.temporal_topology || null);
+      const sourceUnchanged = currentCase.source_subject_digest === focused.case.source_subject_digest;
+      if (!sourceUnchanged || !topologyUnchanged) {
+        setBoundaries([]);
+        setAssignments([]);
+        setSelectedSegment(0);
+        setHasUnsavedChanges(false);
+        setRefinement(null);
+        setMessage('Przypadek został zaktualizowany. Stary podział odrzucono — sprawdź aktualne widoki przed ponownym zapisem.');
+        return;
+      }
+      setMessage('Review został zsynchronizowany. Niezapisany podział zachowano; możesz zapisać go ponownie wyłącznie po sprawdzeniu aktualnych widoków.');
+    } catch (error) {
+      setMessage(`Nie udało się zsynchronizować aktualnego przypadku Mixed. ${errorMessage(error)}`);
+    }
+  }
+
+  async function recoverAfterConcurrentLaneConflict() {
+    setTopologyRejected(true);
+    setHasUnsavedChanges(false);
+    setConcurrentRecoveryRevision((value) => value + 1);
+    const caseId = reviewCase?.case_id;
+    if (!queue || !caseId) {
+      setMessage('Układ ścieżek zmienił się. Odśwież Review przed ponownym przypisaniem.');
+      return;
+    }
+    try {
+      const focused = await loadExactMixedFocus(
+        (requestedCaseId) => api.getFocusedCase(match.id, requestedCaseId),
+        caseId,
+      );
+      if (focused.kind === 'visible' && showFocusedCase(queue, caseId, focused)) {
+        setTopologyRejected(false);
+        setMessage('Układ ścieżek został zaktualizowany. Wprowadź przypisania ponownie na podstawie aktualnego materiału.');
+        return;
+      }
+      setQueue(null);
+      setIndex(0);
+      setFocusMissing(true);
+      setMessage('Dokładny przypadek zmienił się podczas odświeżenia. Nie zapisano żadnych przypisań. Odśwież Review.');
+    } catch {
+      setMessage('Nie udało się pobrać aktualnych ścieżek. Stare przypisania zostały odrzucone; odśwież Review przed dalszą pracą.');
+    }
+  }
+
+  function completeResolveNowIntent() {
+    if (entryMode === 'resolve_now') onResolveNowComplete?.();
   }
 
   async function advanceAfterSave() {
@@ -184,19 +431,202 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     setHasUnsavedChanges(false);
     setQueue({ ...queue, cases: next.cases });
     setIndex(next.index);
-    if (next.cases.length === 0) {
-      setMessage('Przeliczam Review po zapisaniu podziałów…');
-      const result = await finalizeReviewedIdentityCorrections(match.id);
-      onWorkflowChanged(result.workflow);
+    // A temporal split can alter ownership, coverage and Required ordering.
+    // It is a structural Review reprojection, not a finalization shortcut.
+    setMessage('Odświeżam Review po zapisaniu podziału…');
+    let nextWorkflow: ReviewWorkflow;
+    try {
+      nextWorkflow = await api.reprojectWorkflow(match.id);
+    } catch (error) {
+      // Persistence has already succeeded. The old local queue is invalid
+      // after a structural save, so abandon it rather than pretending the
+      // split failed or offering another pre-split card.
+      setQueue(null);
+      setIndex(0);
+      setReprojectFailed(true);
+      setMessage(`Podział został zapisany, ale odświeżenie Review nie powiodło się. ${errorMessage(error)}`);
+      return;
+    }
+    onWorkflowChanged(nextWorkflow);
+    const normalRemaining = nextWorkflow.issues.normal_blocking ?? 0;
+    const mixedRemaining = nextWorkflow.issues.mixed_blocking ?? 0;
+    const destination = mixedPostSaveDestination(entryMode, normalRemaining, mixedRemaining);
+    if (destination === 'required') {
+      onReturnToRequired?.();
+      return;
+    }
+    completeResolveNowIntent();
+    if (destination === 'workflow') return;
+    const refreshedQueue = await api.getQueue(match.id);
+    setQueue(refreshedQueue);
+    setIndex(0);
+    setMessage(refreshedQueue.cases.length === 0
+      ? 'Zapisano podział. Wymagane kolejki Review zostały odświeżone.'
+      : 'Zapisano podział. Kolejka Mixed została odświeżona.');
+  }
+
+  async function retryStructuralReproject() {
+    setBusy(true);
+    setMessage('Odświeżam kolejkę Review po zapisanym podziale…');
+    try {
+      const nextWorkflow = await api.reprojectWorkflow(match.id);
+      onWorkflowChanged(nextWorkflow);
+      setReprojectFailed(false);
+      const normalRemaining = nextWorkflow.issues.normal_blocking ?? 0;
+      const mixedRemaining = nextWorkflow.issues.mixed_blocking ?? 0;
+      const destination = mixedPostSaveDestination(entryMode, normalRemaining, mixedRemaining);
+      if (destination === 'required') {
+        onReturnToRequired?.();
+        return;
+      }
+      completeResolveNowIntent();
+      if (destination === 'workflow') return;
+      const refreshedQueue = await api.getQueue(match.id);
+      setQueue(refreshedQueue);
+      setIndex(0);
+      setMessage('Kolejka Mixed została zsynchronizowana.');
+    } catch (error) {
+      setMessage(`Podział jest zapisany, ale Review nadal wymaga odświeżenia. ${errorMessage(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function showFocusedCase(
+    baseQueue: MixedPlayersReviewQueue,
+    targetCaseId: string,
+    focused: Extract<ExactMixedFocusResult<Awaited<ReturnType<MixedPlayersReviewApi['getFocusedCase']>>>, { kind: 'visible' }>,
+  ) {
+    const focusedIndex = exactMixedFocusIndex(
+      baseQueue.cases.map((item) => item.case_id || ''),
+      targetCaseId,
+    );
+    if (focusedIndex === null) return false;
+    const nextCases = [...baseQueue.cases];
+    nextCases[focusedIndex] = focused.case;
+    setQueue({
+      ...baseQueue,
+      assignment_options: focused.response.assignment_options,
+      cases: nextCases,
+    });
+    setIndex(focusedIndex);
+    setFocusMissing(false);
+    setMessage('');
+    return true;
+  }
+
+  async function routeAfterEmptyReconciledQueue(refreshedQueue: MixedPlayersReviewQueue) {
+    const nextWorkflow = await api.getWorkflow(match.id);
+    onWorkflowChanged(nextWorkflow);
+    setQueue(refreshedQueue);
+    setIndex(0);
+    setFocusMissing(false);
+    if ((nextWorkflow.issues.normal_blocking ?? 0) > 0) {
+      onReturnToRequired?.();
+      return;
+    }
+    setMessage('Kolejka Mixed została zsynchronizowana. Workflow wskaże następny aktualny krok Review.');
+  }
+
+  async function reconcileAfterMissingFocusedCase(
+    previousQueue: MixedPlayersReviewQueue,
+    currentCaseId: string | null,
+    attemptedIndex: number,
+    direction: MixedNavigationDirection,
+    requestId: number,
+  ) {
+    // This is deliberately bounded: one full authoritative reconciliation,
+    // followed by at most one exact focused read of its selected case.
+    const refreshedQueue = await api.getQueue(match.id);
+    if (requestId !== caseNavigationRequestRef.current) return;
+    const nextCaseId = reconciledMixedFocusCaseId(
+      previousQueue.cases.map((item) => item.case_id || ''),
+      currentCaseId,
+      attemptedIndex,
+      refreshedQueue.cases.map((item) => item.case_id || ''),
+      direction,
+    );
+    if (!nextCaseId) {
+      await routeAfterEmptyReconciledQueue(refreshedQueue);
+      return;
+    }
+    const focused = await loadExactMixedFocus(
+      (caseId) => api.getFocusedCase(match.id, caseId),
+      nextCaseId,
+    );
+    if (requestId !== caseNavigationRequestRef.current) return;
+    if (focused.kind !== 'visible' || !showFocusedCase(refreshedQueue, nextCaseId, focused)) {
+      setQueue(null);
+      setFocusMissing(true);
+      setMessage('Kolejka Mixed zmieniła się ponownie podczas jednokrotnej synchronizacji. Odśwież Review przed dalszą pracą.');
+    }
+  }
+
+  async function materializeAndFocusCase(nextIndex: number, discardCurrent = false) {
+    if (!queue) return;
+    const previousQueue = queue;
+    const currentCaseId = reviewCase?.case_id || null;
+    const direction: MixedNavigationDirection = nextIndex < index ? 'previous' : 'next';
+    const boundedIndex = Math.max(0, Math.min(previousQueue.cases.length - 1, nextIndex));
+    const targetCaseId = previousQueue.cases[boundedIndex]?.case_id;
+    if (!targetCaseId) {
+      setFocusMissing(true);
+      setMessage('Nie można ustalić dokładnego przypadku Mixed do otwarcia.');
+      return;
+    }
+    const requestId = ++caseNavigationRequestRef.current;
+    setBusy(true);
+    if (discardCurrent) {
+      setQueue(null);
+      setIndex(0);
+    }
+    setMessage('Przygotowuję widoki wybranego przypadku…');
+    try {
+      const focused = await loadExactMixedFocus(
+        (caseId) => api.getFocusedCase(match.id, caseId),
+        targetCaseId,
+      );
+      if (requestId !== caseNavigationRequestRef.current) return;
+      if (focused.kind === 'membership_changed' && entryMode === 'manual') {
+        setMessage('Synchronizuję aktualną kolejkę Mixed…');
+        await reconcileAfterMissingFocusedCase(
+          previousQueue,
+          currentCaseId,
+          boundedIndex,
+          direction,
+          requestId,
+        );
+        return;
+      }
+      if (focused.kind !== 'visible') {
+        setQueue(null);
+        setFocusMissing(true);
+        setMessage('Wybrany przypadek Mixed zniknął z aktualnej kolejki. Nie otwarto innego przypadku.');
+        return;
+      }
+      // The backend has now materialized this exact case's missing evidence.
+      // Only at this point may it become the visible review card.
+      if (!showFocusedCase(previousQueue, targetCaseId, focused)) {
+        setQueue(null);
+        setFocusMissing(true);
+        setMessage('Wybrany przypadek Mixed nie należy już do lokalnej kolejki.');
+      }
+    } catch (error) {
+      if (requestId === caseNavigationRequestRef.current) {
+        if (discardCurrent) setFocusMissing(true);
+        setMessage(errorMessage(error));
+      }
+    } finally {
+      if (requestId === caseNavigationRequestRef.current) setBusy(false);
     }
   }
 
   function navigateTo(nextIndex: number) {
-    if (!queue || nextIndex === index) return;
+    if (!queue || busy || nextIndex === index) return;
     if (hasUnsavedChanges && !window.confirm(
       'Masz niezapisany podział lub przypisania. Przejście do innego przypadku je odrzuci.\n\nWybierz „OK”, aby przejść bez zapisywania.',
     )) return;
-    setIndex(Math.max(0, Math.min(queue.cases.length - 1, nextIndex)));
+    void materializeAndFocusCase(nextIndex);
   }
 
   useEffect(() => {
@@ -213,10 +643,47 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasUnsavedChanges, index, queue]);
+  }, [busy, hasUnsavedChanges, index, queue]);
 
-  if (busy && !queue) return <p className='loading-line'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
-  if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className='status'>{message}</p>}</section>;
+  if (busy && !queue) return <p className='loading-line' role='status'><span className='spinner' /> Ładuję zmieszane przypadki…</p>;
+  if (focusMissing) return <section className='identity-exception-review'><div className='status error'><strong>Nie można bezpiecznie otworzyć wskazanego przypadku Mixed.</strong><p>{message}</p></div></section>;
+  if (reprojectFailed) return <section className='identity-exception-review'><div className='status error'><strong>Podział został zapisany, ale kolejka Review wymaga odświeżenia.</strong><p>{message}</p><button type='button' onClick={() => void retryStructuralReproject()} disabled={busy}>Spróbuj odświeżyć Review</button></div></section>;
+  if (!reviewCase || !queue) return <section className='identity-exception-review'><div className='status'>Brak zmieszanych przypadków do rozdzielenia.</div>{message && <p className={busy ? 'loading-line' : 'status'} role='status'>{busy && <span className='spinner' />} {message}</p>}</section>;
+  if (reviewCase.scope_status === 'stale_or_unclassifiable_blocking') return <section className='identity-exception-review mixed-player-review'>
+    <div className='status'><strong>Nie można bezpiecznie odtworzyć źródła Mixed.</strong><p>Przypadek nadal blokuje Review. Odśwież lub uruchom bezpieczne przeliczenie Review; nie przypisuj tej historycznej własności na podstawie niepełnych danych.</p></div>
+  </section>;
+  if (
+    reviewCase.temporal_topology?.kind === 'concurrent'
+    && reviewCase.concurrent_resolution
+    && !topologyRejected
+  ) return <ConcurrentMixedResolver
+    key={`${reviewCase.case_id || reviewCase.candidate_subject_id}:${reviewCase.source_subject_digest}`}
+    match={match}
+    reviewCase={reviewCase}
+    assignmentOptions={queue.assignment_options}
+    caseNumber={index + 1}
+    caseTotal={queue.cases.length}
+    busy={busy}
+    statusMessage={message}
+    recoveryRevision={concurrentRecoveryRevision}
+    onDirtyChange={setHasUnsavedChanges}
+    onSave={saveConcurrentLanes}
+    onDefer={deferComplex}
+    onPrevious={() => navigateTo(index - 1)}
+    onNext={() => navigateTo(index + 1)}
+    previousDisabled={index === 0}
+    nextDisabled={index >= queue.cases.length - 1}
+    loadRefinement={(lane, afterFrame, beforeFrame) => api.getLaneRefinement(match.id, {
+      candidate_subject_id: reviewCase.candidate_subject_id,
+      parent_case_id: reviewCase.concurrent_resolution?.parent_case_id || reviewCase.case_id || reviewCase.candidate_subject_id,
+      parent_source_digest: reviewCase.concurrent_resolution?.parent_source_digest || reviewCase.source_subject_digest,
+      lane_id: lane.lane_id,
+      lane_source_digest: lane.source_ownership_digest,
+      after_frame: afterFrame,
+      before_frame: beforeFrame,
+    })}
+    onRecoverableRefinementConflict={recoverAfterConcurrentLaneConflict}
+  />;
 
   const crops = sortedMixedEvidenceCrops(reviewCase.temporal_evidence.anchor_crops);
   const selectedAssignment = assignments[selectedSegment] || null;
@@ -241,17 +708,21 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
         <span>{reviewCase.observation_count} wykrytych obserwacji</span>
       </div>
     </header>
+    {busy && <p className='loading-line' role='status'><span className='spinner' /> {message || 'Zapisuję i synchronizuję Review…'}</p>}
     {reviewCase.reviewed_complex && <div className='mixed-complex-reviewed' role='status'>
       <strong>⚠ Przejrzano: brak prostego podziału czasowego</strong>
       <span>Przypadek nadal wymaga rozwiązania. Możesz spróbować podziału ponownie albo pozostawić go jako złożony.</span>
     </div>}
-    <div className='mixed-review-workstation'>
+    <div className={simpleSplitAllowed ? 'mixed-review-workstation' : 'mixed-review-workstation concurrent'}>
       <section className='mixed-temporal-column'>
-        <div className='identity-exception-column-heading'><strong>Materiał w kolejności czasu</strong><span>Wybierz przedział i doprecyzuj moment przejścia</span></div>
-        <div className='mixed-temporal-strip'>
+        <div className='identity-exception-column-heading'><strong>{simpleSplitAllowed ? 'Materiał w kolejności czasu' : 'Równoległy materiał trackletów'}</strong><span>{simpleSplitAllowed ? 'Wybierz przedział i doprecyzuj moment przejścia' : 'Nakładające się fragmenty są pokazane w osobnych ścieżkach'}</span></div>
+        {!simpleSplitAllowed && reviewCase.temporal_topology?.kind === 'concurrent' && <MixedTemporalTopologyLanes matchId={match.id} reviewCase={reviewCase} />}
+        {!simpleSplitAllowed && reviewCase.temporal_topology?.kind !== 'concurrent' && <div className='mixed-topology-warning' role='alert'><strong>Nie można potwierdzić bezpiecznej topologii czasowej.</strong><span>Podział pozostaje zablokowany, dopóki dokładne źródło nie zostanie ponownie załadowane.</span></div>}
+        {simpleSplitAllowed && <>
+          <div className='mixed-temporal-strip'>
           {crops.map((crop, cropIndex) => <div className='mixed-crop-group' key={crop.anchor_crop_id}>
             <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
-              <img src={artifactUrl(match.id, crop.artifact)} alt='Czasowy widok zmieszanego przypadku' />
+              <ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Czasowy widok zmieszanego przypadku' />
               <figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption>
             </figure>
             {cropIndex < crops.length - 1 && <button
@@ -265,17 +736,18 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
               ? 'Zmień podział'
               : reviewCase.observation_count <= 12 ? 'Podziel tutaj' : 'Doprecyzuj'}</button>}
           </div>)}
-        </div>
+          </div>
         {refinement && <section className='mixed-boundary-refinement' aria-label='Doprecyzowanie granicy podziału'>
           <header>
             <div><strong>Doprecyzuj moment przejścia</strong><span>Wybierz dokładniejszą granicę między sąsiednimi podglądami.</span></div>
             <button type='button' className='secondary' onClick={() => setRefinement(null)}>Zamknij</button>
           </header>
+          <MixedRefinementBoundaryEvidence matchId={match.id} refinement={refinement} />
           <div className='mixed-refinement-strip'>
             <button type='button' className='mixed-refinement-leading-action' onClick={() => selectRefinedBoundary(refinement.after_frame)} disabled={busy}>Podziel zaraz po poprzednim podglądzie</button>
             {sortedMixedEvidenceCrops(refinement.anchor_crops).map((crop, cropIndex, refinementCrops) => <div className='mixed-refinement-crop' key={crop.anchor_crop_id}>
               <figure className={`team-${(crop.team_label || 'u').toLowerCase()}`}>
-                <img src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' />
+                <ReviewedEvidenceImage src={artifactUrl(match.id, crop.artifact)} alt='Dokładniejszy widok przejścia między osobami' />
                 <figcaption>{formatReviewTime(crop.time_sec || 0)}</figcaption>
               </figure>
               {cropIndex < refinementCrops.length - 1 && <button type='button' onClick={() => selectRefinedBoundary(crop.frame)} disabled={busy}>Ustaw tutaj</button>}
@@ -283,7 +755,7 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
           </div>
           {boundaries.some((frame) => frame >= refinement.after_frame && frame < refinement.before_frame) && <button type='button' className='secondary' onClick={removeRefinedBoundary}>Usuń podział z tego przedziału</button>}
         </section>}
-        <div className='mixed-segment-list' aria-label='Fragmenty po podziale'>
+          <div className='mixed-segment-list' aria-label='Fragmenty po podziale'>
           {segments.map((segment) => {
             const assignment = assignments[segment.index];
             const rosterName = queue.assignment_options.roster.find((player) => player.player_id === assignment?.player_id)?.player_name;
@@ -293,39 +765,19 @@ export function MixedPlayersReviewPanel({ match, workflow, onWorkflowChanged }: 
               <small>{assignment ? `✓ ${assignmentLabel(assignment, rosterName)}` : '! Nie przypisano'}</small>
             </button>;
           })}
-        </div>
+          </div>
+        </>}
       </section>
-      <aside className='mixed-assignment-panel'>
+      {simpleSplitAllowed && <aside className='mixed-assignment-panel'>
         <header><h3>Wybrany fragment {selectedSegment + 1}</h3><p>{selected ? segmentTimeLabel(selected.frameStart, selected.frameEnd) : ''}</p><strong>{assignmentLabel(selectedAssignment)}</strong></header>
         <div className='mixed-assignment-scroll'>
-          <label>Zawodnik z kadry
-            <select value={selectedAssignment?.action === 'assign_roster_player' ? selectedAssignment.player_id : ''} onChange={(event) => event.target.value && assign({ action: 'assign_roster_player', player_id: event.target.value })}>
-              <option value=''>Wybierz zawodnika</option>
-              {(['A', 'B'] as const).map((team) => <optgroup key={team} label={matchTeamName(match.teams || [], team)}>{queue.assignment_options.roster.filter((player) => player.team_label === team).map((player) => <option key={player.player_id} value={player.player_id}>{player.player_name}{player.roster_number ? ` #${player.roster_number}` : ''}</option>)}</optgroup>)}
-            </select>
-          </label>
-          <label>Ten sam gracz co Axx/Bxx
-            <select value={selectedAssignment?.action === 'assign_existing_slot' ? selectedAssignment.stable_slot_id : ''} onChange={(event) => event.target.value && assign({ action: 'assign_existing_slot', stable_slot_id: event.target.value })}>
-              <option value=''>Wybierz gracza</option>
-              {queue.assignment_options.slots.map((slot) => <option key={slot.stable_slot_id} value={slot.stable_slot_id}>{slot.stable_slot_id}</option>)}
-            </select>
-          </label>
-          <div className='reviewed-action-cards'>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'A' })}>{matchTeamName(match.teams || [], 'A')} — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'assign_team', team_label: 'B' })}>{matchTeamName(match.teams || [], 'B')} — nieznany</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'A' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'A')})</button>
-            <button type='button' onClick={() => assign({ action: 'create_new_stable_player', team_label: 'B' })}>Nowy zawodnik ({matchTeamName(match.teams || [], 'B')})</button>
-            <button type='button' onClick={() => assign({ action: 'referee' })}>Sędzia</button>
-            <button type='button' onClick={() => assign({ action: 'false_detection' })}>Fałszywa detekcja</button>
-            <button type='button' onClick={() => assign({ action: 'team_unknown' })}>Nieznana drużyna</button>
-            <button type='button' onClick={() => assign({ action: 'unresolved' })}>Nie wiem</button>
-          </div>
+          <MixedAssignmentControls assignment={selectedAssignment} options={queue.assignment_options} teams={match.teams} capabilities={reviewCase.action_capabilities} onAssign={assign} />
         </div>
-      </aside>
+      </aside>}
     </div>
-    <footer className='mixed-review-footer'>
+    <footer className={simpleSplitAllowed ? 'mixed-review-footer' : 'mixed-review-footer concurrent'}>
       <button type='button' className='secondary' onClick={() => navigateTo(index - 1)} disabled={busy || index === 0}>Poprzedni</button>
-      <button type='button' onClick={() => void saveSplit()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>
+      {simpleSplitAllowed && <button type='button' onClick={() => void saveSplit()} disabled={busy || !validMixedResolution(reviewCase, boundaries, assignments)}>Zapisz podział + następny</button>}
       <button type='button' className='secondary' onClick={() => void deferComplex()} disabled={busy}>Nie ma prostego podziału czasowego</button>
       <button type='button' className='secondary' onClick={() => navigateTo(index + 1)} disabled={busy || index >= queue.cases.length - 1}>Następny</button>
     </footer>

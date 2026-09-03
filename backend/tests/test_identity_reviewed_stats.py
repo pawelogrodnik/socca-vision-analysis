@@ -6,13 +6,109 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from app.services.identity_reviewed_stats import build_reviewed_stats
+from app.services.identity_reviewed_stats import (
+    _sprint_reference,
+    build_reviewed_stats,
+    reviewed_team_movement_exclusion_reason,
+)
+from app.services.identity_reviewed_frame_uniqueness import (
+    build_frame_slot_demotions,
+)
+from app.services.identity_reviewed_snapshot_observations import (
+    build_observation_overrides,
+)
+from app.services.reviewed_sprint_policy import reviewed_sprint_policy
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
 from app.services.identity_review_scope import identity_review_scope_digest
+from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION
 from app.services.reviewed_match_report import build_reviewed_match_report
 
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
+    def test_sprint_reference_uses_the_peak_fragment_not_unrelated_low_quality_fragment(self) -> None:
+        reference = _sprint_reference(
+            [
+                {
+                    "peak_sustained_speed_kmh": 24.0,
+                    "speed_quality": "high",
+                    "detected_time_sec": 180.0,
+                },
+                {
+                    "peak_sustained_speed_kmh": 8.0,
+                    "speed_quality": "low",
+                    "detected_time_sec": 2.0,
+                },
+            ]
+        )
+        policy = reviewed_sprint_policy(detected_time_sec=182.0, **reference)
+        self.assertEqual(policy["reference_source"], "current_match_peak_sustained")
+        self.assertEqual(policy["start_threshold_kmh"], 19.68)
+
+    def test_unreliable_peak_fragment_still_uses_the_absolute_fallback(self) -> None:
+        reference = _sprint_reference(
+            [{"peak_sustained_speed_kmh": 24.0, "speed_quality": "low", "detected_time_sec": 2.0}]
+        )
+        policy = reviewed_sprint_policy(detected_time_sec=180.0, **reference)
+        self.assertEqual(policy["reference_source"], "fallback_absolute")
+        self.assertEqual(policy["start_threshold_kmh"], 18.0)
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_team_distance_uses_safe_anonymous_evidence_without_u_or_double_counting(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 20,
+            "duration_sec": 0.8,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet("named", [0, 1, 2]),
+                            _tracklet("anonymous", [3, 4, 5]),
+                            _tracklet("named-two", [6, 7, 8]),
+                            _tracklet("unknown-team", [9, 10, 11]),
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            anonymous = _assignment("anonymous", "stable_anonymous", None)
+            unknown_team = _assignment("unknown-team", "stable_anonymous", None)
+            unknown_team["team_label"] = "U"
+            documents = build_reviewed_stats(
+                root,
+                {
+                    "semantic_digest": "snapshot",
+                    "tracklet_assignments": [
+                        _assignment("named", "confirmed", "p1"),
+                        _assignment("named-two", "confirmed", "p2"),
+                        anonymous,
+                        unknown_team,
+                    ],
+                    "observation_overrides": [],
+                    "observation_demotions": [],
+                    "summary": {},
+                },
+                _match_document(),
+            )
+            players = documents["reviewed_player_stats.json"]["players"]
+            teams = {
+                row["team_label"]: row
+                for row in documents["reviewed_player_stats.json"]["teams"]
+            }
+            named_total = sum(player["total_distance_m"] for player in players)
+            self.assertGreater(teams["A"]["total_distance_m"], named_total)
+            self.assertGreaterEqual(teams["A"]["total_distance_m"] + 0.01, named_total)
+            self.assertAlmostEqual(teams["A"]["total_distance_m"], 0.6, places=2)
+            self.assertEqual(teams["A"]["safe_observation_count"], 9)
+            self.assertEqual(teams["B"]["total_distance_m"], 0.0)
+
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_team_stats_only_omits_opponent_player_rows_but_keeps_scope_metadata(
         self, metadata
@@ -31,7 +127,11 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 encoding="utf-8",
             )
             b_assignment = _assignment("b", "confirmed", "p2")
-            b_assignment.update({"team_label": "B", "player_name": "Opponent"})
+            b_assignment.update({
+                "team_label": "B",
+                "player_name": "Opponent",
+                "reviewed_team_attribution_state": "certain_B",
+            })
             snapshot = {
                 "semantic_digest": "snapshot",
                 "tracklet_assignments": [_assignment("a", "confirmed", "p1"), b_assignment],
@@ -58,6 +158,341 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             scope = documents["reviewed_stats_readiness.json"]["identity_review_scope"]
             self.assertEqual(scope["teams"]["B"]["player_stats_status"], "not_reviewed_by_scope")
             self.assertTrue(scope["teams"]["B"]["team_stats_required"])
+            teams = {
+                row["team_label"]: row
+                for row in documents["reviewed_player_stats.json"]["teams"]
+            }
+            self.assertGreater(teams["B"]["total_distance_m"], 0.0)
+            self.assertEqual(teams["B"]["movement_authority"], "reviewed_safe_team_observations")
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_team_stats_only_unnamed_certain_b_observations_contribute_team_movement(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 30,
+            "duration_sec": 1.2,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tracklets = [
+                _tracklet_with_positions(tracklet_id, [(frame, frame * 0.2) for frame in range(5)])
+                for tracklet_id in ("b-unnamed", "b-and-u", "b-player-conflict", "u-only", "a-b-conflict")
+            ]
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": tracklets}), encoding="utf-8"
+            )
+            b_unnamed = _assignment("b-unnamed", "unresolved", None)
+            b_unnamed.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "certain_B",
+            })
+            b_and_u = _assignment("b-and-u", "unresolved", None)
+            b_and_u.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "certain_B",
+            })
+            b_player_conflict = _assignment("b-player-conflict", "conflicted", None)
+            b_player_conflict.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "certain_B",
+            })
+            u_only = _assignment("u-only", "unresolved", None)
+            u_only.update({
+                "team_label": "U",
+                "reviewed_team_attribution_state": "unknown",
+            })
+            a_b_conflict = _assignment("a-b-conflict", "conflicted", None)
+            a_b_conflict.update({
+                "team_label": "B",
+                "reviewed_team_attribution_state": "cross_team",
+            })
+            documents = build_reviewed_stats(
+                root,
+                {
+                    "semantic_digest": "snapshot",
+                    "tracklet_assignments": [
+                        b_unnamed,
+                        b_and_u,
+                        b_player_conflict,
+                        u_only,
+                        a_b_conflict,
+                    ],
+                    "observation_overrides": [],
+                    "observation_demotions": [],
+                    "summary": {},
+                },
+                {
+                    "identity_review_scope": {
+                        "teams": {"A": "complete_roster", "B": "team_stats_only"}
+                    }
+                },
+            )
+
+            stats = documents["reviewed_player_stats.json"]
+            teams = {row["team_label"]: row for row in stats["teams"]}
+            self.assertEqual(stats["players"], [])
+            self.assertEqual(teams["B"]["safe_observation_count"], 15)
+            self.assertGreater(teams["B"]["total_distance_m"], 0.0)
+            self.assertGreater(teams["B"]["observed_distance_m"], 0.0)
+            self.assertGreater(teams["B"]["high_intensity_distance_m"], 0.0)
+            self.assertLessEqual(
+                teams["B"]["high_intensity_distance_m"],
+                teams["B"]["total_distance_m"],
+            )
+            self.assertNotIn("sprint_count", teams["B"])
+            self.assertNotIn("sprint_distance_m", teams["B"])
+
+    def test_team_movement_requires_safe_team_attribution_not_named_player_identity(
+        self,
+    ) -> None:
+        base = {
+            "team_label": "B",
+            "reviewed_team_attribution_state": "certain_B",
+            "identity_status": "unresolved",
+            "pitch_m": [5.0, 10.0],
+            "smoothed_pitch_m": [5.0, 10.0],
+            "play_area_status": "inside_play",
+        }
+        self.assertIsNone(reviewed_team_movement_exclusion_reason(base))
+        self.assertIsNone(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "identity_status": "conflicted"}
+            )
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason({**base, "team_label": "U"}),
+            "team_unknown",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "reviewed_team_attribution_state": "cross_team"}
+            ),
+            "cross_team_conflict",
+        )
+        self.assertIsNone(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "identity_status": "team_unknown"}
+            )
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {
+                    **base,
+                    "team_label": "U",
+                    "reviewed_team_attribution_state": "unknown",
+                    "identity_status": "team_unknown",
+                }
+            ),
+            "team_unknown",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "reviewed_team_movement_exclusion": "duplicate_owner"}
+            ),
+            "duplicate_owner",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "identity_status": "referee"}
+            ),
+            "non_player",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "visual_trusted": False}
+            ),
+            "visually_untrusted",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "play_area_status": "outside_play"}
+            ),
+            "outside_play",
+        )
+        self.assertEqual(
+            reviewed_team_movement_exclusion_reason(
+                {**base, "smoothed_pitch_m": None, "pitch_m": None}
+            ),
+            "invalid_pitch_point",
+        )
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_exact_team_unknown_actions_keep_certain_team_movement(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 6,
+            "duration_sec": 0.24,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tracklets = {
+                row["tracklet_id"]: row
+                for row in [
+                    _tracklet("team-a", [0, 1]),
+                    _tracklet("team-b", [2, 3]),
+                    _tracklet("team-u", [4, 5]),
+                ]
+            }
+            for tracklet_id, label in (
+                ("team-a", "A"),
+                ("team-b", "B"),
+                ("team-u", "U"),
+            ):
+                tracklets[tracklet_id]["team_label"] = label
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": list(tracklets.values())}), encoding="utf-8"
+            )
+            seeds = {
+                "decisions": [
+                    {
+                        "observation_key": f"{tracklet_id}:{frame}",
+                        "frame_number": frame,
+                        "action": action,
+                        "assigned_team": (
+                            {"team_label": label}
+                            if label in {"A", "B"}
+                            else None
+                        ),
+                        "provenance": {"tracklet_id": tracklet_id},
+                    }
+                    for tracklet_id, label, action, frames in (
+                        ("team-a", "A", "team_a_unknown", (0, 1)),
+                        ("team-b", "B", "team_b_unknown", (2, 3)),
+                        ("team-u", "U", "skip", (4, 5)),
+                    )
+                    for frame in frames
+                ]
+            }
+            overrides = build_observation_overrides(seeds, tracklets, {})
+            by_tracklet = {
+                tracklet_id: [
+                    row
+                    for row in overrides
+                    if row["tracklet_id"] == tracklet_id
+                ]
+                for tracklet_id in tracklets
+            }
+            self.assertTrue(
+                all(
+                    row["reviewed_team_attribution_state"] == "certain_A"
+                    for row in by_tracklet["team-a"]
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["reviewed_team_attribution_state"] == "certain_B"
+                    for row in by_tracklet["team-b"]
+                )
+            )
+            snapshot = {
+                "semantic_digest": "snapshot",
+                "tracklet_assignments": [
+                    _assignment("team-a", "unresolved", None),
+                    {
+                        **_assignment("team-b", "unresolved", None),
+                        "team_label": "B",
+                        "reviewed_team_attribution_state": "certain_B",
+                    },
+                    {
+                        **_assignment("team-u", "unresolved", None),
+                        "team_label": "U",
+                        "reviewed_team_attribution_state": "unknown",
+                    },
+                ],
+                "observation_overrides": overrides,
+                "observation_demotions": [],
+                "summary": {},
+            }
+            teams = {
+                row["team_label"]: row
+                for row in build_reviewed_stats(root, snapshot, _match_document())[
+                    "reviewed_player_stats.json"
+                ]["teams"]
+            }
+            self.assertEqual(teams["A"]["safe_observation_count"], 2)
+            self.assertEqual(teams["B"]["safe_observation_count"], 2)
+            self.assertEqual(teams["A"]["total_distance_m"], 0.1)
+            self.assertEqual(teams["B"]["total_distance_m"], 0.1)
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_frame_uniqueness_losers_do_not_double_count_team_movement(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 2,
+            "duration_sec": 0.08,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        for claim_kind in ("canonical_player", "stable_slot"):
+            with self.subTest(
+                claim_kind=claim_kind
+            ), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                tracklets = {
+                    "winner": _tracklet("winner", [0, 1]),
+                    "loser": _tracklet("loser", [0, 1]),
+                }
+                (root / "tracklets.json").write_text(
+                    json.dumps({"tracklets": list(tracklets.values())}), encoding="utf-8"
+                )
+                common = {
+                    "team_label": "A",
+                    "reviewed_team_attribution_state": "certain_A",
+                    "stable_anonymous_slot_id": "A03",
+                    "identity_status": (
+                        "stable_anonymous"
+                        if claim_kind == "stable_slot"
+                        else "confirmed"
+                    ),
+                    "canonical_player_id": None if claim_kind == "stable_slot" else "p1",
+                }
+                assignments = [
+                    {
+                        "tracklet_id": "winner",
+                        "identity_source": "manual_review",
+                        **common,
+                    },
+                    {
+                        "tracklet_id": "loser",
+                        "identity_source": "candidate_shadow",
+                        **common,
+                    },
+                ]
+                demotions, diagnostics = build_frame_slot_demotions(tracklets, assignments)
+                self.assertEqual(diagnostics["demoted_observation_claims"], 2)
+                self.assertTrue(
+                    all(
+                        row["reviewed_team_movement_exclusion"]
+                        == "duplicate_owner"
+                        for row in demotions
+                    )
+                )
+                teams = {
+                    row["team_label"]: row
+                    for row in build_reviewed_stats(
+                        root,
+                        {
+                            "semantic_digest": "snapshot",
+                            "tracklet_assignments": assignments,
+                            "observation_overrides": [],
+                            "observation_demotions": demotions,
+                            "summary": {},
+                        },
+                        _match_document(),
+                    )["reviewed_player_stats.json"]["teams"]
+                }
+                self.assertEqual(teams["A"]["safe_observation_count"], 2)
+                self.assertEqual(teams["A"]["total_distance_m"], 0.1)
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_coverage_readiness_blocks_new_stats_until_queue_is_complete(
@@ -212,6 +647,7 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertGreater(player["observed_distance_m"], 0)
             self.assertGreater(player["total_distance_m"], 0)
             self.assertAlmostEqual(player["total_distance_m"], 0.1)
+            self.assertGreater(player["movement_time_sec"], 0)
             self.assertGreater(player["accepted_movement_segments"], 0)
             heatmap = documents["reviewed_player_heatmaps.json"]["heatmaps"][0]
             self.assertEqual(heatmap["samples"], 2)
@@ -253,7 +689,58 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             self.assertEqual(player["speed"]["top_speed_kmh"], player["speed"]["peak_sustained_speed_kmh"])
             self.assertEqual(player["intensity"]["high_intensity_distance_m"], 0.0)
             self.assertEqual(player["intensity"]["sprint_count"], 0)
+            self.assertNotIn("sprint_threshold_kmh", player["intensity"])
+            self.assertNotIn("min_sprint_duration_sec", player["intensity"])
+            self.assertEqual(player["intensity"]["sprint_detection"]["policy"], "player_relative_v2")
+            self.assertEqual(player["intensity"]["sprint_detection"]["minimum_duration_sec"], 0.4)
             self.assertEqual(player["readiness"]["speed"], "experimental")
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_player_and_workload_share_the_validated_sprint_event_totals(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 200,
+            "duration_sec": 8.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet_with_positions(
+                                "runner",
+                                [(frame, frame * 0.25) for frame in range(200)],
+                            )
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(root, _confirmed_snapshot("runner"), {})
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            intensity = player["intensity"]
+            workload = player["workload"]
+            self.assertGreater(intensity["sprint_count"], 0)
+            self.assertLessEqual(
+                intensity["max_sprint_speed_kmh"],
+                player["speed"]["peak_sustained_speed_kmh"] + 0.01,
+            )
+            self.assertEqual(workload["sprint_count"], intensity["sprint_count"])
+            self.assertEqual(workload["sprint_time_sec"], intensity["sprint_time_sec"])
+            self.assertEqual(workload["sprint_distance_m"], intensity["sprint_distance_m"])
+            self.assertEqual(
+                workload["max_sprint_speed_kmh"], intensity["max_sprint_speed_kmh"]
+            )
+            self.assertEqual(
+                intensity["validated_sprint_peak_kmh"], intensity["max_sprint_speed_kmh"]
+            )
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_single_frame_position_spike_does_not_leak_into_reviewed_or_public_max_speed(
@@ -358,6 +845,76 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 speed["peak_sustained_speed_kmh"],
             )
 
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_reviewed_public_report_keeps_optional_workload_and_average_position_without_schema_bump(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 100,
+            "duration_sec": 4.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [_tracklet("runner", list(range(100)))]}),
+                encoding="utf-8",
+            )
+            build_reviewed_stats(root, _confirmed_snapshot("runner"), {})
+
+            public_player = _build_public_report(root)["players"][0]
+
+            self.assertEqual(PUBLIC_MATCH_REPORT_SCHEMA_VERSION, "0.1.0")
+            self.assertIsNotNone(public_player["workload"])
+            self.assertEqual(public_player["workload"]["distance_per_5min_m"], None)
+            self.assertEqual(public_player["heatmap"]["average_position"]["pitch_m"], [4.95, 10.0])
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_workload_normalized_distance_uses_canonical_reviewed_total_for_sub_centimeter_steps(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 3000,
+            "duration_sec": 300.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet_with_positions(
+                                "slow-runner",
+                                [
+                                    (frame, frame * 0.009)
+                                    for frame in range(3000)
+                                ],
+                            )
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            documents = build_reviewed_stats(
+                root, _confirmed_snapshot("slow-runner"), {}
+            )
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            workload = player["workload"]
+            self.assertEqual(player["total_distance_m"], 26.99)
+            self.assertEqual(workload["distance_per_5min_m"], 67.47)
+            self.assertEqual(
+                workload["distance_per_5min_m"],
+                round(player["total_distance_m"] / player["detected_time_sec"] * 300, 2),
+            )
+            self.assertEqual(workload["activity_windows"][0]["total_distance_m"], 26.99)
+
 
 def _tracklet(tracklet_id: str, frames: list[int]) -> dict:
     return _tracklet_with_positions(
@@ -451,6 +1008,7 @@ def _assignment(tracklet_id: str, status: str, player_id: str | None) -> dict:
         "tracklet_id": tracklet_id,
         "candidate_subject_id": f"subject-{tracklet_id}",
         "team_label": "A",
+        "reviewed_team_attribution_state": "certain_A",
         "identity_status": status,
         "canonical_player_id": player_id,
         "player_name": "Player One" if player_id else None,

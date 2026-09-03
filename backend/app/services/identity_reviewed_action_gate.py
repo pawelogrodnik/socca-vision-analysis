@@ -73,6 +73,7 @@ def validate_deferred_review_action(
     subject_id = str(payload.get("candidate_subject_id") or "").strip()
     target_id = str(payload.get("review_target_id") or "").strip() or None
     unit = _actionable_unit(progress, subject_id, target_id)
+    authorization_queue_kind = _authorization_queue_kind(progress, unit)
     authorization_source = "batch_baseline"
     dynamic_progress: dict[str, Any] | None = None
     if unit is None and hot_state is None:
@@ -84,6 +85,7 @@ def validate_deferred_review_action(
             expected_source_snapshot_digest=str(progress["source_snapshot_digest"]),
         )
         authorization_source = "dynamic_optional"
+        authorization_queue_kind = "optional"
     if unit is None:
         raise DeferredReviewActionError(
             "review_unit_not_actionable",
@@ -114,7 +116,12 @@ def validate_deferred_review_action(
     validate_review_unit_action_scope(payload, unit)
 
     saved = _saved_decision(match_path, subject_id, target_id, unit)
-    if saved is not None and _semantic_decision(saved) != _semantic_decision(payload):
+    idempotent_replay = saved is not None and _semantic_decision(saved) == _semantic_decision(payload)
+    supersedes_saved_decision = saved is not None and not idempotent_replay
+    if supersedes_saved_decision and not _may_supersede_saved_decision(
+        hot_state,
+        payload,
+    ):
         raise DeferredReviewActionError(
             "review_unit_already_decided",
             "Ten przypadek ma już zapisaną inną decyzję. Odśwież Review przed zmianą.",
@@ -135,12 +142,29 @@ def validate_deferred_review_action(
             )
     return {
         "review_unit": unit,
-        "idempotent_replay": saved is not None,
+        "idempotent_replay": idempotent_replay,
+        "saved_decision": saved,
+        "supersedes_saved_decision": supersedes_saved_decision,
         "batch_source_snapshot_digest": progress["source_snapshot_digest"],
         "detected_team_labels_by_subject": detected_team_labels_by_subject,
         "authorization_source": authorization_source,
+        "audit_required": authorization_queue_kind == "required",
         "hot_state": hot_state,
     }
+
+
+def _may_supersede_saved_decision(
+    hot_state: dict[str, Any] | None,
+    payload: dict[str, Any],
+) -> bool:
+    """Permit a deliberate correction only from the current exact hot card.
+
+    An older team-only decision can leave a Team-A coverage card actionable.
+    The operator must be able to correct it to Team B (or a named player),
+    but only after the versioned hot-state and exact ownership checks above
+    have proven that this is the current card, not a delayed mutation.
+    """
+    return hot_state is not None and payload.get("review_state_version") is not None
 
 
 def _dynamically_authorized_optional_unit(
@@ -320,6 +344,25 @@ def _iter_authorized_review_units(
         yield "required", raw
     for raw in progress.get("optional_audit_cases") or []:
         yield "optional", raw
+
+
+def _authorization_queue_kind(
+    progress: dict[str, Any], unit: dict[str, Any] | None
+) -> str | None:
+    if not isinstance(unit, dict):
+        return None
+    target = str(unit.get("review_target_id") or "")
+    subject = str(unit.get("candidate_subject_id") or "")
+    for queue, row in _iter_authorized_review_units(progress):
+        if not isinstance(row, dict):
+            continue
+        if (
+            str(row.get("candidate_subject_id") or "") == subject
+            and str(row.get("review_target_id") or "") == target
+            and _authorized_queue_semantics(queue, row)
+        ):
+            return queue
+    return None
 
 
 def _authorized_queue_semantics(queue: str, unit: dict[str, Any]) -> bool:

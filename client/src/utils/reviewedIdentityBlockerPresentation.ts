@@ -15,8 +15,12 @@ export function teamAttributionBlockerMessage(
   readiness: ReviewedIdentityCoverageReadiness | null,
 ): string | null {
   const blocker = readiness?.blockers.find((item) => (
-    (item as TeamAttributionBlocker).code === 'team_attribution_evidence_unavailable'
+    ['team_attribution_evidence_unavailable', 'team_attribution_residual_exceeds_tolerance', 'team_attribution_evidence_technical_failure']
+      .includes(String((item as TeamAttributionBlocker).code || ''))
   )) as TeamAttributionBlocker | undefined;
+  if (String(blocker?.code || '') === 'team_attribution_evidence_technical_failure') {
+    return 'Nie udało się przygotować bezpiecznych widoków dla nierozstrzygniętych obserwacji. Sprawdź dostępność pliku wideo i artefaktów analizy; Review pozostaje zablokowany, aby nie ukryć problemu jakości danych.';
+  }
   const units = positiveInteger(blocker?.units);
   const observations = positiveInteger(blocker?.observations);
   if (!units || !observations) return null;

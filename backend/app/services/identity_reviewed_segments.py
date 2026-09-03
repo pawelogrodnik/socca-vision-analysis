@@ -3,16 +3,22 @@ from __future__ import annotations
 """Reviewed-only targets and decisions for frame-owned mixed tracklets."""
 
 from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime, timezone
 from math import isfinite
 from pathlib import Path
+import time
 from typing import Any
 
 from app.services.identity_canonical_io import load_json_cached
 from app.services.identity_canonical_ownership import global_observation_ownership
 from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_jersey_number_common import canonical_digest
-from app.services.identity_reviewed_mixed_store import operator_mixed_targets
+from app.services.identity_reviewed_mixed_store import (
+    load_mixed_player_cases,
+    operator_mixed_targets,
+    resolved_inline_temporal_split_source_keys,
+)
 from app.services.identity_reviewed_slot_registry import (
     build_reviewed_slot_registry,
     next_free_reviewed_slot,
@@ -56,7 +62,10 @@ ALLOWED_ACTIONS = frozenset(
 def build_segment_review_document(
     match_path: Path,
     match_doc: dict[str, Any],
+    *,
+    performance: dict[str, float] | None = None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     tracklets_doc = _load(match_path / "tracklets.json")
     subjects_doc = _load(match_path / "identity_candidate_shadow.json")
     global_doc = _load(match_path / "global_identity.json")
@@ -228,7 +237,9 @@ def build_segment_review_document(
                 "requires_confirmation": True,
             }
 
-    for target in operator_mixed_targets(match_path):
+    operator_targets_started = time.perf_counter()
+    operator_targets = operator_mixed_targets(match_path)
+    for target in operator_targets:
         target_id = str(target["review_target_id"])
         decision = stored_decisions.get(target_id)
         decision_current = bool(
@@ -242,6 +253,32 @@ def build_segment_review_document(
         target["decision_status"] = "reviewed" if decision_current else "pending"
         target["stale_decision"] = bool(decision and not decision_current)
         targets.append(target)
+
+    mixed_cases = [
+        dict(row)
+        for row in load_mixed_player_cases(match_path).get("cases") or []
+        if isinstance(row, dict)
+    ]
+    retired_source_keys = resolved_inline_temporal_split_source_keys(
+        mixed_cases,
+        stored_decisions,
+        operator_targets,
+    )
+    if retired_source_keys:
+        targets = [
+            target
+            for target in targets
+            if (
+                str(target.get("review_target_id") or ""),
+                str(target.get("source_ownership_digest") or ""),
+            ) not in retired_source_keys
+        ]
+
+    if performance is not None:
+        performance["segment_review_operator_targets_ms"] = round(
+            (time.perf_counter() - operator_targets_started) * 1000,
+            1,
+        )
 
     _attach_boundary_evidence(targets)
 
@@ -266,7 +303,7 @@ def build_segment_review_document(
         "summary": {
             "mixed_tracklets": len({key[1] for key in groups}),
             "operator_mixed_targets": sum(
-                row.get("target_origin") in {"operator_mixed_players", "operator_temporal_split"}
+                str(row.get("target_origin") or "").startswith("operator_")
                 for row in targets
             ),
             "targets_total": len(targets),
@@ -299,11 +336,95 @@ def build_segment_review_document(
         },
     }
     write_identity_json_atomic(match_path / REVIEW_FILENAME, document)
+    if performance is not None:
+        performance["segment_review_build_ms"] = round(
+            (time.perf_counter() - started) * 1000,
+            1,
+        )
     return document
 
 
 def load_segment_review(match_path: Path) -> dict[str, Any]:
     return _load(match_path / REVIEW_FILENAME)
+
+
+def project_segment_decisions_onto_materialized_review(
+    match_path: Path,
+    materialized_review: dict[str, Any],
+) -> dict[str, Any]:
+    """Refresh decision-derived fields without rebuilding target topology.
+
+    A Mixed split's first canonical build establishes the exact child target
+    IDs, ownership, evidence and boundary relationships. Persisting decisions
+    cannot change that topology. A second full build previously recalculated
+    all large canonical ownership inputs only to update the fields below:
+    current/stale decisions, decision counts, orphan counts and the decisions
+    digest. In particular, operator-split ``effective_team_label`` remains a
+    topology field from the first build; the canonical second build does not
+    derive it from the newly saved decision. Keep that exact contract explicit
+    and differential-tested against a fresh canonical build.
+    """
+    document = deepcopy(materialized_review)
+    decisions_document = load_segment_decisions(match_path)
+    stored = {
+        str(row.get("review_target_id") or ""): row
+        for row in decisions_document.get("decisions") or []
+        if row.get("review_target_id")
+    }
+    matched: set[str] = set()
+    targets = [row for row in document.get("targets") or [] if isinstance(row, dict)]
+    for target in targets:
+        target_id = str(target.get("review_target_id") or "")
+        decision = stored.get(target_id)
+        current = bool(
+            decision
+            and str(decision.get("source_ownership_digest") or "")
+            == str(target.get("source_ownership_digest") or "")
+        )
+        if decision is not None:
+            matched.add(target_id)
+        target["current_decision"] = decision if current else None
+        target["decision_status"] = "reviewed" if current else "pending"
+        target["stale_decision"] = bool(decision and not current)
+
+    mixed_cases = [
+        dict(row)
+        for row in load_mixed_player_cases(match_path).get("cases") or []
+        if isinstance(row, dict)
+    ]
+    retired_source_keys = resolved_inline_temporal_split_source_keys(
+        mixed_cases,
+        stored,
+        targets,
+    )
+    if retired_source_keys:
+        targets = [
+            target
+            for target in targets
+            if (
+                str(target.get("review_target_id") or ""),
+                str(target.get("source_ownership_digest") or ""),
+            ) not in retired_source_keys
+        ]
+
+    orphaned = len(set(stored) - matched)
+    summary = dict(document.get("summary") or {})
+    summary.update(
+        {
+            "targets_reviewed": sum(target.get("decision_status") == "reviewed" for target in targets),
+            "targets_pending": sum(target.get("decision_status") == "pending" for target in targets),
+            "stale_decisions": sum(bool(target.get("stale_decision")) for target in targets) + orphaned,
+            "orphaned_decisions_requiring_review": orphaned,
+        }
+    )
+    document["targets"] = targets
+    document["summary"] = summary
+    source = dict(document.get("source") or {})
+    source["decisions_digest"] = canonical_digest(decisions_document.get("decisions") or [])
+    document["source"] = source
+    document["generated_at"] = datetime.now(timezone.utc).isoformat()
+    write_identity_json_atomic(match_path / REVIEW_FILENAME, document)
+    return document
 
 
 def render_segment_review_evidence(
@@ -337,7 +458,7 @@ def load_segment_decisions(match_path: Path) -> dict[str, Any]:
     return _decision_document([])
 
 
-def save_segment_decision(
+def _save_segment_decision_legacy(
     match_path: Path,
     match_doc: dict[str, Any],
     payload: dict[str, Any],
@@ -463,6 +584,167 @@ def save_segment_decision(
     return decision
 
 
+def save_segment_decisions_batch(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payloads: list[dict[str, Any]],
+    *,
+    materialized_review: dict[str, Any] | None = None,
+    performance: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Validate and persist an exact segment-decision batch atomically.
+
+    Inline Mixed splits produce all child targets together. Reading and writing
+    the decisions/slot documents per child was both slow and made atomicity
+    harder to reason about. This keeps the public single-save contract while
+    committing the multi-child result once after every child has validated.
+    """
+    if not payloads:
+        return []
+    review = materialized_review or build_segment_review_document(match_path, match_doc)
+    targets = {
+        str(row.get("review_target_id") or ""): row
+        for row in review.get("targets") or []
+        if row.get("review_target_id")
+    }
+    existing = load_segment_decisions(match_path)
+    decisions = {
+        str(row.get("review_target_id") or ""): dict(row)
+        for row in existing.get("decisions") or []
+        if row.get("review_target_id")
+    }
+    slot_document = load_reviewed_slot_assignments(match_path)
+    registry = build_reviewed_slot_registry(match_path, slot_document)
+    reviewed_slots = [dict(row) for row in slot_document.get("reviewed_slots") or []]
+    slots_changed = False
+    roster = _roster(match_doc)
+    prepared: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    validation_started = time.perf_counter()
+    for payload in payloads:
+        target_id = str(payload.get("review_target_id") or "")
+        target = targets.get(target_id)
+        if target is None:
+            raise SegmentTargetError("review_target_unknown")
+        if str(payload.get("source_ownership_digest") or "") != str(target.get("source_ownership_digest") or ""):
+            raise SegmentTargetError("review_target_stale")
+        action = str(payload.get("action") or "")
+        if action not in ALLOWED_ACTIONS:
+            raise ValueError(f"Unsupported segment correction action: {action}")
+        player_id = str(payload.get("player_id") or "") or None
+        team_label = str(payload.get("team_label") or "").upper() or None
+        stable_slot_id: str | None = None
+        if action == "assign_roster_player":
+            player = roster.get(player_id or "")
+            if player is None:
+                raise ValueError(f"Invalid player_id: {player_id or '<missing>'}")
+            team_label = str(player["team_label"])
+        elif action == "assign_existing_slot":
+            stable_slot_id = normalize_reviewed_slot_id(payload.get("stable_slot_id"))
+            if not stable_slot_id or stable_slot_id not in registry:
+                raise ValueError("assign_existing_slot requires an existing stable slot")
+            team_label = str(registry[stable_slot_id]["team_label"])
+            player_id = None
+        elif action == "create_new_stable_player":
+            if team_label not in {"A", "B"}:
+                raise ValueError("create_new_stable_player requires team_label A or B")
+            previous = decisions.get(target_id)
+            stable_slot_id = normalize_reviewed_slot_id((previous or {}).get("stable_slot_id"))
+            if stable_slot_id is None:
+                stable_slot_id = next_free_reviewed_slot(team_label, registry)
+            if stable_slot_id is None:
+                raise ValueError(f"bounded pool exhausted for team {team_label}")
+            if stable_slot_id not in registry:
+                slot = {
+                    "stable_slot_id": stable_slot_id,
+                    "team_label": team_label,
+                    "source": "manual_new_player_confirmation",
+                    "created_for_candidate_subject_id": target["candidate_subject_id"],
+                    "status": "active",
+                }
+                reviewed_slots.append(slot)
+                registry[stable_slot_id] = slot
+                slots_changed = True
+            player_id = None
+        elif action == "assign_team":
+            if team_label not in {"A", "B"}:
+                raise ValueError("assign_team requires team_label A or B")
+            player_id = None
+        else:
+            player_id = None
+            team_label = "U" if action == "team_unknown" else str(target["source_team_label"])
+
+        decision = {
+            "review_target_id": target_id,
+            "candidate_subject_id": target["candidate_subject_id"],
+            "tracklet_ids": list(target["tracklet_ids"]),
+            "stable_slot_id": target["stable_slot_id"],
+            "source_ownership_digest": target["source_ownership_digest"],
+            "action": action,
+            "player_id": player_id,
+            "team_label": team_label,
+            "source_team_label": str(target["source_team_label"]),
+            "team_correction": bool(
+                action == "assign_roster_player"
+                and str(target["source_team_label"]) in {"A", "B"}
+                and team_label != str(target["source_team_label"])
+            ),
+            "source": "manual_segment_review",
+            "supersedes_legacy_whole_subject_decision": bool(target.get("legacy_suggestion")),
+            "comment": str(payload.get("comment") or "").strip() or None,
+            "reviewed_at": now,
+        }
+        if stable_slot_id is not None:
+            decision["stable_slot_id"] = stable_slot_id
+        decisions[target_id] = decision
+        prepared.append(decision)
+    if performance is not None:
+        performance["segment_assignment_validation_ms"] = round(
+            (time.perf_counter() - validation_started) * 1000,
+            1,
+        )
+
+    if slots_changed:
+        slot_persistence_started = time.perf_counter()
+        write_identity_json_atomic(
+            match_path / SLOT_REVIEW_FILENAME,
+            {**slot_document, "reviewed_slots": reviewed_slots},
+        )
+        if performance is not None:
+            performance["reviewed_slot_persistence_ms"] = round(
+                (time.perf_counter() - slot_persistence_started) * 1000,
+                1,
+            )
+    decision_persistence_started = time.perf_counter()
+    write_identity_json_atomic(
+        match_path / DECISIONS_FILENAME,
+        _decision_document(sorted(decisions.values(), key=lambda row: str(row["review_target_id"]))),
+    )
+    if performance is not None:
+        performance["segment_decision_persistence_ms"] = round(
+            (time.perf_counter() - decision_persistence_started) * 1000,
+            1,
+        )
+    return prepared
+
+
+def save_segment_decision(
+    match_path: Path,
+    match_doc: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    materialized_review: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compatibility wrapper for the atomic multi-target writer."""
+    return save_segment_decisions_batch(
+        match_path,
+        match_doc,
+        [payload],
+        materialized_review=materialized_review,
+    )[0]
+
+
 def segment_observation_assignments(
     review: dict[str, Any],
     decisions: dict[str, Any],
@@ -546,6 +828,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
             "team_label": str(player["team_label"]),
+            "reviewed_team_attribution_state": f"certain_{player['team_label']}",
             "fallback_label": slot_id or f"{player['team_label']}?",
             "identity_status": "confirmed",
             "canonical_player_id": str(decision.get("player_id")),
@@ -560,6 +843,9 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": None,
             "stable_anonymous_entity_id": None,
             "team_label": team,
+            "reviewed_team_attribution_state": (
+                f"certain_{team}" if team in {"A", "B"} else "unknown"
+            ),
             "fallback_label": f"{team}?",
             "display_label": f"{team}?",
             "identity_status": "unresolved",
@@ -572,6 +858,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": slot_id,
             "stable_anonymous_entity_id": slot_id,
             "team_label": slot_id[0],
+            "reviewed_team_attribution_state": f"certain_{slot_id[0]}",
             "fallback_label": slot_id,
             "display_label": slot_id,
             "identity_status": "stable_anonymous",
@@ -584,6 +871,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": None,
             "stable_anonymous_entity_id": None,
             "team_label": "U",
+            "reviewed_team_attribution_state": "unknown",
             "fallback_label": "Sędzia",
             "display_label": "Sędzia",
             "identity_status": "referee",
@@ -596,6 +884,7 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": None,
             "stable_anonymous_entity_id": None,
             "team_label": "U",
+            "reviewed_team_attribution_state": "unknown",
             "fallback_label": "Fałszywa detekcja",
             "display_label": "Fałszywa detekcja",
             "identity_status": "false_detection",
@@ -610,6 +899,13 @@ def _segment_assignment_row(
             "stable_anonymous_slot_id": slot_id if action == "unresolved" else None,
             "stable_anonymous_entity_id": slot_id if action == "unresolved" else None,
             "team_label": unknown_team,
+            "reviewed_team_attribution_state": (
+                "unknown"
+                if action == "team_unknown"
+                else f"certain_{unknown_team}"
+                if unknown_team in {"A", "B"}
+                else "unknown"
+            ),
             "fallback_label": fallback,
             "display_label": fallback,
             "identity_status": "team_unknown" if action == "team_unknown" else "unresolved",

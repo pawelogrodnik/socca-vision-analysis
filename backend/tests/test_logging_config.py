@@ -77,6 +77,7 @@ class ApplicationLoggingTests(unittest.TestCase):
         self.assertIn('export APP_LOG_LEVEL="${APP_LOG_LEVEL:-INFO}"', script)
         self.assertIn('export UVICORN_LOG_LEVEL="${UVICORN_LOG_LEVEL:-info}"', script)
         self.assertIn('--log-level "${UVICORN_LOG_LEVEL}"', script)
+        self.assertIn('--reload-dir "$ROOT_DIR/backend/app"', script)
 
     def _application_handlers(self) -> list[logging.Handler]:
         return [

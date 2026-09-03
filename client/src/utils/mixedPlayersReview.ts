@@ -19,8 +19,17 @@ export function toggleMixedBoundary(boundaries: number[], frame: number): number
     : [...boundaries, frame].sort((left, right) => left - right);
 }
 
+export function validMixedBoundaryFrames(
+  reviewCase: Pick<MixedPlayerCase, 'frame_start' | 'frame_end'>,
+  boundaries: number[],
+): number[] {
+  return [...new Set(boundaries)]
+    .filter((frame) => Number.isInteger(frame) && frame >= reviewCase.frame_start && frame < reviewCase.frame_end)
+    .sort((left, right) => left - right);
+}
+
 export function mixedSegments(reviewCase: MixedPlayerCase, boundaries: number[]): MixedSegment[] {
-  const sorted = [...new Set(boundaries)].sort((left, right) => left - right);
+  const sorted = validMixedBoundaryFrames(reviewCase, boundaries);
   const edges = [reviewCase.frame_start, ...sorted.map((frame) => frame + 1), reviewCase.frame_end + 1];
   const cropFrames = reviewCase.temporal_evidence.anchor_crops.map((crop) => crop.frame);
   return edges.slice(0, -1).map((start, index) => ({
@@ -131,9 +140,11 @@ export function validMixedResolution(
   boundaries: number[],
   assignments: Array<MixedSegmentAssignment | null>,
 ): boolean {
-  const segments = mixedSegments(reviewCase, boundaries);
+  if (reviewCase.temporal_topology?.simple_split_allowed !== true) return false;
+  const normalizedBoundaries = validMixedBoundaryFrames(reviewCase, boundaries);
+  const segments = mixedSegments(reviewCase, normalizedBoundaries);
   return boundaries.length > 0
-    && boundaries.every((frame) => frame >= reviewCase.frame_start && frame < reviewCase.frame_end)
+    && boundaries.every((frame, index) => frame === normalizedBoundaries[index])
     && segments.every((segment) => segment.frameStart <= segment.frameEnd)
     && assignments.length === segments.length
     && assignments.every(Boolean);

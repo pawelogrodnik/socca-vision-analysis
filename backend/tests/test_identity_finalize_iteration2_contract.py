@@ -19,6 +19,7 @@ from app.services.identity_reviewed_snapshot import (
     _optional as snapshot_optional,
 )
 from app.services.identity_jersey_number_common import canonical_digest
+from app.services.identity_initial_audit_store import write_identity_json_atomic
 from app.services.identity_reviewed_snapshot import (
     _semantic_input,
     _source_descriptor,
@@ -45,6 +46,15 @@ class RequestCacheWriteSafetyTests(unittest.TestCase):
                 invalidate_cached_json(path)
                 second = load_json_cached(path)
                 self.assertEqual(second["version"], "B")
+
+    def test_identity_atomic_write_invalidates_the_active_request_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "reviewed_identity_segment_decisions.json"
+            path.write_text(json.dumps({"version": "A"}), encoding="utf-8")
+            with review_build_context():
+                self.assertEqual(load_json_cached(path)["version"], "A")
+                write_identity_json_atomic(path, {"version": "B"})
+                self.assertEqual(load_json_cached(path)["version"], "B")
 
     def test_scope_isolation_between_requests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

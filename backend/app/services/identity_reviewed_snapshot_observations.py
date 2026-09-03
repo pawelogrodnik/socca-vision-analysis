@@ -56,6 +56,13 @@ def build_observation_overrides(
                 "action": action,
                 "identity_status": status,
                 "team_label": team,
+                "reviewed_team_attribution_state": (
+                    "cross_team"
+                    if "cross_team_confirmed_assignment" in blockers
+                    else f"certain_{team}"
+                    if team in {"A", "B"}
+                    else "unknown"
+                ),
                 "canonical_player_id": player_id if status == "confirmed" else None,
                 "player_name": player["name"] if player and status == "confirmed" else None,
                 "roster_number": player.get("number") if player and status == "confirmed" else None,

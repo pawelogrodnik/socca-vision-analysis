@@ -24,9 +24,18 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(report["players"][0]["peak_speed_kmh"], 18.4)
             self.assertEqual(report["players"][0]["high_intensity_distance_m"], 11.2)
             self.assertEqual(report["players"][0]["sprint_count"], 1)
+            self.assertEqual(report["players"][0]["max_sprint_speed_kmh"], 21.0)
             self.assertGreater(len(report["players"][0]["heatmap"]["interactive"]["points"]), 0)
             self.assertEqual(report["players"][0]["heatmap"]["path"], "")
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")
+            self.assertEqual(report["teams"][0]["total_distance_m"], 140.0)
+            self.assertEqual(report["teams"][0]["high_intensity_distance_m"], 100.0)
+            self.assertEqual(report["teams"][0]["sprint_count"], 3)
+            self.assertLessEqual(
+                report["teams"][0]["high_intensity_distance_m"],
+                report["teams"][0]["total_distance_m"],
+            )
+            self.assertEqual(report["teams"][0]["movement_authority"], "reviewed_safe_team_observations")
 
     def test_report_rejects_mismatched_reviewed_digests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -64,6 +73,16 @@ class ReviewedMatchReportTests(unittest.TestCase):
                 "status": "ready_with_review",
                 "allows_finalize": True,
                 "blockers": [],
+                "team_attribution_residual": {
+                    "status": "accepted_within_tolerance",
+                    "observations": 3,
+                    "residual_budget_observations": 10,
+                    "within_tolerance": True,
+                    "units": 1,
+                    "evidence_status_counts": {
+                        "no_team_attribution_evidence": 1,
+                    },
+                },
             }
             self._write(root / "reviewed_stats_readiness.json", readiness)
 
@@ -73,6 +92,10 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(
                 report["identity_coverage_readiness"]["status"],
                 "ready_with_review",
+            )
+            self.assertEqual(
+                report["identity_coverage_readiness"]["team_attribution_residual"]["status"],
+                "accepted_within_tolerance",
             )
 
     def _write_fixture(self, root: Path) -> None:
@@ -105,7 +128,7 @@ class ReviewedMatchReportTests(unittest.TestCase):
             root / "team_stats.json",
             {
                 "teams": [
-                    {"team_label": "A", "team_id": "team-a", "playing_time_sec": 630.0, "total_distance_m": 700.0},
+                    {"team_label": "A", "team_id": "team-a", "playing_time_sec": 630.0, "total_distance_m": 700.0, "sprint_count": 3},
                     {"team_label": "B", "team_id": "team-b", "playing_time_sec": 540.0, "total_distance_m": 680.0},
                 ]
             },
@@ -139,6 +162,26 @@ class ReviewedMatchReportTests(unittest.TestCase):
                         },
                     },
                     {"player_id": "B03", "player_name": "B03", "team_label": "B", "detected_time_sec": 60.0, "total_distance_m": 90.0},
+                ],
+                "teams": [
+                    {
+                        "team_label": "A",
+                        "movement_authority": "reviewed_safe_team_observations",
+                        "total_distance_m": 140.0,
+                        "observed_distance_m": 130.0,
+                        "estimated_short_gap_distance_m": 10.0,
+                        "high_intensity_distance_m": 100.0,
+                        "sprint_count": 2,
+                    },
+                    {
+                        "team_label": "B",
+                        "movement_authority": "reviewed_safe_team_observations",
+                        "total_distance_m": 90.0,
+                        "observed_distance_m": 90.0,
+                        "estimated_short_gap_distance_m": 0.0,
+                        "high_intensity_distance_m": 40.0,
+                        "sprint_count": 1,
+                    },
                 ],
             },
         )

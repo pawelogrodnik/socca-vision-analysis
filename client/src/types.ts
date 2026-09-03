@@ -1810,6 +1810,9 @@ export type ReviewWorkflow = {
   status: 'unavailable' | 'action_required' | 'processing' | 'ready' | 'complete' | 'error';
   current_step_id: ReviewWorkflowStepId;
   review_complete: boolean;
+  mandatory_operator_review_complete?: boolean;
+  data_quality_ready_for_output?: boolean;
+  optional_max_available?: boolean;
   can_enter_report: boolean;
   can_publish: boolean;
   steps: ReviewWorkflowStep[];
@@ -1827,7 +1830,7 @@ export type ReviewWorkflow = {
     completion_evidence_reason?: string;
     required_case_observation_keys?: string[];
   };
-  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; normal_blocking?: number; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
+  issues: { blocking: number; actionable_blocking?: number; overall_identity_blocked?: boolean; coverage_readiness_blocked?: boolean; team_attribution_evidence_not_materialized?: boolean; team_attribution_evidence_technical_failure?: boolean; normal_blocking?: number; required_queue?: { count: number; source_keys_digest: string }; mixed_blocking?: number; mixed_total?: number; mixed_resolved?: number; important: number; semantic?: number; coverage?: number; optional: number; optional_audit?: number; coverage_readiness?: ReviewedIdentityCoverageReadiness | null; identity_coverage?: ReviewedIdentityCoverage | null; workload?: ReviewedIdentityWorkload | null; optional_audit_summary?: ReviewedIdentityOptionalAudit | null };
   freshness: {
     reviewed_identity_current: boolean;
     reviewed_stats_current: boolean;
@@ -1835,6 +1838,8 @@ export type ReviewWorkflow = {
     qa_approval_current: boolean;
     review_progress_current?: boolean;
     review_progress_reason?: string | null;
+    /** Stable deferred-mutation marker used to bound automatic recovery. */
+    review_progress_recompute_generation?: string | null;
   };
   processing?: ReviewedOutputJob | null;
   blockers: Array<{ code: string; step_id: string; user_actionable: boolean; details: Record<string, unknown> }>;
@@ -1968,6 +1973,13 @@ export type ReviewedCorrectionContext = {
     anchor_crops: IdentityRosterSubjectAnchorCrop[];
     boundary_crops?: Array<IdentityRosterSubjectAnchorCrop & { outside_target?: boolean }>;
   } | null;
+  temporal_topology?: MixedTemporalTopology | null;
+  concurrent_resolution?: ConcurrentMixedResolution | null;
+  historical_concurrent_repair?: boolean;
+  historical_parent_repair?: {
+    available: true;
+    case_id: string;
+  } | null;
   source_evidence_kind?: string;
   legacy_suggestion?: {
     action: 'assign_roster_player';
@@ -1982,6 +1994,8 @@ export type ReviewedCorrectionContext = {
     split_after_frames: number[];
     split_semantic_digest?: string | null;
     segment_assignments: MixedSegmentAssignment[];
+    resolution_model?: 'concurrent_lanes' | null;
+    resolution_semantic_digest?: string | null;
   } | null;
   action_capabilities: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
   scope_copy?: string;
@@ -2010,14 +2024,17 @@ export type ReviewedCorrectionResponse = {
   snapshot?: { status: string; stale: boolean };
   semantic_decision_digest: string;
   recompute_deferred: boolean;
+  /** The server accepted no new mutation: this exact decision already exists. */
+  idempotent_replay?: boolean;
   review_state_version?: number;
   review_state_rebuild_required?: boolean;
   persistence?: {
-    status: 'saved';
+    status: 'saved' | 'already_saved';
     downstream_recompute_triggered: boolean;
   };
   performance?: Record<string, number>;
   review_progress?: ReviewedIdentityReviewProgress;
+  coverage_debt?: ReviewedIdentityCoverageDebt;
   decision_impact?: ReviewedCorrectionDecisionImpact;
   workflow?: ReviewWorkflow;
   reviewed_identity?: ReviewedFinalizedIdentitySummary;
@@ -2061,6 +2078,11 @@ export type ReviewedIdentityReviewUnit = {
   marginal_named_observation_gain?: number | null;
   potential_team_unnamed_share?: number | null;
   potential_named_coverage_gain_pp?: number | null;
+  potential_team_known_observation_gain?: number | null;
+  potential_team_known_coverage_gain_pp?: number | null;
+  operator_impact_kind?: 'named_coverage' | 'team_known' | null;
+  operator_impact_observation_gain?: number | null;
+  operator_impact_pp?: number | null;
   optional_max_rank?: number | null;
   optional_max_marginal_coverage_gain_pp?: number | null;
   named_coverage_before?: number | null;
@@ -2068,7 +2090,7 @@ export type ReviewedIdentityReviewUnit = {
   filter_team_label?: 'A' | 'B' | 'U';
 };
 
-export type ReviewedIdentityTeamFilterLabel = 'A' | 'B';
+export type ReviewedIdentityTeamFilterLabel = 'A' | 'B' | 'U';
 export type ReviewedIdentityReviewQueue = 'required' | 'optional_audit';
 
 export type ReviewedIdentityReviewFilters = {
@@ -2111,6 +2133,14 @@ export type ReviewedIdentityCoverageReadiness = {
   policy_version: string;
   allows_finalize: boolean;
   blockers: Array<Record<string, unknown>>;
+  team_attribution_residual?: {
+    status: 'none' | 'materialization_required' | 'technical_evidence_failure' | 'accepted_within_tolerance' | 'exceeds_tolerance';
+    units: number;
+    observations: number;
+    residual_budget_observations: number;
+    within_tolerance: boolean;
+    evidence_status_counts: Record<string, number>;
+  };
   roster_scope: Record<string, string>;
 };
 
@@ -2151,6 +2181,67 @@ export type ReviewedIdentityOptionalAudit = {
   unavailable_actionable_observations: number;
   unavailable_reason_counts: Record<string, number>;
   per_team: Record<string, number>;
+};
+
+export type ReviewedIdentityCoverageDebtBucket = {
+  case_count: number;
+  unique_observations: number;
+  share_of_reliable: number | null;
+  coverage_pp: number;
+  reason_counts?: Record<string, number>;
+  breakdown?: Record<'semantic' | 'continuity' | 'coverage', {
+    case_count: number;
+    unique_observations: number;
+    coverage_pp: number;
+  }>;
+};
+
+export type ReviewedIdentityCoverageDebtTeam = {
+  scope: IdentityReviewTeamScope;
+  reliable_observations: number;
+  current_named_observations: number;
+  current_named_coverage: number | null;
+  target_named_coverage: number | null;
+  target_named_observations: number | null;
+  target_gap_observations: number | null;
+  target_gap_pp: number | null;
+  projected_named_coverage_after_committed: number | null;
+  unnamed_observations: number;
+  operator_identity_debt_observations: number;
+  not_required_by_scope: {
+    unique_observations: number;
+    share_of_reliable: number | null;
+    coverage_pp: number;
+  };
+  ambiguous_mixed_currently_labeled_observations: number;
+  accounted_unnamed_observations: number;
+  unaccounted_unnamed_observations: number;
+  buckets: Record<'committed_pending' | 'required' | 'mixed' | 'optional_max' | 'unavailable', ReviewedIdentityCoverageDebtBucket>;
+};
+
+export type ReviewedIdentityCoverageDebt = {
+  policy_version: string;
+  coverage_unit: string;
+  accounting_precedence: string[];
+  per_team: Record<string, ReviewedIdentityCoverageDebtTeam>;
+  actual_required_queue: {
+    total_cases: number;
+    normal_blocking_case_count: number;
+    source: string;
+    per_team: Record<string, {
+      total_cases: number;
+      expected_by_scope: number;
+      unexpected_by_scope: number;
+      breakdown: Record<'semantic' | 'continuity' | 'coverage', { case_count: number }>;
+    }>;
+  };
+  ambiguous: {
+    mixed_case_count: number;
+    unique_current_reliable_observations: number;
+    currently_labeled: Record<string, number>;
+    raw_marker_observations: number;
+    note: string;
+  };
 };
 
 export type ReviewedIdentityMixedPlayersSummary = {
@@ -2206,6 +2297,8 @@ export type ReviewedIdentityReviewProgress = {
   identity_coverage: ReviewedIdentityCoverage;
   coverage_readiness: ReviewedIdentityCoverageReadiness;
   coverage_residuals: Record<string, Record<string, unknown>>;
+  coverage_debt: ReviewedIdentityCoverageDebt;
+  required_queue: { count: number; source_keys_digest: string };
   workload: ReviewedIdentityWorkload;
   optional_audit: ReviewedIdentityOptionalAudit;
   pagination: {
@@ -2245,6 +2338,71 @@ export type ReviewedIdentityReviewProgress = {
 
 export type MixedPlayerHint = 'cross_team' | 'same_team_a' | 'same_team_b' | 'player_referee' | 'unknown';
 
+export type MixedTemporalTracklet = {
+  tracklet_id: string;
+  frame_start: number;
+  frame_end: number;
+  observation_count: number;
+};
+
+export type MixedTemporalOverlapRange = {
+  frame_start: number;
+  frame_end: number;
+  tracklet_ids: string[];
+};
+
+export type MixedTemporalTopology = {
+  kind: 'serial' | 'concurrent';
+  simple_split_allowed: boolean;
+  tracklet_count: number;
+  max_concurrent_tracklets: number;
+  overlap_ranges: MixedTemporalOverlapRange[];
+  tracklets: MixedTemporalTracklet[];
+};
+
+export type ConcurrentLaneDirectResolution = {
+  lane_id: string;
+  lane_source_digest: string;
+  resolution: 'direct';
+  assignment: MixedSegmentAssignment;
+};
+
+export type ConcurrentLaneTemporalSplitResolution = {
+  lane_id: string;
+  lane_source_digest: string;
+  resolution: 'temporal_split';
+  split_after_frames: number[];
+  segment_assignments: MixedSegmentAssignment[];
+};
+
+export type ConcurrentLaneResolution =
+  | ConcurrentLaneDirectResolution
+  | ConcurrentLaneTemporalSplitResolution;
+
+export type ConcurrentMixedLane = {
+  lane_id: string;
+  tracklet_id: string;
+  source_ownership_digest: string;
+  frame_start: number;
+  frame_end: number;
+  observation_count: number;
+  split_allowed: boolean;
+  overlap_lane_ids: string[];
+  evidence: {
+    status: string;
+    anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
+  };
+  current_resolution?: ConcurrentLaneResolution | null;
+};
+
+export type ConcurrentMixedResolution = {
+  status: string;
+  parent_case_id: string;
+  parent_source_digest: string;
+  resolution_semantic_digest?: string | null;
+  lanes: ConcurrentMixedLane[];
+};
+
 export type MixedPlayerCase = {
   case_id?: string;
   candidate_subject_id: string;
@@ -2258,6 +2416,11 @@ export type MixedPlayerCase = {
   frame_end: number;
   reviewed_complex?: boolean;
   reviewed_complex_at?: string | null;
+  blocking?: boolean;
+  scope_status?: 'blocking' | 'not_required_by_scope' | 'stale_or_unclassifiable_blocking';
+  temporal_topology?: MixedTemporalTopology | null;
+  concurrent_resolution?: ConcurrentMixedResolution | null;
+  action_capabilities?: Partial<Record<ReviewedCorrectionPrimaryAction, ReviewedCorrectionActionCapability>>;
   temporal_evidence: { status: string; anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }> };
 };
 
@@ -2265,9 +2428,26 @@ export type MixedPlayersReviewQueue = {
   schema_version: string;
   mode: string;
   match_id: string;
-  summary: { total: number; unresolved: number; resolved: number; complex_unresolved: number };
+  summary: { total: number; unresolved: number; unresolved_total?: number; nonblocking_by_scope?: number; resolved: number; complex_unresolved: number };
   assignment_options: { roster: ReviewedCorrectionRosterOption[]; slots: ReviewedCorrectionSlotOption[] };
   cases: MixedPlayerCase[];
+};
+
+export type MixedPlayerFocusedCaseStatus =
+  | 'current_blocking'
+  | 'stale_or_unclassifiable_blocking'
+  | 'no_longer_unresolved'
+  | 'not_in_mandatory_queue'
+  | 'missing';
+
+export type MixedPlayerFocusedCaseResponse = {
+  schema_version: string;
+  mode: 'reviewed_identity_mixed_focused_case';
+  match_id: string;
+  requested_case_id: string;
+  status: MixedPlayerFocusedCaseStatus;
+  case: MixedPlayerCase | null;
+  assignment_options: MixedPlayersReviewQueue['assignment_options'];
 };
 
 export type MixedBoundaryRefinement = {
@@ -2279,6 +2459,10 @@ export type MixedBoundaryRefinement = {
   source_subject_digest: string;
   after_frame: number;
   before_frame: number;
+  boundary_crops: {
+    after: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+    before: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+  };
   anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
 };
 
@@ -2295,9 +2479,11 @@ export type ReviewedTemporalSplitRequest = {
   continuity_group_id?: string;
   source_ownership_digest: string;
   existing_split_semantic_digest?: string;
-  resolution: 'split' | 'unresolved_complex_mix';
+  existing_resolution_semantic_digest?: string;
+  resolution: 'split' | 'concurrent_lanes' | 'unresolved_complex_mix';
   split_after_frames?: number[];
   segment_assignments?: MixedSegmentAssignment[];
+  lane_resolutions?: ConcurrentLaneResolution[];
   comment?: string;
   review_state_version?: number;
 };
@@ -2319,10 +2505,29 @@ export type MixedPlayerResolutionRequest = {
   candidate_subject_id: string;
   case_id?: string;
   source_subject_digest: string;
-  resolution: 'split' | 'unresolved_complex_mix';
+  resolution: 'split' | 'concurrent_lanes' | 'unresolved_complex_mix';
   split_after_frames?: number[];
   segment_assignments?: MixedSegmentAssignment[];
+  lane_resolutions?: ConcurrentLaneResolution[];
   comment?: string;
+};
+
+export type ConcurrentLaneRefinement = {
+  schema_version: string;
+  mode: 'reviewed_identity_concurrent_lane_refinement';
+  match_id: string;
+  candidate_subject_id: string;
+  parent_case_id: string;
+  parent_source_digest: string;
+  lane_id: string;
+  lane_source_digest: string;
+  after_frame: number;
+  before_frame: number;
+  boundary_crops: {
+    after: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+    before: IdentityRosterSubjectAnchorCrop & { team_label?: string };
+  };
+  anchor_crops: Array<IdentityRosterSubjectAnchorCrop & { team_label?: string }>;
 };
 
 export type MixedPlayerResolutionResponse = {
@@ -2664,6 +2869,9 @@ export type PublicReportTeam = {
   display_color?: string | null;
   playing_time_sec: number;
   total_distance_m: number;
+  observed_distance_m?: number | null;
+  estimated_short_gap_distance_m?: number | null;
+  movement_authority?: string | null;
   high_intensity_distance_m: number;
   sprint_count: number;
   avg_speed_kmh: number;
@@ -2700,7 +2908,12 @@ export type PublicReportPlayer = {
   avg_speed_kmh: number;
   peak_speed_kmh: number;
   high_intensity_distance_m: number;
+  high_intensity_time_sec?: number;
   sprint_count: number;
+  sprint_time_sec?: number;
+  sprint_distance_m?: number;
+  max_sprint_speed_kmh?: number;
+  workload?: PublicPlayerWorkload | null;
   heatmap?: {
     path: string;
     samples: number;
@@ -2720,7 +2933,71 @@ export type PublicReportPlayer = {
         value: number;
       }>;
     };
+    average_position?: {
+      pitch_m: [number, number];
+      x: number;
+      y: number;
+    } | null;
   };
+};
+
+export type PublicPlayerActivityWindow = {
+  window_index: number;
+  start_time_sec: number;
+  end_time_sec: number;
+  duration_sec: number;
+  display_label: string;
+  detected_time_sec: number;
+  observed_distance_m?: number;
+  estimated_short_gap_distance_m?: number;
+  total_distance_m: number;
+  high_intensity_distance_m: number;
+  sprint_count: number;
+  rate_status: 'reportable' | 'insufficient_detected_sample' | string;
+  distance_per_5min_m: number | null;
+  high_intensity_distance_per_5min_m: number | null;
+  sprints_per_5min: number | null;
+};
+
+export type PublicPlayerWorkload = {
+  semantics: string;
+  rate_window_sec: number;
+  minimum_rate_sample_sec: number;
+  minimum_best_window_sample_sec?: number;
+  detected_time_sec: number;
+  distance_per_5min_m: number | null;
+  high_intensity_distance_per_5min_m: number | null;
+  sprints_per_5min: number | null;
+  high_intensity_distance_ratio: number | null;
+  high_intensity_time_sec?: number;
+  high_intensity_distance_m?: number;
+  sprint_count?: number;
+  sprint_time_sec?: number;
+  sprint_distance_m?: number;
+  max_sprint_speed_kmh?: number;
+  sprint_detection?: {
+    policy: 'player_relative_v1' | string;
+    reference_source: 'current_match_peak_sustained' | 'fallback_absolute' | string;
+    reference_peak_sustained_speed_kmh: number;
+    reference_speed_quality?: string;
+    start_threshold_kmh: number;
+    continue_threshold_kmh: number;
+    minimum_duration_sec: number;
+    allowed_dip_sec: number;
+  };
+  activity_windows: PublicPlayerActivityWindow[];
+  best_activity_window: Pick<
+    PublicPlayerActivityWindow,
+    | 'window_index'
+    | 'display_label'
+    | 'start_time_sec'
+    | 'end_time_sec'
+    | 'detected_time_sec'
+    | 'total_distance_m'
+    | 'distance_per_5min_m'
+    | 'high_intensity_distance_m'
+    | 'sprint_count'
+  > | null;
 };
 
 export type PublicMatchReport = {
@@ -2733,6 +3010,16 @@ export type PublicMatchReport = {
   reviewed_identity_digest?: string | null;
   identity_coverage?: ReviewedIdentityCoverage | null;
   identity_coverage_readiness?: ReviewedIdentityCoverageReadiness | null;
+  identity_review_scope?: {
+    schema_version?: string;
+    explicit?: boolean;
+    teams: Record<string, {
+      scope: IdentityReviewTeamScope;
+      named_player_review_required?: boolean;
+      team_stats_required?: boolean;
+      player_stats_status?: 'reviewed' | 'not_reviewed_by_scope';
+    }>;
+  } | null;
   match: {
     id: string;
     title: string;
@@ -2838,3 +3125,195 @@ export type PublishedMatchDetail = PublishedMatch & {
   players: Array<Record<string, unknown>>;
   stable_players?: Array<Record<string, unknown>>;
 };
+
+export type MatchGroupMetadata = {
+  title?: string | null;
+  match_date?: string | null;
+  season?: string | null;
+  venue?: string | null;
+  format?: string | null;
+};
+
+export type MatchGroupSource = {
+  id: string;
+  source_match_id: string;
+  title: string;
+  match_date?: string | null;
+  teams: string[];
+  analyzed_duration_sec: number;
+  status: string;
+  report_type: 'public_match_report';
+};
+
+export type MatchGroupManifest = {
+  group_id: string;
+  metadata: MatchGroupMetadata;
+  members: Array<{
+    published_id: string;
+    source_match_id: string;
+    sequence_index: number;
+    analyzed_duration_sec: number;
+    logical_start_sec: number;
+    logical_end_sec: number;
+  }>;
+  timing: { analyzed_duration_sec: number; timeline_span_sec: number; mapping: string };
+  compatibility: MatchGroupCompatibility;
+};
+
+export type MatchGroupCompatibility = {
+  status: 'compatible' | 'stale' | 'incompatible' | 'invalid';
+  blocking_reasons: Array<{ code: string; detail: string; member?: string }>;
+  capabilities?: Record<string, unknown>;
+};
+
+export type MatchGroupPreview = {
+  status: 'compatible';
+  compatibility: MatchGroupCompatibility;
+  timing: MatchGroupManifest['timing'];
+  members: MatchGroupManifest['members'];
+};
+
+export type MatchGroupRecord = {
+  group: MatchGroupManifest;
+  validation: MatchGroupCompatibility;
+  report?: AggregatePublicMatchReport;
+};
+
+export type MatchGroupReportResponse = {
+  report: AggregatePublicMatchReport;
+  validation: MatchGroupCompatibility;
+  external_video: MatchGroupExternalVideoStatus;
+};
+
+export type MatchGroupVideoStatus = {
+  group_id: string;
+  status: 'not_generated' | 'generating' | 'ready' | 'stale' | 'failed' | 'unavailable_source_video';
+  reason?: string | null;
+  detail?: string | null;
+  generation_id?: string | null;
+  artifact_url?: string | null;
+  manifest?: { output?: { duration_sec?: number } } | null;
+  last_attempt?: {
+    status?: 'generating' | 'failed' | 'completed';
+    started_at?: string;
+    failed_at?: string;
+    completed_at?: string;
+    reason?: string;
+    cleanup_warning?: string;
+  } | null;
+};
+
+export type MatchGroupExternalVideoStatus = {
+  group_id: string;
+  status: 'not_configured' | 'current' | 'stale' | 'invalid';
+  reason?: string | null;
+  external_video?: {
+    provider: 'youtube';
+    video_id: string;
+    source_url: string;
+    embed_url?: string | null;
+    linked_video: {
+      generation_id: string;
+      input_semantic_digest: string;
+      output_semantic_digest: string;
+      timeline_span_sec: number;
+    };
+    updated_at: string;
+  } | null;
+};
+
+export type AggregateMovement = {
+  status: string;
+  total_distance_m?: number;
+  observed_distance_m?: number;
+  estimated_short_gap_distance_m?: number;
+  movement_time_sec?: number;
+  detected_time_sec?: number;
+  high_intensity_distance_m?: number;
+  sprint_count?: number;
+  avg_speed_kmh?: number | null;
+  peak_speed_kmh?: number;
+};
+
+export type AggregateReportTeam = {
+  team_id: string;
+  team_name?: string;
+  display_color?: string;
+  movement: AggregateMovement;
+};
+
+export type AggregateReportPlayer = {
+  player_id: string;
+  team_id: string;
+  player_name?: string;
+  player_number?: string;
+  movement: AggregateMovement;
+};
+
+export type AggregatePossession = {
+  status: string;
+  controlled_frames_by_team_id?: Record<string, number>;
+  possession_share_percent_by_team_id?: Record<string, number | null>;
+  known_frames?: number;
+  free_frames?: number;
+  unknown_frames?: number;
+  contested_frames?: number;
+};
+
+export type AggregatePasses = {
+  status: string;
+  attempts?: number;
+  completed?: number;
+  failed?: number;
+  completion_rate_percent?: number | null;
+  attempts_by_team_id?: Record<string, number>;
+  completed_by_team_id?: Record<string, number>;
+  failed_by_team_id?: Record<string, number>;
+  completion_rate_percent_by_team_id?: Record<string, number | null>;
+};
+
+export type AggregatePublicMatchReport = {
+  schema_version: string;
+  report_type: 'public_aggregate_match_report';
+  group_id: string;
+  match: MatchGroupMetadata;
+  source_match_ids: string[];
+  source_published_ids: string[];
+  sources: Array<{
+    published_id: string;
+    source_match_id: string;
+    sequence_index: number;
+    logical_offset_sec: number;
+  }>;
+  timing: { analyzed_duration_sec: number; timeline_span_sec: number; mapping: string };
+  stats_semantics?: Record<string, string>;
+  spatial: {
+    heatmaps: { status: string; reason?: string };
+    team_shape: { status: string; reason?: string };
+  };
+  teams: AggregateReportTeam[];
+  players: AggregateReportPlayer[];
+  ball?: { possession?: AggregatePossession; passes?: AggregatePasses };
+  identity_coverage?: {
+    status: string;
+    coverage_unit?: string;
+    confirmed_observations?: number;
+    reliable_observations?: number;
+    unresolved_observations?: number;
+    conflicted_observations?: number;
+    confirmed_coverage_percent?: number | null;
+  };
+  timelines?: {
+    possession?: {
+      status?: string;
+      windows?: Array<{ start_time_sec: number; end_time_sec: number; possession_share_percent_by_team_id?: Record<string, number | null> }>;
+    };
+    attacking_momentum?: { product_readiness?: string; status?: string; points?: Array<{ start_time_sec: number; end_time_sec: number; team_values_by_team_id?: Record<string, number> }> };
+  };
+};
+
+export type PhysicalPublicMatchReport = PublicMatchReport & {
+  report_type: 'public_match_report';
+};
+
+export type AnyPublicMatchReport = PhysicalPublicMatchReport | AggregatePublicMatchReport;

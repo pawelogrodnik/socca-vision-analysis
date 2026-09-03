@@ -14,6 +14,8 @@ from app.services.stabilization import _heatmap_quality, _safe_artifact_id, _wri
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CLIENT_PUBLIC_MATCHES_DIR = REPO_ROOT / "client" / "public" / "published" / "matches"
+PUBLIC_MATCH_REPORT_SCHEMA_VERSION = "0.1.0"
+PUBLIC_MATCH_REPORT_TYPE = "public_match_report"
 
 
 def now_iso() -> str:
@@ -74,7 +76,8 @@ def _possession_share(package: dict[str, Any], team_label: str) -> float | None:
     return round(float(controlled.get(team_label) or 0.0) / total * 100.0, 1)
 
 
-def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
+def pass_counts_for_team_label(package: dict[str, Any], team_label: str) -> dict[str, int]:
+    """Return the canonical public-pass classification for one source-local team."""
     pass_doc = package.get("pass_candidates") if isinstance(package.get("pass_candidates"), dict) else {}
     candidates = pass_doc.get("candidates") if isinstance(pass_doc.get("candidates"), list) else []
     team_candidates = [
@@ -104,6 +107,10 @@ def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
             if item.get("final_stat_eligible") is True or item.get("review_status") == "accepted"
         ),
     }
+
+
+def _pass_counts(package: dict[str, Any], team_label: str) -> dict[str, int]:
+    return pass_counts_for_team_label(package, team_label)
 
 
 def _is_public_pass_attempt(candidate: dict[str, Any]) -> bool:
@@ -245,6 +252,13 @@ def _resolved_team_names(package: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
     team_stats = package.get("team_stats") if isinstance(package.get("team_stats"), dict) else {}
     team_rows = team_stats.get("teams") if isinstance(team_stats.get("teams"), list) else []
+    reviewed_movement = {
+        str(row.get("team_label") or ""): row
+        for row in package.get("reviewed_team_movement") or []
+        if isinstance(row, dict)
+    }
+    if not team_rows and reviewed_movement:
+        team_rows = [{"team_label": label} for label in ("A", "B") if label in reviewed_movement]
     match = package.get("match") if isinstance(package.get("match"), dict) else {}
     video = match.get("video") if isinstance(match.get("video"), dict) else {}
     match_duration_sec = _round(video.get("duration_sec"))
@@ -258,6 +272,7 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
         team_id = team.get("team_id")
         display_row = display.get(str(team_id or "")) or display.get(team_label) or {}
         resolved_team = resolved_names.get(team_label) or {}
+        reviewed = reviewed_movement.get(team_label)
         rows.append(
             {
                 "team_label": team_label,
@@ -268,8 +283,20 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
                 or f"Team {team_label}",
                 "display_color": display_row.get("display_color") or team.get("display_color"),
                 "playing_time_sec": match_duration_sec,
-                "total_distance_m": _round(team.get("total_distance_m")),
-                "high_intensity_distance_m": _round(team.get("high_intensity_distance_m")),
+                "total_distance_m": _round(
+                    reviewed.get("total_distance_m") if reviewed else team.get("total_distance_m")
+                ),
+                "observed_distance_m": _round(reviewed.get("observed_distance_m")) if reviewed else None,
+                "estimated_short_gap_distance_m": _round(reviewed.get("estimated_short_gap_distance_m")) if reviewed else None,
+                "movement_authority": reviewed.get("movement_authority") if reviewed else "legacy_team_stats",
+                "high_intensity_distance_m": _round(
+                    reviewed.get("high_intensity_distance_m")
+                    if reviewed and reviewed.get("high_intensity_distance_m") is not None
+                    else team.get("high_intensity_distance_m")
+                ),
+                # Team sprint classification remains the legacy team-stats
+                # authority.  Reviewed movement currently provides only the
+                # safe team distance and common high-intensity aggregate.
                 "sprint_count": int(team.get("sprint_count") or 0),
                 "avg_speed_kmh": _round(team.get("avg_speed_kmh") or team.get("average_speed_kmh")),
                 "peak_speed_kmh": _round(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh")),
@@ -573,6 +600,35 @@ def _write_public_player_heatmap(
             width_px=width_px,
             length_px=length_px,
         ),
+        "average_position": _public_average_position(
+            player.get("average_pitch_position_m"),
+            pitch_width_m=pitch_width_m,
+            pitch_length_m=pitch_length_m,
+            width_px=width_px,
+            length_px=length_px,
+        ),
+    }
+
+
+def _public_average_position(
+    position: Any,
+    *,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    width_px: int,
+    length_px: int,
+) -> dict[str, Any] | None:
+    if not isinstance(position, (list, tuple)) or len(position) < 2:
+        return None
+    if not all(isinstance(value, (int, float)) for value in position[:2]):
+        return None
+    x_m, y_m = float(position[0]), float(position[1])
+    if not (0.0 <= x_m <= pitch_width_m and 0.0 <= y_m <= pitch_length_m):
+        return None
+    return {
+        "pitch_m": [_round(x_m, 3), _round(y_m, 3)],
+        "x": int(round(x_m / max(pitch_width_m, 0.001) * (width_px - 1))),
+        "y": int(round(y_m / max(pitch_length_m, 0.001) * (length_px - 1))),
     }
 
 
@@ -654,7 +710,12 @@ def _public_players(
                 "avg_speed_kmh": _round(speed.get("avg_speed_kmh")),
                 "peak_speed_kmh": _round(speed.get("peak_sustained_speed_kmh") or speed.get("top_speed_kmh")),
                 "high_intensity_distance_m": _round(intensity.get("high_intensity_distance_m")),
+                "high_intensity_time_sec": _round(intensity.get("high_intensity_time_sec")),
                 "sprint_count": int(intensity.get("sprint_count") or 0),
+                "sprint_time_sec": _round(intensity.get("sprint_time_sec")),
+                "sprint_distance_m": _round(intensity.get("sprint_distance_m")),
+                "max_sprint_speed_kmh": _round(intensity.get("max_sprint_speed_kmh")),
+                "workload": player.get("workload") if isinstance(player.get("workload"), dict) else None,
                 "calculation_method": player.get("calculation_method") or resolved.get("calculation_method"),
                 "coverage_ratio": _round(player.get("coverage_ratio"), 4),
                 "quality_flags": player.get("quality_flags") or [],
@@ -684,17 +745,18 @@ def build_public_match_report(
     uses_reviewed_identity = package.get("identity_report_source") == "reviewed_identity"
     public_teams = _public_teams(package)
     report = {
-        "schema_version": "0.1.0",
+        "schema_version": PUBLIC_MATCH_REPORT_SCHEMA_VERSION,
         "generated_at": now_iso(),
         "id": published_id,
         "source_match_id": _public_match(package)["id"],
-        "report_type": "public_match_report",
+        "report_type": PUBLIC_MATCH_REPORT_TYPE,
         "stats_semantics": (
             {
                 "identity": "human_reviewed_named_players_only",
                 "player_time": "confirmed_detected_observations",
                 "team_time": "source_video_duration",
                 "team_tracking": "named_and_anonymous_team_observations",
+                "team_distance": "reviewed_safe_team_observations",
                 "ball": "experimental_candidates",
                 "technical_debug": "excluded",
             }
@@ -749,6 +811,9 @@ def build_public_match_report(
         report["team_shape"] = team_shape
     if uses_reviewed_identity:
         report["reviewed_identity_digest"] = package.get("reviewed_identity_digest")
+        report["identity_coverage"] = package.get("identity_coverage")
+        report["identity_coverage_readiness"] = package.get("identity_coverage_readiness")
+        report["identity_review_scope"] = package.get("identity_review_scope")
     return report
 
 

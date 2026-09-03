@@ -5,10 +5,53 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from app.services.identity_reviewed_progress import build_reviewed_identity_progress
+from app.services.identity_reviewed_coverage import paginate_progress, summarize_effective_observations
+from app.services.identity_reviewed_progress import (
+    _public_unit,
+    build_reviewed_identity_progress,
+    project_reviewed_identity_progress,
+)
+from app.services.identity_reviewed_team_attribution_evidence import (
+    source_ownership_digest,
+)
 
 
 class ReviewedIdentityProgressTests(unittest.TestCase):
+    def test_optional_technical_team_evidence_stays_explicit_without_blocking_finalize(self) -> None:
+        """An ordinary residual must not become structural merely from a stale crop."""
+        with _workspace() as root:
+            _single_subject(
+                root,
+                team="U",
+                frames=range(1, 4),
+                card={
+                    "review_status": "blocked_conflict",
+                    "requires_operator_review": True,
+                    "visual_evidence": {"anchor_crops": [{"anchor_crop_id": "identity"}]},
+                },
+            )
+            pairs = [("tracklet", frame) for frame in range(1, 4)]
+            _write(root / "reviewed_identity_team_attribution_evidence.json", {
+                "cases": [{
+                    "candidate_subject_id": "subject",
+                    "source_ownership_digest": source_ownership_digest("subject", pairs),
+                    "status": "team_attribution_evidence_recovery_incomplete",
+                }],
+            })
+
+            progress = build_reviewed_identity_progress(root, _match())
+
+            unit = _unit(progress, "subject")
+            self.assertTrue(unit["has_operator_visual_evidence"])
+            self.assertEqual(
+                unit["team_attribution_evidence_status"],
+                "team_attribution_evidence_recovery_incomplete",
+            )
+            self.assertEqual(
+                progress["coverage_readiness"]["team_attribution_residual"]["status"],
+                "accepted_within_tolerance",
+            )
+
     def test_progress_uses_candidate_subjects_and_real_detected_positions(self) -> None:
         with _workspace() as root:
             _fixture(root)
@@ -321,6 +364,123 @@ class ReviewedIdentityProgressTests(unittest.TestCase):
                     "unknown": [],
                 },
             )
+
+    def test_b_and_u_tracklets_form_one_certain_team_b_source(self) -> None:
+        with _workspace() as root:
+            _write(root / "tracklets.json", {"tracklets": [
+                _tracklet("b-first", "B", [1, 2]),
+                _tracklet("unknown", "U", [3]),
+                _tracklet("b-last", "B", [4, 5]),
+            ]})
+            _write(root / "identity_candidate_shadow.json", {"subjects": [{
+                "candidate_subject_id": "b-u-b",
+                "tracklet_ids": ["b-first", "unknown", "b-last"],
+            }]})
+
+            progress = build_reviewed_identity_progress(root, {
+                "id": "progress",
+                "identity_review_scope": {
+                    "teams": {"A": "complete_roster", "B": "team_stats_only"},
+                },
+                "teams": [{"team_label": "A"}, {"team_label": "B"}],
+            })
+            unit = _unit(progress, "b-u-b")
+
+            self.assertEqual(unit["source_team_label"], "B")
+            self.assertEqual(unit["effective_team_label"], "B")
+            self.assertNotIn("conflicting_detected_team_labels", unit["reason_codes"])
+            context_subject = next(
+                row
+                for row in progress["deferred_correction_context"]["subjects"]
+                if row["candidate_subject_id"] == "b-u-b"
+            )
+            self.assertEqual(context_subject["detected_team_labels"], ["B"])
+            self.assertEqual(progress["next_cases"], [])
+
+    def test_projected_queue_retains_conflict_filter_after_exact_team_evidence_is_stripped(self) -> None:
+        match = {
+            "id": "team-filter-projection",
+            "identity_review_scope": {
+                "teams": {"A": "complete_roster", "B": "team_stats_only"},
+            },
+            "teams": [{"team_label": "A"}, {"team_label": "B"}],
+        }
+        rows = [{
+            "tracklet_id": "cross-team-tracklet",
+            "frame": 10,
+            "team_label": "B",
+            "identity_status": "unresolved",
+            "canonical_player_id": None,
+            "play_area_status": "inside_play",
+        }]
+        coverage, pair_index = summarize_effective_observations(rows, match)
+        full_required_unit = {
+            "candidate_subject_id": "b-labelled-cross-team",
+            "scope_kind": "whole_subject",
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "coverage_team_label": "B",
+            "detected_team_labels": ["A", "B"],
+            "tracklet_ids": ["cross-team-tracklet"],
+            "detected_pairs": [("cross-team-tracklet", 10)],
+            "detected_observation_count": 1,
+            "detected_frame_count": 1,
+            "detected_time_sec": 0.04,
+            "frame_start": 10,
+            "frame_end": 10,
+            "current_resolution_status": "pending_high_priority",
+            "priority": "high",
+            "operator_actionable": True,
+            "has_operator_visual_evidence": True,
+            "visual_evidence": {"anchor_crops": [{"artifact": "crop.jpg"}]},
+            "reason_codes": ["cross_team_conflict"],
+        }
+        inputs = {
+            "match_id": match["id"],
+            "coverage": coverage,
+            "pair_index": [
+                {"tracklet_id": tracklet_id, "frame": frame, "value": value}
+                for (tracklet_id, frame), value in pair_index.items()
+            ],
+            "observed_pairs": [("cross-team-tracklet", 10)],
+            "mixed_players": {},
+            "technical_diagnostics": {},
+            "deferred_correction_context": {},
+        }
+
+        projected = project_reviewed_identity_progress(
+            [full_required_unit], match, inputs,
+        )
+        compact_case = projected["next_cases"][0]
+        self.assertNotIn("detected_team_labels", compact_case)
+        self.assertEqual(compact_case["filter_team_label"], "U")
+
+        conflict_page = paginate_progress(projected, team_label="U")
+        b_page = paginate_progress(projected, team_label="B")
+        self.assertEqual(conflict_page["filters"]["counts"], {"all": 1, "A": 0, "B": 0, "U": 1})
+        self.assertEqual([row["candidate_subject_id"] for row in conflict_page["next_cases"]], ["b-labelled-cross-team"])
+        self.assertEqual(conflict_page["next_cases"][0]["filter_team_label"], "U")
+        self.assertEqual(b_page["next_cases"], [])
+
+    def test_public_unit_preserves_certain_team_b_navigation_label(self) -> None:
+        full_unit = {
+            "candidate_subject_id": "certain-b",
+            "source_team_label": "B",
+            "effective_team_label": "B",
+            "coverage_team_label": "B",
+            "detected_team_labels": ["B"],
+            "operator_impact_kind": "named_coverage",
+            "operator_impact_observation_gain": 120,
+            "operator_impact_pp": 2.4,
+        }
+
+        public = _public_unit(full_unit)
+
+        self.assertNotIn("detected_team_labels", public)
+        self.assertEqual(public["filter_team_label"], "B")
+        self.assertEqual(public["operator_impact_kind"], "named_coverage")
+        self.assertEqual(public["operator_impact_observation_gain"], 120)
+        self.assertEqual(public["operator_impact_pp"], 2.4)
 
     def test_short_unnamed_team_a_and_team_b_subjects_are_safe_anonymous(self) -> None:
         with _workspace() as root:
