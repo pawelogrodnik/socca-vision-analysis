@@ -326,7 +326,11 @@ function keyMomentReport(): AggregatePublicMatchReport {
       schema_version: '1.0.0', policy_version: 'logical-key-moments:v1', timeline_semantics: 'logical_match_video', status: 'ready',
       moments: [{
         moment_id: 'km-1', time_sec: 722.5, window_start_sec: 720, window_end_sec: 725, type: 'momentum_peak', team_id: 'team-corgi', importance_score: 0.82,
-        headline: 'Mocny okres przewagi', evidence: { primary_signal: 'attacking_momentum', signals: [{ source: 'attacking_momentum', intensity: 0.9, confidence: 0.7, experimental: true }] },
+        headline: 'Mocny okres przewagi', evidence: {
+          primary_signal: 'attacking_momentum',
+          primary: { source: 'attacking_momentum', intensity: 0.9, confidence: 0.7, experimental: true },
+          signals: [{ source: 'attacking_momentum', intensity: 0.9, confidence: 0.7, experimental: true }],
+        },
       }],
     },
   };
@@ -354,9 +358,24 @@ test('Key Moments renders direct evidence metrics instead of the ranking score',
     type: 'possession_dominance',
     importance_score: 0.48,
     headline: 'Wyraźna przewaga w rozpoznanym posiadaniu',
-    evidence: { primary_signal: 'possession', signals: [{ source: 'possession', share_percent: 80, coverage: 0.8 }] },
+    evidence: {
+      primary_signal: 'possession',
+      primary: { source: 'possession', share_percent: 80, coverage: 0.8 },
+      signals: [{ source: 'possession', share_percent: 80, coverage: 0.8 }],
+    },
   };
-  momentum.key_moments!.moments[0].importance_score = 0.63;
+  momentum.key_moments!.moments[0] = {
+    ...momentum.key_moments!.moments[0],
+    importance_score: 0.63,
+    evidence: {
+      primary_signal: 'attacking_momentum',
+      primary: { source: 'attacking_momentum', intensity: 0.9, confidence: 0.7, experimental: true },
+      signals: [
+        { source: 'attacking_momentum', intensity: 0.7, confidence: 1, experimental: true },
+        { source: 'attacking_momentum', intensity: 0.9, confidence: 0.7, experimental: true },
+      ],
+    },
+  };
 
   const view = render(React.createElement(React.Fragment, null,
     React.createElement(AggregateKeyMoments, { report: momentum, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),

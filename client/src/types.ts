@@ -3328,6 +3328,14 @@ export type AggregatePublicMatchReport = {
       headline: string;
       evidence: {
         primary_signal: string;
+        primary: {
+          source: string;
+          intensity?: number;
+          confidence?: number;
+          share_percent?: number;
+          coverage?: number;
+          experimental?: boolean;
+        };
         signals: Array<{
           source: string;
           intensity?: number;

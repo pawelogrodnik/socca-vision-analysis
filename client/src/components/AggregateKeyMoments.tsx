@@ -23,7 +23,7 @@ function percent(value: number | undefined): string | null {
 type AggregateKeyMoment = NonNullable<AggregatePublicMatchReport['key_moments']>['moments'][number];
 
 function evidenceLabel(moment: AggregateKeyMoment): string {
-  const signal = moment.evidence.signals.find((item) => item.source === moment.evidence.primary_signal);
+  const signal = moment.evidence.primary;
   if (moment.evidence.primary_signal === 'attacking_momentum') {
     const intensity = percent(signal?.intensity);
     const confidence = percent(signal?.confidence);

@@ -147,6 +147,27 @@ class MatchGroupKeyMomentsTests(unittest.TestCase):
         self.assertEqual((moment["window_start_sec"], moment["time_sec"], moment["window_end_sec"]), (120.0, 122.5, 132.0))
         self.assertEqual([signal["source"] for signal in moment["evidence"]["signals"]], ["attacking_momentum", "possession"])
 
+    def test_primary_evidence_is_the_exact_strongest_same_source_candidate(self) -> None:
+        report = _report(momentum=_momentum(
+            {"start_time_sec": 120, "end_time_sec": 125, "team_values_by_team_id": {"team-corgi": 0.7}, "dominant_team_id": "team-corgi", "intensity": 0.7, "confidence": 1.0},
+            {"start_time_sec": 130, "end_time_sec": 135, "team_values_by_team_id": {"team-corgi": 0.9}, "dominant_team_id": "team-corgi", "intensity": 0.9, "confidence": 1.0},
+        ))
+
+        result = build_logical_match_key_moments(report)
+
+        self.assertEqual(len(result["moments"]), 1)
+        moment = result["moments"][0]
+        self.assertEqual(moment["time_sec"], 132.5)
+        self.assertEqual(moment["importance_score"], 0.9)
+        self.assertEqual(moment["evidence"]["primary"], {
+            "source": "attacking_momentum",
+            "intensity": 0.9,
+            "confidence": 1.0,
+            "importance": 0.9,
+            "experimental": True,
+        })
+        self.assertEqual([signal["intensity"] for signal in moment["evidence"]["signals"]], [0.7, 0.9])
+
     def test_a_b_a_cluster_merges_connected_same_team_evidence_despite_interleaved_opponent(self) -> None:
         report = _report(momentum=_momentum(
             {"start_time_sec": 120, "end_time_sec": 125, "team_values_by_team_id": {"team-corgi": 0.9}, "dominant_team_id": "team-corgi", "intensity": 0.9, "confidence": 1.0},

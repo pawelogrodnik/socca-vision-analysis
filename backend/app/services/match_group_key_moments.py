@@ -299,6 +299,7 @@ def _moment(candidate: dict[str, Any], digest: str) -> dict[str, Any]:
         "headline": headline,
         "evidence": {
             "primary_signal": candidate["signal"]["source"],
+            "primary": copy.deepcopy(candidate["signal"]),
             "signals": candidate["signals"],
             "source_timeline_semantic_digest": digest,
         },
