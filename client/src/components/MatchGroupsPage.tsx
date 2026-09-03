@@ -3,13 +3,15 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   createMatchGroup,
   deleteMatchGroup,
+  generateMatchGroupVideo,
+  getMatchGroupVideo,
   listEligibleMatchGroupSources,
   listMatchGroups,
   previewMatchGroup,
   regenerateMatchGroup,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { MatchGroupPreview, MatchGroupRecord, MatchGroupSource } from '../types';
+import type { MatchGroupPreview, MatchGroupRecord, MatchGroupSource, MatchGroupVideoStatus } from '../types';
 
 function formatDuration(value: number): string {
   const seconds = Math.max(0, Math.round(value));
@@ -20,6 +22,7 @@ export function MatchGroupsPage() {
   const navigate = useNavigate();
   const [sources, setSources] = useState<MatchGroupSource[]>([]);
   const [groups, setGroups] = useState<MatchGroupRecord[]>([]);
+  const [videos, setVideos] = useState<Record<string, MatchGroupVideoStatus>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [query, setQuery] = useState('');
@@ -32,9 +35,41 @@ export function MatchGroupsPage() {
     const [nextSources, nextGroups] = await Promise.all([listEligibleMatchGroupSources(), listMatchGroups()]);
     setSources(nextSources);
     setGroups(nextGroups);
+    const videoRows = await Promise.all(nextGroups.map(async ({ group }) => [group.group_id, await getMatchGroupVideo(group.group_id)] as const));
+    setVideos(Object.fromEntries(videoRows));
   };
 
   useEffect(() => { void load().catch((error: unknown) => setStatus(errorMessage(error))); }, []);
+
+  const generatingGroupIds = useMemo(
+    () => groups.map(({ group }) => group.group_id).filter((groupId) => isVideoGenerationInFlight(videos[groupId])),
+    [groups, videos],
+  );
+
+  useEffect(() => {
+    if (!generatingGroupIds.length) return undefined;
+    let cancelled = false;
+    let inFlight = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (inFlight || cancelled) return;
+      inFlight = true;
+      try {
+        const rows = await Promise.all(generatingGroupIds.map(async (groupId) => [groupId, await getMatchGroupVideo(groupId)] as const));
+        if (!cancelled) setVideos((current) => ({ ...current, ...Object.fromEntries(rows) }));
+      } catch (error) {
+        if (!cancelled) setStatus(errorMessage(error));
+      } finally {
+        inFlight = false;
+        if (!cancelled) timer = window.setTimeout(() => void poll(), 7_500);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 7_500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [generatingGroupIds]);
 
   const selected = useMemo(
     () => selectedIds.map((id) => sources.find((source) => source.id === id)).filter((source): source is MatchGroupSource => Boolean(source)),
@@ -97,6 +132,15 @@ export function MatchGroupsPage() {
     catch (error) { setStatus(errorMessage(error)); }
     finally { setBusy(false); }
   };
+  const generateVideo = async (groupId: string) => {
+    setBusy(true); setStatus('');
+    try {
+      const nextVideo = await generateMatchGroupVideo(groupId);
+      setVideos((current) => ({ ...current, [groupId]: nextVideo }));
+    }
+    catch (error) { setStatus(errorMessage(error)); }
+    finally { setBusy(false); }
+  };
 
   return <main className='app'>
     <section className='hero compact-hero'>
@@ -139,13 +183,39 @@ export function MatchGroupsPage() {
         <strong>{group.metadata.title || group.group_id}</strong>
         <span>{formatDuration(group.timing.analyzed_duration_sec)} · {group.members.length} fragmenty · {validation.status}</span>
         {validation.blocking_reasons[0] && <p className='status'>{validation.blocking_reasons[0].detail}</p>}
+        <p>Łączne wideo: {videoLabel(videos[group.group_id])}{videoReason(videos[group.group_id]) ? ` — ${videoReason(videos[group.group_id])}` : ''}</p>
         <div className='row'>
           <Link to={`/published/match-groups/${encodeURIComponent(group.group_id)}/report`}>Otwórz raport</Link>
           <button type='button' disabled={busy || validation.status !== 'compatible'} onClick={() => void regenerate(group.group_id)}>Regeneruj</button>
-          <button type='button' disabled={busy} onClick={() => void remove(group.group_id)}>Usuń</button>
+          {videos[group.group_id]?.status === 'ready' && videos[group.group_id]?.artifact_url && <a href={videos[group.group_id].artifact_url!}>Otwórz wideo</a>}
+          <button type='button' disabled={busy || validation.status !== 'compatible' || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void generateVideo(group.group_id)}>{videos[group.group_id]?.status === 'ready' ? 'Regeneruj wideo' : 'Generuj wideo'}</button>
+          <button type='button' disabled={busy || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void remove(group.group_id)}>Usuń</button>
         </div>
       </article>)}
       {!groups.length && <p>Nie utworzono jeszcze scalonych raportów.</p>}
     </section>
   </main>;
+}
+
+function videoLabel(video: MatchGroupVideoStatus | undefined): string {
+  if (video?.status === 'ready' && video.last_attempt?.status === 'generating') return 'Gotowe — trwa regeneracja…';
+  if (video?.status === 'ready' && video.last_attempt?.status === 'failed') return 'Gotowe — ostatnia regeneracja nie powiodła się';
+  return ({ not_generated: 'Nie wygenerowano', generating: 'Generowanie…', ready: 'Gotowe', stale: 'Nieaktualne', failed: 'Błąd', unavailable_source_video: 'Brak wideo źródłowego' } as const)[video?.status || 'not_generated'];
+}
+
+function videoReason(video: MatchGroupVideoStatus | undefined): string {
+  const reason = video?.reason || video?.last_attempt?.reason;
+  if (!reason) return '';
+  return ({
+    unavailable_source_video: 'jeden z opublikowanych fragmentów nie ma zweryfikowanego wideo Review',
+    match_group_stale: 'źródłowy raport został zmieniony i wymaga ponownej weryfikacji',
+    source_video_generation_changed: 'źródłowe wideo lub jego publikacja uległy zmianie',
+    source_video_duration_mismatch: 'czas źródłowego wideo nie odpowiada czasowi fragmentu',
+    video_codec_probe_failed: 'nie można bezpiecznie odczytać parametrów źródłowego wideo',
+    video_generation_failed: 'nie udało się przygotować łącznego wideo; poprzednia gotowa wersja pozostaje bez zmian',
+  } as Record<string, string>)[reason] || 'wymaga ponownej bezpiecznej weryfikacji';
+}
+
+function isVideoGenerationInFlight(video: MatchGroupVideoStatus | undefined): boolean {
+  return video?.status === 'generating' || video?.last_attempt?.status === 'generating';
 }

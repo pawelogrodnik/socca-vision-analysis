@@ -3184,6 +3184,24 @@ export type MatchGroupReportResponse = {
   validation: MatchGroupCompatibility;
 };
 
+export type MatchGroupVideoStatus = {
+  group_id: string;
+  status: 'not_generated' | 'generating' | 'ready' | 'stale' | 'failed' | 'unavailable_source_video';
+  reason?: string | null;
+  detail?: string | null;
+  generation_id?: string | null;
+  artifact_url?: string | null;
+  manifest?: { output?: { duration_sec?: number } } | null;
+  last_attempt?: {
+    status?: 'generating' | 'failed' | 'completed';
+    started_at?: string;
+    failed_at?: string;
+    completed_at?: string;
+    reason?: string;
+    cleanup_warning?: string;
+  } | null;
+};
+
 export type AggregateMovement = {
   status: string;
   total_distance_m?: number;

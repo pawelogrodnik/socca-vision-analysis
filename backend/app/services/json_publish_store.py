@@ -11,6 +11,8 @@ from typing import Any
 from app.config import MATCHES_DIR, PUBLISHED_DIR
 from app.services.aggregate_inputs import build_aggregate_inputs
 from app.services import public_match_report
+from app.services.artifact_lineage import canonical_json_sha256
+from app.services.published_video import stage_published_video
 
 
 PUBLISHED_MATCHES_DIR = PUBLISHED_DIR / "matches"
@@ -254,6 +256,12 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
             target_dir=staged_match_dir,
             source_match_dir=MATCHES_DIR / source_match_id,
             mirror_dir=staged_public_dir,
+        )
+        stage_published_video(
+            descriptor=package.get("published_video") if isinstance(package.get("published_video"), dict) else None,
+            source_match_dir=MATCHES_DIR / source_match_id,
+            target_dir=staged_match_dir,
+            public_report_semantic_digest=canonical_json_sha256(public_report),
         )
         if package.get("identity_report_source") == "reviewed_identity":
             # This is server-side publication data, not a public client asset.
