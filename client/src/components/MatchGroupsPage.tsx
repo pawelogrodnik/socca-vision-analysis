@@ -42,7 +42,7 @@ export function MatchGroupsPage() {
   useEffect(() => { void load().catch((error: unknown) => setStatus(errorMessage(error))); }, []);
 
   const generatingGroupIds = useMemo(
-    () => groups.map(({ group }) => group.group_id).filter((groupId) => videos[groupId]?.status === 'generating'),
+    () => groups.map(({ group }) => group.group_id).filter((groupId) => isVideoGenerationInFlight(videos[groupId])),
     [groups, videos],
   );
 
@@ -188,7 +188,7 @@ export function MatchGroupsPage() {
           <Link to={`/published/match-groups/${encodeURIComponent(group.group_id)}/report`}>Otwórz raport</Link>
           <button type='button' disabled={busy || validation.status !== 'compatible'} onClick={() => void regenerate(group.group_id)}>Regeneruj</button>
           {videos[group.group_id]?.status === 'ready' && videos[group.group_id]?.artifact_url && <a href={videos[group.group_id].artifact_url!}>Otwórz wideo</a>}
-          <button type='button' disabled={busy || validation.status !== 'compatible' || videos[group.group_id]?.status === 'generating'} onClick={() => void generateVideo(group.group_id)}>{videos[group.group_id]?.status === 'ready' ? 'Regeneruj wideo' : 'Generuj wideo'}</button>
+          <button type='button' disabled={busy || validation.status !== 'compatible' || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void generateVideo(group.group_id)}>{videos[group.group_id]?.status === 'ready' ? 'Regeneruj wideo' : 'Generuj wideo'}</button>
           <button type='button' disabled={busy} onClick={() => void remove(group.group_id)}>Usuń</button>
         </div>
       </article>)}
@@ -198,11 +198,14 @@ export function MatchGroupsPage() {
 }
 
 function videoLabel(video: MatchGroupVideoStatus | undefined): string {
+  if (video?.status === 'ready' && video.last_attempt?.status === 'generating') return 'Gotowe — trwa regeneracja…';
+  if (video?.status === 'ready' && video.last_attempt?.status === 'failed') return 'Gotowe — ostatnia regeneracja nie powiodła się';
   return ({ not_generated: 'Nie wygenerowano', generating: 'Generowanie…', ready: 'Gotowe', stale: 'Nieaktualne', failed: 'Błąd', unavailable_source_video: 'Brak wideo źródłowego' } as const)[video?.status || 'not_generated'];
 }
 
 function videoReason(video: MatchGroupVideoStatus | undefined): string {
-  if (!video?.reason) return '';
+  const reason = video?.reason || video?.last_attempt?.reason;
+  if (!reason) return '';
   return ({
     unavailable_source_video: 'jeden z opublikowanych fragmentów nie ma zweryfikowanego wideo Review',
     match_group_stale: 'źródłowy raport został zmieniony i wymaga ponownej weryfikacji',
@@ -210,5 +213,9 @@ function videoReason(video: MatchGroupVideoStatus | undefined): string {
     source_video_duration_mismatch: 'czas źródłowego wideo nie odpowiada czasowi fragmentu',
     video_codec_probe_failed: 'nie można bezpiecznie odczytać parametrów źródłowego wideo',
     video_generation_failed: 'nie udało się przygotować łącznego wideo; poprzednia gotowa wersja pozostaje bez zmian',
-  } as Record<string, string>)[video.reason] || 'wymaga ponownej bezpiecznej weryfikacji';
+  } as Record<string, string>)[reason] || 'wymaga ponownej bezpiecznej weryfikacji';
+}
+
+function isVideoGenerationInFlight(video: MatchGroupVideoStatus | undefined): boolean {
+  return video?.status === 'generating' || video?.last_attempt?.status === 'generating';
 }

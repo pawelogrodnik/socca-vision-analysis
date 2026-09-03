@@ -97,8 +97,18 @@ def stage_published_video(
     return document
 
 
-def load_published_video(source_dir: Path, *, expected_public_report_digest: str) -> dict[str, Any] | None:
-    """Return a proven immutable source video or ``None`` without guessing."""
+def load_published_video(
+    source_dir: Path,
+    *,
+    expected_public_report_digest: str,
+    verify_content: bool = True,
+) -> dict[str, Any] | None:
+    """Return a proven published source video or ``None`` without guessing.
+
+    Callers that already pin content at a stronger lifecycle boundary may use
+    ``verify_content=False`` for a descriptor-and-stat-only preflight.  They
+    must retain and compare their own file fingerprint before serving data.
+    """
 
     descriptor = _load_object(source_dir / PUBLISHED_VIDEO_DESCRIPTOR_FILENAME)
     if (
@@ -117,7 +127,7 @@ def load_published_video(source_dir: Path, *, expected_public_report_digest: str
     artifact = source_dir / str(descriptor.get("artifact") or "")
     if artifact.name != PUBLISHED_VIDEO_ARTIFACT or not artifact.is_file() or artifact.stat().st_size <= 0:
         return None
-    if sha256_file(artifact) != descriptor.get("semantic_digest"):
+    if verify_content and sha256_file(artifact) != descriptor.get("semantic_digest"):
         return None
     return descriptor
 

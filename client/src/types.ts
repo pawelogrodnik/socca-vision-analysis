@@ -3192,10 +3192,12 @@ export type MatchGroupVideoStatus = {
   artifact_url?: string | null;
   manifest?: { output?: { duration_sec?: number } } | null;
   last_attempt?: {
-    status?: 'generating' | 'failed';
+    status?: 'generating' | 'failed' | 'completed';
     started_at?: string;
     failed_at?: string;
+    completed_at?: string;
     reason?: string;
+    cleanup_warning?: string;
   } | null;
 };
 

@@ -17,6 +17,7 @@ from app.services.match_group_video import (
     VIDEO_JOB_FILENAME,
     VIDEO_LOCK_FILENAME,
     VIDEO_MANIFEST_FILENAME,
+    MatchGroupVideoError,
     _acquire_lock,
     _active_job_keys,
     _active_token,
@@ -252,6 +253,79 @@ class MatchGroupVideoTests(unittest.TestCase):
                 combined_video_path(group["group_id"])
             self._generate_with_fake_media(group["group_id"], b"retry")
             self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "ready")
+
+    def test_post_pointer_job_cleanup_failure_keeps_new_current_generation(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"old")
+            old_video = combined_video_path(group["group_id"])
+            original_unlink = Path.unlink
+
+            def fail_job_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+                if path.name == VIDEO_JOB_FILENAME:
+                    raise OSError("injected post-commit cleanup failure")
+                original_unlink(path, missing_ok=missing_ok)
+
+            with patch.object(Path, "unlink", new=fail_job_cleanup):
+                self._generate_with_fake_media(group["group_id"], b"new")
+
+            current_video = combined_video_path(group["group_id"])
+            status = get_match_group_video_status(group["group_id"])
+            self.assertNotEqual(current_video, old_video)
+            self.assertEqual(current_video.read_bytes(), b"new")
+            self.assertEqual(status["status"], "ready")
+            self.assertEqual(status["manifest"]["output"]["semantic_digest"], sha256_file(current_video))
+            self.assertEqual(status["last_attempt"]["status"], "completed")
+
+    def test_first_generation_post_pointer_job_cleanup_failure_remains_coherent(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            original_unlink = Path.unlink
+
+            def fail_job_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+                if path.name == VIDEO_JOB_FILENAME:
+                    raise OSError("injected post-commit cleanup failure")
+                original_unlink(path, missing_ok=missing_ok)
+
+            with patch.object(Path, "unlink", new=fail_job_cleanup):
+                self._generate_with_fake_media(group["group_id"], b"first")
+
+            current_video = combined_video_path(group["group_id"])
+            status = get_match_group_video_status(group["group_id"])
+            self.assertEqual(current_video.read_bytes(), b"first")
+            self.assertEqual(status["status"], "ready")
+            self.assertEqual(status["manifest"]["output"]["semantic_digest"], sha256_file(current_video))
+
+    def test_repeated_unchanged_status_reads_do_not_rehash_full_media(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"combined")
+
+            with (
+                patch("app.services.match_group_video.sha256_file", side_effect=AssertionError("status must not hash combined media")),
+                patch("app.services.published_video.sha256_file", side_effect=AssertionError("status must not hash source media")),
+            ):
+                self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "ready")
+                self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "ready")
+
+    def test_source_fingerprint_change_fails_closed_then_generation_rehashes(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"combined")
+            (root / "published" / "published-b" / PUBLISHED_VIDEO_ARTIFACT).write_bytes(b"changed-source")
+
+            self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "stale")
+            with self.assertRaises(MatchGroupVideoError) as failure:
+                self._generate_with_fake_media(group["group_id"], b"not-used")
+            self.assertEqual(failure.exception.code, "unavailable_source_video")
 
     def _generate_with_fake_media(self, group_id: str, payload: bytes) -> None:
         def concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:

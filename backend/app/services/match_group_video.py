@@ -49,15 +49,20 @@ def get_match_group_video_status(group_id: str) -> dict[str, Any]:
     if validation.get("status") != "compatible":
         return _state("stale", group, reason="match_group_stale", current=current, job=job)
     try:
-        inputs = _validated_video_inputs(group)
+        inputs = _validated_video_inputs(group, verify_content=False)
     except MatchGroupVideoError as error:
         return _state("stale" if current else "unavailable_source_video", group, reason=error.code, current=current, job=job)
     expected = _input_digest(inputs, group)
     if current:
-        if current["manifest"].get("input_semantic_digest") != expected:
+        if (
+            current["manifest"].get("input_semantic_digest") != expected
+            or not _source_fingerprints_match(current["manifest"], inputs)
+        ):
             return _state("stale", group, reason="source_video_generation_changed", current=current, job=job)
         # A failed (or still running) regeneration must not hide a valid video.
         return _state("ready", group, current=current, job=job)
+    if _load(group_dir / CURRENT_GENERATION_FILENAME):
+        return _state("stale", group, reason="current_video_generation_changed", job=job)
     if job.get("status") == "generating":
         return _state("generating", group, job=job)
     if job.get("status") == "failed":
@@ -109,7 +114,7 @@ def _begin_generation(group: dict[str, Any]) -> dict[str, Any]:
     group_dir = _group_dir(group)
     if validate_match_group(str(group["group_id"])).get("status") != "compatible":
         raise MatchGroupVideoError("match_group_stale", "Logical match sources must be current before generating video.")
-    inputs = _validated_video_inputs(group)
+    inputs = _validated_video_inputs(group, verify_content=True)
     input_digest = _input_digest(inputs, group)
     current_job = _recover_interrupted_job(group_dir)
     if current_job.get("status") == "generating":
@@ -141,7 +146,7 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
     try:
         if validate_match_group(str(group["group_id"])).get("status") != "compatible":
             raise MatchGroupVideoError("match_group_stale", "Logical match sources changed before video generation.")
-        inputs = _validated_video_inputs(group)
+        inputs = _validated_video_inputs(group, verify_content=True)
         input_digest = _input_digest(inputs, group)
         if input_digest != job.get("input_semantic_digest"):
             raise MatchGroupVideoError("source_video_generation_changed", "Source video inputs changed after the generation was queued.")
@@ -166,20 +171,23 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
             "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id,
             "generation_status": "ready", "input_semantic_digest": input_digest, "policy_version": VIDEO_POLICY_VERSION,
             "logical_timeline": dict(group["timing"]), "members": [{key: value for key, value in item.items() if key != "path"} for item in inputs],
-            "output": {"artifact": COMBINED_VIDEO_FILENAME, "semantic_digest": sha256_file(output), "duration_sec": duration, "codec": output_probe["codec"], "width": output_probe["width"], "height": output_probe["height"], "fps": output_probe["fps"], "file_size_bytes": output.stat().st_size},
+            "output": {"artifact": COMBINED_VIDEO_FILENAME, "semantic_digest": sha256_file(output), "duration_sec": duration, "codec": output_probe["codec"], "width": output_probe["width"], "height": output_probe["height"], "fps": output_probe["fps"], "file_size_bytes": output.stat().st_size, "fingerprint": _file_fingerprint(output)},
             "observability": {"started_at": started_at, "completed_at": completed_at, "elapsed_sec": round(time.monotonic() - started_monotonic, 3), "source_count": len(inputs), "source_total_bytes": sum(item["file_size_bytes"] for item in inputs), "output_bytes": output.stat().st_size, "generation_mode": mode},
         }
         _write(generation_dir / VIDEO_MANIFEST_FILENAME, manifest)
-        if not _generation_is_valid(generation_dir, manifest):
+        if not _generation_is_valid(generation_dir, manifest, verify_content=True):
             raise MatchGroupVideoError("output_video_invalid", "Generated video could not be verified before publication.")
         # One atomic pointer chooses a fully written immutable video+manifest pair.
         _write(group_dir / CURRENT_GENERATION_FILENAME, {"schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id, "input_semantic_digest": input_digest, "published_at": completed_at})
-        (group_dir / VIDEO_JOB_FILENAME).unlink(missing_ok=True)
-        return _state("ready", group, current={"manifest": manifest, "video_path": output})
     except Exception as error:
         shutil.rmtree(generation_dir, ignore_errors=True)
         _write(group_dir / VIDEO_JOB_FILENAME, {**job, "status": "failed", "failed_at": _now(), "reason": error.code if isinstance(error, MatchGroupVideoError) else "video_generation_failed", "detail": str(error)})
         raise
+
+    # The pointer is the commit point.  Never roll back this immutable
+    # generation because best-effort cleanup of the now-obsolete job failed.
+    cleanup_job = _clear_completed_job(group_dir, job, completed_at)
+    return _state("ready", group, current={"manifest": manifest, "video_path": output}, job=cleanup_job)
 
 
 def _background_generate(group_id: str, job: dict[str, Any]) -> None:
@@ -210,10 +218,77 @@ def _current_generation(group_dir: Path) -> dict[str, Any] | None:
     return {"pointer": pointer, "manifest": manifest, "video_path": generation_dir / COMBINED_VIDEO_FILENAME}
 
 
-def _generation_is_valid(generation_dir: Path, manifest: dict[str, Any]) -> bool:
+def _clear_completed_job(group_dir: Path, job: dict[str, Any], completed_at: str) -> dict[str, Any] | None:
+    """Clear a completed job without ever invalidating committed media."""
+
+    try:
+        (group_dir / VIDEO_JOB_FILENAME).unlink(missing_ok=True)
+    except OSError as error:
+        completed = {
+            **job,
+            "status": "completed",
+            "completed_at": completed_at,
+            "cleanup_warning": str(error),
+        }
+        try:
+            _write(group_dir / VIDEO_JOB_FILENAME, completed)
+        except OSError:
+            # The pointer already commits the generation.  A later status read
+            # can safely recover this stale job without touching the media.
+            pass
+        return completed
+    return None
+
+
+def _generation_is_valid(
+    generation_dir: Path,
+    manifest: dict[str, Any],
+    *,
+    verify_content: bool = False,
+) -> bool:
     output = manifest.get("output") if isinstance(manifest.get("output"), dict) else {}
     video = generation_dir / COMBINED_VIDEO_FILENAME
-    return manifest.get("generation_status") == "ready" and video.is_file() and video.stat().st_size > 0 and sha256_file(video) == output.get("semantic_digest")
+    if (
+        manifest.get("generation_status") != "ready"
+        or not video.is_file()
+        or video.stat().st_size <= 0
+        or not _fingerprints_match(_file_fingerprint(video), output.get("fingerprint"))
+    ):
+        return False
+    return not verify_content or sha256_file(video) == output.get("semantic_digest")
+
+
+def _file_fingerprint(path: Path) -> dict[str, Any] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    if not path.is_file() or stat.st_size <= 0:
+        return None
+    return {
+        "size_bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _fingerprints_match(current: dict[str, Any] | None, expected: object) -> bool:
+    if not isinstance(expected, dict) or current is None:
+        return False
+    return all(current.get(key) == expected.get(key) for key in ("size_bytes", "mtime_ns"))
+
+
+def _source_fingerprints_match(manifest: dict[str, Any], inputs: list[dict[str, Any]]) -> bool:
+    members = manifest.get("members")
+    if not isinstance(members, list) or len(members) != len(inputs):
+        return False
+    for member, source in zip(members, inputs, strict=True):
+        if not isinstance(member, dict):
+            return False
+        if member.get("published_id") != source.get("published_id"):
+            return False
+        if not _fingerprints_match(source.get("source_fingerprint"), member.get("source_fingerprint")):
+            return False
+    return True
 
 
 def _recover_interrupted_job(group_dir: Path) -> dict[str, Any]:
@@ -269,24 +344,31 @@ def _lock_owner_alive(group_dir: Path, owner: dict[str, Any]) -> bool:
         return False
 
 
-def _validated_video_inputs(group: dict[str, Any]) -> list[dict[str, Any]]:
+def _validated_video_inputs(group: dict[str, Any], *, verify_content: bool) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for member in group.get("members") or []:
         published_id = str(member.get("published_id") or "")
         source_dir = PUBLISHED_MATCHES_DIR / published_id
-        video = load_published_video(source_dir, expected_public_report_digest=str(member.get("public_report_semantic_digest") or ""))
+        video = load_published_video(
+            source_dir,
+            expected_public_report_digest=str(member.get("public_report_semantic_digest") or ""),
+            verify_content=verify_content,
+        )
         if video is None:
             raise MatchGroupVideoError("unavailable_source_video", "A selected publication has no proven final reviewed video.", member=published_id)
         path = source_dir / PUBLISHED_VIDEO_ARTIFACT
         logical_start, logical_end = float(member.get("logical_start_sec") or 0), float(member.get("logical_end_sec") or 0)
         if abs(float(video.get("duration_sec") or 0) - (logical_end - logical_start)) > VIDEO_DURATION_TOLERANCE_SEC:
             raise MatchGroupVideoError("source_video_duration_mismatch", "Published final video duration does not match its logical source duration.", member=published_id)
-        items.append({"sequence_index": int(member.get("sequence_index") or 0), "published_id": published_id, "source_match_id": str(member.get("source_match_id") or ""), "logical_start_sec": logical_start, "logical_end_sec": logical_end, "source_video": {key: video[key] for key in ("semantic_digest", "duration_sec", "codec", "width", "height", "fps", "pix_fmt")}, "file_size_bytes": path.stat().st_size, "path": path})
+        fingerprint = _file_fingerprint(path)
+        if fingerprint is None:
+            raise MatchGroupVideoError("unavailable_source_video", "A selected publication has no proven final reviewed video.", member=published_id)
+        items.append({"sequence_index": int(member.get("sequence_index") or 0), "published_id": published_id, "source_match_id": str(member.get("source_match_id") or ""), "logical_start_sec": logical_start, "logical_end_sec": logical_end, "source_video": {key: video[key] for key in ("semantic_digest", "duration_sec", "codec", "width", "height", "fps", "pix_fmt")}, "source_fingerprint": fingerprint, "file_size_bytes": fingerprint["size_bytes"], "path": path})
     return items
 
 
 def _input_digest(inputs: list[dict[str, Any]], group: dict[str, Any]) -> str:
-    return canonical_json_sha256({"policy_version": VIDEO_POLICY_VERSION, "members": [{key: value for key, value in item.items() if key not in {"path", "file_size_bytes"}} for item in inputs], "logical_timeline": group.get("timing")})
+    return canonical_json_sha256({"policy_version": VIDEO_POLICY_VERSION, "members": [{key: value for key, value in item.items() if key not in {"path", "file_size_bytes", "source_fingerprint"}} for item in inputs], "logical_timeline": group.get("timing")})
 
 
 def _probe(path: Path) -> dict[str, Any]:

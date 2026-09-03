@@ -23,7 +23,7 @@ export function AggregateMatchReportPage() {
     }).catch((error: unknown) => setStatus(errorMessage(error)));
   }, [groupId]);
   useEffect(() => {
-    if (!groupId || video?.status !== 'generating') return undefined;
+    if (!groupId || !isVideoGenerationInFlight(video)) return undefined;
     let cancelled = false;
     let inFlight = false;
     let timer: number | undefined;
@@ -45,7 +45,7 @@ export function AggregateMatchReportPage() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [groupId, video?.status]);
+  }, [groupId, video?.status, video?.last_attempt?.status]);
   return <main className='app'>
     <section className='hero compact-hero'>
       <p className='eyebrow'>Scalony raport</p>
@@ -61,6 +61,7 @@ export function AggregateMatchReportPage() {
     {report && <>
       <section className='panel'><h2>Podsumowanie</h2><p>Łączny analizowany czas: <strong>{duration(report.timing.analyzed_duration_sec)}</strong></p></section>
       {video?.status === 'ready' && video.artifact_url && <section className='panel'><h2>Pełne wideo meczu</h2><video className='reviewed-video' controls src={video.artifact_url} /><p>{duration(report.timing.timeline_span_sec)}</p></section>}
+      {video?.status === 'ready' && video.last_attempt?.status === 'generating' && <section className='panel'><p>Pełne wideo meczu jest gotowe — trwa regeneracja nowszej wersji.</p></section>}
       {video && video.status !== 'ready' && <section className='panel'><p>Łączne wideo: {videoMessage(video)}</p></section>}
       <AggregateMatchReportContent report={report} />
     </>}
@@ -73,4 +74,8 @@ function videoMessage(video: MatchGroupVideoStatus): string {
   if (video.status === 'unavailable_source_video') return 'nie jest dostępne, ponieważ co najmniej jeden fragment nie ma zweryfikowanego końcowego wideo Review.';
   if (video.status === 'stale') return 'wymaga ponownego wygenerowania, ponieważ źródłowy fragment lub jego publikacja uległy zmianie.';
   return 'nie zostało wygenerowane; poprzednia poprawna wersja pozostaje bez zmian.';
+}
+
+function isVideoGenerationInFlight(video: MatchGroupVideoStatus | null): boolean {
+  return video?.status === 'generating' || video?.last_attempt?.status === 'generating';
 }
