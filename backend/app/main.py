@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
 from app.logging_config import configure_application_logging
-from app.models import AnalyzePayload, BallAnalyzePayload, MatchGroupPayload, MatchMetadataPayload, PitchConfigPayload
+from app.models import AnalyzePayload, BallAnalyzePayload, MatchGroupExternalVideoPayload, MatchGroupPayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
 from app.services.analysis_jobs import list_analysis_jobs, load_analysis_job, mark_interrupted_analysis_jobs, start_analysis_job
 from app.services.change_candidates import load_change_candidates_review, save_change_candidate_reviews
@@ -200,6 +200,12 @@ from app.services.match_group_video import (
     generation_video,
     get_match_group_video_status,
     submit_match_group_video_generation,
+)
+from app.services.match_group_external_video import (
+    MatchGroupExternalVideoError,
+    delete_match_group_external_video,
+    get_match_group_external_video,
+    save_match_group_external_video,
 )
 from app.services.match_groups import (
     MatchGroupError,
@@ -3661,6 +3667,34 @@ def api_generate_match_group_video(group_id: str) -> dict[str, Any]:
         raise _match_group_error_response(error) from error
 
 
+@app.get("/api/published/match-groups/{group_id}/external-video")
+def api_get_match_group_external_video(group_id: str) -> dict[str, Any]:
+    try:
+        return get_match_group_external_video(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.put("/api/published/match-groups/{group_id}/external-video")
+def api_save_match_group_external_video(group_id: str, payload: MatchGroupExternalVideoPayload) -> dict[str, Any]:
+    try:
+        return save_match_group_external_video(group_id, payload.url)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupExternalVideoError as error:
+        if error.code == "unsupported_youtube_url":
+            raise HTTPException(status_code=422, detail={"code": error.code, "detail": error.detail}) from error
+        raise _match_group_error_response(error) from error
+
+
+@app.delete("/api/published/match-groups/{group_id}/external-video")
+def api_delete_match_group_external_video(group_id: str) -> dict[str, Any]:
+    try:
+        return delete_match_group_external_video(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
 @app.get("/api/published/match-groups/{group_id}/video/file")
 def api_get_match_group_video_file(group_id: str) -> RedirectResponse:
     try:
@@ -3703,6 +3737,7 @@ def api_get_match_group_report(group_id: str) -> dict[str, Any]:
         return {
             "report": load_match_group_report(group_id),
             "validation": validate_match_group(group_id),
+            "external_video": get_match_group_external_video(group_id),
         }
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error

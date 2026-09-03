@@ -41,6 +41,7 @@ import type {
   MatchGroupPreview,
   MatchGroupRecord,
   MatchGroupReportResponse,
+  MatchGroupExternalVideoStatus,
   MatchGroupVideoStatus,
   MatchGroupSource,
   StablePlayerReviewPayload,
@@ -959,4 +960,18 @@ export async function getMatchGroupVideo(groupId: string): Promise<MatchGroupVid
 
 export async function generateMatchGroupVideo(groupId: string): Promise<MatchGroupVideoStatus> {
   return request<MatchGroupVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/video/generate`, { method: 'POST' });
+}
+
+export async function getMatchGroupExternalVideo(groupId: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/external-video`);
+}
+
+export async function saveMatchGroupExternalVideo(groupId: string, url: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/external-video`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+  });
+}
+
+export async function deleteMatchGroupExternalVideo(groupId: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/match-groups/${encodeURIComponent(groupId)}/external-video`, { method: 'DELETE' });
 }

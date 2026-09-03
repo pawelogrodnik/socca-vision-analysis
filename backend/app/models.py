@@ -104,3 +104,8 @@ class MatchGroupPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     member_published_ids: list[str] = Field(min_length=2)
     metadata: MatchGroupMetadataPayload
+
+
+class MatchGroupExternalVideoPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: str
