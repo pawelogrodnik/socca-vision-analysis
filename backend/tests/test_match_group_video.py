@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import app.services.match_group_video as match_group_video
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
@@ -326,6 +327,136 @@ class MatchGroupVideoTests(unittest.TestCase):
             with self.assertRaises(MatchGroupVideoError) as failure:
                 self._generate_with_fake_media(group["group_id"], b"not-used")
             self.assertEqual(failure.exception.code, "unavailable_source_video")
+
+    def test_normalization_work_files_are_removed_before_generation_is_committed(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+
+            def normalize(path: Path, work_dir: Path, index: int, probes: list[dict[str, object]]) -> Path:
+                normalized = work_dir / f"normalized-{index}.mp4"
+                normalized.write_bytes(path.read_bytes())
+                return normalized
+
+            def concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:
+                (output.parent / ".work" / "concat.txt").write_text("temporary", encoding="utf-8")
+                output.write_bytes(b"combined")
+
+            def probe(path: Path) -> dict[str, object]:
+                if path.name == COMBINED_VIDEO_FILENAME:
+                    return {"codec": "h264", "pix_fmt": "yuv420p", "width": 1280, "height": 720, "fps": 25.0, "duration_sec": 20.0, "audio": False}
+                width = 1280 if path.parent.name == "published-a" else 640
+                return {"codec": "h264", "pix_fmt": "yuv420p", "width": width, "height": 720, "fps": 25.0, "duration_sec": 10.0, "audio": False}
+
+            with (
+                patch("app.services.match_group_video._stream_copy_compatible", return_value=False),
+                patch("app.services.match_group_video._normalize", side_effect=normalize),
+                patch("app.services.match_group_video._concat", side_effect=concat),
+                patch("app.services.match_group_video._probe", side_effect=probe),
+            ):
+                generate_match_group_video(group["group_id"])
+
+            generation_dir = combined_video_path(group["group_id"]).parent
+            self.assertEqual(sorted(path.name for path in generation_dir.iterdir()), [COMBINED_VIDEO_FILENAME, VIDEO_MANIFEST_FILENAME])
+
+    def test_successful_regeneration_retains_only_the_new_current_generation(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"old")
+            old_generation = combined_video_path(group["group_id"]).parent
+
+            self._generate_with_fake_media(group["group_id"], b"new")
+
+            current = combined_video_path(group["group_id"])
+            generations_root = current.parent.parent
+            self.assertEqual(current.read_bytes(), b"new")
+            self.assertFalse(old_generation.exists())
+            self.assertEqual([path.name for path in generations_root.iterdir() if path.is_dir()], [current.parent.name])
+
+    def test_superseded_generation_cleanup_failure_cannot_rollback_new_current_video(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"old")
+            old_generation = combined_video_path(group["group_id"]).parent
+            original_remove = shutil.rmtree
+
+            def fail_old_generation(path: str | Path, *args: object, **kwargs: object) -> None:
+                if Path(path) == old_generation:
+                    raise OSError("injected superseded cleanup failure")
+                original_remove(path, *args, **kwargs)
+
+            with patch("app.services.match_group_video.shutil.rmtree", side_effect=fail_old_generation):
+                self._generate_with_fake_media(group["group_id"], b"new")
+
+            current = combined_video_path(group["group_id"])
+            status = get_match_group_video_status(group["group_id"])
+            self.assertEqual(current.read_bytes(), b"new")
+            self.assertEqual(status["status"], "ready")
+            self.assertTrue(old_generation.exists())
+            self.assertIn("superseded generation cleanup", status["last_attempt"]["cleanup_warning"])
+
+    def test_source_change_during_render_keeps_previous_generation_current(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"old")
+            old_video = combined_video_path(group["group_id"])
+            original_validate = match_group_video._validate_pre_commit
+
+            def mutate_source_then_validate(*args: object) -> None:
+                (root / "published" / "published-b" / PUBLISHED_VIDEO_ARTIFACT).write_bytes(b"source-changed-during-render")
+                original_validate(*args)
+
+            with patch("app.services.match_group_video._validate_pre_commit", side_effect=mutate_source_then_validate), self.assertRaises(MatchGroupVideoError) as failure:
+                self._generate_with_fake_media(group["group_id"], b"candidate")
+
+            self.assertEqual(failure.exception.code, "source_video_generation_changed")
+            self.assertEqual(combined_video_path(group["group_id"]), old_video)
+            self.assertEqual(old_video.read_bytes(), b"old")
+            self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "stale")
+
+    def test_group_order_change_during_render_keeps_previous_generation_current(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"old")
+            old_video = combined_video_path(group["group_id"])
+            original_validate = match_group_video._validate_pre_commit
+
+            def reorder_then_validate(*args: object) -> None:
+                update_match_group(group["group_id"], member_published_ids=["published-b", "published-a"], metadata={})
+                original_validate(*args)
+
+            with patch("app.services.match_group_video._validate_pre_commit", side_effect=reorder_then_validate), self.assertRaises(MatchGroupVideoError) as failure:
+                self._generate_with_fake_media(group["group_id"], b"candidate")
+
+            self.assertEqual(failure.exception.code, "match_group_changed_during_generation")
+            self.assertEqual(combined_video_path(group["group_id"]), old_video)
+            self.assertEqual(old_video.read_bytes(), b"old")
+
+    def test_metadata_only_change_during_render_allows_candidate_commit(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={"title": "Old title"})
+            original_validate = match_group_video._validate_pre_commit
+
+            def rename_then_validate(*args: object) -> None:
+                update_match_group(group["group_id"], member_published_ids=["published-a", "published-b"], metadata={"title": "New title"})
+                original_validate(*args)
+
+            with patch("app.services.match_group_video._validate_pre_commit", side_effect=rename_then_validate):
+                self._generate_with_fake_media(group["group_id"], b"candidate")
+
+            self.assertEqual(combined_video_path(group["group_id"]).read_bytes(), b"candidate")
+            self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "ready")
 
     def _generate_with_fake_media(self, group_id: str, payload: bytes) -> None:
         def concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:

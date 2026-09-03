@@ -130,7 +130,8 @@ def _begin_generation(group: dict[str, Any]) -> dict[str, Any]:
     job = {
         "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "job_key": job_key,
         "input_semantic_digest": input_digest, "status": "generating", "started_at": _now(),
-        "owner_pid": os.getpid(), "ownership_mode": "single_host_filesystem_pid_lock", "source_count": len(inputs),
+        "group_contract_digest": _group_contract_digest(group), "owner_pid": os.getpid(),
+        "ownership_mode": "single_host_filesystem_pid_lock", "source_count": len(inputs),
     }
     _write(group_dir / VIDEO_JOB_FILENAME, job)
     return job
@@ -143,6 +144,8 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
     generation_id = f"{str(job['input_semantic_digest'])[:16]}-{uuid.uuid4().hex[:12]}"
     generation_dir = _generation_dir(group_dir, generation_id)
     generation_dir.mkdir(parents=True, exist_ok=False)
+    work_dir = generation_dir / ".work"
+    work_dir.mkdir()
     try:
         if validate_match_group(str(group["group_id"])).get("status") != "compatible":
             raise MatchGroupVideoError("match_group_stale", "Logical match sources changed before video generation.")
@@ -157,7 +160,7 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
         if mode == "stream_copy":
             _concat([item["path"] for item in inputs], output, copy_streams=True)
         else:
-            normalized = [_normalize(item["path"], generation_dir, index, probes) for index, item in enumerate(inputs)]
+            normalized = [_normalize(item["path"], work_dir, index, probes) for index, item in enumerate(inputs)]
             _concat(normalized, output, copy_streams=True)
         output_probe = _probe(output)
         timeline_span = float(group["timing"]["timeline_span_sec"])
@@ -166,6 +169,7 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
             raise MatchGroupVideoError("output_duration_mismatch", "Combined video duration differs from the logical timeline.")
         if output_probe.get("codec") != "h264" or output_probe.get("pix_fmt") != "yuv420p" or output_probe.get("audio") or output.stat().st_size <= 0:
             raise MatchGroupVideoError("output_video_invalid", "Combined video does not meet the H.264/yuv420p/no-audio output contract.")
+        shutil.rmtree(work_dir)
         completed_at = _now()
         manifest = {
             "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id,
@@ -177,6 +181,7 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
         _write(generation_dir / VIDEO_MANIFEST_FILENAME, manifest)
         if not _generation_is_valid(generation_dir, manifest, verify_content=True):
             raise MatchGroupVideoError("output_video_invalid", "Generated video could not be verified before publication.")
+        _validate_pre_commit(group, job, inputs)
         # One atomic pointer chooses a fully written immutable video+manifest pair.
         _write(group_dir / CURRENT_GENERATION_FILENAME, {"schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id, "input_semantic_digest": input_digest, "published_at": completed_at})
     except Exception as error:
@@ -186,7 +191,7 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
 
     # The pointer is the commit point.  Never roll back this immutable
     # generation because best-effort cleanup of the now-obsolete job failed.
-    cleanup_job = _clear_completed_job(group_dir, job, completed_at)
+    cleanup_job = _post_commit_cleanup(group_dir, generation_id, job, completed_at)
     return _state("ready", group, current={"manifest": manifest, "video_path": output}, job=cleanup_job)
 
 
@@ -218,26 +223,47 @@ def _current_generation(group_dir: Path) -> dict[str, Any] | None:
     return {"pointer": pointer, "manifest": manifest, "video_path": generation_dir / COMBINED_VIDEO_FILENAME}
 
 
-def _clear_completed_job(group_dir: Path, job: dict[str, Any], completed_at: str) -> dict[str, Any] | None:
-    """Clear a completed job without ever invalidating committed media."""
+def _post_commit_cleanup(
+    group_dir: Path,
+    generation_id: str,
+    job: dict[str, Any],
+    completed_at: str,
+) -> dict[str, Any] | None:
+    """Best-effort cleanup after the pointer commit; never touch current media."""
 
+    warnings: list[str] = []
     try:
         (group_dir / VIDEO_JOB_FILENAME).unlink(missing_ok=True)
     except OSError as error:
-        completed = {
-            **job,
-            "status": "completed",
-            "completed_at": completed_at,
-            "cleanup_warning": str(error),
-        }
-        try:
-            _write(group_dir / VIDEO_JOB_FILENAME, completed)
-        except OSError:
-            # The pointer already commits the generation.  A later status read
-            # can safely recover this stale job without touching the media.
-            pass
-        return completed
-    return None
+        warnings.append(f"job cleanup: {error}")
+    try:
+        _remove_superseded_generations(group_dir, generation_id)
+    except OSError as error:
+        warnings.append(f"superseded generation cleanup: {error}")
+    if not warnings:
+        return None
+    completed = {
+        **job,
+        "status": "completed",
+        "completed_at": completed_at,
+        "cleanup_warning": "; ".join(warnings),
+    }
+    try:
+        _write(group_dir / VIDEO_JOB_FILENAME, completed)
+    except OSError:
+        # The pointer already commits the generation.  A later status read can
+        # safely recover this stale job without touching the media.
+        pass
+    return completed
+
+
+def _remove_superseded_generations(group_dir: Path, current_generation_id: str) -> None:
+    root = group_dir / VIDEO_GENERATIONS_DIRECTORY
+    if not root.is_dir():
+        return
+    for candidate in root.iterdir():
+        if candidate.is_dir() and candidate.name != current_generation_id:
+            shutil.rmtree(candidate)
 
 
 def _generation_is_valid(
@@ -289,6 +315,60 @@ def _source_fingerprints_match(manifest: dict[str, Any], inputs: list[dict[str, 
         if not _fingerprints_match(source.get("source_fingerprint"), member.get("source_fingerprint")):
             return False
     return True
+
+
+def _group_contract_digest(group: dict[str, Any]) -> str:
+    """Stable generation contract; intentionally excludes presentation metadata."""
+
+    members = group.get("members") if isinstance(group.get("members"), list) else []
+    pinned_keys = (
+        "sequence_index",
+        "published_id",
+        "source_match_id",
+        "aggregation_input_schema_version",
+        "aggregation_policy_version",
+        "aggregation_input_semantic_digest",
+        "public_report_schema_version",
+        "public_report_semantic_digest",
+        "reviewed_identity_digest",
+        "logical_start_sec",
+        "logical_end_sec",
+    )
+    return canonical_json_sha256({
+        "group_id": group.get("group_id"),
+        "members": [{key: member.get(key) for key in pinned_keys} for member in members if isinstance(member, dict)],
+        "timing": group.get("timing"),
+    })
+
+
+def _validate_pre_commit(
+    original_group: dict[str, Any],
+    job: dict[str, Any],
+    captured_inputs: list[dict[str, Any]],
+) -> None:
+    """Cheaply reject a candidate if its logical sources drifted during ffmpeg."""
+
+    group_id = str(original_group["group_id"])
+    current_group = get_match_group(group_id)
+    if validate_match_group(group_id).get("status") != "compatible":
+        raise MatchGroupVideoError("match_group_changed_during_generation", "Logical match sources changed while the combined video was rendering.")
+    if _group_contract_digest(current_group) != job.get("group_contract_digest"):
+        raise MatchGroupVideoError("match_group_changed_during_generation", "Logical match order, timing, or pinned publication changed during rendering.")
+    current_inputs = _validated_video_inputs(current_group, verify_content=False)
+    if _input_digest(current_inputs, current_group) != job.get("input_semantic_digest"):
+        raise MatchGroupVideoError("source_video_generation_changed", "Published source video descriptors changed during rendering.")
+    if not _input_fingerprints_match(captured_inputs, current_inputs):
+        raise MatchGroupVideoError("source_video_generation_changed", "Published source video files changed during rendering.")
+
+
+def _input_fingerprints_match(first: list[dict[str, Any]], second: list[dict[str, Any]]) -> bool:
+    if len(first) != len(second):
+        return False
+    return all(
+        first_item.get("published_id") == second_item.get("published_id")
+        and _fingerprints_match(first_item.get("source_fingerprint"), second_item.get("source_fingerprint"))
+        for first_item, second_item in zip(first, second, strict=True)
+    )
 
 
 def _recover_interrupted_job(group_dir: Path) -> dict[str, Any]:
@@ -399,7 +479,7 @@ def _stream_copy_compatible(probes: list[dict[str, Any]]) -> bool:
 
 
 def _concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:
-    listing = output.parent / "concat.txt"
+    listing = output.parent / ".work" / "concat.txt"
     listing.write_text("".join(f"file '{path.as_posix()}'\n" for path in paths), encoding="utf-8")
     command = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing)]
     command.extend(["-c", "copy"] if copy_streams else ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"])
@@ -432,7 +512,9 @@ def _state(status: str, group: dict[str, Any], *, reason: str | None = None, cur
 def _public_job(job: dict[str, Any]) -> dict[str, Any] | None:
     if not job:
         return None
-    return {key: job.get(key) for key in ("status", "started_at", "failed_at", "reason", "detail", "source_count")}
+    return {key: job.get(key) for key in (
+        "status", "started_at", "completed_at", "failed_at", "reason", "detail", "cleanup_warning", "source_count",
+    )}
 
 
 def _artifact_url(group_id: str) -> str:
