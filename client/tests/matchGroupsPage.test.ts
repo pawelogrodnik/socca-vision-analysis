@@ -79,6 +79,40 @@ test('match-group page exposes background combined-video generation without trea
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('match-group page polls only a generating video until it becomes ready', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = window.setTimeout;
+  const scheduled: Array<() => void> = [];
+  let videoReads = 0;
+  window.setTimeout = ((callback: TimerHandler) => {
+    scheduled.push(callback as () => void);
+    return scheduled.length as unknown as number;
+  }) as typeof window.setTimeout;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([{
+      group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
+      validation: { status: 'compatible', blocking_reasons: [] },
+    }]);
+    if (path.endsWith('/group-1/video')) {
+      videoReads += 1;
+      return Response.json(videoReads === 1 ? { group_id: 'group-1', status: 'generating' } : { group_id: 'group-1', status: 'ready', artifact_url: '/video.mp4' });
+    }
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Generowanie/)));
+    scheduled.shift()?.();
+    await waitFor(() => assert.ok(view.getByRole('link', { name: 'Otwórz wideo' })));
+    assert.equal(videoReads, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.setTimeout = originalSetTimeout;
+  }
+});
+
 test('aggregate content renders per-team passes and server-rebased timelines', () => {
   const view = render(React.createElement(BrowserRouter, null, React.createElement(AggregateMatchReportContent, {
     report: {
@@ -142,4 +176,38 @@ test('aggregate page shows server-authoritative stale reason above its last cohe
     assert.ok(view.getByText('Jeden z raportów źródłowych został ponownie opublikowany.'));
     assert.ok(view.getByText('Old report'));
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('aggregate page polls a generating video and shows the player when ready', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = window.setTimeout;
+  const scheduled: Array<() => void> = [];
+  let videoReads = 0;
+  window.setTimeout = ((callback: TimerHandler) => {
+    scheduled.push(callback as () => void);
+    return scheduled.length as unknown as number;
+  }) as typeof window.setTimeout;
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path.endsWith('/video')) {
+      videoReads += 1;
+      return Response.json(videoReads === 1 ? { group_id: 'group-1', status: 'generating' } : { group_id: 'group-1', status: 'ready', artifact_url: '/video.mp4' });
+    }
+    return Response.json({
+      report: { schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' }, source_match_ids: [], source_published_ids: [], sources: [], timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [] },
+      validation: { status: 'compatible', blocking_reasons: [] },
+    });
+  };
+  try {
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    )));
+    await waitFor(() => assert.ok(view.getByText(/przygotowywane w tle/)));
+    scheduled.shift()?.();
+    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Pełne wideo meczu' })));
+    assert.equal(videoReads, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    window.setTimeout = originalSetTimeout;
+  }
 });

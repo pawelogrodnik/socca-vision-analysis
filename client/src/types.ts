@@ -3191,6 +3191,12 @@ export type MatchGroupVideoStatus = {
   detail?: string | null;
   artifact_url?: string | null;
   manifest?: { output?: { duration_sec?: number } } | null;
+  last_attempt?: {
+    status?: 'generating' | 'failed';
+    started_at?: string;
+    failed_at?: string;
+    reason?: string;
+  } | null;
 };
 
 export type AggregateMovement = {

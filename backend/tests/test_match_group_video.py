@@ -12,10 +12,20 @@ from unittest.mock import patch
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
+    CURRENT_GENERATION_FILENAME,
     VIDEO_DURATION_TOLERANCE_SEC,
+    VIDEO_JOB_FILENAME,
+    VIDEO_LOCK_FILENAME,
     VIDEO_MANIFEST_FILENAME,
+    _acquire_lock,
+    _active_job_keys,
+    _active_token,
+    _group_dir,
+    _write as write_video_document,
+    combined_video_path,
     generate_match_group_video,
     get_match_group_video_status,
+    submit_match_group_video_generation,
 )
 from app.services.match_groups import create_match_group, delete_match_group, update_match_group
 from app.services.published_video import PUBLISHED_VIDEO_ARTIFACT, PUBLISHED_VIDEO_DESCRIPTOR_FILENAME, sha256_file
@@ -52,7 +62,7 @@ class MatchGroupVideoTests(unittest.TestCase):
             status = generate_match_group_video(group["group_id"])
 
             self.assertEqual(status["status"], "ready")
-            manifest = self._load(root / "groups" / group["group_id"] / VIDEO_MANIFEST_FILENAME)
+            manifest = get_match_group_video_status(group["group_id"])["manifest"]
             self.assertEqual(manifest["observability"]["generation_mode"], "stream_copy")
             self.assertAlmostEqual(manifest["output"]["duration_sec"], 2.0, delta=VIDEO_DURATION_TOLERANCE_SEC)
 
@@ -76,7 +86,7 @@ class MatchGroupVideoTests(unittest.TestCase):
 
             self.assertEqual(status["status"], "ready")
             self.assertEqual([path.read_bytes() for path in calls[0]], [b"B", b"A"])
-            manifest = self._load(root / "groups" / group["group_id"] / VIDEO_MANIFEST_FILENAME)
+            manifest = get_match_group_video_status(group["group_id"])["manifest"]
             self.assertEqual([(row["logical_start_sec"], row["logical_end_sec"]) for row in manifest["members"]], [(0.0, 20.0), (20.0, 30.0)])
             self.assertEqual(manifest["output"]["duration_sec"], 30.0)
             self.assertEqual((root / "published" / "published-a" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"A")
@@ -96,7 +106,7 @@ class MatchGroupVideoTests(unittest.TestCase):
 
             with patch("app.services.match_group_video._concat", side_effect=concat), patch("app.services.match_group_video._probe", side_effect=probe):
                 generate_match_group_video(group["group_id"])
-            output = root / "groups" / group["group_id"] / COMBINED_VIDEO_FILENAME
+            output = combined_video_path(group["group_id"])
             before = output.read_bytes()
             (root / "published" / "published-b" / PUBLISHED_VIDEO_ARTIFACT).write_bytes(b"changed")
             self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "stale")
@@ -130,7 +140,7 @@ class MatchGroupVideoTests(unittest.TestCase):
 
             with patch("app.services.match_group_video._concat", side_effect=concat), patch("app.services.match_group_video._probe", side_effect=probe):
                 generate_match_group_video(group["group_id"])
-            output = root / "groups" / group["group_id"] / COMBINED_VIDEO_FILENAME
+            output = combined_video_path(group["group_id"])
             before = output.read_bytes()
             with (
                 patch("app.services.match_group_video._concat", side_effect=RuntimeError("ffmpeg failed")),
@@ -139,15 +149,18 @@ class MatchGroupVideoTests(unittest.TestCase):
             ):
                 generate_match_group_video(group["group_id"])
 
-            self.assertEqual(output.read_bytes(), before)
-            self.assertTrue(self._load(root / "groups" / group["group_id"] / "video_status.json")["previous_coherent_video"])
+            self.assertEqual(combined_video_path(group["group_id"]).read_bytes(), before)
+            status = get_match_group_video_status(group["group_id"])
+            self.assertEqual(status["status"], "ready")
+            self.assertEqual(status["last_attempt"]["status"], "failed")
 
     def test_deleting_a_group_removes_only_its_derived_video(self) -> None:
         with self._store() as root:
             self._source(root, "published-a", "a", duration=10, payload=b"A")
             self._source(root, "published-b", "b", duration=10, payload=b"B")
             group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
-            group_video = root / "groups" / group["group_id"] / COMBINED_VIDEO_FILENAME
+            group_video = root / "groups" / group["group_id"] / "video-generations" / "derived" / COMBINED_VIDEO_FILENAME
+            group_video.parent.mkdir(parents=True)
             group_video.write_bytes(b"derived")
 
             delete_match_group(group["group_id"])
@@ -155,6 +168,100 @@ class MatchGroupVideoTests(unittest.TestCase):
             self.assertFalse(group_video.exists())
             self.assertEqual((root / "published" / "published-a" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"A")
             self.assertEqual((root / "published" / "published-b" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"B")
+
+    def test_dead_persisted_generating_owner_becomes_interrupted_and_can_retry(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            group_dir = root / "groups" / group["group_id"]
+            self._write(group_dir / VIDEO_JOB_FILENAME, {"status": "generating", "job_key": "dead-job", "owner_pid": 999999})
+            self._write(group_dir / VIDEO_LOCK_FILENAME, {"pid": 999999, "job_key": "dead-job"})
+
+            status = get_match_group_video_status(group["group_id"])
+
+            self.assertEqual(status["status"], "failed")
+            self.assertEqual(status["reason"], "video_generation_interrupted")
+            with patch("app.services.match_group_video._background_generate") as run:
+                retry = submit_match_group_video_generation(group["group_id"])
+            self.assertEqual(retry["status"], "generating")
+            run.assert_called_once()
+            _active_job_keys.clear()
+
+    def test_live_durable_owner_prevents_a_second_background_submission(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            with patch("app.services.match_group_video._background_generate") as run:
+                first = submit_match_group_video_generation(group["group_id"])
+                second = submit_match_group_video_generation(group["group_id"])
+            self.assertEqual(first["status"], "generating")
+            self.assertEqual(second["status"], "generating")
+            run.assert_called_once()
+            _active_job_keys.clear()
+
+    def test_persisted_lock_allows_only_one_service_owner(self) -> None:
+        with self._store() as root:
+            lock = root / "groups" / "group" / VIDEO_LOCK_FILENAME
+            owner = {"pid": os.getpid(), "job_key": "worker-one"}
+            _active_job_keys.add(_active_token(lock.parent, "worker-one"))
+            self.assertTrue(_acquire_lock(lock, owner))
+            self.assertFalse(_acquire_lock(lock, {"pid": os.getpid(), "job_key": "worker-two"}))
+            _active_job_keys.clear()
+
+    def test_pointer_switch_failure_keeps_the_old_coherent_generation(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            self._generate_with_fake_media(group["group_id"], b"old")
+            old_video = combined_video_path(group["group_id"])
+            old_bytes = old_video.read_bytes()
+            old_manifest = get_match_group_video_status(group["group_id"])["manifest"]
+            original_write = write_video_document
+
+            def fail_pointer(path: Path, document: dict[str, object]) -> None:
+                if path.name == CURRENT_GENERATION_FILENAME:
+                    raise OSError("injected pointer switch failure")
+                original_write(path, document)
+
+            with patch("app.services.match_group_video._write", side_effect=fail_pointer), self.assertRaises(OSError):
+                self._generate_with_fake_media(group["group_id"], b"new")
+            status = get_match_group_video_status(group["group_id"])
+            self.assertEqual(status["status"], "ready")
+            self.assertEqual(combined_video_path(group["group_id"]).read_bytes(), old_bytes)
+            self.assertEqual(status["manifest"]["output"]["semantic_digest"], old_manifest["output"]["semantic_digest"])
+
+    def test_first_generation_pointer_failure_serves_no_partial_video_and_can_retry(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            original_write = write_video_document
+
+            def fail_pointer(path: Path, document: dict[str, object]) -> None:
+                if path.name == CURRENT_GENERATION_FILENAME:
+                    raise OSError("injected pointer switch failure")
+                original_write(path, document)
+
+            with patch("app.services.match_group_video._write", side_effect=fail_pointer), self.assertRaises(OSError):
+                self._generate_with_fake_media(group["group_id"], b"new")
+            self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "failed")
+            with self.assertRaises(FileNotFoundError):
+                combined_video_path(group["group_id"])
+            self._generate_with_fake_media(group["group_id"], b"retry")
+            self.assertEqual(get_match_group_video_status(group["group_id"])["status"], "ready")
+
+    def _generate_with_fake_media(self, group_id: str, payload: bytes) -> None:
+        def concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:
+            output.write_bytes(payload)
+
+        def probe(path: Path) -> dict[str, object]:
+            return {"codec": "h264", "pix_fmt": "yuv420p", "width": 1280, "height": 720, "fps": 25.0, "duration_sec": 20.0 if path.name == COMBINED_VIDEO_FILENAME else 10.0, "audio": False}
+
+        with patch("app.services.match_group_video._concat", side_effect=concat), patch("app.services.match_group_video._probe", side_effect=probe):
+            generate_match_group_video(group_id)
 
     def _source(self, root: Path, published_id: str, source_match_id: str, *, duration: float, payload: bytes) -> None:
         directory = root / "published" / published_id

@@ -41,6 +41,36 @@ export function MatchGroupsPage() {
 
   useEffect(() => { void load().catch((error: unknown) => setStatus(errorMessage(error))); }, []);
 
+  const generatingGroupIds = useMemo(
+    () => groups.map(({ group }) => group.group_id).filter((groupId) => videos[groupId]?.status === 'generating'),
+    [groups, videos],
+  );
+
+  useEffect(() => {
+    if (!generatingGroupIds.length) return undefined;
+    let cancelled = false;
+    let inFlight = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (inFlight || cancelled) return;
+      inFlight = true;
+      try {
+        const rows = await Promise.all(generatingGroupIds.map(async (groupId) => [groupId, await getMatchGroupVideo(groupId)] as const));
+        if (!cancelled) setVideos((current) => ({ ...current, ...Object.fromEntries(rows) }));
+      } catch (error) {
+        if (!cancelled) setStatus(errorMessage(error));
+      } finally {
+        inFlight = false;
+        if (!cancelled) timer = window.setTimeout(() => void poll(), 7_500);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 7_500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [generatingGroupIds]);
+
   const selected = useMemo(
     () => selectedIds.map((id) => sources.find((source) => source.id === id)).filter((source): source is MatchGroupSource => Boolean(source)),
     [selectedIds, sources],

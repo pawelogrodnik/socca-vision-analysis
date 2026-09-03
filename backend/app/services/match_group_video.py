@@ -2,15 +2,15 @@ from __future__ import annotations
 
 """Derived, post-publication logical-match video generation.
 
-This service deliberately consumes only immutable video copies from published
-physical generations.  It never opens MATCHES_DIR, Review state, or CV data.
+The service reads only immutable video copies owned by physical publications.
+One small pointer selects a coherent immutable video+manifest generation; no
+request ever combines a mutable match directory with a logical match group.
 """
 
 import json
 import os
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -25,12 +25,15 @@ from app.services.published_video import PUBLISHED_VIDEO_ARTIFACT, load_publishe
 
 COMBINED_VIDEO_FILENAME = "combined_match_video.mp4"
 VIDEO_MANIFEST_FILENAME = "video_manifest.json"
-VIDEO_STATUS_FILENAME = "video_status.json"
-VIDEO_SCHEMA_VERSION = "1.0.0"
+VIDEO_GENERATIONS_DIRECTORY = "video-generations"
+CURRENT_GENERATION_FILENAME = "current_video_generation.json"
+VIDEO_JOB_FILENAME = "video_job.json"
+VIDEO_LOCK_FILENAME = "video_job.lock"
+VIDEO_SCHEMA_VERSION = "1.1.0"
 VIDEO_POLICY_VERSION = "logical-video:v1-h264-yuv420p-no-audio;normalize-25fps-max-resolution"
 VIDEO_DURATION_TOLERANCE_SEC = 0.25
 _submission_lock = threading.Lock()
-_active: set[str] = set()
+_active_job_keys: set[str] = set()
 
 
 class MatchGroupVideoError(MatchGroupError):
@@ -39,162 +42,231 @@ class MatchGroupVideoError(MatchGroupError):
 
 def get_match_group_video_status(group_id: str) -> dict[str, Any]:
     group = get_match_group(group_id)
-    group_dir = MATCH_GROUPS_DIR / str(group["group_id"])
+    group_dir = _group_dir(group)
+    job = _recover_interrupted_job(group_dir)
+    current = _current_generation(group_dir)
     validation = validate_match_group(group_id)
-    manifest = _load(group_dir / VIDEO_MANIFEST_FILENAME)
-    status = _load(group_dir / VIDEO_STATUS_FILENAME)
-    output = group_dir / COMBINED_VIDEO_FILENAME
     if validation.get("status") != "compatible":
-        return _state("stale", group, reason="match_group_stale", manifest=manifest, output=output)
+        return _state("stale", group, reason="match_group_stale", current=current, job=job)
     try:
         inputs = _validated_video_inputs(group)
     except MatchGroupVideoError as error:
-        if manifest:
-            return _state(
-                "stale",
-                group,
-                reason=error.code,
-                manifest=manifest,
-                output=output,
-            )
-        return _state("unavailable_source_video", group, reason=error.code, manifest=manifest, output=output)
+        return _state("stale" if current else "unavailable_source_video", group, reason=error.code, current=current, job=job)
     expected = _input_digest(inputs, group)
-    if manifest:
-        if manifest.get("input_semantic_digest") != expected or not _valid_output(output, manifest):
-            return _state("stale", group, reason="source_video_generation_changed", manifest=manifest, output=output)
-        return _state("ready", group, manifest=manifest, output=output)
-    if status.get("status") in {"generating", "failed"}:
-        return {**status, "group_id": group["group_id"], "artifact_url": _artifact_url(group["group_id"]) if output.is_file() else None}
+    if current:
+        if current["manifest"].get("input_semantic_digest") != expected:
+            return _state("stale", group, reason="source_video_generation_changed", current=current, job=job)
+        # A failed (or still running) regeneration must not hide a valid video.
+        return _state("ready", group, current=current, job=job)
+    if job.get("status") == "generating":
+        return _state("generating", group, job=job)
+    if job.get("status") == "failed":
+        return _state("failed", group, reason=str(job.get("reason") or "video_generation_failed"), job=job)
     return _state("not_generated", group)
 
 
 def submit_match_group_video_generation(group_id: str) -> dict[str, Any]:
+    """Claim one durable single-host job, then return immediately."""
+
     group = get_match_group(group_id)
-    status = get_match_group_video_status(group_id)
-    if status.get("status") == "generating":
-        return status
-    if validate_match_group(group_id).get("status") != "compatible":
-        raise MatchGroupVideoError("match_group_stale", "Logical match sources must be current before generating video.")
-    _validated_video_inputs(group)
     with _submission_lock:
-        if group_id in _active:
-            return get_match_group_video_status(group_id)
-        _active.add(group_id)
-        queued = {
-            "schema_version": VIDEO_SCHEMA_VERSION,
-            "group_id": group_id,
-            "status": "generating",
-            "started_at": _now(),
-            "source_count": len(group.get("members") or []),
-        }
-        _write(MATCH_GROUPS_DIR / group_id / VIDEO_STATUS_FILENAME, queued)
-        threading.Thread(target=_background_generate, args=(group_id,), daemon=True).start()
-        return queued
+        job = _begin_generation(group)
+        if job.get("already_running"):
+            return _state("generating", group, job=job)
+        _active_job_keys.add(_active_token(_group_dir(group), str(job["job_key"])))
+        threading.Thread(target=_background_generate, args=(group_id, job), daemon=True).start()
+        return _state("generating", group, job=job)
 
 
-def generate_match_group_video(group_id: str) -> dict[str, Any]:
-    """Synchronously generate one video; used by the background worker and tests."""
+def generate_match_group_video(group_id: str, *, job: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Synchronously render a generation; public direct calls own a job too."""
 
     group = get_match_group(group_id)
-    if validate_match_group(group_id).get("status") != "compatible":
+    owned_here = job is None
+    if job is None:
+        with _submission_lock:
+            job = _begin_generation(group)
+            if job.get("already_running"):
+                return _state("generating", group, job=job)
+            _active_job_keys.add(_active_token(_group_dir(group), str(job["job_key"])))
+    assert job is not None
+    try:
+        return _render_generation(group, job)
+    finally:
+        if owned_here:
+            _finish_job(_group_dir(group), job)
+
+
+def combined_video_path(group_id: str) -> Path:
+    group = get_match_group(group_id)
+    current = _current_generation(_group_dir(group))
+    if not current:
+        raise FileNotFoundError(group_id)
+    return current["video_path"]
+
+
+def _begin_generation(group: dict[str, Any]) -> dict[str, Any]:
+    group_dir = _group_dir(group)
+    if validate_match_group(str(group["group_id"])).get("status") != "compatible":
         raise MatchGroupVideoError("match_group_stale", "Logical match sources must be current before generating video.")
     inputs = _validated_video_inputs(group)
     input_digest = _input_digest(inputs, group)
-    group_dir = MATCH_GROUPS_DIR / group_id
-    target = group_dir / COMBINED_VIDEO_FILENAME
-    prior_manifest = _load(group_dir / VIDEO_MANIFEST_FILENAME)
-    started = time.monotonic()
-    stage = Path(tempfile.mkdtemp(prefix="generation-", dir=_staging_parent(group_dir)))
+    current_job = _recover_interrupted_job(group_dir)
+    if current_job.get("status") == "generating":
+        return {**current_job, "already_running": True}
+    job_key = canonical_json_sha256({"group_id": group["group_id"], "input_semantic_digest": input_digest, "policy_version": VIDEO_POLICY_VERSION})
+    owner = {"pid": os.getpid(), "job_key": job_key, "created_at": _now(), "ownership_mode": "single_host_filesystem_pid_lock"}
+    lock_path = group_dir / VIDEO_LOCK_FILENAME
+    if not _acquire_lock(lock_path, owner):
+        current_job = _recover_interrupted_job(group_dir)
+        if current_job.get("status") == "generating":
+            return {**current_job, "already_running": True}
+        raise MatchGroupVideoError("video_generation_busy", "Combined video generation is already owned by another local worker.")
+    job = {
+        "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "job_key": job_key,
+        "input_semantic_digest": input_digest, "status": "generating", "started_at": _now(),
+        "owner_pid": os.getpid(), "ownership_mode": "single_host_filesystem_pid_lock", "source_count": len(inputs),
+    }
+    _write(group_dir / VIDEO_JOB_FILENAME, job)
+    return job
+
+
+def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    group_dir = _group_dir(group)
+    started_monotonic = time.monotonic()
+    started_at = str(job.get("started_at") or _now())
+    generation_id = f"{str(job['input_semantic_digest'])[:16]}-{uuid.uuid4().hex[:12]}"
+    generation_dir = _generation_dir(group_dir, generation_id)
+    generation_dir.mkdir(parents=True, exist_ok=False)
     try:
+        if validate_match_group(str(group["group_id"])).get("status") != "compatible":
+            raise MatchGroupVideoError("match_group_stale", "Logical match sources changed before video generation.")
+        inputs = _validated_video_inputs(group)
+        input_digest = _input_digest(inputs, group)
+        if input_digest != job.get("input_semantic_digest"):
+            raise MatchGroupVideoError("source_video_generation_changed", "Source video inputs changed after the generation was queued.")
         probes = [_probe(item["path"]) for item in inputs]
         _validate_source_media(probes, inputs)
-        output = stage / COMBINED_VIDEO_FILENAME
+        output = generation_dir / COMBINED_VIDEO_FILENAME
         mode = "stream_copy" if _stream_copy_compatible(probes) else "normalized"
         if mode == "stream_copy":
             _concat([item["path"] for item in inputs], output, copy_streams=True)
         else:
-            normalized = [_normalize(item["path"], stage, index, probes) for index, item in enumerate(inputs)]
+            normalized = [_normalize(item["path"], generation_dir, index, probes) for index, item in enumerate(inputs)]
             _concat(normalized, output, copy_streams=True)
         output_probe = _probe(output)
         timeline_span = float(group["timing"]["timeline_span_sec"])
         duration = float(output_probe["duration_sec"])
         if abs(duration - timeline_span) > VIDEO_DURATION_TOLERANCE_SEC:
             raise MatchGroupVideoError("output_duration_mismatch", "Combined video duration differs from the logical timeline.")
-        if (
-            output_probe.get("codec") != "h264"
-            or output_probe.get("pix_fmt") != "yuv420p"
-            or output_probe.get("audio")
-        ):
-            raise MatchGroupVideoError("output_video_invalid", "Combined video does not meet the H.264/yuv420p output contract.")
-        if output.stat().st_size <= 0:
-            raise MatchGroupVideoError("output_video_invalid", "Combined video is empty.")
-        output_digest = sha256_file(output)
-        video_manifest = {
-            "schema_version": VIDEO_SCHEMA_VERSION,
-            "group_id": group_id,
-            "generation_status": "ready",
-            "input_semantic_digest": input_digest,
-            "policy_version": VIDEO_POLICY_VERSION,
-            "logical_timeline": dict(group["timing"]),
-            "members": [{key: value for key, value in item.items() if key != "path"} for item in inputs],
-            "output": {
-                "artifact": COMBINED_VIDEO_FILENAME,
-                "semantic_digest": output_digest,
-                "duration_sec": duration,
-                "codec": output_probe["codec"],
-                "width": output_probe["width"],
-                "height": output_probe["height"],
-                "fps": output_probe["fps"],
-                "file_size_bytes": output.stat().st_size,
-            },
-            "observability": {
-                "started_at": _now(),
-                "completed_at": _now(),
-                "elapsed_sec": round(time.monotonic() - started, 3),
-                "source_count": len(inputs),
-                "source_total_bytes": sum(item["file_size_bytes"] for item in inputs),
-                "output_bytes": output.stat().st_size,
-                "generation_mode": mode,
-            },
+        if output_probe.get("codec") != "h264" or output_probe.get("pix_fmt") != "yuv420p" or output_probe.get("audio") or output.stat().st_size <= 0:
+            raise MatchGroupVideoError("output_video_invalid", "Combined video does not meet the H.264/yuv420p/no-audio output contract.")
+        completed_at = _now()
+        manifest = {
+            "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id,
+            "generation_status": "ready", "input_semantic_digest": input_digest, "policy_version": VIDEO_POLICY_VERSION,
+            "logical_timeline": dict(group["timing"]), "members": [{key: value for key, value in item.items() if key != "path"} for item in inputs],
+            "output": {"artifact": COMBINED_VIDEO_FILENAME, "semantic_digest": sha256_file(output), "duration_sec": duration, "codec": output_probe["codec"], "width": output_probe["width"], "height": output_probe["height"], "fps": output_probe["fps"], "file_size_bytes": output.stat().st_size},
+            "observability": {"started_at": started_at, "completed_at": completed_at, "elapsed_sec": round(time.monotonic() - started_monotonic, 3), "source_count": len(inputs), "source_total_bytes": sum(item["file_size_bytes"] for item in inputs), "output_bytes": output.stat().st_size, "generation_mode": mode},
         }
-        _write(stage / VIDEO_MANIFEST_FILENAME, video_manifest)
-        # Both bytes have been probe/digest validated before either replaces a
-        # coherent artifact.  A failed render never touches the current pair.
-        os.replace(output, target)
-        os.replace(stage / VIDEO_MANIFEST_FILENAME, group_dir / VIDEO_MANIFEST_FILENAME)
-        (group_dir / VIDEO_STATUS_FILENAME).unlink(missing_ok=True)
-        return _state("ready", group, manifest=video_manifest, output=target)
+        _write(generation_dir / VIDEO_MANIFEST_FILENAME, manifest)
+        if not _generation_is_valid(generation_dir, manifest):
+            raise MatchGroupVideoError("output_video_invalid", "Generated video could not be verified before publication.")
+        # One atomic pointer chooses a fully written immutable video+manifest pair.
+        _write(group_dir / CURRENT_GENERATION_FILENAME, {"schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "generation_id": generation_id, "input_semantic_digest": input_digest, "published_at": completed_at})
+        (group_dir / VIDEO_JOB_FILENAME).unlink(missing_ok=True)
+        return _state("ready", group, current={"manifest": manifest, "video_path": output})
     except Exception as error:
-        _write(group_dir / VIDEO_STATUS_FILENAME, {
-            "schema_version": VIDEO_SCHEMA_VERSION,
-            "group_id": group_id,
-            "status": "failed",
-            "failed_at": _now(),
-            "reason": error.code if isinstance(error, MatchGroupVideoError) else "video_generation_failed",
-            "detail": str(error),
-            "previous_coherent_video": bool(prior_manifest and target.is_file()),
-        })
+        shutil.rmtree(generation_dir, ignore_errors=True)
+        _write(group_dir / VIDEO_JOB_FILENAME, {**job, "status": "failed", "failed_at": _now(), "reason": error.code if isinstance(error, MatchGroupVideoError) else "video_generation_failed", "detail": str(error)})
         raise
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
 
 
-def combined_video_path(group_id: str) -> Path:
+def _background_generate(group_id: str, job: dict[str, Any]) -> None:
     group = get_match_group(group_id)
-    path = MATCH_GROUPS_DIR / str(group["group_id"]) / COMBINED_VIDEO_FILENAME
-    if not path.is_file():
-        raise FileNotFoundError(group_id)
-    return path
-
-
-def _background_generate(group_id: str) -> None:
     try:
-        generate_match_group_video(group_id)
+        _render_generation(group, job)
     except Exception:
         pass
     finally:
-        with _submission_lock:
-            _active.discard(group_id)
+        _finish_job(_group_dir(group), job)
+
+
+def _finish_job(group_dir: Path, job: dict[str, Any]) -> None:
+    job_key = str(job.get("job_key") or "")
+    _active_job_keys.discard(_active_token(group_dir, job_key))
+    _release_lock(group_dir / VIDEO_LOCK_FILENAME, job_key)
+
+
+def _current_generation(group_dir: Path) -> dict[str, Any] | None:
+    pointer = _load(group_dir / CURRENT_GENERATION_FILENAME)
+    generation_id = str(pointer.get("generation_id") or "")
+    if not generation_id or Path(generation_id).name != generation_id:
+        return None
+    generation_dir = _generation_dir(group_dir, generation_id)
+    manifest = _load(generation_dir / VIDEO_MANIFEST_FILENAME)
+    if not _generation_is_valid(generation_dir, manifest):
+        return None
+    return {"pointer": pointer, "manifest": manifest, "video_path": generation_dir / COMBINED_VIDEO_FILENAME}
+
+
+def _generation_is_valid(generation_dir: Path, manifest: dict[str, Any]) -> bool:
+    output = manifest.get("output") if isinstance(manifest.get("output"), dict) else {}
+    video = generation_dir / COMBINED_VIDEO_FILENAME
+    return manifest.get("generation_status") == "ready" and video.is_file() and video.stat().st_size > 0 and sha256_file(video) == output.get("semantic_digest")
+
+
+def _recover_interrupted_job(group_dir: Path) -> dict[str, Any]:
+    job = _load(group_dir / VIDEO_JOB_FILENAME)
+    if job.get("status") != "generating":
+        return job
+    lock = _load(group_dir / VIDEO_LOCK_FILENAME)
+    job_key = str(job.get("job_key") or "")
+    if lock.get("job_key") == job_key and _lock_owner_alive(group_dir, lock):
+        return job
+    interrupted = {**job, "status": "failed", "failed_at": _now(), "reason": "video_generation_interrupted", "detail": "Persisted combined-video owner is no longer alive; generation may be retried."}
+    _write(group_dir / VIDEO_JOB_FILENAME, interrupted)
+    _release_lock(group_dir / VIDEO_LOCK_FILENAME, job_key)
+    return interrupted
+
+
+def _acquire_lock(path: Path, owner: dict[str, Any]) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            current = _load(path)
+            if current and _lock_owner_alive(path.parent, current):
+                return False
+            path.unlink(missing_ok=True)
+            continue
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(owner, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return True
+    return False
+
+
+def _release_lock(path: Path, job_key: str) -> None:
+    current = _load(path)
+    if not current or str(current.get("job_key") or "") == job_key:
+        path.unlink(missing_ok=True)
+
+
+def _lock_owner_alive(group_dir: Path, owner: dict[str, Any]) -> bool:
+    try:
+        pid = int(owner.get("pid"))
+    except (TypeError, ValueError):
+        return False
+    if pid == os.getpid():
+        return _active_token(group_dir, str(owner.get("job_key") or "")) in _active_job_keys
+    try:
+        os.kill(pid, 0)
+        return pid > 0
+    except OSError:
+        return False
 
 
 def _validated_video_inputs(group: dict[str, Any]) -> list[dict[str, Any]]:
@@ -206,38 +278,20 @@ def _validated_video_inputs(group: dict[str, Any]) -> list[dict[str, Any]]:
         if video is None:
             raise MatchGroupVideoError("unavailable_source_video", "A selected publication has no proven final reviewed video.", member=published_id)
         path = source_dir / PUBLISHED_VIDEO_ARTIFACT
-        logical_start = float(member.get("logical_start_sec") or 0)
-        logical_end = float(member.get("logical_end_sec") or 0)
-        duration = float(video.get("duration_sec") or 0)
-        if abs(duration - (logical_end - logical_start)) > VIDEO_DURATION_TOLERANCE_SEC:
+        logical_start, logical_end = float(member.get("logical_start_sec") or 0), float(member.get("logical_end_sec") or 0)
+        if abs(float(video.get("duration_sec") or 0) - (logical_end - logical_start)) > VIDEO_DURATION_TOLERANCE_SEC:
             raise MatchGroupVideoError("source_video_duration_mismatch", "Published final video duration does not match its logical source duration.", member=published_id)
-        items.append({
-            "sequence_index": int(member.get("sequence_index") or 0),
-            "published_id": published_id,
-            "source_match_id": str(member.get("source_match_id") or ""),
-            "logical_start_sec": logical_start,
-            "logical_end_sec": logical_end,
-            "source_video": {key: video[key] for key in ("semantic_digest", "duration_sec", "codec", "width", "height", "fps", "pix_fmt")},
-            "file_size_bytes": path.stat().st_size,
-            "path": path,
-        })
+        items.append({"sequence_index": int(member.get("sequence_index") or 0), "published_id": published_id, "source_match_id": str(member.get("source_match_id") or ""), "logical_start_sec": logical_start, "logical_end_sec": logical_end, "source_video": {key: video[key] for key in ("semantic_digest", "duration_sec", "codec", "width", "height", "fps", "pix_fmt")}, "file_size_bytes": path.stat().st_size, "path": path})
     return items
 
 
 def _input_digest(inputs: list[dict[str, Any]], group: dict[str, Any]) -> str:
-    return canonical_json_sha256({
-        "policy_version": VIDEO_POLICY_VERSION,
-        "members": [{key: value for key, value in item.items() if key not in {"path", "file_size_bytes"}} for item in inputs],
-        "logical_timeline": group.get("timing"),
-    })
+    return canonical_json_sha256({"policy_version": VIDEO_POLICY_VERSION, "members": [{key: value for key, value in item.items() if key not in {"path", "file_size_bytes"}} for item in inputs], "logical_timeline": group.get("timing")})
 
 
 def _probe(path: Path) -> dict[str, Any]:
     try:
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_name,pix_fmt,width,height,r_frame_rate,codec_type", "-of", "json", str(path)],
-            check=True, capture_output=True, text=True,
-        )
+        result = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_name,pix_fmt,width,height,r_frame_rate,codec_type", "-of", "json", str(path)], check=True, capture_output=True, text=True)
         document = json.loads(result.stdout)
         streams = document.get("streams") if isinstance(document.get("streams"), list) else []
         video = next((row for row in streams if isinstance(row, dict) and row.get("codec_type") == "video"), None)
@@ -259,11 +313,7 @@ def _validate_source_media(probes: list[dict[str, Any]], inputs: list[dict[str, 
 
 def _stream_copy_compatible(probes: list[dict[str, Any]]) -> bool:
     first = probes[0]
-    return all(
-        probe["codec"] == "h264" and probe["pix_fmt"] == "yuv420p" and not probe["audio"]
-        and all(probe[key] == first[key] for key in ("codec", "pix_fmt", "width", "height", "fps", "audio"))
-        for probe in probes
-    )
+    return all(probe["codec"] == "h264" and probe["pix_fmt"] == "yuv420p" and not probe["audio"] and all(probe[key] == first[key] for key in ("codec", "pix_fmt", "width", "height", "fps", "audio")) for probe in probes)
 
 
 def _concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:
@@ -271,17 +321,15 @@ def _concat(paths: list[Path], output: Path, *, copy_streams: bool) -> None:
     listing.write_text("".join(f"file '{path.as_posix()}'\n" for path in paths), encoding="utf-8")
     command = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listing)]
     command.extend(["-c", "copy"] if copy_streams else ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"])
-    command.append(str(output))
-    _run_ffmpeg(command)
+    _run_ffmpeg([*command, str(output)])
 
 
-def _normalize(path: Path, stage: Path, index: int, probes: list[dict[str, Any]]) -> Path:
-    target_width = max(int(probe["width"]) for probe in probes)
-    target_height = max(int(probe["height"]) for probe in probes)
-    target_width += target_width % 2
-    target_height += target_height % 2
-    normalized = stage / f"normalized-{index}.mp4"
-    vf = f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2"
+def _normalize(path: Path, generation_dir: Path, index: int, probes: list[dict[str, Any]]) -> Path:
+    width, height = max(int(probe["width"]) for probe in probes), max(int(probe["height"]) for probe in probes)
+    width += width % 2
+    height += height % 2
+    normalized = generation_dir / f"normalized-{index}.mp4"
+    vf = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
     _run_ffmpeg(["ffmpeg", "-y", "-i", str(path), "-vf", vf, "-r", "25", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(normalized)])
     return normalized
 
@@ -292,27 +340,31 @@ def _run_ffmpeg(command: list[str]) -> None:
     except OSError as error:
         raise MatchGroupVideoError("video_tool_missing", "ffmpeg is required to generate a combined video.") from error
     if result.returncode != 0:
-        tail = (result.stderr or "").strip()[-1000:]
-        raise MatchGroupVideoError("video_generation_failed", f"ffmpeg failed: {tail}")
+        raise MatchGroupVideoError("video_generation_failed", f"ffmpeg failed: {(result.stderr or '').strip()[-1000:]}")
 
 
-def _valid_output(path: Path, manifest: dict[str, Any]) -> bool:
-    output = manifest.get("output") if isinstance(manifest.get("output"), dict) else {}
-    return path.is_file() and path.stat().st_size > 0 and sha256_file(path) == output.get("semantic_digest")
+def _state(status: str, group: dict[str, Any], *, reason: str | None = None, current: dict[str, Any] | None = None, job: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {"group_id": group["group_id"], "status": status, "reason": reason, "manifest": current["manifest"] if current else None, "artifact_url": _artifact_url(group["group_id"]) if current else None, "last_attempt": _public_job(job) if job else None}
 
 
-def _state(status: str, group: dict[str, Any], *, reason: str | None = None, manifest: dict[str, Any] | None = None, output: Path | None = None) -> dict[str, Any]:
-    return {"group_id": group["group_id"], "status": status, "reason": reason, "manifest": manifest or None, "artifact_url": _artifact_url(group["group_id"]) if output and output.is_file() else None}
+def _public_job(job: dict[str, Any]) -> dict[str, Any] | None:
+    if not job:
+        return None
+    return {key: job.get(key) for key in ("status", "started_at", "failed_at", "reason", "detail", "source_count")}
 
 
 def _artifact_url(group_id: str) -> str:
     return f"/api/published/match-groups/{group_id}/video/file"
 
 
-def _staging_parent(group_dir: Path) -> Path:
-    parent = group_dir / ".video-staging"
-    parent.mkdir(parents=True, exist_ok=True)
-    return parent
+def _group_dir(group: dict[str, Any]) -> Path:
+    path = MATCH_GROUPS_DIR / str(group["group_id"])
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _generation_dir(group_dir: Path, generation_id: str) -> Path:
+    return group_dir / VIDEO_GENERATIONS_DIRECTORY / generation_id
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -324,10 +376,18 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _write(path: Path, document: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
-    temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(document, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _active_token(group_dir: Path, job_key: str) -> str:
+    return f"{group_dir.resolve()}::{job_key}"

@@ -101,7 +101,11 @@ def load_published_video(source_dir: Path, *, expected_public_report_digest: str
     """Return a proven immutable source video or ``None`` without guessing."""
 
     descriptor = _load_object(source_dir / PUBLISHED_VIDEO_DESCRIPTOR_FILENAME)
-    if not descriptor or descriptor.get("status") != "available":
+    if (
+        not descriptor
+        or descriptor.get("schema_version") != PUBLISHED_VIDEO_SCHEMA_VERSION
+        or descriptor.get("status") != "available"
+    ):
         return None
     claimed = str(descriptor.get("descriptor_semantic_digest") or "")
     digest_document = dict(descriptor)

@@ -22,6 +22,30 @@ export function AggregateMatchReportPage() {
       setReport(response.report); setValidation(response.validation); setVideo(videoStatus);
     }).catch((error: unknown) => setStatus(errorMessage(error)));
   }, [groupId]);
+  useEffect(() => {
+    if (!groupId || video?.status !== 'generating') return undefined;
+    let cancelled = false;
+    let inFlight = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const next = await getMatchGroupVideo(groupId);
+        if (!cancelled) setVideo(next);
+      } catch (error) {
+        if (!cancelled) setStatus(errorMessage(error));
+      } finally {
+        inFlight = false;
+        if (!cancelled) timer = window.setTimeout(() => void poll(), 7_500);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 7_500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [groupId, video?.status]);
   return <main className='app'>
     <section className='hero compact-hero'>
       <p className='eyebrow'>Scalony raport</p>
