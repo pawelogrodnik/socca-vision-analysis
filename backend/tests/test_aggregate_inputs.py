@@ -66,6 +66,9 @@ class AggregateInputsTests(unittest.TestCase):
         )
         self.assertNotIn("avg_speed_kmh", player["movement"])
         self.assertEqual(inputs["ball"]["possession"]["controlled_frames_by_team_id"], {"team-corgi": 12, "team-verisk": 18})
+        possession_window = inputs["timelines"]["possession"]["windows"][0]
+        self.assertEqual(possession_window["contested_frames"], 2)
+        self.assertEqual(possession_window["total_frames"], 21)
         self.assertEqual(inputs["ball"]["passes"]["attempts_by_team_id"], {"team-corgi": 4, "team-verisk": 6})
         self.assertEqual(inputs["ball"]["passes"]["restart_attempts_by_team_id"], {"team-corgi": 1, "team-verisk": 0})
         self.assertEqual(inputs["ball"]["passes"]["accepted_by_team_id"], {"team-corgi": 2, "team-verisk": 2})
@@ -393,8 +396,10 @@ def _package(*, labels: dict[str, str] | None = None, swap_players: bool = False
                     "start_time_sec": 0.0,
                     "end_time_sec": 20.0,
                     "team_controlled_frames": {"A": 6, "B": 9},
+                    "contested_frames": 2,
                     "free_frames": 3,
                     "unknown_frames": 1,
+                    "frames": 21,
                 }
             ],
         },

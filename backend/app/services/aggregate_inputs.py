@@ -314,7 +314,12 @@ def _build_timelines(
                 counts, team_by_label, "possession_timeline.team_controlled_frames"
             ),
         }
-        for source, destination in (("free_frames", "free_frames"), ("unknown_frames", "unknown_frames")):
+        for source, destination in (
+            ("contested_frames", "contested_frames"),
+            ("free_frames", "free_frames"),
+            ("unknown_frames", "unknown_frames"),
+            ("frames", "total_frames"),
+        ):
             value = _number_or_none(item.get(source))
             if value is not None:
                 window[destination] = value

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from app.services.artifact_lineage import canonical_json_sha256
+from app.services.match_group_key_moments import build_logical_match_key_moments
 from app.services.match_groups import (
     MATCH_GROUPS_DIR,
     PUBLISHED_MATCHES_DIR,
@@ -155,6 +156,7 @@ def build_match_group_public_report(
             "registry": dict(AGGREGATION_REGISTRY),
         },
     }
+    report["key_moments"] = build_logical_match_key_moments(report)
     digest_document = copy.deepcopy(report)
     report["aggregate_semantic_digest"] = canonical_json_sha256(digest_document)
     return report
