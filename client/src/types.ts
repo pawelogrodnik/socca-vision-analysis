@@ -3326,7 +3326,17 @@ export type AggregatePublicMatchReport = {
       team_id: string;
       importance_score: number;
       headline: string;
-      evidence: { primary_signal: string; signals: Array<Record<string, unknown>> };
+      evidence: {
+        primary_signal: string;
+        signals: Array<{
+          source: string;
+          intensity?: number;
+          confidence?: number;
+          share_percent?: number;
+          coverage?: number;
+          experimental?: boolean;
+        }>;
+      };
     }>;
   };
 };

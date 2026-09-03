@@ -93,6 +93,30 @@ class MatchGroupAggregationTests(unittest.TestCase):
             self.assertIn("key_moments", forward_report)
             self.assertEqual(forward_report["aggregate_semantic_digest"], generate_match_group_report(forward["group_id"])["aggregate_semantic_digest"])
 
+    def test_rebased_possession_window_preserves_the_exact_coverage_denominator_inputs(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=10)
+            _write_source(root, "published-two", "physical-two", duration=20)
+            _set_source_possession_window(root, "published-two", {
+                "start_time_sec": 0,
+                "end_time_sec": 20,
+                "controlled_frames_by_team_id": {"team-corgi": 10, "team-verisk": 0},
+                "contested_frames": 90,
+                "free_frames": 0,
+                "unknown_frames": 0,
+                "total_frames": 100,
+            })
+            manifest = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+
+            report = generate_match_group_report(manifest["group_id"])
+
+            rebased = report["timelines"]["possession"]["windows"][1]
+            self.assertEqual((rebased["start_time_sec"], rebased["end_time_sec"]), (10.0, 30.0))
+            self.assertEqual(rebased["known_team_frames"], 10.0)
+            self.assertEqual(rebased["contested_frames"], 90.0)
+            self.assertEqual(rebased["total_frames"], 100.0)
+            self.assertEqual(report["key_moments"]["moments"], [])
+
     def test_conservative_readiness_and_spatial_are_never_upgraded(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one")
@@ -361,6 +385,16 @@ def _set_source_momentum(root: Path, published_id: str, point: dict[str, object]
     digest_document["source"].pop("aggregation_input_semantic_digest", None)
     aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(digest_document)
     _write(directory / "public_report.json", public)
+    _write(directory / "aggregate_inputs.json", aggregate)
+
+
+def _set_source_possession_window(root: Path, published_id: str, window: dict[str, object]) -> None:
+    directory = root / "published" / published_id
+    aggregate = _read(directory / "aggregate_inputs.json")
+    aggregate["timelines"]["possession"]["windows"] = [window]
+    digest_document = copy.deepcopy(aggregate)
+    digest_document["source"].pop("aggregation_input_semantic_digest", None)
+    aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(digest_document)
     _write(directory / "aggregate_inputs.json", aggregate)
 
 

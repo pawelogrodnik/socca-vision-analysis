@@ -326,7 +326,7 @@ function keyMomentReport(): AggregatePublicMatchReport {
       schema_version: '1.0.0', policy_version: 'logical-key-moments:v1', timeline_semantics: 'logical_match_video', status: 'ready',
       moments: [{
         moment_id: 'km-1', time_sec: 722.5, window_start_sec: 720, window_end_sec: 725, type: 'momentum_peak', team_id: 'team-corgi', importance_score: 0.82,
-        headline: 'Mocny okres przewagi', evidence: { primary_signal: 'attacking_momentum', signals: [] },
+        headline: 'Mocny okres przewagi', evidence: { primary_signal: 'attacking_momentum', signals: [{ source: 'attacking_momentum', intensity: 0.9, confidence: 0.7, experimental: true }] },
       }],
     },
   };
@@ -343,6 +343,30 @@ test('Key Moments uses the current server-validated YouTube ID with the logical 
   assert.ok(view.getByText('12:02'));
   assert.equal((view.getByRole('link', { name: 'Zobacz moment' }) as HTMLAnchorElement).getAttribute('href'), 'https://www.youtube.com/watch?v=AbCdEfGhI_1&t=722s');
   assert.equal(youtubeWatchUrl('AbCdEfGhI_1', -1.2), 'https://www.youtube.com/watch?v=AbCdEfGhI_1&t=0s');
+});
+
+test('Key Moments renders direct evidence metrics instead of the ranking score', () => {
+  const momentum = keyMomentReport();
+  const possession = keyMomentReport();
+  possession.key_moments!.moments[0] = {
+    ...possession.key_moments!.moments[0],
+    moment_id: 'km-2',
+    type: 'possession_dominance',
+    importance_score: 0.48,
+    headline: 'Wyraźna przewaga w rozpoznanym posiadaniu',
+    evidence: { primary_signal: 'possession', signals: [{ source: 'possession', share_percent: 80, coverage: 0.8 }] },
+  };
+  momentum.key_moments!.moments[0].importance_score = 0.63;
+
+  const view = render(React.createElement(React.Fragment, null,
+    React.createElement(AggregateKeyMoments, { report: momentum, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),
+    React.createElement(AggregateKeyMoments, { report: possession, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),
+  ));
+
+  assert.ok(view.getByText('Momentum: intensywność 90% · pewność 70% · eksperymentalne'));
+  assert.ok(view.getByText('Rozpoznane posiadanie: 80% · pokrycie 80%'));
+  assert.equal(view.queryByText(/Momentum 63%/), null);
+  assert.equal(view.queryByText(/Rozpoznane posiadanie 48%/), null);
 });
 
 test('Key Moments never use stale YouTube and reuse the one ready local video seek action', () => {

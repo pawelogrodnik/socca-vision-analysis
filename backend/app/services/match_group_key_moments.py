@@ -60,9 +60,29 @@ def _input_domain(report: Mapping[str, Any]) -> dict[str, Any]:
         "policy_version": KEY_MOMENTS_POLICY_VERSION,
         "timing": copy.deepcopy(_record(report.get("timing"))),
         "team_ids": sorted(str(_record(team).get("team_id") or "") for team in _list(report.get("teams"))),
-        "possession": copy.deepcopy(_record(_record(report.get("timelines")).get("possession"))),
-        "attacking_momentum": copy.deepcopy(_record(_record(report.get("timelines")).get("attacking_momentum"))),
+        "possession": _canonical_timeline(_record(_record(report.get("timelines")).get("possession")), "windows"),
+        "attacking_momentum": _canonical_timeline(
+            _record(_record(report.get("timelines")).get("attacking_momentum")), "points"
+        ),
     }
+
+
+def _canonical_timeline(timeline: Mapping[str, Any], row_key: str) -> dict[str, Any]:
+    """Canonicalize semantically unordered candidate rows before digesting."""
+
+    result = copy.deepcopy(dict(timeline))
+    rows = result.get(row_key)
+    if not isinstance(rows, list):
+        return result
+    result[row_key] = sorted(
+        (copy.deepcopy(_record(row)) for row in rows),
+        key=lambda row: (
+            _finite_number(row.get("start_time_sec")) or 0.0,
+            _finite_number(row.get("end_time_sec")) or 0.0,
+            canonical_json_sha256(row),
+        ),
+    )
+    return result
 
 
 def _momentum_candidates(report: Mapping[str, Any], span: float) -> list[dict[str, Any]]:
@@ -125,20 +145,23 @@ def _possession_candidates(report: Mapping[str, Any], span: float) -> list[dict[
             for key, value in _record(row.get("possession_share_percent_by_team_id")).items()
         }
         usable = [(team, value) for team, value in shares.items() if team and value is not None]
-        coverage_counts = (
-            _finite_number(row.get("known_team_frames")),
-            _finite_number(row.get("free_frames")),
-            _finite_number(row.get("unknown_frames")),
-        )
-        if (
-            interval is None
-            or not usable
-            or any(value is None or value < 0 for value in coverage_counts)
-        ):
+        known = _finite_number(row.get("known_team_frames"))
+        total = _finite_number(row.get("total_frames"))
+        if interval is None or not usable or known is None or known < 0:
             continue
-        known, free, unknown = (float(value) for value in coverage_counts if value is not None)
-        total = known + free + unknown
-        if total <= 0:
+        if total is None:
+            decomposed_counts = (
+                _finite_number(row.get("contested_frames")),
+                _finite_number(row.get("free_frames")),
+                _finite_number(row.get("unknown_frames")),
+            )
+            if any(value is None or value < 0 for value in decomposed_counts):
+                continue
+            contested, free, unknown = (
+                float(value) for value in decomposed_counts if value is not None
+            )
+            total = known + contested + free + unknown
+        if total <= 0 or known > total:
             continue
         coverage = known / total
         team_id, share = sorted(usable, key=lambda item: (-float(item[1]), item[0]))[0]
@@ -179,28 +202,45 @@ def _candidate(
 
 
 def _cluster(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    ordered = sorted(
-        candidates,
-        key=lambda item: (
-            float(item["time_sec"]),
-            str(item["team_id"]),
-            str(item["type"]),
-        ),
-    )
+    """Join connected same-team intervals without depending on other teams.
+
+    Different teams are deliberately never merged: overlapping evidence must
+    not be turned into a fabricated team call.  Grouping each team before the
+    interval sweep also makes an A-B-A sequence deterministic regardless of
+    the original candidate order.
+    """
+
+    by_team: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        by_team.setdefault(str(candidate["team_id"]), []).append(candidate)
+
     clusters: list[list[dict[str, Any]]] = []
-    for candidate in ordered:
-        # Contradictory teams deliberately remain separate.  This fail-closed
-        # policy never turns overlapping evidence into a fabricated team call.
-        if (
-            clusters
-            and candidate["team_id"] == clusters[-1][0]["team_id"]
-            and float(candidate["window_start_sec"])
-            <= max(float(item["window_end_sec"]) for item in clusters[-1])
-            + KEY_MOMENT_CLUSTER_GAP_SEC
-        ):
-            clusters[-1].append(candidate)
-        else:
-            clusters.append([candidate])
+    for team_id in sorted(by_team):
+        current: list[dict[str, Any]] = []
+        current_end: float | None = None
+        ordered = sorted(
+            by_team[team_id],
+            key=lambda item: (
+                float(item["window_start_sec"]),
+                float(item["window_end_sec"]),
+                float(item["time_sec"]),
+                str(item["type"]),
+                canonical_json_sha256(item["signal"]),
+            ),
+        )
+        for candidate in ordered:
+            start = float(candidate["window_start_sec"])
+            end = float(candidate["window_end_sec"])
+            if current and current_end is not None and start <= current_end + KEY_MOMENT_CLUSTER_GAP_SEC:
+                current.append(candidate)
+                current_end = max(current_end, end)
+                continue
+            if current:
+                clusters.append(current)
+            current = [candidate]
+            current_end = end
+        if current:
+            clusters.append(current)
     result = []
     for cluster in clusters:
         primary = sorted(
@@ -224,6 +264,7 @@ def _cluster(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         key=lambda item: (
                             str(item["signal"]["source"]),
                             float(item["time_sec"]),
+                            canonical_json_sha256(item["signal"]),
                         ),
                     )
                 ],

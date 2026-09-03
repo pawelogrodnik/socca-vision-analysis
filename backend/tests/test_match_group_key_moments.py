@@ -89,12 +89,12 @@ class MatchGroupKeyMomentsTests(unittest.TestCase):
     def test_possession_requires_known_coverage_before_claiming_dominance(self) -> None:
         strong = {
             "start_time_sec": 60, "end_time_sec": 90,
-            "known_team_frames": 80, "free_frames": 10, "unknown_frames": 10,
+            "known_team_frames": 80, "contested_frames": 5, "free_frames": 5, "unknown_frames": 10,
             "possession_share_percent_by_team_id": {"team-verisk": 80, "team-corgi": 20},
         }
         weak = {
             "start_time_sec": 100, "end_time_sec": 130,
-            "known_team_frames": 2, "free_frames": 10, "unknown_frames": 88,
+            "known_team_frames": 10, "contested_frames": 90, "free_frames": 0, "unknown_frames": 0,
             "possession_share_percent_by_team_id": {"team-corgi": 100},
         }
         result = build_logical_match_key_moments(_report(possession=_possession(strong, weak)))
@@ -104,11 +104,34 @@ class MatchGroupKeyMomentsTests(unittest.TestCase):
         self.assertEqual((moment["type"], moment["team_id"]), ("possession_dominance", "team-verisk"))
         self.assertEqual(moment["evidence"]["signals"][0]["coverage"], 0.8)
 
+    def test_possession_without_total_or_contested_frames_fails_closed(self) -> None:
+        legacy_window = {
+            "start_time_sec": 60, "end_time_sec": 90,
+            "known_team_frames": 80, "free_frames": 10, "unknown_frames": 10,
+            "possession_share_percent_by_team_id": {"team-verisk": 80},
+        }
+
+        result = build_logical_match_key_moments(_report(possession=_possession(legacy_window)))
+
+        self.assertEqual(result["moments"], [])
+
+    def test_possession_uses_explicit_total_frames_as_the_authoritative_denominator(self) -> None:
+        window = {
+            "start_time_sec": 60, "end_time_sec": 90,
+            "known_team_frames": 80, "total_frames": 160,
+            "contested_frames": 0, "free_frames": 5, "unknown_frames": 5,
+            "possession_share_percent_by_team_id": {"team-verisk": 80},
+        }
+
+        result = build_logical_match_key_moments(_report(possession=_possession(window)))
+
+        self.assertEqual(result["moments"][0]["evidence"]["signals"][0]["coverage"], 0.5)
+
     def test_same_team_overlapping_signals_cluster_and_keep_supporting_evidence(self) -> None:
         report = _report(
             possession=_possession({
                 "start_time_sec": 123, "end_time_sec": 132,
-                "known_team_frames": 90, "free_frames": 5, "unknown_frames": 5,
+                "known_team_frames": 90, "contested_frames": 0, "free_frames": 5, "unknown_frames": 5,
                 "possession_share_percent_by_team_id": {"team-corgi": 78},
             }),
             momentum=_momentum({
@@ -124,15 +147,57 @@ class MatchGroupKeyMomentsTests(unittest.TestCase):
         self.assertEqual((moment["window_start_sec"], moment["time_sec"], moment["window_end_sec"]), (120.0, 122.5, 132.0))
         self.assertEqual([signal["source"] for signal in moment["evidence"]["signals"]], ["attacking_momentum", "possession"])
 
-    def test_conflicting_teams_stay_separate_under_the_fail_closed_cluster_policy(self) -> None:
+    def test_a_b_a_cluster_merges_connected_same_team_evidence_despite_interleaved_opponent(self) -> None:
         report = _report(momentum=_momentum(
             {"start_time_sec": 120, "end_time_sec": 125, "team_values_by_team_id": {"team-corgi": 0.9}, "dominant_team_id": "team-corgi", "intensity": 0.9, "confidence": 1.0},
             {"start_time_sec": 121, "end_time_sec": 126, "team_values_by_team_id": {"team-verisk": 0.85}, "dominant_team_id": "team-verisk", "intensity": 0.85, "confidence": 1.0},
+            {"start_time_sec": 123, "end_time_sec": 132, "team_values_by_team_id": {"team-corgi": 0.8}, "dominant_team_id": "team-corgi", "intensity": 0.8, "confidence": 1.0},
         ))
 
         result = build_logical_match_key_moments(report)
 
         self.assertEqual([(moment["team_id"], moment["time_sec"]) for moment in result["moments"]], [("team-corgi", 122.5), ("team-verisk", 123.5)])
+        self.assertEqual(result["moments"][0]["window_end_sec"], 132.0)
+        self.assertEqual(len(result["moments"][0]["evidence"]["signals"]), 2)
+
+    def test_same_team_intervals_outside_the_gap_remain_separate(self) -> None:
+        report = _report(momentum=_momentum(
+            {"start_time_sec": 120, "end_time_sec": 125, "team_values_by_team_id": {"team-corgi": 0.9}, "dominant_team_id": "team-corgi", "intensity": 0.9, "confidence": 1.0},
+            {"start_time_sec": 121, "end_time_sec": 126, "team_values_by_team_id": {"team-verisk": 0.85}, "dominant_team_id": "team-verisk", "intensity": 0.85, "confidence": 1.0},
+            {"start_time_sec": 140, "end_time_sec": 145, "team_values_by_team_id": {"team-corgi": 0.8}, "dominant_team_id": "team-corgi", "intensity": 0.8, "confidence": 1.0},
+        ))
+
+        result = build_logical_match_key_moments(report)
+
+        self.assertEqual(
+            [(moment["team_id"], moment["time_sec"]) for moment in result["moments"]],
+            [("team-corgi", 122.5), ("team-verisk", 123.5), ("team-corgi", 142.5)],
+        )
+
+    def test_same_team_connected_cluster_is_independent_of_candidate_input_order(self) -> None:
+        points = [
+            {"start_time_sec": 120, "end_time_sec": 125, "team_values_by_team_id": {"team-corgi": 0.9}, "dominant_team_id": "team-corgi", "intensity": 0.9, "confidence": 1.0},
+            {"start_time_sec": 121, "end_time_sec": 126, "team_values_by_team_id": {"team-verisk": 0.85}, "dominant_team_id": "team-verisk", "intensity": 0.85, "confidence": 1.0},
+            {"start_time_sec": 123, "end_time_sec": 132, "team_values_by_team_id": {"team-corgi": 0.8}, "dominant_team_id": "team-corgi", "intensity": 0.8, "confidence": 1.0},
+        ]
+
+        forward = build_logical_match_key_moments(_report(momentum=_momentum(*points)))
+        reverse = build_logical_match_key_moments(_report(momentum=_momentum(*reversed(points))))
+
+        self.assertEqual(forward, reverse)
+
+    def test_same_team_chain_clusters_when_each_interval_connects_to_the_next(self) -> None:
+        report = _report(momentum=_momentum(
+            {"start_time_sec": 120, "end_time_sec": 125, "team_values_by_team_id": {"team-corgi": 0.9}, "dominant_team_id": "team-corgi", "intensity": 0.9, "confidence": 1.0},
+            {"start_time_sec": 134, "end_time_sec": 140, "team_values_by_team_id": {"team-corgi": 0.85}, "dominant_team_id": "team-corgi", "intensity": 0.85, "confidence": 1.0},
+            {"start_time_sec": 149, "end_time_sec": 155, "team_values_by_team_id": {"team-corgi": 0.8}, "dominant_team_id": "team-corgi", "intensity": 0.8, "confidence": 1.0},
+        ))
+
+        result = build_logical_match_key_moments(report)
+
+        self.assertEqual(len(result["moments"]), 1)
+        self.assertEqual((result["moments"][0]["window_start_sec"], result["moments"][0]["window_end_sec"]), (120.0, 155.0))
+        self.assertEqual(len(result["moments"][0]["evidence"]["signals"]), 3)
 
     def test_ordering_ties_are_stable_and_output_is_bounded(self) -> None:
         points = [
