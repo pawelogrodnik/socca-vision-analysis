@@ -850,8 +850,13 @@ test('only server-splittable lanes offer the local split workflow', async () => 
   }]) });
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
   assert.equal(view.queryByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }), null);
-  fireEvent.click(view.getByRole('button', { name: /Ścieżka 2/ }));
-  assert.ok(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' }));
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: /Ścieżka 2/ }));
+  });
+  await waitFor(
+    () => assert.ok(view.getByRole('button', { name: 'Ta ścieżka zawiera więcej niż jednego zawodnika' })),
+    { timeout: 3_000 },
+  );
 });
 
 test('stale lane refinement refreshes the exact case once without save or reproject', async () => {
