@@ -80,9 +80,8 @@ def get_match_group_video_status(group_id: str) -> dict[str, Any]:
 def submit_match_group_video_generation(group_id: str) -> dict[str, Any]:
     """Claim one durable single-host job, then return immediately."""
 
-    group = get_match_group(group_id)
     with _submission_lock:
-        job = _begin_generation(group)
+        group, job = _begin_generation(group_id)
         if job.get("already_running"):
             return _state("generating", group, job=job)
         _active_job_keys.add(_active_token(_group_dir(group), str(job["job_key"])))
@@ -93,14 +92,15 @@ def submit_match_group_video_generation(group_id: str) -> dict[str, Any]:
 def generate_match_group_video(group_id: str, *, job: dict[str, Any] | None = None) -> dict[str, Any]:
     """Synchronously render a generation; public direct calls own a job too."""
 
-    group = get_match_group(group_id)
     owned_here = job is None
     if job is None:
         with _submission_lock:
-            job = _begin_generation(group)
+            group, job = _begin_generation(group_id)
             if job.get("already_running"):
                 return _state("generating", group, job=job)
             _active_job_keys.add(_active_token(_group_dir(group), str(job["job_key"])))
+    else:
+        group = get_match_group(group_id)
     assert job is not None
     try:
         return _render_generation(group, job)
@@ -146,7 +146,7 @@ def delete_match_group_when_video_idle(group_id: str) -> dict[str, Any]:
         job_key = f"delete-{uuid.uuid4().hex}"
         owner = {"pid": os.getpid(), "job_key": job_key, "created_at": _now(), "ownership_mode": "single_host_filesystem_pid_lock"}
         lock_path = group_dir / VIDEO_LOCK_FILENAME
-        if not _acquire_lock(lock_path, owner):
+        if not _acquire_lock(lock_path, owner, create_parent=False):
             raise MatchGroupVideoError("video_generation_in_progress", "Cannot delete a logical match while its combined video is generating.")
         _active_job_keys.add(_active_token(group_dir, job_key))
         try:
@@ -156,31 +156,55 @@ def delete_match_group_when_video_idle(group_id: str) -> dict[str, Any]:
             _release_lock(lock_path, job_key)
 
 
-def _begin_generation(group: dict[str, Any]) -> dict[str, Any]:
-    group_dir = _group_dir(group)
-    if validate_match_group(str(group["group_id"])).get("status") != "compatible":
-        raise MatchGroupVideoError("match_group_stale", "Logical match sources must be current before generating video.")
-    inputs = _validated_video_inputs(group, verify_content=True)
-    input_digest = _input_digest(inputs, group)
+def _begin_generation(group_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Claim an existing group before any expensive source-video preflight."""
+
+    initial_group = get_match_group(group_id)
+    group_dir = _group_dir(initial_group)
     current_job = _recover_interrupted_job(group_dir)
     if current_job.get("status") == "generating":
-        return {**current_job, "already_running": True}
-    job_key = canonical_json_sha256({"group_id": group["group_id"], "input_semantic_digest": input_digest, "policy_version": VIDEO_POLICY_VERSION})
+        return initial_group, {**current_job, "already_running": True}
+    # The lock cannot depend on the source digest because hashing belongs
+    # inside the durable ownership interval.
+    job_key = f"video-generation-{uuid.uuid4().hex}"
     owner = {"pid": os.getpid(), "job_key": job_key, "created_at": _now(), "ownership_mode": "single_host_filesystem_pid_lock"}
     lock_path = group_dir / VIDEO_LOCK_FILENAME
-    if not _acquire_lock(lock_path, owner):
+    if not _acquire_lock(lock_path, owner, create_parent=False):
+        if not _group_manifest_exists(group_dir):
+            raise KeyError(group_id)
         current_job = _recover_interrupted_job(group_dir)
         if current_job.get("status") == "generating":
-            return {**current_job, "already_running": True}
+            return initial_group, {**current_job, "already_running": True}
+        lock = _load(lock_path)
+        if lock and _lock_owner_alive(group_dir, lock):
+            return initial_group, {
+                "status": "generating",
+                "job_key": lock.get("job_key"),
+                "started_at": lock.get("created_at"),
+                "already_running": True,
+            }
         raise MatchGroupVideoError("video_generation_busy", "Combined video generation is already owned by another local worker.")
-    job = {
-        "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "job_key": job_key,
-        "input_semantic_digest": input_digest, "status": "generating", "started_at": _now(),
-        "group_contract_digest": _group_contract_digest(group), "owner_pid": os.getpid(),
-        "ownership_mode": "single_host_filesystem_pid_lock", "source_count": len(inputs),
-    }
-    _write(group_dir / VIDEO_JOB_FILENAME, job)
-    return job
+    try:
+        if not _group_manifest_exists(group_dir):
+            raise KeyError(group_id)
+        # Never build a job from a pre-lock snapshot: delete/update can win
+        # before ownership is acquired.
+        group = get_match_group(group_id)
+        if validate_match_group(str(group["group_id"])).get("status") != "compatible":
+            raise MatchGroupVideoError("match_group_stale", "Logical match sources must be current before generating video.")
+        inputs = _validated_video_inputs(group, verify_content=True)
+        input_digest = _input_digest(inputs, group)
+        job = {
+            "schema_version": VIDEO_SCHEMA_VERSION, "group_id": group["group_id"], "job_key": job_key,
+            "input_semantic_digest": input_digest, "status": "generating", "started_at": _now(),
+            "group_contract_digest": _group_contract_digest(group), "owner_pid": os.getpid(),
+            "ownership_mode": "single_host_filesystem_pid_lock", "source_count": len(inputs),
+        }
+        _write(group_dir / VIDEO_JOB_FILENAME, job)
+        return group, job
+    except Exception:
+        _release_lock(lock_path, job_key)
+        raise
 
 
 def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
@@ -442,11 +466,16 @@ def _recover_interrupted_job(group_dir: Path) -> dict[str, Any]:
     return interrupted
 
 
-def _acquire_lock(path: Path, owner: dict[str, Any]) -> bool:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _acquire_lock(path: Path, owner: dict[str, Any], *, create_parent: bool = True) -> bool:
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.is_dir():
+        return False
     for _ in range(2):
         try:
             descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileNotFoundError:
+            return False
         except FileExistsError:
             current = _load(path)
             if current and _lock_owner_alive(path.parent, current):
@@ -622,7 +651,14 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _write(path: Path, document: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # Every video write belongs either to an existing group or to a generation
+    # directory explicitly created by the renderer.  Creating parents here
+    # could resurrect a group that won a concurrent delete race.
+    if not path.parent.is_dir() or (
+        path.name in {VIDEO_JOB_FILENAME, CURRENT_GENERATION_FILENAME}
+        and not _group_manifest_exists(path.parent)
+    ):
+        raise FileNotFoundError(path.parent)
     temporary = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
     with temporary.open("w", encoding="utf-8") as handle:
         json.dump(document, handle, ensure_ascii=False, indent=2, sort_keys=True)

@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -433,6 +434,37 @@ class MatchGroupVideoTests(unittest.TestCase):
             self.assertEqual(failure.exception.code, "video_generation_in_progress")
             self.assertTrue((root / "groups" / group["group_id"] / "manifest.json").exists())
             _active_job_keys.clear()
+
+    def test_prelock_delete_race_cannot_recreate_an_orphan_group_directory(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            group_dir = root / "groups" / group["group_id"]
+            original_acquire = match_group_video._acquire_lock
+            generation_attempt_reached_lock = False
+
+            def delete_then_resume_generation(path: Path, owner: dict[str, object], *, create_parent: bool = True) -> bool:
+                nonlocal generation_attempt_reached_lock
+                if not generation_attempt_reached_lock and str(owner.get("job_key", "")).startswith("video-generation-"):
+                    generation_attempt_reached_lock = True
+                    delete_match_group_when_video_idle(group["group_id"])
+                return original_acquire(path, owner, create_parent=create_parent)
+
+            with (
+                patch("app.services.match_group_video._submission_lock", threading.RLock()),
+                patch("app.services.match_group_video._acquire_lock", side_effect=delete_then_resume_generation),
+                patch("app.services.match_group_video.threading.Thread") as start_thread,
+                self.assertRaises(KeyError),
+            ):
+                submit_match_group_video_generation(group["group_id"])
+
+            self.assertTrue(generation_attempt_reached_lock)
+            self.assertFalse(group_dir.exists())
+            self.assertFalse((group_dir / VIDEO_JOB_FILENAME).exists())
+            self.assertFalse((group_dir / VIDEO_LOCK_FILENAME).exists())
+            self.assertFalse((group_dir / "video-generations").exists())
+            start_thread.assert_not_called()
 
     def test_deleted_group_is_not_resurrected_by_a_render_that_loses_its_group_midflight(self) -> None:
         with self._store() as root:
