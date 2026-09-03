@@ -3310,6 +3310,25 @@ export type AggregatePublicMatchReport = {
     };
     attacking_momentum?: { product_readiness?: string; status?: string; points?: Array<{ start_time_sec: number; end_time_sec: number; team_values_by_team_id?: Record<string, number> }> };
   };
+  key_moments?: {
+    schema_version: string;
+    policy_version: string;
+    timeline_semantics: 'logical_match_video';
+    status: 'ready' | 'not_available';
+    reason?: string | null;
+    source_timeline_semantic_digest?: string;
+    moments: Array<{
+      moment_id: string;
+      time_sec: number;
+      window_start_sec: number;
+      window_end_sec: number;
+      type: 'momentum_peak' | 'possession_dominance';
+      team_id: string;
+      importance_score: number;
+      headline: string;
+      evidence: { primary_signal: string; signals: Array<Record<string, unknown>> };
+    }>;
+  };
 };
 
 export type PhysicalPublicMatchReport = PublicMatchReport & {

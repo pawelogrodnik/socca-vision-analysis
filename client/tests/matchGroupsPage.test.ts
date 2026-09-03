@@ -6,8 +6,10 @@ import { BrowserRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { MatchGroupsPage } from '../src/components/MatchGroupsPage.tsx';
 import { AggregateMatchReportContent } from '../src/components/AggregateMatchReportContent.tsx';
+import { AggregateKeyMoments, youtubeWatchUrl } from '../src/components/AggregateKeyMoments.tsx';
 import { AggregateMatchReportPage } from '../src/components/AggregateMatchReportPage.tsx';
 import { MatchGroupExternalVideoSection } from '../src/components/MatchGroupExternalVideoSection.tsx';
+import type { AggregatePublicMatchReport } from '../src/types.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/match-groups' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -311,4 +313,80 @@ test('aggregate page polls a ready prior generation and switches to its replacem
     globalThis.fetch = originalFetch;
     window.setTimeout = originalSetTimeout;
   }
+});
+
+function keyMomentReport(): AggregatePublicMatchReport {
+  return {
+    schema_version: '1.0.0', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' },
+    source_match_ids: [], source_published_ids: [], sources: [],
+    timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' },
+    teams: [{ team_id: 'team-corgi', team_name: 'Corgi', movement: { status: 'ready' } }], players: [],
+    spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } },
+    key_moments: {
+      schema_version: '1.0.0', policy_version: 'logical-key-moments:v1', timeline_semantics: 'logical_match_video', status: 'ready',
+      moments: [{
+        moment_id: 'km-1', time_sec: 722.5, window_start_sec: 720, window_end_sec: 725, type: 'momentum_peak', team_id: 'team-corgi', importance_score: 0.82,
+        headline: 'Mocny okres przewagi', evidence: { primary_signal: 'attacking_momentum', signals: [] },
+      }],
+    },
+  };
+}
+
+test('Key Moments uses the current server-validated YouTube ID with the logical video second', () => {
+  const view = render(React.createElement(AggregateKeyMoments, {
+    report: keyMomentReport(), video: { group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' },
+    externalVideo: { group_id: 'group-1', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://youtu.be/AbCdEfGhI_1', linked_video: { generation_id: 'g', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 900 }, updated_at: 'now' } },
+    onSeekLocalVideo: () => assert.fail('current YouTube must be primary'),
+  }));
+
+  assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' }));
+  assert.ok(view.getByText('12:02'));
+  assert.equal((view.getByRole('link', { name: 'Zobacz moment' }) as HTMLAnchorElement).getAttribute('href'), 'https://www.youtube.com/watch?v=AbCdEfGhI_1&t=722s');
+  assert.equal(youtubeWatchUrl('AbCdEfGhI_1', -1.2), 'https://www.youtube.com/watch?v=AbCdEfGhI_1&t=0s');
+});
+
+test('Key Moments never use stale YouTube and reuse the one ready local video seek action', () => {
+  const seeks: number[] = [];
+  const view = render(React.createElement(AggregateKeyMoments, {
+    report: keyMomentReport(), video: { group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' },
+    externalVideo: { group_id: 'group-1', status: 'stale', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://youtu.be/AbCdEfGhI_1', linked_video: { generation_id: 'old', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 900 }, updated_at: 'now' } },
+    onSeekLocalVideo: (timeSec) => seeks.push(timeSec),
+  }));
+
+  assert.equal(view.queryByRole('link', { name: 'Zobacz moment' }), null);
+  fireEvent.click(view.getByRole('button', { name: 'Zobacz moment' }));
+  assert.deepEqual(seeks, [722.5]);
+  assert.equal(view.container.querySelectorAll('video').length, 0);
+});
+
+test('Key Moments keep visible timestamps without a current video action', () => {
+  const view = render(React.createElement(AggregateKeyMoments, {
+    report: keyMomentReport(), video: { group_id: 'group-1', status: 'not_generated' },
+    externalVideo: { group_id: 'group-1', status: 'invalid' }, onSeekLocalVideo: () => assert.fail('no local video is ready'),
+  }));
+
+  assert.ok(view.getByText('12:02'));
+  assert.equal(view.queryByRole('link', { name: 'Zobacz moment' }), null);
+  assert.equal(view.queryByRole('button', { name: 'Zobacz moment' }), null);
+});
+
+test('aggregate page places Key Moments after the one local player and seeks it exactly when YouTube is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path.endsWith('/video')) return Response.json({ group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' });
+    return Response.json({ report: keyMomentReport(), validation: { status: 'compatible', blocking_reasons: [] }, external_video: { group_id: 'group-1', status: 'not_configured' } });
+  };
+  try {
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    )));
+    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' })));
+    const video = view.container.querySelector('video') as HTMLVideoElement;
+    assert.ok(video);
+    fireEvent.click(view.getByRole('button', { name: 'Zobacz moment' }));
+    assert.equal(video.currentTime, 722.5);
+    assert.equal(view.container.querySelectorAll('video').length, 1);
+    assert.ok((view.getByRole('heading', { name: 'Najważniejsze momenty' }).compareDocumentPosition(view.getByRole('heading', { name: 'Podsumowanie drużyn' })) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+  } finally { globalThis.fetch = originalFetch; }
 });

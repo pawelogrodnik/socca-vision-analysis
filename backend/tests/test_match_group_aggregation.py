@@ -67,6 +67,32 @@ class MatchGroupAggregationTests(unittest.TestCase):
             self.assertEqual([row["player_id"] for row in report["players"]], ["player-one", "player-two"])
             self.assertEqual([row["player_name"] for row in report["players"]], ["Alex", "Alex"])
 
+    def test_key_moments_are_derived_after_member_order_rebasing_and_ignore_source_rows(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            _set_source_momentum(root, "published-two", {
+                "start_time_sec": 120,
+                "end_time_sec": 125,
+                "team_values_by_team_id": {"team-corgi": 0.82, "team-verisk": 0.18},
+                "dominant_team_id": "team-corgi",
+                "intensity": 0.82,
+                "confidence": 1.0,
+            }, fake_key_moment=True)
+            forward = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            reverse = create_match_group(member_published_ids=["published-two", "published-one"], metadata=_metadata())
+
+            forward_report = generate_match_group_report(forward["group_id"])
+            reverse_report = generate_match_group_report(reverse["group_id"])
+            forward_moments = forward_report["key_moments"]["moments"]
+            reverse_moments = reverse_report["key_moments"]["moments"]
+
+            self.assertIn(722.5, [moment["time_sec"] for moment in forward_moments])
+            self.assertIn(122.5, [moment["time_sec"] for moment in reverse_moments])
+            self.assertNotIn("fake-physical", str(forward_report["key_moments"]))
+            self.assertIn("key_moments", forward_report)
+            self.assertEqual(forward_report["aggregate_semantic_digest"], generate_match_group_report(forward["group_id"])["aggregate_semantic_digest"])
+
     def test_conservative_readiness_and_spatial_are_never_upgraded(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one")
@@ -319,6 +345,21 @@ def _write_source(
         "metric_readiness": {"team_movement": {"status": "ready"}, "player_movement": {"status": "ready"}, "possession": {"status": possession_status}, "passes": {"status": "ready"}},
     }
     aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
+    _write(directory / "public_report.json", public)
+    _write(directory / "aggregate_inputs.json", aggregate)
+
+
+def _set_source_momentum(root: Path, published_id: str, point: dict[str, object], *, fake_key_moment: bool) -> None:
+    directory = root / "published" / published_id
+    public = _read(directory / "public_report.json")
+    if fake_key_moment:
+        public["key_moments"] = {"moments": [{"moment_id": "fake-physical", "time_sec": 5}]}
+    aggregate = _read(directory / "aggregate_inputs.json")
+    aggregate["timelines"]["attacking_momentum"]["points"] = [point]
+    aggregate["source"]["public_report_semantic_digest"] = canonical_json_sha256(public)
+    digest_document = copy.deepcopy(aggregate)
+    digest_document["source"].pop("aggregation_input_semantic_digest", None)
+    aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(digest_document)
     _write(directory / "public_report.json", public)
     _write(directory / "aggregate_inputs.json", aggregate)
 
