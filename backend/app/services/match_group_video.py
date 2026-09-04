@@ -14,9 +14,10 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.match_groups import (
@@ -139,20 +140,40 @@ def generation_video(group_id: str, generation_id: str) -> dict[str, Any]:
 def delete_match_group_when_video_idle(group_id: str) -> dict[str, Any]:
     """Delete only after taking the same durable lock used by render workers."""
 
+    with reserve_match_group_video_idle(group_id, operation="delete"):
+        return delete_match_group(group_id)
+
+
+@contextmanager
+def reserve_match_group_video_idle(group_id: str, *, operation: str) -> Iterator[dict[str, Any]]:
+    """Reserve an existing group against video generation and deletion.
+
+    Maintenance operations such as refresh share the durable ownership protocol
+    with video generation.  ``create_parent=False`` is intentional: a delete
+    that won the race must never be undone by a later maintenance write.
+    """
+
     group = get_match_group(group_id)
     group_dir = _group_dir(group)
     with _submission_lock:
         job = _recover_interrupted_job(group_dir)
         if job.get("status") == "generating":
-            raise MatchGroupVideoError("video_generation_in_progress", "Cannot delete a logical match while its combined video is generating.")
-        job_key = f"delete-{uuid.uuid4().hex}"
+            raise MatchGroupVideoError("video_generation_in_progress", f"Cannot {operation} a logical match while its combined video is generating.")
+        job_key = f"{operation}-{uuid.uuid4().hex}"
         owner = {"pid": os.getpid(), "job_key": job_key, "created_at": _now(), "ownership_mode": "single_host_filesystem_pid_lock"}
         lock_path = group_dir / VIDEO_LOCK_FILENAME
         if not _acquire_lock(lock_path, owner, create_parent=False):
-            raise MatchGroupVideoError("video_generation_in_progress", "Cannot delete a logical match while its combined video is generating.")
+            if not _group_manifest_exists(group_dir):
+                raise KeyError(group_id)
+            lock = _load(lock_path)
+            if str(lock.get("job_key") or "").startswith("video-generation-"):
+                raise MatchGroupVideoError("video_generation_in_progress", "Cannot maintain a logical match while its combined video is generating.")
+            raise MatchGroupVideoError("match_group_maintenance_in_progress", "Logical match maintenance is already in progress.")
         _active_job_keys.add(_active_token(group_dir, job_key))
         try:
-            return delete_match_group(group_id)
+            if not _group_manifest_exists(group_dir):
+                raise KeyError(group_id)
+            yield get_match_group(group_id)
         finally:
             _active_job_keys.discard(_active_token(group_dir, job_key))
             _release_lock(lock_path, job_key)

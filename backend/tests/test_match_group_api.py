@@ -16,6 +16,8 @@ from app.main import (
     api_get_match_group_video,
     api_get_match_group_report,
     api_get_match_group_external_video,
+    api_preview_match_group_refresh,
+    api_refresh_match_group_to_latest,
     api_save_match_group_external_video,
     api_list_eligible_match_group_sources,
     app,
@@ -25,6 +27,20 @@ from app.services.match_group_video import MatchGroupVideoError
 
 
 class MatchGroupApiTests(unittest.TestCase):
+    def test_refresh_routes_are_server_authoritative_and_exposed(self) -> None:
+        preview = {"group_id": "match-group-1", "status": "refreshable", "members": [], "blocking_reasons": []}
+        refreshed = {"status": "refreshed", "group": {"group_id": "match-group-1"}}
+        with patch("app.main.preview_match_group_refresh", return_value=preview) as request_preview, patch(
+            "app.main.refresh_match_group_to_latest", return_value=refreshed
+        ) as refresh:
+            self.assertEqual(api_preview_match_group_refresh("match-group-1"), preview)
+            self.assertEqual(api_refresh_match_group_to_latest("match-group-1"), refreshed)
+        request_preview.assert_called_once_with("match-group-1")
+        refresh.assert_called_once_with("match-group-1")
+        paths = app.openapi()["paths"]
+        self.assertIn("/api/published/match-groups/{group_id}/refresh-preview", paths)
+        self.assertIn("/api/published/match-groups/{group_id}/refresh-to-latest", paths)
+
     def test_selector_is_compact_and_only_returns_physical_sources(self) -> None:
         with patch("app.main.list_eligible_match_group_sources", return_value=[
             {"id": "physical-1", "report_type": "public_match_report", "analyzed_duration_sec": 12},

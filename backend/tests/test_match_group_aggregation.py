@@ -8,17 +8,38 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.services.artifact_lineage import canonical_json_sha256
-from app.services.match_group_aggregation import generate_match_group_report
+from app.services.match_group_aggregation import build_match_group_report_candidate, generate_match_group_report
 from app.services.match_groups import (
     MatchGroupError,
     create_match_group,
     create_match_group_and_generate_report,
+    update_match_group,
     update_match_group_and_generate_report,
 )
 from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION, PUBLIC_MATCH_REPORT_TYPE
 
 
 class MatchGroupAggregationTests(unittest.TestCase):
+    def test_report_generation_rejects_manifest_replaced_while_candidate_builds(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one")
+            _write_source(root, "published-two", "physical-two")
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            original = build_match_group_report_candidate
+
+            def replace_manifest(manifest: dict[str, object]) -> dict[str, object]:
+                update_match_group(
+                    str(group["group_id"]),
+                    member_published_ids=["published-one", "published-two"],
+                    metadata={**_metadata(), "title": "Changed while generating"},
+                )
+                return original(manifest)
+
+            with patch("app.services.match_group_aggregation.build_match_group_report_candidate", side_effect=replace_manifest):
+                with self.assertRaises(MatchGroupError) as failure:
+                    generate_match_group_report(str(group["group_id"]))
+            self.assertEqual(failure.exception.code, "match_group_changed_during_report_generation")
+
     def test_two_parts_reconcile_stable_ids_and_recompute_all_rates(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=10, player_distance=100, movement_time=10, peak=20, attempts=10, completed=8, controlled_corgi=60, controlled_verisk=40)

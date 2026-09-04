@@ -193,6 +193,17 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
     """Compare persisted source pins with current published source artifacts."""
 
     manifest = get_match_group(group_id)
+    return validate_match_group_manifest(manifest)
+
+
+def validate_match_group_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Validate one already-loaded manifest against authoritative publications.
+
+    Refresh builds a candidate manifest before it becomes durable.  Keeping this
+    validation beside the persisted-group path means it uses the same source
+    trust chain and compatibility rules in both cases.
+    """
+
     stored_capabilities = _record(_record(manifest.get("compatibility")).get("capabilities"))
     manifest_reason = _manifest_digest_reason(manifest)
     if manifest_reason is not None:
@@ -248,6 +259,21 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
 
     compatibility = _compatibility(current_members)
     return _validation_result(compatibility["status"], compatibility["blocking_reasons"], compatibility["capabilities"])
+
+
+def build_current_match_group_manifest(
+    *,
+    group_id: str,
+    member_published_ids: list[str],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a manifest from the current authoritative stable publications."""
+
+    return _build_manifest(
+        group_id=group_id,
+        member_published_ids=member_published_ids,
+        metadata=metadata,
+    )
 
 
 def _build_manifest(*, group_id: str, member_published_ids: list[str], metadata: dict[str, Any]) -> dict[str, Any]:

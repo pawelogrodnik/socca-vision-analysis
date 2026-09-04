@@ -193,6 +193,7 @@ from app.services.json_publish_store import (
     publish_store_health,
 )
 from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report as load_match_group_report
+from app.services.match_group_refresh import preview_match_group_refresh, refresh_match_group_to_latest
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
     MatchGroupVideoError,
@@ -3633,6 +3634,26 @@ def api_regenerate_match_group(group_id: str) -> dict[str, Any]:
     try:
         report = generate_match_group_report(group_id)
         return {**_group_with_validation(get_match_group(group_id)), "report": report}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/refresh-preview")
+def api_preview_match_group_refresh(group_id: str) -> dict[str, Any]:
+    try:
+        return preview_match_group_refresh(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.post("/api/published/match-groups/{group_id}/refresh-to-latest")
+def api_refresh_match_group_to_latest(group_id: str) -> dict[str, Any]:
+    try:
+        return refresh_match_group_to_latest(group_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:

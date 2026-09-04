@@ -82,6 +82,34 @@ test('match-group page exposes background combined-video generation without trea
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('match-group page refreshes sources only through the dedicated group endpoint', async () => {
+  const calls: Array<{ path: string; method?: string; body?: string }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    calls.push({ path, method: init?.method, body: init?.body ? String(init.body) : undefined });
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([{
+      group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
+      validation: { status: 'compatible', blocking_reasons: [] },
+    }]);
+    if (path.endsWith('/group-1/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', source_match_id: 'a', status: 'refreshable' }], blocking_reasons: [] });
+    if (path.endsWith('/group-1/refresh-to-latest')) return Response.json({ status: 'refreshed', group: { group_id: 'group-1' }, validation: { status: 'compatible', blocking_reasons: [] }, video: { group_id: 'group-1', status: 'stale' }, external_video: { group_id: 'group-1', status: 'stale' } });
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'stale' });
+    if (path.endsWith('/group-1/external-video')) return Response.json({ group_id: 'group-1', status: 'stale' });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Dostępna jest nowsza wersja danych źródłowych/)));
+    fireEvent.click(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }));
+    await waitFor(() => assert.ok(calls.some((call) => call.path.endsWith('/group-1/refresh-to-latest'))));
+    const refresh = calls.find((call) => call.path.endsWith('/group-1/refresh-to-latest'));
+    assert.equal(refresh?.method, 'POST');
+    assert.equal(refresh?.body, undefined);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('YouTube settings submit only when the local combined video is ready', async () => {
   const saves: Array<[string, string]> = [];
   let view: ReturnType<typeof render>;

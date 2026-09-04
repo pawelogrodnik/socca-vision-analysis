@@ -83,15 +83,32 @@ def generate_match_group_report(group_id: str) -> dict[str, Any]:
     report untouched.
     """
     manifest = get_match_group(group_id)
+    manifest_digest = str(manifest.get("aggregate_semantic_digest") or "")
     validation = validate_match_group(group_id)
     if validation.get("status") != "compatible":
         reasons = validation.get("blocking_reasons") or []
         detail = str((reasons[0] if reasons else {}).get("detail") or "Match group is not compatible.")
         raise MatchGroupError("aggregate_generation_blocked", detail)
-    sources = _load_pinned_sources(manifest)
-    report = build_match_group_public_report(manifest, sources)
+    report = build_match_group_report_candidate(manifest)
+    current_manifest = get_match_group(group_id)
+    if current_manifest.get("aggregate_semantic_digest") != manifest_digest:
+        raise MatchGroupError(
+            "match_group_changed_during_report_generation",
+            "Logical match changed while its aggregate report was being generated.",
+        )
+    if validate_match_group(group_id).get("status") != "compatible":
+        raise MatchGroupError(
+            "match_group_changed_during_report_generation",
+            "Logical match sources changed while its aggregate report was being generated.",
+        )
     _atomic_write_json(MATCH_GROUPS_DIR / group_id / "public_report.json", report)
     return report
+
+
+def build_match_group_report_candidate(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the canonical aggregate report without publishing any bytes."""
+
+    return build_match_group_public_report(manifest, _load_pinned_sources(manifest))
 
 
 def get_match_group_report(group_id: str) -> dict[str, Any]:

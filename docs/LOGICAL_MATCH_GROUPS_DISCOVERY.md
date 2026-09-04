@@ -341,6 +341,27 @@ so a failed source validation leaves the previous manifest bytes intact.
 Deletion removes only the group directory.  No group store operation touches
 published physical source files or the physical-match profile boundary.
 
+## Refreshing to current physical publications
+
+`POST /api/published/match-groups/{group_id}/refresh-to-latest` is the explicit
+operator lifecycle action for a group whose stable `published_id` members were
+republished in place.  The server rebuilds a candidate manifest from those
+same ordered IDs, preserves the original `source_match_id` identity and group
+metadata, validates compatibility, and builds the canonical aggregate report
+before committing either document.
+
+The paired manifest/report replacement is rollback-safe.  It never creates a
+missing group directory, so a concurrent delete cannot be resurrected.  The
+operation shares the existing durable combined-video ownership lock: refresh
+is rejected while video generation is active, and neither refresh nor its
+preview invokes ffmpeg.  A no-op leaves both existing bytes untouched.
+
+`GET /api/published/match-groups/{group_id}/refresh-preview` exposes only the
+server-calculated `current`, `refreshable`, or `blocked` state.  The browser
+does not choose member IDs or digests.  Refresh deliberately does not create a
+new combined video or mutate external-video metadata; their existing stale
+status projections determine any subsequent operator action.
+
 ## Mergeable implementation phases
 
 1. **Aggregation input contract.** Implement the versioned builder above at

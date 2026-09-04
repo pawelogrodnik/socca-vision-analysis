@@ -3179,6 +3179,25 @@ export type MatchGroupRecord = {
   report?: AggregatePublicMatchReport;
 };
 
+export type MatchGroupRefreshPreview = {
+  group_id: string;
+  status: 'current' | 'refreshable' | 'blocked';
+  members: Array<{
+    published_id: string;
+    source_match_id: string;
+    status: 'current' | 'refreshable';
+  }>;
+  blocking_reasons: Array<{ code: string; detail: string; member?: string }>;
+};
+
+export type MatchGroupRefreshResult = {
+  status: 'current' | 'refreshed';
+  group: MatchGroupManifest;
+  validation: MatchGroupCompatibility;
+  video: MatchGroupVideoStatus;
+  external_video: MatchGroupExternalVideoStatus;
+};
+
 export type MatchGroupReportResponse = {
   report: AggregatePublicMatchReport;
   validation: MatchGroupCompatibility;

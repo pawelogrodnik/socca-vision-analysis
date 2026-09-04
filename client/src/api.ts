@@ -39,6 +39,8 @@ import type {
   PublishedMatchDetail,
   MatchGroupMetadata,
   MatchGroupPreview,
+  MatchGroupRefreshPreview,
+  MatchGroupRefreshResult,
   MatchGroupRecord,
   MatchGroupReportResponse,
   MatchGroupExternalVideoStatus,
@@ -944,6 +946,14 @@ export async function createMatchGroup(payload: {
 
 export async function regenerateMatchGroup(groupId: string): Promise<MatchGroupRecord> {
   return request<MatchGroupRecord>(`/api/published/match-groups/${encodeURIComponent(groupId)}/regenerate`, { method: 'POST' });
+}
+
+export async function previewMatchGroupRefresh(groupId: string): Promise<MatchGroupRefreshPreview> {
+  return request<MatchGroupRefreshPreview>(`/api/published/match-groups/${encodeURIComponent(groupId)}/refresh-preview`);
+}
+
+export async function refreshMatchGroupToLatest(groupId: string): Promise<MatchGroupRefreshResult> {
+  return request<MatchGroupRefreshResult>(`/api/published/match-groups/${encodeURIComponent(groupId)}/refresh-to-latest`, { method: 'POST' });
 }
 
 export async function deleteMatchGroup(groupId: string): Promise<{ status: string }> {
