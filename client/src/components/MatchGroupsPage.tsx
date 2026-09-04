@@ -126,7 +126,7 @@ export function MatchGroupsPage() {
     try {
       const result = await createMatchGroup({ member_published_ids: selectedIds, metadata: { title } });
       await load();
-      navigate(`/published/match-groups/${encodeURIComponent(result.group.group_id)}/report`);
+      navigate(`/published/matches/${encodeURIComponent(result.merged_published_match_id)}/report`);
     } catch (error) {
       setStatus(errorMessage(error));
     } finally { setBusy(false); }
@@ -156,7 +156,7 @@ export function MatchGroupsPage() {
     finally { setBusy(false); }
   };
   const remove = async (groupId: string) => {
-    if (!window.confirm('Usunąć tylko scalony raport? Raporty źródłowe pozostaną bez zmian.')) return;
+    if (!window.confirm('Usunąć scalony mecz? Raporty źródłowe pozostaną bez zmian.')) return;
     setBusy(true); setStatus('');
     try { await deleteMatchGroup(groupId); await load(); }
     catch (error) { setStatus(errorMessage(error)); }
@@ -190,9 +190,9 @@ export function MatchGroupsPage() {
 
   return <main className='app'>
     <section className='hero compact-hero'>
-      <p className='eyebrow'>Opublikowane raporty</p>
-      <h1>Scal opublikowane mecze</h1>
-      <p>Wybierz fizyczne fragmenty, ustaw ich kolejność i utwórz oddzielny raport łączony.</p>
+      <p className='eyebrow'>Opublikowane mecze</p>
+      <h1>Scal fragmenty w mecz</h1>
+      <p>Wybierz fizyczne fragmenty, ustaw ich kolejność i utwórz jeden scalony mecz z normalnym raportem.</p>
       <Link to='/'>Lista meczów</Link>
     </section>
     {status && <p className='status'>{status}</p>}
@@ -210,22 +210,22 @@ export function MatchGroupsPage() {
     </section>
     <section className='panel'>
       <h2>Wybrane fragmenty</h2>
-      {selected.length < 2 && <p>Wybierz co najmniej 2 fragmenty, aby utworzyć raport łączony.</p>}
+      {selected.length < 2 && <p>Wybierz co najmniej 2 fragmenty, aby scalić je w jeden mecz.</p>}
       {selected.map((source, index) => <div className='row' key={source.id}>
         <span>{index + 1}. {source.title} ({formatDuration(source.analyzed_duration_sec)})</span>
         <button type='button' disabled={index === 0} onClick={() => move(index, -1)}>Przenieś wyżej</button>
         <button type='button' disabled={index === selected.length - 1} onClick={() => move(index, 1)}>Przenieś niżej</button>
       </div>)}
       <p><strong>Łączny analizowany czas: {formatDuration(duration)}</strong></p>
-      <label>Nazwa scalonego raportu <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder='Corgi - Verisk | pełny mecz' /></label>
+      <label>Nazwa scalonego meczu <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder='Corgi - Verisk | pełny mecz' /></label>
       {selected.length >= 2 && !preview && !previewError && <p className='loading-line'>Sprawdzam zgodność na serwerze…</p>}
-      {preview && <p className='status success'>Zgodne źródła. Serwer potwierdził kolejność oraz łączny czas {formatDuration(preview.timing.analyzed_duration_sec)}. Heatmapy i Team Shape pozostają niedostępne dla raportu łączonego.</p>}
+      {preview && <p className='status success'>Zgodne źródła. Serwer potwierdził kolejność oraz łączny czas {formatDuration(preview.timing.analyzed_duration_sec)}.</p>}
       {previewError && <p className='status'>{previewError}</p>}
-      <button type='button' disabled={busy || !preview || Boolean(previewError)} onClick={() => void create()}>Utwórz scalony raport</button>
+      <button type='button' disabled={busy || !preview || Boolean(previewError)} onClick={() => void create()}>Scal fragmenty w mecz</button>
     </section>
     <section className='panel'>
-      <h2>Scalone raporty</h2>
-      {groups.map(({ group, validation }) => <article className='match-card' key={group.group_id}>
+      <h2>Scalone mecze</h2>
+      {groups.map(({ group, validation, merged_published_match_id }) => <article className='match-card' key={group.group_id}>
         <strong>{group.metadata.title || group.group_id}</strong>
         <span>{formatDuration(group.timing.analyzed_duration_sec)} · {group.members.length} fragmenty · {validation.status}</span>
         {validation.blocking_reasons[0] && <p className='status'>{validation.blocking_reasons[0].detail}</p>}
@@ -234,7 +234,7 @@ export function MatchGroupsPage() {
         {refreshPreviews[group.group_id]?.status === 'blocked' && <p className='status'>Nie można odświeżyć: {refreshPreviews[group.group_id]?.blocking_reasons[0]?.detail || 'źródła nie są zgodne.'}</p>}
         <p>Łączne wideo: {videoLabel(videos[group.group_id])}{videoReason(videos[group.group_id]) ? ` — ${videoReason(videos[group.group_id])}` : ''}</p>
         <div className='row'>
-          <Link to={`/published/match-groups/${encodeURIComponent(group.group_id)}/report`}>Otwórz raport</Link>
+          {merged_published_match_id && <Link to={`/published/matches/${encodeURIComponent(merged_published_match_id)}/report`}>Otwórz mecz</Link>}
           <button type='button' disabled={busy || validation.status !== 'compatible'} onClick={() => void regenerate(group.group_id)}>Regeneruj raport</button>
           <button type='button' disabled={busy || isVideoGenerationInFlight(videos[group.group_id]) || refreshPreviews[group.group_id]?.status !== 'refreshable'} onClick={() => void refresh(group.group_id)}>Odśwież do najnowszych danych</button>
           {videos[group.group_id]?.status === 'ready' && videos[group.group_id]?.artifact_url && <a href={videos[group.group_id].artifact_url!}>Otwórz wideo</a>}
@@ -243,7 +243,7 @@ export function MatchGroupsPage() {
         </div>
         <MatchGroupExternalVideoSection groupId={group.group_id} localVideo={videos[group.group_id]} externalVideo={externalVideos[group.group_id]} busy={busy} onSave={saveExternalVideo} onRemove={removeExternalVideo} />
       </article>)}
-      {!groups.length && <p>Nie utworzono jeszcze scalonych raportów.</p>}
+      {!groups.length && <p>Nie utworzono jeszcze scalonych meczów.</p>}
     </section>
   </main>;
 }

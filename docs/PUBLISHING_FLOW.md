@@ -182,3 +182,66 @@ matches are never refreshed here — they observe the new snapshot through
 the explicit #94 refresh flow.
 
 Deletion is intentionally hard delete for now because this panel is meant for correcting duplicate imports and bad stats snapshots during MVP development. A later production version can add soft delete/audit logs.
+
+## Merged (logical) matches are canonical published matches
+
+Authoritative product invariant:
+
+> A merged match is not a report about several matches.
+> A merged match is one new match assembled from several physical match fragments.
+
+Pipeline:
+
+```text
+physical published match A/B/C
+        ↓
+match-group manifest (INTERNAL provenance / aggregation definition)
+        ↓
+aggregation engine (ordered pins, digests, compatibility checks)
+        ↓
+canonical merged PublicMatchReport
+        ↓
+merged published-match projection:
+    published/matches/published-merged-{uuid}/
+        summary.json / public_report.json / provenance.json / heatmaps/
+        (NO package.json — a merged match is not a physical package)
+        ↓
+/published/matches/{mergedPublishedId}/report
+        ↓
+the exact same PublishedMatchReportPage → PublicMatchReportContent
+```
+
+There is no separate user-facing aggregate report type. If
+`PublicMatchReportContent` changes, merged matches get the change
+automatically. The old `/published/match-groups/{groupId}/report` URL only
+redirects to the canonical merged report.
+
+Key properties:
+
+- The merged published ID (`published-merged-{uuid}`) is allocated once per
+  group, persisted in `match-groups/{groupId}/merged_projection.json`, and
+  stays stable across regeneration, refresh, and video updates.
+- `source_kind` distinguishes `physical` from `merged` publications.
+  `GET /api/published/matches/{id}` returns server-authoritative
+  `capabilities`: physical matches offer `Przebuduj publikację`; merged
+  matches offer `Regeneruj raport`, `Odśwież do najnowszych danych`, video
+  generation, and external-video maintenance instead.
+- `Regeneruj raport` rebuilds from currently pinned sources (no repinning).
+  `Odśwież do najnowszych danych` repins changed sources atomically
+  (all-or-nothing), preserves group and merged IDs, rebuilds the canonical
+  report, reevaluates combined/external video freshness, and regenerates Key
+  Moments — without auto-regenerating video. The same lifecycle previously
+  known as #93/#94 is preserved.
+- Aggregation semantics: durations/times/distances/counts are SUMMED, peak
+  and max speeds use MAX, averages/percentages/rates (possession share,
+  completion rate, avg speed, workload, coverage) are RECOMPUTED from summed
+  primitives, timelines are REBASED to logical time, heatmaps merge
+  pitch-meter samples through the shared renderer, and average positions are
+  recomputed from merged samples.
+- Combined video and YouTube lifecycle keep their existing semantics but
+  resolve server-side from the merged published match to its backing group;
+  the frontend never infers group IDs.
+- Existing `published/match-groups/` groups remain authoritative internal
+  manifests; a lazy projection creates the stable merged published match on
+  demand (create/regenerate/refresh/merged-match lookup) without destructive
+  migration of source publications.

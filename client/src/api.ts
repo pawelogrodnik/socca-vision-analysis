@@ -41,6 +41,7 @@ import type {
   MatchGroupPreview,
   MatchGroupRefreshPreview,
   MatchGroupRefreshResult,
+  MatchGroupCreateResult,
   MatchGroupRecord,
   MatchGroupReportResponse,
   MatchGroupExternalVideoStatus,
@@ -945,10 +946,57 @@ export async function listMatchGroups(): Promise<MatchGroupRecord[]> {
 export async function createMatchGroup(payload: {
   member_published_ids: string[];
   metadata: MatchGroupMetadata;
-}): Promise<MatchGroupRecord> {
-  return request<MatchGroupRecord>('/api/published/match-groups', {
+}): Promise<MatchGroupCreateResult> {
+  return request<MatchGroupCreateResult>('/api/published/match-groups', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
+}
+
+export async function getMergedMatchForGroup(groupId: string): Promise<{ group_id: string; merged_published_match_id: string }> {
+  return request<{ group_id: string; merged_published_match_id: string }>(`/api/published/match-groups/${encodeURIComponent(groupId)}/merged-match`);
+}
+
+export async function regenerateMergedReport(publishedMatchId: string): Promise<PublishedMatchDetail> {
+  return request<PublishedMatchDetail>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/regenerate-report`,
+    { method: 'POST' },
+  );
+}
+
+export async function previewMergedRefresh(publishedMatchId: string): Promise<MatchGroupRefreshPreview> {
+  return request<MatchGroupRefreshPreview>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/refresh-preview`);
+}
+
+export async function refreshMergedToLatest(publishedMatchId: string): Promise<PublishedMatchDetail> {
+  return request<PublishedMatchDetail>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/refresh-to-latest`,
+    { method: 'POST' },
+  );
+}
+
+export async function getMergedMatchVideo(publishedMatchId: string): Promise<MatchGroupVideoStatus> {
+  return request<MatchGroupVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/video`);
+}
+
+export async function generateMergedMatchVideo(publishedMatchId: string): Promise<MatchGroupVideoStatus> {
+  return request<MatchGroupVideoStatus>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/video/generate`,
+    { method: 'POST' },
+  );
+}
+
+export async function getMergedMatchExternalVideo(publishedMatchId: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`);
+}
+
+export async function saveMergedMatchExternalVideo(publishedMatchId: string, url: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+  });
+}
+
+export async function deleteMergedMatchExternalVideo(publishedMatchId: string): Promise<MatchGroupExternalVideoStatus> {
+  return request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`, { method: 'DELETE' });
 }
 
 export async function regenerateMatchGroup(groupId: string): Promise<MatchGroupRecord> {

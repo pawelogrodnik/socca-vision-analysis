@@ -1,5 +1,12 @@
 # Logical match groups — discovery and aggregation-input contract
 
+> Current product model (canonical merged matches): the match group is an
+> INTERNAL provenance / aggregation definition. Its output is a normal
+> canonical published match (`published-merged-*`) rendered by the same
+> `PublishedMatchReportPage`. There is no separate user-facing aggregate
+> report type. See `docs/PUBLISHING_FLOW.md` ("Merged (logical) matches are
+> canonical published matches").
+
 This is the bounded Phase 0 design record for Issue #52.  It deliberately
 does not add match groups, aggregate routes, aggregate reports, or an operator
 interface.  A logical match remains a derived publication above independent

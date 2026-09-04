@@ -7,6 +7,7 @@ import {
   MatchReportContent,
   sourceFromPublishedPackage,
 } from './MatchReportContent';
+import { MergedMatchLifecycle } from './MergedMatchLifecycle';
 import { PublicMatchReportContent } from './PublicMatchReportContent';
 import { ReportActions } from './ReportActions';
 
@@ -48,7 +49,7 @@ export function PublishedMatchReportPage() {
   }, [matchId]);
 
   const reportSource = useMemo(
-    () => (match ? sourceFromPublishedPackage(match.package) : null),
+    () => (match?.package ? sourceFromPublishedPackage(match.package) : null),
     [match],
   );
 
@@ -68,6 +69,10 @@ export function PublishedMatchReportPage() {
     }
   }
 
+  const isMerged = match?.source_kind === 'merged';
+  const canRebuildPhysical = Boolean(match?.package) && match?.capabilities?.rebuild_physical_publication !== false;
+  const memberCount = match?.member_count ?? match?.member_published_ids?.length ?? null;
+
   return (
     <main className='app'>
       <section className='hero compact-hero'>
@@ -77,6 +82,9 @@ export function PublishedMatchReportPage() {
           Raport dla zawodników: statystyki drużyn, rozpoznani gracze i ich heatmapy,
           bez technicznych danych trackera.
         </p>
+        {isMerged && memberCount != null && (
+          <p className='muted'>Scalony z {memberCount} fragmentów · jeden mecz, jeden raport.</p>
+        )}
         <div className='row'>
           <Link to='/'>Lista meczów</Link>
           <Link to='/admin-panel'>Panel admin</Link>
@@ -101,7 +109,18 @@ export function PublishedMatchReportPage() {
           }}
           busyAction={busyAction}
           status={actionStatus}
-          onRebuildPublished={match ? rebuildPublication : undefined}
+          onRebuildPublished={match && canRebuildPhysical ? rebuildPublication : undefined}
+        />
+      )}
+
+      {isMerged && matchId && (
+        <MergedMatchLifecycle
+          mergedId={matchId}
+          report={publicReport}
+          onReportUpdated={(updated, nextReport) => {
+            setMatch(updated);
+            setPublicReport(nextReport);
+          }}
         />
       )}
 

@@ -65,6 +65,9 @@ export function PublishedMatchList({
           <span>
             {match.match_date || 'brak daty'} · {match.player_count} zawodników
             · {match.tracks_count ?? 0} tracków
+            {match.source_kind === 'merged' && (
+              <> · Scalony{typeof match.member_count === 'number' ? ` z ${match.member_count} fragmentów` : ''}</>
+            )}
           </span>
         </button>
       ))}

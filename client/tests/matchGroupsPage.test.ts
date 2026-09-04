@@ -5,11 +5,11 @@ import React from 'react';
 import { BrowserRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { MatchGroupsPage } from '../src/components/MatchGroupsPage.tsx';
-import { AggregateMatchReportContent } from '../src/components/AggregateMatchReportContent.tsx';
-import { AggregateKeyMoments, youtubeWatchUrl } from '../src/components/AggregateKeyMoments.tsx';
-import { AggregateMatchReportPage } from '../src/components/AggregateMatchReportPage.tsx';
+import { KeyMoments, youtubeWatchUrl } from '../src/components/KeyMoments.tsx';
+import { MatchGroupReportRedirect } from '../src/components/MatchGroupReportRedirect.tsx';
+import { PublishedMatchReportPage } from '../src/components/PublishedMatchReportPage.tsx';
 import { MatchGroupExternalVideoSection } from '../src/components/MatchGroupExternalVideoSection.tsx';
-import type { AggregatePublicMatchReport } from '../src/types.ts';
+import type { PublicMatchReport } from '../src/types.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/match-groups' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -37,7 +37,7 @@ test('match-group page selects physical sources, orders IDs and submits no stati
     if (path.endsWith('/eligible-sources')) return Response.json(sources);
     if (path.endsWith('/match-groups') && !init?.method) return Response.json([]);
     if (path.endsWith('/preview')) return Response.json({ status: 'compatible', compatibility: { status: 'compatible', blocking_reasons: [] }, timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, members: [] });
-    if (path.endsWith('/match-groups')) return Response.json({ group: { group_id: 'new-group', metadata: {}, members: [], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } }, validation: { status: 'compatible', blocking_reasons: [] }, report: { report_type: 'public_aggregate_match_report' } });
+    if (path.endsWith('/match-groups')) return Response.json({ group: { group_id: 'new-group', metadata: {}, members: [], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } }, validation: { status: 'compatible', blocking_reasons: [] }, report: { report_type: 'public_match_report' }, merged_published_match_id: 'published-merged-new' });
     throw new Error(`Unexpected ${path}`);
   };
   try {
@@ -48,8 +48,8 @@ test('match-group page selects physical sources, orders IDs and submits no stati
     fireEvent.click(checks[1]);
     await waitFor(() => assert.ok(view.getByText(/Zgodne źródła/)));
     fireEvent.click(view.getAllByRole('button', { name: 'Przenieś wyżej' })[1]);
-    await waitFor(() => assert.equal(view.getByRole('button', { name: 'Utwórz scalony raport' }).hasAttribute('disabled'), false));
-    fireEvent.click(view.getByRole('button', { name: 'Utwórz scalony raport' }));
+    await waitFor(() => assert.equal(view.getByRole('button', { name: 'Scal fragmenty w mecz' }).hasAttribute('disabled'), false));
+    fireEvent.click(view.getByRole('button', { name: 'Scal fragmenty w mecz' }));
     await waitFor(() => assert.ok(calls.some((call) => call.path.endsWith('/match-groups') && call.body)));
     const create = calls.filter((call) => call.path.endsWith('/match-groups') && call.body).at(-1) as { body: { member_published_ids: string[]; metadata: { title: string } } };
     assert.deepEqual(create.body.member_published_ids, ['physical-b', 'physical-a']);
@@ -219,85 +219,104 @@ test('match-group page keeps the old video visible after a failed regeneration',
   }
 });
 
-test('aggregate content renders per-team passes and server-rebased timelines', () => {
-  const view = render(React.createElement(BrowserRouter, null, React.createElement(AggregateMatchReportContent, {
-    report: {
-      schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Full match' },
-      source_match_ids: ['m1'], source_published_ids: ['p1'],
-      sources: [{ published_id: 'p1', source_match_id: 'm1', sequence_index: 0, logical_offset_sec: 0 }],
-      timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' },
-      stats_semantics: { ball: 'experimental_candidates' },
-      spatial: { heatmaps: { status: 'not_available', reason: 'orientation' }, team_shape: { status: 'not_available', reason: 'orientation' } },
-      teams: [
-        { team_id: 'a', team_name: 'Corgi', movement: { status: 'ready', total_distance_m: 123, sprint_count: 2 } },
-        { team_id: 'b', team_name: 'Verisk', movement: { status: 'ready', total_distance_m: 99, sprint_count: 1 } },
-      ],
-      players: [{ player_id: 'p', player_name: 'Piotr', team_id: 'a', movement: { status: 'ready', total_distance_m: 88, avg_speed_kmh: 10 } }],
-      ball: {
-        possession: { status: 'ready', known_frames: 20, possession_share_percent_by_team_id: { a: 60 } },
-        passes: {
-          status: 'ready', attempts: 8, completed: 5, failed: 3, completion_rate_percent: 62.5,
-          attempts_by_team_id: { a: 5 }, completed_by_team_id: { a: 3 }, failed_by_team_id: { a: 2 }, completion_rate_percent_by_team_id: { a: 60 },
-        },
-      },
-      identity_coverage: { status: 'ready', confirmed_observations: 10, reliable_observations: 12, confirmed_coverage_percent: 83.3 },
-      timelines: {
-        possession: { status: 'ready', windows: [
-          { start_time_sec: 0, end_time_sec: 60, possession_share_percent_by_team_id: { a: 60 } },
-          { start_time_sec: 60, end_time_sec: 120, possession_share_percent_by_team_id: { a: 40 } },
-        ] },
-        attacking_momentum: { product_readiness: 'experimental', status: 'completed', points: [
-          { start_time_sec: 0, end_time_sec: 60, team_values_by_team_id: { a: 1.5 } },
-          { start_time_sec: 60, end_time_sec: 120, team_values_by_team_id: { a: 0.75 } },
-        ] },
-      },
-    },
-  })));
-  assert.ok(view.getByText('Podsumowanie drużyn'));
-  assert.ok(view.getByText('Piotr'));
-  assert.ok(view.getByText('5.0 / 3.0 / 2.0'));
-  assert.equal(view.getAllByText('60.0%').length, 2);
-  assert.match(view.getByText('Verisk').closest('tr')?.textContent || '', /— \/ — \/ —/);
-  assert.ok(view.getByText('Posiadanie w czasie'));
-  assert.ok(view.getByText(/Atakujące momentum/));
-  assert.equal(view.getAllByText(/eksperymentalne/).length, 2);
-  assert.ok(view.getByText(/Heatmapy: not_available/));
-  assert.equal((view.getByRole('link', { name: 'Fragment 1' }) as HTMLAnchorElement).getAttribute('href'), '/published/matches/p1/report');
-});
-
-test('aggregate page shows server-authoritative stale reason above its last coherent report', async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({
-    report: {
-      schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Old report' }, source_match_ids: [], source_published_ids: [], sources: [],
-      timing: { analyzed_duration_sec: 0, timeline_span_sec: 0, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [],
-    },
-    validation: { status: 'stale', blocking_reasons: [{ code: 'source_generation_changed', detail: 'Jeden z raportów źródłowych został ponownie opublikowany.' }] },
-  });
-  try {
-    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
-      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
-    )));
-    await waitFor(() => assert.ok(view.getByText('Raport jest nieaktualny.')));
-    assert.ok(view.getByText('Jeden z raportów źródłowych został ponownie opublikowany.'));
-    assert.ok(view.getByText('Old report'));
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test('aggregate page embeds only the server-derived current YouTube URL and keeps local fallback', async () => {
+test('merge list links to the canonical merged published match, not an aggregate page', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const path = String(input);
-    if (path.endsWith('/video')) return Response.json({ group_id: 'group-1', status: 'ready', artifact_url: '/local-video.mp4' });
-    return Response.json({
-      report: { schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' }, source_match_ids: [], source_published_ids: [], sources: [], timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [] },
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !String(input).includes('group-1')) return Response.json([{
+      group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
       validation: { status: 'compatible', blocking_reasons: [] },
-      external_video: { group_id: 'group-1', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1', linked_video: { generation_id: 'a', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 120 }, updated_at: 'now' } },
-    });
+      merged_published_match_id: 'published-merged-abc',
+    }]);
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'not_generated' });
+    if (path.endsWith('/group-1/external-video')) return Response.json({ group_id: 'group-1', status: 'not_configured' });
+    if (path.endsWith('/group-1/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByRole('link', { name: 'Otwórz mecz' })));
+    assert.equal(
+      (view.getByRole('link', { name: 'Otwórz mecz' }) as HTMLAnchorElement).getAttribute('href'),
+      '/published/matches/published-merged-abc/report',
+    );
+    assert.equal(view.queryByRole('link', { name: 'Otwórz raport' }), null);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('old group report URL redirects to the canonical merged published match', async () => {
+  const calls: string[] = [];
+  const mergedDetail = {
+    id: 'published-merged-abc',
+    source_match_id: 'group-1',
+    source_kind: 'merged',
+    title: 'Scalony mecz',
+    package: null,
+    public_report: {
+      id: 'published-merged-abc',
+      schema_version: '0.1.0',
+      report_type: 'public_match_report',
+      match: { id: 'published-merged-abc', title: 'Scalony mecz' },
+      teams: [],
+      players: [],
+    },
+    teams: [],
+    players: [],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    calls.push(path);
+    if (path.endsWith('/match-groups/group-1/merged-match')) return Response.json({ group_id: 'group-1', merged_published_match_id: 'published-merged-abc' });
+    if (path.endsWith('/api/published/matches/published-merged-abc')) return Response.json(mergedDetail);
+    if (path.endsWith('/published-merged-abc/video')) return Response.json({ group_id: 'group-1', status: 'not_generated' });
+    if (path.endsWith('/published-merged-abc/external-video')) return Response.json({ group_id: 'group-1', status: 'not_configured' });
+    if (path.endsWith('/published-merged-abc/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] });
+    throw new Error(`Unexpected ${path}`);
   };
   try {
     const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
-      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(MatchGroupReportRedirect) }),
+      React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
+    )));
+    await waitFor(() => assert.ok(view.getAllByText('Scalony mecz').length > 0));
+    assert.ok(calls.some((path) => path.endsWith('/match-groups/group-1/merged-match')));
+    assert.ok(calls.some((path) => path.endsWith('/api/published/matches/published-merged-abc')));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('canonical merged report embeds only the server-derived current YouTube URL and keeps local fallback', async () => {
+  const mergedDetail = {
+    id: 'published-merged-abc',
+    source_match_id: 'group-1',
+    source_kind: 'merged',
+    title: 'Mecz',
+    member_count: 2,
+    package: null,
+    public_report: {
+      id: 'published-merged-abc',
+      schema_version: '0.1.0',
+      report_type: 'public_match_report',
+      match: { id: 'published-merged-abc', title: 'Mecz', duration_sec: 120 },
+      teams: [],
+      players: [],
+    },
+    teams: [],
+    players: [],
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path.endsWith('/published-merged-abc/video')) return Response.json({ group_id: 'group-1', status: 'ready', artifact_url: '/local-video.mp4' });
+    if (path.endsWith('/published-merged-abc/external-video')) return Response.json({ group_id: 'group-1', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1', linked_video: { generation_id: 'a', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 120 }, updated_at: 'now' } });
+    if (path.endsWith('/published-merged-abc/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] });
+    if (path.endsWith('/api/published/matches/published-merged-abc')) return Response.json(mergedDetail);
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-merged-abc/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
     )));
     await waitFor(() => assert.equal(view.container.querySelector('iframe')?.getAttribute('src'), 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1'));
     assert.equal(view.container.querySelector('iframe')?.hasAttribute('allowfullscreen'), true);
@@ -305,7 +324,24 @@ test('aggregate page embeds only the server-derived current YouTube URL and keep
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('aggregate page polls a ready prior generation and switches to its replacement', async () => {
+test('canonical merged report polls a ready prior generation and switches to its replacement', async () => {
+  const mergedDetail = {
+    id: 'published-merged-abc',
+    source_match_id: 'group-1',
+    source_kind: 'merged',
+    title: 'Mecz',
+    package: null,
+    public_report: {
+      id: 'published-merged-abc',
+      schema_version: '0.1.0',
+      report_type: 'public_match_report',
+      match: { id: 'published-merged-abc', title: 'Mecz', duration_sec: 120 },
+      teams: [],
+      players: [],
+    },
+    teams: [],
+    players: [],
+  };
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
@@ -316,42 +352,48 @@ test('aggregate page polls a ready prior generation and switches to its replacem
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input) => {
     const path = String(input);
-    if (path.endsWith('/video')) {
+    if (path.endsWith('/published-merged-abc/video')) {
       videoReads += 1;
       return Response.json(videoReads === 1
-        ? { group_id: 'group-1', status: 'ready', generation_id: 'generation-a', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-a/file', last_attempt: { status: 'generating' } }
-        : { group_id: 'group-1', status: 'ready', generation_id: 'generation-b', artifact_url: '/api/published/match-groups/group-1/video/generations/generation-b/file' });
+        ? { group_id: 'group-1', status: 'ready', generation_id: 'generation-a', artifact_url: '/merged-video-a.mp4', last_attempt: { status: 'generating' } }
+        : { group_id: 'group-1', status: 'ready', generation_id: 'generation-b', artifact_url: '/merged-video-b.mp4' });
     }
-    return Response.json({
-      report: { schema_version: '1', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' }, source_match_ids: [], source_published_ids: [], sources: [], timing: { analyzed_duration_sec: 120, timeline_span_sec: 120, mapping: 'ordered' }, spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } }, teams: [], players: [] },
-      validation: { status: 'compatible', blocking_reasons: [] },
-    });
+    if (path.endsWith('/published-merged-abc/external-video')) return Response.json({ group_id: 'group-1', status: 'not_configured' });
+    if (path.endsWith('/published-merged-abc/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] });
+    if (path.endsWith('/api/published/matches/published-merged-abc')) return Response.json(mergedDetail);
+    throw new Error(`Unexpected ${path}`);
   };
   try {
-    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
-      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-merged-abc/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
     )));
     await waitFor(() => assert.ok(view.getByText(/trwa regeneracja nowszej wersji/)));
-    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/api/published/match-groups/group-1/video/generations/generation-a/file');
+    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/merged-video-a.mp4');
     scheduled.shift()?.();
     await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Pełne wideo meczu' })));
     assert.equal(videoReads, 2);
-    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/api/published/match-groups/group-1/video/generations/generation-b/file');
+    assert.equal(view.container.querySelector('video')?.getAttribute('src'), '/merged-video-b.mp4');
   } finally {
     globalThis.fetch = originalFetch;
     window.setTimeout = originalSetTimeout;
   }
 });
 
-function keyMomentReport(): AggregatePublicMatchReport {
+function keyMomentReport(): PublicMatchReport {
   return {
-    schema_version: '1.0.0', report_type: 'public_aggregate_match_report', group_id: 'group-1', match: { title: 'Mecz' },
-    source_match_ids: [], source_published_ids: [], sources: [],
-    timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' },
-    teams: [{ team_id: 'team-corgi', team_name: 'Corgi', movement: { status: 'ready' } }], players: [],
-    spatial: { heatmaps: { status: 'not_available' }, team_shape: { status: 'not_available' } },
+    schema_version: '0.1.0',
+    generated_at: '2026-09-01T00:00:00+00:00',
+    id: 'published-merged-abc',
+    source_match_id: 'group-1',
+    report_type: 'public_match_report',
+    match: { id: 'published-merged-abc', title: 'Mecz' },
+    teams: [
+      { team_label: 'A', team_id: 'team-corgi', team_name: 'Corgi', playing_time_sec: 900, total_distance_m: 1000, high_intensity_distance_m: 100, sprint_count: 5, avg_speed_kmh: 6, peak_speed_kmh: 20, pass_candidates: 10, same_team_pass_candidates: 10, turnover_or_interception_candidates: 0, progressive_pass_candidates: 2, accepted_passes: 8 },
+      { team_label: 'B', team_id: 'team-verisk', team_name: 'Verisk', playing_time_sec: 900, total_distance_m: 800, high_intensity_distance_m: 80, sprint_count: 3, avg_speed_kmh: 5, peak_speed_kmh: 18, pass_candidates: 8, same_team_pass_candidates: 8, turnover_or_interception_candidates: 0, progressive_pass_candidates: 1, accepted_passes: 6 },
+    ],
+    players: [],
     key_moments: {
-      schema_version: '1.0.0', policy_version: 'logical-key-moments:v1', timeline_semantics: 'logical_match_video', status: 'ready',
+      schema_version: '1.0.0', policy_version: 'logical-key-moments:v1', status: 'ready',
       moments: [{
         moment_id: 'km-1', time_sec: 722.5, window_start_sec: 720, window_end_sec: 725, type: 'momentum_peak', team_id: 'team-corgi', importance_score: 0.82,
         headline: 'Mocny okres przewagi', evidence: {
@@ -365,7 +407,7 @@ function keyMomentReport(): AggregatePublicMatchReport {
 }
 
 test('Key Moments uses the current server-validated YouTube ID with the logical video second', () => {
-  const view = render(React.createElement(AggregateKeyMoments, {
+  const view = render(React.createElement(KeyMoments, {
     report: keyMomentReport(), video: { group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' },
     externalVideo: { group_id: 'group-1', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://youtu.be/AbCdEfGhI_1', linked_video: { generation_id: 'g', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 900 }, updated_at: 'now' } },
     onSeekLocalVideo: () => assert.fail('current YouTube must be primary'),
@@ -406,8 +448,8 @@ test('Key Moments renders direct evidence metrics instead of the ranking score',
   };
 
   const view = render(React.createElement(React.Fragment, null,
-    React.createElement(AggregateKeyMoments, { report: momentum, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),
-    React.createElement(AggregateKeyMoments, { report: possession, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),
+    React.createElement(KeyMoments, { report: momentum, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),
+    React.createElement(KeyMoments, { report: possession, video: null, externalVideo: null, onSeekLocalVideo: () => undefined }),
   ));
 
   assert.ok(view.getByText('Momentum: intensywność 90% · pewność 70% · eksperymentalne'));
@@ -418,7 +460,7 @@ test('Key Moments renders direct evidence metrics instead of the ranking score',
 
 test('Key Moments never use stale YouTube and reuse the one ready local video seek action', () => {
   const seeks: number[] = [];
-  const view = render(React.createElement(AggregateKeyMoments, {
+  const view = render(React.createElement(KeyMoments, {
     report: keyMomentReport(), video: { group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' },
     externalVideo: { group_id: 'group-1', status: 'stale', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://youtu.be/AbCdEfGhI_1', linked_video: { generation_id: 'old', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 900 }, updated_at: 'now' } },
     onSeekLocalVideo: (timeSec) => seeks.push(timeSec),
@@ -431,7 +473,7 @@ test('Key Moments never use stale YouTube and reuse the one ready local video se
 });
 
 test('Key Moments keep visible timestamps without a current video action', () => {
-  const view = render(React.createElement(AggregateKeyMoments, {
+  const view = render(React.createElement(KeyMoments, {
     report: keyMomentReport(), video: { group_id: 'group-1', status: 'not_generated' },
     externalVideo: { group_id: 'group-1', status: 'invalid' }, onSeekLocalVideo: () => assert.fail('no local video is ready'),
   }));
@@ -441,16 +483,29 @@ test('Key Moments keep visible timestamps without a current video action', () =>
   assert.equal(view.queryByRole('button', { name: 'Zobacz moment' }), null);
 });
 
-test('aggregate page places Key Moments after the one local player and seeks it exactly when YouTube is unavailable', async () => {
+test('canonical merged page places Key Moments inside the shared report and seeks the one local video', async () => {
+  const mergedDetail = {
+    id: 'published-merged-abc',
+    source_match_id: 'group-1',
+    source_kind: 'merged',
+    title: 'Mecz',
+    package: null,
+    public_report: keyMomentReport(),
+    teams: [],
+    players: [],
+  };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const path = String(input);
-    if (path.endsWith('/video')) return Response.json({ group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' });
-    return Response.json({ report: keyMomentReport(), validation: { status: 'compatible', blocking_reasons: [] }, external_video: { group_id: 'group-1', status: 'not_configured' } });
+    if (path.endsWith('/published-merged-abc/video')) return Response.json({ group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' });
+    if (path.endsWith('/published-merged-abc/external-video')) return Response.json({ group_id: 'group-1', status: 'not_configured' });
+    if (path.endsWith('/published-merged-abc/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] });
+    if (path.endsWith('/api/published/matches/published-merged-abc')) return Response.json(mergedDetail);
+    throw new Error(`Unexpected ${path}`);
   };
   try {
-    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/match-groups/group-1/report'] }, React.createElement(Routes, null,
-      React.createElement(Route, { path: '/published/match-groups/:groupId/report', element: React.createElement(AggregateMatchReportPage) }),
+    const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-merged-abc/report'] }, React.createElement(Routes, null,
+      React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
     )));
     await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' })));
     const video = view.container.querySelector('video') as HTMLVideoElement;
@@ -458,7 +513,7 @@ test('aggregate page places Key Moments after the one local player and seeks it 
     fireEvent.click(view.getByRole('button', { name: 'Zobacz moment' }));
     assert.equal(video.currentTime, 722.5);
     assert.equal(view.container.querySelectorAll('video').length, 1);
-    assert.ok((view.getByRole('heading', { name: 'Najważniejsze momenty' }).compareDocumentPosition(view.getByRole('heading', { name: 'Podsumowanie drużyn' })) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+    assert.ok((view.getByRole('heading', { name: 'Najważniejsze momenty' }).compareDocumentPosition(view.getByRole('heading', { name: 'Statystyki drużyn' })) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
   } finally { globalThis.fetch = originalFetch; }
 });
 

@@ -1,7 +1,13 @@
-import type { AggregatePublicMatchReport, MatchGroupExternalVideoStatus, MatchGroupVideoStatus } from '../types';
+import type {
+  CanonicalKeyMoment,
+  CanonicalKeyMoments,
+  MatchGroupExternalVideoStatus,
+  MatchGroupVideoStatus,
+  PublicMatchReport,
+} from '../types';
 
-type AggregateKeyMomentsProps = {
-  report: AggregatePublicMatchReport;
+type KeyMomentsProps = {
+  report: Pick<PublicMatchReport, 'teams' | 'key_moments'>;
   video: MatchGroupVideoStatus | null;
   externalVideo: MatchGroupExternalVideoStatus | null;
   onSeekLocalVideo: (timeSec: number) => void;
@@ -20,9 +26,7 @@ function percent(value: number | undefined): string | null {
   return typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}%` : null;
 }
 
-type AggregateKeyMoment = NonNullable<AggregatePublicMatchReport['key_moments']>['moments'][number];
-
-function evidenceLabel(moment: AggregateKeyMoment): string {
+function evidenceLabel(moment: CanonicalKeyMoment): string {
   const signal = moment.evidence.primary;
   if (moment.evidence.primary_signal === 'attacking_momentum') {
     const intensity = percent(signal?.intensity);
@@ -43,7 +47,11 @@ function evidenceLabel(moment: AggregateKeyMoment): string {
   ].filter((item): item is string => item !== null).join(' · ');
 }
 
-export function AggregateKeyMoments({ report, video, externalVideo, onSeekLocalVideo }: AggregateKeyMomentsProps) {
+export function keyMomentsOf(report: Pick<PublicMatchReport, 'key_moments'>): CanonicalKeyMoments | null {
+  return report.key_moments || null;
+}
+
+export function KeyMoments({ report, video, externalVideo, onSeekLocalVideo }: KeyMomentsProps) {
   const keyMoments = report.key_moments;
   if (!keyMoments?.moments.length) return null;
 

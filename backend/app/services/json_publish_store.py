@@ -17,6 +17,29 @@ from app.services.published_video import stage_published_video
 
 PUBLISHED_MATCHES_DIR = PUBLISHED_DIR / "matches"
 
+MERGED_SOURCE_KIND = "merged"
+PHYSICAL_SOURCE_KIND = "physical"
+
+
+def published_capabilities(summary: dict[str, Any]) -> dict[str, Any]:
+    """Server-authoritative action capabilities for one published match."""
+
+    if str(summary.get("source_kind") or PHYSICAL_SOURCE_KIND) == MERGED_SOURCE_KIND:
+        return {
+            "rebuild_physical_publication": False,
+            "regenerate_report": True,
+            "refresh_to_latest": True,
+            "generate_video": True,
+            "external_video": True,
+        }
+    return {
+        "rebuild_physical_publication": True,
+        "regenerate_report": False,
+        "refresh_to_latest": False,
+        "generate_video": False,
+        "external_video": False,
+    }
+
 
 def write_public_match_report_bundle(*args: Any, **kwargs: Any) -> dict[str, Any]:
     """Late-bind the public-report service so its configured mirror remains patchable."""
@@ -203,6 +226,7 @@ def _summary_from_package(
     return {
         "id": published_id,
         "source_match_id": source_match_id,
+        "source_kind": PHYSICAL_SOURCE_KIND,
         "title": str(match.get("title") or "Untitled match"),
         "match_date": match.get("match_date"),
         "season": match.get("season"),
@@ -317,6 +341,9 @@ def list_eligible_match_group_sources() -> list[dict[str, Any]]:
     for summary_path in PUBLISHED_MATCHES_DIR.glob("*/summary.json"):
         try:
             summary = _load_json_object(summary_path)
+            if str(summary.get("source_kind") or PHYSICAL_SOURCE_KIND) == MERGED_SOURCE_KIND:
+                # Merged matches are products, not mergeable fragments.
+                continue
             published_id = str(summary.get("id") or summary_path.parent.name)
             aggregate = _load_json_object(summary_path.parent / "aggregate_inputs.json")
             report_type = str(summary.get("report_type") or "")
@@ -353,10 +380,14 @@ def get_published_match(match_id: str) -> dict[str, Any]:
     init_publish_store()
     target_dir = _published_match_dir(match_id)
     summary_path = target_dir / "summary.json"
-    package_path = target_dir / "package.json"
-    if not summary_path.exists() or not package_path.exists():
+    if not summary_path.exists():
         raise KeyError(match_id)
     summary = _load_json_object(summary_path)
+    if str(summary.get("source_kind") or PHYSICAL_SOURCE_KIND) == MERGED_SOURCE_KIND:
+        return _get_merged_published_match(match_id, summary, target_dir)
+    package_path = target_dir / "package.json"
+    if not package_path.exists():
+        raise KeyError(match_id)
     package = _load_json_object(package_path)
     public_report_path = target_dir / "public_report.json"
     public_report = _load_json_object(public_report_path) if public_report_path.exists() else None
@@ -372,11 +403,70 @@ def get_published_match(match_id: str) -> dict[str, Any]:
     ]
     return {
         **summary,
+        "source_kind": PHYSICAL_SOURCE_KIND,
+        "capabilities": published_capabilities({**summary, "source_kind": PHYSICAL_SOURCE_KIND}),
         "package": package,
         "public_report": public_report,
         "teams": teams,
         "players": _match_players(package),
         "stable_players": _stable_players(package),
+    }
+
+
+def _get_merged_published_match(match_id: str, summary: dict[str, Any], target_dir: Path) -> dict[str, Any]:
+    """Load a merged published match without pretending it has a package.
+
+    A merged match is NOT a physical analysis package: there is no
+    ``package.json``.  Teams/players are synthesized from the canonical
+    ``public_report.json`` so the standard published-match read works.
+    """
+
+    public_report_path = target_dir / "public_report.json"
+    if not public_report_path.exists():
+        raise KeyError(match_id)
+    public_report = _load_json_object(public_report_path)
+    report_teams = public_report.get("teams") if isinstance(public_report.get("teams"), list) else []
+    report_players = public_report.get("players") if isinstance(public_report.get("players"), list) else []
+    players_by_team: dict[str, list[dict[str, Any]]] = {}
+    players: list[dict[str, Any]] = []
+    for player in report_players:
+        if not isinstance(player, dict):
+            continue
+        team_id = str(player.get("team_id") or "")
+        players_by_team.setdefault(team_id, []).append(player)
+        players.append({
+            "id": str(player.get("player_id") or ""),
+            "match_id": match_id,
+            "team_id": team_id,
+            "name": str(player.get("player_name") or player.get("player_id") or ""),
+            "number": player.get("player_number"),
+            "role": player.get("player_role"),
+            "is_guest": False,
+        })
+    teams = []
+    for index, team in enumerate(report_teams):
+        if not isinstance(team, dict):
+            continue
+        team_id = str(team.get("team_id") or f"team-{index + 1}")
+        teams.append({
+            "id": team_id,
+            "match_id": match_id,
+            "name": str(team.get("team_name") or team_id),
+            "color": team.get("display_color"),
+            "players_json": players_by_team.get(team_id, []),
+        })
+    provenance_path = target_dir / "provenance.json"
+    provenance = _load_json_object(provenance_path) if provenance_path.exists() else None
+    return {
+        **summary,
+        "source_kind": MERGED_SOURCE_KIND,
+        "capabilities": published_capabilities(summary),
+        "package": None,
+        "public_report": public_report,
+        "provenance": provenance,
+        "teams": teams,
+        "players": players,
+        "stable_players": [],
     }
 
 
@@ -388,6 +478,11 @@ def delete_published_match(match_id: str) -> dict[str, Any]:
         raise KeyError(match_id)
     summary = _load_json_object(summary_path)
     shutil.rmtree(target_dir)
+    # The static client mirror is a derived projection, not source data.
+    # Physical publications historically left it behind; merged projections
+    # must not leave a stale user-facing report after deletion.
+    if str(summary.get("source_kind") or PHYSICAL_SOURCE_KIND) == MERGED_SOURCE_KIND:
+        shutil.rmtree(public_match_report.CLIENT_PUBLIC_MATCHES_DIR / match_id, ignore_errors=True)
     return summary
 
 
