@@ -2412,7 +2412,7 @@ def build_player_heatmaps_document(
         "generated_at": now_iso(),
         "source": stable_doc.get("source") or "conservative_identity_v2",
         "identity_semantics": stable_doc.get("identity_semantics") or "stint_first",
-        "method": "pitch_meter_gaussian_heatmap_v1",
+        "method": HEATMAP_METHOD,
         "pitch_dimensions_m": {"width_m": pitch_width_m, "length_m": pitch_length_m},
         "image_size_px": {"width": width_px, "height": length_px},
         "summary": summary,
@@ -2445,17 +2445,110 @@ def _player_heatmap_rows(player: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _write_player_heatmap_png(
-    output_path: Path,
+HEATMAP_DENSITY_BASELINE_PERCENTILE = 80.0
+# Density ~SATURATION_RATIO x above the baseline reaches full scale.
+# Logarithmic headroom: typical density maps to yellow/amber, strong
+# hotspots to red, extreme hotspots saturate to deep red without globally
+# crushing ordinary movement (a single linear reference cannot span the
+# ~60x corridor-to-hotspot dynamic range).
+HEATMAP_DENSITY_SATURATION_RATIO = 30.0
+HEATMAP_DENSITY_GAMMA = 1.4
+HEATMAP_DENSITY_EPSILON = 1e-6
+# Sigma for float Gaussian smoothing, chosen to preserve the visual footprint
+# of the previous PIL ImageFilter.GaussianBlur(radius=12) step (Pillow radius
+# approximates the gaussian sigma). Same 360x720 canvas already uses sigma 10
+# via cv2 in analysis.save_heatmap; 12 keeps the established player-heatmap look.
+HEATMAP_BLUR_SIGMA = 12.0
+# Normalized densities below this floor are quadratically suppressed so the
+# low-density Gaussian blur halo stays visually close to pitch green.
+HEATMAP_DENSITY_FLOOR = 0.04
+HEATMAP_METHOD = "pitch_meter_gaussian_heatmap_v2"
+# Density (0..1) -> RGB stops. Very low density stays close to pitch green so
+# Gaussian blur halo does not paint the whole pitch yellow. Red is reserved
+# for genuinely high density; see _normalize_heatmap_density.
+HEATMAP_PALETTE_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
+    (0.00, (0x1A, 0x46, 0x30)),  # pitch green
+    (0.15, (0xB7, 0xA7, 0x2A)),  # subtle yellow-green
+    (0.30, (0xFA, 0xCC, 0x15)),  # yellow
+    (0.50, (0xF5, 0x9E, 0x0B)),  # amber
+    (0.68, (0xF9, 0x73, 0x16)),  # orange
+    (0.84, (0xEF, 0x44, 0x44)),  # red
+    (1.00, (0x99, 0x1B, 0x1B)),  # deep red
+)
+
+
+def _normalize_heatmap_density(
+    blurred: Any,
+    *,
+    percentile: float = HEATMAP_DENSITY_BASELINE_PERCENTILE,
+    saturation_ratio: float = HEATMAP_DENSITY_SATURATION_RATIO,
+    gamma: float = HEATMAP_DENSITY_GAMMA,
+) -> Any:
+    """Map blurred density to 0..1 with baseline plus logarithmic hotspot headroom.
+
+    The reference level is a low baseline percentile of positive density values,
+    so even an extreme hotspot barely moves it. Density above the baseline is
+    compressed logarithmically: ~baseline maps low, ~30x baseline saturates to
+    full scale. A gamma transform then keeps medium densities visually away
+    from red, and sub-floor values are suppressed toward pitch green.
+    Deterministic: no randomness, no per-player tuning.
+    """
+    import numpy as np
+
+    blurred_float = np.asarray(blurred, dtype=np.float32)
+    finite_positive = blurred_float[np.isfinite(blurred_float) & (blurred_float > 0)]
+    if finite_positive.size == 0:
+        return np.zeros_like(blurred_float, dtype=np.float32)
+    baseline = float(np.percentile(finite_positive, percentile))
+    ratio = blurred_float / max(baseline, HEATMAP_DENSITY_EPSILON)
+    compressed = np.log1p(ratio) / max(np.log1p(float(saturation_ratio)), HEATMAP_DENSITY_EPSILON)
+    normalized = np.clip(compressed, 0.0, 1.0)
+    if gamma != 1.0:
+        normalized = np.power(normalized, gamma, dtype=np.float32)
+    floor = np.float32(HEATMAP_DENSITY_FLOOR)
+    below_floor = normalized < floor
+    normalized[below_floor] = (normalized[below_floor] ** 2) / floor
+    return normalized.astype(np.float32)
+
+
+def _heatmap_palette_lut() -> Any:
+    """Build a deterministic 256-entry RGB lookup table from palette stops."""
+    import numpy as np
+
+    stops = HEATMAP_PALETTE_STOPS
+    lut = np.zeros((256, 3), dtype=np.uint8)
+    for index in range(256):
+        position = index / 255.0
+        for (low_pos, low_rgb), (high_pos, high_rgb) in zip(stops, stops[1:]):
+            if position <= high_pos or high_pos >= stops[-1][0]:
+                span = max(high_pos - low_pos, 1e-9)
+                weight = min(1.0, max(0.0, (position - low_pos) / span))
+                lut[index] = [round(low + (high - low) * weight) for low, high in zip(low_rgb, high_rgb)]
+                break
+    return lut
+
+
+def _colorize_heatmap_density(normalized: Any, *, palette_lut: Any | None = None) -> Any:
+    """Map 0..1 density to an RGB pitch heatmap image via the palette LUT."""
+    import numpy as np
+    from PIL import Image
+
+    lut = np.asarray(palette_lut, dtype=np.uint8) if palette_lut is not None else _heatmap_palette_lut()
+    clean = np.nan_to_num(np.asarray(normalized, dtype=np.float32), nan=0.0, posinf=1.0, neginf=0.0)
+    indices = np.clip(np.rint(clean * 255.0), 0, 255).astype(np.uint8)
+    return Image.fromarray(lut[indices], mode="RGB")
+
+
+def _build_heatmap_density(
     rows: list[dict[str, Any]],
     *,
     pitch_width_m: float,
     pitch_length_m: float,
     width_px: int,
     length_px: int,
-) -> None:
+) -> Any:
+    """Accumulate raw float32 sample density. No scaling or quantization."""
     import numpy as np
-    from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
     heat = np.zeros((length_px, width_px), dtype=np.float32)
     for row in rows:
@@ -2466,13 +2559,38 @@ def _write_player_heatmap_png(
         x = int(np.clip(x_m / max(pitch_width_m, 0.001) * (width_px - 1), 0, width_px - 1))
         y = int(np.clip(y_m / max(pitch_length_m, 0.001) * (length_px - 1), 0, length_px - 1))
         heat[y, x] += 1.0
+    return heat
+
+
+def _blur_heatmap_density(heat: Any, *, sigma: float = HEATMAP_BLUR_SIGMA) -> Any:
+    """Spatially smooth float32 density. Linear: hotspot magnitude cannot erase other density."""
+    import cv2
+
+    return cv2.GaussianBlur(heat, ksize=(0, 0), sigmaX=float(sigma), sigmaY=float(sigma))
+
+
+def _write_player_heatmap_png(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    width_px: int,
+    length_px: int,
+) -> None:
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    heat = _build_heatmap_density(
+        rows,
+        pitch_width_m=pitch_width_m,
+        pitch_length_m=pitch_length_m,
+        width_px=width_px,
+        length_px=length_px,
+    )
     if heat.max() > 0:
-        normalized = (heat / heat.max() * 255).astype(np.uint8)
-        heat_image = Image.fromarray(normalized, mode="L").filter(ImageFilter.GaussianBlur(radius=12))
-        blurred = np.asarray(heat_image, dtype=np.float32)
-        if blurred.max() > 0:
-            heat_image = Image.fromarray((blurred / blurred.max() * 255).astype(np.uint8), mode="L")
-        colored = ImageOps.colorize(heat_image, black="#163d2b", mid="#facc15", white="#ef4444")
+        blurred = _blur_heatmap_density(np.asarray(heat, dtype=np.float32))
+        colored = _colorize_heatmap_density(_normalize_heatmap_density(blurred))
     else:
         colored = Image.new("RGB", (width_px, length_px), "#1a4630")
     _draw_pitch_on_heatmap(colored, ImageDraw.Draw(colored))
