@@ -214,7 +214,7 @@ class MatchGroupAggregationTests(unittest.TestCase):
                     manifest["group_id"],
                     member_published_ids=["published-one", "published-three"],
                     metadata={**_metadata(), "title": "Changed"},
-                    generate_report=lambda _: (_ for _ in ()).throw(MatchGroupError("generation_failed", "generation failed")),
+                    build_report_candidate=lambda _: (_ for _ in ()).throw(MatchGroupError("generation_failed", "generation failed")),
                 )
 
             self.assertEqual((group_dir / "manifest.json").read_bytes(), before_manifest)
@@ -235,7 +235,7 @@ class MatchGroupAggregationTests(unittest.TestCase):
                 create_match_group_and_generate_report(
                     member_published_ids=["published-one", "published-two"],
                     metadata=_metadata(),
-                    generate_report=lambda _group_id: (_ for _ in ()).throw(OSError("disk full")),
+                    generate_and_persist_report=lambda _group_id: (_ for _ in ()).throw(OSError("disk full")),
                 )
 
             self.assertEqual(list((root / "groups").glob("match-group-*")), [])

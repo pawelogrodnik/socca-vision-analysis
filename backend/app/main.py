@@ -3600,7 +3600,7 @@ def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
         group, report = create_match_group_and_generate_report(
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
-            generate_report=build_match_group_report_candidate,
+            generate_and_persist_report=generate_match_group_report,
         )
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
@@ -3624,7 +3624,7 @@ def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[st
             group_id,
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
-            generate_report=generate_match_group_report,
+            build_report_candidate=build_match_group_report_candidate,
         )
         return {**_group_with_validation(group), "report": report}
     except KeyError as error:

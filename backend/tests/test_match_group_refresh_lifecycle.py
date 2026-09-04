@@ -490,7 +490,7 @@ class RefreshLifecycleTests(unittest.TestCase):
                         group_id,
                         member_published_ids=["published-one", "published-two"],
                         metadata={**_metadata(), "title": "operator update"},
-                        generate_report=pause_report,
+                        build_report_candidate=pause_report,
                     ),
                 )
             )
@@ -541,7 +541,7 @@ class RefreshLifecycleTests(unittest.TestCase):
                         group_id,
                         member_published_ids=["published-one", "published-two"],
                         metadata={**_metadata(), "title": "late operator update"},
-                        generate_report=build_match_group_report_candidate,
+                        build_report_candidate=build_match_group_report_candidate,
                     )
                 self.assertEqual(failure.exception.code, "match_group_maintenance_in_progress")
                 release.set()

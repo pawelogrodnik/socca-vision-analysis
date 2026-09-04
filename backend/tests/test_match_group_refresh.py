@@ -213,7 +213,7 @@ class MatchGroupRefreshTests(unittest.TestCase):
                         str(group["group_id"]),
                         member_published_ids=["published-one", "published-two"],
                         metadata={**_metadata(), "title": "operator update"},
-                        generate_report=lambda manifest: {"group_id": manifest["group_id"]},
+                        build_report_candidate=lambda manifest: {"group_id": manifest["group_id"]},
                     ),
                     lambda: delete_match_group_when_video_idle(str(group["group_id"])),
                 ):

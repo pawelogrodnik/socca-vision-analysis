@@ -13,7 +13,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.config import PUBLISHED_DIR
@@ -76,14 +76,20 @@ def create_match_group_and_generate_report(
     *,
     member_published_ids: list[str],
     metadata: dict[str, Any],
-    generate_report: Callable[[str], dict[str, Any]],
+    generate_and_persist_report: Callable[[str], dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Create a group only when its first public report is coherent too."""
+    """Create a group only when its first public report is coherent too.
+
+    The callback follows the persisted-report contract: it receives the new
+    ``str`` group ID and must persist ``public_report.json`` itself (normally
+    :func:`generate_match_group_report`).  It must NOT be the pure in-memory
+    candidate builder, which cannot persist anything.
+    """
 
     group = create_match_group(member_published_ids=member_published_ids, metadata=metadata)
     group_id = str(group["group_id"])
     try:
-        return group, generate_report(group_id)
+        return group, generate_and_persist_report(group_id)
     except Exception:
         # This directory belongs solely to a group created in this operation;
         # physical source publications are never touched by cleanup.
@@ -157,9 +163,18 @@ def update_match_group_and_generate_report(
     *,
     member_published_ids: list[str],
     metadata: dict[str, Any],
-    generate_report: Callable[[dict[str, Any]], dict[str, Any]],
+    build_report_candidate: Callable[[Mapping[str, Any]], dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Publish a replacement manifest/report pair under one maintenance owner."""
+    """Publish a replacement manifest/report pair under one maintenance owner.
+
+    The builder follows the pure-candidate contract: it receives the
+    in-memory replacement manifest mapping and returns the report WITHOUT
+    persisting anything or acquiring the maintenance lock (normally
+    :func:`build_match_group_report_candidate`).  This transaction already
+    owns the reservation and commits both documents via ``_commit_pair``.
+    Passing the normal persisted report generation here would both receive
+    the wrong type and recursively acquire the same lock.
+    """
 
     # Runtime imports avoid a module cycle: video owns the shared lock protocol,
     # while the group store owns manifest construction.
@@ -178,7 +193,7 @@ def update_match_group_and_generate_report(
             member_published_ids=member_published_ids,
             metadata=metadata,
         )
-        report = generate_report(replacement)
+        report = build_report_candidate(replacement)
         _commit_pair(
             normalized_group_id,
             replacement,
