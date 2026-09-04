@@ -2448,6 +2448,11 @@ def _player_heatmap_rows(player: dict[str, Any]) -> list[dict[str, Any]]:
 HEATMAP_DENSITY_PERCENTILE = 95.0
 HEATMAP_DENSITY_GAMMA = 1.4
 HEATMAP_DENSITY_EPSILON = 1e-6
+# Sigma for float Gaussian smoothing, chosen to preserve the visual footprint
+# of the previous PIL ImageFilter.GaussianBlur(radius=12) step (Pillow radius
+# approximates the gaussian sigma). Same 360x720 canvas already uses sigma 10
+# via cv2 in analysis.save_heatmap; 12 keeps the established player-heatmap look.
+HEATMAP_BLUR_SIGMA = 12.0
 # Normalized densities below this floor are quadratically suppressed so the
 # low-density Gaussian blur halo stays visually close to pitch green.
 HEATMAP_DENSITY_FLOOR = 0.06
@@ -2523,17 +2528,16 @@ def _colorize_heatmap_density(normalized: Any, *, palette_lut: Any | None = None
     return Image.fromarray(lut[indices], mode="RGB")
 
 
-def _write_player_heatmap_png(
-    output_path: Path,
+def _build_heatmap_density(
     rows: list[dict[str, Any]],
     *,
     pitch_width_m: float,
     pitch_length_m: float,
     width_px: int,
     length_px: int,
-) -> None:
+) -> Any:
+    """Accumulate raw float32 sample density. No scaling or quantization."""
     import numpy as np
-    from PIL import Image, ImageDraw, ImageFilter
 
     heat = np.zeros((length_px, width_px), dtype=np.float32)
     for row in rows:
@@ -2544,10 +2548,37 @@ def _write_player_heatmap_png(
         x = int(np.clip(x_m / max(pitch_width_m, 0.001) * (width_px - 1), 0, width_px - 1))
         y = int(np.clip(y_m / max(pitch_length_m, 0.001) * (length_px - 1), 0, length_px - 1))
         heat[y, x] += 1.0
+    return heat
+
+
+def _blur_heatmap_density(heat: Any, *, sigma: float = HEATMAP_BLUR_SIGMA) -> Any:
+    """Spatially smooth float32 density. Linear: hotspot magnitude cannot erase other density."""
+    import cv2
+
+    return cv2.GaussianBlur(heat, ksize=(0, 0), sigmaX=float(sigma), sigmaY=float(sigma))
+
+
+def _write_player_heatmap_png(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    pitch_width_m: float,
+    pitch_length_m: float,
+    width_px: int,
+    length_px: int,
+) -> None:
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    heat = _build_heatmap_density(
+        rows,
+        pitch_width_m=pitch_width_m,
+        pitch_length_m=pitch_length_m,
+        width_px=width_px,
+        length_px=length_px,
+    )
     if heat.max() > 0:
-        normalized = (heat / heat.max() * 255).astype(np.uint8)
-        heat_image = Image.fromarray(normalized, mode="L").filter(ImageFilter.GaussianBlur(radius=12))
-        blurred = np.asarray(heat_image, dtype=np.float32)
+        blurred = _blur_heatmap_density(np.asarray(heat, dtype=np.float32))
         colored = _colorize_heatmap_density(_normalize_heatmap_density(blurred))
     else:
         colored = Image.new("RGB", (width_px, length_px), "#1a4630")

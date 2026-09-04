@@ -7,10 +7,14 @@ from pathlib import Path
 import numpy as np
 
 from app.services.stabilization import (
+    HEATMAP_BLUR_SIGMA,
+    HEATMAP_DENSITY_FLOOR,
     HEATMAP_DENSITY_GAMMA,
     HEATMAP_DENSITY_PERCENTILE,
     HEATMAP_METHOD,
     HEATMAP_PALETTE_STOPS,
+    _blur_heatmap_density,
+    _build_heatmap_density,
     _colorize_heatmap_density,
     _heatmap_palette_lut,
     _normalize_heatmap_density,
@@ -21,6 +25,37 @@ from app.services.stabilization import (
 
 PITCH_GREEN = (0x1A, 0x46, 0x30)
 DEEP_RED = (0x99, 0x1B, 0x1B)
+
+# Production-scale canvas used by the regression scenario below.
+_DENSITY_KWARGS: dict = {
+    "pitch_width_m": 30.0,
+    "pitch_length_m": 47.4,
+    "width_px": 360,
+    "length_px": 720,
+}
+# Corridor probe point and hotspot point, kept far apart so blur kernels
+# do not meaningfully overlap (sigma ~= 12 px).
+_CORRIDOR_PITCH_M = (4.0, 10.0)
+_HOTSPOT_PITCH_M = (24.0, 38.0)
+
+
+def _hotspot_corridor_rows(hotspot_samples: int) -> list[dict]:
+    """Sparse corridor samples plus many repeated samples at one hotspot."""
+    rows = [
+        {"pitch_m": [4.0 + index * 1.8, 10.0 + (index % 3) * 1.2], "source": "detected"}
+        for index in range(12)
+    ]
+    rows.extend(
+        {"pitch_m": list(_HOTSPOT_PITCH_M), "source": "detected"}
+        for _ in range(hotspot_samples)
+    )
+    return rows
+
+
+def _pitch_to_pixel(pitch_m: tuple[float, float]) -> tuple[int, int]:
+    x = int(np.clip(pitch_m[0] / 30.0 * 359, 0, 359))
+    y = int(np.clip(pitch_m[1] / 47.4 * 719, 0, 719))
+    return y, x
 
 
 def _representative_blurred(*, hotspot_value: float = 150.0) -> np.ndarray:
@@ -196,6 +231,71 @@ class HeatmapNormalizationTests(unittest.TestCase):
             self.assertEqual(document["method"], "pitch_meter_gaussian_heatmap_v2")
             heatmap_path = match_dir / str(document["heatmaps"][0]["path"])
             self.assertTrue(heatmap_path.exists())
+
+
+class HeatmapFloatBlurRegressionTests(unittest.TestCase):
+    """Extreme hotspot magnitude must not erase ordinary density before p95 normalization."""
+
+    def test_blur_uses_configured_float_sigma(self) -> None:
+        self.assertEqual(HEATMAP_BLUR_SIGMA, 12.0)
+        heat = np.zeros((48, 24), dtype=np.float32)
+        heat[24, 12] = 1.0
+
+        blurred = _blur_heatmap_density(heat)
+
+        self.assertEqual(blurred.dtype, np.float32)
+        # Single impulse spreads over a wide footprint, not a single uint8 step.
+        self.assertGreater(int(np.count_nonzero(blurred > 0)), 100)
+        self.assertLess(float(blurred.max()), 1.0)
+
+    def test_extreme_hotspot_does_not_erase_corridor_density(self) -> None:
+        corridor_y, corridor_x = _pitch_to_pixel(_CORRIDOR_PITCH_M)
+        blurred_corridor = {}
+        for hotspot_samples in (100, 10000):
+            heat = _build_heatmap_density(
+                _hotspot_corridor_rows(hotspot_samples), **_DENSITY_KWARGS
+            )
+            # Raw single-sample corridor density survives: no pre-blur
+            # max-scaling or uint8 quantization (1/10000*255 would be 0).
+            self.assertEqual(float(heat[corridor_y, corridor_x]), 1.0)
+            blurred = _blur_heatmap_density(np.asarray(heat, dtype=np.float32))
+            self.assertGreater(float(blurred[corridor_y, corridor_x]), 0.0)
+            blurred_corridor[hotspot_samples] = float(blurred[corridor_y, corridor_x])
+
+        # Gaussian blur is linear: corridor density after blur is (almost)
+        # identical no matter how extreme the distant hotspot gets.
+        self.assertAlmostEqual(
+            blurred_corridor[100], blurred_corridor[10000], delta=1e-6
+        )
+
+    def test_corridor_visible_for_moderate_hotspot_end_to_end(self) -> None:
+        from PIL import Image
+
+        corridor_y, corridor_x = _pitch_to_pixel(_CORRIDOR_PITCH_M)
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "heatmap_corridor.png"
+            _write_player_heatmap_png(
+                output, _hotspot_corridor_rows(100), **_DENSITY_KWARGS
+            )
+            pixels = np.asarray(Image.open(output), dtype=np.int32)
+            corridor_pixel = tuple(int(v) for v in pixels[corridor_y, corridor_x])
+            # Corridor density survives the full pipeline into a visible tint.
+            self.assertNotEqual(corridor_pixel, PITCH_GREEN)
+            # ... while staying far from red (red reserved for the hotspot).
+            self.assertGreater(corridor_pixel[1], 100)
+
+    def test_extreme_hotspot_still_renders_valid_png(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "heatmap_extreme.png"
+            _write_player_heatmap_png(
+                output, _hotspot_corridor_rows(10000), **_DENSITY_KWARGS
+            )
+            image = Image.open(output)
+            self.assertEqual(image.size, (360, 720))
+            pixels = np.asarray(image, dtype=np.float32)
+            self.assertTrue(np.all(np.isfinite(pixels)))
 
 
 if __name__ == "__main__":
