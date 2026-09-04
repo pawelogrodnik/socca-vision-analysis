@@ -75,10 +75,11 @@ class MatchGroupApiTests(unittest.TestCase):
                 "summed_distance_m": 999999,
             })
 
-    def test_report_returns_last_coherent_bytes_with_authoritative_stale_validation(self) -> None:
+    def test_report_returns_one_coherent_snapshot_with_matching_validation(self) -> None:
         report = {"report_type": "public_aggregate_match_report"}
         validation = {"status": "stale", "blocking_reasons": [{"code": "source_generation_changed", "detail": "Republished."}]}
-        with patch("app.main.load_match_group_report", return_value=report), patch("app.main.validate_match_group", return_value=validation), patch("app.main.get_match_group_external_video", return_value={"status": "not_configured"}):
+        snapshot = {"report": report, "manifest": {"group_id": "match-group-1"}, "validation": validation}
+        with patch("app.main.get_coherent_match_group_report", return_value=snapshot), patch("app.main.get_match_group_external_video", return_value={"status": "not_configured"}):
             response = api_get_match_group_report("match-group-1")
         self.assertEqual(response["report"], report)
         self.assertEqual(response["validation"]["status"], "stale")
@@ -134,6 +135,16 @@ class MatchGroupApiTests(unittest.TestCase):
                 api_delete_match_group("match-group-1")
         self.assertEqual(error.exception.status_code, 409)
         self.assertEqual(error.exception.detail["code"], "video_generation_in_progress")
+
+    def test_video_request_reports_maintenance_reservation_as_a_conflict(self) -> None:
+        with patch(
+            "app.main.submit_match_group_video_generation",
+            side_effect=MatchGroupVideoError("match_group_maintenance_in_progress", "refresh owns the group"),
+        ):
+            with self.assertRaises(HTTPException) as error:
+                api_generate_match_group_video("match-group-1")
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(error.exception.detail["code"], "match_group_maintenance_in_progress")
 
 
 if __name__ == "__main__":

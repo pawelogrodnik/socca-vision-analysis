@@ -284,6 +284,9 @@ class MatchGroupAggregationTests(unittest.TestCase):
             patch("app.services.match_groups.MATCH_GROUPS_DIR", root / "groups"),
             patch("app.services.match_group_aggregation.PUBLISHED_MATCHES_DIR", root / "published"),
             patch("app.services.match_group_aggregation.MATCH_GROUPS_DIR", root / "groups"),
+            patch("app.services.match_group_video.MATCH_GROUPS_DIR", root / "groups"),
+            patch("app.services.match_group_video.PUBLISHED_MATCHES_DIR", root / "published"),
+            patch("app.services.match_group_refresh.MATCH_GROUPS_DIR", root / "groups"),
         )
 
         class StoreContext:

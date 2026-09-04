@@ -144,7 +144,15 @@ export function MatchGroupsPage() {
       setStatus(result.status === 'refreshed' ? 'Raport został odświeżony do najnowszych danych źródłowych.' : 'Dane źródłowe są aktualne.');
       await load();
     }
-    catch (error) { setStatus(errorMessage(error)); }
+    catch (error) {
+      // A refreshable preview can go stale before the operator confirms:
+      // the POST then returns a structured 409. Reload authoritative
+      // group/preview/video/external state so the stale refreshable UI is
+      // replaced, but keep the exact server reason visible.
+      const message = errorMessage(error);
+      try { await load(); } catch { /* keep the original conflict reason */ }
+      setStatus(message);
+    }
     finally { setBusy(false); }
   };
   const remove = async (groupId: string) => {

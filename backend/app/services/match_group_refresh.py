@@ -10,13 +10,17 @@ that advances an existing logical group to those new contents.
 import json
 import os
 import tempfile
-import uuid
 from pathlib import Path
 from typing import Any
 
 from app.services.match_group_aggregation import build_match_group_report_candidate
 from app.services.match_group_external_video import get_match_group_external_video
 from app.services.match_group_video import get_match_group_video_status, reserve_match_group_video_idle
+from app.services.match_group_pair_transaction import (
+    finish_pair_recovery,
+    prepare_pair_recovery,
+    recover_interrupted_pair,
+)
 from app.services.match_groups import (
     MATCH_GROUPS_DIR,
     MatchGroupError,
@@ -214,7 +218,7 @@ def _commit_pair(
     *,
     expected_manifest_digest: str | None = None,
 ) -> None:
-    """Replace the two coupled documents or restore their previous exact bytes."""
+    """Durably replace the coupled documents or recover the old coherent pair."""
 
     directory = MATCH_GROUPS_DIR / group_id
     manifest_path = directory / "manifest.json"
@@ -225,28 +229,42 @@ def _commit_pair(
         raise MatchGroupError("source_generation_changed_during_refresh", "Logical-match definition changed before refresh could commit.")
     previous_manifest = manifest_path.read_bytes()
     previous_report = report_path.read_bytes() if report_path.is_file() else None
-    staged_manifest = _stage_json(directory, "manifest", manifest)
-    staged_report = _stage_json(directory, "public_report", report)
+    staged_manifest: Path | None = None
+    staged_report: Path | None = None
+    recovery_prepared = False
     try:
+        try:
+            staged_manifest = _stage_json(directory, "manifest", manifest)
+            staged_report = _stage_json(directory, "public_report", report)
+        except FileNotFoundError as error:
+            # The group directory disappeared under this writer: delete wins
+            # and no partial state may be recreated.
+            raise KeyError(group_id) from error
         if not directory.is_dir() or not manifest_path.is_file():
             raise KeyError(group_id)
         if expected_manifest_digest is not None and get_match_group(group_id).get("aggregate_semantic_digest") != expected_manifest_digest:
             raise MatchGroupError("source_generation_changed_during_refresh", "Logical-match definition changed before refresh could commit.")
+        prepare_pair_recovery(
+            directory,
+            previous_manifest=previous_manifest,
+            previous_report=previous_report,
+        )
+        recovery_prepared = True
         os.replace(staged_manifest, manifest_path)
         if not directory.is_dir() or not manifest_path.is_file():
             raise KeyError(group_id)
         os.replace(staged_report, report_path)
+        _fsync_directory(directory)
+        finish_pair_recovery(directory)
     except Exception:
-        if directory.is_dir() and manifest_path.is_file():
-            _restore_bytes(manifest_path, previous_manifest)
-            if previous_report is None:
-                report_path.unlink(missing_ok=True)
-            else:
-                _restore_bytes(report_path, previous_report)
+        if recovery_prepared and directory.is_dir():
+            recover_interrupted_pair(directory, allow_live_owner=True)
         raise
     finally:
-        staged_manifest.unlink(missing_ok=True)
-        staged_report.unlink(missing_ok=True)
+        if staged_manifest is not None:
+            staged_manifest.unlink(missing_ok=True)
+        if staged_report is not None:
+            staged_report.unlink(missing_ok=True)
 
 
 def _stage_json(directory: Path, name: str, document: dict[str, Any]) -> Path:
@@ -260,14 +278,14 @@ def _stage_json(directory: Path, name: str, document: dict[str, Any]) -> Path:
     return temporary
 
 
-def _restore_bytes(path: Path, value: bytes) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".rollback.tmp", dir=path.parent)
-    temporary = Path(temporary_name)
+def _fsync_directory(directory: Path) -> None:
     try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(value)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
     finally:
-        temporary.unlink(missing_ok=True)
+        os.close(descriptor)

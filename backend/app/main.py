@@ -192,7 +192,11 @@ from app.services.json_publish_store import (
     list_published_matches,
     publish_store_health,
 )
-from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report as load_match_group_report
+from app.services.match_group_aggregation import (
+    build_match_group_report_candidate,
+    generate_match_group_report,
+    get_coherent_match_group_report,
+)
 from app.services.match_group_refresh import preview_match_group_refresh, refresh_match_group_to_latest
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
@@ -3596,7 +3600,7 @@ def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
         group, report = create_match_group_and_generate_report(
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
-            generate_report=generate_match_group_report,
+            generate_report=build_match_group_report_candidate,
         )
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
@@ -3755,9 +3759,13 @@ def api_get_match_group_video_generation_file(group_id: str, generation_id: str)
 @app.get("/api/published/match-groups/{group_id}/report")
 def api_get_match_group_report(group_id: str) -> dict[str, Any]:
     try:
+        # One coherent snapshot: the manifest, report and validation below
+        # always belong to the same logical generation, so a concurrent
+        # refresh can never produce a NEW-manifest/OLD-report response.
+        snapshot = get_coherent_match_group_report(group_id)
         return {
-            "report": load_match_group_report(group_id),
-            "validation": validate_match_group(group_id),
+            "report": snapshot["report"],
+            "validation": snapshot["validation"],
             "external_video": get_match_group_external_video(group_id),
         }
     except KeyError as error:

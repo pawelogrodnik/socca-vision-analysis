@@ -170,13 +170,13 @@ def reserve_match_group_video_idle(group_id: str, *, operation: str) -> Iterator
                 raise MatchGroupVideoError("video_generation_in_progress", "Cannot maintain a logical match while its combined video is generating.")
             raise MatchGroupVideoError("match_group_maintenance_in_progress", "Logical match maintenance is already in progress.")
         _active_job_keys.add(_active_token(group_dir, job_key))
-        try:
-            if not _group_manifest_exists(group_dir):
-                raise KeyError(group_id)
-            yield get_match_group(group_id)
-        finally:
-            _active_job_keys.discard(_active_token(group_dir, job_key))
-            _release_lock(lock_path, job_key)
+    try:
+        if not _group_manifest_exists(group_dir):
+            raise KeyError(group_id)
+        yield get_match_group(group_id)
+    finally:
+        _active_job_keys.discard(_active_token(group_dir, job_key))
+        _release_lock(lock_path, job_key)
 
 
 def _begin_generation(group_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -199,13 +199,18 @@ def _begin_generation(group_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         if current_job.get("status") == "generating":
             return initial_group, {**current_job, "already_running": True}
         lock = _load(lock_path)
-        if lock and _lock_owner_alive(group_dir, lock):
+        if lock and _lock_owner_alive(group_dir, lock) and str(lock.get("job_key") or "").startswith("video-generation-"):
             return initial_group, {
                 "status": "generating",
                 "job_key": lock.get("job_key"),
                 "started_at": lock.get("created_at"),
                 "already_running": True,
             }
+        if lock and _lock_owner_alive(group_dir, lock):
+            raise MatchGroupVideoError(
+                "match_group_maintenance_in_progress",
+                "Logical match maintenance is already in progress; video generation was not started.",
+            )
         raise MatchGroupVideoError("video_generation_busy", "Combined video generation is already owned by another local worker.")
     active_token = _active_token(group_dir, job_key)
     _active_job_keys.add(active_token)

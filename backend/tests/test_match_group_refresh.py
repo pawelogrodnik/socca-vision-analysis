@@ -3,14 +3,21 @@ from __future__ import annotations
 import tempfile
 import unittest
 import json
+import threading
 from pathlib import Path
 from unittest.mock import patch
 
 import app.services.match_group_refresh as match_group_refresh
-from app.services.match_group_aggregation import generate_match_group_report
+from app.services.match_group_aggregation import generate_match_group_report, get_match_group_report
+from app.services.match_group_pair_transaction import (
+    PAIR_TRANSACTION_FILENAME,
+    PREVIOUS_MANIFEST_FILENAME,
+    PREVIOUS_REPORT_FILENAME,
+    prepare_pair_recovery,
+)
 from app.services.match_group_refresh import preview_match_group_refresh, refresh_match_group_to_latest
-from app.services.match_group_video import MatchGroupVideoError
-from app.services.match_groups import MatchGroupError, create_match_group, get_match_group, update_match_group
+from app.services.match_group_video import MatchGroupVideoError, delete_match_group_when_video_idle, submit_match_group_video_generation
+from app.services.match_groups import MatchGroupError, create_match_group, get_match_group, update_match_group, update_match_group_and_generate_report
 from test_match_group_aggregation import _metadata, _write_source
 
 
@@ -156,6 +163,133 @@ class MatchGroupRefreshTests(unittest.TestCase):
             with self.assertRaises(KeyError):
                 match_group_refresh._commit_pair("match-group-00000000-0000-0000-0000-000000000000", {}, {})
             self.assertFalse((root / "groups" / "match-group-00000000-0000-0000-0000-000000000000").exists())
+
+    def test_report_regeneration_owns_group_until_report_commit(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            entered = threading.Event()
+            release = threading.Event()
+            original_write = __import__("app.services.match_group_aggregation", fromlist=["_write_existing_group_report"])._write_existing_group_report
+            errors: list[BaseException] = []
+
+            def pause_report_write(path: Path, value: dict[str, object]) -> None:
+                _write_source(root, "published-one", "physical-one", player_distance=333)
+                entered.set()
+                self.assertTrue(release.wait(timeout=2))
+                original_write(path, value)
+
+            with patch("app.services.match_group_aggregation._write_existing_group_report", side_effect=pause_report_write):
+                worker = threading.Thread(target=lambda: self._capture(errors, lambda: generate_match_group_report(str(group["group_id"]))))
+                worker.start()
+                self.assertTrue(entered.wait(timeout=2))
+                with self.assertRaises(MatchGroupVideoError) as failure:
+                    refresh_match_group_to_latest(str(group["group_id"]))
+                self.assertEqual(failure.exception.code, "match_group_maintenance_in_progress")
+                release.set()
+                worker.join(timeout=2)
+            self.assertFalse(errors)
+
+    def test_refresh_owns_group_against_update_refresh_and_delete(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            _write_source(root, "published-one", "physical-one", player_distance=333)
+            entered = threading.Event()
+            release = threading.Event()
+            original_commit = match_group_refresh._commit_pair
+            errors: list[BaseException] = []
+
+            def pause_commit(*args: object, **kwargs: object) -> None:
+                entered.set()
+                self.assertTrue(release.wait(timeout=2))
+                original_commit(*args, **kwargs)  # type: ignore[arg-type]
+
+            with patch("app.services.match_group_refresh._commit_pair", side_effect=pause_commit):
+                worker = threading.Thread(target=lambda: self._capture(errors, lambda: refresh_match_group_to_latest(str(group["group_id"]))))
+                worker.start()
+                self.assertTrue(entered.wait(timeout=2))
+                for operation in (
+                    lambda: refresh_match_group_to_latest(str(group["group_id"])),
+                    lambda: update_match_group_and_generate_report(
+                        str(group["group_id"]),
+                        member_published_ids=["published-one", "published-two"],
+                        metadata={**_metadata(), "title": "operator update"},
+                        generate_report=lambda manifest: {"group_id": manifest["group_id"]},
+                    ),
+                    lambda: delete_match_group_when_video_idle(str(group["group_id"])),
+                ):
+                    with self.assertRaises(MatchGroupVideoError) as failure:
+                        operation()
+                    self.assertEqual(failure.exception.code, "match_group_maintenance_in_progress")
+                release.set()
+                worker.join(timeout=2)
+            self.assertFalse(errors)
+            self.assertTrue((root / "groups" / str(group["group_id"])).is_dir())
+
+    def test_delete_first_means_later_refresh_is_not_found(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            delete_match_group_when_video_idle(str(group["group_id"]))
+            with self.assertRaises(KeyError):
+                refresh_match_group_to_latest(str(group["group_id"]))
+
+    def test_video_request_during_refresh_returns_maintenance_conflict_without_job(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            group_dir = root / "groups" / str(group["group_id"])
+            from app.services.match_group_video import reserve_match_group_video_idle
+
+            with reserve_match_group_video_idle(str(group["group_id"]), operation="refresh"):
+                with patch("app.services.match_group_video.threading.Thread") as worker:
+                    with self.assertRaises(MatchGroupVideoError) as failure:
+                        submit_match_group_video_generation(str(group["group_id"]))
+                self.assertEqual(failure.exception.code, "match_group_maintenance_in_progress")
+                worker.assert_not_called()
+                self.assertFalse((group_dir / "video_job.json").exists())
+
+    def test_interrupted_pair_commit_recovers_before_a_fresh_authoritative_read(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            group_id = str(group["group_id"])
+            group_dir = root / "groups" / group_id
+            previous_manifest = (group_dir / "manifest.json").read_bytes()
+            previous_report = (group_dir / "public_report.json").read_bytes()
+            _write_source(root, "published-one", "physical-one", player_distance=333)
+            replacement = match_group_refresh._build_refresh_candidate(get_match_group(group_id))
+            replacement_report = match_group_refresh.build_match_group_report_candidate(replacement)
+            prepare_pair_recovery(group_dir, previous_manifest=previous_manifest, previous_report=previous_report)
+            (group_dir / "manifest.json").write_text(json.dumps(replacement), encoding="utf-8")
+
+            recovered = get_match_group(group_id)
+
+            self.assertEqual(recovered, json.loads(previous_manifest))
+            self.assertEqual(get_match_group_report(group_id), json.loads(previous_report))
+            for name in (PAIR_TRANSACTION_FILENAME, PREVIOUS_MANIFEST_FILENAME, PREVIOUS_REPORT_FILENAME):
+                self.assertFalse((group_dir / name).exists())
+            self.assertNotEqual(replacement_report["aggregate_semantic_digest"], json.loads(previous_report)["aggregate_semantic_digest"])
+            self.assertEqual(refresh_match_group_to_latest(group_id)["status"], "refreshed")
+
+    def test_refresh_does_not_rewrite_external_video_or_start_video_generation(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            group_dir = root / "groups" / str(group["group_id"])
+            external = group_dir / "external_video.json"
+            external.write_bytes(b'{"legacy":"external-video-bytes"}\n')
+            before = external.read_bytes()
+            _write_source(root, "published-one", "physical-one", player_distance=333)
+
+            with patch("app.services.match_group_video._run_ffmpeg") as ffmpeg:
+                result = refresh_match_group_to_latest(str(group["group_id"]))
+
+            self.assertEqual(result["status"], "refreshed")
+            self.assertEqual(external.read_bytes(), before)
+            ffmpeg.assert_not_called()
+
+    @staticmethod
+    def _capture(errors: list[BaseException], action: object) -> None:
+        try:
+            action()  # type: ignore[operator]
+        except BaseException as error:
+            errors.append(error)
 
     def _group(self, root: Path) -> dict[str, object]:
         _write_source(root, "published-one", "physical-one")
