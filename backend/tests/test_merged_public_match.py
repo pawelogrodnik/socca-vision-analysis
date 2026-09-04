@@ -515,6 +515,134 @@ class MergedPublicMatchTests(unittest.TestCase):
             live = [path for path in (root / "published").iterdir() if path.name.startswith("published-merged-")]
             self.assertEqual(len(live), 1)
 
+    def test_concurrent_first_merged_projection_uses_one_reserved_id_and_no_orphan(self) -> None:
+        import threading
+        from unittest.mock import patch as mock_patch
+
+        from app.services.merged_public_match import get_merged_projection
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            physical_before = {
+                published_id: _snapshot_tree(root / "published" / published_id)
+                for published_id in ("published-one", "published-two")
+            }
+
+            # Both lazy readers enter the formerly racy first-reservation
+            # window together.  The durable reservation primitive chooses
+            # exactly one ID before either caller starts projection staging.
+            start = threading.Barrier(3)
+            reservation_entry = threading.Barrier(2)
+            real_reserve = __import__(
+                "app.services.merged_public_match",
+                fromlist=["get_or_reserve_merged_published_id"],
+            ).get_or_reserve_merged_published_id
+            results: list[dict] = []
+            errors: list[BaseException] = []
+
+            def synchronized_reserve(request_group_id: str, *, candidate_id: str | None = None) -> str:
+                reservation_entry.wait(timeout=30)
+                return real_reserve(request_group_id, candidate_id=candidate_id)
+
+            def worker() -> None:
+                try:
+                    start.wait(timeout=30)
+                    results.append(ensure_merged_published_match(group_id))
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            with mock_patch(
+                "app.services.merged_public_match.get_or_reserve_merged_published_id",
+                side_effect=synchronized_reserve,
+            ):
+                first = threading.Thread(target=worker, daemon=True)
+                second = threading.Thread(target=worker, daemon=True)
+                first.start()
+                second.start()
+                start.wait(timeout=30)
+                first.join(timeout=60)
+                second.join(timeout=60)
+
+            self.assertFalse(first.is_alive(), "first lazy reader hung")
+            self.assertFalse(second.is_alive(), "second lazy reader hung")
+            self.assertEqual(errors, [])
+            self.assertEqual(len(results), 2)
+            merged_ids = {str(result["merged_published_match_id"]) for result in results}
+            self.assertEqual(len(merged_ids), 1)
+            merged_id = next(iter(merged_ids))
+            sidecar = get_merged_projection(group_id)
+            self.assertIsNotNone(sidecar)
+            assert sidecar is not None
+            self.assertEqual(sidecar["merged_published_match_id"], merged_id)
+            self.assertEqual(
+                [path.name for path in (root / "published").iterdir() if path.name.startswith("published-merged-")],
+                [merged_id],
+            )
+            self.assertEqual(
+                [path.name for path in (root / "client-public").iterdir() if path.name.startswith("published-merged-")],
+                [merged_id],
+            )
+            self.assertEqual(
+                {
+                    published_id: _snapshot_tree(root / "published" / published_id)
+                    for published_id in ("published-one", "published-two")
+                },
+                physical_before,
+            )
+
+    def test_concurrent_candidate_reservations_reuse_the_authoritative_winner(self) -> None:
+        import threading
+
+        from app.services.merged_public_match import (
+            _reserve_merged_projection,
+            get_merged_projection,
+            new_merged_published_id,
+        )
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            candidates = (new_merged_published_id(), new_merged_published_id())
+            start = threading.Barrier(3)
+            results: list[str] = []
+            errors: list[BaseException] = []
+
+            def worker(candidate_id: str) -> None:
+                try:
+                    start.wait(timeout=30)
+                    results.append(_reserve_merged_projection(group_id, candidate_id))
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            first = threading.Thread(target=worker, args=(candidates[0],), daemon=True)
+            second = threading.Thread(target=worker, args=(candidates[1],), daemon=True)
+            first.start()
+            second.start()
+            start.wait(timeout=30)
+            first.join(timeout=30)
+            second.join(timeout=30)
+
+            self.assertFalse(first.is_alive(), "first candidate reservation hung")
+            self.assertFalse(second.is_alive(), "second candidate reservation hung")
+            self.assertEqual(errors, [])
+            self.assertEqual(len(set(results)), 1)
+            winner = results[0]
+            self.assertIn(winner, candidates)
+            sidecar = get_merged_projection(group_id)
+            self.assertIsNotNone(sidecar)
+            assert sidecar is not None
+            self.assertEqual(sidecar["merged_published_match_id"], winner)
+
+            # A later explicit candidate can only reuse the valid winner;
+            # it may never turn sidecar persistence into last-writer-wins.
+            self.assertEqual(_reserve_merged_projection(group_id, new_merged_published_id()), winner)
+            self.assertEqual(get_merged_projection(group_id), sidecar)
+
     def test_conflicting_player_team_fails_closed(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=600)

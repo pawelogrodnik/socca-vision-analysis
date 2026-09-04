@@ -75,12 +75,15 @@ summed primitives.
 
 import copy
 import json
+import os
 import shutil
 import tempfile
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.match_group_aggregation import (
@@ -110,6 +113,12 @@ from app.services.stabilization import (
 MERGED_PUBLISHED_ID_PREFIX = "published-merged-"
 MERGED_PROJECTION_SCHEMA_VERSION = "1.0.0"
 MERGED_REPORT_POLICY_VERSION = "1.0.0"
+MERGED_PROJECTION_RESERVATION_LOCK_FILENAME = ".merged_projection.reservation.lock"
+_MERGED_PROJECTION_RESERVATION_WAIT_SEC = 30.0
+_MERGED_PROJECTION_RESERVATION_POLL_SEC = 0.01
+# An owner may be between exclusive creation and writing its lock payload.
+# Treat that very short interval as owned rather than deleting its lock.
+_MERGED_PROJECTION_LOCK_INITIALIZATION_GRACE_SEC = 1.0
 
 # Canonical labels are assigned by sorted stable team_id so every fragment
 # maps deterministically to the same merged A/B presentation.
@@ -142,6 +151,10 @@ def is_merged_published_id(published_id: str) -> bool:
 
 def merged_projection_path(group_id: str) -> Path:
     return MATCH_GROUPS_DIR / group_id / "merged_projection.json"
+
+
+def _merged_projection_reservation_lock_path(group_id: str) -> Path:
+    return merged_projection_path(group_id).parent / MERGED_PROJECTION_RESERVATION_LOCK_FILENAME
 
 
 def get_merged_projection(group_id: str) -> dict[str, Any] | None:
@@ -1448,15 +1461,10 @@ def ensure_merged_published_match(group_id: str) -> dict[str, Any]:
     """
 
     manifest = get_match_group(group_id)
-    projection = get_merged_projection(group_id)
-    if projection is None:
-        # Reserve the stable merged ID BEFORE anything goes live: if the
-        # build or promotion fails, a retry reuses this same ID and no
-        # orphan publication can exist without an authoritative relation.
-        merged_id = new_merged_published_id()
-        _reserve_merged_projection(group_id, merged_id)
-    else:
-        merged_id = str(projection["merged_published_match_id"])
+    # Reserve the stable merged ID BEFORE anything goes live.  This is an
+    # exclusive filesystem operation: two lazy first reads may arrive in
+    # different local processes, but both must build the same projection.
+    merged_id = get_or_reserve_merged_published_id(group_id)
     sources = load_pinned_merge_sources(manifest)
     report = build_canonical_merged_report(manifest, sources, merged_published_id=merged_id)
     candidate = _stage_projection_candidate(group_id, merged_id, manifest, sources, report)
@@ -1544,12 +1552,7 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
         # commits, so a build failure cannot split pins from projection.
         # The merged ID is reserved before staging for the same reason as
         # in ensure: promotion must never precede the authoritative relation.
-        projection = get_merged_projection(group_id)
-        if projection is None:
-            merged_id = new_merged_published_id()
-            _reserve_merged_projection(group_id, merged_id)
-        else:
-            merged_id = str(projection["merged_published_match_id"])
+        merged_id = get_or_reserve_merged_published_id(group_id)
         candidate_sources = load_pinned_merge_sources(candidate)
         candidate_report = build_canonical_merged_report(candidate, candidate_sources, merged_published_id=merged_id)
         staged = _stage_projection_candidate(group_id, merged_id, candidate, candidate_sources, candidate_report)
@@ -1685,20 +1688,115 @@ def _write_merged_projection(
     _atomic_write_json(path, document)
 
 
-def _reserve_merged_projection(group_id: str, merged_id: str) -> None:
-    """Durably reserve the stable group ↔ merged-ID relation first.
+def get_or_reserve_merged_published_id(group_id: str, *, candidate_id: str | None = None) -> str:
+    """Return the one durable merged ID for a group, reserving it if needed.
 
-    Storage failures become a chained domain error: no live publication
-    can exist yet at this point, so there is nothing to roll back.
+    The sidecar is the authority for the group ↔ merged-publication relation.
+    A short-lived O_EXCL lock makes its first write safe across local worker
+    processes; after taking that lock we always re-read the sidecar, so a
+    losing caller can never overwrite the winner's valid reservation.
     """
 
+    with _merged_projection_reservation_lock(group_id):
+        existing = get_merged_projection(group_id)
+        if existing is not None:
+            return str(existing["merged_published_match_id"])
+        merged_id = candidate_id or new_merged_published_id()
+        if not is_merged_published_id(merged_id):
+            raise MatchGroupError("merged_projection_invalid", "Merged published-match reservation ID is invalid.")
+        try:
+            _write_merged_projection(group_id, merged_id)
+        except OSError as error:
+            raise MatchGroupError(
+                "merged_projection_store_unavailable",
+                "Could not persist the merged published-match reservation.",
+            ) from error
+        persisted = get_merged_projection(group_id)
+        if persisted is None or str(persisted.get("merged_published_match_id") or "") != merged_id:
+            raise MatchGroupError(
+                "merged_projection_store_unavailable",
+                "Merged published-match reservation could not be read back coherently.",
+            )
+        return merged_id
+
+
+def _reserve_merged_projection(group_id: str, merged_id: str) -> str:
+    """Compatibility wrapper for explicit candidate reservation tests."""
+
+    return get_or_reserve_merged_published_id(group_id, candidate_id=merged_id)
+
+
+@contextmanager
+def _merged_projection_reservation_lock(group_id: str) -> Iterator[None]:
+    """Own the short critical section that chooses a merged published ID.
+
+    This intentionally does not reuse ``video_job.lock``: refresh already
+    holds that maintenance lock, while lazy merged-report reads must not take
+    it.  O_EXCL ownership follows the existing single-host filesystem model.
+    """
+
+    path = _merged_projection_reservation_lock_path(group_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = uuid.uuid4().hex
+    owner = {
+        "pid": os.getpid(),
+        "reservation_token": token,
+        "created_at": now_iso(),
+        "ownership_mode": "single_host_filesystem_pid_lock",
+    }
+    deadline = time.monotonic() + _MERGED_PROJECTION_RESERVATION_WAIT_SEC
+    while True:
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            if _merged_projection_lock_owner_active(path):
+                if time.monotonic() >= deadline:
+                    raise MatchGroupError(
+                        "merged_projection_reservation_in_progress",
+                        "Merged published-match reservation is already in progress.",
+                    )
+                time.sleep(_MERGED_PROJECTION_RESERVATION_POLL_SEC)
+                continue
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(owner, handle, ensure_ascii=False, sort_keys=True)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        break
     try:
-        _write_merged_projection(group_id, merged_id)
-    except OSError as error:
-        raise MatchGroupError(
-            "merged_projection_store_unavailable",
-            "Could not persist the merged published-match reservation.",
-        ) from error
+        yield
+    finally:
+        current = _read_json_or_none(path)
+        if current is not None and str(current.get("reservation_token") or "") == token:
+            path.unlink(missing_ok=True)
+
+
+def _merged_projection_lock_owner_active(path: Path) -> bool:
+    owner = _read_json_or_none(path)
+    if owner is None:
+        try:
+            return time.time() - path.stat().st_mtime < _MERGED_PROJECTION_LOCK_INITIALIZATION_GRACE_SEC
+        except FileNotFoundError:
+            return False
+    try:
+        pid = int(owner.get("pid"))
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _staging_root() -> Path:
@@ -1948,9 +2046,16 @@ def _assert_equal(current: Any, expected: Any, code: str, member: str) -> None:
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    tmp_path.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 __all__ = [
@@ -1972,6 +2077,7 @@ __all__ = [
     "merged_projection_path",
     "merged_published_id_for_group",
     "new_merged_published_id",
+    "get_or_reserve_merged_published_id",
     "rebuild_canonical_report_for_group",
     "refresh_merged_match_to_latest",
     "render_merged_heatmaps",
