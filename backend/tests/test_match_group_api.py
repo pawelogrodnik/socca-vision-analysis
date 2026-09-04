@@ -33,21 +33,16 @@ from app.services.match_group_video import MatchGroupVideoError
 class MatchGroupApiTests(unittest.TestCase):
     def test_refresh_routes_are_server_authoritative_and_exposed(self) -> None:
         preview = {"group_id": "match-group-1", "status": "refreshable", "members": [], "blocking_reasons": []}
-        refreshed = {"status": "refreshed", "group": {"group_id": "match-group-1"}}
-        projection = {"merged_published_match_id": "published-merged-1", "report": {"id": "published-merged-1"}}
+        refreshed = {"status": "refreshed", "group": {"group_id": "match-group-1"}, "merged_published_match_id": "published-merged-1"}
         with patch("app.main.preview_match_group_refresh", return_value=preview) as request_preview, patch(
-            "app.main.refresh_match_group_to_latest", return_value=refreshed
-        ) as refresh, patch(
-            "app.main.ensure_merged_published_match", return_value=projection
-        ) as ensure:
+            "app.main.refresh_merged_match_to_latest", return_value=refreshed
+        ) as refresh:
             self.assertEqual(api_preview_match_group_refresh("match-group-1"), preview)
             response = api_refresh_match_group_to_latest("match-group-1")
             self.assertEqual(response["status"], "refreshed")
             self.assertEqual(response["merged_published_match_id"], "published-merged-1")
-            self.assertEqual(response["merged_report"], {"id": "published-merged-1"})
         request_preview.assert_called_once_with("match-group-1")
         refresh.assert_called_once_with("match-group-1")
-        ensure.assert_called_once_with("match-group-1")
         paths = app.openapi()["paths"]
         self.assertIn("/api/published/match-groups/{group_id}/refresh-preview", paths)
         self.assertIn("/api/published/match-groups/{group_id}/refresh-to-latest", paths)

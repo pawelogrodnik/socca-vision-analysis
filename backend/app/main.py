@@ -222,11 +222,15 @@ from app.services.match_groups import (
     validate_match_group,
 )
 from app.services.merged_public_match import (
+    check_merged_projection,
+    delete_merged_projection_by_id,
     delete_merged_published_match,
     ensure_merged_published_match,
     group_id_for_merged_published_id,
     is_merged_published_id,
+    merged_ids_for_group,
     merged_published_id_for_group,
+    refresh_merged_match_to_latest,
 )
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
 from app.services.pass_review import load_pass_candidates_review, save_pass_candidate_reviews
@@ -3720,16 +3724,7 @@ def api_preview_match_group_refresh(group_id: str) -> dict[str, Any]:
 @app.post("/api/published/match-groups/{group_id}/refresh-to-latest")
 def api_refresh_match_group_to_latest(group_id: str) -> dict[str, Any]:
     try:
-        response = refresh_match_group_to_latest(group_id)
-        try:
-            projection = ensure_merged_published_match(group_id)
-        except MatchGroupError as error:
-            raise _match_group_error_response(error) from error
-        return {
-            **response,
-            "merged_published_match_id": projection["merged_published_match_id"],
-            "merged_report": projection["report"],
-        }
+        return refresh_merged_match_to_latest(group_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3739,10 +3734,13 @@ def api_refresh_match_group_to_latest(group_id: str) -> dict[str, Any]:
 @app.delete("/api/published/match-groups/{group_id}")
 def api_delete_match_group(group_id: str) -> dict[str, Any]:
     try:
+        # Resolve owned canonical projections BEFORE the group directory
+        # (and its sidecar) disappears; otherwise the merged publication
+        # would be orphaned.  Physical sources are never touched.
+        owned_merged_ids = merged_ids_for_group(group_id)
         group = delete_match_group_when_video_idle(group_id)
-        # The user-facing merged projection goes away with its group, but the
-        # physical source publications are never touched.
-        delete_merged_published_match(group_id)
+        for merged_id in owned_merged_ids:
+            delete_merged_projection_by_id(merged_id)
         return {"status": "deleted", "group": group}
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
@@ -3878,9 +3876,29 @@ def api_get_match_group_report(group_id: str) -> dict[str, Any]:
 @app.get("/api/published/matches/{published_match_id}")
 def api_get_published_match(published_match_id: str) -> dict[str, Any]:
     try:
-        return get_published_match(published_match_id)
+        match = get_published_match(published_match_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Published match not found") from exc
+    if str(match.get("source_kind") or "") == "merged":
+        # Fail closed when the user-facing projection disagrees with its
+        # backing group generation; a stale projection is rebuilt safely,
+        # anything unrecoverable becomes an explicit conflict.
+        coherence = check_merged_projection(published_match_id)
+        if coherence["status"] == "orphan":
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "merged_match_orphaned", "detail": "Merged match backing group no longer exists."},
+            )
+        if coherence["status"] != "current":
+            try:
+                ensure_merged_published_match(str(coherence.get("group_id") or ""))
+                match = get_published_match(published_match_id)
+            except (KeyError, MatchGroupError) as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "merged_projection_stale", "detail": "Merged report is stale and cannot be rebuilt safely."},
+                ) from error
+    return match
 
 
 @app.post("/api/published/matches/{published_match_id}/regenerate-report")
@@ -3939,8 +3957,7 @@ def api_refresh_merged_published_match_to_latest(published_match_id: str) -> dic
         )
     group_id = _require_backing_group_id(published_match_id)
     try:
-        refresh_match_group_to_latest(group_id)
-        ensure_merged_published_match(group_id)
+        refresh_merged_match_to_latest(group_id)
         return get_published_match(published_match_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Published match not found") from exc

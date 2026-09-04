@@ -34,8 +34,19 @@ from app.services.public_match_report import (
 class MergedPublicMatchTests(unittest.TestCase):
     def test_merged_match_is_canonical_published_match_with_summed_semantics(self) -> None:
         with self._store() as root:
-            _write_source(root, "published-one", "physical-one", duration=600, team_distance=1000, peak=20, controlled_corgi=360, controlled_verisk=240, attempts=20, completed=16, player_distance=100)
-            _write_source(root, "published-two", "physical-two", duration=300, team_distance=500, peak=30, controlled_corgi=120, controlled_verisk=180, attempts=10, completed=8, player_distance=50)
+            # Adversarial values: movement_time != detected_time, contested /
+            # free / unknown != 0, swapped local A/B with real local momentum
+            # signs, sub-minute logical boundary (595s), shared calibration.
+            _write_source(root, "published-one", "physical-one", duration=595, team_distance=1000, peak=20,
+                          player_distance=120, movement_time=100, detected_time=80, attempts=20, completed=16,
+                          controlled_corgi=40, controlled_verisk=30, contested=10, free=10, unknown=10,
+                          momentum_local_a=0.8, momentum_local_b=-0.2, momentum_dominant_local="A",
+                          team_shape_eligible=200, team_shape_width=20.0, team_shape_cells=(0.6, 0.4))
+            _write_source(root, "published-two", "physical-two", duration=300, labels=("B", "A"), team_distance=500, peak=30,
+                          player_distance=180, movement_time=150, detected_time=150, attempts=10, completed=8,
+                          controlled_corgi=80, controlled_verisk=60, contested=20, free=20, unknown=20,
+                          momentum_local_a=0.6, momentum_local_b=-0.3, momentum_dominant_local="A",
+                          team_shape_eligible=500, team_shape_width=30.0, team_shape_cells=(0.2, 0.8))
             group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
 
             result = ensure_merged_published_match(str(group["group_id"]))
@@ -56,15 +67,15 @@ class MergedPublicMatchTests(unittest.TestCase):
             self.assertEqual(report["schema_version"], PUBLIC_MATCH_REPORT_SCHEMA_VERSION)
             self.assertEqual(report["id"], merged_id)
             # Canonical match metadata: summed duration.
-            self.assertEqual(report["match"]["duration_sec"], 900.0)
+            self.assertEqual(report["match"]["duration_sec"], 895.0)
             self.assertEqual(report["match"]["title"], "Logical match")
 
             # Team aggregation: SUM distance, MAX peak, recomputed possession.
             corgi = next(row for row in report["teams"] if row["team_id"] == "team-corgi")
             self.assertEqual(corgi["total_distance_m"], 1500.0)
             self.assertEqual(corgi["peak_speed_kmh"], 30.0)
-            # Controlled frames: one 360/240 + two 120/180 → 480/420 → 53.3%.
-            self.assertAlmostEqual(corgi["possession_share_percent"], 53.3, places=1)
+            # Controlled corgi 40+80=120 of 210 → 57.1%.
+            self.assertAlmostEqual(corgi["possession_share_percent"], 57.1, places=1)
             self.assertEqual(report["teams"][0]["team_label"], "A")
 
             # Pass counts SUM, completion rate RECOMPUTED (not averaged).
@@ -72,40 +83,69 @@ class MergedPublicMatchTests(unittest.TestCase):
             self.assertEqual(report["ball"]["completed_passes"], 24)
             self.assertEqual(report["ball"]["completion_rate"], 80.0)
 
+            # Coverage semantics: controlled != known when free/contested exist.
+            # controlled 210/300 = 0.70, known (210+30+30)/300 = 0.90.
+            self.assertEqual(report["ball"]["controlled_coverage"], 0.70)
+            self.assertEqual(report["ball"]["known_possession_coverage"], 0.90)
+            self.assertNotEqual(report["ball"]["controlled_coverage"], report["ball"]["known_possession_coverage"])
+
             # One player row per stable player, times SUMMED.
             players = [row for row in report["players"] if row["player_id"] == "player-one"]
             self.assertEqual(len(players), 1)
             player = players[0]
-            self.assertEqual(player["playing_time_sec"], 900.0)
-            self.assertEqual(player["total_distance_m"], 150.0)
+            self.assertEqual(player["playing_time_sec"], 895.0)
+            self.assertEqual(player["total_distance_m"], 300.0)
             self.assertEqual(player["peak_speed_kmh"], 30.0)
-            # avg speed recomputed from merged primitives: 150m / 900s * 3.6.
-            self.assertAlmostEqual(player["avg_speed_kmh"], 0.6, places=2)
-            self.assertEqual(player["sprint_count"], 3)
+            # avg speed from movement_time primitive: 300m / 250s * 3.6 = 4.32,
+            # NOT 300/230*3.6 = 4.70 from detected time.
+            self.assertAlmostEqual(player["avg_speed_kmh"], 4.32, places=2)
+            self.assertEqual(player["sprint_count"], 2)
             self.assertIn("player-one", [row["player_id"] for row in report["players"]])
 
-            # Canonical possession timeline: rebased 0..600 + 600..900.
+            # Canonical possession timeline: rebased 0..595 + 595..895.
             timeline = report["ball"]["possession_timeline"]
-            self.assertEqual([(row["start_time_sec"], row["end_time_sec"]) for row in timeline], [(0.0, 600.0), (600.0, 900.0)])
-            self.assertEqual(timeline[-1]["cumulative_team_a_frames"], 480)
-            self.assertEqual(timeline[-1]["cumulative_team_b_frames"], 420)
+            self.assertEqual([(row["start_time_sec"], row["end_time_sec"]) for row in timeline], [(0.0, 595.0), (595.0, 895.0)])
+            self.assertEqual(timeline[-1]["cumulative_team_a_frames"], 120)
+            self.assertEqual(timeline[-1]["cumulative_team_b_frames"], 90)
 
-            # Canonical momentum timeline present in physical shape.
+            # Canonical momentum: A >= 0, B <= 0 even for the swapped source.
             momentum = report["ball"]["attacking_momentum"]
             self.assertTrue(momentum["experimental"])
             self.assertEqual(len(momentum["timeline"]), 2)
-            self.assertEqual(momentum["timeline"][1]["start_time_sec"], 600.0)
-            self.assertIn("signed_score", momentum["timeline"][0])
+            first, second = momentum["timeline"]
+            self.assertGreater(first["team_a_value"], 0)
+            self.assertLess(first["team_b_value"], 0)
+            self.assertAlmostEqual(first["signed_score"], first["team_a_value"] + first["team_b_value"], places=3)
+            self.assertEqual(first["dominant_team_label"], "A")
+            self.assertGreater(second["team_a_value"], 0)
+            self.assertLess(second["team_b_value"], 0)
+            self.assertAlmostEqual(second["signed_score"], second["team_a_value"] + second["team_b_value"], places=3)
+            self.assertEqual(second["dominant_team_label"], "B")
+            self.assertEqual(second["start_time_sec"], 595.0)
 
             # Heatmaps use merged samples through the canonical player field.
             self.assertTrue(player["heatmap"]["path"].startswith(f"published/matches/{merged_id}/heatmaps/"))
             self.assertEqual(player["heatmap"]["samples"], 8)
             self.assertIn("average_position", player["heatmap"])
             self.assertIsNotNone(player["heatmap"]["average_position"])
+            self.assertEqual(player["heatmap"]["average_position"]["pitch_m"], [6.5, 11.5])
             heatmap_file = root / "published" / merged_id / "heatmaps" / Path(player["heatmap"]["path"]).name
             self.assertTrue(heatmap_file.is_file())
             mirror_file = root / "client-public" / merged_id / "heatmaps" / Path(player["heatmap"]["path"]).name
             self.assertTrue(mirror_file.is_file())
+
+            # Team Shape uses eligible-frame evidence weighting, not duration:
+            # (200*20 + 500*30)/700 = 27.14, not (595*20 + 300*30)/895 = 23.35.
+            shape = report["team_shape"]
+            corgi_shape = next(row for row in shape["teams"] if row["team_id"] == "team-corgi")
+            self.assertAlmostEqual(corgi_shape["summary"]["average_width_m"], 27.14, places=2)
+            # Density grids use the same evidence weights: (200*0.6 + 500*0.2)/700.
+            merged_cells = {cell["column"]: cell["value"] for cell in corgi_shape["average_shape"]["cells"]}
+            self.assertAlmostEqual(merged_cells[0], 0.314286, places=5)
+            self.assertAlmostEqual(merged_cells[1], 0.685714, places=5)
+            # Sub-minute boundary: fragment two starts at logical 595s = 09:55.
+            second_bin = next(point for point in corgi_shape["timeline"] if point["label"] == "09:55")
+            self.assertEqual(second_bin["minute"], 10)
 
             # Provenance is internal; the report still looks like a normal one.
             self.assertEqual(report["merged_provenance"]["group_id"], str(group["group_id"]))
@@ -130,6 +170,185 @@ class MergedPublicMatchTests(unittest.TestCase):
             self.assertNotIn(first["merged_published_match_id"], eligible)
             self.assertIn("published-one", eligible)
 
+    def test_heatmap_orientation_not_proven_yields_no_spatial_output(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300, calibration=_FLIPPED_CALIBRATION_POINTS)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            report = ensure_merged_published_match(str(group["group_id"]))["report"]
+            player = next(row for row in report["players"] if row["player_id"] == "player-one")
+            # Same dims but different calibration: orientation unproven → None,
+            # never points rendered against fallback dimensions.
+            self.assertIsNone(player["heatmap"])
+            self.assertIn("unavailable", str(report["merged_provenance"].get("spatial_heatmaps")))
+
+    def test_heatmap_missing_calibration_yields_no_spatial_output(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300, calibration=None)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            report = ensure_merged_published_match(str(group["group_id"]))["report"]
+            player = next(row for row in report["players"] if row["player_id"] == "player-one")
+            self.assertIsNone(player["heatmap"])
+
+    def test_stale_spatial_lineage_fails_closed(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300, heatmap_digest="sha256:stale-generation")
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            with self.assertRaises(MatchGroupError) as failure:
+                ensure_merged_published_match(str(group["group_id"]))
+            self.assertEqual(failure.exception.code, "spatial_lineage_mismatch")
+
+    def test_merged_heatmap_uses_shared_renderer(self) -> None:
+        from unittest.mock import patch as mock_patch
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            seen: dict[str, object] = {}
+
+            def fake_renderer(output_path, rows, **kwargs):
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_bytes(b"png")
+                seen["rows"] = list(rows)
+                seen["kwargs"] = dict(kwargs)
+
+            with mock_patch("app.services.merged_public_match._write_player_heatmap_png", side_effect=fake_renderer):
+                ensure_merged_published_match(str(group["group_id"]))
+            # All 8 merged pitch-m samples reach the shared renderer in one call.
+            merged_rows = seen["rows"]
+            assert isinstance(merged_rows, list)
+            self.assertEqual(len(merged_rows), 8)
+            merged_kwargs = seen["kwargs"]
+            assert isinstance(merged_kwargs, dict)
+            self.assertEqual(merged_kwargs["pitch_width_m"], 30.0)
+
+    def test_delete_group_removes_projection_mirror_and_keeps_sources(self) -> None:
+        from fastapi import HTTPException
+
+        from app.main import api_delete_match_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            before = {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in sorted((root / "published").rglob("*"))
+                if path.is_file()
+            }
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            self.assertTrue((root / "published" / merged_id).is_dir())
+
+            response = api_delete_match_group(group_id)
+            self.assertEqual(response["status"], "deleted")
+
+            # Group, canonical projection, and static mirror are all gone.
+            self.assertFalse((root / "groups" / group_id).exists())
+            self.assertFalse((root / "published" / merged_id).exists())
+            self.assertFalse((root / "client-public" / merged_id).exists())
+            # Physical member publications are byte-identical.
+            after = {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in sorted((root / "published").rglob("*"))
+                if path.is_file()
+            }
+            self.assertEqual(after, before)
+            with self.assertRaises(HTTPException):
+                api_delete_match_group(group_id)
+
+    def test_delete_blocked_while_maintenance_reservation_held(self) -> None:
+        from fastapi import HTTPException
+
+        from app.main import api_delete_match_group
+        from app.services.match_group_video import reserve_match_group_video_idle
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            with reserve_match_group_video_idle(group_id, operation="test-maintenance"):
+                with self.assertRaises(HTTPException) as failure:
+                    api_delete_match_group(group_id)
+            self.assertEqual(failure.exception.status_code, 409)
+            # Nothing was deleted by the blocked attempt.
+            self.assertTrue((root / "groups" / group_id).is_dir())
+            self.assertTrue((root / "published" / merged_id).is_dir())
+
+    def test_projection_build_failure_preserves_previous_complete_projection(self) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from app.services.merged_public_match import check_merged_projection
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            live_before = _snapshot_tree(root / "published" / merged_id)
+            mirror_before = _snapshot_tree(root / "client-public" / merged_id)
+            self.assertTrue(live_before)
+
+            failures = {
+                "heatmap render": "app.services.merged_public_match._write_player_heatmap_png",
+                "candidate validation": "app.services.merged_public_match._validate_projection_candidate",
+                "atomic commit": "app.services.json_publish_store._commit_publication_generation",
+                "mirror copy": "shutil.copytree",
+            }
+            for name, target in failures.items():
+                with mock_patch(target, side_effect=RuntimeError(f"injected {name}")):
+                    with self.assertRaises(Exception, msg=name):
+                        ensure_merged_published_match(group_id)
+                self.assertEqual(_snapshot_tree(root / "published" / merged_id), live_before, name)
+                self.assertEqual(_snapshot_tree(root / "client-public" / merged_id), mirror_before, name)
+            self.assertEqual(check_merged_projection(merged_id)["status"], "current")
+
+    def test_refresh_advances_pins_and_projection_coherently(self) -> None:
+        from app.services.merged_public_match import check_merged_projection, refresh_merged_match_to_latest
+        from app.services.match_groups import get_match_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+
+            # A rebuilt physical source changes its pinned generation.
+            _write_source(root, "published-two", "physical-two", duration=400)
+            response = refresh_merged_match_to_latest(group_id)
+            self.assertEqual(response["status"], "refreshed")
+            self.assertEqual(response["merged_published_match_id"], merged_id)
+
+            stored = store_get_published_match(merged_id)
+            self.assertEqual(stored["public_report"]["match"]["duration_sec"], 1000.0)
+            manifest = get_match_group(group_id)
+            provenance = stored["provenance"]
+            self.assertEqual(provenance["manifest_digest"], manifest["aggregate_semantic_digest"])
+            self.assertEqual(check_merged_projection(merged_id)["status"], "current")
+
+    def test_tampered_live_report_reads_as_stale_not_silent(self) -> None:
+        from app.services.merged_public_match import check_merged_projection
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            merged_id = ensure_merged_published_match(str(group["group_id"]))["merged_published_match_id"]
+            self.assertEqual(check_merged_projection(merged_id)["status"], "current")
+
+            live_report = root / "published" / merged_id / "public_report.json"
+            document = _read(live_report)
+            document["match"]["title"] = "Tampered title"
+            _write(live_report, document)
+            self.assertEqual(check_merged_projection(merged_id)["status"], "stale")
+
     def test_conflicting_player_team_fails_closed(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=600)
@@ -140,16 +359,27 @@ class MergedPublicMatchTests(unittest.TestCase):
 
     def test_swapped_local_labels_map_to_same_canonical_teams(self) -> None:
         with self._store() as root:
-            _write_source(root, "published-one", "physical-one", duration=600, labels=("A", "B"))
-            _write_source(root, "published-two", "physical-two", duration=300, labels=("B", "A"))
+            # Real local sign semantics: source 1 A=Corgi +0.8 / B=Verisk -0.2,
+            # source 2 A=Verisk +0.6 / B=Corgi -0.3.
+            _write_source(root, "published-one", "physical-one", duration=600, labels=("A", "B"),
+                          momentum_local_a=0.8, momentum_local_b=-0.2, momentum_dominant_local="A")
+            _write_source(root, "published-two", "physical-two", duration=300, labels=("B", "A"),
+                          momentum_local_a=0.6, momentum_local_b=-0.3, momentum_dominant_local="A")
             group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
             result = ensure_merged_published_match(str(group["group_id"]))
             report = result["report"]
             labels = {row["team_id"]: row["team_label"] for row in report["teams"]}
             self.assertEqual(labels, {"team-corgi": "A", "team-verisk": "B"})
-            # Momentum dominant team follows the stable team, not the local label.
-            for point in report["ball"]["attacking_momentum"]["timeline"]:
-                self.assertEqual(point["dominant_team_label"], "A")
+            # Canonical momentum signs follow canonical roles, not local ones.
+            first, second = report["ball"]["attacking_momentum"]["timeline"]
+            self.assertAlmostEqual(first["team_a_value"], 0.8, places=3)
+            self.assertAlmostEqual(first["team_b_value"], -0.2, places=3)
+            self.assertAlmostEqual(first["signed_score"], 0.6, places=3)
+            self.assertEqual(first["dominant_team_label"], "A")
+            self.assertAlmostEqual(second["team_a_value"], 0.3, places=3)
+            self.assertAlmostEqual(second["team_b_value"], -0.6, places=3)
+            self.assertAlmostEqual(second["signed_score"], -0.3, places=3)
+            self.assertEqual(second["dominant_team_label"], "B")
 
     def test_aggregate_report_still_generated_for_internal_provenance(self) -> None:
         with self._store() as root:
@@ -226,6 +456,10 @@ class MergedPublicMatchTests(unittest.TestCase):
         return StoreContext()
 
 
+_SHARED_CALIBRATION_POINTS = [[0.0, 0.0], [100.0, 0.0], [100.0, 200.0], [0.0, 200.0]]
+_FLIPPED_CALIBRATION_POINTS = [[100.0, 0.0], [0.0, 0.0], [0.0, 200.0], [100.0, 200.0]]
+
+
 def _write_source(
     root: Path,
     published_id: str,
@@ -236,14 +470,39 @@ def _write_source(
     team_distance: float = 1000,
     peak: float = 20,
     player_distance: float = 100,
+    movement_time: float | None = None,
+    detected_time: float | None = None,
     attempts: int = 20,
     completed: int = 16,
     controlled_corgi: float = 360,
     controlled_verisk: float = 240,
+    contested: float = 0,
+    free: float = 0,
+    unknown: float = 0,
+    momentum_local_a: float = 60.0,
+    momentum_local_b: float = -20.0,
+    momentum_dominant_local: str = "A",
+    calibration: list | None = _SHARED_CALIBRATION_POINTS,
+    heatmap_digest: str | None = "auto",
+    team_shape_eligible: int = 200,
+    team_shape_width: float = 20.0,
+    team_shape_cells: tuple[float, float] = (0.6, 0.4),
 ) -> None:
+    """Write one adversarial physical publication fixture.
+
+    Deliberately distinguishable values: movement_time != detected_time,
+    contested/free/unknown != 0, local A/B momentum signs following LOCAL
+    semantics, and explicit calibration identity for spatial gating.
+    """
+
     directory = root / "published" / published_id
     directory.mkdir(parents=True, exist_ok=True)
     corgi_label, verisk_label = labels
+    movement = movement_time if movement_time is not None else duration
+    detected = detected_time if detected_time is not None else duration
+    reviewed_digest = f"reviewed-{source_match_id}"
+    total_frames = controlled_corgi + controlled_verisk + contested + free + unknown
+    stable_of_local = {corgi_label: "team-corgi", verisk_label: "team-verisk"}
     public = {
         "schema_version": PUBLIC_MATCH_REPORT_SCHEMA_VERSION,
         "report_type": PUBLIC_MATCH_REPORT_TYPE,
@@ -304,8 +563,8 @@ def _write_source(
                 "team_id": "team-corgi",
                 "team_label": corgi_label,
                 "playing_time_sec": duration,
-                "detected_time_sec": duration,
-                "certain_playing_time_sec": duration,
+                "detected_time_sec": detected,
+                "certain_playing_time_sec": detected,
                 "possible_playing_time_sec": 0,
                 "ambiguous_playing_time_sec": 0,
                 "continuity_gap_time_sec": 0,
@@ -323,7 +582,7 @@ def _write_source(
                     "semantics": "reviewed_confirmed_detected_in_play",
                     "rate_window_sec": 300.0,
                     "minimum_rate_sample_sec": 120.0,
-                    "detected_time_sec": duration,
+                    "detected_time_sec": detected,
                     "distance_per_5min_m": 50.0,
                     "high_intensity_distance_per_5min_m": 5.0,
                     "sprints_per_5min": 1.0,
@@ -335,7 +594,7 @@ def _write_source(
                             "end_time_sec": min(300, duration),
                             "duration_sec": min(300, duration),
                             "display_label": "0–5",
-                            "detected_time_sec": min(300, duration),
+                            "detected_time_sec": min(300, detected),
                             "total_distance_m": 50,
                             "high_intensity_distance_m": 5,
                             "sprint_count": 1,
@@ -372,7 +631,7 @@ def _write_source(
         "source": {
             "source_match_id": source_match_id,
             "published_id": published_id,
-            "reviewed_identity_digest": f"reviewed-{source_match_id}",
+            "reviewed_identity_digest": reviewed_digest,
             "public_report_semantic_digest": canonical_json_sha256(public),
         },
         "timing": {"analyzed_duration_sec": duration},
@@ -386,8 +645,8 @@ def _write_source(
                 "team_id": "team-corgi",
                 "movement": {
                     "total_distance_m": player_distance,
-                    "movement_time_sec": duration,
-                    "detected_time_sec": duration,
+                    "movement_time_sec": movement,
+                    "detected_time_sec": detected,
                     "high_intensity_distance_m": 10,
                     "sprint_count": 2 if duration >= 600 else 1,
                     "peak_speed_kmh": peak,
@@ -396,24 +655,49 @@ def _write_source(
         ],
         "identity_coverage": {"status": "ready", "coverage_unit": "observations", "confirmed_observations": 15, "reliable_observations": 20, "unresolved_observations": 3, "conflicted_observations": 2},
         "ball": {
-            "possession": {"status": "ready", "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "known_frames": controlled_corgi + controlled_verisk, "free_frames": 0, "unknown_frames": 0},
-            "passes": {"status": "ready", "attempts": attempts, "completed": completed, "failed": attempts - completed, "restart_attempts": 1, "accepted": completed},
+            "possession": {"status": "ready", "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "known_frames": controlled_corgi + controlled_verisk, "contested_frames": contested, "free_frames": free, "unknown_frames": unknown, "processed_frames": total_frames},
+            "passes": {"status": "ready", "attempts": attempts, "completed": completed, "failed": attempts - completed, "restart_attempts": 1, "accepted": completed, "attempts_by_team_id": {"team-corgi": attempts, "team-verisk": 0}, "completed_by_team_id": {"team-corgi": completed, "team-verisk": 0}, "failed_by_team_id": {"team-corgi": attempts - completed, "team-verisk": 0}, "restart_attempts_by_team_id": {"team-corgi": 1, "team-verisk": 0}, "accepted_by_team_id": {"team-corgi": completed, "team-verisk": 0}},
         },
         "timelines": {
-            "possession": {"status": "ready", "windows": [{"start_time_sec": 0, "end_time_sec": duration, "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "free_frames": 0, "unknown_frames": 0}]},
-            "attacking_momentum": {"status": "completed", "product_readiness": "experimental", "signal_quality": "medium", "quality": "medium", "points": [{"start_time_sec": 0, "end_time_sec": duration, "team_values_by_team_id": {"team-corgi": 60, "team-verisk": -20}, "dominant_team_id": "team-corgi", "confidence": 0.9, "intensity": 0.8}]},
+            "possession": {"status": "ready", "windows": [{"start_time_sec": 0, "end_time_sec": duration, "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "contested_frames": contested, "free_frames": free, "unknown_frames": unknown, "frames": total_frames}]},
+            "attacking_momentum": {"status": "completed", "product_readiness": "experimental", "signal_quality": "medium", "quality": "medium", "points": [{"start_time_sec": 0, "end_time_sec": duration, "team_values_by_team_id": {stable_of_local["A"]: momentum_local_a, stable_of_local["B"]: momentum_local_b}, "dominant_team_id": stable_of_local[momentum_dominant_local], "confidence": 0.9, "intensity": 0.8}]},
         },
         "spatial": {"orientation": "unproven", "heatmaps": {"status": "not_available"}, "team_shape": {"status": "not_available"}, "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0}},
         "metric_readiness": {"team_movement": {"status": "ready"}, "player_movement": {"status": "ready"}, "possession": {"status": "ready"}, "passes": {"status": "ready"}},
     }
     aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
+    pitch_config = (
+        {"image_points": [list(point) for point in calibration], "width_m": 30.0, "length_m": 50.0, "calibration_frame_time_sec": 1.0}
+        if calibration is not None
+        else None
+    )
+    match_phase_config = {"periods": [{"period_id": "full", "start_time_sec": 0, "end_time_sec": duration, "teams": {"A": {"attack_direction": "towards_y_max"}, "B": {"attack_direction": "towards_y_min"}}}]}
+    team_config = {"teams": [{"team_label": "A", "team_id": "team-corgi", "team_name": "Corgi"}, {"team_label": "B", "team_id": "team-verisk", "team_name": "Verisk"}]}
+    heatmap_digest_value = reviewed_digest if heatmap_digest == "auto" else heatmap_digest
+    heatmaps_doc = {
+        "schema_version": "1.0.0",
+        "source_snapshot_digest": heatmap_digest_value,
+        "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0},
+        "heatmaps": [{"player_id": "player-one", "positions_m": [[5.0 + index, 10.0 + index] for index in range(4)]}],
+    }
+    team_shape_doc = _team_shape_fixture(duration, eligible=team_shape_eligible, width=team_shape_width, cells=team_shape_cells) if team_shape_eligible else None
     package = {
         "match": {"id": source_match_id, "title": source_match_id},
-        "reviewed_player_heatmaps": {
-            "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0},
-            "heatmaps": [{"player_id": "player-one", "positions_m": [[5.0 + index, 10.0 + index] for index in range(4)]}],
-        },
+        "pitch_config": pitch_config,
+        "match_phase_config": match_phase_config,
+        "team_config": team_config,
+        "reviewed_player_heatmaps": heatmaps_doc,
+        "team_shape": team_shape_doc,
     }
+    if team_shape_doc is not None:
+        team_shape_doc["generated_from"] = [
+            {"artifact": filename, "sha256": canonical_json_sha256(payload)}
+            for filename, payload in (
+                ("pitch_config.json", pitch_config),
+                ("match_phase_config.json", match_phase_config),
+                ("team_config.json", team_config),
+            )
+        ]
     _write(directory / "public_report.json", public)
     _write(directory / "aggregate_inputs.json", aggregate)
     _write(directory / "package.json", package)
@@ -430,6 +714,35 @@ def _write_source(
     })
 
 
+def _team_shape_fixture(duration: float, *, eligible: int, width: float, cells: tuple[float, float] = (0.6, 0.4)) -> dict:
+    grid_cells = [{"column": 0, "row": 0, "value": cells[0]}, {"column": 1, "row": 0, "value": cells[1]}]
+    teams = []
+    for label, team_id, name in (("A", "team-corgi", "Corgi"), ("B", "team-verisk", "Verisk")):
+        teams.append({
+            "team_label": label,
+            "team_id": team_id,
+            "team_name": name,
+            "readiness": "ready",
+            "summary": {"average_width_m": width, "average_depth_m": 12.0, "average_compactness_m": 4.0, "average_block_height_percent": 50.0},
+            "average_shape": {"grid": {"columns": 6, "rows": 10}, "cells": grid_cells},
+            "timeline": [
+                {"minute": 1, "label": "00:00", "width_m": width, "depth_m": 12.0, "compactness_m": 4.0, "block_height_percent": 50.0},
+                {"minute": 2, "label": "01:00", "width_m": width, "depth_m": 12.0, "compactness_m": 4.0, "block_height_percent": 50.0},
+            ],
+            "diagnostics": {"eligible_frames": eligible, "candidate_frames": eligible, "attack_direction_trusted": True},
+        })
+    return {
+        "schema_version": "team-shape-v1",
+        "algorithm_version": "team_shape_spatial_v1_1",
+        "available": True,
+        "readiness": "ready",
+        "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0},
+        "parameters": {"timeline_bin_sec": 60.0, "density_columns": 6, "density_rows": 10},
+        "teams": teams,
+        "takeaways": [],
+    }
+
+
 def _force_player_team(root: Path, published_id: str, player_id: str, team_id: str) -> None:
     directory = root / "published" / published_id
     aggregate = _read(directory / "aggregate_inputs.json")
@@ -444,6 +757,16 @@ def _force_player_team(root: Path, published_id: str, player_id: str, team_id: s
 
 def _metadata() -> dict[str, str]:
     return {"title": "Logical match", "match_date": "2026-09-01", "season": "2026", "venue": "Orlik", "format": "7v7"}
+
+
+def _snapshot_tree(directory: Path) -> dict[str, bytes]:
+    if not directory.is_dir():
+        return {}
+    return {
+        str(path.relative_to(directory)): path.read_bytes()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
 
 
 def _read(path: Path) -> dict:
