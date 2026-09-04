@@ -1,0 +1,51 @@
+{
+  "schema_version": "combined-match-sources-v1",
+  "generated_at": "2026-09-01T13:34:49.467918+00:00",
+  "sources": [
+    {
+      "match_id": "9c7485e4",
+      "title": "1 polowa Corgi Verisk 20-08 nowy workflow",
+      "offset_sec": 0.0,
+      "offset_clock": "0:00",
+      "duration_sec": 1156.322,
+      "duration_clock": "19:16",
+      "logical_end_sec": 1156.322,
+      "logical_end_clock": "19:16",
+      "fps": 29.97,
+      "local_team_to_stable_team": {
+        "A": "team-corgi-1fc405",
+        "B": "team-verisk"
+      }
+    },
+    {
+      "match_id": "6d8fc20c",
+      "title": "2 polowa Corgi Verisk 29-08 nowy workflow",
+      "offset_sec": 1156.322,
+      "offset_clock": "19:16",
+      "duration_sec": 610.376,
+      "duration_clock": "10:10",
+      "logical_end_sec": 1766.698,
+      "logical_end_clock": "29:27",
+      "fps": 29.97,
+      "local_team_to_stable_team": {
+        "A": "team-corgi-1fc405",
+        "B": "team-verisk"
+      }
+    },
+    {
+      "match_id": "5e62625e",
+      "title": "2 polowa Corgi Verisk 29-08 nowy workflow koncowka 2 polowy",
+      "offset_sec": 1766.698,
+      "offset_clock": "29:27",
+      "duration_sec": 356.323,
+      "duration_clock": "5:56",
+      "logical_end_sec": 2123.021,
+      "logical_end_clock": "35:23",
+      "fps": 29.967,
+      "local_team_to_stable_team": {
+        "A": "team-corgi-1fc405",
+        "B": "team-verisk"
+      }
+    }
+  ]
+}

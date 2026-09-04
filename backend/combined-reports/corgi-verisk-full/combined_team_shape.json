@@ -1,0 +1,653 @@
+{
+  "schema_version": "combined-team-shape-v1",
+  "source": "trusted_detected_tracklet_positions_rebased",
+  "pitch_dimensions_m": {
+    "width_m": 30.0,
+    "length_m": 47.4
+  },
+  "teams": [
+    {
+      "team_id": "team-corgi-1fc405",
+      "team_label": "A",
+      "team_name": "Corgi",
+      "summary": {
+        "samples": 49689,
+        "average_width_m": 14.66,
+        "average_depth_m": 23.99,
+        "average_compactness_m": 8.54,
+        "average_block_height_percent": 36.72
+      },
+      "average_shape": {
+        "grid": {
+          "columns": 6,
+          "rows": 10
+        },
+        "cells": [
+          {
+            "column": 0,
+            "row": 0,
+            "value": 0.003326
+          },
+          {
+            "column": 0,
+            "row": 1,
+            "value": 0.005698
+          },
+          {
+            "column": 0,
+            "row": 2,
+            "value": 0.007038
+          },
+          {
+            "column": 0,
+            "row": 3,
+            "value": 0.006115
+          },
+          {
+            "column": 0,
+            "row": 4,
+            "value": 0.007446
+          },
+          {
+            "column": 0,
+            "row": 5,
+            "value": 0.004989
+          },
+          {
+            "column": 0,
+            "row": 6,
+            "value": 0.002457
+          },
+          {
+            "column": 0,
+            "row": 7,
+            "value": 0.000962
+          },
+          {
+            "column": 0,
+            "row": 8,
+            "value": 0.000586
+          },
+          {
+            "column": 0,
+            "row": 9,
+            "value": 0.00189
+          },
+          {
+            "column": 1,
+            "row": 0,
+            "value": 0.008812
+          },
+          {
+            "column": 1,
+            "row": 1,
+            "value": 0.017285
+          },
+          {
+            "column": 1,
+            "row": 2,
+            "value": 0.02132
+          },
+          {
+            "column": 1,
+            "row": 3,
+            "value": 0.02683
+          },
+          {
+            "column": 1,
+            "row": 4,
+            "value": 0.031568
+          },
+          {
+            "column": 1,
+            "row": 5,
+            "value": 0.015757
+          },
+          {
+            "column": 1,
+            "row": 6,
+            "value": 0.010307
+          },
+          {
+            "column": 1,
+            "row": 7,
+            "value": 0.00647
+          },
+          {
+            "column": 1,
+            "row": 8,
+            "value": 0.004545
+          },
+          {
+            "column": 1,
+            "row": 9,
+            "value": 0.001222
+          },
+          {
+            "column": 2,
+            "row": 0,
+            "value": 0.053161
+          },
+          {
+            "column": 2,
+            "row": 1,
+            "value": 0.059083
+          },
+          {
+            "column": 2,
+            "row": 2,
+            "value": 0.045292
+          },
+          {
+            "column": 2,
+            "row": 3,
+            "value": 0.040995
+          },
+          {
+            "column": 2,
+            "row": 4,
+            "value": 0.034093
+          },
+          {
+            "column": 2,
+            "row": 5,
+            "value": 0.034024
+          },
+          {
+            "column": 2,
+            "row": 6,
+            "value": 0.022025
+          },
+          {
+            "column": 2,
+            "row": 7,
+            "value": 0.018277
+          },
+          {
+            "column": 2,
+            "row": 8,
+            "value": 0.012296
+          },
+          {
+            "column": 2,
+            "row": 9,
+            "value": 0.003009
+          },
+          {
+            "column": 3,
+            "row": 0,
+            "value": 0.056405
+          },
+          {
+            "column": 3,
+            "row": 1,
+            "value": 0.056123
+          },
+          {
+            "column": 3,
+            "row": 2,
+            "value": 0.046062
+          },
+          {
+            "column": 3,
+            "row": 3,
+            "value": 0.042832
+          },
+          {
+            "column": 3,
+            "row": 4,
+            "value": 0.035785
+          },
+          {
+            "column": 3,
+            "row": 5,
+            "value": 0.026929
+          },
+          {
+            "column": 3,
+            "row": 6,
+            "value": 0.018363
+          },
+          {
+            "column": 3,
+            "row": 7,
+            "value": 0.013767
+          },
+          {
+            "column": 3,
+            "row": 8,
+            "value": 0.009372
+          },
+          {
+            "column": 3,
+            "row": 9,
+            "value": 0.002234
+          },
+          {
+            "column": 4,
+            "row": 0,
+            "value": 0.003923
+          },
+          {
+            "column": 4,
+            "row": 1,
+            "value": 0.01933
+          },
+          {
+            "column": 4,
+            "row": 2,
+            "value": 0.02216
+          },
+          {
+            "column": 4,
+            "row": 3,
+            "value": 0.025724
+          },
+          {
+            "column": 4,
+            "row": 4,
+            "value": 0.029009
+          },
+          {
+            "column": 4,
+            "row": 5,
+            "value": 0.024344
+          },
+          {
+            "column": 4,
+            "row": 6,
+            "value": 0.01242
+          },
+          {
+            "column": 4,
+            "row": 7,
+            "value": 0.008254
+          },
+          {
+            "column": 4,
+            "row": 8,
+            "value": 0.003718
+          },
+          {
+            "column": 4,
+            "row": 9,
+            "value": 0.000997
+          },
+          {
+            "column": 5,
+            "row": 0,
+            "value": 0.000196
+          },
+          {
+            "column": 5,
+            "row": 1,
+            "value": 0.002059
+          },
+          {
+            "column": 5,
+            "row": 2,
+            "value": 0.003328
+          },
+          {
+            "column": 5,
+            "row": 3,
+            "value": 0.007479
+          },
+          {
+            "column": 5,
+            "row": 4,
+            "value": 0.005146
+          },
+          {
+            "column": 5,
+            "row": 5,
+            "value": 0.005054
+          },
+          {
+            "column": 5,
+            "row": 6,
+            "value": 0.003286
+          },
+          {
+            "column": 5,
+            "row": 7,
+            "value": 0.005438
+          },
+          {
+            "column": 5,
+            "row": 8,
+            "value": 0.002365
+          },
+          {
+            "column": 5,
+            "row": 9,
+            "value": 0.001017
+          }
+        ],
+        "samples": 49689
+      }
+    },
+    {
+      "team_id": "team-verisk",
+      "team_label": "B",
+      "team_name": "Verisk",
+      "summary": {
+        "samples": 40522,
+        "average_width_m": 15.36,
+        "average_depth_m": 16.9,
+        "average_compactness_m": 7.77,
+        "average_block_height_percent": 50.21
+      },
+      "average_shape": {
+        "grid": {
+          "columns": 6,
+          "rows": 10
+        },
+        "cells": [
+          {
+            "column": 0,
+            "row": 0,
+            "value": 0.002489
+          },
+          {
+            "column": 0,
+            "row": 1,
+            "value": 0.002839
+          },
+          {
+            "column": 0,
+            "row": 2,
+            "value": 0.007135
+          },
+          {
+            "column": 0,
+            "row": 3,
+            "value": 0.010484
+          },
+          {
+            "column": 0,
+            "row": 4,
+            "value": 0.007365
+          },
+          {
+            "column": 0,
+            "row": 5,
+            "value": 0.010121
+          },
+          {
+            "column": 0,
+            "row": 6,
+            "value": 0.006976
+          },
+          {
+            "column": 0,
+            "row": 7,
+            "value": 0.006833
+          },
+          {
+            "column": 0,
+            "row": 8,
+            "value": 0.00185
+          },
+          {
+            "column": 0,
+            "row": 9,
+            "value": 0.00184
+          },
+          {
+            "column": 1,
+            "row": 0,
+            "value": 0.004621
+          },
+          {
+            "column": 1,
+            "row": 1,
+            "value": 0.007878
+          },
+          {
+            "column": 1,
+            "row": 2,
+            "value": 0.018673
+          },
+          {
+            "column": 1,
+            "row": 3,
+            "value": 0.021531
+          },
+          {
+            "column": 1,
+            "row": 4,
+            "value": 0.027728
+          },
+          {
+            "column": 1,
+            "row": 5,
+            "value": 0.028706
+          },
+          {
+            "column": 1,
+            "row": 6,
+            "value": 0.025395
+          },
+          {
+            "column": 1,
+            "row": 7,
+            "value": 0.015328
+          },
+          {
+            "column": 1,
+            "row": 8,
+            "value": 0.013439
+          },
+          {
+            "column": 1,
+            "row": 9,
+            "value": 0.004745
+          },
+          {
+            "column": 2,
+            "row": 0,
+            "value": 0.009377
+          },
+          {
+            "column": 2,
+            "row": 1,
+            "value": 0.020397
+          },
+          {
+            "column": 2,
+            "row": 2,
+            "value": 0.024467
+          },
+          {
+            "column": 2,
+            "row": 3,
+            "value": 0.031411
+          },
+          {
+            "column": 2,
+            "row": 4,
+            "value": 0.036158
+          },
+          {
+            "column": 2,
+            "row": 5,
+            "value": 0.043243
+          },
+          {
+            "column": 2,
+            "row": 6,
+            "value": 0.035585
+          },
+          {
+            "column": 2,
+            "row": 7,
+            "value": 0.025307
+          },
+          {
+            "column": 2,
+            "row": 8,
+            "value": 0.025279
+          },
+          {
+            "column": 2,
+            "row": 9,
+            "value": 0.002569
+          },
+          {
+            "column": 3,
+            "row": 0,
+            "value": 0.010592
+          },
+          {
+            "column": 3,
+            "row": 1,
+            "value": 0.029782
+          },
+          {
+            "column": 3,
+            "row": 2,
+            "value": 0.02604
+          },
+          {
+            "column": 3,
+            "row": 3,
+            "value": 0.031062
+          },
+          {
+            "column": 3,
+            "row": 4,
+            "value": 0.038312
+          },
+          {
+            "column": 3,
+            "row": 5,
+            "value": 0.03562
+          },
+          {
+            "column": 3,
+            "row": 6,
+            "value": 0.033095
+          },
+          {
+            "column": 3,
+            "row": 7,
+            "value": 0.02769
+          },
+          {
+            "column": 3,
+            "row": 8,
+            "value": 0.017399
+          },
+          {
+            "column": 3,
+            "row": 9,
+            "value": 0.002429
+          },
+          {
+            "column": 4,
+            "row": 0,
+            "value": 0.005692
+          },
+          {
+            "column": 4,
+            "row": 1,
+            "value": 0.010636
+          },
+          {
+            "column": 4,
+            "row": 2,
+            "value": 0.014064
+          },
+          {
+            "column": 4,
+            "row": 3,
+            "value": 0.024229
+          },
+          {
+            "column": 4,
+            "row": 4,
+            "value": 0.034957
+          },
+          {
+            "column": 4,
+            "row": 5,
+            "value": 0.028574
+          },
+          {
+            "column": 4,
+            "row": 6,
+            "value": 0.03141
+          },
+          {
+            "column": 4,
+            "row": 7,
+            "value": 0.025881
+          },
+          {
+            "column": 4,
+            "row": 8,
+            "value": 0.012815
+          },
+          {
+            "column": 4,
+            "row": 9,
+            "value": 0.004372
+          },
+          {
+            "column": 5,
+            "row": 0,
+            "value": 0.001072
+          },
+          {
+            "column": 5,
+            "row": 1,
+            "value": 0.003033
+          },
+          {
+            "column": 5,
+            "row": 2,
+            "value": 0.006495
+          },
+          {
+            "column": 5,
+            "row": 3,
+            "value": 0.007624
+          },
+          {
+            "column": 5,
+            "row": 4,
+            "value": 0.011027
+          },
+          {
+            "column": 5,
+            "row": 5,
+            "value": 0.012201
+          },
+          {
+            "column": 5,
+            "row": 6,
+            "value": 0.012385
+          },
+          {
+            "column": 5,
+            "row": 7,
+            "value": 0.010585
+          },
+          {
+            "column": 5,
+            "row": 8,
+            "value": 0.007912
+          },
+          {
+            "column": 5,
+            "row": 9,
+            "value": 0.003248
+          }
+        ],
+        "samples": 40522
+      }
+    }
+  ],
+  "warnings": []
+}
