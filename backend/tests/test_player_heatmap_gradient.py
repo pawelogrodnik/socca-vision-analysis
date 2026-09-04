@@ -8,9 +8,10 @@ import numpy as np
 
 from app.services.stabilization import (
     HEATMAP_BLUR_SIGMA,
+    HEATMAP_DENSITY_BASELINE_PERCENTILE,
     HEATMAP_DENSITY_FLOOR,
     HEATMAP_DENSITY_GAMMA,
-    HEATMAP_DENSITY_PERCENTILE,
+    HEATMAP_DENSITY_SATURATION_RATIO,
     HEATMAP_METHOD,
     HEATMAP_PALETTE_STOPS,
     _blur_heatmap_density,
@@ -58,7 +59,7 @@ def _pitch_to_pixel(pitch_m: tuple[float, float]) -> tuple[int, int]:
     return y, x
 
 
-def _representative_blurred(*, hotspot_value: float = 150.0) -> np.ndarray:
+def _representative_blurred(*, hotspot_value: float = 400.0) -> np.ndarray:
     """Synthetic blurred-density-like distribution with halo, corridor, zone and hotspot."""
     values = (
         [2.0] * 4000
@@ -107,26 +108,39 @@ class HeatmapNormalizationTests(unittest.TestCase):
 
         np.testing.assert_array_equal(first, second)
 
-    def test_normalization_uses_percentile_reference_not_max(self) -> None:
+    def test_normalization_uses_baseline_reference_not_max(self) -> None:
         blurred = _representative_blurred()
         positive = blurred[blurred > 0]
-        expected_reference = float(np.percentile(positive, HEATMAP_DENSITY_PERCENTILE))
+        expected_baseline = float(np.percentile(positive, HEATMAP_DENSITY_BASELINE_PERCENTILE))
 
         normalized = _normalize_heatmap_density(blurred)
 
-        self.assertLess(expected_reference, float(blurred.max()))
-        # Moderate density must map to the percentile-based level, not max-based.
-        moderate = (np.float32(8.0) / expected_reference) ** np.float32(HEATMAP_DENSITY_GAMMA)
+        self.assertLess(expected_baseline, float(blurred.max()))
+        self.assertEqual(HEATMAP_DENSITY_BASELINE_PERCENTILE, 80.0)
+        # Moderate density must map through baseline + log headroom, not max-based scaling.
+        compressed = float(np.log1p(np.float32(8.0) / expected_baseline) / np.log1p(HEATMAP_DENSITY_SATURATION_RATIO))
+        moderate = np.clip(compressed, 0.0, 1.0) ** np.float32(HEATMAP_DENSITY_GAMMA)
         self.assertAlmostEqual(float(normalized[4000]), float(moderate), places=5)
 
+    def test_baseline_density_does_not_map_to_red(self) -> None:
+        # Density exactly at the baseline is ordinary, not exceptional.
+        baseline_only = np.array([8.0] * 100 + [400.0], dtype=np.float32)
+        normalized = _normalize_heatmap_density(baseline_only)
+
+        self.assertLess(float(normalized[0]), 0.30)
+        pixel = tuple(int(v) for v in np.asarray(_colorize_heatmap_density(
+            np.array([[normalized[0]]], dtype=np.float32)
+        ))[0, 0])
+        self.assertGreater(pixel[1], 100)
+
     def test_outlier_hotspot_does_not_rescale_moderate_density(self) -> None:
-        base = _normalize_heatmap_density(_representative_blurred(hotspot_value=150.0))
+        base = _normalize_heatmap_density(_representative_blurred(hotspot_value=400.0))
         spiked = _normalize_heatmap_density(_representative_blurred(hotspot_value=15000.0))
 
         # Only the hotspot pixels themselves may differ; everything else is identical.
         np.testing.assert_array_equal(base[:-10], spiked[:-10])
         # Moderate density is not washed out to ~0 as pure max-normalization would do.
-        self.assertGreater(float(base[4000]), 0.15)
+        self.assertGreater(float(base[4000]), 0.05)
 
     def test_density_mapping_is_monotonic(self) -> None:
         blurred = np.array([0.0, 2.0, 8.0, 20.0, 45.0, 150.0], dtype=np.float32)
@@ -267,6 +281,47 @@ class HeatmapFloatBlurRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(
             blurred_corridor[100], blurred_corridor[10000], delta=1e-6
         )
+
+    def test_extreme_hotspot_does_not_erase_corridor_normalization(self) -> None:
+        corridor_y, corridor_x = _pitch_to_pixel(_CORRIDOR_PITCH_M)
+        hotspot_y, hotspot_x = _pitch_to_pixel(_HOTSPOT_PITCH_M)
+        corridor_norm = {}
+        for hotspot_samples in (100, 10000):
+            heat = _build_heatmap_density(
+                _hotspot_corridor_rows(hotspot_samples), **_DENSITY_KWARGS
+            )
+            blurred = _blur_heatmap_density(np.asarray(heat, dtype=np.float32))
+            normalized = _normalize_heatmap_density(blurred)
+            corridor_norm[hotspot_samples] = float(normalized[corridor_y, corridor_x])
+            # The hotspot itself still saturates in both cases.
+            self.assertGreater(float(normalized[hotspot_y, hotspot_x]), 0.9)
+
+        # Ordinary corridor stays materially visible in both cases ...
+        self.assertGreater(corridor_norm[100], 0.05)
+        self.assertGreater(corridor_norm[10000], 0.05)
+        # ... and the extreme hotspot preserves a meaningful fraction of it.
+        self.assertGreaterEqual(corridor_norm[10000], 0.4 * corridor_norm[100])
+
+    def test_corridor_color_survives_extreme_hotspot(self) -> None:
+        from PIL import Image
+
+        corridor_y, corridor_x = _pitch_to_pixel(_CORRIDOR_PITCH_M)
+        hotspot_y, hotspot_x = _pitch_to_pixel(_HOTSPOT_PITCH_M)
+        for hotspot_samples in (100, 10000):
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / f"heatmap_{hotspot_samples}.png"
+                _write_player_heatmap_png(
+                    output, _hotspot_corridor_rows(hotspot_samples), **_DENSITY_KWARGS
+                )
+                pixels = np.asarray(Image.open(output), dtype=np.int32)
+                corridor_pixel = tuple(int(v) for v in pixels[corridor_y, corridor_x])
+                hotspot_pixel = tuple(int(v) for v in pixels[hotspot_y, hotspot_x])
+                # Corridor remains visible (not pitch green) in both versions ...
+                self.assertNotEqual(corridor_pixel, PITCH_GREEN)
+                self.assertGreater(corridor_pixel[1], 100)
+                # ... while the hotspot itself reaches the red range.
+                self.assertGreaterEqual(hotspot_pixel[0], 150)
+                self.assertLess(hotspot_pixel[1], 100)
 
     def test_corridor_visible_for_moderate_hotspot_end_to_end(self) -> None:
         from PIL import Image

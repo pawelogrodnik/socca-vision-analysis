@@ -2445,7 +2445,13 @@ def _player_heatmap_rows(player: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-HEATMAP_DENSITY_PERCENTILE = 95.0
+HEATMAP_DENSITY_BASELINE_PERCENTILE = 80.0
+# Density ~SATURATION_RATIO x above the baseline reaches full scale.
+# Logarithmic headroom: typical density maps to yellow/amber, strong
+# hotspots to red, extreme hotspots saturate to deep red without globally
+# crushing ordinary movement (a single linear reference cannot span the
+# ~60x corridor-to-hotspot dynamic range).
+HEATMAP_DENSITY_SATURATION_RATIO = 30.0
 HEATMAP_DENSITY_GAMMA = 1.4
 HEATMAP_DENSITY_EPSILON = 1e-6
 # Sigma for float Gaussian smoothing, chosen to preserve the visual footprint
@@ -2455,7 +2461,7 @@ HEATMAP_DENSITY_EPSILON = 1e-6
 HEATMAP_BLUR_SIGMA = 12.0
 # Normalized densities below this floor are quadratically suppressed so the
 # low-density Gaussian blur halo stays visually close to pitch green.
-HEATMAP_DENSITY_FLOOR = 0.06
+HEATMAP_DENSITY_FLOOR = 0.04
 HEATMAP_METHOD = "pitch_meter_gaussian_heatmap_v2"
 # Density (0..1) -> RGB stops. Very low density stays close to pitch green so
 # Gaussian blur halo does not paint the whole pitch yellow. Red is reserved
@@ -2474,14 +2480,17 @@ HEATMAP_PALETTE_STOPS: tuple[tuple[float, tuple[int, int, int]], ...] = (
 def _normalize_heatmap_density(
     blurred: Any,
     *,
-    percentile: float = HEATMAP_DENSITY_PERCENTILE,
+    percentile: float = HEATMAP_DENSITY_BASELINE_PERCENTILE,
+    saturation_ratio: float = HEATMAP_DENSITY_SATURATION_RATIO,
     gamma: float = HEATMAP_DENSITY_GAMMA,
 ) -> Any:
-    """Map blurred density to 0..1 with robust percentile scaling.
+    """Map blurred density to 0..1 with baseline plus logarithmic hotspot headroom.
 
-    The reference level is the given percentile of positive density values,
-    so a single extreme hotspot cannot define the whole scale. A gamma
-    transform then keeps medium densities visually away from red.
+    The reference level is a low baseline percentile of positive density values,
+    so even an extreme hotspot barely moves it. Density above the baseline is
+    compressed logarithmically: ~baseline maps low, ~30x baseline saturates to
+    full scale. A gamma transform then keeps medium densities visually away
+    from red, and sub-floor values are suppressed toward pitch green.
     Deterministic: no randomness, no per-player tuning.
     """
     import numpy as np
@@ -2490,8 +2499,10 @@ def _normalize_heatmap_density(
     finite_positive = blurred_float[np.isfinite(blurred_float) & (blurred_float > 0)]
     if finite_positive.size == 0:
         return np.zeros_like(blurred_float, dtype=np.float32)
-    reference = float(np.percentile(finite_positive, percentile))
-    normalized = np.clip(blurred_float / max(reference, HEATMAP_DENSITY_EPSILON), 0.0, 1.0)
+    baseline = float(np.percentile(finite_positive, percentile))
+    ratio = blurred_float / max(baseline, HEATMAP_DENSITY_EPSILON)
+    compressed = np.log1p(ratio) / max(np.log1p(float(saturation_ratio)), HEATMAP_DENSITY_EPSILON)
+    normalized = np.clip(compressed, 0.0, 1.0)
     if gamma != 1.0:
         normalized = np.power(normalized, gamma, dtype=np.float32)
     floor = np.float32(HEATMAP_DENSITY_FLOOR)
