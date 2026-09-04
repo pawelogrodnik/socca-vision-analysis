@@ -918,6 +918,13 @@ export async function deletePublishedMatch(matchId: string): Promise<{ status: s
   return request<{ status: string; match: PublishedMatch }>(`/api/published/matches/${matchId}`, { method: 'DELETE' });
 }
 
+export async function rebuildPublishedMatch(publishedMatchId: string): Promise<PublishedMatchDetail> {
+  return request<PublishedMatchDetail>(
+    `/api/published/matches/${encodeURIComponent(publishedMatchId)}/rebuild`,
+    { method: 'POST' },
+  );
+}
+
 export async function listEligibleMatchGroupSources(): Promise<MatchGroupSource[]> {
   return request<MatchGroupSource[]>('/api/published/match-groups/eligible-sources');
 }

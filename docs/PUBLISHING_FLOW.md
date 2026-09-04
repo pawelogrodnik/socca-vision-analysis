@@ -164,4 +164,21 @@ GET    /api/published/matches/{published_match_id}
 DELETE /api/published/matches/{published_match_id}
 ```
 
+Rebuild an existing publication from its original local match artifacts
+(same operator action as „Zaktualizuj opublikowany raport”, exposed on the
+published report page as „Przebuduj publikację”):
+
+```text
+POST /api/published/matches/{published_match_id}/rebuild
+```
+
+The server resolves the authoritative `source_match_id` from the stored
+publication, rebuilds the package with the normal publication flow
+(`build_match_package` + eligibility validation + atomic replace import),
+and verifies before replacement that the rebuilt package still identifies
+the same physical source. The stable `published-*` identity is preserved;
+any mismatch fails closed without touching the stored publication. Logical
+matches are never refreshed here — they observe the new snapshot through
+the explicit #94 refresh flow.
+
 Deletion is intentionally hard delete for now because this panel is meant for correcting duplicate imports and bad stats snapshots during MVP development. A later production version can add soft delete/audit logs.

@@ -3784,6 +3784,56 @@ def api_get_published_match(published_match_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Published match not found") from exc
 
 
+@app.post("/api/published/matches/{published_match_id}/rebuild")
+def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
+    """Rebuild one existing publication from its original local match artifacts.
+
+    This is the published-page equivalent of republishing from the local
+    report ("Zaktualizuj opublikowany raport"). It preserves the stable
+    published identity and fails closed on any source identity mismatch
+    without touching the stored publication. Logical matches are never
+    refreshed here; they observe the new snapshot through the #94 flow.
+    """
+    try:
+        existing = get_published_match(published_match_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Published match not found") from exc
+    source_match_id = str(existing.get("source_match_id") or "")
+    if not source_match_id or f"published-{source_match_id}" != published_match_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Published match source identity is not trustworthy; rebuild refused.",
+        )
+    try:
+        path = match_dir(source_match_id)
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Local source match {source_match_id} not found; publication left unchanged.",
+        ) from exc
+    _assert_publish_workflow(path)
+    try:
+        package = build_match_package(path)
+        ensure_package_publishable(package)
+        package_source_id = str((package.get("match") or {}).get("id") or "")
+        if package_source_id != source_match_id or f"published-{package_source_id}" != published_match_id:
+            raise ValueError(
+                "Rebuilt package source identity does not match the requested publication; rebuild refused."
+            )
+        published = import_match_package(package, replace=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PublishError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    meta = read_match_meta(path)
+    meta["status"] = "published"
+    meta["publish_target"] = "local-json"
+    meta["published_match_id"] = published["id"]
+    write_match_meta(path, meta)
+    return published
+
+
 @app.delete("/api/published/matches/{published_match_id}")
 def api_delete_published_match(published_match_id: str) -> dict[str, Any]:
     try:

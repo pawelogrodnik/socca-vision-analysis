@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
-type ReportAction = 'package' | 'publish' | 'replace' | null;
+type ReportAction = 'package' | 'publish' | 'replace' | 'rebuild' | null;
 
 type JsonDownload = {
   label: string;
@@ -20,6 +20,7 @@ type ReportActionsProps = {
   onPublish?: () => Promise<void> | void;
   publishLabel?: string;
   onReplacePublish?: () => Promise<void> | void;
+  onRebuildPublished?: () => Promise<void> | void;
   workflowAllowed?: boolean;
   workflowReason?: string;
 };
@@ -68,6 +69,7 @@ export function ReportActions({
   onPublish,
   publishLabel = 'Publikuj raport',
   onReplacePublish,
+  onRebuildPublished,
   workflowAllowed = true,
   workflowReason,
 }: ReportActionsProps) {
@@ -124,7 +126,7 @@ export function ReportActions({
         )}
       </div>
 
-      {(onBuildPackage || onPublish || onReplacePublish) && (
+      {(onBuildPackage || onPublish || onReplacePublish || onRebuildPublished) && (
         <div className='report-actions-main'>
           {onBuildPackage && (
             <button type='button' onClick={onBuildPackage} disabled={isBusy || !workflowAllowed} title={workflowReason}>
@@ -139,6 +141,11 @@ export function ReportActions({
           {onReplacePublish && (
             <button type='button' className='secondary' onClick={onReplacePublish} disabled={isBusy || !workflowAllowed} title={workflowReason}>
               {busyAction === 'replace' ? 'Nadpisuję...' : 'Nadpisz publikację'}
+            </button>
+          )}
+          {onRebuildPublished && (
+            <button type='button' className='secondary' onClick={onRebuildPublished} disabled={isBusy}>
+              {busyAction === 'rebuild' ? 'Przebudowuję...' : 'Przebuduj publikację'}
             </button>
           )}
         </div>
