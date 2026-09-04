@@ -10,11 +10,13 @@ import {
   listEligibleMatchGroupSources,
   listMatchGroups,
   previewMatchGroup,
+  previewMatchGroupRefresh,
   regenerateMatchGroup,
+  refreshMatchGroupToLatest,
   saveMatchGroupExternalVideo,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { MatchGroupExternalVideoStatus, MatchGroupPreview, MatchGroupRecord, MatchGroupSource, MatchGroupVideoStatus } from '../types';
+import type { MatchGroupExternalVideoStatus, MatchGroupPreview, MatchGroupRecord, MatchGroupRefreshPreview, MatchGroupSource, MatchGroupVideoStatus } from '../types';
 import { MatchGroupExternalVideoSection } from './MatchGroupExternalVideoSection';
 
 function formatDuration(value: number): string {
@@ -28,6 +30,7 @@ export function MatchGroupsPage() {
   const [groups, setGroups] = useState<MatchGroupRecord[]>([]);
   const [videos, setVideos] = useState<Record<string, MatchGroupVideoStatus>>({});
   const [externalVideos, setExternalVideos] = useState<Record<string, MatchGroupExternalVideoStatus>>({});
+  const [refreshPreviews, setRefreshPreviews] = useState<Record<string, MatchGroupRefreshPreview>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [title, setTitle] = useState('');
   const [query, setQuery] = useState('');
@@ -44,6 +47,8 @@ export function MatchGroupsPage() {
     const externalRows = await Promise.all(nextGroups.map(async ({ group }) => [group.group_id, await getMatchGroupExternalVideo(group.group_id).catch(() => ({ group_id: group.group_id, status: 'not_configured' as const }))] as const));
     setVideos(Object.fromEntries(videoRows));
     setExternalVideos(Object.fromEntries(externalRows));
+    const refreshRows = await Promise.all(nextGroups.map(async ({ group }) => [group.group_id, await previewMatchGroupRefresh(group.group_id).catch(() => null)] as const));
+    setRefreshPreviews(Object.fromEntries(refreshRows.filter((row): row is readonly [string, MatchGroupRefreshPreview] => row[1] !== null)));
   };
 
   useEffect(() => { void load().catch((error: unknown) => setStatus(errorMessage(error))); }, []);
@@ -132,6 +137,24 @@ export function MatchGroupsPage() {
     catch (error) { setStatus(errorMessage(error)); }
     finally { setBusy(false); }
   };
+  const refresh = async (groupId: string) => {
+    setBusy(true); setStatus('');
+    try {
+      const result = await refreshMatchGroupToLatest(groupId);
+      setStatus(result.status === 'refreshed' ? 'Raport został odświeżony do najnowszych danych źródłowych.' : 'Dane źródłowe są aktualne.');
+      await load();
+    }
+    catch (error) {
+      // A refreshable preview can go stale before the operator confirms:
+      // the POST then returns a structured 409. Reload authoritative
+      // group/preview/video/external state so the stale refreshable UI is
+      // replaced, but keep the exact server reason visible.
+      const message = errorMessage(error);
+      try { await load(); } catch { /* keep the original conflict reason */ }
+      setStatus(message);
+    }
+    finally { setBusy(false); }
+  };
   const remove = async (groupId: string) => {
     if (!window.confirm('Usunąć tylko scalony raport? Raporty źródłowe pozostaną bez zmian.')) return;
     setBusy(true); setStatus('');
@@ -206,10 +229,14 @@ export function MatchGroupsPage() {
         <strong>{group.metadata.title || group.group_id}</strong>
         <span>{formatDuration(group.timing.analyzed_duration_sec)} · {group.members.length} fragmenty · {validation.status}</span>
         {validation.blocking_reasons[0] && <p className='status'>{validation.blocking_reasons[0].detail}</p>}
+        {refreshPreviews[group.group_id]?.status === 'current' && <p className='status success'>Dane źródłowe są aktualne.</p>}
+        {refreshPreviews[group.group_id]?.status === 'refreshable' && <p className='status'>Dostępna jest nowsza wersja danych źródłowych. Zmienione fragmenty: {refreshPreviews[group.group_id]?.members.filter((member) => member.status === 'refreshable').length}.</p>}
+        {refreshPreviews[group.group_id]?.status === 'blocked' && <p className='status'>Nie można odświeżyć: {refreshPreviews[group.group_id]?.blocking_reasons[0]?.detail || 'źródła nie są zgodne.'}</p>}
         <p>Łączne wideo: {videoLabel(videos[group.group_id])}{videoReason(videos[group.group_id]) ? ` — ${videoReason(videos[group.group_id])}` : ''}</p>
         <div className='row'>
           <Link to={`/published/match-groups/${encodeURIComponent(group.group_id)}/report`}>Otwórz raport</Link>
-          <button type='button' disabled={busy || validation.status !== 'compatible'} onClick={() => void regenerate(group.group_id)}>Regeneruj</button>
+          <button type='button' disabled={busy || validation.status !== 'compatible'} onClick={() => void regenerate(group.group_id)}>Regeneruj raport</button>
+          <button type='button' disabled={busy || isVideoGenerationInFlight(videos[group.group_id]) || refreshPreviews[group.group_id]?.status !== 'refreshable'} onClick={() => void refresh(group.group_id)}>Odśwież do najnowszych danych</button>
           {videos[group.group_id]?.status === 'ready' && videos[group.group_id]?.artifact_url && <a href={videos[group.group_id].artifact_url!}>Otwórz wideo</a>}
           <button type='button' disabled={busy || validation.status !== 'compatible' || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void generateVideo(group.group_id)}>{videos[group.group_id]?.status === 'ready' ? 'Regeneruj wideo' : 'Generuj wideo'}</button>
           <button type='button' disabled={busy || isVideoGenerationInFlight(videos[group.group_id])} onClick={() => void remove(group.group_id)}>Usuń</button>

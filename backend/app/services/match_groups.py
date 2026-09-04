@@ -13,12 +13,17 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.config import PUBLISHED_DIR
 from app.services.aggregate_inputs import AGGREGATE_INPUTS_SCHEMA_VERSION, AGGREGATION_POLICY_VERSION
 from app.services.artifact_lineage import canonical_json_sha256
+from app.services.match_group_pair_transaction import (
+    MatchGroupPairTransactionError,
+    MatchGroupPairTransactionInProgress,
+    recover_interrupted_pair,
+)
 from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION, PUBLIC_MATCH_REPORT_TYPE
 
 
@@ -71,14 +76,20 @@ def create_match_group_and_generate_report(
     *,
     member_published_ids: list[str],
     metadata: dict[str, Any],
-    generate_report: Callable[[str], dict[str, Any]],
+    generate_and_persist_report: Callable[[str], dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Create a group only when its first public report is coherent too."""
+    """Create a group only when its first public report is coherent too.
+
+    The callback follows the persisted-report contract: it receives the new
+    ``str`` group ID and must persist ``public_report.json`` itself (normally
+    :func:`generate_match_group_report`).  It must NOT be the pure in-memory
+    candidate builder, which cannot persist anything.
+    """
 
     group = create_match_group(member_published_ids=member_published_ids, metadata=metadata)
     group_id = str(group["group_id"])
     try:
-        return group, generate_report(group_id)
+        return group, generate_and_persist_report(group_id)
     except Exception:
         # This directory belongs solely to a group created in this operation;
         # physical source publications are never touched by cleanup.
@@ -106,7 +117,9 @@ def preview_match_group(*, member_published_ids: list[str], metadata: dict[str, 
 
 
 def get_match_group(group_id: str) -> dict[str, Any]:
-    return _load_manifest(_group_dir(_validated_group_id(group_id)) / "manifest.json")
+    directory = _group_dir(_validated_group_id(group_id))
+    _recover_pair_before_authoritative_read(directory)
+    return _load_manifest(directory / "manifest.json")
 
 
 def list_match_groups() -> list[dict[str, Any]]:
@@ -114,6 +127,7 @@ def list_match_groups() -> list[dict[str, Any]]:
     rows = []
     for manifest_path in sorted(MATCH_GROUPS_DIR.glob("match-group-*/manifest.json")):
         try:
+            _recover_pair_before_authoritative_read(manifest_path.parent)
             rows.append(_load_manifest(manifest_path))
         except (MatchGroupError, OSError, json.JSONDecodeError):
             continue
@@ -140,7 +154,7 @@ def update_match_group(
         member_published_ids=member_published_ids,
         metadata=metadata,
     )
-    _atomic_write_json(manifest_path, manifest)
+    _write_existing_group_json(manifest_path, manifest)
     return manifest
 
 
@@ -149,33 +163,44 @@ def update_match_group_and_generate_report(
     *,
     member_published_ids: list[str],
     metadata: dict[str, Any],
-    generate_report: Callable[[str], dict[str, Any]],
+    build_report_candidate: Callable[[Mapping[str, Any]], dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Restore prior coherent group bytes when regeneration cannot complete."""
+    """Publish a replacement manifest/report pair under one maintenance owner.
+
+    The builder follows the pure-candidate contract: it receives the
+    in-memory replacement manifest mapping and returns the report WITHOUT
+    persisting anything or acquiring the maintenance lock (normally
+    :func:`build_match_group_report_candidate`).  This transaction already
+    owns the reservation and commits both documents via ``_commit_pair``.
+    Passing the normal persisted report generation here would both receive
+    the wrong type and recursively acquire the same lock.
+    """
+
+    # Runtime imports avoid a module cycle: video owns the shared lock protocol,
+    # while the group store owns manifest construction.
+    from app.services.match_group_refresh import _commit_pair
+    from app.services.match_group_video import reserve_match_group_video_idle
 
     normalized_group_id = _validated_group_id(group_id)
-    directory = _group_dir(normalized_group_id)
-    manifest_path = directory / "manifest.json"
-    report_path = directory / "public_report.json"
-    if not manifest_path.exists():
-        raise KeyError(normalized_group_id)
-    previous_manifest = manifest_path.read_bytes()
-    previous_report = report_path.read_bytes() if report_path.exists() else None
-    group = update_match_group(
-        normalized_group_id,
-        member_published_ids=member_published_ids,
-        metadata=metadata,
-    )
-    try:
-        report = generate_report(normalized_group_id)
-    except Exception:
-        _atomic_write_bytes(manifest_path, previous_manifest)
-        if previous_report is not None:
-            _atomic_write_bytes(report_path, previous_report)
-        elif report_path.exists():
-            report_path.unlink()
-        raise
-    return group, report
+    with reserve_match_group_video_idle(normalized_group_id, operation="update"):
+        directory = _group_dir(normalized_group_id)
+        manifest_path = directory / "manifest.json"
+        if not manifest_path.exists():
+            raise KeyError(normalized_group_id)
+        current = get_match_group(normalized_group_id)
+        replacement = _build_manifest(
+            group_id=normalized_group_id,
+            member_published_ids=member_published_ids,
+            metadata=metadata,
+        )
+        report = build_report_candidate(replacement)
+        _commit_pair(
+            normalized_group_id,
+            replacement,
+            report,
+            expected_manifest_digest=str(current.get("aggregate_semantic_digest") or ""),
+        )
+        return replacement, report
 
 
 def delete_match_group(group_id: str) -> dict[str, Any]:
@@ -193,6 +218,17 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
     """Compare persisted source pins with current published source artifacts."""
 
     manifest = get_match_group(group_id)
+    return validate_match_group_manifest(manifest)
+
+
+def validate_match_group_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Validate one already-loaded manifest against authoritative publications.
+
+    Refresh builds a candidate manifest before it becomes durable.  Keeping this
+    validation beside the persisted-group path means it uses the same source
+    trust chain and compatibility rules in both cases.
+    """
+
     stored_capabilities = _record(_record(manifest.get("compatibility")).get("capabilities"))
     manifest_reason = _manifest_digest_reason(manifest)
     if manifest_reason is not None:
@@ -248,6 +284,21 @@ def validate_match_group(group_id: str) -> dict[str, Any]:
 
     compatibility = _compatibility(current_members)
     return _validation_result(compatibility["status"], compatibility["blocking_reasons"], compatibility["capabilities"])
+
+
+def build_current_match_group_manifest(
+    *,
+    group_id: str,
+    member_published_ids: list[str],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a manifest from the current authoritative stable publications."""
+
+    return _build_manifest(
+        group_id=group_id,
+        member_published_ids=member_published_ids,
+        metadata=metadata,
+    )
 
 
 def _build_manifest(*, group_id: str, member_published_ids: list[str], metadata: dict[str, Any]) -> dict[str, Any]:
@@ -600,10 +651,20 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _atomic_write_bytes(path: Path, value: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f"{path.suffix}.rollback.tmp")
-    temporary.write_bytes(value)
+def _write_existing_group_json(path: Path, value: dict[str, Any]) -> None:
+    """Replace one manifest for an existing group without resurrecting deletes.
+
+    The group directory must already exist: a writer that loses a race with
+    group deletion must never recreate ``match-groups/<group_id>/``.
+    """
+
+    if not path.parent.is_dir() or not path.is_file():
+        raise KeyError(path.parent.name)
+    temporary = path.with_suffix(f"{path.suffix}.tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    if not path.parent.is_dir() or not path.is_file():
+        temporary.unlink(missing_ok=True)
+        raise KeyError(path.parent.name)
     temporary.replace(path)
 
 
@@ -701,6 +762,21 @@ def _load_json_object(path: Path, *, member: str | None = None) -> dict[str, Any
     if not isinstance(value, dict):
         raise MatchGroupError("source_json_invalid", f"{path.name} must contain a JSON object.", member=member)
     return value
+
+
+def _recover_pair_before_authoritative_read(directory: Path) -> None:
+    try:
+        recover_interrupted_pair(directory)
+    except MatchGroupPairTransactionInProgress as error:
+        raise MatchGroupError(
+            "match_group_maintenance_in_progress",
+            "Logical match maintenance is committing a coherent manifest/report generation.",
+        ) from error
+    except MatchGroupPairTransactionError as error:
+        raise MatchGroupError(
+            "match_group_pair_recovery_failed",
+            "Logical match manifest/report recovery failed; no partial generation was served.",
+        ) from error
 
 
 def _group_dir(group_id: str) -> Path:

@@ -341,6 +341,63 @@ so a failed source validation leaves the previous manifest bytes intact.
 Deletion removes only the group directory.  No group store operation touches
 published physical source files or the physical-match profile boundary.
 
+## Refreshing to current physical publications
+
+`POST /api/published/match-groups/{group_id}/refresh-to-latest` is the explicit
+operator lifecycle action for a group whose stable `published_id` members were
+republished in place.  The server rebuilds a candidate manifest from those
+same ordered IDs, preserves the original `source_match_id` identity and group
+metadata, validates compatibility, and builds the canonical aggregate report
+before committing either document.
+
+The paired manifest/report replacement is rollback-safe.  It never creates a
+missing group directory, so a concurrent delete cannot be resurrected.  The
+operation shares the existing durable combined-video ownership lock: refresh
+is rejected while video generation is active, and neither refresh nor its
+preview invokes ffmpeg.  A no-op leaves both existing bytes untouched.
+
+Crash safety uses a small transaction-marker protocol, not one atomic
+filesystem commit: before replacing either file, the previous coherent pair
+is staged to `.manifest-report.*` recovery files plus a
+`.manifest-report.transaction.json` marker.  Both replacements are then
+`os.replace()` calls followed by a directory fsync; only afterwards is the
+marker removed.  A restart that finds the marker rolls back to the previous
+coherent pair before any authoritative read, so a crash between the two
+replacements can never be served as a valid group.  A live maintenance owner
+instead fails closed with `match_group_maintenance_in_progress` until the
+commit finishes.
+
+Readers never trust two independent files blindly.  The public report route
+serves one coherent snapshot: manifest, report, manifest again, accepted only
+when both manifest digests agree and the report's own semantic digest plus
+its ordered source lineage (group, published, source-match and pin digests)
+belong to that exact manifest generation.  A snapshot that moves under the
+reader is retried a bounded number of times; anything else fails closed with
+a structured 409 instead of a mixed NEW-manifest/OLD-report response.
+
+All logical-group mutations share one maintenance ownership contract: normal
+report regeneration, whole-group update (definition plus report under one
+reservation), refresh, delete and video maintenance serialize on the same
+durable per-group lock.  Only a genuine `video-generation-*` owner is ever
+reported as `generating`; a live refresh/delete/report/update owner surfaces
+as the structured `match_group_maintenance_in_progress` conflict instead.
+
+`Regeneruj raport` rebuilds the aggregate report from the currently pinned
+sources and never repins them; `Odśwież do najnowszych danych` is the only
+operation that advances source pins, and only to the current authoritative
+contents of the same ordered stable publications.  Refresh commits no
+combined-video regeneration, no YouTube upload/rebinding, no Review rerun and
+no analysis rerun.  A report-only source change keeps a ready combined video
+(and a linked external video) current; a changed logical-video input digest
+marks them stale through the existing provenance projections while the stored
+video generations and `external_video.json` bytes stay untouched.
+
+`GET /api/published/match-groups/{group_id}/refresh-preview` exposes only the
+server-calculated `current`, `refreshable`, or `blocked` state.  The browser
+does not choose member IDs or digests.  Refresh deliberately does not create a
+new combined video or mutate external-video metadata; their existing stale
+status projections determine any subsequent operator action.
+
 ## Mergeable implementation phases
 
 1. **Aggregation input contract.** Implement the versioned builder above at

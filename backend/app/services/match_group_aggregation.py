@@ -22,12 +22,17 @@ from app.services.match_groups import (
     MatchGroupError,
     get_match_group,
     validate_match_group,
+    validate_match_group_manifest,
 )
+from app.services.match_group_video import reserve_match_group_video_idle
 
 
 AGGREGATE_REPORT_SCHEMA_VERSION = "1.0.0"
 AGGREGATE_REPORT_TYPE = "public_aggregate_match_report"
 AGGREGATE_ENGINE_POLICY_VERSION = "1.0.0"
+# A concurrent pair commit may legitimately move the snapshot under a reader.
+# Retrying this many times keeps reads cheap while never fabricating coherence.
+_COHERENT_READ_ATTEMPTS = 3
 
 # This is deliberately data, rather than a recursive JSON operation.  A
 # future metric requires an explicit decision before it can enter a report.
@@ -82,16 +87,40 @@ def generate_match_group_report(group_id: str) -> dict[str, Any]:
     missing, or tampered child generation leaves an earlier coherent aggregate
     report untouched.
     """
+    with reserve_match_group_video_idle(group_id, operation="report regeneration"):
+        return generate_match_group_report_unlocked(group_id)
+
+
+def generate_match_group_report_unlocked(group_id: str) -> dict[str, Any]:
+    """Generate one report while the caller already owns group maintenance."""
+
     manifest = get_match_group(group_id)
+    manifest_digest = str(manifest.get("aggregate_semantic_digest") or "")
     validation = validate_match_group(group_id)
     if validation.get("status") != "compatible":
         reasons = validation.get("blocking_reasons") or []
         detail = str((reasons[0] if reasons else {}).get("detail") or "Match group is not compatible.")
         raise MatchGroupError("aggregate_generation_blocked", detail)
-    sources = _load_pinned_sources(manifest)
-    report = build_match_group_public_report(manifest, sources)
-    _atomic_write_json(MATCH_GROUPS_DIR / group_id / "public_report.json", report)
+    report = build_match_group_report_candidate(manifest)
+    current_manifest = get_match_group(group_id)
+    if current_manifest.get("aggregate_semantic_digest") != manifest_digest:
+        raise MatchGroupError(
+            "match_group_changed_during_report_generation",
+            "Logical match changed while its aggregate report was being generated.",
+        )
+    if validate_match_group(group_id).get("status") != "compatible":
+        raise MatchGroupError(
+            "match_group_changed_during_report_generation",
+            "Logical match sources changed while its aggregate report was being generated.",
+        )
+    _write_existing_group_report(MATCH_GROUPS_DIR / group_id / "public_report.json", report)
     return report
+
+
+def build_match_group_report_candidate(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the canonical aggregate report without publishing any bytes."""
+
+    return build_match_group_public_report(manifest, _load_pinned_sources(manifest))
 
 
 def get_match_group_report(group_id: str) -> dict[str, Any]:
@@ -102,6 +131,141 @@ def get_match_group_report(group_id: str) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(group_id)
     return _load_json(path, group_id)
+
+
+def get_coherent_match_group_report(group_id: str) -> dict[str, Any]:
+    """Read one coherent manifest/report snapshot or fail closed.
+
+    The pair commit replaces two files, so a reader can otherwise observe a
+    NEW manifest next to an OLD report (or vice versa).  This read takes a
+    manifest snapshot on both sides of the report read and serves the report
+    only when both snapshots agree and the report lineage belongs to that
+    exact snapshot.  A snapshot that moves under the reader is retried a
+    small bounded number of times; anything else fails closed with a
+    structured lifecycle error instead of a mixed-generation response.
+    """
+
+    last_mismatch: MatchGroupError | None = None
+    for _ in range(_COHERENT_READ_ATTEMPTS):
+        manifest_before = get_match_group(group_id)
+        report_path = MATCH_GROUPS_DIR / group_id / "public_report.json"
+        if not report_path.is_file():
+            raise FileNotFoundError(group_id)
+        report = _load_json(report_path, group_id)
+        manifest_after = get_match_group(group_id)
+        if str(manifest_before.get("aggregate_semantic_digest") or "") != str(
+            manifest_after.get("aggregate_semantic_digest") or ""
+        ):
+            last_mismatch = MatchGroupError(
+                "match_group_maintenance_in_progress",
+                "Logical match maintenance is committing a coherent manifest/report generation.",
+            )
+            continue
+        try:
+            _assert_manifest_self_digest(manifest_before, member=group_id)
+            _assert_report_belongs_to_manifest(report, manifest_before, member=group_id)
+        except MatchGroupError as error:
+            last_mismatch = error
+            # A snapshot that moved under the reader is worth one retry only
+            # when both files still describe the same generation; a lineage or
+            # digest mismatch against a stable snapshot is fail-closed now.
+            manifest_check = get_match_group(group_id)
+            if str(manifest_check.get("aggregate_semantic_digest") or "") != str(
+                manifest_before.get("aggregate_semantic_digest") or ""
+            ):
+                continue
+            raise
+        return {
+            "report": report,
+            "manifest": manifest_before,
+            "validation": validate_match_group_manifest(manifest_before),
+        }
+    raise last_mismatch or MatchGroupError(
+        "match_group_maintenance_in_progress",
+        "Logical match maintenance is committing a coherent manifest/report generation.",
+    )
+
+
+def _assert_manifest_self_digest(manifest: dict[str, Any], *, member: str) -> None:
+    persisted = manifest.get("aggregate_semantic_digest")
+    if not isinstance(persisted, str) or not persisted:
+        raise MatchGroupError("manifest_digest_missing", "Stored logical match manifest has no aggregate semantic digest.", member=member)
+    digest_document = copy.deepcopy(manifest)
+    digest_document.pop("aggregate_semantic_digest", None)
+    if canonical_json_sha256(digest_document) != persisted:
+        raise MatchGroupError(
+            "manifest_digest_mismatch",
+            "Stored logical match manifest digest does not match its content.",
+            member=member,
+        )
+
+
+def _assert_report_belongs_to_manifest(report: dict[str, Any], manifest: dict[str, Any], *, member: str) -> None:
+    """Prove a loaded report was built from one exact manifest snapshot."""
+
+    if not isinstance(report, dict):
+        raise MatchGroupError("aggregate_report_invalid", "Stored logical aggregate report is not a JSON object.", member=member)
+    if str(report.get("group_id") or "") != str(manifest.get("group_id") or ""):
+        raise MatchGroupError(
+            "aggregate_report_lineage_mismatch",
+            "Stored logical aggregate report belongs to a different logical match generation.",
+            member=member,
+        )
+    if str(report.get("report_type") or "") != AGGREGATE_REPORT_TYPE:
+        raise MatchGroupError(
+            "aggregate_report_invalid",
+            "Stored logical aggregate report has an unsupported report type.",
+            member=member,
+        )
+    digest = report.get("aggregate_semantic_digest")
+    if not isinstance(digest, str) or not digest:
+        raise MatchGroupError(
+            "aggregate_report_invalid",
+            "Stored logical aggregate report has no aggregate semantic digest.",
+            member=member,
+        )
+    digest_document = copy.deepcopy(report)
+    digest_document.pop("aggregate_semantic_digest", None)
+    if canonical_json_sha256(digest_document) != digest:
+        raise MatchGroupError(
+            "aggregate_report_invalid",
+            "Stored logical aggregate report digest does not match its content.",
+            member=member,
+        )
+    manifest_members = manifest.get("members") if isinstance(manifest.get("members"), list) else []
+    report_sources = report.get("sources") if isinstance(report.get("sources"), list) else []
+    if len(manifest_members) != len(report_sources) or not manifest_members:
+        raise MatchGroupError(
+            "aggregate_report_lineage_mismatch",
+            "Stored logical aggregate report sources do not match the logical match generation.",
+            member=member,
+        )
+    expected_published = [str(member.get("published_id") or "") for member in manifest_members if isinstance(member, dict)]
+    actual_published = [str(source.get("published_id") or "") for source in report_sources if isinstance(source, dict)]
+    if expected_published != actual_published:
+        raise MatchGroupError(
+            "aggregate_report_lineage_mismatch",
+            "Stored logical aggregate report sources do not match the logical match generation.",
+            member=member,
+        )
+    for member_row, source_row in zip(manifest_members, report_sources, strict=True):
+        if not isinstance(member_row, dict) or not isinstance(source_row, dict):
+            raise MatchGroupError(
+                "aggregate_report_lineage_mismatch",
+                "Stored logical aggregate report sources do not match the logical match generation.",
+                member=member,
+            )
+        for field in (
+            "source_match_id",
+            "aggregation_input_semantic_digest",
+            "public_report_semantic_digest",
+        ):
+            if source_row.get(field) != member_row.get(field):
+                raise MatchGroupError(
+                    "aggregate_report_lineage_mismatch",
+                    "Stored logical aggregate report pins do not match the logical match generation.",
+                    member=member,
+                )
 
 
 def build_match_group_public_report(
@@ -477,8 +641,18 @@ def _load_json(path: Path, member: str) -> dict[str, Any]:
     return result
 
 
-def _atomic_write_json(path: Path, document: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _write_existing_group_report(path: Path, document: Mapping[str, Any]) -> None:
+    """Publish one report for an existing group without resurrecting deletes.
+
+    The group directory and its manifest must already exist: a report
+    generation that loses a race with group deletion must never recreate
+    ``match-groups/<group_id>/`` containing only a stray report.  Losing
+    writers therefore fail with a structured not-found outcome and the
+    deleted directory stays deleted.
+    """
+
+    if not path.parent.is_dir() or not (path.parent / "manifest.json").is_file():
+        raise KeyError(path.parent.name)
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary = Path(temporary_name)
     try:
@@ -487,6 +661,8 @@ def _atomic_write_json(path: Path, document: Mapping[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        if not path.parent.is_dir() or not (path.parent / "manifest.json").is_file():
+            raise KeyError(path.parent.name)
         os.replace(temporary, path)
     finally:
         if temporary.exists():

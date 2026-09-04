@@ -82,6 +82,34 @@ test('match-group page exposes background combined-video generation without trea
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('match-group page refreshes sources only through the dedicated group endpoint', async () => {
+  const calls: Array<{ path: string; method?: string; body?: string }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    calls.push({ path, method: init?.method, body: init?.body ? String(init.body) : undefined });
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([{
+      group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
+      validation: { status: 'compatible', blocking_reasons: [] },
+    }]);
+    if (path.endsWith('/group-1/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', source_match_id: 'a', status: 'refreshable' }], blocking_reasons: [] });
+    if (path.endsWith('/group-1/refresh-to-latest')) return Response.json({ status: 'refreshed', group: { group_id: 'group-1' }, validation: { status: 'compatible', blocking_reasons: [] }, video: { group_id: 'group-1', status: 'stale' }, external_video: { group_id: 'group-1', status: 'stale' } });
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'stale' });
+    if (path.endsWith('/group-1/external-video')) return Response.json({ group_id: 'group-1', status: 'stale' });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Dostępna jest nowsza wersja danych źródłowych/)));
+    fireEvent.click(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }));
+    await waitFor(() => assert.ok(calls.some((call) => call.path.endsWith('/group-1/refresh-to-latest'))));
+    const refresh = calls.find((call) => call.path.endsWith('/group-1/refresh-to-latest'));
+    assert.equal(refresh?.method, 'POST');
+    assert.equal(refresh?.body, undefined);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('YouTube settings submit only when the local combined video is ready', async () => {
   const saves: Array<[string, string]> = [];
   let view: ReturnType<typeof render>;
@@ -432,4 +460,177 @@ test('aggregate page places Key Moments after the one local player and seeks it 
     assert.equal(view.container.querySelectorAll('video').length, 1);
     assert.ok((view.getByRole('heading', { name: 'Najważniejsze momenty' }).compareDocumentPosition(view.getByRole('heading', { name: 'Podsumowanie drużyn' })) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+function refreshableGroupRecord() {
+  return {
+    group: { group_id: 'group-1', metadata: { title: 'Mecz' }, members: [{ published_id: 'physical-a' }, { published_id: 'physical-b' }], timing: { analyzed_duration_sec: 900, timeline_span_sec: 900, mapping: 'ordered' }, compatibility: { status: 'compatible', blocking_reasons: [] } },
+    validation: { status: 'compatible', blocking_reasons: [] },
+  };
+}
+
+function routeRefreshSuite(fetches: string[], options: {
+  preview: () => unknown;
+  postRefresh?: () => Response;
+  video?: () => unknown;
+  external?: () => unknown;
+}) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    fetches.push(`${init?.method || 'GET'} ${path}`);
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([refreshableGroupRecord()]);
+    if (path.endsWith('/group-1/refresh-preview')) return Response.json(options.preview());
+    if (path.endsWith('/group-1/refresh-to-latest')) return options.postRefresh ? options.postRefresh() : Response.json({ status: 'current' });
+    if (path.endsWith('/group-1/regenerate')) return Response.json(refreshableGroupRecord());
+    if (path.endsWith('/group-1/video')) return Response.json(options.video ? options.video() : { group_id: 'group-1', status: 'not_generated' });
+    if (path.endsWith('/group-1/external-video')) return Response.json(options.external ? options.external() : { group_id: 'group-1', status: 'not_configured' });
+    throw new Error(`Unexpected ${path}`);
+  };
+  return () => { globalThis.fetch = originalFetch; };
+}
+
+test('match-group page shows current state with refresh disabled and regenerate independent', async () => {
+  const fetches: string[] = [];
+  const restore = routeRefreshSuite(fetches, {
+    preview: () => ({ group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] }),
+  });
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText('Dane źródłowe są aktualne.')));
+    assert.equal(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }).hasAttribute('disabled'), true);
+    const regenerate = view.getByRole('button', { name: 'Regeneruj raport' });
+    assert.equal(regenerate.hasAttribute('disabled'), false);
+    fireEvent.click(regenerate);
+    await waitFor(() => assert.ok(fetches.some((call) => call === 'POST /api/published/match-groups/group-1/regenerate')));
+  } finally { restore(); }
+});
+
+test('match-group page shows refreshable count and posts without client digests', async () => {
+  const calls: Array<{ path: string; method?: string; body?: string }> = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    calls.push({ path, method: init?.method, body: init?.body ? String(init.body) : undefined });
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([refreshableGroupRecord()]);
+    if (path.endsWith('/group-1/refresh-preview')) return Response.json({ group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', status: 'refreshable' }, { published_id: 'physical-b', status: 'current' }], blocking_reasons: [] });
+    if (path.endsWith('/group-1/refresh-to-latest')) return Response.json({ status: 'refreshed', group: { group_id: 'group-1' }, validation: { status: 'compatible', blocking_reasons: [] }, video: { group_id: 'group-1', status: 'stale' }, external_video: { group_id: 'group-1', status: 'stale' } });
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'stale' });
+    if (path.endsWith('/group-1/external-video')) return Response.json({ group_id: 'group-1', status: 'stale' });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Zmienione fragmenty: 1/)));
+    const refresh = view.getByRole('button', { name: 'Odśwież do najnowszych danych' });
+    assert.equal(refresh.hasAttribute('disabled'), false);
+    fireEvent.click(refresh);
+    await waitFor(() => assert.ok(calls.some((call) => call.path.endsWith('/group-1/refresh-to-latest'))));
+    const post = calls.find((call) => call.path.endsWith('/group-1/refresh-to-latest'));
+    assert.equal(post?.method, 'POST');
+    assert.equal(post?.body, undefined);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('match-group page shows the exact blocked reason with refresh disabled', async () => {
+  const fetches: string[] = [];
+  const restore = routeRefreshSuite(fetches, {
+    preview: () => ({ group_id: 'group-1', status: 'blocked', members: [], blocking_reasons: [{ code: 'source_match_identity_changed', detail: 'Stabilna publikacja wskazuje teraz inny fizyczny mecz.' }] }),
+  });
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Stabilna publikacja wskazuje teraz inny fizyczny mecz/)));
+    assert.equal(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }).hasAttribute('disabled'), true);
+  } finally { restore(); }
+});
+
+test('match-group page disables refresh while a real video generation is active', async () => {
+  const fetches: string[] = [];
+  const restore = routeRefreshSuite(fetches, {
+    preview: () => ({ group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', status: 'refreshable' }], blocking_reasons: [] }),
+    video: () => ({ group_id: 'group-1', status: 'generating', last_attempt: { status: 'generating' } }),
+  });
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Generowanie/)));
+    assert.equal(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }).hasAttribute('disabled'), true);
+  } finally { restore(); }
+});
+
+test('match-group page reloads group, preview, video and external projections after a refresh', async () => {
+  const fetches: string[] = [];
+  const restore = routeRefreshSuite(fetches, {
+    preview: () => ({ group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', status: 'refreshable' }], blocking_reasons: [] }),
+    postRefresh: () => Response.json({ status: 'refreshed', group: { group_id: 'group-1' }, validation: { status: 'compatible', blocking_reasons: [] }, video: { group_id: 'group-1', status: 'stale' }, external_video: { group_id: 'group-1', status: 'stale' } }),
+    video: () => ({ group_id: 'group-1', status: 'stale', reason: 'source_video_generation_changed' }),
+    external: () => ({ group_id: 'group-1', status: 'stale' }),
+  });
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Dostępna jest nowsza wersja/)));
+    fireEvent.click(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }));
+    await waitFor(() => assert.ok(view.getByText('Raport został odświeżony do najnowszych danych źródłowych.')));
+    const rounds = (suffix: string) => fetches.filter((call) => call.endsWith(suffix)).length;
+    await waitFor(() => assert.ok(rounds('GET /api/published/match-groups') >= 2));
+    assert.ok(rounds('GET /api/published/match-groups/group-1/refresh-preview') >= 2);
+    assert.ok(rounds('GET /api/published/match-groups/group-1/video') >= 2);
+    assert.ok(rounds('GET /api/published/match-groups/group-1/external-video') >= 2);
+  } finally { restore(); }
+});
+
+test('match-group page recovers a stale refreshable preview after a POST conflict', async () => {
+  const fetches: string[] = [];
+  let previewReads = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    fetches.push(`${init?.method || 'GET'} ${path}`);
+    if (path.endsWith('/eligible-sources')) return Response.json([]);
+    if (path.endsWith('/match-groups') && !init?.method) return Response.json([refreshableGroupRecord()]);
+    if (path.endsWith('/group-1/refresh-preview')) {
+      previewReads += 1;
+      return Response.json(previewReads === 1
+        ? { group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', status: 'refreshable' }], blocking_reasons: [] }
+        : { group_id: 'group-1', status: 'current', members: [], blocking_reasons: [] });
+    }
+    if (path.endsWith('/group-1/refresh-to-latest')) {
+      return Response.json({ detail: { code: 'source_generation_changed_during_refresh', detail: 'Źródła zmieniły się w trakcie odświeżania.' } }, { status: 409 });
+    }
+    if (path.endsWith('/group-1/video')) return Response.json({ group_id: 'group-1', status: 'not_generated' });
+    if (path.endsWith('/group-1/external-video')) return Response.json({ group_id: 'group-1', status: 'not_configured' });
+    throw new Error(`Unexpected ${path}`);
+  };
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Dostępna jest nowsza wersja/)));
+    fireEvent.click(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }));
+    await waitFor(() => assert.ok(view.getByText(/Źródła zmieniły się w trakcie odświeżania/)));
+    // Authoritative state was fetched again and the stale preview is gone.
+    await waitFor(() => assert.ok(previewReads >= 2));
+    await waitFor(() => assert.ok(view.getByText('Dane źródłowe są aktualne.')));
+    assert.equal(view.queryByText(/Dostępna jest nowsza wersja/), null);
+    assert.equal(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }).hasAttribute('disabled'), true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('match-group page renders stale video and external states without triggering side effects', async () => {
+  const fetches: string[] = [];
+  const restore = routeRefreshSuite(fetches, {
+    preview: () => ({ group_id: 'group-1', status: 'refreshable', members: [{ published_id: 'physical-a', status: 'refreshable' }], blocking_reasons: [] }),
+    postRefresh: () => Response.json({ status: 'refreshed', group: { group_id: 'group-1' }, validation: { status: 'compatible', blocking_reasons: [] }, video: { group_id: 'group-1', status: 'stale' }, external_video: { group_id: 'group-1', status: 'stale' } }),
+    video: () => ({ group_id: 'group-1', status: 'stale', reason: 'source_video_generation_changed' }),
+    external: () => ({ group_id: 'group-1', status: 'stale', reason: 'combined_video_generation_changed' }),
+  });
+  try {
+    const view = render(React.createElement(BrowserRouter, null, React.createElement(MatchGroupsPage)));
+    await waitFor(() => assert.ok(view.getByText(/Dostępna jest nowsza wersja/)));
+    fireEvent.click(view.getByRole('button', { name: 'Odśwież do najnowszych danych' }));
+    await waitFor(() => assert.ok(view.getByText('Raport został odświeżony do najnowszych danych źródłowych.')));
+    await waitFor(() => assert.ok(view.getByText(/Nieaktualne/)));
+    assert.ok(!fetches.some((call) => call.endsWith('/group-1/video/generate')));
+    assert.ok(!fetches.some((call) => call.startsWith('PUT') && call.endsWith('/group-1/external-video')));
+    assert.ok(!fetches.some((call) => call.startsWith('DELETE') && call.endsWith('/group-1/external-video')));
+  } finally { restore(); }
 });
