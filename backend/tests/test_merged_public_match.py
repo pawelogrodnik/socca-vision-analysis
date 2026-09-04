@@ -191,6 +191,23 @@ class MergedPublicMatchTests(unittest.TestCase):
             player = next(row for row in report["players"] if row["player_id"] == "player-one")
             self.assertIsNone(player["heatmap"])
 
+    def test_missing_heatmap_lineage_disables_heatmaps_but_keeps_report(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300, heatmap_digest=None)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            report = ensure_merged_published_match(str(group["group_id"]))["report"]
+            # The canonical report still renders; only spatial output is off.
+            self.assertEqual(report["report_type"], "public_match_report")
+            player = next(row for row in report["players"] if row["player_id"] == "player-one")
+            self.assertIsNone(player["heatmap"])
+            self.assertIn("spatial_lineage_unproven", str(report["merged_provenance"].get("spatial_heatmaps")))
+            merged_id = report["id"]
+            heatmap_dir = root / "published" / merged_id / "heatmaps"
+            self.assertFalse(any(heatmap_dir.iterdir()) if heatmap_dir.is_dir() else False)
+            mirror_heatmaps = root / "client-public" / merged_id / "heatmaps"
+            self.assertFalse(any(mirror_heatmaps.iterdir()) if mirror_heatmaps.is_dir() else False)
+
     def test_stale_spatial_lineage_fails_closed(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=600)
@@ -348,6 +365,155 @@ class MergedPublicMatchTests(unittest.TestCase):
             document["match"]["title"] = "Tampered title"
             _write(live_report, document)
             self.assertEqual(check_merged_projection(merged_id)["status"], "stale")
+
+    def test_refresh_aborts_when_physical_source_rebuilt_mid_refresh(self) -> None:
+        import threading
+        from unittest.mock import patch as mock_patch
+
+        from app.services.match_groups import get_match_group
+        from app.services.merged_public_match import refresh_merged_match_to_latest
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            pins_before = json.loads(json.dumps(get_match_group(group_id)["members"]))
+            live_before = _snapshot_tree(root / "published" / merged_id)
+            mirror_before = _snapshot_tree(root / "client-public" / merged_id)
+
+            entered = threading.Event()
+            release = threading.Event()
+            real_validate = __import__("app.services.merged_public_match", fromlist=["_validate_projection_candidate"])._validate_projection_candidate
+
+            def gate(staged, candidate_id):
+                entered.set()
+                assert release.wait(timeout=30), "refresh worker never reached staging gate"
+                return real_validate(staged, candidate_id)
+
+            errors: list[BaseException] = []
+
+            def worker() -> None:
+                try:
+                    refresh_merged_match_to_latest(group_id)
+                except BaseException as error:  # noqa: BLE001 - captured for assertions
+                    errors.append(error)
+
+            # Prime a first in-place rebuild (G1.5) so refresh has changed
+            # pins and proceeds to candidate staging.
+            _write_source(root, "published-two", "physical-two", duration=350)
+            with mock_patch("app.services.merged_public_match._validate_projection_candidate", side_effect=gate):
+                thread = threading.Thread(target=worker, daemon=True)
+                thread.start()
+                self.assertTrue(entered.wait(timeout=30), "refresh did not reach the pre-commit gate")
+                # Physical "Przebuduj publikację" lands G2 in place mid-refresh.
+                _write_source(root, "published-two", "physical-two", duration=400)
+                release.set()
+                thread.join(timeout=60)
+            self.assertFalse(thread.is_alive(), "refresh worker hung")
+
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], MatchGroupError)
+            assert isinstance(errors[0], MatchGroupError)
+            self.assertEqual(errors[0].code, "source_generation_changed_during_refresh")
+
+            # NOTHING committed: pins still G1, projection still the old one.
+            self.assertEqual(get_match_group(group_id)["members"], pins_before)
+            self.assertEqual(_snapshot_tree(root / "published" / merged_id), live_before)
+            self.assertEqual(_snapshot_tree(root / "client-public" / merged_id), mirror_before)
+            staging_root = root / ".staging"
+            leftovers = [path for path in staging_root.rglob("*")] if staging_root.exists() else []
+            self.assertEqual(leftovers, [])
+            # Physical G2 itself is untouched and refreshable on retry.
+            current_two = _read(root / "published" / "published-two" / "aggregate_inputs.json")
+            self.assertEqual(current_two["timing"]["analyzed_duration_sec"], 400)
+
+    def test_sidecar_reservation_failure_leaves_no_orphan(self) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from app.services.merged_public_match import merged_ids_for_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            before = _snapshot_tree(root / "published")
+
+            # A: establishing the stable ID itself fails.
+            with mock_patch(
+                "app.services.merged_public_match._write_merged_projection",
+                side_effect=OSError("disk full"),
+            ):
+                with self.assertRaises(MatchGroupError):
+                    ensure_merged_published_match(group_id)
+            self.assertEqual(merged_ids_for_group(group_id), [])
+            self.assertEqual(_snapshot_tree(root / "published"), before)
+            client_public = root / "client-public"
+            self.assertFalse(client_public.exists() and any(client_public.rglob("*")))
+
+    def test_promotion_failure_keeps_sidecar_and_reuses_id_on_retry(self) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from app.services.merged_public_match import merged_ids_for_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+
+            # B/C: first creation — live promotion fails after ID reservation.
+            # The sidecar retains the ID and no orphan live publication exists
+            # without an authoritative relation.
+            with mock_patch(
+                "app.services.json_publish_store._commit_publication_generation",
+                side_effect=OSError("promotion exploded"),
+            ):
+                with self.assertRaises(OSError):
+                    ensure_merged_published_match(group_id)
+            reserved = merged_ids_for_group(group_id)
+            self.assertEqual(len(reserved), 1)
+            reserved_id = reserved[0]
+            # Live projection absent on first creation, sidecar retained.
+            self.assertFalse((root / "published" / reserved_id).exists())
+            # Retry reuses the SAME stable merged ID and succeeds.
+            retry = ensure_merged_published_match(group_id)
+            self.assertEqual(retry["merged_published_match_id"], reserved_id)
+            self.assertTrue((root / "published" / reserved_id / "public_report.json").is_file())
+
+    def test_lazy_migration_retry_uses_single_stable_id(self) -> None:
+        from unittest.mock import patch as mock_patch
+
+        from app.services.merged_public_match import merged_ids_for_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            group_id = str(group["group_id"])
+            self.assertEqual(merged_ids_for_group(group_id), [])
+
+            # D: first lazy attempt fails (heatmap render explodes), retry works.
+            calls = {"count": 0}
+            real_render = __import__("app.services.merged_public_match", fromlist=["render_merged_heatmaps"]).render_merged_heatmaps
+
+            def flaky_render(report, sources, **kwargs):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise OSError("renderer exploded")
+                return real_render(report, sources, **kwargs)
+
+            with mock_patch("app.services.merged_public_match.render_merged_heatmaps", side_effect=flaky_render):
+                with self.assertRaises(OSError):
+                    ensure_merged_published_match(group_id)
+            first_ids = merged_ids_for_group(group_id)
+            self.assertEqual(len(first_ids), 1)
+            retry = ensure_merged_published_match(group_id)
+            self.assertEqual(retry["merged_published_match_id"], first_ids[0])
+            live = [path for path in (root / "published").iterdir() if path.name.startswith("published-merged-")]
+            self.assertEqual(len(live), 1)
 
     def test_conflicting_player_team_fails_closed(self) -> None:
         with self._store() as root:

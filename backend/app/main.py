@@ -3593,7 +3593,6 @@ def _group_with_validation(group: dict[str, Any]) -> dict[str, Any]:
 
 def _merged_projection_response(group_id: str) -> dict[str, Any]:
     """Build (or rebuild) the canonical merged projection for one group."""
-
     try:
         projection = ensure_merged_published_match(group_id)
     except MatchGroupError as error:
@@ -3603,6 +3602,25 @@ def _merged_projection_response(group_id: str) -> dict[str, Any]:
         "merged_published_match_id": projection["merged_published_match_id"],
         "merged_report": projection["report"],
     }
+
+
+def _cleanup_failed_create(group_id: str) -> None:
+    """Remove every trace of a failed group creation (best effort).
+
+    Deletes the group under the maintenance lock protocol, then any live
+    canonical projection resolved by sidecar or summary scan.  Physical
+    source publications are never touched.  Cleanup errors never mask the
+    original failure.
+    """
+
+    try:
+        delete_match_group_when_video_idle(group_id)
+    except (KeyError, MatchGroupError, MatchGroupVideoError):
+        pass
+    try:
+        delete_merged_published_match(group_id)
+    except (KeyError, MatchGroupError, OSError):
+        pass
 
 
 def _require_backing_group_id(published_match_id: str) -> str:
@@ -3660,12 +3678,16 @@ def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
         projection = ensure_merged_published_match(group_id)
     except MatchGroupError as error:
         # Never leave a group without its user-facing merged match: the
-        # group directory belongs solely to this operation.
-        try:
-            delete_match_group_when_video_idle(group_id)
-        except (KeyError, MatchGroupError, MatchGroupVideoError):
-            pass
+        # group directory belongs solely to this operation.  Cleanup covers
+        # any live projection too (resolved by summary scan when the sidecar
+        # is already gone), so no orphan published-merged-* can survive a
+        # failed create.  Storage errors (OSError and friends) take the same
+        # path and are re-raised unconverted — never swallowed.
+        _cleanup_failed_create(group_id)
         raise _match_group_error_response(error) from error
+    except Exception:
+        _cleanup_failed_create(group_id)
+        raise
     return {
         **_group_with_validation(get_match_group(group_id)),
         "report": report,

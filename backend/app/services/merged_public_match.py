@@ -1150,7 +1150,8 @@ def validate_spatial_lineage(sources: list[dict[str, Any]]) -> None:
     pinned reviewed identity generation, or a team_shape whose verifiable
     ``generated_from`` entries do not match the embedded package payloads,
     raises instead of producing plausible-but-wrong spatial analytics.
-    Missing payloads merely make spatial output unavailable.
+    Missing payloads — or a present payload with missing/empty lineage —
+    merely make spatial output unavailable (see ``_heatmap_merge_status``).
     """
 
     for source in sources:
@@ -1200,12 +1201,33 @@ def _validate_team_shape_entries(package: dict[str, Any], shape: dict[str, Any],
             )
 
 
+def _heatmap_lineage_proven(source: dict[str, Any]) -> bool:
+    """Return True only when heatmap lineage is explicitly proven.
+
+    Proven means the payload carries a non-empty ``source_snapshot_digest``
+    equal to the pinned ``reviewed_identity_digest``.  Explicit mismatches
+    are rejected earlier by :func:`validate_spatial_lineage`; anything that
+    merely lacks lineage is unproven and must not render positions.
+    """
+
+    member = _record(source.get("member"))
+    heatmaps = _record(source["package"].get("reviewed_player_heatmaps"))
+    digest = heatmaps.get("source_snapshot_digest")
+    pinned = str(member.get("reviewed_identity_digest") or "")
+    return isinstance(digest, str) and bool(digest) and bool(pinned) and digest == pinned
+
+
 def _heatmap_merge_status(sources: list[dict[str, Any]]) -> dict[str, Any]:
     identities: list[str] = []
     for source in sources:
         heatmaps = _record(source["package"].get("reviewed_player_heatmaps"))
         if not isinstance(source["package"].get("reviewed_player_heatmaps"), dict):
             return {"status": "unavailable", "reason": "heatmap_payload_missing"}
+        if not _heatmap_lineage_proven(source):
+            # Missing lineage is NOT proven lineage: mergeable heatmaps
+            # require an explicit source_snapshot_digest match.  The merge
+            # itself still succeeds; only spatial output is unavailable.
+            return {"status": "unavailable", "reason": "spatial_lineage_unproven"}
         pitch = _record(heatmaps.get("pitch_dimensions_m"))
         width = _number_or_none(pitch.get("width_m"))
         length = _number_or_none(pitch.get("length_m"))
@@ -1427,7 +1449,14 @@ def ensure_merged_published_match(group_id: str) -> dict[str, Any]:
 
     manifest = get_match_group(group_id)
     projection = get_merged_projection(group_id)
-    merged_id = str(projection["merged_published_match_id"]) if projection is not None else new_merged_published_id()
+    if projection is None:
+        # Reserve the stable merged ID BEFORE anything goes live: if the
+        # build or promotion fails, a retry reuses this same ID and no
+        # orphan publication can exist without an authoritative relation.
+        merged_id = new_merged_published_id()
+        _reserve_merged_projection(group_id, merged_id)
+    else:
+        merged_id = str(projection["merged_published_match_id"])
     sources = load_pinned_merge_sources(manifest)
     report = build_canonical_merged_report(manifest, sources, merged_published_id=merged_id)
     candidate = _stage_projection_candidate(group_id, merged_id, manifest, sources, report)
@@ -1497,7 +1526,6 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
         _pins_changed,
     )
     from app.services.match_group_video import reserve_match_group_video_idle
-
     with reserve_match_group_video_idle(group_id, operation="refresh"):
         group = get_match_group(group_id)
         original_digest = str(group.get("aggregate_semantic_digest") or "")
@@ -1514,18 +1542,44 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
         aggregate_report = build_match_group_report_candidate(candidate)
         # The canonical candidate is fully staged BEFORE the group pair
         # commits, so a build failure cannot split pins from projection.
+        # The merged ID is reserved before staging for the same reason as
+        # in ensure: promotion must never precede the authoritative relation.
         projection = get_merged_projection(group_id)
-        merged_id = str(projection["merged_published_match_id"]) if projection is not None else new_merged_published_id()
+        if projection is None:
+            merged_id = new_merged_published_id()
+            _reserve_merged_projection(group_id, merged_id)
+        else:
+            merged_id = str(projection["merged_published_match_id"])
         candidate_sources = load_pinned_merge_sources(candidate)
         candidate_report = build_canonical_merged_report(candidate, candidate_sources, merged_published_id=merged_id)
         staged = _stage_projection_candidate(group_id, merged_id, candidate, candidate_sources, candidate_report)
         try:
             _validate_projection_candidate(staged, merged_id)
+            # Final authoritative re-read BEFORE any durable commit.  The
+            # manifest-digest check alone only proves the group definition
+            # did not change; a physical publication rebuilt in place (same
+            # published_id, new generation) leaves the manifest untouched
+            # while invalidating the G1 pins this candidate was built from.
+            # Rebuilding the candidate from current sources must reproduce
+            # the exact same pins, or the staged projection is discarded
+            # and NOTHING is committed (the operator retries refresh).
             precommit_group = get_match_group(group_id)
             if precommit_group.get("aggregate_semantic_digest") != original_digest:
                 raise MatchGroupError(
                     "source_generation_changed_during_refresh",
                     "Logical-match definition changed while the report was refreshing.",
+                )
+            precommit = _build_refresh_candidate(precommit_group)
+            if precommit.get("aggregate_semantic_digest") != candidate.get("aggregate_semantic_digest"):
+                raise MatchGroupError(
+                    "source_generation_changed_during_refresh",
+                    "A source publication changed generation while the report was refreshing.",
+                )
+            precommit_validation = validate_match_group_manifest(precommit)
+            if precommit_validation.get("status") != "compatible":
+                raise MatchGroupError(
+                    "source_generation_changed_during_refresh",
+                    "A source publication became incompatible while the report was refreshing.",
                 )
             _commit_pair(
                 group_id,
@@ -1631,6 +1685,22 @@ def _write_merged_projection(
     _atomic_write_json(path, document)
 
 
+def _reserve_merged_projection(group_id: str, merged_id: str) -> None:
+    """Durably reserve the stable group ↔ merged-ID relation first.
+
+    Storage failures become a chained domain error: no live publication
+    can exist yet at this point, so there is nothing to roll back.
+    """
+
+    try:
+        _write_merged_projection(group_id, merged_id)
+    except OSError as error:
+        raise MatchGroupError(
+            "merged_projection_store_unavailable",
+            "Could not persist the merged published-match reservation.",
+        ) from error
+
+
 def _staging_root() -> Path:
     staging_parent = PUBLISHED_MATCHES_DIR.parent / ".staging"
     staging_parent.mkdir(parents=True, exist_ok=True)
@@ -1719,7 +1789,8 @@ def _commit_projection_candidate(group_id: str, merged_id: str, candidate: dict[
         staged_public_dir=candidate["mirror"],
         target_public_dir=mirror_dir,
     )
-    _write_merged_projection(group_id, merged_id)
+    # The sidecar was reserved BEFORE staging, so no post-promotion write
+    # can fail into an orphan live publication.  Nothing to do here.
 
 
 def _remove_staging(candidate: dict[str, Any]) -> None:
