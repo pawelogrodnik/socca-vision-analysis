@@ -194,6 +194,11 @@ def update_match_group_and_generate_report(
             metadata=metadata,
         )
         report = build_report_candidate(replacement)
+        validation = validate_match_group_manifest(replacement)
+        if validation.get("status") != "compatible":
+            reasons = validation.get("blocking_reasons") or []
+            detail = str((reasons[0] if reasons else {}).get("detail") or "Logical match sources are not compatible.")
+            raise MatchGroupError("aggregate_generation_blocked", detail)
         _commit_pair(
             normalized_group_id,
             replacement,

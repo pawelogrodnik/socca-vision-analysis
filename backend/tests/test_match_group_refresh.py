@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import json
+import os
 import threading
 from pathlib import Path
 from unittest.mock import patch
@@ -267,6 +268,26 @@ class MatchGroupRefreshTests(unittest.TestCase):
                 self.assertFalse((group_dir / name).exists())
             self.assertNotEqual(replacement_report["aggregate_semantic_digest"], json.loads(previous_report)["aggregate_semantic_digest"])
             self.assertEqual(refresh_match_group_to_latest(group_id)["status"], "refreshed")
+
+    def test_reader_fails_closed_while_a_live_owner_has_replaced_only_the_manifest(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            group_id = str(group["group_id"])
+            group_dir = root / "groups" / group_id
+            previous_manifest = (group_dir / "manifest.json").read_bytes()
+            previous_report = (group_dir / "public_report.json").read_bytes()
+            _write_source(root, "published-one", "physical-one", player_distance=333)
+            replacement = match_group_refresh._build_refresh_candidate(get_match_group(group_id))
+            prepare_pair_recovery(group_dir, previous_manifest=previous_manifest, previous_report=previous_report)
+            (group_dir / "manifest.json").write_text(json.dumps(replacement), encoding="utf-8")
+            (group_dir / "video_job.lock").write_text(json.dumps({"pid": os.getpid(), "job_key": "refresh-live"}), encoding="utf-8")
+
+            with self.assertRaises(MatchGroupError) as failure:
+                get_match_group(group_id)
+
+            self.assertEqual(failure.exception.code, "match_group_maintenance_in_progress")
+            (group_dir / "video_job.lock").unlink()
+            self.assertEqual(get_match_group(group_id), json.loads(previous_manifest))
 
     def test_refresh_does_not_rewrite_external_video_or_start_video_generation(self) -> None:
         with self._store() as root:
