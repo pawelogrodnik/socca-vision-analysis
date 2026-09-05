@@ -164,6 +164,7 @@ def update_match_group_and_generate_report(
     member_published_ids: list[str],
     metadata: dict[str, Any],
     build_report_candidate: Callable[[Mapping[str, Any]], dict[str, Any]],
+    rebuild_canonical_projection: Callable[[str], Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Publish a replacement manifest/report pair under one maintenance owner.
 
@@ -174,6 +175,11 @@ def update_match_group_and_generate_report(
     owns the reservation and commits both documents via ``_commit_pair``.
     Passing the normal persisted report generation here would both receive
     the wrong type and recursively acquire the same lock.
+
+    When supplied, ``rebuild_canonical_projection`` must be the merged
+    projection helper that assumes this maintenance ownership is already
+    held.  Running it before release prevents an older lazy projection from
+    promoting after this replacement manifest becomes authoritative.
     """
 
     # Runtime imports avoid a module cycle: video owns the shared lock protocol,
@@ -200,6 +206,8 @@ def update_match_group_and_generate_report(
             report,
             expected_manifest_digest=str(current.get("aggregate_semantic_digest") or ""),
         )
+        if rebuild_canonical_projection is not None:
+            rebuild_canonical_projection(normalized_group_id)
         return replacement, report
 
 

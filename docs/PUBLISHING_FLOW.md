@@ -221,6 +221,13 @@ Key properties:
 - The merged published ID (`published-merged-{uuid}`) is allocated once per
   group, persisted in `match-groups/{groupId}/merged_projection.json`, and
   stays stable across regeneration, refresh, and video updates.
+- Two ownership scopes protect this lifecycle: a short exclusive merged-ID
+  reservation lock chooses that one stable ID, while the existing durable
+  match-group maintenance ownership serializes the complete canonical
+  projection lifecycle (stage, validate, promote) with refresh, update,
+  regeneration, video maintenance, and deletion. A staged candidate is
+  promoted only when its backing group still exists with the same manifest
+  digest it was built from; ID reservation alone is not a projection lock.
 - `source_kind` distinguishes `physical` from `merged` publications.
   `GET /api/published/matches/{id}` returns server-authoritative
   `capabilities`: physical matches offer `Przebuduj publikację`; merged

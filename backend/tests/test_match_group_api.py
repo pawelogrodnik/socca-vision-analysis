@@ -363,6 +363,14 @@ class MatchGroupCreateUpdateWiringTests(unittest.TestCase):
                 update.call_args.kwargs["build_report_candidate"],
                 main_module.build_match_group_report_candidate,
             )
+            # The update service already owns the durable maintenance lock.
+            # It must therefore receive the explicitly locked projection
+            # helper, never the public wrapper which would self-conflict on
+            # the non-reentrant ownership lock after publishing G2.
+            self.assertIs(
+                update.call_args.kwargs["rebuild_canonical_projection"],
+                main_module._ensure_merged_published_match_locked,
+            )
 
     @staticmethod
     def _payload(members: list[str], title: str = "Logical match") -> MatchGroupPayload:

@@ -517,7 +517,6 @@ class MergedPublicMatchTests(unittest.TestCase):
 
     def test_concurrent_first_merged_projection_uses_one_reserved_id_and_no_orphan(self) -> None:
         import threading
-        from unittest.mock import patch as mock_patch
 
         from app.services.merged_public_match import get_merged_projection
 
@@ -531,21 +530,12 @@ class MergedPublicMatchTests(unittest.TestCase):
                 for published_id in ("published-one", "published-two")
             }
 
-            # Both lazy readers enter the formerly racy first-reservation
-            # window together.  The durable reservation primitive chooses
-            # exactly one ID before either caller starts projection staging.
+            # Both lazy readers start together.  The first owns projection
+            # maintenance while choosing the stable ID; the second must then
+            # reuse it after the first lifecycle operation completes.
             start = threading.Barrier(3)
-            reservation_entry = threading.Barrier(2)
-            real_reserve = __import__(
-                "app.services.merged_public_match",
-                fromlist=["get_or_reserve_merged_published_id"],
-            ).get_or_reserve_merged_published_id
             results: list[dict] = []
             errors: list[BaseException] = []
-
-            def synchronized_reserve(request_group_id: str, *, candidate_id: str | None = None) -> str:
-                reservation_entry.wait(timeout=30)
-                return real_reserve(request_group_id, candidate_id=candidate_id)
 
             def worker() -> None:
                 try:
@@ -554,21 +544,28 @@ class MergedPublicMatchTests(unittest.TestCase):
                 except BaseException as error:  # noqa: BLE001 - asserted below
                     errors.append(error)
 
-            with mock_patch(
-                "app.services.merged_public_match.get_or_reserve_merged_published_id",
-                side_effect=synchronized_reserve,
-            ):
-                first = threading.Thread(target=worker, daemon=True)
-                second = threading.Thread(target=worker, daemon=True)
-                first.start()
-                second.start()
-                start.wait(timeout=30)
-                first.join(timeout=60)
-                second.join(timeout=60)
+            first = threading.Thread(target=worker, daemon=True)
+            second = threading.Thread(target=worker, daemon=True)
+            first.start()
+            second.start()
+            start.wait(timeout=30)
+            first.join(timeout=60)
+            second.join(timeout=60)
 
             self.assertFalse(first.is_alive(), "first lazy reader hung")
             self.assertFalse(second.is_alive(), "second lazy reader hung")
-            self.assertEqual(errors, [])
+            # Maintenance ownership intentionally rejects a concurrent full
+            # lifecycle operation.  Its retry must still reuse the winner's
+            # sidecar ID; the lower-level reservation test below covers two
+            # simultaneous candidate IDs directly.
+            self.assertLessEqual(len(errors), 1)
+            if errors:
+                from app.services.match_group_video import MatchGroupVideoError
+
+                self.assertIsInstance(errors[0], MatchGroupVideoError)
+                assert isinstance(errors[0], MatchGroupVideoError)
+                self.assertEqual(errors[0].code, "match_group_maintenance_in_progress")
+                results.append(ensure_merged_published_match(group_id))
             self.assertEqual(len(results), 2)
             merged_ids = {str(result["merged_published_match_id"]) for result in results}
             self.assertEqual(len(merged_ids), 1)
@@ -642,6 +639,232 @@ class MergedPublicMatchTests(unittest.TestCase):
             # it may never turn sidecar persistence into last-writer-wins.
             self.assertEqual(_reserve_merged_projection(group_id, new_merged_published_id()), winner)
             self.assertEqual(get_merged_projection(group_id), sidecar)
+
+    def test_concurrent_ensure_cannot_enter_projection_promotion_while_owner_is_staging(self) -> None:
+        import threading
+        from unittest.mock import patch as mock_patch
+
+        from app.services.match_group_video import MatchGroupVideoError
+        from app.services.merged_public_match import check_merged_projection
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group_id = str(create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            entered = threading.Event()
+            release = threading.Event()
+            real_commit = __import__(
+                "app.services.merged_public_match",
+                fromlist=["_commit_projection_candidate"],
+            )._commit_projection_candidate
+            commits: list[str] = []
+            errors: list[BaseException] = []
+
+            def gate(commit_group_id: str, commit_merged_id: str, candidate: dict) -> None:
+                commits.append(commit_merged_id)
+                entered.set()
+                self.assertTrue(release.wait(timeout=30), "first ensure never released")
+                real_commit(commit_group_id, commit_merged_id, candidate)
+
+            def first_ensure() -> None:
+                try:
+                    ensure_merged_published_match(group_id)
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            with mock_patch("app.services.merged_public_match._commit_projection_candidate", side_effect=gate):
+                owner = threading.Thread(target=first_ensure, daemon=True)
+                owner.start()
+                self.assertTrue(entered.wait(timeout=30), "owner did not reach promotion gate")
+                with self.assertRaises(MatchGroupVideoError) as blocked:
+                    ensure_merged_published_match(group_id)
+                self.assertEqual(blocked.exception.code, "match_group_maintenance_in_progress")
+                self.assertEqual(commits, [merged_id])
+                release.set()
+                owner.join(timeout=60)
+
+            self.assertFalse(owner.is_alive(), "owner ensure hung")
+            self.assertEqual(errors, [])
+            self.assertEqual(ensure_merged_published_match(group_id)["merged_published_match_id"], merged_id)
+            self.assertEqual(check_merged_projection(merged_id)["status"], "current")
+
+    def test_first_ensure_blocks_delete_and_cannot_leave_an_orphan_after_retry(self) -> None:
+        import threading
+        from unittest.mock import patch as mock_patch
+
+        from fastapi import HTTPException
+
+        from app.main import api_delete_match_group
+        from app.services.merged_public_match import merged_ids_for_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group_id = str(create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())["group_id"])
+            entered = threading.Event()
+            release = threading.Event()
+            real_stage = __import__(
+                "app.services.merged_public_match",
+                fromlist=["_stage_projection_candidate"],
+            )._stage_projection_candidate
+            errors: list[BaseException] = []
+
+            def gate(*args: object, **kwargs: object) -> dict:
+                candidate = real_stage(*args, **kwargs)
+                entered.set()
+                self.assertTrue(release.wait(timeout=30), "first ensure never released")
+                return candidate
+
+            def worker() -> None:
+                try:
+                    ensure_merged_published_match(group_id)
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            with mock_patch("app.services.merged_public_match._stage_projection_candidate", side_effect=gate):
+                owner = threading.Thread(target=worker, daemon=True)
+                owner.start()
+                self.assertTrue(entered.wait(timeout=30), "ensure did not reach staging gate")
+                with self.assertRaises(HTTPException) as blocked:
+                    api_delete_match_group(group_id)
+                self.assertEqual(blocked.exception.status_code, 409)
+                release.set()
+                owner.join(timeout=60)
+
+            self.assertFalse(owner.is_alive(), "ensure hung")
+            self.assertEqual(errors, [])
+            merged_id = merged_ids_for_group(group_id)[0]
+            self.assertTrue((root / "published" / merged_id).is_dir())
+            self.assertEqual(api_delete_match_group(group_id)["status"], "deleted")
+            self.assertFalse((root / "groups" / group_id).exists())
+            self.assertFalse((root / "published" / merged_id).exists())
+            self.assertFalse((root / "client-public" / merged_id).exists())
+
+    def test_delete_winning_before_ensure_prevents_projection_resurrection(self) -> None:
+        from app.services.match_group_video import reserve_match_group_video_idle
+        from app.services.match_groups import delete_match_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group_id = str(create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())["group_id"])
+            with reserve_match_group_video_idle(group_id, operation="test-delete-winner"):
+                delete_match_group(group_id)
+                with self.assertRaises(KeyError):
+                    ensure_merged_published_match(group_id)
+            self.assertFalse((root / "groups" / group_id).exists())
+            self.assertEqual([path for path in (root / "published").iterdir() if path.name.startswith("published-merged-")], [])
+            self.assertEqual([path for path in (root / "client-public").iterdir() if path.name.startswith("published-merged-")], [])
+
+    def test_staged_candidate_does_not_promote_after_backing_manifest_changes(self) -> None:
+        import threading
+        from unittest.mock import patch as mock_patch
+
+        from app.services.match_groups import update_match_group
+        from app.services.merged_public_match import merged_published_id_for_group
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group_id = str(create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())["group_id"])
+            entered = threading.Event()
+            release = threading.Event()
+            real_stage = __import__(
+                "app.services.merged_public_match",
+                fromlist=["_stage_projection_candidate"],
+            )._stage_projection_candidate
+            errors: list[BaseException] = []
+
+            def gate(*args: object, **kwargs: object) -> dict:
+                candidate = real_stage(*args, **kwargs)
+                entered.set()
+                self.assertTrue(release.wait(timeout=30), "ensure did not resume")
+                return candidate
+
+            def worker() -> None:
+                try:
+                    ensure_merged_published_match(group_id)
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            with mock_patch("app.services.merged_public_match._stage_projection_candidate", side_effect=gate):
+                owner = threading.Thread(target=worker, daemon=True)
+                owner.start()
+                self.assertTrue(entered.wait(timeout=30), "ensure did not reach staging gate")
+                # Controlled failure injection: production updates are excluded
+                # by maintenance ownership, so mutate directly to prove the
+                # mandatory pre-promotion digest guard itself.
+                update_match_group(
+                    group_id,
+                    member_published_ids=["published-one", "published-two"],
+                    metadata={**_metadata(), "title": "G2 while G1 staged"},
+                )
+                release.set()
+                owner.join(timeout=60)
+
+            self.assertFalse(owner.is_alive(), "ensure hung")
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], MatchGroupError)
+            assert isinstance(errors[0], MatchGroupError)
+            self.assertEqual(errors[0].code, "merged_projection_source_changed")
+            merged_id = merged_published_id_for_group(group_id)
+            self.assertIsNotNone(merged_id)
+            assert merged_id is not None
+            self.assertFalse((root / "published" / merged_id).exists())
+            self.assertFalse((root / "client-public" / merged_id).exists())
+
+    def test_failed_commit_releases_lifecycle_before_retry_can_promote_coherently(self) -> None:
+        import threading
+        from unittest.mock import patch as mock_patch
+
+        from app.services.match_group_video import MatchGroupVideoError
+        from app.services.merged_public_match import check_merged_projection
+
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group_id = str(create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            entered = threading.Event()
+            release = threading.Event()
+            real_commit = __import__(
+                "app.services.json_publish_store",
+                fromlist=["_commit_publication_generation"],
+            )._commit_publication_generation
+            calls = {"count": 0}
+            errors: list[BaseException] = []
+
+            def fail_first_commit(*args: object, **kwargs: object) -> None:
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    entered.set()
+                    self.assertTrue(release.wait(timeout=30), "failing owner never released")
+                    raise OSError("injected private/public promotion failure")
+                real_commit(*args, **kwargs)
+
+            def failing_owner() -> None:
+                try:
+                    ensure_merged_published_match(group_id)
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            with mock_patch("app.services.json_publish_store._commit_publication_generation", side_effect=fail_first_commit):
+                owner = threading.Thread(target=failing_owner, daemon=True)
+                owner.start()
+                self.assertTrue(entered.wait(timeout=30), "owner did not enter commit")
+                with self.assertRaises(MatchGroupVideoError) as blocked:
+                    ensure_merged_published_match(group_id)
+                self.assertEqual(blocked.exception.code, "match_group_maintenance_in_progress")
+                self.assertEqual(calls["count"], 1)
+                release.set()
+                owner.join(timeout=60)
+                self.assertEqual(ensure_merged_published_match(group_id)["merged_published_match_id"], merged_id)
+
+            self.assertFalse(owner.is_alive(), "failing owner hung")
+            self.assertEqual(len(errors), 1)
+            self.assertIsInstance(errors[0], OSError)
+            self.assertEqual(check_merged_projection(merged_id)["status"], "current")
 
     def test_conflicting_player_team_fails_closed(self) -> None:
         with self._store() as root:

@@ -1460,7 +1460,24 @@ def ensure_merged_published_match(group_id: str) -> dict[str, Any]:
     it — they never allocate a new one.
     """
 
+    from app.services.match_group_video import reserve_match_group_video_idle
+
+    # The short merged-ID reservation lock chooses one stable ID.  This
+    # durable maintenance ownership is a separate, longer-lived domain: it
+    # serializes every staged/live projection transition with refresh, update,
+    # video generation, and deletion.
+    with reserve_match_group_video_idle(group_id, operation="merged-projection"):
+        return _ensure_merged_published_match_locked(group_id)
+
+
+def _ensure_merged_published_match_locked(group_id: str) -> dict[str, Any]:
+    """Build and promote a projection while maintenance ownership is held."""
+
+    # Read only after the caller owns maintenance.  In particular, do not
+    # stage a pre-lock G1 manifest after another lifecycle operation made G2
+    # authoritative while we waited for this ownership interval.
     manifest = get_match_group(group_id)
+    manifest_digest = str(manifest.get("aggregate_semantic_digest") or "")
     # Reserve the stable merged ID BEFORE anything goes live.  This is an
     # exclusive filesystem operation: two lazy first reads may arrive in
     # different local processes, but both must build the same projection.
@@ -1470,6 +1487,7 @@ def ensure_merged_published_match(group_id: str) -> dict[str, Any]:
     candidate = _stage_projection_candidate(group_id, merged_id, manifest, sources, report)
     try:
         _validate_projection_candidate(candidate, merged_id)
+        _assert_projection_source_current(group_id, manifest_digest)
         _commit_projection_candidate(group_id, merged_id, candidate)
     finally:
         _remove_staging(candidate)
@@ -1544,7 +1562,7 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
             detail = str((reasons[0] if reasons else {}).get("detail") or "Latest source publications are incompatible.")
             raise MatchGroupError("refresh_blocked", detail)
         if not _pins_changed(group, candidate):
-            coherence = _ensure_projection_coherent(group_id)
+            coherence = _ensure_projection_coherent_locked(group_id)
             return _refresh_response(get_match_group(group_id), refreshed=False, coherence=coherence)
 
         aggregate_report = build_match_group_report_candidate(candidate)
@@ -1590,24 +1608,45 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
                 aggregate_report,
                 expected_manifest_digest=original_digest,
             )
+            _assert_projection_source_current(
+                group_id,
+                str(candidate.get("aggregate_semantic_digest") or ""),
+            )
             _commit_projection_candidate(group_id, merged_id, staged)
         finally:
             _remove_staging(staged)
         return _refresh_response(get_match_group(group_id), refreshed=True, coherence={"status": "current"})
 
 
-def _ensure_projection_coherent(group_id: str) -> dict[str, Any]:
-    """Rebuild a stale projection when pins are unchanged (safe recovery)."""
+def _ensure_projection_coherent_locked(group_id: str) -> dict[str, Any]:
+    """Rebuild a stale projection when pins are unchanged and lock is held."""
 
     merged_id = merged_published_id_for_group(group_id)
     if merged_id is None:
-        ensure_merged_published_match(group_id)
+        _ensure_merged_published_match_locked(group_id)
         return {"status": "current"}
     coherence = check_merged_projection(merged_id)
     if coherence["status"] != "current":
-        ensure_merged_published_match(group_id)
+        _ensure_merged_published_match_locked(group_id)
         return {"status": "current"}
     return coherence
+
+
+def regenerate_merged_match_group(group_id: str) -> dict[str, Any]:
+    """Regenerate aggregate and canonical reports in one ownership interval.
+
+    This intentionally does not repin sources.  The aggregate report and the
+    canonical projection both come from the current persisted manifest while
+    delete/refresh/update are mutually excluded.
+    """
+
+    from app.services.match_group_aggregation import generate_match_group_report_unlocked
+    from app.services.match_group_video import reserve_match_group_video_idle
+
+    with reserve_match_group_video_idle(group_id, operation="merged-regenerate"):
+        report = generate_match_group_report_unlocked(group_id)
+        projection = _ensure_merged_published_match_locked(group_id)
+    return {"report": report, "projection": projection}
 
 
 def _refresh_response(group: dict[str, Any], *, refreshed: bool, coherence: dict[str, Any]) -> dict[str, Any]:
@@ -1865,8 +1904,26 @@ def _validate_projection_candidate(candidate: dict[str, Any], merged_id: str) ->
                 raise MatchGroupError("merged_projection_invalid", "Staged merged heatmap artifact is missing.")
 
 
+def _assert_projection_source_current(group_id: str, expected_manifest_digest: str) -> None:
+    """Reject a staged candidate whose backing group changed or disappeared."""
+
+    try:
+        current = get_match_group(group_id)
+    except KeyError as error:
+        raise MatchGroupError(
+            "merged_projection_source_changed",
+            "Backing logical match disappeared while the canonical projection was staging.",
+        ) from error
+    current_digest = str(current.get("aggregate_semantic_digest") or "")
+    if not expected_manifest_digest or current_digest != expected_manifest_digest:
+        raise MatchGroupError(
+            "merged_projection_source_changed",
+            "Backing logical-match generation changed while the canonical projection was staging.",
+        )
+
+
 def _commit_projection_candidate(group_id: str, merged_id: str, candidate: dict[str, Any]) -> None:
-    """Atomically promote a validated candidate to the live projection."""
+    """Atomically promote a validated candidate owned by one lifecycle lock."""
 
     from app.services.json_publish_store import (
         _commit_publication_generation as _commit_staged_directories,
@@ -2079,6 +2136,7 @@ __all__ = [
     "new_merged_published_id",
     "get_or_reserve_merged_published_id",
     "rebuild_canonical_report_for_group",
+    "regenerate_merged_match_group",
     "refresh_merged_match_to_latest",
     "render_merged_heatmaps",
     "validate_spatial_lineage",

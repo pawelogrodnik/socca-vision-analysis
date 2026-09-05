@@ -222,6 +222,7 @@ from app.services.match_groups import (
     validate_match_group,
 )
 from app.services.merged_public_match import (
+    _ensure_merged_published_match_locked,
     check_merged_projection,
     delete_merged_projection_by_id,
     delete_merged_published_match,
@@ -230,6 +231,7 @@ from app.services.merged_public_match import (
     is_merged_published_id,
     merged_ids_for_group,
     merged_published_id_for_group,
+    regenerate_merged_match_group,
     refresh_merged_match_to_latest,
 )
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
@@ -3591,10 +3593,19 @@ def _group_with_validation(group: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _merged_projection_response(group_id: str) -> dict[str, Any]:
+def _merged_projection_response(group_id: str, *, rebuild: bool = True) -> dict[str, Any]:
     """Build (or rebuild) the canonical merged projection for one group."""
     try:
-        projection = ensure_merged_published_match(group_id)
+        if rebuild:
+            projection = ensure_merged_published_match(group_id)
+        else:
+            merged_id = merged_published_id_for_group(group_id)
+            if merged_id is None:
+                raise MatchGroupError("merged_projection_missing", "Canonical merged projection was not created.")
+            projection = {
+                "merged_published_match_id": merged_id,
+                "report": get_published_match(merged_id)["public_report"],
+            }
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
     return {
@@ -3714,8 +3725,9 @@ def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[st
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
             build_report_candidate=build_match_group_report_candidate,
+            rebuild_canonical_projection=_ensure_merged_published_match_locked,
         )
-        return {**_merged_projection_response(str(group["group_id"])), "report": report}
+        return {**_merged_projection_response(str(group["group_id"]), rebuild=False), "report": report}
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3725,8 +3737,12 @@ def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[st
 @app.post("/api/published/match-groups/{group_id}/regenerate")
 def api_regenerate_match_group(group_id: str) -> dict[str, Any]:
     try:
-        report = generate_match_group_report(group_id)
-        return {**_group_with_validation(get_match_group(group_id)), "report": report, **_merged_projection_response(group_id)}
+        regenerated = regenerate_merged_match_group(group_id)
+        return {
+            **_group_with_validation(get_match_group(group_id)),
+            "report": regenerated["report"],
+            **_merged_projection_response(group_id, rebuild=False),
+        }
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3938,8 +3954,7 @@ def api_regenerate_merged_published_match(published_match_id: str) -> dict[str, 
         )
     group_id = _require_backing_group_id(published_match_id)
     try:
-        generate_match_group_report(group_id)
-        ensure_merged_published_match(group_id)
+        regenerate_merged_match_group(group_id)
         return get_published_match(published_match_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Published match not found") from exc
