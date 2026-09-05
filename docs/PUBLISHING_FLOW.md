@@ -182,3 +182,141 @@ matches are never refreshed here — they observe the new snapshot through
 the explicit #94 refresh flow.
 
 Deletion is intentionally hard delete for now because this panel is meant for correcting duplicate imports and bad stats snapshots during MVP development. A later production version can add soft delete/audit logs.
+
+## Merged (logical) matches are canonical published matches
+
+Authoritative product invariant:
+
+> A merged match is not a report about several matches.
+> A merged match is one new match assembled from several physical match fragments.
+
+Pipeline:
+
+```text
+physical published match A/B/C
+        ↓
+match-group manifest (INTERNAL provenance / aggregation definition)
+        ↓
+aggregation engine (ordered pins, digests, compatibility checks)
+        ↓
+canonical merged PublicMatchReport
+        ↓
+merged published-match projection:
+    published/matches/published-merged-{uuid}/
+        summary.json / public_report.json / provenance.json / heatmaps/
+        (NO package.json — a merged match is not a physical package)
+        ↓
+/published/matches/{mergedPublishedId}/report
+        ↓
+the exact same PublishedMatchReportPage → PublicMatchReportContent
+```
+
+There is no separate user-facing aggregate report type. If
+`PublicMatchReportContent` changes, merged matches get the change
+automatically. The old `/published/match-groups/{groupId}/report` URL only
+redirects to the canonical merged report.
+
+Key properties:
+
+- The merged published ID (`published-merged-{uuid}`) is allocated once per
+  group, persisted in `match-groups/{groupId}/merged_projection.json`, and
+  stays stable across regeneration, refresh, and video updates.
+- Two ownership scopes protect this lifecycle: a short exclusive merged-ID
+  reservation lock chooses that one stable ID, while the existing durable
+  match-group maintenance ownership serializes the complete canonical
+  projection lifecycle (stage, validate, promote) with refresh, update,
+  regeneration, video maintenance, and deletion. A staged candidate is
+  promoted only when its backing group still exists with the same manifest
+  digest it was built from; ID reservation alone is not a projection lock.
+- `source_kind` distinguishes `physical` from `merged` publications.
+  `GET /api/published/matches/{id}` returns server-authoritative
+  `capabilities`: physical matches offer `Przebuduj publikację`; merged
+  matches offer `Regeneruj raport`, `Odśwież do najnowszych danych`, video
+  generation, and external-video maintenance instead.
+- `Regeneruj raport` rebuilds from currently pinned sources (no repinning).
+  `Odśwież do najnowszych danych` repins changed sources atomically
+  (all-or-nothing), preserves group and merged IDs, rebuilds the canonical
+  report, reevaluates combined/external video freshness, and regenerates Key
+  Moments — without auto-regenerating video. The same lifecycle previously
+  known as #93/#94 is preserved.
+- Aggregation semantics: durations/times/distances/counts are SUMMED, peak
+  and max speeds use MAX, averages/percentages/rates (possession share,
+  completion rate, workload, coverage) are RECOMPUTED from summed primitives,
+  timelines are REBASED to logical time, heatmaps merge
+  pitch-meter samples through the shared renderer, and average positions are
+  recomputed from merged samples.
+- Combined video and YouTube lifecycle keep their existing semantics but
+  resolve server-side from the merged published match to its backing group;
+  the frontend never infers group IDs.
+- Existing `published/match-groups/` groups remain authoritative internal
+  manifests; a lazy projection creates the stable merged published match on
+  demand (create/regenerate/refresh/merged-match lookup) without destructive
+  migration of source publications.
+
+## Merged correctness guarantees (hardening)
+
+### Canonical field semantics
+
+- Momentum: fragment-local A/B signs are re-derived into canonical roles
+  (canonical A ≥ 0, canonical B ≤ 0, `signed_score = a + b`); the dominant
+  team follows the stable team, never the local label.
+- Possession: `controlled_coverage = controlled / total` while
+  `known_possession_coverage = (controlled + contested + free) / total`.
+  Free and contested possession is known but not controlled; contested
+  frames are never dropped. `processed_frames` is the preferred denominator,
+  falling back to the summed categories.
+- Player average speed uses summed `movement_time_sec` primitives (which
+  include reviewed safe short-gap estimated movement), never detected time.
+  Team movement has no time denominator in aggregate inputs, so team average
+  speed stays explicitly merged-defined (distance over merged duration).
+- Movement and core pass counts aggregate from `aggregate_inputs`
+  primitives; `public_report.json` supplies presentation (names, colors)
+  and extended classification without deeper primitives.
+
+### Spatial heatmaps: proven orientation or unavailable
+
+Matching pitch dimensions do NOT prove matching coordinate orientation.
+Merged heatmaps require, per fragment: valid spatial lineage
+(`reviewed_player_heatmaps.source_snapshot_digest` equals the pinned
+Reviewed Identity digest — mismatches fail closed) AND byte-identical pitch
+calibration geometry (image points + dimensions, i.e. the identical
+homography, hence identical pitch axes/origin). Otherwise the canonical
+player `heatmap` is `None` (rendered as unavailable by the shared UI) —
+never points drawn against fallback dimensions.
+
+### Team Shape: evidence weighting and team-oriented space
+
+Team Shape summaries and density grids average over valid frame-shape
+samples, so fragments are weighted by `diagnostics.eligible_frames`
+evidence — never video duration. Timelines rebase in seconds first (source
+bin index × bin width + logical offset) and derive display minute/label
+afterwards, keeping sub-minute boundaries exact. Team Shape lives in
+team-attack-oriented space (already pooled across halves by the physical
+computation), which is a different — and documented — contract from the raw
+pitch-orientation rule used for heatmaps. Team_shape lineage entries are
+validated against embedded package payloads where verifiable.
+
+### Transactional canonical projection
+
+The live projection is never mutated in place. Every rebuild stages a
+complete candidate (report + heatmaps + summary + provenance + mirror
+candidate), validates identity/digest coherence, then promotes it with
+atomic directory replacement (with backup/restore). Any failure leaves the
+previous complete projection untouched.
+
+Refresh commits coherently: prepare the refreshed group candidate, prepare
+the canonical projection candidate in staging, validate both, commit the
+group pair transaction, then promote the projection. `provenance.json`
+records the backing manifest digest; the read path (`GET
+/api/published/matches/{id}`) fails closed on mismatch — rebuilding safely
+when possible, returning an explicit conflict otherwise — so pins and the
+user-facing report can never silently split.
+
+### Deletion
+
+Deleting a group resolves owned `published-merged-*` IDs BEFORE the group
+directory (and its sidecar) disappears, then deletes the group under the
+existing video/maintenance lock, then the canonical projection(s) and
+static mirror(s) by explicit ID. Physical source publications are never
+touched; concurrent video generation still blocks deletion; deletion is
+idempotent over partially missing projections.

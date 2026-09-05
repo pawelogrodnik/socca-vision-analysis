@@ -393,8 +393,19 @@ def _write_source(
         "metric_readiness": {"team_movement": {"status": "ready"}, "player_movement": {"status": "ready"}, "possession": {"status": possession_status}, "passes": {"status": "ready"}},
     }
     aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
+    package = {
+        "match": {"id": source_match_id, "title": source_match_id},
+        "reviewed_player_heatmaps": {
+            "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0},
+            "heatmaps": [
+                {"player_id": player_id, "positions_m": [[5.0, 10.0], [6.0, 11.0]]}
+                for player_id, _team_id, _name in (extra_players or [("player-one", "team-corgi", "Alex")])
+            ],
+        },
+    }
     _write(directory / "public_report.json", public)
     _write(directory / "aggregate_inputs.json", aggregate)
+    _write(directory / "package.json", package)
 
 
 def _set_source_momentum(root: Path, published_id: str, point: dict[str, object], *, fake_key_moment: bool) -> None:

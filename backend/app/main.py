@@ -221,6 +221,19 @@ from app.services.match_groups import (
     update_match_group_and_generate_report,
     validate_match_group,
 )
+from app.services.merged_public_match import (
+    _ensure_merged_published_match_locked,
+    check_merged_projection,
+    delete_merged_projection_by_id,
+    delete_merged_published_match,
+    ensure_merged_published_match,
+    group_id_for_merged_published_id,
+    is_merged_published_id,
+    merged_ids_for_group,
+    merged_published_id_for_group,
+    regenerate_merged_match_group,
+    refresh_merged_match_to_latest,
+)
 from app.services.match_phase_config import load_match_phase_config, save_match_phase_config
 from app.services.pass_review import load_pass_candidates_review, save_pass_candidate_reviews
 from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
@@ -3570,7 +3583,74 @@ def _match_group_error_response(error: MatchGroupError) -> HTTPException:
 
 
 def _group_with_validation(group: dict[str, Any]) -> dict[str, Any]:
-    return {"group": group, "validation": validate_match_group(str(group["group_id"]))}
+    group_id = str(group["group_id"])
+    return {
+        "group": group,
+        "validation": validate_match_group(group_id),
+        # Read-only sidecar lookup: creating the projection is an explicit
+        # lifecycle step (create/regenerate/refresh/merged-match endpoint).
+        "merged_published_match_id": merged_published_id_for_group(group_id),
+    }
+
+
+def _merged_projection_response(group_id: str, *, rebuild: bool = True) -> dict[str, Any]:
+    """Build (or rebuild) the canonical merged projection for one group."""
+    try:
+        if rebuild:
+            projection = ensure_merged_published_match(group_id)
+        else:
+            merged_id = merged_published_id_for_group(group_id)
+            if merged_id is None:
+                raise MatchGroupError("merged_projection_missing", "Canonical merged projection was not created.")
+            projection = {
+                "merged_published_match_id": merged_id,
+                "report": get_published_match(merged_id)["public_report"],
+            }
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+    return {
+        **_group_with_validation(get_match_group(group_id)),
+        "merged_published_match_id": projection["merged_published_match_id"],
+        "merged_report": projection["report"],
+    }
+
+
+def _cleanup_failed_create(group_id: str) -> None:
+    """Remove every trace of a failed group creation (best effort).
+
+    Deletes the group under the maintenance lock protocol, then any live
+    canonical projection resolved by sidecar or summary scan.  Physical
+    source publications are never touched.  Cleanup errors never mask the
+    original failure.
+    """
+
+    try:
+        delete_match_group_when_video_idle(group_id)
+    except (KeyError, MatchGroupError, MatchGroupVideoError):
+        pass
+    try:
+        delete_merged_published_match(group_id)
+    except (KeyError, MatchGroupError, OSError):
+        pass
+
+
+def _require_backing_group_id(published_match_id: str) -> str:
+    group_id = group_id_for_merged_published_id(published_match_id)
+    if group_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "merged_match_not_found", "detail": "Merged published match not found."},
+        )
+    try:
+        get_match_group(group_id)
+    except KeyError as error:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "backing_group_not_found", "detail": "Backing logical match no longer exists."},
+        ) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+    return group_id
 
 
 @app.get("/api/published/match-groups/eligible-sources")
@@ -3604,7 +3684,27 @@ def api_create_match_group(payload: MatchGroupPayload) -> dict[str, Any]:
         )
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
-    return {**_group_with_validation(group), "report": report}
+    group_id = str(group["group_id"])
+    try:
+        projection = ensure_merged_published_match(group_id)
+    except MatchGroupError as error:
+        # Never leave a group without its user-facing merged match: the
+        # group directory belongs solely to this operation.  Cleanup covers
+        # any live projection too (resolved by summary scan when the sidecar
+        # is already gone), so no orphan published-merged-* can survive a
+        # failed create.  Storage errors (OSError and friends) take the same
+        # path and are re-raised unconverted — never swallowed.
+        _cleanup_failed_create(group_id)
+        raise _match_group_error_response(error) from error
+    except Exception:
+        _cleanup_failed_create(group_id)
+        raise
+    return {
+        **_group_with_validation(get_match_group(group_id)),
+        "report": report,
+        "merged_published_match_id": projection["merged_published_match_id"],
+        "merged_report": projection["report"],
+    }
 
 
 @app.get("/api/published/match-groups/{group_id}")
@@ -3625,8 +3725,9 @@ def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[st
             member_published_ids=payload.member_published_ids,
             metadata=payload.metadata.model_dump(),
             build_report_candidate=build_match_group_report_candidate,
+            rebuild_canonical_projection=_ensure_merged_published_match_locked,
         )
-        return {**_group_with_validation(group), "report": report}
+        return {**_merged_projection_response(str(group["group_id"]), rebuild=False), "report": report}
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3636,8 +3737,12 @@ def api_update_match_group(group_id: str, payload: MatchGroupPayload) -> dict[st
 @app.post("/api/published/match-groups/{group_id}/regenerate")
 def api_regenerate_match_group(group_id: str) -> dict[str, Any]:
     try:
-        report = generate_match_group_report(group_id)
-        return {**_group_with_validation(get_match_group(group_id)), "report": report}
+        regenerated = regenerate_merged_match_group(group_id)
+        return {
+            **_group_with_validation(get_match_group(group_id)),
+            "report": regenerated["report"],
+            **_merged_projection_response(group_id, rebuild=False),
+        }
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3657,7 +3762,7 @@ def api_preview_match_group_refresh(group_id: str) -> dict[str, Any]:
 @app.post("/api/published/match-groups/{group_id}/refresh-to-latest")
 def api_refresh_match_group_to_latest(group_id: str) -> dict[str, Any]:
     try:
-        return refresh_match_group_to_latest(group_id)
+        return refresh_merged_match_to_latest(group_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
@@ -3667,11 +3772,41 @@ def api_refresh_match_group_to_latest(group_id: str) -> dict[str, Any]:
 @app.delete("/api/published/match-groups/{group_id}")
 def api_delete_match_group(group_id: str) -> dict[str, Any]:
     try:
-        return {"status": "deleted", "group": delete_match_group_when_video_idle(group_id)}
+        # Resolve owned canonical projections BEFORE the group directory
+        # (and its sidecar) disappears; otherwise the merged publication
+        # would be orphaned.  Physical sources are never touched.
+        owned_merged_ids = merged_ids_for_group(group_id)
+        group = delete_match_group_when_video_idle(group_id)
+        for merged_id in owned_merged_ids:
+            delete_merged_projection_by_id(merged_id)
+        return {"status": "deleted", "group": group}
     except KeyError as error:
         raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
     except MatchGroupError as error:
         raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/match-groups/{group_id}/merged-match")
+def api_get_merged_match_for_group(group_id: str) -> dict[str, Any]:
+    """Resolve (and lazily create) the canonical merged published match.
+
+    This is the backward-compatibility path for match groups created before
+    the canonical projection existed: the group stays authoritative, a
+    stable ``published-merged-*`` ID is allocated once, and the canonical
+    report is rebuilt from current pins.
+    """
+
+    try:
+        get_match_group(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+    try:
+        projection = ensure_merged_published_match(group_id)
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+    return {"group_id": group_id, "merged_published_match_id": projection["merged_published_match_id"]}
 
 
 @app.get("/api/published/match-groups/{group_id}/video")
@@ -3779,9 +3914,163 @@ def api_get_match_group_report(group_id: str) -> dict[str, Any]:
 @app.get("/api/published/matches/{published_match_id}")
 def api_get_published_match(published_match_id: str) -> dict[str, Any]:
     try:
+        match = get_published_match(published_match_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Published match not found") from exc
+    if str(match.get("source_kind") or "") == "merged":
+        # Fail closed when the user-facing projection disagrees with its
+        # backing group generation; a stale projection is rebuilt safely,
+        # anything unrecoverable becomes an explicit conflict.
+        coherence = check_merged_projection(published_match_id)
+        if coherence["status"] == "orphan":
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "merged_match_orphaned", "detail": "Merged match backing group no longer exists."},
+            )
+        if coherence["status"] != "current":
+            try:
+                ensure_merged_published_match(str(coherence.get("group_id") or ""))
+                match = get_published_match(published_match_id)
+            except (KeyError, MatchGroupError) as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "merged_projection_stale", "detail": "Merged report is stale and cannot be rebuilt safely."},
+                ) from error
+    return match
+
+
+@app.post("/api/published/matches/{published_match_id}/regenerate-report")
+def api_regenerate_merged_published_match(published_match_id: str) -> dict[str, Any]:
+    """Rebuild the canonical merged report from currently pinned sources.
+
+    This never repins sources — it is distinct from refresh-to-latest.
+    Physical publications are rejected: their lifecycle is rebuild.
+    """
+
+    if not is_merged_published_id(published_match_id):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "not_a_merged_match", "detail": "Only merged published matches support report regeneration."},
+        )
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        regenerate_merged_match_group(group_id)
         return get_published_match(published_match_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Published match not found") from exc
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/refresh-preview")
+def api_preview_merged_published_match_refresh(published_match_id: str) -> dict[str, Any]:
+    if not is_merged_published_id(published_match_id):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "not_a_merged_match", "detail": "Only merged published matches support refresh preview."},
+        )
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        return preview_match_group_refresh(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/refresh-to-latest")
+def api_refresh_merged_published_match_to_latest(published_match_id: str) -> dict[str, Any]:
+    """Repin changed sources atomically, preserving the merged published ID.
+
+    Rebuilds the canonical merged report, reevaluates combined-video and
+    external-video freshness, and regenerates Key Moments naturally.  Does
+    NOT auto-regenerate combined video or auto-rebind external video.
+    """
+
+    if not is_merged_published_id(published_match_id):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "not_a_merged_match", "detail": "Only merged published matches support refresh to latest."},
+        )
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        refresh_merged_match_to_latest(group_id)
+        return get_published_match(published_match_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Published match not found") from exc
+    except MatchGroupError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/video")
+def api_get_merged_published_match_video(published_match_id: str) -> dict[str, Any]:
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        return get_match_group_video_status(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.post("/api/published/matches/{published_match_id}/video/generate")
+def api_generate_merged_published_match_video(published_match_id: str) -> dict[str, Any]:
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        return submit_match_group_video_generation(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupVideoError as error:
+        raise _match_group_error_response(error) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/video/file")
+def api_get_merged_published_match_video_file(published_match_id: str) -> RedirectResponse:
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        status = get_match_group_video_status(group_id)
+        if status.get("status") != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "combined_video_not_current",
+                    "detail": "The combined video is not current for this merged match.",
+                },
+            )
+        return RedirectResponse(str(status["artifact_url"]), status_code=307)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail={"code": "combined_video_not_found", "detail": "Combined video not found."}) from error
+
+
+@app.get("/api/published/matches/{published_match_id}/external-video")
+def api_get_merged_published_match_external_video(published_match_id: str) -> dict[str, Any]:
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        return get_match_group_external_video(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+
+
+@app.put("/api/published/matches/{published_match_id}/external-video")
+def api_save_merged_published_match_external_video(published_match_id: str, payload: MatchGroupExternalVideoPayload) -> dict[str, Any]:
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        return save_match_group_external_video(group_id, payload.url)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
+    except MatchGroupExternalVideoError as error:
+        if error.code == "unsupported_youtube_url":
+            raise HTTPException(status_code=422, detail={"code": error.code, "detail": error.detail}) from error
+        raise _match_group_error_response(error) from error
+
+
+@app.delete("/api/published/matches/{published_match_id}/external-video")
+def api_delete_merged_published_match_external_video(published_match_id: str) -> dict[str, Any]:
+    group_id = _require_backing_group_id(published_match_id)
+    try:
+        return delete_match_group_external_video(group_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "match_group_not_found", "detail": "Match group not found."}) from error
 
 
 @app.post("/api/published/matches/{published_match_id}/rebuild")
@@ -3798,6 +4087,11 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
         existing = get_published_match(published_match_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Published match not found") from exc
+    if str(existing.get("source_kind") or "physical") == "merged" or is_merged_published_id(published_match_id):
+        raise HTTPException(
+            status_code=409,
+            detail="Merged matches have no single local analyzed source; use Regeneruj raport or Odśwież do najnowszych danych.",
+        )
     source_match_id = str(existing.get("source_match_id") or "")
     if not source_match_id or f"published-{source_match_id}" != published_match_id:
         raise HTTPException(

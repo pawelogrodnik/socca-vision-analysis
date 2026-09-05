@@ -33,12 +33,14 @@ from app.services.match_group_video import MatchGroupVideoError
 class MatchGroupApiTests(unittest.TestCase):
     def test_refresh_routes_are_server_authoritative_and_exposed(self) -> None:
         preview = {"group_id": "match-group-1", "status": "refreshable", "members": [], "blocking_reasons": []}
-        refreshed = {"status": "refreshed", "group": {"group_id": "match-group-1"}}
+        refreshed = {"status": "refreshed", "group": {"group_id": "match-group-1"}, "merged_published_match_id": "published-merged-1"}
         with patch("app.main.preview_match_group_refresh", return_value=preview) as request_preview, patch(
-            "app.main.refresh_match_group_to_latest", return_value=refreshed
+            "app.main.refresh_merged_match_to_latest", return_value=refreshed
         ) as refresh:
             self.assertEqual(api_preview_match_group_refresh("match-group-1"), preview)
-            self.assertEqual(api_refresh_match_group_to_latest("match-group-1"), refreshed)
+            response = api_refresh_match_group_to_latest("match-group-1")
+            self.assertEqual(response["status"], "refreshed")
+            self.assertEqual(response["merged_published_match_id"], "published-merged-1")
         request_preview.assert_called_once_with("match-group-1")
         refresh.assert_called_once_with("match-group-1")
         paths = app.openapi()["paths"]
@@ -61,8 +63,13 @@ class MatchGroupApiTests(unittest.TestCase):
             "compatibility": {"status": "compatible"},
         }
         report = {"report_type": "public_aggregate_match_report"}
+        projection = {"merged_published_match_id": "published-merged-1", "report": {"id": "published-merged-1"}}
         with patch("app.main.create_match_group_and_generate_report", return_value=(group, report)) as create, patch(
             "app.main.validate_match_group", return_value={"status": "compatible", "blocking_reasons": []}
+        ), patch(
+            "app.main.ensure_merged_published_match", return_value=projection
+        ), patch(
+            "app.main.get_match_group", return_value=group
         ):
             response = api_create_match_group(MatchGroupPayload.model_validate({
                 "member_published_ids": ["one", "two"], "metadata": {"title": "Full match"},
@@ -70,6 +77,7 @@ class MatchGroupApiTests(unittest.TestCase):
         self.assertEqual(create.call_args.kwargs["member_published_ids"], ["one", "two"])
         self.assertTrue(callable(create.call_args.kwargs["generate_and_persist_report"]))
         self.assertEqual(response["report"]["report_type"], "public_aggregate_match_report")
+        self.assertEqual(response["merged_published_match_id"], "published-merged-1")
 
     def test_forged_aggregate_statistics_are_rejected_by_request_contract(self) -> None:
         with self.assertRaises(ValidationError):
@@ -200,6 +208,23 @@ class MatchGroupCreateUpdateWiringTests(unittest.TestCase):
             self.assertEqual(self._physical_bytes(root), physical_before)
             self.assertEqual(len(list((root / "groups").glob("match-group-*"))), 1)
 
+            # Creating a merge also creates one stable canonical merged
+            # published match retrievable through the standard read path.
+            merged_id = str(response["merged_published_match_id"])
+            self.assertTrue(merged_id.startswith("published-merged-"))
+            merged_dir = root / "published" / merged_id
+            self.assertTrue((merged_dir / "summary.json").is_file())
+            self.assertTrue((merged_dir / "public_report.json").is_file())
+            self.assertTrue((merged_dir / "provenance.json").is_file())
+            self.assertFalse((merged_dir / "package.json").exists())
+
+            from app.services.json_publish_store import get_published_match as store_get
+
+            stored = store_get(merged_id)
+            self.assertEqual(stored["source_kind"], "merged")
+            self.assertEqual(stored["public_report"]["report_type"], "public_match_report")
+            self.assertEqual(stored["public_report"]["id"], merged_id)
+
     def test_real_create_report_failure_removes_the_new_group(self) -> None:
         from test_match_group_aggregation import _metadata, _write_source
 
@@ -305,13 +330,18 @@ class MatchGroupCreateUpdateWiringTests(unittest.TestCase):
     def test_production_callbacks_are_pinned_to_their_contracts(self) -> None:
         from test_match_group_aggregation import _metadata, _write_source
 
+        projection = {"merged_published_match_id": "published-merged-1", "report": {"id": "published-merged-1"}}
         with self._store() as root:
             _write_source(root, "published-one", "physical-one")
             _write_source(root, "published-two", "physical-two")
             with patch(
-                "app.main.create_match_group_and_generate_report", return_value=({}, {})
+                "app.main.create_match_group_and_generate_report", return_value=({"group_id": "match-group-1"}, {})
             ) as create, patch(
                 "app.main._group_with_validation", return_value={"group": {}, "validation": {}}
+            ), patch(
+                "app.main.ensure_merged_published_match", return_value=projection
+            ), patch(
+                "app.main.get_match_group", return_value={"group_id": "match-group-1"}
             ):
                 api_create_match_group(self._payload(["published-one", "published-two"]))
             self.assertIs(
@@ -320,14 +350,26 @@ class MatchGroupCreateUpdateWiringTests(unittest.TestCase):
             )
             group_id = str(api_create_match_group(self._payload(["published-one", "published-two"]))["group"]["group_id"])
             with patch(
-                "app.main.update_match_group_and_generate_report", return_value=({}, {})
+                "app.main.update_match_group_and_generate_report", return_value=({"group_id": group_id}, {})
             ) as update, patch(
                 "app.main._group_with_validation", return_value={"group": {}, "validation": {}}
+            ), patch(
+                "app.main.ensure_merged_published_match", return_value=projection
+            ), patch(
+                "app.main.get_match_group", return_value={"group_id": group_id}
             ):
                 api_update_match_group(group_id, self._payload(["published-one", "published-two"]))
             self.assertIs(
                 update.call_args.kwargs["build_report_candidate"],
                 main_module.build_match_group_report_candidate,
+            )
+            # The update service already owns the durable maintenance lock.
+            # It must therefore receive the explicitly locked projection
+            # helper, never the public wrapper which would self-conflict on
+            # the non-reentrant ownership lock after publishing G2.
+            self.assertIs(
+                update.call_args.kwargs["rebuild_canonical_projection"],
+                main_module._ensure_merged_published_match_locked,
             )
 
     @staticmethod
@@ -341,15 +383,20 @@ class MatchGroupCreateUpdateWiringTests(unittest.TestCase):
 
     @staticmethod
     def _physical_bytes(root: Path) -> dict[str, bytes]:
+        # Member source publications must never be touched by group
+        # lifecycle.  The merged published-match projection
+        # (published-merged-*) is a new user-facing product, not a source
+        # mutation, so it is excluded from the physical-source snapshot.
         return {
             str(path.relative_to(root)): path.read_bytes()
             for path in sorted((root / "published").rglob("*"))
-            if path.is_file()
+            if path.is_file() and "published-merged-" not in str(path.relative_to(root))
         }
 
     def _store(self):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
+        (root / "client-public").mkdir(parents=True, exist_ok=True)
         patches = (
             patch("app.services.match_groups.PUBLISHED_MATCHES_DIR", root / "published"),
             patch("app.services.match_groups.MATCH_GROUPS_DIR", root / "groups"),
@@ -359,6 +406,10 @@ class MatchGroupCreateUpdateWiringTests(unittest.TestCase):
             patch("app.services.match_group_video.PUBLISHED_MATCHES_DIR", root / "published"),
             patch("app.services.match_group_video.MATCH_GROUPS_DIR", root / "groups"),
             patch("app.services.match_group_external_video.MATCH_GROUPS_DIR", root / "groups"),
+            patch("app.services.merged_public_match.PUBLISHED_MATCHES_DIR", root / "published"),
+            patch("app.services.merged_public_match.MATCH_GROUPS_DIR", root / "groups"),
+            patch("app.services.merged_public_match.CLIENT_PUBLIC_MATCHES_DIR", root / "client-public"),
+            patch("app.services.json_publish_store.PUBLISHED_MATCHES_DIR", root / "published"),
         )
 
         class StoreContext:

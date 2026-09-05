@@ -9,8 +9,8 @@ import { TeamsPage } from './components/TeamsPage';
 import { Viewer } from './components/Viewer';
 import { ProductFlowBenchmarkPage } from './components/ProductFlowBenchmarkPage';
 import { BoundedH2ReIdPage } from './components/BoundedH2ReIdPage';
-import { AggregateMatchReportPage } from './components/AggregateMatchReportPage';
 import { MatchGroupsPage } from './components/MatchGroupsPage';
+import { MatchGroupReportRedirect } from './components/MatchGroupReportRedirect';
 
 function App() {
   return (
@@ -19,7 +19,7 @@ function App() {
       <Route path='/admin-panel' element={<AdminPanel />} />
       <Route path='/matches/:matchId/report' element={<MatchReportPage />} />
       <Route path='/published/matches/:matchId/report' element={<PublishedMatchReportPage />} />
-      <Route path='/published/match-groups/:groupId/report' element={<AggregateMatchReportPage />} />
+      <Route path='/published/match-groups/:groupId/report' element={<MatchGroupReportRedirect />} />
       <Route path='/match-groups' element={<MatchGroupsPage />} />
       <Route path='/teams' element={<TeamsPage />} />
       <Route path='/teams/add' element={<TeamEditPage mode='create' />} />

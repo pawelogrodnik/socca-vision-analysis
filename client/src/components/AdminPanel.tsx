@@ -633,7 +633,7 @@ export function AdminPanel() {
         <div className='row'>
           <Link to='/'>Public viewer</Link>
           <Link to='/teams'>Rejestr druzyn</Link>
-          <Link to='/match-groups'>Scal opublikowane mecze</Link>
+          <Link to='/match-groups'>Scal fragmenty w mecz</Link>
         </div>
       </section>
 

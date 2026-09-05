@@ -3032,6 +3032,19 @@ export type PublicMatchReport = {
   teams: PublicReportTeam[];
   players: PublicReportPlayer[];
   team_shape?: TeamShapeDocument | null;
+  key_moments?: CanonicalKeyMoments | null;
+  merged_provenance?: {
+    group_id: string;
+    merged_published_match_id: string;
+    policy_version?: string;
+    sources?: Array<{
+      published_id: string;
+      source_match_id: string;
+      sequence_index: number;
+      logical_start_sec: number;
+      logical_end_sec: number;
+    }>;
+  } | null;
   ball?: {
     known_possession_coverage?: number;
     controlled_coverage?: number;
@@ -3098,9 +3111,23 @@ export type PublicMatchReport = {
   };
 };
 
+export type PublishedMatchCapabilities = {
+  rebuild_physical_publication: boolean;
+  regenerate_report: boolean;
+  refresh_to_latest: boolean;
+  generate_video: boolean;
+  external_video: boolean;
+};
+
 export type PublishedMatch = {
   id: string;
   source_match_id: string;
+  source_kind?: 'physical' | 'merged' | string;
+  backing_group_id?: string | null;
+  merged_published_match_id?: string | null;
+  member_published_ids?: string[];
+  member_count?: number;
+  capabilities?: PublishedMatchCapabilities | null;
   title: string;
   match_date?: string | null;
   season?: string | null;
@@ -3119,8 +3146,9 @@ export type PublishedMatch = {
 };
 
 export type PublishedMatchDetail = PublishedMatch & {
-  package: MatchPackage;
+  package: MatchPackage | null;
   public_report?: PublicMatchReport | null;
+  provenance?: Record<string, unknown> | null;
   teams: Array<Record<string, unknown>>;
   players: Array<Record<string, unknown>>;
   stable_players?: Array<Record<string, unknown>>;
@@ -3176,7 +3204,13 @@ export type MatchGroupPreview = {
 export type MatchGroupRecord = {
   group: MatchGroupManifest;
   validation: MatchGroupCompatibility;
+  merged_published_match_id?: string | null;
   report?: AggregatePublicMatchReport;
+};
+
+export type MatchGroupCreateResult = MatchGroupRecord & {
+  merged_published_match_id: string;
+  merged_report?: PublicMatchReport;
 };
 
 export type MatchGroupRefreshPreview = {
@@ -3366,6 +3400,44 @@ export type AggregatePublicMatchReport = {
       };
     }>;
   };
+};
+
+export type CanonicalKeyMoment = {
+  moment_id: string;
+  time_sec: number;
+  window_start_sec: number;
+  window_end_sec: number;
+  type: 'momentum_peak' | 'possession_dominance' | string;
+  team_id: string;
+  importance_score: number;
+  headline: string;
+  evidence: {
+    primary_signal: string;
+    primary: {
+      source: string;
+      intensity?: number;
+      confidence?: number;
+      share_percent?: number;
+      coverage?: number;
+      experimental?: boolean;
+    };
+    signals: Array<{
+      source: string;
+      intensity?: number;
+      confidence?: number;
+      share_percent?: number;
+      coverage?: number;
+      experimental?: boolean;
+    }>;
+  };
+};
+
+export type CanonicalKeyMoments = {
+  schema_version: string;
+  policy_version: string;
+  status: 'ready' | 'not_available' | string;
+  reason?: string | null;
+  moments: CanonicalKeyMoment[];
 };
 
 export type PhysicalPublicMatchReport = PublicMatchReport & {
