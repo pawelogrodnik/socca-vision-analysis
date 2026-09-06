@@ -146,7 +146,7 @@ def _teams(checks: list[dict[str, Any]], report: dict[str, Any], sources: list[d
         if all(value is not None for value in peaks): _compare(checks, f"team {team_id} peak_speed_kmh", max(value for value in peaks if value is not None), _required_number(checks, f"team {team_id} peak actual", actual[team_id], "peak_speed_kmh"))
         primitives = (("attempts_by_team_id", "pass_attempts"), ("completed_by_team_id", "completed_passes"), ("failed_by_team_id", "failed_passes"), ("restart_attempts_by_team_id", "restart_passes"), ("accepted_by_team_id", "accepted_passes"))
         for map_key, actual_key in primitives:
-            values = [_required_number(checks, f"source team {team_id} {actual_key}", _pass_map(checks, source, map_key), team_id) for source in sources]
+            values = [_sparse_team_pass_count(checks, source, map_key, team_id) for source in sources]
             if all(value is not None for value in values): _compare(checks, f"team {team_id} {actual_key}", sum(value for value in values if value is not None), _required_number(checks, f"team {team_id} {actual_key} actual", actual[team_id], actual_key))
         attempts, completed = _required_number(checks, f"team {team_id} attempts actual", actual[team_id], "pass_attempts"), _required_number(checks, f"team {team_id} completed actual", actual[team_id], "completed_passes")
         if attempts is not None and completed is not None and attempts > 0: _compare(checks, f"team {team_id} completion rate", round(completed / attempts * 100, 1), _required_number(checks, f"team {team_id} rate actual", actual[team_id], "completion_rate"))
@@ -281,7 +281,18 @@ def _team_movement(checks: list[dict[str, Any]], source: dict[str, Any], team_id
     if row is None: _fail(checks, f"source team {team_id} row", "present", None); return {}
     return _required_object(checks, f"source team {team_id} movement", row, "movement") or {}
 def _passes(checks: list[dict[str, Any]], source: dict[str, Any]) -> dict[str, Any]: return _required_object(checks, f"source {source['published_id']} passes", _required_object(checks, f"source {source['published_id']} ball", source["aggregate"], "ball") or {}, "passes") or {}
-def _pass_map(checks: list[dict[str, Any]], source: dict[str, Any], key: str) -> dict[str, Any]: return _required_object(checks, f"source {source['published_id']} {key}", _passes(checks, source), key) or {}
+def _sparse_team_pass_count(checks: list[dict[str, Any]], source: dict[str, Any], map_key: str, team_id: str) -> float | None:
+    values = _passes(checks, source).get(map_key)
+    if not isinstance(values, dict):
+        _fail(checks, f"source {source['published_id']} {map_key} required", "object", values)
+        return None
+    if team_id not in values:
+        return 0.0
+    count = _finite(values[team_id])
+    if count is None or count < 0 or not count.is_integer():
+        _fail(checks, f"source {source['published_id']} {map_key} {team_id}", "non-negative integer", values[team_id])
+        return None
+    return count
 def _player_parts(checks: list[dict[str, Any]], sources: list[dict[str, Any]], player_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[float]]:
     public: list[dict[str, Any]] = []; movement: list[dict[str, Any]] = []; offsets: list[float] = []
     for source in sources:
@@ -300,15 +311,24 @@ def _max_check(checks: list[dict[str, Any]], name: str, rows: list[dict[str, Any
     if all(value is not None for value in values): _compare(checks, name, max(value for value in values if value is not None), _required_number(checks, f"{name} actual", actual, key))
 def _workload(checks: list[dict[str, Any]], player_id: str, actual: dict[str, Any], public: list[dict[str, Any]], offsets: list[float], duration: float) -> None:
     expected = []
+    source_has_workload = False
     for row, offset in zip(public, offsets):
-        workload = _object(row.get("workload")); windows = workload.get("activity_windows")
-        if windows is None: continue
-        if not isinstance(windows, list): _fail(checks, f"source player {player_id} workload windows", "list", windows); continue
+        workload = row.get("workload")
+        if not isinstance(workload, dict) or not workload:
+            continue
+        source_has_workload = True
+        windows = workload.get("activity_windows")
+        if not isinstance(windows, list):
+            continue
         for window in windows:
             if isinstance(window, dict):
                 start, end = _required_number(checks, f"source player {player_id} workload start", window, "start_time_sec"), _required_number(checks, f"source player {player_id} workload end", window, "end_time_sec")
                 if start is not None and end is not None: expected.append((start + offset, end + offset))
-    if not expected: return
+    actual_workload = actual.get("workload")
+    if not source_has_workload:
+        _compare(checks, f"player {player_id} workload presence", None, actual_workload)
+        return
+    _compare(checks, f"player {player_id} workload presence", True, isinstance(actual_workload, dict))
     workload = _required_object(checks, f"player {player_id} workload", actual, "workload") or {}
     pairs = []
     for window in _required_list(checks, f"player {player_id} workload windows", workload, "activity_windows"):

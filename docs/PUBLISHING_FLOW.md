@@ -350,7 +350,7 @@ PYTHONPATH=backend python backend/scripts/validate_merged_match.py \
 | Timeline / momentum | all possession and momentum intervals stay within 0–2123.021 s and canonical signs remain A >= 0, B <= 0 |
 | Spatial / Team Shape | unavailable by design: canonical orientation and Team Shape evidence compatibility are not proven; merged heatmaps and average positions are fail-closed |
 | Key Moments | two `ready` moments; their required bounds and production ordering tuple are independently validated |
-| Hardened reconciliation | 248 checks: 245 passed, 0 failed, 3 Reviewed Identity digest recomputations explicitly unavailable because compact source inputs retain authoritative pins but not the physical Reviewed Identity artifacts |
+| Hardened reconciliation | 258 checks: 255 passed, 0 failed, 3 Reviewed Identity digest recomputations explicitly unavailable because compact source inputs retain authoritative pins but not the physical Reviewed Identity artifacts |
 | Lifecycle on copy | regenerate retained the same merged ID and pins; no-op refresh returned `current`; deleting the group removed only group/merged projections and preserved all 51 physical source files byte-for-byte |
 | Longitudinal / source eligibility | longitudinal profiles read physical analysis matches, not merged publications; automated regressions preserve profile summaries and exclude `source_kind=merged` from merge sources |
 | Compactness | aggregate inputs: 207,284 bytes total; source public reports: 3,109,916 bytes total; merged public report: 354,304 bytes |
@@ -364,9 +364,11 @@ provide a reliable denominator.
 The reconciliation is read-only and does not call the merged-report builder.
 It independently checks pinned public/aggregate semantic digests and identity
 pins; source-derived team/player ID sets and duplicate rows; required numeric
-fields; canonical player/team/pass metrics; source-to-logical possession,
-momentum, and workload rebasing; Key Moments bounds/order; and declared
-fail-closed absence for unavailable spatial and Team Shape outputs. If a
+fields; sparse per-team pass maps (absent team key means zero, but a missing
+map or invalid present count fails); canonical player/team/pass metrics;
+source-to-logical possession, momentum, and workload rebasing, including
+absent versus explicitly empty workload windows; Key Moments bounds/order; and
+declared fail-closed absence for unavailable spatial and Team Shape outputs. If a
 future advanced capability is available, its mathematical correctness is
 reported as `not_audited` until a separate independent oracle exists; artifact
 presence alone is never an acceptance pass. The auditor uses final canonical

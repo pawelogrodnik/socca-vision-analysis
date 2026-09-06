@@ -5,6 +5,7 @@ import json
 import shutil
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -162,6 +163,92 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
             _write(report_path, report)
             self.assertEqual(_status(audit_merged_match(store, merged_id), "player player-one sprint_count actual required"), "fail")
 
+    def test_sparse_team_pass_maps_treat_an_absent_team_key_as_zero(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store, source_mutator=_remove_verisk_from_pass_maps)
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "pass")
+            for check in (
+                "team team-verisk pass_attempts",
+                "team team-verisk completed_passes",
+                "team team-verisk failed_passes",
+                "team team-verisk restart_passes",
+                "team team-verisk accepted_passes",
+            ):
+                with self.subTest(check=check):
+                    self.assertEqual(_status(result, check), "pass")
+
+    def test_sparse_team_pass_maps_reject_missing_or_invalid_entries(self) -> None:
+        cases: tuple[tuple[str, Callable[[Path], None], str, str], ...] = (
+            ("map missing", _remove_attempts_map, "source published-one attempts_by_team_id required", "fail"),
+            ("string value", _set_verisk_attempts("0"), "source published-one attempts_by_team_id team-verisk", "fail"),
+            ("negative value", _set_verisk_attempts(-1), "source published-one attempts_by_team_id team-verisk", "fail"),
+        )
+        for label, mutation, check, expected in cases:
+            with self.subTest(label=label), self._store() as store:
+                _, merged_id = self._build(store)
+                mutation(store / "published" / "matches" / "published-one")
+
+                result = audit_merged_match(store, merged_id)
+
+                self.assertEqual(_status(result, check), expected)
+                self.assertEqual(result["status"], expected)
+
+    def test_sparse_team_pass_maps_accept_an_explicit_zero(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store, source_mutator=_set_verisk_attempts(0))
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(_status(result, "team team-verisk pass_attempts"), "pass")
+
+    def test_workload_absence_and_empty_source_windows_match_canonical_output(self) -> None:
+        cases: tuple[tuple[str, Callable[[Path], None], bool], ...] = (
+            ("absent", _remove_workload, False),
+            ("empty windows", _empty_workload_windows, True),
+        )
+        for label, mutation, expects_object in cases:
+            with self.subTest(label=label), self._store() as store:
+                _, merged_id = self._build(store, source_mutator=mutation)
+                report = _read(store / "published" / "matches" / merged_id / "public_report.json")
+
+                self.assertEqual(isinstance(report["players"][0].get("workload"), dict), expects_object)
+                result = audit_merged_match(store, merged_id)
+
+                self.assertEqual(result["status"], "pass")
+                self.assertEqual(_status(result, "player player-one workload presence"), "pass")
+                if expects_object:
+                    self.assertEqual(_status(result, "player player-one workload timeline"), "pass")
+
+    def test_empty_expected_workload_rejects_a_fabricated_merged_window(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store, source_mutator=_empty_workload_windows)
+            report_path = store / "published" / "matches" / merged_id / "public_report.json"
+            report = _read(report_path)
+            report["players"][0]["workload"]["activity_windows"] = [{"start_time_sec": 1, "end_time_sec": 2}]
+            _write(report_path, report)
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(_status(result, "player player-one workload timeline"), "fail")
+
+    def test_nonempty_expected_workload_requires_merged_workload(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store)
+            report_path = store / "published" / "matches" / merged_id / "public_report.json"
+            report = _read(report_path)
+            report["players"][0]["workload"] = None
+            _write(report_path, report)
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(_status(result, "player player-one workload presence"), "fail")
+
     def test_stale_source_public_and_aggregate_digests_fail(self) -> None:
         for path_name, mutation, check in (("public_report.json", lambda doc: doc["match"].update({"title": "stale"}), "source published-one aggregate public digest"), ("aggregate_inputs.json", lambda doc: doc["timing"].update({"analyzed_duration_sec": 999}), "source published-one aggregate self digest")):
             with self.subTest(path_name=path_name), self._store() as store:
@@ -195,8 +282,9 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
                 _write(path, report)
                 self.assertEqual(_status(audit_merged_match(store, merged_id), check), "fail")
 
-    def _build(self, store: Path, *, subset_players: bool = False, zero_sprints: bool = False) -> tuple[dict, str]:
+    def _build(self, store: Path, *, subset_players: bool = False, zero_sprints: bool = False, source_mutator: Callable[[Path], None] | None = None) -> tuple[dict, str]:
         fixture = store / "fixture"
+        source_directories: list[Path] = []
         for published_id, source_id, duration in (("published-one", "one", 10), ("published-two", "two", 20), ("published-three", "three", 30)):
             _write_source(fixture, published_id, source_id, duration=duration)
             source_dir = fixture / "published" / published_id
@@ -206,9 +294,13 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
             self._normalize_source(target)
             if zero_sprints:
                 self._zero_sprints(target)
+            source_directories.append(target)
         if subset_players:
             self._add_player(store / "published" / "matches" / "published-one", "player-b")
             self._add_player(store / "published" / "matches" / "published-three", "player-c")
+        if source_mutator:
+            for directory in source_directories:
+                source_mutator(directory)
         group = create_match_group(member_published_ids=["published-one", "published-two", "published-three"], metadata=_metadata())
         merged_id = ensure_merged_published_match(str(group["group_id"]))["merged_published_match_id"]
         return group, merged_id
@@ -246,6 +338,57 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
                 for item in reversed(patches): item.__exit__(*args)
                 temporary.cleanup()
         return Context()
+
+
+_TEAM_PASS_MAP_KEYS = (
+    "attempts_by_team_id",
+    "completed_by_team_id",
+    "failed_by_team_id",
+    "restart_attempts_by_team_id",
+    "accepted_by_team_id",
+)
+
+
+def _remove_verisk_from_pass_maps(directory: Path) -> None:
+    aggregate = _read(directory / "aggregate_inputs.json")
+    for key in _TEAM_PASS_MAP_KEYS:
+        aggregate["ball"]["passes"][key].pop("team-verisk", None)
+    _refresh_source_digests(directory, aggregate)
+
+
+def _remove_attempts_map(directory: Path) -> None:
+    if directory.name != "published-one":
+        return
+    aggregate = _read(directory / "aggregate_inputs.json")
+    aggregate["ball"]["passes"].pop("attempts_by_team_id")
+    _refresh_source_digests(directory, aggregate)
+
+
+def _set_verisk_attempts(value: object) -> Callable[[Path], None]:
+    def mutate(directory: Path) -> None:
+        if directory.name != "published-one":
+            return
+        aggregate = _read(directory / "aggregate_inputs.json")
+        aggregate["ball"]["passes"]["attempts_by_team_id"]["team-verisk"] = value
+        _refresh_source_digests(directory, aggregate)
+
+    return mutate
+
+
+def _remove_workload(directory: Path) -> None:
+    public, aggregate = _read(directory / "public_report.json"), _read(directory / "aggregate_inputs.json")
+    for player in public["players"]:
+        player.pop("workload", None)
+    _write(directory / "public_report.json", public)
+    _refresh_source_digests(directory, aggregate)
+
+
+def _empty_workload_windows(directory: Path) -> None:
+    public, aggregate = _read(directory / "public_report.json"), _read(directory / "aggregate_inputs.json")
+    for player in public["players"]:
+        player["workload"]["activity_windows"] = []
+    _write(directory / "public_report.json", public)
+    _refresh_source_digests(directory, aggregate)
 
 
 def _moment(moment_id: str, importance: float, time: float, *, end: float | None = None) -> dict:
