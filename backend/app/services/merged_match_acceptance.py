@@ -32,7 +32,7 @@ def audit_merged_match(storage_dir: Path, identifier: str) -> dict[str, Any]:
     _possession_and_passes(checks, report, sources)
     _timelines(checks, report, sources, duration)
     _key_moments(checks, report, duration)
-    _advanced_availability(checks, manifest, report)
+    _advanced_availability(checks, report)
     failures = [check for check in checks if check["status"] == "fail"]
     unavailable = [check for check in checks if check["status"] in {"unavailable", "not_audited"}]
     merged_dir = matches / merged_id
@@ -212,10 +212,17 @@ def _key_moments(checks: list[dict[str, Any]], report: dict[str, Any], duration:
     key_moments = report.get("key_moments")
     if key_moments is None: checks.append({"name": "key moments", "status": "unavailable", "expected": "optional canonical object", "actual": "absent"}); return
     if not isinstance(key_moments, dict): _fail(checks, "key moments object", "object", key_moments); return
-    if key_moments.get("status") == "not_available": _compare(checks, "key moments unavailable list", [], _required_list(checks, "key moments unavailable", key_moments, "moments")); return
-    _compare(checks, "key moments status", "ready", key_moments.get("status"))
+    status = key_moments.get("status")
+    moments = _required_list(checks, "key moments", key_moments, "moments")
+    if status == "not_available":
+        _compare(checks, "key moments unavailable list", [], moments)
+        return
+    if status != "ready":
+        _fail(checks, "key moments status", "ready or not_available", status)
+        return
+    _compare(checks, "key moments ready cardinality", True, len(moments) > 0)
     ordering, bounded = [], True
-    for moment in _required_list(checks, "key moments", key_moments, "moments"):
+    for moment in moments:
         if not isinstance(moment, dict): _fail(checks, "key moment row", "object", moment); bounded = False; continue
         start, time, end, importance = (_required_number(checks, label, moment, key) for label, key in (("key moment start", "window_start_sec"), ("key moment time", "time_sec"), ("key moment end", "window_end_sec"), ("key moment importance", "importance_score")))
         kind, team, moment_id = _required_string(checks, "key moment type", moment, "type"), _required_string(checks, "key moment team", moment, "team_id"), _required_string(checks, "key moment id", moment, "moment_id")
@@ -224,14 +231,49 @@ def _key_moments(checks: list[dict[str, Any]], report: dict[str, Any], duration:
     _compare(checks, "key moments deterministic ordering", sorted(ordering), ordering)
 
 
-def _advanced_availability(checks: list[dict[str, Any]], manifest: dict[str, Any], report: dict[str, Any]) -> None:
-    capabilities = _object(_object(manifest.get("compatibility")).get("capabilities"))
+def _advanced_availability(checks: list[dict[str, Any]], report: dict[str, Any]) -> None:
+    provenance = _object(report.get("merged_provenance"))
     player_heatmaps = [row.get("heatmap") for row in _required_list(checks, "merged players spatial", report, "players") if isinstance(row, dict)]
-    for capability, output, label in (("spatial", player_heatmaps, "spatial"), ("team_shape", report.get("team_shape"), "team shape")):
-        status = _object(capabilities.get(capability)).get("status")
-        if status == "not_available": _compare(checks, f"{label} fail-closed", True, all(value is None for value in output) if isinstance(output, list) else not bool(output))
-        elif status == "available": checks.append({"name": f"{label} mathematical reconciliation", "status": "not_audited", "expected": "independent oracle", "actual": "not implemented"})
-        else: checks.append({"name": f"{label} availability", "status": "unavailable", "expected": "declared capability", "actual": status})
+    _advanced_output(
+        checks,
+        label="spatial",
+        present=any(value is not None for value in player_heatmaps),
+        final_declaration=provenance.get("spatial_heatmaps"),
+    )
+    _advanced_output(
+        checks,
+        label="team shape",
+        present=report.get("team_shape") is not None,
+        final_declaration=provenance.get("team_shape"),
+    )
+
+
+def _advanced_output(checks: list[dict[str, Any]], *, label: str, present: bool, final_declaration: Any) -> None:
+    declaration = _advanced_declaration(final_declaration)
+    if declaration == "unavailable":
+        _compare(checks, f"{label} final provenance consistency", False, present)
+        return
+    if declaration == "available" and not present:
+        _fail(checks, f"{label} final provenance consistency", "present output", "absent")
+        return
+    if present:
+        checks.append({"name": f"{label} mathematical reconciliation", "status": "not_audited", "expected": "independent oracle", "actual": final_declaration})
+        return
+    checks.append({"name": f"{label} fail-closed absence", "status": "pass", "expected": "absent output", "actual": "absent"})
+
+
+def _advanced_declaration(value: Any) -> str:
+    if value == "merged":
+        return "available"
+    if isinstance(value, str) and value.startswith("unavailable:"):
+        return "unavailable"
+    if isinstance(value, dict):
+        status = value.get("status")
+        if status in {"not_available", "unavailable"}:
+            return "unavailable"
+        if status in {"ready", "available", "completed", "fresh", "merged"}:
+            return "available"
+    return "unknown"
 
 
 def _team_movement(checks: list[dict[str, Any]], source: dict[str, Any], team_id: str) -> dict[str, Any]:

@@ -369,4 +369,7 @@ momentum, and workload rebasing; Key Moments bounds/order; and declared
 fail-closed absence for unavailable spatial and Team Shape outputs. If a
 future advanced capability is available, its mathematical correctness is
 reported as `not_audited` until a separate independent oracle exists; artifact
-presence alone is never an acceptance pass.
+presence alone is never an acceptance pass. The auditor uses final canonical
+projection provenance for that classification, not the conservative compact
+manifest preflight capability: package-level evidence may safely enable a
+final output after preflight declares the compact inputs insufficient.

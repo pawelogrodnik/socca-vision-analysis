@@ -16,17 +16,100 @@ from test_merged_public_match import _metadata, _write_source
 
 
 class MergedMatchAcceptanceTests(unittest.TestCase):
-    def test_valid_object_shaped_key_moments_passes(self) -> None:
+    def test_valid_canonical_merged_fixture_passes(self) -> None:
         with self._store() as store:
             group, merged_id = self._build(store)
+            result = audit_merged_match(store, merged_id)
+            manifest = _read(store / "published" / "match-groups" / group["group_id"] / "manifest.json")
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["summary"]["failed"], 0)
+            self.assertEqual(manifest["compatibility"]["capabilities"]["spatial"]["status"], "not_available")
+            for check in (
+                "source published-one aggregate public digest",
+                "merged analyzed duration",
+                "merged team IDs",
+                "merged player IDs",
+                "player player-one avg_speed_kmh",
+                "pass completion rate",
+                "possession controlled coverage",
+                "possession timeline exact source rebasing",
+                "momentum timeline exact source rebasing",
+                "player player-one workload timeline",
+                "key moments ready cardinality",
+            ):
+                with self.subTest(check=check):
+                    self.assertEqual(_status(result, check), "pass")
+            self.assertEqual(_status(result, "spatial mathematical reconciliation"), "not_audited")
+            self.assertEqual(_status(result, "team shape mathematical reconciliation"), "not_audited")
+
+    def test_explicit_spatial_unavailability_with_absent_heatmaps_passes(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store)
             report_path = store / "published" / "matches" / merged_id / "public_report.json"
             report = _read(report_path)
-            report["key_moments"] = {"status": "ready", "moments": [_moment("km-a", 0.9, 10), _moment("km-b", 0.5, 30)]}
+            for player in report["players"]:
+                player["heatmap"] = None
+            report["merged_provenance"]["spatial_heatmaps"] = "unavailable:canonical_orientation_not_proven"
             _write(report_path, report)
+
             result = audit_merged_match(store, merged_id)
-            self.assertEqual(result["status"], "fail")  # report digest deliberately changed
-            self.assertEqual(_status(result, "key moments bounds"), "pass")
-            self.assertEqual(_status(result, "key moments deterministic ordering"), "pass")
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(_status(result, "spatial final provenance consistency"), "pass")
+
+    def test_spatial_output_contradicting_final_unavailability_fails(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store)
+            report_path = store / "published" / "matches" / merged_id / "public_report.json"
+            report = _read(report_path)
+            report["merged_provenance"]["spatial_heatmaps"] = "unavailable:canonical_orientation_not_proven"
+            _write(report_path, report)
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(_status(result, "spatial final provenance consistency"), "fail")
+
+    def test_key_moments_not_available_requires_an_empty_list(self) -> None:
+        for moments, expected in (([], "pass"), ([_moment("km-a", 0.9, 10)], "fail")):
+            with self.subTest(moments=moments), self._store() as store:
+                _, merged_id = self._build(store)
+                report_path = store / "published" / "matches" / merged_id / "public_report.json"
+                report = _read(report_path)
+                report["key_moments"] = {"status": "not_available", "moments": moments}
+                _write(report_path, report)
+
+                result = audit_merged_match(store, merged_id)
+
+                self.assertEqual(_status(result, "key moments unavailable list"), expected)
+                self.assertEqual(result["status"], expected)
+
+    def test_key_moments_ready_requires_a_nonempty_list(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store)
+            report_path = store / "published" / "matches" / merged_id / "public_report.json"
+            report = _read(report_path)
+            report["key_moments"] = {"status": "ready", "moments": []}
+            _write(report_path, report)
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(_status(result, "key moments ready cardinality"), "fail")
+
+    def test_key_moments_unknown_status_fails(self) -> None:
+        with self._store() as store:
+            _, merged_id = self._build(store)
+            report_path = store / "published" / "matches" / merged_id / "public_report.json"
+            report = _read(report_path)
+            report["key_moments"] = {"status": "pending", "moments": [_moment("km-a", 0.9, 10)]}
+            _write(report_path, report)
+
+            result = audit_merged_match(store, merged_id)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(_status(result, "key moments status"), "fail")
 
     def test_key_moment_bounds_and_order_do_not_skip_dict_shape(self) -> None:
         with self._store() as store:
