@@ -515,7 +515,16 @@ def _rebase_rows(rows: list[Any], offset: float, source: Mapping[str, Any], kind
         end = _optional_number(row.get("end_time_sec"))
         if start is None or end is None or end < start:
             raise MatchGroupError("timeline_primitive_invalid", f"{kind} timeline requires ordered numeric source-local times.")
-        rebased_start = min(start + offset, source_end)
+        source_duration = source_end - offset
+        # Only a terminal display interval which *starts inside* the source
+        # may run past its last decoded boundary. A wholly outside primitive
+        # is invalid evidence, not a zero-width row to preserve.
+        if start < 0 or start >= source_duration:
+            raise MatchGroupError(
+                "timeline_primitive_invalid",
+                f"{kind} timeline starts outside its source duration.",
+            )
+        rebased_start = start + offset
         rebased_end = min(end + offset, source_end)
         row["start_time_sec"] = rebased_start
         row["end_time_sec"] = rebased_end

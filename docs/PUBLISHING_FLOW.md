@@ -272,6 +272,11 @@ Key properties:
 - Movement and core pass counts aggregate from `aggregate_inputs`
   primitives; `public_report.json` supplies presentation (names, colors)
   and extended classification without deeper primitives.
+- A physical terminal display interval may end beyond the source's final
+  decoded boundary only when its start is within the source interval. The
+  canonical timeline clips that end to the source boundary. A primitive that
+  starts at or outside the source boundary is invalid and fails closed; it is
+  never preserved as a synthetic zero-width row.
 
 ### Spatial heatmaps: proven orientation or unavailable
 
@@ -344,7 +349,8 @@ PYTHONPATH=backend python backend/scripts/validate_merged_match.py \
 | Possession / passing | controlled coverage 0.2694, known coverage 0.6808; 217 completed from 471 attempts = 46.1% |
 | Timeline / momentum | all possession and momentum intervals stay within 0–2123.021 s and canonical signs remain A >= 0, B <= 0 |
 | Spatial / Team Shape | unavailable by design: canonical orientation and Team Shape evidence compatibility are not proven; merged heatmaps and average positions are fail-closed |
-| Key Moments | no eligible moments in this real report; the auditor still validates bounds/order for any future moments |
+| Key Moments | two `ready` moments; their required bounds and production ordering tuple are independently validated |
+| Hardened reconciliation | 248 checks: 245 passed, 0 failed, 3 Reviewed Identity digest recomputations explicitly unavailable because compact source inputs retain authoritative pins but not the physical Reviewed Identity artifacts |
 | Lifecycle on copy | regenerate retained the same merged ID and pins; no-op refresh returned `current`; deleting the group removed only group/merged projections and preserved all 51 physical source files byte-for-byte |
 | Longitudinal / source eligibility | longitudinal profiles read physical analysis matches, not merged publications; automated regressions preserve profile summaries and exclude `source_kind=merged` from merge sources |
 | Compactness | aggregate inputs: 207,284 bytes total; source public reports: 3,109,916 bytes total; merged public report: 354,304 bytes |
@@ -354,3 +360,13 @@ could not be accepted from this data set. It is an environment limitation, not
 a synthetic success claim. The canonical projection also intentionally omits
 optional identity-coverage presentation fields when the source contract cannot
 provide a reliable denominator.
+
+The reconciliation is read-only and does not call the merged-report builder.
+It independently checks pinned public/aggregate semantic digests and identity
+pins; source-derived team/player ID sets and duplicate rows; required numeric
+fields; canonical player/team/pass metrics; source-to-logical possession,
+momentum, and workload rebasing; Key Moments bounds/order; and declared
+fail-closed absence for unavailable spatial and Team Shape outputs. If a
+future advanced capability is available, its mathematical correctness is
+reported as `not_audited` until a separate independent oracle exists; artifact
+presence alone is never an acceptance pass.
