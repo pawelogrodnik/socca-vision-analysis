@@ -521,12 +521,12 @@ test('canonical merged page places Key Moments inside the shared report and seek
     const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-merged-abc/report'] }, React.createElement(Routes, null,
       React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
     )));
-    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' })));
-    const video = await waitFor(() => {
-      const element = view.container.querySelector('video') as HTMLVideoElement | null;
-      assert.ok(element);
-      return element;
+    await act(async () => {
+      for (let index = 0; index < 4; index += 1) await Promise.resolve();
     });
+    assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' }));
+    const video = view.container.querySelector('video') as HTMLVideoElement | null;
+    assert.ok(video);
     fireEvent.click(view.getByRole('button', { name: 'Zobacz moment' }));
     assert.equal(video.currentTime, 722.5);
     assert.equal(view.container.querySelectorAll('video').length, 1);
