@@ -21,7 +21,12 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 
 const { act, cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
 
-afterEach(() => cleanup());
+const nativeWindowSetTimeout = window.setTimeout;
+
+afterEach(() => {
+  cleanup();
+  window.setTimeout = nativeWindowSetTimeout;
+});
 
 const sources = [
   { id: 'physical-a', source_match_id: 'a', title: 'Pierwsza połowa', match_date: '2026-08-20', teams: ['Corgi', 'Verisk'], analyzed_duration_sec: 600, status: 'published', report_type: 'public_match_report' },
