@@ -320,3 +320,37 @@ existing video/maintenance lock, then the canonical projection(s) and
 static mirror(s) by explicit ID. Physical source publications are never
 touched; concurrent video generation still blocks deletion; deletion is
 idempotent over partially missing projections.
+
+## Real merged-match acceptance
+
+The canonical merged-publication path was accepted against a disposable copy
+of three reviewed, physical publications. The copy keeps the operator's source
+publications immutable while lifecycle actions exercise the same JSON store
+contracts. Run the read-only reconciliation with:
+
+```bash
+PYTHONPATH=backend python backend/scripts/validate_merged_match.py \
+  --storage-dir /path/to/disposable/published-store \
+  published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4
+```
+
+| Item | Accepted result |
+| --- | --- |
+| Group / canonical publication | `match-group-c3fbd48a-356d-44a0-a740-c630de69b527` / `published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4` |
+| Physical sources | `published-9c7485e4`, `published-6d8fc20c`, `published-5e62625e` (`9c7485e4`, `6d8fc20c`, `5e62625e`) |
+| Exact durations / offsets | 1156.322 s at 0.000 s; 610.376 s at 1156.322 s; 356.323 s at 1766.698 s; merged 2123.021 s |
+| Corgi movement | distance 20061.74 m, high intensity 3030.74 m, sprints 0, peak 22.55 km/h; independently reconciled as SUM/SUM/SUM/MAX |
+| Paweł player row | one stable `player_id`; distance 1465.86 m, high intensity 253.41 m, 14 sprints, peak 21.02 km/h, average 6.05 km/h recomputed from movement time |
+| Possession / passing | controlled coverage 0.2694, known coverage 0.6808; 217 completed from 471 attempts = 46.1% |
+| Timeline / momentum | all possession and momentum intervals stay within 0–2123.021 s and canonical signs remain A >= 0, B <= 0 |
+| Spatial / Team Shape | unavailable by design: canonical orientation and Team Shape evidence compatibility are not proven; merged heatmaps and average positions are fail-closed |
+| Key Moments | no eligible moments in this real report; the auditor still validates bounds/order for any future moments |
+| Lifecycle on copy | regenerate retained the same merged ID and pins; no-op refresh returned `current`; deleting the group removed only group/merged projections and preserved all 51 physical source files byte-for-byte |
+| Longitudinal / source eligibility | longitudinal profiles read physical analysis matches, not merged publications; automated regressions preserve profile summaries and exclude `source_kind=merged` from merge sources |
+| Compactness | aggregate inputs: 207,284 bytes total; source public reports: 3,109,916 bytes total; merged public report: 354,304 bytes |
+
+The real copied store had no combined-video artifact, so video-duration/currentness
+could not be accepted from this data set. It is an environment limitation, not
+a synthetic success claim. The canonical projection also intentionally omits
+optional identity-coverage presentation fields when the source contract cannot
+provide a reliable denominator.
