@@ -147,9 +147,12 @@ test('match-group page keeps polling a ready video while its replacement regener
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
   let videoReads = 0;
-  window.setTimeout = ((callback: TimerHandler) => {
-    scheduled.push(callback as () => void);
-    return scheduled.length as unknown as number;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    if (delay === 7_500 && typeof callback === 'function') {
+      scheduled.push(callback);
+      return -scheduled.length;
+    }
+    return originalSetTimeout(callback, delay);
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input, init) => {
     const path = String(input);
@@ -187,9 +190,12 @@ test('match-group page keeps the old video visible after a failed regeneration',
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
   let videoReads = 0;
-  window.setTimeout = ((callback: TimerHandler) => {
-    scheduled.push(callback as () => void);
-    return scheduled.length as unknown as number;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    if (delay === 7_500 && typeof callback === 'function') {
+      scheduled.push(callback);
+      return -scheduled.length;
+    }
+    return originalSetTimeout(callback, delay);
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input, init) => {
     const path = String(input);
@@ -346,9 +352,12 @@ test('canonical merged report polls a ready prior generation and switches to its
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
   let videoReads = 0;
-  window.setTimeout = ((callback: TimerHandler) => {
-    scheduled.push(callback as () => void);
-    return scheduled.length as unknown as number;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    if (delay === 7_500 && typeof callback === 'function') {
+      scheduled.push(callback);
+      return -scheduled.length;
+    }
+    return originalSetTimeout(callback, delay);
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input) => {
     const path = String(input);
