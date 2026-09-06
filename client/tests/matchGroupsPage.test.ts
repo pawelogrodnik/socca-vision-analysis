@@ -21,7 +21,12 @@ Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: tr
 
 const { act, cleanup, fireEvent, render, waitFor } = await import('@testing-library/react');
 
-afterEach(() => cleanup());
+const nativeWindowSetTimeout = window.setTimeout;
+
+afterEach(() => {
+  cleanup();
+  window.setTimeout = nativeWindowSetTimeout;
+});
 
 const sources = [
   { id: 'physical-a', source_match_id: 'a', title: 'Pierwsza połowa', match_date: '2026-08-20', teams: ['Corgi', 'Verisk'], analyzed_duration_sec: 600, status: 'published', report_type: 'public_match_report' },
@@ -147,9 +152,12 @@ test('match-group page keeps polling a ready video while its replacement regener
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
   let videoReads = 0;
-  window.setTimeout = ((callback: TimerHandler) => {
-    scheduled.push(callback as () => void);
-    return scheduled.length as unknown as number;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    if (delay === 7_500 && typeof callback === 'function') {
+      scheduled.push(callback);
+      return -scheduled.length;
+    }
+    return originalSetTimeout(callback, delay);
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input, init) => {
     const path = String(input);
@@ -187,9 +195,12 @@ test('match-group page keeps the old video visible after a failed regeneration',
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
   let videoReads = 0;
-  window.setTimeout = ((callback: TimerHandler) => {
-    scheduled.push(callback as () => void);
-    return scheduled.length as unknown as number;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    if (delay === 7_500 && typeof callback === 'function') {
+      scheduled.push(callback);
+      return -scheduled.length;
+    }
+    return originalSetTimeout(callback, delay);
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input, init) => {
     const path = String(input);
@@ -346,9 +357,12 @@ test('canonical merged report polls a ready prior generation and switches to its
   const originalSetTimeout = window.setTimeout;
   const scheduled: Array<() => void> = [];
   let videoReads = 0;
-  window.setTimeout = ((callback: TimerHandler) => {
-    scheduled.push(callback as () => void);
-    return scheduled.length as unknown as number;
+  window.setTimeout = ((callback: TimerHandler, delay?: number) => {
+    if (delay === 7_500 && typeof callback === 'function') {
+      scheduled.push(callback);
+      return -scheduled.length;
+    }
+    return originalSetTimeout(callback, delay);
   }) as typeof window.setTimeout;
   globalThis.fetch = async (input) => {
     const path = String(input);
@@ -507,8 +521,11 @@ test('canonical merged page places Key Moments inside the shared report and seek
     const view = render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-merged-abc/report'] }, React.createElement(Routes, null,
       React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
     )));
-    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' })));
-    const video = view.container.querySelector('video') as HTMLVideoElement;
+    await act(async () => {
+      for (let index = 0; index < 4; index += 1) await Promise.resolve();
+    });
+    assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' }));
+    const video = view.container.querySelector('video') as HTMLVideoElement | null;
     assert.ok(video);
     fireEvent.click(view.getByRole('button', { name: 'Zobacz moment' }));
     assert.equal(video.currentTime, 722.5);

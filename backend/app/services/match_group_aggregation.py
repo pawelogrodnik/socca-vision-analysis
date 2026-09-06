@@ -504,15 +504,31 @@ def _aggregate_timelines(sources: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _rebase_rows(rows: list[Any], offset: float, source: Mapping[str, Any], kind: str) -> list[dict[str, Any]]:
     result = []
+    member = _record(source["member"])
+    # Physical reports may end a display bin just after the final decoded
+    # frame.  Keep that physical presentation unchanged, but a canonical
+    # logical timeline must never extend beyond its declared source interval.
+    source_end = offset + _number(member.get("analyzed_duration_sec"))
     for raw in rows:
         row = dict(_record(raw))
         start = _optional_number(row.get("start_time_sec"))
         end = _optional_number(row.get("end_time_sec"))
         if start is None or end is None or end < start:
             raise MatchGroupError("timeline_primitive_invalid", f"{kind} timeline requires ordered numeric source-local times.")
-        row["start_time_sec"] = start + offset
-        row["end_time_sec"] = end + offset
-        row["source_published_id"] = str(_record(source["member"]).get("published_id") or "")
+        source_duration = source_end - offset
+        # Only a terminal display interval which *starts inside* the source
+        # may run past its last decoded boundary. A wholly outside primitive
+        # is invalid evidence, not a zero-width row to preserve.
+        if start < 0 or start >= source_duration:
+            raise MatchGroupError(
+                "timeline_primitive_invalid",
+                f"{kind} timeline starts outside its source duration.",
+            )
+        rebased_start = start + offset
+        rebased_end = min(end + offset, source_end)
+        row["start_time_sec"] = rebased_start
+        row["end_time_sec"] = rebased_end
+        row["source_published_id"] = str(member.get("published_id") or "")
         if kind == "possession":
             counts = row.get("controlled_frames_by_team_id")
             if not isinstance(counts, Mapping):

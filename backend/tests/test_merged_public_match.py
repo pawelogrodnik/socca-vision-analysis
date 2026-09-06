@@ -170,6 +170,53 @@ class MergedPublicMatchTests(unittest.TestCase):
             self.assertNotIn(first["merged_published_match_id"], eligible)
             self.assertIn("published-one", eligible)
 
+    def test_canonical_timelines_clip_a_physical_terminal_display_bin(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=10)
+            _write_source(root, "published-two", "physical-two", duration=20)
+            # A source display bin may visually end after its final decoded
+            # frame.  The logical projection must clip it to the exact
+            # source interval instead of leaking beyond merged duration.
+            for published_id, source_duration in (("published-one", 10), ("published-two", 20)):
+                aggregate_path = root / "published" / published_id / "aggregate_inputs.json"
+                aggregate = _read(aggregate_path)
+                point = aggregate["timelines"]["attacking_momentum"]["points"][0]
+                point["start_time_sec"] = 5
+                point["end_time_sec"] = source_duration + 5
+                digest_document = copy.deepcopy(aggregate)
+                digest_document["source"].pop("aggregation_input_semantic_digest", None)
+                aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(digest_document)
+                _write(aggregate_path, aggregate)
+
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            report = ensure_merged_published_match(str(group["group_id"]))["report"]
+            timeline = report["ball"]["attacking_momentum"]["timeline"]
+
+            self.assertEqual(report["match"]["duration_sec"], 30.0)
+            self.assertTrue(all(0 <= point["start_time_sec"] <= point["end_time_sec"] <= 30.0 for point in timeline))
+            self.assertEqual(timeline[-1]["end_time_sec"], 30.0)
+
+    def test_canonical_timelines_reject_primitives_starting_outside_source_duration(self) -> None:
+        for invalid_start in (-1, 10, 14):
+            with self.subTest(invalid_start=invalid_start), self._store() as root:
+                _write_source(root, "published-one", "physical-one", duration=10)
+                _write_source(root, "published-two", "physical-two", duration=20)
+                aggregate_path = root / "published" / "published-one" / "aggregate_inputs.json"
+                aggregate = _read(aggregate_path)
+                point = aggregate["timelines"]["attacking_momentum"]["points"][0]
+                point["start_time_sec"] = invalid_start
+                point["end_time_sec"] = 18
+                digest_document = copy.deepcopy(aggregate)
+                digest_document["source"].pop("aggregation_input_semantic_digest", None)
+                aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(digest_document)
+                _write(aggregate_path, aggregate)
+                group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+
+                with self.assertRaises(MatchGroupError) as failure:
+                    ensure_merged_published_match(str(group["group_id"]))
+
+                self.assertEqual(failure.exception.code, "timeline_primitive_invalid")
+
     def test_heatmap_orientation_not_proven_yields_no_spatial_output(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=600)
