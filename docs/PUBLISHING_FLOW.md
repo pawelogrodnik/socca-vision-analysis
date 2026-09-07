@@ -438,7 +438,11 @@ Reviewed snapshot source descriptors are versioned: unmarked legacy snapshots
 are verified with their exact pre-timebase digest once, then successful
 migration updates only provenance to `timebase-insensitive-v2`, preserving
 human assignments. A failed rebuild restores the previous local
-timebase-derived files before returning an error.
+timebase-derived files before returning an error. The same rebuild also
+rechecks the derived ball-event package: a phase interval normalized by the
+new source duration makes lineage-fresh momentum stale, so it is rebuilt from
+the existing possession/pass/review artifacts (never by rerunning CV). This
+prevents terminal momentum bins outside the canonical logical timeline.
 
 `media_duration_sec` records the decoded presentation span independently.
 For supported CFR media, `frame -> time` and Reviewed-video seeking are

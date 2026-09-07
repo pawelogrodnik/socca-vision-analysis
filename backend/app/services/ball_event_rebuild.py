@@ -28,6 +28,16 @@ from app.services.pass_candidates import (
 REBUILD_ALGORITHM = {"name": "canonical_ball_event_rebuild", "version": "1.0.0"}
 FRESHNESS_STATUSES = {"fresh", "stale", "missing_inputs", "legacy_unknown"}
 REBUILD_TRIGGERS = {"contact_review", "match_phase_review", "pass_review", "package_publish"}
+BALL_EVENT_REBUILD_OUTPUT_FILENAMES = (
+    "match_phase_config.json",
+    "event_candidates.json",
+    "event_review_report.json",
+    "pass_candidates.json",
+    "pass_review_report.json",
+    "attacking_momentum.json",
+    "analytics_readiness.json",
+    "ball_event_generation.json",
+)
 
 
 def rebuild_ball_event_artifacts(
@@ -154,13 +164,35 @@ def ensure_ball_event_artifacts_fresh(match_path: Path) -> dict[str, Any]:
     readiness = _load_json(match_path / "analytics_readiness.json")
     momentum = _load_json(match_path / "attacking_momentum.json")
     status = artifact_freshness_status(match_path, momentum)
-    if status == "fresh" and readiness:
+    if status == "fresh" and readiness and _momentum_uses_current_phase_duration(match_path, momentum):
         return readiness
     try:
         result = rebuild_ball_event_artifacts(match_path, trigger="package_publish")
         return result["analytics_readiness"]
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         return _write_unavailable_readiness(match_path, "package_publish", str(exc))["analytics_readiness"]
+
+
+def _momentum_uses_current_phase_duration(match_path: Path, momentum: dict[str, Any] | None) -> bool:
+    """Bind momentum's display horizon to the current canonical video timebase.
+
+    A historical nominal video duration can leave an otherwise lineage-fresh
+    momentum document with terminal bins past the proven source timeline.
+    Loading the phase config normalizes intervals against current match metadata
+    without mutating disk; a mismatch uses the normal atomic rebuild path.
+    """
+    if not momentum:
+        return False
+    summary = momentum.get("summary")
+    if not isinstance(summary, dict):
+        return False
+    try:
+        recorded_duration = round(float(summary["duration_sec"]), 3)
+    except (KeyError, TypeError, ValueError):
+        return False
+    meta = _load_json(match_path / "match.json") or {}
+    phase_config = load_match_phase_config(match_path, meta)
+    return recorded_duration == round(_momentum_duration_sec(meta, phase_config), 3)
 
 
 def artifact_freshness_status(match_path: Path, document: dict[str, Any] | None) -> str:
@@ -344,6 +376,23 @@ def _match_duration_sec(meta: dict[str, Any]) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _momentum_duration_sec(meta: dict[str, Any], phase_config: dict[str, Any]) -> float:
+    explicit_period_ends = [
+        period.get("end_time_sec")
+        for period in phase_config.get("periods") or []
+        if isinstance(period, dict) and period.get("end_time_sec") is not None
+    ]
+    numeric_ends = []
+    for value in explicit_period_ends:
+        try:
+            numeric_ends.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if numeric_ends:
+        return max(numeric_ends)
+    return _match_duration_sec(meta) or 0.0
 
 
 def _now_iso() -> str:

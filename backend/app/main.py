@@ -4140,6 +4140,8 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
         ) from exc
     _assert_physical_rebuild_workflow(path)
     try:
+        from app.services.ball_event_rebuild import BALL_EVENT_REBUILD_OUTPUT_FILENAMES
+
         # This explicit downstream rebuild is the migration boundary for
         # historical nominal OpenCV metadata. It never reruns CV or mutates
         # Review decisions; it proves and persists the source frame timeline,
@@ -4161,6 +4163,7 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "reviewed_output_manifest.json",
                 "reviewed_video_manifest.json",
                 "reviewed_video_job.json",
+                *BALL_EVENT_REBUILD_OUTPUT_FILENAMES,
             )
         }
         if source_video is not None:

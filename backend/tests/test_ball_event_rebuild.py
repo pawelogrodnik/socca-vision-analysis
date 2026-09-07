@@ -8,11 +8,32 @@ from pathlib import Path
 from app.services.ball_event_rebuild import (
     artifact_freshness_status,
     atomic_write_rebuild_documents,
+    ensure_ball_event_artifacts_fresh,
     rebuild_ball_event_artifacts,
 )
 
 
 class BallEventRebuildTests(unittest.TestCase):
+    def test_timebase_change_rebuilds_lineage_fresh_terminal_momentum_bins(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            match_path = Path(temp_dir)
+            self._write_inputs(match_path)
+            rebuild_ball_event_artifacts(match_path, trigger="package_publish")
+
+            meta_path = match_path / "match.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["video"]["duration_sec"] = 2.0
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+            readiness = ensure_ball_event_artifacts_fresh(match_path)
+            momentum = json.loads((match_path / "attacking_momentum.json").read_text(encoding="utf-8"))
+            phase_config = json.loads((match_path / "match_phase_config.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(readiness["trigger"], "package_publish")
+            self.assertEqual(momentum["summary"]["duration_sec"], 2.0)
+            self.assertTrue(all(point["start_time_sec"] < 2.0 for point in momentum["points"]))
+            self.assertEqual(phase_config["periods"][0]["end_time_sec"], 2.0)
+
     def test_rebuild_preserves_manual_review_by_stable_candidate_key(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             match_path = Path(temp_dir)
