@@ -367,7 +367,7 @@ def _write_source(
     }
     aggregate = {
         "schema_version": "1.0.0",
-        "aggregation_policy_version": "1.0.0",
+        "aggregation_policy_version": "1.1.0",
         "source": {
             "source_match_id": source_match_id,
             "published_id": published_id,

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import hashlib
+from contextlib import contextmanager
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -59,18 +62,21 @@ class ReviewedOutputContractTests(unittest.TestCase):
                 self.assertEqual(output["reviewed_identity"]["digest"], "new")
                 self.assertTrue(_reusable_job(job, expected, root))
 
-    def test_verified_v7_render_is_rekeyed_to_the_canonical_timebase_contract(self) -> None:
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_verified_v7_real_mp4_is_rekeyed_to_the_canonical_timebase_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "video.mp4").write_bytes(b"source")
-            (root / "reviewed_video.mp4").write_bytes(b"rendered")
+            reviewed_video = root / "reviewed_video.mp4"
+            self._write_tiny_mp4(reviewed_video, frames=50, fps=25)
+            before_digest = hashlib.sha256(reviewed_video.read_bytes()).hexdigest()
             options = {"include_minimap": True}
             legacy_renderer = "reviewed_video:v7-play-area-safety"
             old_key = _reviewed_output_job_key(
                 snapshot_digest="old", source_video_digest="video-digest", review_scope_digest="scope-digest",
                 options=options, renderer_version=legacy_renderer,
             )
-            digest = hashlib.sha256(b"rendered").hexdigest()
+            digest = before_digest
             (root / "match.json").write_text(json.dumps({"video": {
                 "timebase_schema_version": "1.0.0", "frame_count": 50, "fps": 25,
             }}), encoding="utf-8")
@@ -89,7 +95,7 @@ class ReviewedOutputContractTests(unittest.TestCase):
             }), encoding="utf-8")
             with patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video-digest"), patch(
                 "app.services.identity_reviewed_output_jobs.identity_review_scope_digest", return_value="scope-digest"
-            ), patch("app.services.identity_reviewed_output_jobs.probe_media_duration", return_value=2.0):
+            ):
                 rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
             job = json.loads((root / "reviewed_video_job.json").read_text(encoding="utf-8"))
             expected = _reviewed_output_job_key(
@@ -99,6 +105,98 @@ class ReviewedOutputContractTests(unittest.TestCase):
             self.assertEqual(job["job_key"], expected)
             self.assertEqual(job["renderer_version"], RENDERER_VERSION)
             self.assertEqual(job["rendered_with_renderer_version"], legacy_renderer)
+            self.assertEqual(hashlib.sha256(reviewed_video.read_bytes()).hexdigest(), before_digest)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_v7_promotion_rejects_one_frame_short_real_mp4_despite_close_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_legacy_v7_fixture(root, actual_frames=49, actual_fps=25, manifest_frames=50, manifest_fps=25)
+            with self._legacy_rebind_inputs():
+                with self.assertRaisesRegex(ValueError, "lacks exact inputs"):
+                    rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_v7_promotion_rejects_wrong_encoded_fps(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_legacy_v7_fixture(root, actual_frames=50, actual_fps=24, manifest_frames=50, manifest_fps=24)
+            with self._legacy_rebind_inputs():
+                with self.assertRaisesRegex(ValueError, "lacks exact inputs"):
+                    rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_v7_promotion_rejects_unknown_renderer_and_output_digest_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._write_legacy_v7_fixture(root, actual_frames=50, actual_fps=25, manifest_frames=50, manifest_fps=25)
+            job_path = root / "reviewed_video_job.json"
+            job = json.loads(job_path.read_text(encoding="utf-8"))
+            job["renderer_version"] = "reviewed_video:v6-unknown"
+            job_path.write_text(json.dumps(job), encoding="utf-8")
+            with self._legacy_rebind_inputs():
+                with self.assertRaisesRegex(ValueError, "lacks exact inputs"):
+                    rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+
+            job["renderer_version"] = "reviewed_video:v7-play-area-safety"
+            job["video_digest"] = "not-the-output-sha"
+            job_path.write_text(json.dumps(job), encoding="utf-8")
+            with self._legacy_rebind_inputs():
+                with self.assertRaisesRegex(ValueError, "lacks exact inputs"):
+                    rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+
+    @staticmethod
+    def _write_tiny_mp4(path: Path, *, frames: int, fps: int) -> None:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c=blue:s=64x48:r={fps}",
+                "-frames:v", str(frames), "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path),
+            ],
+            check=True,
+        )
+
+    def _write_legacy_v7_fixture(
+        self,
+        root: Path,
+        *,
+        actual_frames: int,
+        actual_fps: int,
+        manifest_frames: int,
+        manifest_fps: int,
+    ) -> None:
+        options = {"include_minimap": True}
+        renderer = "reviewed_video:v7-play-area-safety"
+        self._write_tiny_mp4(root / "reviewed_video.mp4", frames=actual_frames, fps=actual_fps)
+        digest = hashlib.sha256((root / "reviewed_video.mp4").read_bytes()).hexdigest()
+        old_key = _reviewed_output_job_key(
+            snapshot_digest="old", source_video_digest="video-digest", review_scope_digest="scope-digest",
+            options=options, renderer_version=renderer,
+        )
+        (root / "match.json").write_text(json.dumps({"video": {
+            "timebase_schema_version": "1.0.0", "frame_count": 50, "fps": 25,
+        }}), encoding="utf-8")
+        (root / "reviewed_video_job.json").write_text(json.dumps({
+            "status": "completed", "job_key": old_key, "source_snapshot_digest": "old",
+            "source_video_digest": "video-digest", "source_review_scope_digest": "scope-digest",
+            "options": options, "renderer_version": renderer, "video_digest": digest,
+        }), encoding="utf-8")
+        (root / "reviewed_video_manifest.json").write_text(json.dumps({
+            "status": "completed", "renderer_version": renderer, "source_video_digest": "video-digest",
+            "source_snapshot_digest": "old", "digest": digest, "frames": manifest_frames, "fps": manifest_fps,
+        }), encoding="utf-8")
+        (root / "reviewed_output_manifest.json").write_text(json.dumps({
+            "job_key": old_key, "reviewed_identity": {"digest": "old"},
+            "stats": {"source_snapshot_digest": "old"}, "video": {"source_snapshot_digest": "old"},
+        }), encoding="utf-8")
+
+    @staticmethod
+    @contextmanager
+    def _legacy_rebind_inputs():
+        with (
+            patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video-digest"),
+            patch("app.services.identity_reviewed_output_jobs.identity_review_scope_digest", return_value="scope-digest"),
+        ):
+            yield
 
     def test_provenance_rebind_rejects_a_mismatched_output_job_key(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

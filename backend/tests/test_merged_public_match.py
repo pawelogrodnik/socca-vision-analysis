@@ -33,6 +33,27 @@ from app.services.public_match_report import (
 
 
 class MergedPublicMatchTests(unittest.TestCase):
+    def test_legacy_aggregation_policy_cannot_mix_with_current_team_movement_contract(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=60, team_distance=100, peak=20,
+                          player_distance=10, movement_time=10, detected_time=10, attempts=1, completed=1,
+                          controlled_corgi=1, controlled_verisk=1, contested=0, free=0, unknown=0,
+                          momentum_local_a=0.1, momentum_local_b=-0.1, momentum_dominant_local="A")
+            _write_source(root, "published-two", "physical-two", duration=60, team_distance=100, peak=20,
+                          player_distance=10, movement_time=10, detected_time=10, attempts=1, completed=1,
+                          controlled_corgi=1, controlled_verisk=1, contested=0, free=0, unknown=0,
+                          momentum_local_a=0.1, momentum_local_b=-0.1, momentum_dominant_local="A")
+            legacy_path = root / "published" / "published-one" / "aggregate_inputs.json"
+            legacy = _read(legacy_path)
+            legacy["aggregation_policy_version"] = "1.0.0"
+            digest_document = copy.deepcopy(legacy)
+            digest_document["source"].pop("aggregation_input_semantic_digest", None)
+            legacy["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(digest_document)
+            _write(legacy_path, legacy)
+
+            with self.assertRaisesRegex(MatchGroupError, "Aggregation policy '1.0.0' is not supported"):
+                create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+
     def test_merged_match_is_canonical_published_match_with_summed_semantics(self) -> None:
         with self._store() as root:
             # Adversarial values: movement_time != detected_time, contested /
@@ -1218,7 +1239,7 @@ def _write_source(
     }
     aggregate = {
         "schema_version": "1.0.0",
-        "aggregation_policy_version": "1.0.0",
+        "aggregation_policy_version": "1.1.0",
         "source": {
             "source_match_id": source_match_id,
             "published_id": published_id,

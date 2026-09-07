@@ -15,6 +15,7 @@ from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_video import (
     RENDERER_VERSION,
+    inspect_encoded_video_timing,
     render_reviewed_video,
     reviewed_source_video_digest,
 )
@@ -164,15 +165,21 @@ def _renderer_can_rebind_to_current_timebase(
     ):
         return False
     try:
-        rendered_frames = int(manifest["frames"])
-        rendered_fps = float(manifest["fps"])
+        manifest_frames = int(manifest["frames"])
+        manifest_fps = float(manifest["fps"])
         output_path = match_path / "reviewed_video.mp4"
+        decoded_frames, encoded_fps = inspect_encoded_video_timing(output_path)
         rendered_duration = probe_media_duration(output_path)
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, RuntimeError):
         return False
-    if rendered_frames != expected_frames or not fps_matches(rendered_fps, expected_fps):
+    if (
+        decoded_frames != expected_frames
+        or not fps_matches(encoded_fps, expected_fps)
+        or manifest_frames != decoded_frames
+        or not fps_matches(manifest_fps, encoded_fps)
+    ):
         return False
-    return abs(rendered_duration - (expected_frames / expected_fps)) <= max(0.05, 2.0 / expected_fps)
+    return abs(rendered_duration - (decoded_frames / encoded_fps)) <= max(0.05, 2.0 / encoded_fps)
 
 
 def generate_reviewed_output(

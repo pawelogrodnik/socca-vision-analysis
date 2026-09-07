@@ -181,6 +181,7 @@ from app.services.review_workflow_orchestrator import (
     retry_review_render,
 )
 from app.services.review_workflow_state import (
+    RECOMPUTE_FAILURE_FILENAME,
     WorkflowActionError,
     assert_workflow_action_allowed,
     build_compact_review_workflow_state,
@@ -4252,7 +4253,6 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 previous_snapshot_digest=previous_snapshot_digest,
                 snapshot_digest=str(snapshot.get("semantic_digest") or ""),
             )
-            build_reviewed_stats(path, snapshot, meta, pitch_config)
             # The snapshot's digest is an explicit dependency of durable
             # review progress. Re-project that read model in the same
             # transaction, without scheduling a new operator-evidence pass.
@@ -4263,6 +4263,13 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             progress["source_snapshot_digest"] = snapshot.get("semantic_digest")
             progress["workflow_refresh_source"] = "timebase_migration"
             write_identity_json_atomic(path / "reviewed_identity_progress.json", progress)
+            _clear_pre_migration_recompute_failure(
+                path,
+                previous_snapshot_digest=previous_snapshot_digest,
+            )
+            # Stats consume durable progress for coverage readiness. The
+            # freshly reprojected progress must therefore be persisted first.
+            build_reviewed_stats(path, snapshot, meta, pitch_config)
         package = build_match_package(path)
         ensure_package_publishable(package)
         package_source_id = str((package.get("match") or {}).get("id") or "")
@@ -4294,6 +4301,20 @@ def _restore_rebuild_local_files(path: Path, previous_files: dict[str, bytes | N
             target.unlink(missing_ok=True)
         else:
             target.write_bytes(previous)
+
+
+def _clear_pre_migration_recompute_failure(path: Path, *, previous_snapshot_digest: str) -> None:
+    """Clear only a failure explicitly bound to the superseded generation."""
+    failure_path = path / RECOMPUTE_FAILURE_FILENAME
+    try:
+        failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if (
+        isinstance(failure, dict)
+        and failure.get("source_snapshot_digest") == previous_snapshot_digest
+    ):
+        failure_path.unlink(missing_ok=True)
 
 
 @app.delete("/api/published/matches/{published_match_id}")

@@ -244,7 +244,7 @@ def render_reviewed_video(
     emitter.emit_profile_stage("encode_mp4", profile.encode_mp4_sec)
     partial.replace(output)
     raw.unlink(missing_ok=True)
-    encoded_frames, encoded_fps = _decode_output_timing(output)
+    encoded_frames, encoded_fps = inspect_encoded_video_timing(output)
     if encoded_frames != count:
         output.unlink(missing_ok=True)
         raise RuntimeError("reviewed_video_frame_count_mismatch: encoder changed frame count")
@@ -609,7 +609,13 @@ def _encode(
         output.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg encoding failed: {stderr.strip()}")
 def _ball_by_frame(path:Path)->dict[int,dict[str,Any]]: return {int(row.get("frame") or 0):row for row in _load_optional(path/"ball_tracks.json").get("positions") or []}
-def _decode_output_timing(path: Path) -> tuple[int, float]:
+def inspect_encoded_video_timing(path: Path) -> tuple[int, float]:
+    """Independently decode an encoded reviewed MP4 and read its cadence.
+
+    Rendering and legacy renderer promotion share this proof: container
+    metadata is not a substitute for the number of frames an actual decoder
+    can read from the persisted artifact.
+    """
     import cv2
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():

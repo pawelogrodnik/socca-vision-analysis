@@ -145,6 +145,8 @@ class PublishedRebuildTests(unittest.TestCase):
             get_reviewed_identity_status,
         )
         from app.services.identity_reviewed_stats import build_reviewed_stats
+        from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+        from app.services.identity_review_scope import identity_review_scope_digest
 
         with self._store() as root:
             match_dir = self._local_match(root, "match-1", title="Original", reviewed=True)
@@ -184,15 +186,25 @@ class PublishedRebuildTests(unittest.TestCase):
             # Identity is current. Migration may prove timebase without
             # rerunning human Review or identity finalization.
             from fastapi import HTTPException
+            def current_ready_progress(path: Path, document: dict) -> dict:
+                return {
+                    "schema_version": PROGRESS_SCHEMA_VERSION,
+                    "source_snapshot_digest": get_reviewed_identity_status(path)["semantic_digest"],
+                    "source_review_scope_digest": identity_review_scope_digest(document),
+                    "coverage_readiness": {"allows_finalize": True, "status": "ready"},
+                }
+
             with patch(
                 "app.main._assert_publish_workflow",
                 side_effect=HTTPException(status_code=409, detail="review_not_completed"),
-            ):
+            ), patch("app.main.build_reviewed_identity_progress", side_effect=current_ready_progress):
                 rebuilt = api_rebuild_published_match(published["id"])
             migrated = read_match_meta(match_dir)
             timing = json.loads((match_dir / "reviewed_player_stats.json").read_text(encoding="utf-8"))["video_timing"]
             identity_status = get_reviewed_identity_status(match_dir)["status"]
             migrated_snapshot = json.loads((match_dir / "reviewed_identity_snapshot.json").read_text(encoding="utf-8"))
+            migrated_progress = json.loads((match_dir / "reviewed_identity_progress.json").read_text(encoding="utf-8"))
+            migrated_readiness = json.loads((match_dir / "reviewed_stats_readiness.json").read_text(encoding="utf-8"))
             # The migration has refreshed the derived review-progress digest,
             # so future rebuild authorization takes the normal workflow path
             # rather than requiring the historical-publication fallback.
@@ -207,6 +219,24 @@ class PublishedRebuildTests(unittest.TestCase):
         self.assertEqual(timing["source"], "decoded_cfr_timebase")
         self.assertNotEqual(identity_status, "stale")
         self.assertEqual(migrated_snapshot["source"]["identity_source_semantics_version"], "timebase-insensitive-v2")
+        self.assertEqual(migrated_progress["source_snapshot_digest"], migrated_snapshot["semantic_digest"])
+        self.assertEqual(migrated_readiness["source_snapshot_digest"], migrated_snapshot["semantic_digest"])
+        self.assertEqual(migrated_readiness["coverage_readiness"]["status"], "ready")
+        self.assertEqual(rebuilt["public_report"]["identity_coverage_readiness"]["status"], "ready")
+
+    def test_migration_clears_only_a_failure_bound_to_the_superseded_snapshot(self) -> None:
+        from app.main import _clear_pre_migration_recompute_failure
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            failure_path = path / "review_workflow_recompute_failure.json"
+            failure_path.write_text(json.dumps({"source_snapshot_digest": "old", "error": "historical"}), encoding="utf-8")
+            _clear_pre_migration_recompute_failure(path, previous_snapshot_digest="old")
+            self.assertFalse(failure_path.exists())
+
+            failure_path.write_text(json.dumps({"source_snapshot_digest": "new", "error": "current"}), encoding="utf-8")
+            _clear_pre_migration_recompute_failure(path, previous_snapshot_digest="old")
+            self.assertTrue(failure_path.exists())
     def test_rebuild_updates_publication_preserving_stable_identity(self) -> None:
         from app.main import api_rebuild_published_match, publish_local_match
 

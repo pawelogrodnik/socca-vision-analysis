@@ -15,6 +15,7 @@ class AggregateInputsTests(unittest.TestCase):
         inputs = build_aggregate_inputs(_package(), public_report=_public_report(), published_id="published-match-1")
 
         self.assertEqual(inputs["schema_version"], "1.0.0")
+        self.assertEqual(inputs["aggregation_policy_version"], "1.1.0")
         self.assertEqual(inputs["source"]["source_match_id"], "match-1")
         self.assertEqual(inputs["source"]["published_id"], "published-match-1")
         self.assertEqual(inputs["source"]["reviewed_identity_digest"], "reviewed-digest")
@@ -23,7 +24,10 @@ class AggregateInputsTests(unittest.TestCase):
                 "team_id": "team-corgi",
                 "source_team_label": "A",
                 "movement": {
+                    "authority": "reviewed_safe_team_observations",
                     "total_distance_m": 110.0,
+                    "observed_distance_m": 100.0,
+                    "estimated_short_gap_distance_m": 10.0,
                     "high_intensity_distance_m": 20.0,
                     "sprint_count": 2,
                     "peak_speed_kmh": 23.0,
@@ -37,7 +41,10 @@ class AggregateInputsTests(unittest.TestCase):
                 "team_id": "team-verisk",
                 "source_team_label": "B",
                 "movement": {
+                    "authority": "reviewed_safe_team_observations",
                     "total_distance_m": 120.0,
+                    "observed_distance_m": 108.0,
+                    "estimated_short_gap_distance_m": 12.0,
                     "high_intensity_distance_m": 24.0,
                     "sprint_count": 3,
                     "peak_speed_kmh": 24.0,
@@ -112,6 +119,14 @@ class AggregateInputsTests(unittest.TestCase):
                 "estimated_short_gap_distance_m": 10.0,
                 "high_intensity_distance_m": 30.0,
             },
+            {
+                "team_label": "B",
+                "movement_authority": "reviewed_safe_team_observations",
+                "total_distance_m": 120.0,
+                "observed_distance_m": 108.0,
+                "estimated_short_gap_distance_m": 12.0,
+                "high_intensity_distance_m": 24.0,
+            },
         ]
 
         inputs = build_aggregate_inputs(package, public_report=_public_report(), published_id="published-match-1")
@@ -123,6 +138,36 @@ class AggregateInputsTests(unittest.TestCase):
         self.assertEqual(movement["high_intensity_distance_m"], 30.0)
         self.assertEqual(movement["sprint_count"], 2)
         self.assertEqual(movement["peak_speed_kmh"], 23.0)
+        self.assertEqual(movement["authority"], "reviewed_safe_team_observations")
+
+    def test_physical_public_report_and_aggregate_inputs_share_reviewed_safe_team_distance(self) -> None:
+        from app.services.public_match_report import build_public_match_report
+
+        package = _package()
+        package["reviewed_team_movement"][0]["total_distance_m"] = 130.0
+        public_report = build_public_match_report(
+            package,
+            published_id="published-match-1",
+            source_match_dir=None,
+            heatmap_dir=None,
+            public_heatmap_base="published/matches/published-match-1/heatmaps",
+        )
+        inputs = build_aggregate_inputs(package, public_report=public_report, published_id="published-match-1")
+        physical = next(row for row in public_report["teams"] if row["team_id"] == "team-corgi")
+        aggregate = next(row for row in inputs["teams"] if row["team_id"] == "team-corgi")
+        self.assertEqual(physical["total_distance_m"], aggregate["movement"]["total_distance_m"])
+
+    def test_team_movement_is_unavailable_without_reviewed_safe_authority(self) -> None:
+        package = _package()
+        package.pop("reviewed_team_movement")
+
+        inputs = build_aggregate_inputs(package, public_report=_public_report(), published_id="published-match-1")
+
+        self.assertEqual(inputs["metric_readiness"]["team_movement"]["status"], "not_available")
+        self.assertEqual(
+            inputs["teams"][0]["movement"],
+            {"status": "not_available", "reason": "reviewed_safe_team_movement_missing"},
+        )
 
     def test_missing_stable_mapping_fails_closed(self) -> None:
         package = _package()
@@ -367,6 +412,24 @@ def _package(*, labels: dict[str, str] | None = None, swap_players: bool = False
                 _team_row("B", labels["B"], 120.0, 24.0, 3, 24.0),
             ],
         },
+        "reviewed_team_movement": [
+            {
+                "team_label": "A",
+                "movement_authority": "reviewed_safe_team_observations",
+                "total_distance_m": 110.0,
+                "observed_distance_m": 100.0,
+                "estimated_short_gap_distance_m": 10.0,
+                "high_intensity_distance_m": 20.0,
+            },
+            {
+                "team_label": "B",
+                "movement_authority": "reviewed_safe_team_observations",
+                "total_distance_m": 120.0,
+                "observed_distance_m": 108.0,
+                "estimated_short_gap_distance_m": 12.0,
+                "high_intensity_distance_m": 24.0,
+            },
+        ],
         "reviewed_player_stats": {
             "source_snapshot_digest": "reviewed-digest",
             "generated_at": "2026-08-29T10:00:00+00:00",
