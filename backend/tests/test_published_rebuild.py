@@ -132,7 +132,16 @@ class PublishedRebuildTests(unittest.TestCase):
             )
             (match_dir / "reviewed_identity_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-            rebuilt = api_rebuild_published_match(published["id"])
+            # Existing historical publication: the contemporary workflow
+            # projection is incomplete, but its authoritative Reviewed
+            # Identity is current. Migration may prove timebase without
+            # rerunning human Review or identity finalization.
+            from fastapi import HTTPException
+            with patch(
+                "app.main._assert_publish_workflow",
+                side_effect=HTTPException(status_code=409, detail="review_not_completed"),
+            ):
+                rebuilt = api_rebuild_published_match(published["id"])
             migrated = read_match_meta(match_dir)
             timing = json.loads((match_dir / "reviewed_player_stats.json").read_text(encoding="utf-8"))["video_timing"]
             identity_status = get_reviewed_identity_status(match_dir)["status"]

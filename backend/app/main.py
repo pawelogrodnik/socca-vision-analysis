@@ -257,6 +257,7 @@ from app.services.team_registry import get_team as registry_get_team
 from app.services.team_registry import list_teams as registry_list_teams
 from app.services.team_registry import update_team as registry_update_team
 from app.services.video import (
+    VIDEO_TIMEBASE_SCHEMA_VERSION,
     ensure_current_video_timebase,
     extract_frame,
     inspect_video_timebase,
@@ -297,6 +298,29 @@ def _assert_publish_workflow(match_path: Path) -> None:
             "workflow": workflow,
         },
     )
+
+
+def _assert_physical_rebuild_workflow(match_path: Path) -> None:
+    """Keep normal publish gating while allowing one safe legacy migration.
+
+    Historical physical publications predate the current workflow projection.
+    They may have a current Reviewed Identity snapshot but no longer satisfy a
+    newly-introduced finalization marker.  A rebuild is allowed only to attach
+    the first canonical video-timebase proof; it cannot alter review evidence
+    and does not apply to already-proven sources.
+    """
+    try:
+        _assert_publish_workflow(match_path)
+        return
+    except HTTPException as error:
+        meta = read_match_meta(match_path)
+        video = meta.get("video") if isinstance(meta.get("video"), dict) else {}
+        snapshot = get_reviewed_identity_status(match_path)
+        historical_timebase = video.get("timebase_schema_version") != VIDEO_TIMEBASE_SCHEMA_VERSION
+        snapshot_current = snapshot.get("status") not in {"missing", "stale"}
+        if historical_timebase and snapshot_current:
+            return
+        raise error
 
 
 @app.on_event("startup")
@@ -4113,7 +4137,7 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             status_code=404,
             detail=f"Local source match {source_match_id} not found; publication left unchanged.",
         ) from exc
-    _assert_publish_workflow(path)
+    _assert_physical_rebuild_workflow(path)
     try:
         # This explicit downstream rebuild is the migration boundary for
         # historical nominal OpenCV metadata. It never reruns CV or mutates
