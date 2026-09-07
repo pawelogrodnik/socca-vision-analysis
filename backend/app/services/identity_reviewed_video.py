@@ -598,11 +598,13 @@ def _encode(
                 total_frames=total_frames,
             )
         lines.clear()
-    if process.stdout is not None:
-        process.stdout.close()
+    close_stdout = getattr(process.stdout, "close", None)
+    if callable(close_stdout):
+        close_stdout()
     stderr = process.stderr.read() if process.stderr is not None else ""
-    if process.stderr is not None:
-        process.stderr.close()
+    close_stderr = getattr(process.stderr, "close", None)
+    if callable(close_stderr):
+        close_stderr()
     if process.wait() != 0:
         output.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg encoding failed: {stderr.strip()}")

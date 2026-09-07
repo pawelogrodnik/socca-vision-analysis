@@ -3,7 +3,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -93,16 +92,29 @@ class VideoTimebaseTests(unittest.TestCase):
                         result = inspect_video_timebase(video)
                 self.assertAlmostEqual(float(result["fps"]), pts_fps, places=4)
 
-    def test_changed_bytes_are_reproved_at_expensive_boundary(self) -> None:
+    def test_changed_bytes_with_identical_technical_properties_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             video = root / "video.mp4"
             self._cfr_video(video, color="blue")
             first = inspect_video_timebase(video)
             self._cfr_video(video, color="red")
+            with self.assertRaisesRegex(VideoTimebaseError, "source_video_changed_requires_reanalysis"):
+                ensure_current_video_timebase(root, {"video_filename": "video.mp4", "video": first})
+
+    def test_same_source_bytes_with_changed_mtime_remain_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / "video.mp4"
+            self._cfr_video(video)
+            first = inspect_video_timebase(video)
+            stat = video.stat()
+            video.touch()
+            if video.stat().st_mtime_ns == stat.st_mtime_ns:
+                import os
+                os.utime(video, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1))
             current = ensure_current_video_timebase(root, {"video_filename": "video.mp4", "video": first})
-        self.assertNotEqual(current["source_fingerprint"]["sha256"], first["source_fingerprint"]["sha256"])
-        self.assertEqual(current["frame_count"], first["frame_count"])
+        self.assertEqual(current["source_fingerprint"]["sha256"], first["source_fingerprint"]["sha256"])
 
     def test_real_cfr_timebase_renders_a_reconciled_reviewed_video(self) -> None:
         from app.services.identity_reviewed_video import render_reviewed_video

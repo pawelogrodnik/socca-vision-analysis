@@ -94,6 +94,9 @@ class PublishedRebuildTests(unittest.TestCase):
     def test_rebuild_migrates_real_cfr_video_and_preserves_reviewed_identity(self) -> None:
         from app.main import api_rebuild_published_match, publish_local_match, read_match_meta
         from app.services.identity_reviewed_snapshot import (
+            IDENTITY_SOURCE_SEMANTICS_LEGACY,
+            _source_digest,
+            _source_documents,
             finalize_reviewed_identity,
             get_reviewed_identity_status,
         )
@@ -120,11 +123,20 @@ class PublishedRebuildTests(unittest.TestCase):
             output_manifest_path.write_text(json.dumps(output_manifest), encoding="utf-8")
             self.assertNotEqual(get_reviewed_identity_status(match_dir)["status"], "stale")
             published = publish_local_match("match-1", replace=False)
+            # Persist a genuine pre-#103 descriptor for the now-published
+            # historical match: exact old semantics, no version marker.
+            legacy_meta = read_match_meta(match_dir)
+            snapshot["source"].pop("identity_source_semantics_version", None)
+            snapshot["source"]["semantic_input_digest"] = _source_digest(
+                _source_documents(match_dir), legacy_meta, semantics_version=IDENTITY_SOURCE_SEMANTICS_LEGACY
+            )
+            (match_dir / "reviewed_identity_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
             rebuilt = api_rebuild_published_match(published["id"])
             migrated = read_match_meta(match_dir)
             timing = json.loads((match_dir / "reviewed_player_stats.json").read_text(encoding="utf-8"))["video_timing"]
             identity_status = get_reviewed_identity_status(match_dir)["status"]
+            migrated_snapshot = json.loads((match_dir / "reviewed_identity_snapshot.json").read_text(encoding="utf-8"))
 
         self.assertEqual(rebuilt["id"], "published-match-1")
         self.assertEqual(migrated["video"]["timebase_schema_version"], "1.0.0")
@@ -133,6 +145,7 @@ class PublishedRebuildTests(unittest.TestCase):
         self.assertAlmostEqual(migrated["video"]["duration_sec"], 2.0, places=3)
         self.assertEqual(timing["source"], "decoded_cfr_timebase")
         self.assertNotEqual(identity_status, "stale")
+        self.assertEqual(migrated_snapshot["source"]["identity_source_semantics_version"], "timebase-insensitive-v2")
     def test_rebuild_updates_publication_preserving_stable_identity(self) -> None:
         from app.main import api_rebuild_published_match, publish_local_match
 

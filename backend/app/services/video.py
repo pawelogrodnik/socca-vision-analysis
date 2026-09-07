@@ -73,7 +73,11 @@ def timebase_matches_source(video_path: Path, timebase: dict[str, Any]) -> bool:
     persisted frame timeline to source bytes, not just its dimensions/rate.
     """
     fingerprint = timebase.get("source_fingerprint")
-    return isinstance(fingerprint, dict) and fingerprint == _video_fingerprint(video_path)
+    if not isinstance(fingerprint, dict) or not isinstance(fingerprint.get("sha256"), str):
+        return False
+    # Content is the immutable analysis identity. mtime is only a diagnostic
+    # cache hint: copying/touching identical media must not invalidate Review.
+    return fingerprint["sha256"] == _video_fingerprint(video_path)["sha256"]
 
 
 def ensure_current_video_timebase(
@@ -89,12 +93,13 @@ def ensure_current_video_timebase(
     preferred = str(match_document.get("video_filename") or "") or None
     video_path = resolve_match_video_path(match_path, preferred)
     persisted = match_document.get("video")
-    if (
-        isinstance(persisted, dict)
-        and persisted.get("timebase_schema_version") == VIDEO_TIMEBASE_SCHEMA_VERSION
-        and timebase_matches_source(video_path, persisted)
-    ):
-        return {**persisted, "path": str(video_path), "filename": video_path.name}
+    if isinstance(persisted, dict) and persisted.get("timebase_schema_version") == VIDEO_TIMEBASE_SCHEMA_VERSION:
+        if timebase_matches_source(video_path, persisted):
+            return {**persisted, "path": str(video_path), "filename": video_path.name}
+        if isinstance(persisted.get("source_fingerprint"), dict):
+            raise VideoTimebaseError(
+                "source_video_changed_requires_reanalysis: canonical analysis belongs to different source media bytes"
+            )
     return inspect_video_timebase(video_path)
 
 

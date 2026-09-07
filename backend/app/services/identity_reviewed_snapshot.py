@@ -61,6 +61,8 @@ from app.services.play_area import is_on_pitch_product_observation
 SNAPSHOT_FILENAME = "reviewed_identity_snapshot.json"
 REPORT_FILENAME = "reviewed_identity_report.json"
 ALGORITHM_VERSION = "reviewed_identity_snapshot:v15-authoritative-short-track-team-projection"
+IDENTITY_SOURCE_SEMANTICS_LEGACY = "legacy-v1"
+IDENTITY_SOURCE_SEMANTICS_TIMEBASE_INSENSITIVE = "timebase-insensitive-v2"
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +100,15 @@ def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
     snapshot = _load(snapshot_path)
     current = _source_documents(match_path)
     match_doc = _optional(match_path / "match.json")
+    descriptor = snapshot.get("source", {})
+    semantics = (
+        descriptor.get("identity_source_semantics_version")
+        if isinstance(descriptor, dict)
+        else None
+    ) or IDENTITY_SOURCE_SEMANTICS_LEGACY
     stale = (
-        snapshot.get("source", {}).get("semantic_input_digest")
-        != _source_digest(current, match_doc)
+        descriptor.get("semantic_input_digest")
+        != _source_digest(current, match_doc, semantics_version=semantics)
         or snapshot.get("source", {}).get("algorithm_version") != ALGORITHM_VERSION
     )
     return {
@@ -678,6 +686,7 @@ def _source_descriptor(
     values = {key: canonical_digest(_semantic_input(value)) if value else None for key, value in documents.items()}
     match_value = canonical_digest(_semantic_match_input(match_doc))
     return {
+        "identity_source_semantics_version": IDENTITY_SOURCE_SEMANTICS_TIMEBASE_INSENSITIVE,
         "match_digest": match_value,
         "roster_digest": canonical_digest(_semantic_input(match_doc.get("teams") or [])),
         "tracklets_digest": values["tracklets"],
@@ -695,11 +704,23 @@ def _source_descriptor(
     }
 
 
-def _source_digest(documents: dict[str, dict[str, Any]], match_doc: dict[str, Any] | None = None) -> str:
+def _source_digest(
+    documents: dict[str, dict[str, Any]],
+    match_doc: dict[str, Any] | None = None,
+    *,
+    semantics_version: str = IDENTITY_SOURCE_SEMANTICS_TIMEBASE_INSENSITIVE,
+) -> str:
     """Reference implementation kept for digest-equivalence regression."""
     value = {key: canonical_digest(_semantic_input(document)) if document else None for key, document in documents.items()}
     if match_doc is not None:
-        value["match"] = canonical_digest(_semantic_match_input(match_doc))
+        if semantics_version == IDENTITY_SOURCE_SEMANTICS_LEGACY:
+            value["match"] = canonical_digest(_semantic_input(match_doc))
+        elif semantics_version == IDENTITY_SOURCE_SEMANTICS_TIMEBASE_INSENSITIVE:
+            value["match"] = canonical_digest(_semantic_match_input(match_doc))
+        else:
+            # An unknown future source contract must never be accepted by a
+            # historical reader under guessed semantics.
+            return "unknown-source-semantics"
     return canonical_digest(value)
 
 

@@ -4144,12 +4144,11 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             meta["video"] = ensure_current_video_timebase(path, meta)
             pitch_path = path / "pitch_config.json"
             pitch_config = json.loads(pitch_path.read_text(encoding="utf-8")) if pitch_path.exists() else {}
-            build_reviewed_stats(path, snapshot, meta, pitch_config)
-            # Commit the metadata only after all timebase-derived documents
-            # have been built successfully.  The rollback below protects a
-            # later package/publication failure from a split local generation.
+            # The rollback below protects this coherent local migration from a
+            # later stats/package/publication failure.
             write_match_meta(path, meta)
-            refresh_reviewed_identity_nonidentity_metadata(path, meta)
+            snapshot = refresh_reviewed_identity_nonidentity_metadata(path, meta)
+            build_reviewed_stats(path, snapshot, meta, pitch_config)
         package = build_match_package(path)
         ensure_package_publishable(package)
         package_source_id = str((package.get("match") or {}).get("id") or "")
@@ -4158,16 +4157,12 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "Rebuilt package source identity does not match the requested publication; rebuild refused."
             )
         published = import_match_package(package, replace=True)
-    except (ValueError, PublishError) as exc:
-        # build_reviewed_stats writes several atomic files.  Restore their
-        # coherent previous generation when a later rebuild stage rejects.
-        for name, previous in locals().get("previous_files", {}).items():
-            target = path / name
-            if previous is None:
-                target.unlink(missing_ok=True)
-            else:
-                target.write_bytes(previous)
+    except ValueError as exc:
+        _restore_rebuild_local_files(path, locals().get("previous_files", {}))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PublishError as exc:
+        _restore_rebuild_local_files(path, locals().get("previous_files", {}))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     meta = read_match_meta(path)
     meta["status"] = "published"
@@ -4175,6 +4170,16 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
     meta["published_match_id"] = published["id"]
     write_match_meta(path, meta)
     return published
+
+
+def _restore_rebuild_local_files(path: Path, previous_files: dict[str, bytes | None]) -> None:
+    """Restore every local artifact changed before publication replacement."""
+    for name, previous in previous_files.items():
+        target = path / name
+        if previous is None:
+            target.unlink(missing_ok=True)
+        else:
+            target.write_bytes(previous)
 
 
 @app.delete("/api/published/matches/{published_match_id}")

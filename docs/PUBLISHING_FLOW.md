@@ -427,12 +427,18 @@ must agree within the named strict FPS tolerance. The compatibility field
 Normal report reads reuse that persisted contract without hashing the source.
 
 At expensive rebuild and Reviewed-render boundaries, the persisted fingerprint
-(including SHA-256) is compared with the source bytes. A changed source is
-re-proven on rebuild and rejected by rendering until its timebase has been
-persisted. Technical timebase proof fields do not invalidate Reviewed Identity
-decisions; roster, tracklet and decision inputs remain part of its freshness
-digest. A failed rebuild restores the previous local timebase-derived files
-before returning an error.
+(including SHA-256) is compared with the source bytes. A historical source
+without a proof receives one during migration; after that, SHA-256 is immutable
+analysis identity. Same bytes with a different mtime remain valid, while a
+different SHA fails closed with `source_video_changed_requires_reanalysis` and
+can never be attached to existing tracking or Reviewed Identity evidence.
+Technical timebase proof fields do not invalidate Reviewed Identity decisions;
+roster, tracklet and decision inputs remain part of its freshness digest.
+Reviewed snapshot source descriptors are versioned: unmarked legacy snapshots
+are verified with their exact pre-timebase digest once, then successful
+migration updates only provenance to `timebase-insensitive-v2`, preserving
+human assignments. A failed rebuild restores the previous local
+timebase-derived files before returning an error.
 
 `media_duration_sec` records the decoded presentation span independently.
 For supported CFR media, `frame -> time` and Reviewed-video seeking are

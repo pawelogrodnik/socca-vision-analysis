@@ -24,6 +24,9 @@ from app.services.identity_reviewed_snapshot import (
     _semantic_input,
     _source_descriptor,
     _source_digest,
+    IDENTITY_SOURCE_SEMANTICS_LEGACY,
+    IDENTITY_SOURCE_SEMANTICS_TIMEBASE_INSENSITIVE,
+    get_reviewed_identity_status,
 )
 from app.services.identity_reviewed_video import DIGEST_CACHE_FILENAME, reviewed_source_video_digest
 from app.services.review_workflow_orchestrator import durable_review_progress
@@ -159,6 +162,28 @@ class SourceDigestEquivalenceTests(unittest.TestCase):
         for key in ("gallery", "stable_players", "global_identity"):
             expected = canonical_digest(_semantic_input(documents[key]))
             self.assertEqual(descriptor["stable_identity_digests"][key], expected, key)
+
+    def test_unmarked_legacy_snapshot_uses_exact_legacy_digest(self) -> None:
+        documents = self._documents()
+        match_doc = {"id": "m1", "teams": [{"team_label": "A"}], "video": {"fps": 25}}
+        legacy_digest = _source_digest(documents, match_doc, semantics_version=IDENTITY_SOURCE_SEMANTICS_LEGACY)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "reviewed_identity_snapshot.json").write_text(json.dumps({
+                "status": "completed",
+                "source": {"semantic_input_digest": legacy_digest, "algorithm_version": "reviewed_identity_snapshot:v15-authoritative-short-track-team-projection"},
+            }), encoding="utf-8")
+            with patch("app.services.identity_reviewed_snapshot._source_documents", return_value=documents), patch(
+                "app.services.identity_reviewed_snapshot._optional", return_value=match_doc
+            ):
+                self.assertNotEqual(get_reviewed_identity_status(root)["status"], "stale")
+                changed = {**match_doc, "teams": [{"team_label": "B"}]}
+                with patch("app.services.identity_reviewed_snapshot._optional", return_value=changed):
+                    self.assertEqual(get_reviewed_identity_status(root)["status"], "stale")
+
+    def test_new_descriptor_records_timebase_insensitive_semantics(self) -> None:
+        descriptor = _source_descriptor(self._documents(), {"id": "m1", "teams": []}, {"status": "fresh"})
+        self.assertEqual(descriptor["identity_source_semantics_version"], IDENTITY_SOURCE_SEMANTICS_TIMEBASE_INSENSITIVE)
 
 
 class DurableProgressContractTests(unittest.TestCase):
