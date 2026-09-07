@@ -185,11 +185,16 @@ def _momentum_uses_current_phase_duration(match_path: Path, momentum: dict[str, 
         return False
     summary = momentum.get("summary")
     if not isinstance(summary, dict):
-        return False
+        return True
+    if "duration_sec" not in summary:
+        # Older optional momentum documents were not timebase-aware. Preserve
+        # their established package contract; only a recorded display horizon
+        # can contradict the current source timeline.
+        return True
     try:
         recorded_duration = round(float(summary["duration_sec"]), 3)
     except (KeyError, TypeError, ValueError):
-        return False
+        return True
     meta = _load_json(match_path / "match.json") or {}
     phase_config = load_match_phase_config(match_path, meta)
     return recorded_duration == round(_momentum_duration_sec(meta, phase_config), 3)
