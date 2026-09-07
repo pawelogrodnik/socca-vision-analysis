@@ -96,6 +96,30 @@ class MatchGroupVideoTests(unittest.TestCase):
             self.assertEqual(manifest["output"]["duration_sec"], 30.0)
             self.assertEqual((root / "published" / "published-a" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"A")
 
+    def test_logical_duration_mismatch_fails_closed_before_generation(self) -> None:
+        with self._store() as root:
+            self._source(root, "published-a", "a", duration=10, payload=b"A")
+            self._source(root, "published-b", "b", duration=10, payload=b"B")
+            group = create_match_group(member_published_ids=["published-a", "published-b"], metadata={})
+            descriptor_path = root / "published" / "published-b" / PUBLISHED_VIDEO_DESCRIPTOR_FILENAME
+            descriptor = self._load(descriptor_path)
+            descriptor["duration_sec"] = 10 + VIDEO_DURATION_TOLERANCE_SEC + 0.01
+            descriptor["descriptor_semantic_digest"] = canonical_json_sha256({
+                key: value for key, value in descriptor.items() if key != "descriptor_semantic_digest"
+            })
+            self._write(descriptor_path, descriptor)
+
+            status = get_match_group_video_status(group["group_id"])
+
+            self.assertEqual(status["status"], "unavailable_source_video")
+            self.assertEqual(status["reason"], "source_video_duration_mismatch")
+            with self.assertRaises(MatchGroupVideoError) as failure:
+                generate_match_group_video(group["group_id"])
+            self.assertEqual(failure.exception.code, "source_video_duration_mismatch")
+            self.assertFalse((root / "groups" / group["group_id"] / "video-generations").exists())
+            self.assertEqual((root / "published" / "published-a" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"A")
+            self.assertEqual((root / "published" / "published-b" / PUBLISHED_VIDEO_ARTIFACT).read_bytes(), b"B")
+
     def test_missing_or_changed_source_video_fails_closed_and_marks_previous_video_stale(self) -> None:
         with self._store() as root:
             self._source(root, "published-a", "a", duration=10, payload=b"A")

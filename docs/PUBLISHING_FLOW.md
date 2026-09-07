@@ -355,11 +355,45 @@ PYTHONPATH=backend python backend/scripts/validate_merged_match.py \
 | Longitudinal / source eligibility | longitudinal profiles read physical analysis matches, not merged publications; automated regressions preserve profile summaries and exclude `source_kind=merged` from merge sources |
 | Compactness | aggregate inputs: 207,284 bytes total; source public reports: 3,109,916 bytes total; merged public report: 354,304 bytes |
 
-The real copied store had no combined-video artifact, so video-duration/currentness
-could not be accepted from this data set. It is an environment limitation, not
-a synthetic success claim. The canonical projection also intentionally omits
-optional identity-coverage presentation fields when the source contract cannot
-provide a reliable denominator.
+### Combined-video closeout status (2026-09-06) — Refs #52
+
+The real physical publications now contain completed, provenance-pinned
+`reviewed_video.mp4` artifacts. A fresh disposable copy of those three
+published packages and the match group was used for the production synchronous
+generator; the authoritative store was not modified. The canonical projection
+was regenerated in that copy before reconciliation, which again produced 255
+passed checks, zero failures and the same three explicitly unavailable
+Reviewed Identity recomputations.
+
+The combined-video acceptance is nevertheless **not accepted**. The production
+preflight returns `unavailable_source_video` with reason
+`source_video_duration_mismatch` before it creates a generation. Its first
+failing member is `published-6d8fc20c`.
+
+| Published source | Logical duration used by the group | Published reviewed-video descriptor | Independent `ffprobe` duration | Absolute delta |
+| --- | ---: | ---: | ---: | ---: |
+| `published-9c7485e4` | 1156.322 s | 1156.288 s | 1156.290 s | 0.034 s |
+| `published-6d8fc20c` | 610.376 s | 605.572 s | 605.572 s | 4.804 s |
+| `published-5e62625e` | 356.323 s | 352.052 s | 352.054 s | 4.271 s |
+
+The allowed production delta is 0.25 s. `ffprobe` agrees with the published
+reviewed-video descriptors, so the discrepancy is not introduced by
+publication copy. The two affected source MP4s also have shorter container
+durations than their logical `frame_count / fps` metadata. The logical match
+timeline therefore cannot be mapped safely onto the available video bytes.
+
+Do not widen the tolerance, pad/trim the media, rewrite descriptor durations,
+or publish a combined artifact for this group. Those changes would shift
+fragment boundaries and make the canonical report, Key Moments and player
+statistics describe different times than the video. A future remediation must
+establish and prove one source-time mapping for the affected fragments, then
+rebuild the affected projections from that mapping before attempting a new
+combined-video acceptance. Until then #52 remains open and this result must be
+referenced, not closed.
+
+The canonical projection intentionally omits optional identity-coverage
+presentation fields when the source contract cannot provide a reliable
+denominator.
 
 The reconciliation is read-only and does not call the merged-report builder.
 It independently checks pinned public/aggregate semantic digests and identity
