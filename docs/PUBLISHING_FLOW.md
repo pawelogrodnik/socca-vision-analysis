@@ -478,3 +478,33 @@ presence alone is never an acceptance pass. The auditor uses final canonical
 projection provenance for that classification, not the conservative compact
 manifest preflight capability: package-level evidence may safely enable a
 final output after preflight declares the compact inputs insufficient.
+
+## Key Moments editorial layer
+
+Generated Key Moments are machine evidence; editorial decisions are not. The
+operator-owned, versioned sidecar lives outside replaceable publication
+directories:
+
+```text
+backend/storage/editorial/key-moments/<published-id>.json
+```
+
+It contains manual moments, generated-moment suppressions and presentation
+overrides. A manual item has a server-generated ID and a physical source
+anchor (published source, canonical frame and local source time), never only a
+logical display timestamp. On a merged report its displayed time is recomputed
+from the current member offset; an absent source remains unresolved and is not
+retargeted.
+
+The server resolves generated evidence plus this sidecar into the effective,
+chronological `key_moments` list in the canonical `public_report.json`; the
+same JSON is atomically mirrored to `client/public/`. The normal static/Vercel
+viewer reads only that effective list and never calls an editorial endpoint.
+
+Editing is available only from `?dev=1` when the local backend confirms
+`ORLIK_APP_MODE=local-analysis`. Both mutation and capability checks are
+server-side. Saving is a cheap report reprojection: it does not run CV,
+Reviewed Identity, statistics, ball analytics, or the Key Moment generator.
+For physical publications it also rebuilds `aggregate_inputs.json` from the
+same effective report, so dependent logical groups become cleanly stale rather
+than digest-incoherent.

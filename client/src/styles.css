@@ -265,6 +265,15 @@ a { color: #93c5fd; }
 .key-moment-card { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid #334155; border-radius: 12px; background: rgba(2, 6, 23, 0.35); }
 .key-moment-card h3 { margin: 0 0 3px; font-size: 16px; }
 .key-moment-card small { color: #cbd5e1; }
+.key-moment-manual { display: block; margin-top: 4px; color: #93c5fd !important; }
+.modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(2, 6, 23, .8); }
+.modal { width: min(860px, 100%); max-height: min(780px, calc(100vh - 40px)); overflow: auto; padding: 22px; border: 1px solid #475569; border-radius: 14px; background: #0f172a; }
+.key-moments-editor { display: grid; gap: 14px; }
+.key-moment-editor-list { display: grid; gap: 8px; }
+.key-moment-editor-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 10px; border: 1px solid #334155; border-radius: 10px; }
+.key-moment-editor-row.manual { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.key-moment-editor-row label { display: grid; gap: 3px; font-size: 12px; color: #cbd5e1; }
+.key-moment-editor-row input, .key-moment-editor-row select { width: 100%; }
 .reviewed-inspect-button { width: fit-content; }
 
 .reviewed-at-time { gap: 12px; padding-top: 6px; }

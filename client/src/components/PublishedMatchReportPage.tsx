@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { artifactUrl, getPublishedMatch, getStaticPublicMatchReport, rebuildPublishedMatch } from '../api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useParams } from 'react-router-dom';
+import { artifactUrl, getKeyMomentEditor, getPublishedMatch, getStaticPublicMatchReport, rebuildPublishedMatch, saveKeyMomentEditor } from '../api';
 import { errorMessage } from '../lib/helpers';
-import type { PublicMatchReport, PublishedMatchDetail } from '../types';
+import type { KeyMomentEditorState, PublicMatchReport, PublishedMatchDetail } from '../types';
 import {
   MatchReportContent,
   sourceFromPublishedPackage,
@@ -10,15 +10,23 @@ import {
 import { MergedMatchLifecycle } from './MergedMatchLifecycle';
 import { PublicMatchReportContent } from './PublicMatchReportContent';
 import { ReportActions } from './ReportActions';
+import { KeyMoments } from './KeyMoments';
+import { KeyMomentsEditorModal } from './KeyMomentsEditorModal';
 
 export function PublishedMatchReportPage() {
   const { matchId } = useParams();
+  const location = useLocation();
   const [match, setMatch] = useState<PublishedMatchDetail | null>(null);
   const [publicReport, setPublicReport] = useState<PublicMatchReport | null>(null);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState<'rebuild' | null>(null);
   const [actionStatus, setActionStatus] = useState('');
+  const [keyMomentEditor, setKeyMomentEditor] = useState<KeyMomentEditorState | null>(null);
+  const [keyMomentEditorOpen, setKeyMomentEditorOpen] = useState(false);
+  const [localVideoTimeGetter, setLocalVideoTimeGetter] = useState<(() => number | null) | null>(null);
+  const devPresentation = new URLSearchParams(location.search).get('dev') === '1';
+  const captureLocalVideoTimeGetter = useCallback((getter: () => number | null) => setLocalVideoTimeGetter(() => getter), []);
 
   useEffect(() => {
     if (!matchId) {
@@ -47,6 +55,13 @@ export function PublishedMatchReportPage() {
       )
       .finally(() => setLoading(false));
   }, [matchId]);
+
+  useEffect(() => {
+    if (!devPresentation || !matchId) { setKeyMomentEditor(null); return; }
+    let cancelled = false;
+    void getKeyMomentEditor(matchId).then((state) => { if (!cancelled) setKeyMomentEditor(state); }).catch(() => { if (!cancelled) setKeyMomentEditor(null); });
+    return () => { cancelled = true; };
+  }, [devPresentation, matchId, publicReport?.id]);
 
   const reportSource = useMemo(
     () => (match?.package ? sourceFromPublishedPackage(match.package) : null),
@@ -117,6 +132,9 @@ export function PublishedMatchReportPage() {
         <MergedMatchLifecycle
           mergedId={matchId}
           report={publicReport}
+          keyMomentEditorAllowed={Boolean(keyMomentEditor?.key_moment_editor_allowed)}
+          onEditKeyMoments={() => setKeyMomentEditorOpen(true)}
+          onLocalVideoTimeGetter={captureLocalVideoTimeGetter}
           onReportUpdated={(updated, nextReport) => {
             setMatch(updated);
             setPublicReport(nextReport);
@@ -125,10 +143,10 @@ export function PublishedMatchReportPage() {
       )}
 
       {publicReport ? (
-        <PublicMatchReportContent
-          report={publicReport}
-          assetHref={(path) => (path.startsWith('http') || path.startsWith('/') ? path : `/${path}`)}
-        />
+        <>
+          <PublicMatchReportContent report={publicReport} assetHref={(path) => (path.startsWith('http') || path.startsWith('/') ? path : `/${path}`)} />
+          {!isMerged && <KeyMoments report={publicReport} editorAllowed={Boolean(keyMomentEditor?.key_moment_editor_allowed)} onEdit={() => setKeyMomentEditorOpen(true)} />}
+        </>
       ) : reportSource ? (
         <MatchReportContent
           source={reportSource}
@@ -138,6 +156,20 @@ export function PublishedMatchReportPage() {
           }
         />
       ) : null}
+      {keyMomentEditorOpen && keyMomentEditor?.key_moment_editor_allowed && publicReport && matchId && (
+        <KeyMomentsEditorModal
+          state={keyMomentEditor}
+          report={publicReport}
+          currentVideoTime={localVideoTimeGetter}
+          onClose={() => setKeyMomentEditorOpen(false)}
+          onSave={async (draft) => {
+            const saved = await saveKeyMomentEditor(matchId, draft);
+            setKeyMomentEditor(saved);
+            if (saved.public_report) setPublicReport(saved.public_report);
+            setKeyMomentEditorOpen(false);
+          }}
+        />
+      )}
     </main>
   );
 }

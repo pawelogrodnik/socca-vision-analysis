@@ -848,6 +848,14 @@ def write_public_match_report_bundle(
         heatmap_dir=public_heatmap_dir,
         public_heatmap_base=public_heatmap_base,
     )
+    # Physical reports currently have no automatic Key Moment generator, but
+    # a durable manual editorial layer must survive a normal republish.
+    from app.services.key_moment_editor import load_editorial_document, resolve_effective_key_moments
+
+    editorial = load_editorial_document(published_id)
+    if editorial.get("manual_moments"):
+        effective = resolve_effective_key_moments(report, [], editorial, source_kind="physical")
+        report["key_moments"] = {key: value for key, value in effective.items() if not key.startswith("_")}
     public_dir.mkdir(parents=True, exist_ok=True)
     (public_dir / "public_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True),

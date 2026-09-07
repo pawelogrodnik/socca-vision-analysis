@@ -497,6 +497,20 @@ test('Key Moments keep visible timestamps without a current video action', () =>
   assert.equal(view.queryByRole('button', { name: 'Zobacz moment' }), null);
 });
 
+test('manual Key Moment has a human marker and never fabricates machine evidence', () => {
+  const report = keyMomentReport();
+  report.key_moments!.moments = [{
+    moment_id: 'manual-km-1', origin: 'manual', operator_edited: true,
+    time_sec: 45, window_start_sec: 40, window_end_sec: 50, type: 'tactical_note',
+    team_id: 'team-corgi', headline: 'Zmiana ustawienia', note: 'Presja po lewej stronie', importance_score: 0,
+    evidence: { primary_signal: '', primary: { source: '' }, signals: [] },
+  }];
+  const view = render(React.createElement(KeyMoments, { report, video: null, externalVideo: null }));
+  assert.ok(view.getByText('Dodane ręcznie'));
+  assert.ok(view.getByText('Presja po lewej stronie'));
+  assert.equal(view.queryByText(/Rozpoznane posiadanie|Momentum:/), null);
+});
+
 test('canonical merged page places Key Moments inside the shared report and seeks the one local video', async () => {
   const mergedDetail = {
     id: 'published-merged-abc',

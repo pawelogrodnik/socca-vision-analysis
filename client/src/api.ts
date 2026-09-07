@@ -67,6 +67,8 @@ import type {
   ReviewedTemporalSplitRefinement,
   ReviewedTemporalSplitResponse,
   ReviewWorkflow,
+  KeyMomentEditorState,
+  KeyMomentEditorialManual,
 } from './types';
 import type {
   BoundedH2Session,
@@ -899,6 +901,24 @@ export async function listPublishedMatches(): Promise<PublishedMatch[]> {
 
 export async function getPublishedMatch(matchId: string): Promise<PublishedMatchDetail> {
   return request<PublishedMatchDetail>(`/api/published/matches/${matchId}`);
+}
+
+export async function getKeyMomentEditor(publishedMatchId: string): Promise<KeyMomentEditorState> {
+  return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor`);
+}
+
+export async function saveKeyMomentEditor(
+  publishedMatchId: string,
+  payload: {
+    expected_revision: string;
+    manual_moments: KeyMomentEditorialManual[];
+    generated_suppressions: Array<{ generated_editorial_key: string }>;
+    generated_overrides: Array<{ generated_editorial_key: string; presentation: Record<string, unknown> }>;
+  },
+): Promise<KeyMomentEditorState> {
+  return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
 }
 
 export async function getStaticPublicMatchReport(matchId: string): Promise<PublicMatchReport> {

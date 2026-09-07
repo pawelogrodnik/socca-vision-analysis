@@ -10,7 +10,7 @@ from typing import Any
 from app.services.artifact_lineage import canonical_json_sha256
 
 
-KEY_MOMENTS_SCHEMA_VERSION = "1.0.0"
+KEY_MOMENTS_SCHEMA_VERSION = "1.1.0"
 KEY_MOMENTS_POLICY_VERSION = "logical-key-moments:v1"
 MAX_KEY_MOMENTS = 8
 KEY_MOMENT_CLUSTER_GAP_SEC = 10.0
@@ -35,15 +35,11 @@ def build_logical_match_key_moments(report: Mapping[str, Any]) -> dict[str, Any]
     ]
     clustered = _cluster(candidates)
     moments = [_moment(candidate, digest) for candidate in clustered]
-    moments.sort(
-        key=lambda row: (
-            -float(row["importance_score"]),
-            float(row["time_sec"]),
-            str(row["type"]),
-            str(row["team_id"]),
-            str(row["moment_id"]),
-        )
-    )
+    # Selection remains importance-limited, but the public list is a match
+    # timeline rather than a ranking. Editorial moments use the same order.
+    moments.sort(key=lambda row: (-float(row["importance_score"]), float(row["time_sec"]), str(row["moment_id"])))
+    moments = moments[:MAX_KEY_MOMENTS]
+    moments.sort(key=lambda row: (float(row["time_sec"]), "generated", str(row["type"]), str(row["moment_id"])))
     return {
         "schema_version": KEY_MOMENTS_SCHEMA_VERSION,
         "policy_version": KEY_MOMENTS_POLICY_VERSION,
@@ -51,7 +47,7 @@ def build_logical_match_key_moments(report: Mapping[str, Any]) -> dict[str, Any]
         "status": "ready" if moments else "not_available",
         "reason": None if moments else "no_reliable_key_moment_signals",
         "source_timeline_semantic_digest": digest,
-        "moments": moments[:MAX_KEY_MOMENTS],
+        "moments": moments,
     }
 
 
@@ -290,6 +286,8 @@ def _moment(candidate: dict[str, Any], digest: str) -> dict[str, Any]:
     )
     return {
         "moment_id": f"km-{canonical_json_sha256(identity)[:16]}",
+        "origin": "generated",
+        "operator_edited": False,
         "time_sec": candidate["time_sec"],
         "window_start_sec": candidate["window_start_sec"],
         "window_end_sec": candidate["window_end_sec"],

@@ -8,9 +8,11 @@ import type {
 
 type KeyMomentsProps = {
   report: Pick<PublicMatchReport, 'teams' | 'key_moments'>;
-  video: MatchGroupVideoStatus | null;
-  externalVideo: MatchGroupExternalVideoStatus | null;
-  onSeekLocalVideo: (timeSec: number) => void;
+  video?: MatchGroupVideoStatus | null;
+  externalVideo?: MatchGroupExternalVideoStatus | null;
+  onSeekLocalVideo?: (timeSec: number) => void;
+  onEdit?: (() => void) | null;
+  editorAllowed?: boolean;
 };
 
 function clock(seconds: number): string {
@@ -27,8 +29,9 @@ function percent(value: number | undefined): string | null {
 }
 
 function evidenceLabel(moment: CanonicalKeyMoment): string {
-  const signal = moment.evidence.primary;
-  if (moment.evidence.primary_signal === 'attacking_momentum') {
+  if (moment.origin === 'manual') return moment.note || moment.public_category || 'Dodane ręcznie';
+  const signal = moment.evidence?.primary;
+  if (moment.evidence?.primary_signal === 'attacking_momentum') {
     const intensity = percent(signal?.intensity);
     const confidence = percent(signal?.confidence);
     return [
@@ -51,9 +54,9 @@ export function keyMomentsOf(report: Pick<PublicMatchReport, 'key_moments'>): Ca
   return report.key_moments || null;
 }
 
-export function KeyMoments({ report, video, externalVideo, onSeekLocalVideo }: KeyMomentsProps) {
+export function KeyMoments({ report, video = null, externalVideo = null, onSeekLocalVideo, onEdit, editorAllowed = false }: KeyMomentsProps) {
   const keyMoments = report.key_moments;
-  if (!keyMoments?.moments.length) return null;
+  if (!keyMoments?.moments.length && !editorAllowed) return null;
 
   const teamNames = new Map(report.teams.map((team) => [team.team_id, team.team_name || team.team_id]));
   const currentYouTubeVideoId = externalVideo?.status === 'current'
@@ -62,17 +65,19 @@ export function KeyMoments({ report, video, externalVideo, onSeekLocalVideo }: K
   const localVideoReady = video?.status === 'ready' && Boolean(video.artifact_url);
 
   return <section className='panel key-moments'>
-    <h2>Najważniejsze momenty</h2>
-    {keyMoments.moments.map((moment) => <article key={moment.moment_id} className='key-moment-card'>
+    <div className='row between'><h2>Najważniejsze momenty</h2>{editorAllowed && onEdit && <button type='button' className='secondary' onClick={onEdit}>Edytuj momenty</button>}</div>
+    {!keyMoments?.moments.length && <p className='muted'>Brak widocznych momentów.</p>}
+    {keyMoments?.moments.map((moment) => <article key={moment.moment_id} className='key-moment-card'>
       <strong>{clock(moment.time_sec)}</strong>
       <div>
-        <h3>{moment.headline} {teamNames.get(moment.team_id) || moment.team_id}</h3>
+        <h3>{moment.headline} {moment.team_id ? (teamNames.get(moment.team_id) || moment.team_id) : ''}</h3>
         <small>{evidenceLabel(moment)}</small>
+        {moment.origin === 'manual' && <small className='key-moment-manual'>Dodane ręcznie</small>}
       </div>
       {currentYouTubeVideoId
         ? <a href={youtubeWatchUrl(currentYouTubeVideoId, moment.time_sec)}>Zobacz moment</a>
         : localVideoReady
-          ? <button type='button' onClick={() => onSeekLocalVideo(moment.time_sec)}>Zobacz moment</button>
+          ? <button type='button' onClick={() => onSeekLocalVideo?.(moment.time_sec)}>Zobacz moment</button>
           : null}
     </article>)}
   </section>;
