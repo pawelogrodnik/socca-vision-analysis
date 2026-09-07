@@ -68,7 +68,7 @@ import type {
   ReviewedTemporalSplitResponse,
   ReviewWorkflow,
   KeyMomentEditorState,
-  KeyMomentEditorialManual,
+  KeyMomentEditorialMoment,
 } from './types';
 import type {
   BoundedH2Session,
@@ -911,9 +911,7 @@ export async function saveKeyMomentEditor(
   publishedMatchId: string,
   payload: {
     expected_revision: string;
-    manual_moments: KeyMomentEditorialManual[];
-    generated_suppressions: Array<{ generated_editorial_key: string }>;
-    generated_overrides: Array<{ generated_editorial_key: string; presentation: Record<string, unknown> }>;
+    moments: KeyMomentEditorialMoment[];
   },
 ): Promise<KeyMomentEditorState> {
   return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor`, {

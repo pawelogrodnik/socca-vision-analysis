@@ -3445,7 +3445,7 @@ export type CanonicalKeyMoments = {
   moments: CanonicalKeyMoment[];
 };
 
-export type KeyMomentEditorialManual = {
+export type KeyMomentEditorialMoment = {
   moment_id?: string;
   time_sec: number;
   category: string;
@@ -3455,6 +3455,7 @@ export type KeyMomentEditorialManual = {
   player_id?: string | null;
   context_before_sec?: number;
   context_after_sec?: number;
+  origin?: 'generated' | 'manual' | string;
 };
 
 export type KeyMomentEditorState = {
@@ -3462,16 +3463,8 @@ export type KeyMomentEditorState = {
   reason?: string | null;
   published_id?: string;
   revision?: string;
-  effective_key_moments?: CanonicalKeyMoments;
-  generated_moments?: Array<CanonicalKeyMoment & {
-    generated_editorial_key: string;
-    suppressed: boolean;
-    override?: Partial<Pick<CanonicalKeyMoment, 'headline' | 'public_category' | 'note' | 'team_id' | 'player_id'>> | null;
-  }>;
-  manual_moments?: KeyMomentEditorialManual[];
-  orphaned_suppressions?: Array<Record<string, unknown>>;
-  orphaned_overrides?: Array<Record<string, unknown>>;
-  unresolved_manual_moments?: KeyMomentEditorialManual[];
+  moments?: KeyMomentEditorialMoment[];
+  has_editorial_sidecar?: boolean;
   public_report?: PublicMatchReport;
 };
 

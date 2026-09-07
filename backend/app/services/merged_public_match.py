@@ -331,31 +331,17 @@ def build_canonical_merged_report(
         ],
         "aggregate_semantic_digest": str(aggregate_report.get("aggregate_semantic_digest") or ""),
     }
-    # The aggregate report is generator-owned.  Reapply the durable editorial
-    # sidecar here so ordinary regeneration never erases a manual item,
-    # suppression, or presentation overlay.
-    if isinstance(key_moments, dict):
-        from app.services.key_moment_editor import (
-            generated_editorial_key,
-            load_editorial_document,
-            resolve_effective_key_moments,
-        )
+    # A saved editorial sidecar owns the final list. Without it, retain the
+    # freshly generated logical moments.
+    from app.services.key_moment_editor import apply_editorial_key_moments
 
-        generated_sources = report["merged_provenance"]["sources"]
-        generated = [
-            {**copy.deepcopy(moment), "generated_editorial_key": generated_editorial_key(moment, generated_sources)}
-            for moment in key_moments.get("moments") or []
-            if isinstance(moment, dict)
-        ]
-        effective = resolve_effective_key_moments(
-            report,
-            generated,
-            load_editorial_document(merged_published_id),
-            source_kind="merged",
-        )
-        report["key_moments"] = {
-            key: value for key, value in effective.items() if not key.startswith("_")
-        }
+    editorial_key_moments = apply_editorial_key_moments(
+        report,
+        merged_published_id,
+        source_kind="merged",
+    )
+    if editorial_key_moments:
+        report["key_moments"] = editorial_key_moments
     report["_heatmap_jobs"] = heatmap_jobs
     return report
 

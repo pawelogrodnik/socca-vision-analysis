@@ -37,11 +37,56 @@ function publishedDetail(title: string) {
   };
 }
 
-function renderPage() {
-  return render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-9c7485e4/report'] }, React.createElement(Routes, null,
+function renderPage(initialEntry = '/published/matches/published-9c7485e4/report') {
+  return render(React.createElement(MemoryRouter, { initialEntries: [initialEntry] }, React.createElement(Routes, null,
     React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
   )));
 }
+
+test('normal published report does not request or show the Key Moments editor', async () => {
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input); calls.push(path);
+    if (path.endsWith('/api/published/matches/published-9c7485e4')) return Response.json(publishedDetail('Raport'));
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage();
+    await waitFor(() => assert.ok(view.getAllByText('Raport').length > 0));
+    assert.equal(view.queryByRole('button', { name: 'Edytuj momenty' }), null);
+    assert.equal(calls.some((path) => path.includes('/key-moments/editor')), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('dev URL shows Key Moments editor when the backend is available', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith('/api/published/matches/published-9c7485e4')) return Response.json(publishedDetail('Raport'));
+    if (path.endsWith('/key-moments/editor')) return Response.json({ key_moment_editor_allowed: true, published_id: 'published-9c7485e4', revision: 'r1', moments: [] });
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage('/published/matches/published-9c7485e4/report?dev=1');
+    await waitFor(() => assert.ok(view.getByRole('button', { name: 'Edytuj momenty' })));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('dev URL keeps the normal report when the Key Moments backend is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith('/api/published/matches/published-9c7485e4')) return Response.json(publishedDetail('Raport'));
+    if (path.endsWith('/key-moments/editor')) return Response.json({ detail: 'offline' }, { status: 503 });
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage('/published/matches/published-9c7485e4/report?dev=1');
+    await waitFor(() => assert.ok(view.getAllByText('Raport').length > 0));
+    assert.equal(view.queryByRole('button', { name: 'Edytuj momenty' }), null);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 test('published report rebuilds through the dedicated endpoint and shows the new report', async () => {
   const calls: Array<{ path: string; method?: string }> = [];
