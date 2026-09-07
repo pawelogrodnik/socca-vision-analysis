@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,6 +90,62 @@ def write_rebuildable_reviewed_fixture(match_dir: Path) -> None:
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for rebuild endpoint tests")
 class PublishedRebuildTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_rebuild_migrates_real_cfr_video_and_preserves_reviewed_identity(self) -> None:
+        from app.main import api_rebuild_published_match, publish_local_match, read_match_meta
+        from app.services.identity_reviewed_snapshot import (
+            IDENTITY_SOURCE_SEMANTICS_LEGACY,
+            _source_digest,
+            _source_documents,
+            finalize_reviewed_identity,
+            get_reviewed_identity_status,
+        )
+        from app.services.identity_reviewed_stats import build_reviewed_stats
+
+        with self._store() as root:
+            match_dir = self._local_match(root, "match-1", title="Original", reviewed=True)
+            source = match_dir / "video.mp4"
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=25", "-frames:v", "50", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(source)],
+                check=True,
+            )
+            # This is intentionally historical nominal metadata: the endpoint
+            # must inspect the source rather than trust its frame count.
+            meta = read_match_meta(match_dir)
+            meta["video"] = {"fps": 25, "frame_count": 250, "duration_sec": 10, "width": 320, "height": 180}
+            (match_dir / "match.json").write_text(json.dumps(meta), encoding="utf-8")
+            snapshot = finalize_reviewed_identity(match_dir, meta)
+            build_reviewed_stats(match_dir, snapshot, meta, {})
+            output_manifest_path = match_dir / "reviewed_output_manifest.json"
+            output_manifest = json.loads(output_manifest_path.read_text(encoding="utf-8"))
+            output_manifest["reviewed_identity"]["digest"] = snapshot["semantic_digest"]
+            output_manifest["stats"]["source_snapshot_digest"] = snapshot["semantic_digest"]
+            output_manifest_path.write_text(json.dumps(output_manifest), encoding="utf-8")
+            self.assertNotEqual(get_reviewed_identity_status(match_dir)["status"], "stale")
+            published = publish_local_match("match-1", replace=False)
+            # Persist a genuine pre-#103 descriptor for the now-published
+            # historical match: exact old semantics, no version marker.
+            legacy_meta = read_match_meta(match_dir)
+            snapshot["source"].pop("identity_source_semantics_version", None)
+            snapshot["source"]["semantic_input_digest"] = _source_digest(
+                _source_documents(match_dir), legacy_meta, semantics_version=IDENTITY_SOURCE_SEMANTICS_LEGACY
+            )
+            (match_dir / "reviewed_identity_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+
+            rebuilt = api_rebuild_published_match(published["id"])
+            migrated = read_match_meta(match_dir)
+            timing = json.loads((match_dir / "reviewed_player_stats.json").read_text(encoding="utf-8"))["video_timing"]
+            identity_status = get_reviewed_identity_status(match_dir)["status"]
+            migrated_snapshot = json.loads((match_dir / "reviewed_identity_snapshot.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(rebuilt["id"], "published-match-1")
+        self.assertEqual(migrated["video"]["timebase_schema_version"], "1.0.0")
+        self.assertEqual(migrated["video"]["source"], "decoded_cfr_timebase")
+        self.assertEqual(migrated["video"]["frame_count"], 50)
+        self.assertAlmostEqual(migrated["video"]["duration_sec"], 2.0, places=3)
+        self.assertEqual(timing["source"], "decoded_cfr_timebase")
+        self.assertNotEqual(identity_status, "stale")
+        self.assertEqual(migrated_snapshot["source"]["identity_source_semantics_version"], "timebase-insensitive-v2")
     def test_rebuild_updates_publication_preserving_stable_identity(self) -> None:
         from app.main import api_rebuild_published_match, publish_local_match
 

@@ -24,7 +24,7 @@ class ReviewedVideoProfileTests(unittest.TestCase):
         profile = _RenderTimingProfile()
         self.assertEqual(profile.decode_sec, 0)
         self.assertEqual(profile.as_dict()["raw_avi_bytes"], 0)
-        self.assertEqual(RENDERER_VERSION, "reviewed_video:v7-play-area-safety")
+        self.assertEqual(RENDERER_VERSION, "reviewed_video:v8-canonical-timebase")
 
         profile.decode_sec += 0.2
         profile.decode_sec += 0.3
@@ -166,6 +166,9 @@ class ReviewedVideoProfileTests(unittest.TestCase):
             ), patch(
                 "app.services.identity_reviewed_video._encode",
                 side_effect=fake_encode,
+            ), patch(
+                "app.services.identity_reviewed_video.probe_media_duration",
+                return_value=1 / 25,
             ):
                 manifest = render_reviewed_video(
                     root,
@@ -180,7 +183,7 @@ class ReviewedVideoProfileTests(unittest.TestCase):
             )
             self.assertEqual(manifest["performance_profile"], persisted["performance_profile"])
             self.assertEqual(manifest["renderer_version"], RENDERER_VERSION)
-            self.assertEqual(manifest["schema_version"], "1.4.0")
+            self.assertEqual(manifest["schema_version"], "1.5.0")
             self.assertEqual(fourcc_calls, [("M", "J", "P", "G")])
             self.assertEqual(
                 manifest["semantic_checks"],

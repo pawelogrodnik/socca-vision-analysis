@@ -413,6 +413,44 @@ The canonical projection intentionally omits optional identity-coverage
 presentation fields when the source contract cannot provide a reliable
 denominator.
 
+### Canonical source/media timebase (2026-09-07)
+
+`match.video.duration_sec` is the **analysis-frame coverage duration**: for a
+proven CFR source it is `decoded_frame_count / fps`, not OpenCV's nominal
+`CAP_PROP_FRAME_COUNT / CAP_PROP_FPS`. Upload and explicit physical
+publication rebuild perform the expensive decode/ffprobe PTS proof once and
+persist `timebase_schema_version`, the decoded frame count, nominal diagnostic
+count, media span, and source fingerprint. The canonical `fps` is derived
+from the median positive PTS cadence; `nominal_fps` remains a diagnostic and
+must agree within the named strict FPS tolerance. The compatibility field
+`source: decoded_cfr_timebase` remains present for existing stats consumers.
+Normal report reads reuse that persisted contract without hashing the source.
+
+At expensive rebuild and Reviewed-render boundaries, the persisted fingerprint
+(including SHA-256) is compared with the source bytes. A historical source
+without a proof receives one during migration; after that, SHA-256 is immutable
+analysis identity. Same bytes with a different mtime remain valid, while a
+different SHA fails closed with `source_video_changed_requires_reanalysis` and
+can never be attached to existing tracking or Reviewed Identity evidence.
+Technical timebase proof fields do not invalidate Reviewed Identity decisions;
+roster, tracklet and decision inputs remain part of its freshness digest.
+Reviewed snapshot source descriptors are versioned: unmarked legacy snapshots
+are verified with their exact pre-timebase digest once, then successful
+migration updates only provenance to `timebase-insensitive-v2`, preserving
+human assignments. A failed rebuild restores the previous local
+timebase-derived files before returning an error.
+
+`media_duration_sec` records the decoded presentation span independently.
+For supported CFR media, `frame -> time` and Reviewed-video seeking are
+`frame_index / fps`; the renderer requires the same source frame count and
+requires its encoded output to retain it. Logical merged offsets remain sums
+of `analysis_duration_sec`, so report events, Reviewed media and combined
+fragment boundaries refer to the same decoded frame stream. Irregular PTS or
+decoder/ffprobe disagreement fails closed rather than being rescaled, padded,
+or accepted with a wider tolerance. The Reviewed manifest's
+`media_duration_sec` is independently read from the encoded MP4 with ffprobe
+and reconciled against its decoded CFR frames.
+
 The reconciliation is read-only and does not call the merged-report builder.
 It independently checks pinned public/aggregate semantic digests and identity
 pins; source-derived team/player ID sets and duplicate rows; required numeric

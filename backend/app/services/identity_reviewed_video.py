@@ -21,11 +21,17 @@ from app.services.identity_reviewed_effective_observation import (
     visible_reviewed_overlay,
     visible_reviewed_player,
 )
-from app.services.video import resolve_match_video_path
+from app.services.video import (
+    VIDEO_TIMEBASE_SCHEMA_VERSION,
+    fps_matches,
+    probe_media_duration,
+    resolve_match_video_path,
+    timebase_matches_source,
+)
 
 
 RenderProgressCallback = Callable[[dict[str, Any]], None]
-RENDERER_VERSION = "reviewed_video:v7-play-area-safety"
+RENDERER_VERSION = "reviewed_video:v8-canonical-timebase"
 
 
 @dataclass
@@ -130,9 +136,17 @@ def render_reviewed_video(
     emitter = _ProgressEmitter(progress_callback)
     emitter.emit("resolve_source_video")
     source = reviewed_source_video_path(match_path, match_doc)
+    timebase = match_doc.get("video") if isinstance(match_doc.get("video"), dict) else {}
+    expected_frames = (
+        int(timebase["frame_count"])
+        if timebase.get("timebase_schema_version") == VIDEO_TIMEBASE_SCHEMA_VERSION
+        else None
+    )
     output = match_path / "reviewed_video.mp4"
     raw = match_path / "reviewed_video.raw.avi"
     partial = match_path / "reviewed_video.partial.mp4"
+    if expected_frames is not None and not timebase_matches_source(source, timebase):
+        raise RuntimeError("reviewed_video_timebase_stale: source bytes differ from canonical timebase proof")
     emitter.emit("load_render_inputs")
     positions = _positions_by_frame(match_path, snapshot)
     pitch = _load_optional(match_path / "pitch_config.json")
@@ -140,7 +154,12 @@ def render_reviewed_video(
     capture = cv2.VideoCapture(str(source))
     if not capture.isOpened():
         raise RuntimeError("Source video could not be opened")
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0)
+    decoded_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    canonical_fps = float(timebase.get("fps") or 0.0) if expected_frames is not None else 0.0
+    if expected_frames is not None and not fps_matches(decoded_fps, canonical_fps):
+        capture.release()
+        raise RuntimeError("reviewed_video_duration_mismatch: source FPS disagrees with canonical timebase")
+    fps = canonical_fps if expected_frames is not None else (decoded_fps or 25.0)
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -214,6 +233,9 @@ def render_reviewed_video(
     if count == 0:
         raw.unlink(missing_ok=True)
         raise RuntimeError("Renderer produced zero frames")
+    if expected_frames is not None and count != expected_frames:
+        raw.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_frame_count_mismatch: source decode disagrees with canonical timebase")
     profile.raw_avi_bytes = raw.stat().st_size
     emitter.emit("encode_mp4", processed_frames=count, total_frames=total, force=True)
     stage_started = time.perf_counter()
@@ -222,6 +244,23 @@ def render_reviewed_video(
     emitter.emit_profile_stage("encode_mp4", profile.encode_mp4_sec)
     partial.replace(output)
     raw.unlink(missing_ok=True)
+    encoded_frames, encoded_fps = _decode_output_timing(output)
+    if encoded_frames != count:
+        output.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_frame_count_mismatch: encoder changed frame count")
+    if not fps_matches(encoded_fps, fps):
+        output.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_duration_mismatch: encoder changed FPS")
+    try:
+        encoded_media_duration = probe_media_duration(output)
+    except ValueError as exc:
+        output.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_duration_mismatch: encoded media duration is unavailable") from exc
+    # MP4 duration is independently probed but allowed the small container
+    # rounding range of at most two CFR frame periods.
+    if abs(encoded_media_duration - (encoded_frames / encoded_fps)) > max(0.05, 2.0 / encoded_fps):
+        output.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_duration_mismatch: encoded media span disagrees with frame timeline")
     emitter.emit("validate_output", processed_frames=count, total_frames=total, force=True)
     stage_started = time.perf_counter()
     # Fingerprint-gated reuse of the enqueue-time source SHA; re-hashes only
@@ -249,7 +288,7 @@ def render_reviewed_video(
         "max_simultaneous_stable_labels": max_simultaneous_stable_labels,
     }
     manifest = {
-        "schema_version": "1.4.0",
+        "schema_version": "1.5.0",
         "status": "completed",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_snapshot_digest": snapshot["semantic_digest"],
@@ -261,6 +300,8 @@ def render_reviewed_video(
         "fps": fps,
         "resolution": [width, height],
         "duration_sec": round(count / fps, 3),
+        "media_duration_sec": round(encoded_media_duration, 6),
+        "timing_mode": "cfr_frame_index",
         "file_size_bytes": output.stat().st_size,
         "digest": output_digest,
         "render_duration_sec": round(render_duration_sec, 3),
@@ -557,11 +598,32 @@ def _encode(
                 total_frames=total_frames,
             )
         lines.clear()
+    close_stdout = getattr(process.stdout, "close", None)
+    if callable(close_stdout):
+        close_stdout()
     stderr = process.stderr.read() if process.stderr is not None else ""
+    close_stderr = getattr(process.stderr, "close", None)
+    if callable(close_stderr):
+        close_stderr()
     if process.wait() != 0:
         output.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg encoding failed: {stderr.strip()}")
 def _ball_by_frame(path:Path)->dict[int,dict[str,Any]]: return {int(row.get("frame") or 0):row for row in _load_optional(path/"ball_tracks.json").get("positions") or []}
+def _decode_output_timing(path: Path) -> tuple[int, float]:
+    import cv2
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise RuntimeError("reviewed_video_duration_mismatch: encoded output cannot be opened")
+    fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    count = 0
+    try:
+        while True:
+            ok, _frame = capture.read()
+            if not ok:
+                return count, fps
+            count += 1
+    finally:
+        capture.release()
 def _load_optional(path:Path)->dict[str,Any]:
     import json
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
