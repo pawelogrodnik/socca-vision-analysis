@@ -131,6 +131,10 @@ def _validated_reviewed_identity_digest(package: dict[str, Any]) -> str:
 
 def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list[dict[str, Any]]:
     team_stats = _record(package.get("team_stats"))
+    reviewed_team_movement = {
+        _required_label(row.get("team_label"), "reviewed_team_movement[].team_label"): _record(row)
+        for row in _list(package.get("reviewed_team_movement"))
+    }
     movement_by_team: dict[str, dict[str, Any]] = {}
     for raw_row in _list(team_stats.get("teams")):
         row = _record(raw_row)
@@ -152,6 +156,21 @@ def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list
             "status": "not_available",
             "reason": "canonical_team_movement_time_missing",
         }
+        reviewed = reviewed_team_movement.get(label)
+        if reviewed and reviewed.get("movement_authority") == "reviewed_safe_team_observations":
+            # The public physical report uses this reviewed-safe team rollup.
+            # Preserve the same authority in aggregate primitives so a merged
+            # report sums the exact physical generations rather than stale
+            # tracking-only team_stats retained for legacy presentation.
+            for field in (
+                "total_distance_m",
+                "observed_distance_m",
+                "estimated_short_gap_distance_m",
+                "high_intensity_distance_m",
+            ):
+                value = _number_or_none(reviewed.get(field))
+                if value is not None:
+                    movement[field] = value
         movement_by_team[team_id] = movement
 
     rows = []

@@ -101,6 +101,29 @@ class AggregateInputsTests(unittest.TestCase):
         self.assertEqual(inputs["ball"]["passes"]["restart_attempts_by_team_id"], {"team-corgi": 0, "team-verisk": 1})
         self.assertEqual(inputs["ball"]["passes"]["accepted_by_team_id"], {"team-corgi": 2, "team-verisk": 2})
 
+    def test_reviewed_safe_team_movement_overrides_stale_tracking_team_stats(self) -> None:
+        package = _package()
+        package["reviewed_team_movement"] = [
+            {
+                "team_label": "A",
+                "movement_authority": "reviewed_safe_team_observations",
+                "total_distance_m": 130.0,
+                "observed_distance_m": 120.0,
+                "estimated_short_gap_distance_m": 10.0,
+                "high_intensity_distance_m": 30.0,
+            },
+        ]
+
+        inputs = build_aggregate_inputs(package, public_report=_public_report(), published_id="published-match-1")
+
+        movement = next(row["movement"] for row in inputs["teams"] if row["team_id"] == "team-corgi")
+        self.assertEqual(movement["total_distance_m"], 130.0)
+        self.assertEqual(movement["observed_distance_m"], 120.0)
+        self.assertEqual(movement["estimated_short_gap_distance_m"], 10.0)
+        self.assertEqual(movement["high_intensity_distance_m"], 30.0)
+        self.assertEqual(movement["sprint_count"], 2)
+        self.assertEqual(movement["peak_speed_kmh"], 23.0)
+
     def test_missing_stable_mapping_fails_closed(self) -> None:
         package = _package()
         package["team_config"]["teams"] = []
