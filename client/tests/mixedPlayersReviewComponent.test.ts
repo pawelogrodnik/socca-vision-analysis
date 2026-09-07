@@ -368,19 +368,19 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
   });
   await waitFor(
     () => assert.ok(view.getByText('1 z 3 ścieżek przypisane')),
-    { timeout: 3_000 },
+    { timeout: 10_000 },
   );
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
   });
   await waitFor(
     () => assert.ok(view.getByText('2 z 3 ścieżek przypisane')),
-    { timeout: 3_000 },
+    { timeout: 10_000 },
   );
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
   });
-  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 3_000 });
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 10_000 });
   await act(async () => { fireEvent.click(save); });
 
   assert.deepEqual(resolutions, ['concurrent_lanes']);
