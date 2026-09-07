@@ -35,6 +35,58 @@ class ReviewedOutputBusyError(RuntimeError):
     pass
 
 
+def rebind_reviewed_output_snapshot_provenance(
+    match_path: Path,
+    *,
+    previous_snapshot_digest: str,
+    snapshot_digest: str,
+) -> None:
+    """Rebind derived render metadata after a provenance-only snapshot upgrade.
+
+    A timebase migration preserves every rendered frame and human assignment;
+    only the snapshot's source-descriptor semantics changes.  Every existing
+    reference must therefore prove it points at *exactly* the old digest before
+    it may be rebound.  Mixed or incomplete artifacts fail closed and require
+    a normal render instead.
+    """
+    if not previous_snapshot_digest or not snapshot_digest:
+        raise ValueError("Reviewed output provenance requires non-empty snapshot digests")
+    if previous_snapshot_digest == snapshot_digest:
+        return
+
+    output_path = match_path / "reviewed_output_manifest.json"
+    output = _load(output_path)
+    if output:
+        references = [
+            (output.get("reviewed_identity"), "digest"),
+            (output.get("stats"), "source_snapshot_digest"),
+        ]
+        if isinstance(output.get("video"), dict):
+            references.append((output["video"], "source_snapshot_digest"))
+        if any(not isinstance(container, dict) or container.get(key) != previous_snapshot_digest for container, key in references):
+            raise ValueError("Reviewed output provenance does not match the pre-migration snapshot")
+        for container, key in references:
+            assert isinstance(container, dict)
+            container[key] = snapshot_digest
+        write_identity_json_atomic(output_path, output)
+
+    video_path = match_path / "reviewed_video_manifest.json"
+    video = _load(video_path)
+    if video:
+        if video.get("source_snapshot_digest") != previous_snapshot_digest:
+            raise ValueError("Reviewed video provenance does not match the pre-migration snapshot")
+        video["source_snapshot_digest"] = snapshot_digest
+        write_identity_json_atomic(video_path, video)
+
+    job_path = match_path / JOB_FILENAME
+    job = _load(job_path)
+    if job:
+        if job.get("source_snapshot_digest") != previous_snapshot_digest:
+            raise ValueError("Reviewed video job provenance does not match the pre-migration snapshot")
+        job["source_snapshot_digest"] = snapshot_digest
+        write_identity_json_atomic(job_path, job)
+
+
 def generate_reviewed_output(
     match_path: Path,
     snapshot: dict[str, Any],

@@ -76,6 +76,7 @@ from app.services.identity_roster_subject_review_store import (
 from app.services.identity_reviewed_output_jobs import (
     ReviewedOutputBusyError,
     generate_reviewed_output,
+    rebind_reviewed_output_snapshot_provenance,
     reviewed_output_status,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
@@ -4157,6 +4158,9 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "reviewed_player_heatmaps.json",
                 "reviewed_stats_readiness.json",
                 "reviewed_identity_snapshot.json",
+                "reviewed_output_manifest.json",
+                "reviewed_video_manifest.json",
+                "reviewed_video_job.json",
             )
         }
         if source_video is not None:
@@ -4171,7 +4175,13 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             # The rollback below protects this coherent local migration from a
             # later stats/package/publication failure.
             write_match_meta(path, meta)
+            previous_snapshot_digest = str(snapshot.get("semantic_digest") or "")
             snapshot = refresh_reviewed_identity_nonidentity_metadata(path, meta)
+            rebind_reviewed_output_snapshot_provenance(
+                path,
+                previous_snapshot_digest=previous_snapshot_digest,
+                snapshot_digest=str(snapshot.get("semantic_digest") or ""),
+            )
             build_reviewed_stats(path, snapshot, meta, pitch_config)
         package = build_match_package(path)
         ensure_package_publishable(package)
