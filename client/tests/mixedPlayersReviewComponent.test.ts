@@ -1080,7 +1080,10 @@ test('concurrent lane save ignores a repeated click while the atomic POST is in 
   fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
   const save = view.getByRole('button', { name: 'Zapisz przypisania + następny' });
   fireEvent.click(save);
-  fireEvent.click(save);
+  // The mutation is scheduled asynchronously. Wait until it has actually
+  // entered the transport before asserting that the second click is ignored.
+  await waitFor(() => assert.equal(saves, 1));
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz przypisania + następny' }));
   assert.equal(saves, 1);
   await act(async () => pending.resolve({
     saved_case: concurrent,
