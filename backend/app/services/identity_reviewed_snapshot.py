@@ -110,6 +110,28 @@ def get_reviewed_identity_status(match_path: Path) -> dict[str, Any]:
     }
 
 
+def refresh_reviewed_identity_nonidentity_metadata(
+    match_path: Path,
+    match_doc: dict[str, Any],
+) -> dict[str, Any]:
+    """Refresh snapshot provenance after a technical video-timebase migration.
+
+    This does not resolve identities or alter assignments.  It only replaces
+    the normalized source descriptor and its derived digest so a proven video
+    timing correction cannot make otherwise identical human decisions stale.
+    """
+    snapshot_path = match_path / SNAPSHOT_FILENAME
+    if not snapshot_path.exists():
+        raise ValueError("Reviewed Identity snapshot is missing")
+    snapshot = _load(snapshot_path)
+    documents = _source_documents(match_path)
+    _seeded, seeded_freshness = load_fresh_seeded_assignments(match_path)
+    snapshot["source"] = _source_descriptor(documents, match_doc, seeded_freshness)
+    snapshot["semantic_digest"] = _semantic_digest(snapshot)
+    write_identity_json_atomic(snapshot_path, snapshot)
+    return snapshot
+
+
 def finalize_reviewed_identity(match_path: Path, match_doc: dict[str, Any]) -> dict[str, Any]:
     phases = _Phases()
     documents = _source_documents(match_path)
@@ -654,7 +676,7 @@ def _source_descriptor(
     # both the named descriptor fields and semantic_input_digest.  The
     # aggregate value is byte-identical to the former _source_digest() output.
     values = {key: canonical_digest(_semantic_input(value)) if value else None for key, value in documents.items()}
-    match_value = canonical_digest(_semantic_input(match_doc))
+    match_value = canonical_digest(_semantic_match_input(match_doc))
     return {
         "match_digest": match_value,
         "roster_digest": canonical_digest(_semantic_input(match_doc.get("teams") or [])),
@@ -677,7 +699,7 @@ def _source_digest(documents: dict[str, dict[str, Any]], match_doc: dict[str, An
     """Reference implementation kept for digest-equivalence regression."""
     value = {key: canonical_digest(_semantic_input(document)) if document else None for key, document in documents.items()}
     if match_doc is not None:
-        value["match"] = canonical_digest(_semantic_input(match_doc))
+        value["match"] = canonical_digest(_semantic_match_input(match_doc))
     return canonical_digest(value)
 
 
@@ -1236,6 +1258,50 @@ def _semantic_input(value: Any) -> Any:
             }
         }
     return value
+
+
+def _semantic_match_input(match_doc: dict[str, Any]) -> Any:
+    """Keep identity freshness independent of proven video timing metadata.
+
+    A corrected decoded-CFR proof changes no roster, observation frame index,
+    tracklet ownership, or operator decision.  Keep every other match field
+    in the digest so this exemption cannot mask an identity-relevant edit.
+    """
+    value = {
+        key: item
+        for key, item in match_doc.items()
+        if key not in {"status", "publish_target", "published_match_id"}
+    }
+    video = value.get("video")
+    if isinstance(video, dict):
+        value["video"] = {
+            key: item
+            for key, item in video.items()
+            if key not in {
+                "fps",
+                "nominal_fps",
+                "pts_frame_interval_sec",
+                "pts_derived_fps",
+                "frame_count",
+                "nominal_frame_count",
+                "duration_sec",
+                "nominal_duration_sec",
+                "analysis_duration_sec",
+                "media_duration_sec",
+                "first_media_timestamp_sec",
+                "last_media_timestamp_sec",
+                "timing_mode",
+                "timing_source",
+                "timebase_schema_version",
+                "source_fingerprint",
+                "source",
+                "path",
+                "filename",
+                "width",
+                "height",
+            }
+        }
+    return _semantic_input(value)
 
 
 def _optional(path: Path) -> dict[str, Any]:

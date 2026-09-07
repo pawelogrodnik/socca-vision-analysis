@@ -123,6 +123,7 @@ from app.services.identity_reviewed_hot_state import (
 from app.services.identity_reviewed_snapshot import (
     finalize_reviewed_identity,
     get_reviewed_identity_status,
+    refresh_reviewed_identity_nonidentity_metadata,
     reviewed_assignment_at,
 )
 from app.services.identity_reviewed_slot_review import (
@@ -255,7 +256,13 @@ from app.services.team_registry import delete_team as registry_delete_team
 from app.services.team_registry import get_team as registry_get_team
 from app.services.team_registry import list_teams as registry_list_teams
 from app.services.team_registry import update_team as registry_update_team
-from app.services.video import extract_frame, inspect_video_timebase, read_video_metadata, resolve_match_video_path
+from app.services.video import (
+    ensure_current_video_timebase,
+    extract_frame,
+    inspect_video_timebase,
+    read_video_metadata,
+    resolve_match_video_path,
+)
 
 app = FastAPI(title="Orlik Vision API", version="0.6.0")
 logger = logging.getLogger(__name__)
@@ -4117,14 +4124,32 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             source_video = resolve_match_video_path(path, str(meta.get("video_filename") or "") or None)
         except FileNotFoundError:
             source_video = None
+        previous_files = {
+            name: (path / name).read_bytes() if (path / name).exists() else None
+            for name in (
+                "match.json",
+                "reviewed_player_stats.json",
+                "reviewed_player_timeline.json",
+                "reviewed_player_heatmaps.json",
+                "reviewed_stats_readiness.json",
+                "reviewed_identity_snapshot.json",
+            )
+        }
         if source_video is not None:
-            meta["video"] = inspect_video_timebase(source_video)
-            meta["updated_at"] = now_iso()
-            write_match_meta(path, meta)
+            # Validate human identity evidence before changing technical
+            # metadata. The identity digest ignores only timebase proof fields.
             snapshot = get_reviewed_identity_status(path)
             if snapshot.get("status") in {"missing", "stale"}:
                 raise ValueError("Reviewed Identity must be current before rebuilding a timebase-correct publication.")
-            build_reviewed_stats(path, snapshot, meta, _load(path / "pitch_config.json"))
+            meta["video"] = ensure_current_video_timebase(path, meta)
+            pitch_path = path / "pitch_config.json"
+            pitch_config = json.loads(pitch_path.read_text(encoding="utf-8")) if pitch_path.exists() else {}
+            build_reviewed_stats(path, snapshot, meta, pitch_config)
+            # Commit the metadata only after all timebase-derived documents
+            # have been built successfully.  The rollback below protects a
+            # later package/publication failure from a split local generation.
+            write_match_meta(path, meta)
+            refresh_reviewed_identity_nonidentity_metadata(path, meta)
         package = build_match_package(path)
         ensure_package_publishable(package)
         package_source_id = str((package.get("match") or {}).get("id") or "")
@@ -4133,10 +4158,16 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "Rebuilt package source identity does not match the requested publication; rebuild refused."
             )
         published = import_match_package(package, replace=True)
-    except ValueError as exc:
+    except (ValueError, PublishError) as exc:
+        # build_reviewed_stats writes several atomic files.  Restore their
+        # coherent previous generation when a later rebuild stage rejects.
+        for name, previous in locals().get("previous_files", {}).items():
+            target = path / name
+            if previous is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_bytes(previous)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except PublishError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     meta = read_match_meta(path)
     meta["status"] = "published"

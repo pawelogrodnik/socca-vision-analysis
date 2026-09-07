@@ -166,6 +166,9 @@ class ReviewedVideoProfileTests(unittest.TestCase):
             ), patch(
                 "app.services.identity_reviewed_video._encode",
                 side_effect=fake_encode,
+            ), patch(
+                "app.services.identity_reviewed_video.probe_media_duration",
+                return_value=1 / 25,
             ):
                 manifest = render_reviewed_video(
                     root,

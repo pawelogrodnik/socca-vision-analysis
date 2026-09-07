@@ -21,7 +21,13 @@ from app.services.identity_reviewed_effective_observation import (
     visible_reviewed_overlay,
     visible_reviewed_player,
 )
-from app.services.video import VIDEO_TIMEBASE_SCHEMA_VERSION, resolve_match_video_path
+from app.services.video import (
+    VIDEO_TIMEBASE_SCHEMA_VERSION,
+    fps_matches,
+    probe_media_duration,
+    resolve_match_video_path,
+    timebase_matches_source,
+)
 
 
 RenderProgressCallback = Callable[[dict[str, Any]], None]
@@ -139,6 +145,8 @@ def render_reviewed_video(
     output = match_path / "reviewed_video.mp4"
     raw = match_path / "reviewed_video.raw.avi"
     partial = match_path / "reviewed_video.partial.mp4"
+    if expected_frames is not None and not timebase_matches_source(source, timebase):
+        raise RuntimeError("reviewed_video_timebase_stale: source bytes differ from canonical timebase proof")
     emitter.emit("load_render_inputs")
     positions = _positions_by_frame(match_path, snapshot)
     pitch = _load_optional(match_path / "pitch_config.json")
@@ -146,7 +154,12 @@ def render_reviewed_video(
     capture = cv2.VideoCapture(str(source))
     if not capture.isOpened():
         raise RuntimeError("Source video could not be opened")
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 25.0)
+    decoded_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    canonical_fps = float(timebase.get("fps") or 0.0) if expected_frames is not None else 0.0
+    if expected_frames is not None and not fps_matches(decoded_fps, canonical_fps):
+        capture.release()
+        raise RuntimeError("reviewed_video_duration_mismatch: source FPS disagrees with canonical timebase")
+    fps = canonical_fps if expected_frames is not None else (decoded_fps or 25.0)
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -235,9 +248,19 @@ def render_reviewed_video(
     if encoded_frames != count:
         output.unlink(missing_ok=True)
         raise RuntimeError("reviewed_video_frame_count_mismatch: encoder changed frame count")
-    if abs(encoded_fps - fps) > 0.001:
+    if not fps_matches(encoded_fps, fps):
         output.unlink(missing_ok=True)
         raise RuntimeError("reviewed_video_duration_mismatch: encoder changed FPS")
+    try:
+        encoded_media_duration = probe_media_duration(output)
+    except ValueError as exc:
+        output.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_duration_mismatch: encoded media duration is unavailable") from exc
+    # MP4 duration is independently probed but allowed the small container
+    # rounding range of at most two CFR frame periods.
+    if abs(encoded_media_duration - (encoded_frames / encoded_fps)) > max(0.05, 2.0 / encoded_fps):
+        output.unlink(missing_ok=True)
+        raise RuntimeError("reviewed_video_duration_mismatch: encoded media span disagrees with frame timeline")
     emitter.emit("validate_output", processed_frames=count, total_frames=total, force=True)
     stage_started = time.perf_counter()
     # Fingerprint-gated reuse of the enqueue-time source SHA; re-hashes only
@@ -277,7 +300,7 @@ def render_reviewed_video(
         "fps": fps,
         "resolution": [width, height],
         "duration_sec": round(count / fps, 3),
-        "media_duration_sec": round(encoded_frames / encoded_fps, 6),
+        "media_duration_sec": round(encoded_media_duration, 6),
         "timing_mode": "cfr_frame_index",
         "file_size_bytes": output.stat().st_size,
         "digest": output_digest,
@@ -575,7 +598,11 @@ def _encode(
                 total_frames=total_frames,
             )
         lines.clear()
+    if process.stdout is not None:
+        process.stdout.close()
     stderr = process.stderr.read() if process.stderr is not None else ""
+    if process.stderr is not None:
+        process.stderr.close()
     if process.wait() != 0:
         output.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg encoding failed: {stderr.strip()}")

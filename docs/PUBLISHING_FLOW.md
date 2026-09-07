@@ -420,8 +420,19 @@ proven CFR source it is `decoded_frame_count / fps`, not OpenCV's nominal
 `CAP_PROP_FRAME_COUNT / CAP_PROP_FPS`. Upload and explicit physical
 publication rebuild perform the expensive decode/ffprobe PTS proof once and
 persist `timebase_schema_version`, the decoded frame count, nominal diagnostic
-count, media span, and source fingerprint. Normal report reads reuse that
-persisted contract.
+count, media span, and source fingerprint. The canonical `fps` is derived
+from the median positive PTS cadence; `nominal_fps` remains a diagnostic and
+must agree within the named strict FPS tolerance. The compatibility field
+`source: decoded_cfr_timebase` remains present for existing stats consumers.
+Normal report reads reuse that persisted contract without hashing the source.
+
+At expensive rebuild and Reviewed-render boundaries, the persisted fingerprint
+(including SHA-256) is compared with the source bytes. A changed source is
+re-proven on rebuild and rejected by rendering until its timebase has been
+persisted. Technical timebase proof fields do not invalidate Reviewed Identity
+decisions; roster, tracklet and decision inputs remain part of its freshness
+digest. A failed rebuild restores the previous local timebase-derived files
+before returning an error.
 
 `media_duration_sec` records the decoded presentation span independently.
 For supported CFR media, `frame -> time` and Reviewed-video seeking are
@@ -430,7 +441,9 @@ requires its encoded output to retain it. Logical merged offsets remain sums
 of `analysis_duration_sec`, so report events, Reviewed media and combined
 fragment boundaries refer to the same decoded frame stream. Irregular PTS or
 decoder/ffprobe disagreement fails closed rather than being rescaled, padded,
-or accepted with a wider tolerance.
+or accepted with a wider tolerance. The Reviewed manifest's
+`media_duration_sec` is independently read from the encoded MP4 with ffprobe
+and reconciled against its decoded CFR frames.
 
 The reconciliation is read-only and does not call the merged-report builder.
 It independently checks pinned public/aggregate semantic digests and identity
