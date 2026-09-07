@@ -902,11 +902,48 @@ export async function getPublishedMatch(matchId: string): Promise<PublishedMatch
 }
 
 export async function getStaticPublicMatchReport(matchId: string): Promise<PublicMatchReport> {
-  const res = await fetch(`/published/matches/${encodeURIComponent(matchId)}/public_report.json`);
-  if (!res.ok) {
-    throw new Error(`${res.status}: Public report not found`);
+  const artifactPath = `/published/matches/${encodeURIComponent(matchId)}/public_report.json`;
+  let res: Response;
+  try {
+    res = await fetch(artifactPath);
+  } catch {
+    throw new Error('Published report artifact could not be loaded from this deployment.');
   }
-  return res.json() as Promise<PublicMatchReport>;
+  if (!res.ok) {
+    throw new Error('Published report artifact was not found in this deployment.');
+  }
+  const contentType = res.headers.get('content-type') || '';
+  const payload = await res.text();
+  if (!contentType.toLowerCase().includes('application/json') || looksLikeHtml(payload)) {
+    throw new Error('Published report artifact was not found in this deployment.');
+  }
+  try {
+    const report: unknown = JSON.parse(payload);
+    if (!isStaticPublicMatchReport(report, matchId)) {
+      throw new Error('invalid static public report');
+    }
+    return report;
+  } catch {
+    throw new Error('Published report artifact is invalid in this deployment.');
+  }
+}
+
+function looksLikeHtml(payload: string): boolean {
+  return /^\s*<!doctype\s+html|^\s*<html[\s>]/i.test(payload);
+}
+
+function isStaticPublicMatchReport(value: unknown, matchId: string): value is PublicMatchReport {
+  if (!value || typeof value !== 'object') return false;
+  const report = value as Record<string, unknown>;
+  const match = report.match;
+  return (
+    typeof report.schema_version === 'string'
+    && report.id === matchId
+    && report.report_type === 'public_match_report'
+    && Boolean(match)
+    && typeof match === 'object'
+    && typeof (match as Record<string, unknown>).id === 'string'
+  );
 }
 
 export async function getReviewedMatchReport(matchId: string): Promise<PublicMatchReport> {

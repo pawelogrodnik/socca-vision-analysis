@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -133,6 +134,10 @@ class MergedPublicMatchTests(unittest.TestCase):
             self.assertTrue(heatmap_file.is_file())
             mirror_file = root / "client-public" / merged_id / "heatmaps" / Path(player["heatmap"]["path"]).name
             self.assertTrue(mirror_file.is_file())
+            canonical_report = _read(root / "published" / merged_id / "public_report.json")
+            static_report = _read(root / "client-public" / merged_id / "public_report.json")
+            self.assertEqual(static_report, canonical_report)
+            self.assertEqual(canonical_json_sha256(static_report), canonical_json_sha256(canonical_report))
 
             # Team Shape uses eligible-frame evidence weighting, not duration:
             # (200*20 + 500*30)/700 = 27.14, not (595*20 + 300*30)/895 = 23.35.
@@ -169,6 +174,28 @@ class MergedPublicMatchTests(unittest.TestCase):
             eligible = [row["id"] for row in store_list_eligible_sources()]
             self.assertNotIn(first["merged_published_match_id"], eligible)
             self.assertIn("published-one", eligible)
+
+    def test_regeneration_repairs_missing_and_stale_static_mirror(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600)
+            _write_source(root, "published-two", "physical-two", duration=300)
+            group_id = str(create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())["group_id"])
+            merged_id = ensure_merged_published_match(group_id)["merged_published_match_id"]
+            canonical_path = root / "published" / merged_id / "public_report.json"
+            mirror_dir = root / "client-public" / merged_id
+
+            shutil.rmtree(mirror_dir)
+            repaired = ensure_merged_published_match(group_id)
+            self.assertEqual(repaired["merged_published_match_id"], merged_id)
+            self.assertEqual(_read(mirror_dir / "public_report.json"), _read(canonical_path))
+
+            _write(mirror_dir / "public_report.json", {"id": "stale", "report_type": "public_match_report"})
+            repaired = ensure_merged_published_match(group_id)
+            self.assertEqual(repaired["merged_published_match_id"], merged_id)
+            static_report = _read(mirror_dir / "public_report.json")
+            canonical_report = _read(canonical_path)
+            self.assertEqual(static_report, canonical_report)
+            self.assertEqual(canonical_json_sha256(static_report), canonical_json_sha256(canonical_report))
 
     def test_canonical_timelines_clip_a_physical_terminal_display_bin(self) -> None:
         with self._store() as root:
