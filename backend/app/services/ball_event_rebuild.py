@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -28,8 +29,11 @@ from app.services.pass_candidates import (
 REBUILD_ALGORITHM = {"name": "canonical_ball_event_rebuild", "version": "1.0.0"}
 FRESHNESS_STATUSES = {"fresh", "stale", "missing_inputs", "legacy_unknown"}
 REBUILD_TRIGGERS = {"contact_review", "match_phase_review", "pass_review", "package_publish"}
-BALL_EVENT_REBUILD_OUTPUT_FILENAMES = (
+# Exact possible local write set for ``trigger="package_publish"``.  Contact
+# review has additional ownership and must not be folded into this contract.
+PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES = (
     "match_phase_config.json",
+    "restart_candidates.json",
     "event_candidates.json",
     "event_review_report.json",
     "pass_candidates.json",
@@ -192,9 +196,12 @@ def _momentum_uses_current_phase_duration(match_path: Path, momentum: dict[str, 
         # can contradict the current source timeline.
         return True
     try:
-        recorded_duration = round(float(summary["duration_sec"]), 3)
+        recorded_duration = float(summary["duration_sec"])
     except (KeyError, TypeError, ValueError):
-        return True
+        return False
+    if not math.isfinite(recorded_duration):
+        return False
+    recorded_duration = round(recorded_duration, 3)
     meta = _load_json(match_path / "match.json") or {}
     phase_config = load_match_phase_config(match_path, meta)
     return recorded_duration == round(_momentum_duration_sec(meta, phase_config), 3)

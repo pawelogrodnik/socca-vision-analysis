@@ -54,6 +54,38 @@ def rebind_reviewed_output_snapshot_provenance(
     if previous_snapshot_digest == snapshot_digest:
         return
 
+    job_path = match_path / JOB_FILENAME
+    job = _load(job_path)
+    rebased_job_key: str | None = None
+    if job:
+        if job.get("source_snapshot_digest") != previous_snapshot_digest:
+            raise ValueError("Reviewed video job provenance does not match the pre-migration snapshot")
+        if job.get("status") != "completed":
+            raise ValueError("An incomplete reviewed video job cannot be rebound during migration")
+        options = job.get("options")
+        source_video_digest = str(job.get("source_video_digest") or "")
+        review_scope_digest = str(job.get("source_review_scope_digest") or "")
+        if (
+            not isinstance(options, dict)
+            or not source_video_digest
+            or not review_scope_digest
+            or job.get("renderer_version") != RENDERER_VERSION
+        ):
+            raise ValueError("Reviewed video job lacks exact inputs required to rebind its key")
+        current_match = _load(match_path / "match.json")
+        if (
+            reviewed_source_video_digest(match_path, current_match) != source_video_digest
+            or identity_review_scope_digest(current_match) != review_scope_digest
+        ):
+            raise ValueError("Reviewed video job inputs changed; migration cannot reuse the render")
+        rebased_job_key = _reviewed_output_job_key(
+            snapshot_digest=snapshot_digest,
+            source_video_digest=source_video_digest,
+            review_scope_digest=review_scope_digest,
+            options=options,
+            renderer_version=RENDERER_VERSION,
+        )
+
     output_path = match_path / "reviewed_output_manifest.json"
     output = _load(output_path)
     if output:
@@ -65,9 +97,15 @@ def rebind_reviewed_output_snapshot_provenance(
             references.append((output["video"], "source_snapshot_digest"))
         if any(not isinstance(container, dict) or container.get(key) != previous_snapshot_digest for container, key in references):
             raise ValueError("Reviewed output provenance does not match the pre-migration snapshot")
+        if output.get("job_key") is not None and (
+            not job or not rebased_job_key or output.get("job_key") != job.get("job_key")
+        ):
+            raise ValueError("Reviewed output job key does not match the pre-migration job")
         for container, key in references:
             assert isinstance(container, dict)
             container[key] = snapshot_digest
+        if rebased_job_key:
+            output["job_key"] = rebased_job_key
         write_identity_json_atomic(output_path, output)
 
     video_path = match_path / "reviewed_video_manifest.json"
@@ -78,12 +116,10 @@ def rebind_reviewed_output_snapshot_provenance(
         video["source_snapshot_digest"] = snapshot_digest
         write_identity_json_atomic(video_path, video)
 
-    job_path = match_path / JOB_FILENAME
-    job = _load(job_path)
     if job:
-        if job.get("source_snapshot_digest") != previous_snapshot_digest:
-            raise ValueError("Reviewed video job provenance does not match the pre-migration snapshot")
         job["source_snapshot_digest"] = snapshot_digest
+        assert rebased_job_key is not None
+        job["job_key"] = rebased_job_key
         write_identity_json_atomic(job_path, job)
 
 
@@ -115,14 +151,12 @@ def _generate_reviewed_output(
 ) -> dict[str, Any]:
     source_video_digest = reviewed_source_video_digest(match_path, match_doc)
     review_scope_digest = identity_review_scope_digest(match_doc)
-    key = canonical_digest(
-        {
-            "snapshot": snapshot["semantic_digest"],
-            "source_video": source_video_digest,
-            "identity_review_scope": review_scope_digest,
-            "options": options,
-            "renderer_version": RENDERER_VERSION,
-        }
+    key = _reviewed_output_job_key(
+        snapshot_digest=str(snapshot["semantic_digest"]),
+        source_video_digest=source_video_digest,
+        review_scope_digest=review_scope_digest,
+        options=options,
+        renderer_version=RENDERER_VERSION,
     )
     existing = _load(match_path / JOB_FILENAME)
     if _reusable_job(existing, key, match_path):
@@ -524,6 +558,25 @@ def _reusable_job(job: dict[str, Any], key: str, match_path: Path) -> bool:
     return (
         job.get("status") == "completed"
         and _completed_output_matches(job, match_path)
+    )
+
+
+def _reviewed_output_job_key(
+    *,
+    snapshot_digest: str,
+    source_video_digest: str,
+    review_scope_digest: str,
+    options: dict[str, Any],
+    renderer_version: str,
+) -> str:
+    return canonical_digest(
+        {
+            "snapshot": snapshot_digest,
+            "source_video": source_video_digest,
+            "identity_review_scope": review_scope_digest,
+            "options": options,
+            "renderer_version": renderer_version,
+        }
     )
 
 

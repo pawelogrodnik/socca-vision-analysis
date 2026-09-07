@@ -242,6 +242,7 @@ from app.services.pass_review import load_pass_candidates_review, save_pass_cand
 from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
 from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
+from app.services.published_video import sha256_file
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
 from app.services.reviewed_match_report import (
     REVIEWED_PACKAGE_INPUTS,
@@ -301,27 +302,90 @@ def _assert_publish_workflow(match_path: Path) -> None:
     )
 
 
-def _assert_physical_rebuild_workflow(match_path: Path) -> None:
+def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: dict[str, Any]) -> None:
     """Keep normal publish gating while allowing one safe legacy migration.
 
     Historical physical publications predate the current workflow projection.
-    They may have a current Reviewed Identity snapshot but no longer satisfy a
-    newly-introduced finalization marker.  A rebuild is allowed only to attach
-    the first canonical video-timebase proof; it cannot alter review evidence
-    and does not apply to already-proven sources.
+    A rebuild may attach the first canonical video-timebase proof only when
+    the fresh, non-blocked Reviewed Identity snapshot is *exactly* the
+    generation embedded in the already-published package. Historical packages
+    can retain a ``partial_reviewed`` projection while still pinning a complete
+    published Reviewed-output generation. This is a migration exception, never
+    an alternate gate for incomplete current review.
     """
     try:
         _assert_publish_workflow(match_path)
         return
     except HTTPException as error:
+        detail = error.detail
+        review_not_completed = detail == "review_not_completed" or (
+            isinstance(detail, dict) and detail.get("code") == "review_not_completed"
+        )
         meta = read_match_meta(match_path)
         video = meta.get("video") if isinstance(meta.get("video"), dict) else {}
         snapshot = get_reviewed_identity_status(match_path)
+        package = existing_publication.get("package") if isinstance(existing_publication.get("package"), dict) else {}
+        published_review = reviewed_identity_package_status(package)
         historical_timebase = video.get("timebase_schema_version") != VIDEO_TIMEBASE_SCHEMA_VERSION
-        snapshot_current = snapshot.get("status") not in {"missing", "stale"}
-        if historical_timebase and snapshot_current:
+        exact_published_generation = (
+            published_review.get("ready") is True
+            and snapshot.get("status") not in {"missing", "stale", "blocked"}
+            and bool(snapshot.get("semantic_digest"))
+            and snapshot.get("semantic_digest") == published_review.get("digest")
+            and _published_source_video_matches(
+                match_path,
+                meta,
+                package,
+                reviewed_identity_digest=str(published_review.get("digest") or ""),
+            )
+        )
+        if review_not_completed and historical_timebase and exact_published_generation:
             return
         raise error
+
+
+def _published_source_video_matches(
+    match_path: Path,
+    match_meta: dict[str, Any],
+    package: dict[str, Any],
+    *,
+    reviewed_identity_digest: str,
+) -> bool:
+    """Require an immutable published-to-local raw-video binding for migration.
+
+    Newer packages pin the source fingerprint directly. Older packages can
+    prove the same binding through their persisted reviewed-render job key,
+    which is itself embedded in the published output manifest.  A missing or
+    mixed proof never grants the legacy workflow exception.
+    """
+    try:
+        source = resolve_match_video_path(match_path, str(match_meta.get("video_filename") or "") or None)
+    except FileNotFoundError:
+        return False
+    package_match = package.get("match") if isinstance(package.get("match"), dict) else {}
+    package_video = package_match.get("video") if isinstance(package_match.get("video"), dict) else {}
+    fingerprint = package_video.get("source_fingerprint") if isinstance(package_video.get("source_fingerprint"), dict) else {}
+    fingerprint_digest = str(fingerprint.get("sha256") or "")
+    if fingerprint_digest:
+        return sha256_file(source) == fingerprint_digest
+
+    output = package.get("reviewed_output_manifest") if isinstance(package.get("reviewed_output_manifest"), dict) else {}
+    published_job_key = str(output.get("job_key") or "")
+    output_identity = output.get("reviewed_identity") if isinstance(output.get("reviewed_identity"), dict) else {}
+    job_path = match_path / "reviewed_video_job.json"
+    try:
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        bool(published_job_key)
+        and output_identity.get("digest") == reviewed_identity_digest
+        and job.get("status") == "completed"
+        and job.get("job_key") == published_job_key
+        and job.get("source_snapshot_digest") == reviewed_identity_digest
+        and bool(job.get("source_video_digest"))
+        and sha256_file(source) == job.get("source_video_digest")
+    )
 
 
 @app.on_event("startup")
@@ -4138,9 +4202,9 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             status_code=404,
             detail=f"Local source match {source_match_id} not found; publication left unchanged.",
         ) from exc
-    _assert_physical_rebuild_workflow(path)
+    _assert_physical_rebuild_workflow(path, existing)
     try:
-        from app.services.ball_event_rebuild import BALL_EVENT_REBUILD_OUTPUT_FILENAMES
+        from app.services.ball_event_rebuild import PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES
 
         # This explicit downstream rebuild is the migration boundary for
         # historical nominal OpenCV metadata. It never reruns CV or mutates
@@ -4163,7 +4227,7 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "reviewed_output_manifest.json",
                 "reviewed_video_manifest.json",
                 "reviewed_video_job.json",
-                *BALL_EVENT_REBUILD_OUTPUT_FILENAMES,
+                *PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES,
             )
         }
         if source_video is not None:

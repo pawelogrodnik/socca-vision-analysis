@@ -352,6 +352,7 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
   });
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  await settleConcurrentLaneResolver();
   assert.ok(view.getByRole('button', { name: /Ścieżka 1/ }));
   assert.ok(view.getByRole('button', { name: /Ścieżka 2/ }));
   assert.ok(view.getByRole('button', { name: /Ścieżka 3/ }));
@@ -367,20 +368,24 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
     fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
   });
   await waitFor(
-    () => assert.ok(view.getByText('1 z 3 ścieżek przypisane')),
-    { timeout: 10_000 },
+    () => {
+      assert.ok(view.getByText('1 z 3 ścieżek przypisane'));
+      assert.ok(view.getByRole('heading', { name: 'Przypisz Ścieżkę 2' }));
+    },
   );
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
   });
   await waitFor(
-    () => assert.ok(view.getByText('2 z 3 ścieżek przypisane')),
-    { timeout: 10_000 },
+    () => {
+      assert.ok(view.getByText('2 z 3 ścieżek przypisane'));
+      assert.ok(view.getByRole('heading', { name: 'Przypisz Ścieżkę 3' }));
+    },
   );
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
   });
-  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 10_000 });
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
   await act(async () => { fireEvent.click(save); });
 
   assert.deepEqual(resolutions, ['concurrent_lanes']);

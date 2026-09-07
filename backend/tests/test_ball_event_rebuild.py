@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from app.services.ball_event_rebuild import (
+    _momentum_uses_current_phase_duration,
     artifact_freshness_status,
     atomic_write_rebuild_documents,
     ensure_ball_event_artifacts_fresh,
@@ -14,6 +15,18 @@ from app.services.ball_event_rebuild import (
 
 
 class BallEventRebuildTests(unittest.TestCase):
+    def test_momentum_duration_compatibility_distinguishes_missing_and_malformed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            match_path = Path(temp_dir)
+            self._write_inputs(match_path)
+
+            self.assertTrue(_momentum_uses_current_phase_duration(match_path, {"summary": {}}))
+            self.assertTrue(_momentum_uses_current_phase_duration(match_path, {"summary": {"duration_sec": 5.0}}))
+            self.assertFalse(_momentum_uses_current_phase_duration(match_path, {"summary": {"duration_sec": 4.0}}))
+            self.assertFalse(_momentum_uses_current_phase_duration(match_path, {"summary": {"duration_sec": "garbage"}}))
+            self.assertFalse(_momentum_uses_current_phase_duration(match_path, {"summary": {"duration_sec": "NaN"}}))
+            self.assertFalse(_momentum_uses_current_phase_duration(match_path, {"summary": {"duration_sec": "Infinity"}}))
+
     def test_timebase_change_rebuilds_lineage_fresh_terminal_momentum_bins(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             match_path = Path(temp_dir)
@@ -56,6 +69,22 @@ class BallEventRebuildTests(unittest.TestCase):
                 artifact_freshness_status(match_path, momentum),
                 "fresh",
             )
+
+    def test_package_publish_persists_normalized_restart_candidate_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            match_path = Path(temp_dir)
+            self._write_inputs(match_path)
+            restart_path = match_path / "restart_candidates.json"
+            restart_path.write_text(json.dumps({"candidates": [{
+                "candidate_id": "restart-1", "setup_start_frame": 3,
+                "release_frame": 8, "boundary_line": "touchline",
+            }]}), encoding="utf-8")
+
+            result = rebuild_ball_event_artifacts(match_path, trigger="package_publish")
+            persisted = json.loads(restart_path.read_text(encoding="utf-8"))
+
+            self.assertIn("restart_candidates.json", result["artifacts"])
+            self.assertTrue(persisted["candidates"][0]["candidate_key"].startswith("restart:v1:"))
 
     def test_atomic_write_rolls_back_on_replace_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

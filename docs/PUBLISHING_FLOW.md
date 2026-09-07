@@ -430,12 +430,28 @@ roster, tracklet and decision inputs remain part of its freshness digest.
 Reviewed snapshot source descriptors are versioned: unmarked legacy snapshots
 are verified with their exact pre-timebase digest once, then successful
 migration updates only provenance to `timebase-insensitive-v2`, preserving
-human assignments. A failed rebuild restores the previous local
-timebase-derived files before returning an error. The same rebuild also
+human assignments. The legacy exception is limited to an existing physical
+publication whose complete Reviewed Identity package digest equals the fresh
+local snapshot and whose source-video SHA is pinned either in the published
+package or by its published reviewed-render job key. Historical
+`partial_reviewed` projection is accepted only under that exact proof;
+missing, stale, blocked, or mismatched evidence never bypasses normal Review
+completion.
+A failed rebuild restores the previous local timebase-derived files before
+returning an error, including the exact `package_publish` ball-event write set:
+phase, restart, event, pass, momentum, readiness, and generation documents.
+The same rebuild also
 rechecks the derived ball-event package: a phase interval normalized by the
 new source duration makes lineage-fresh momentum stale, so it is rebuilt from
 the existing possession/pass/review artifacts (never by rerunning CV). This
 prevents terminal momentum bins outside the canonical logical timeline.
+
+Older momentum documents without `summary.duration_sec` retain their optional
+legacy compatibility. An explicit malformed or non-finite duration is never
+accepted as current and is rebuilt. Provenance-only Reviewed snapshot migration
+also rekeys a completed reviewed-video job and its output manifest from the
+same persisted source/options/scope/renderer inputs, allowing the unchanged
+video bytes to be reused without a redundant render.
 
 `media_duration_sec` records the decoded presentation span independently.
 For supported CFR media, `frame -> time` and Reviewed-video seeking are

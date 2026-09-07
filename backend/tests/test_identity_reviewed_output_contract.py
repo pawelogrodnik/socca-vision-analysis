@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,16 +12,72 @@ from fastapi import HTTPException
 from app.services.identity_minimap import reviewed_ball_pitch_point
 from app.services.identity_reviewed_output_jobs import (
     ReviewedOutputBusyError,
+    _reviewed_output_job_key,
     _log_render,
     _reusable_job,
     generate_reviewed_output,
+    rebind_reviewed_output_snapshot_provenance,
     reviewed_output_status,
 )
-from app.services.identity_reviewed_video import _ProgressEmitter, _parse_ffmpeg_progress
+from app.services.identity_reviewed_video import RENDERER_VERSION, _ProgressEmitter, _parse_ffmpeg_progress
 from app.services.video import resolve_match_video_path
 
 
 class ReviewedOutputContractTests(unittest.TestCase):
+    def test_completed_job_is_rekeyed_after_provenance_only_snapshot_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "video.mp4").write_bytes(b"source")
+            (root / "match.json").write_text(json.dumps({"video_filename": "video.mp4"}), encoding="utf-8")
+            options = {"include_minimap": True}
+            with patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video-digest"), patch(
+                "app.services.identity_reviewed_output_jobs.identity_review_scope_digest", return_value="scope-digest"
+            ):
+                old_key = _reviewed_output_job_key(
+                    snapshot_digest="old", source_video_digest="video-digest", review_scope_digest="scope-digest", options=options, renderer_version=RENDERER_VERSION
+                )
+                (root / "reviewed_video.mp4").write_bytes(b"rendered")
+                (root / "reviewed_video_job.json").write_text(json.dumps({
+                    "status": "completed", "job_key": old_key, "source_snapshot_digest": "old", "source_video_digest": "video-digest",
+                    "source_review_scope_digest": "scope-digest", "options": options, "renderer_version": RENDERER_VERSION,
+                    "video_digest": hashlib.sha256(b"rendered").hexdigest(),
+                }), encoding="utf-8")
+                (root / "reviewed_output_manifest.json").write_text(json.dumps({
+                    "job_key": old_key,
+                    "reviewed_identity": {"digest": "old"},
+                    "stats": {"source_snapshot_digest": "old"},
+                    "video": {"source_snapshot_digest": "old"},
+                }), encoding="utf-8")
+                rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+                job = json.loads((root / "reviewed_video_job.json").read_text(encoding="utf-8"))
+                output = json.loads((root / "reviewed_output_manifest.json").read_text(encoding="utf-8"))
+                expected = _reviewed_output_job_key(
+                    snapshot_digest="new", source_video_digest="video-digest", review_scope_digest="scope-digest", options=options, renderer_version=RENDERER_VERSION
+                )
+                self.assertEqual(job["job_key"], expected)
+                self.assertEqual(output["job_key"], expected)
+                self.assertEqual(output["reviewed_identity"]["digest"], "new")
+                self.assertTrue(_reusable_job(job, expected, root))
+
+    def test_provenance_rebind_rejects_a_mismatched_output_job_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "reviewed_output_manifest.json").write_text(json.dumps({
+                "job_key": "published-old-key",
+                "reviewed_identity": {"digest": "old"},
+                "stats": {"source_snapshot_digest": "old"},
+            }), encoding="utf-8")
+            (root / "reviewed_video_job.json").write_text(json.dumps({
+                "status": "completed", "job_key": "different-local-key", "source_snapshot_digest": "old",
+                "source_video_digest": "video", "source_review_scope_digest": "scope",
+                "options": {}, "renderer_version": RENDERER_VERSION,
+            }), encoding="utf-8")
+            with patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video"), patch(
+                "app.services.identity_reviewed_output_jobs.identity_review_scope_digest", return_value="scope"
+            ):
+                with self.assertRaisesRegex(ValueError, "job key"):
+                    rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+
     def test_terminal_render_progress_has_safe_eta_and_throttles_frames(self) -> None:
         emitted: list[dict] = []
         emitter = _ProgressEmitter(emitted.append)
