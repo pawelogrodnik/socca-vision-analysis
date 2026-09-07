@@ -413,6 +413,25 @@ The canonical projection intentionally omits optional identity-coverage
 presentation fields when the source contract cannot provide a reliable
 denominator.
 
+### Canonical source/media timebase (2026-09-07)
+
+`match.video.duration_sec` is the **analysis-frame coverage duration**: for a
+proven CFR source it is `decoded_frame_count / fps`, not OpenCV's nominal
+`CAP_PROP_FRAME_COUNT / CAP_PROP_FPS`. Upload and explicit physical
+publication rebuild perform the expensive decode/ffprobe PTS proof once and
+persist `timebase_schema_version`, the decoded frame count, nominal diagnostic
+count, media span, and source fingerprint. Normal report reads reuse that
+persisted contract.
+
+`media_duration_sec` records the decoded presentation span independently.
+For supported CFR media, `frame -> time` and Reviewed-video seeking are
+`frame_index / fps`; the renderer requires the same source frame count and
+requires its encoded output to retain it. Logical merged offsets remain sums
+of `analysis_duration_sec`, so report events, Reviewed media and combined
+fragment boundaries refer to the same decoded frame stream. Irregular PTS or
+decoder/ffprobe disagreement fails closed rather than being rescaled, padded,
+or accepted with a wider tolerance.
+
 The reconciliation is read-only and does not call the merged-report builder.
 It independently checks pinned public/aggregate semantic digests and identity
 pins; source-derived team/player ID sets and duplicate rows; required numeric

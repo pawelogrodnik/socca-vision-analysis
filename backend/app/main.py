@@ -78,6 +78,7 @@ from app.services.identity_reviewed_output_jobs import (
     generate_reviewed_output,
     reviewed_output_status,
 )
+from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
     validate_deferred_review_action,
@@ -254,7 +255,7 @@ from app.services.team_registry import delete_team as registry_delete_team
 from app.services.team_registry import get_team as registry_get_team
 from app.services.team_registry import list_teams as registry_list_teams
 from app.services.team_registry import update_team as registry_update_team
-from app.services.video import extract_frame, read_video_metadata, resolve_match_video_path
+from app.services.video import extract_frame, inspect_video_timebase, read_video_metadata, resolve_match_video_path
 
 app = FastAPI(title="Orlik Vision API", version="0.6.0")
 logger = logging.getLogger(__name__)
@@ -1039,7 +1040,7 @@ def create_match(
     with video_path.open("wb") as f:
         shutil.copyfileobj(video.file, f)
 
-    metadata = read_video_metadata(video_path)
+    metadata = inspect_video_timebase(video_path)
     meta.update(
         {
             "id": match_id,
@@ -4107,6 +4108,23 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
         ) from exc
     _assert_publish_workflow(path)
     try:
+        # This explicit downstream rebuild is the migration boundary for
+        # historical nominal OpenCV metadata. It never reruns CV or mutates
+        # Review decisions; it proves and persists the source frame timeline,
+        # then regenerates only frame-derived reviewed statistics/package data.
+        meta = read_match_meta(path)
+        try:
+            source_video = resolve_match_video_path(path, str(meta.get("video_filename") or "") or None)
+        except FileNotFoundError:
+            source_video = None
+        if source_video is not None:
+            meta["video"] = inspect_video_timebase(source_video)
+            meta["updated_at"] = now_iso()
+            write_match_meta(path, meta)
+            snapshot = get_reviewed_identity_status(path)
+            if snapshot.get("status") in {"missing", "stale"}:
+                raise ValueError("Reviewed Identity must be current before rebuilding a timebase-correct publication.")
+            build_reviewed_stats(path, snapshot, meta, _load(path / "pitch_config.json"))
         package = build_match_package(path)
         ensure_package_publishable(package)
         package_source_id = str((package.get("match") or {}).get("id") or "")
