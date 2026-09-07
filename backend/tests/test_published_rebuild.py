@@ -193,6 +193,11 @@ class PublishedRebuildTests(unittest.TestCase):
             timing = json.loads((match_dir / "reviewed_player_stats.json").read_text(encoding="utf-8"))["video_timing"]
             identity_status = get_reviewed_identity_status(match_dir)["status"]
             migrated_snapshot = json.loads((match_dir / "reviewed_identity_snapshot.json").read_text(encoding="utf-8"))
+            # The migration has refreshed the derived review-progress digest,
+            # so future rebuild authorization takes the normal workflow path
+            # rather than requiring the historical-publication fallback.
+            from app.main import _assert_publish_workflow
+            _assert_publish_workflow(match_dir)
 
         self.assertEqual(rebuilt["id"], "published-match-1")
         self.assertEqual(migrated["video"]["timebase_schema_version"], "1.0.0")

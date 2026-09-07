@@ -173,6 +173,7 @@ from app.services.review_workflow_orchestrator import (
     after_video_qa_correction,
     approve_review_video_qa,
     finalize_review_for_qa,
+    durable_review_progress,
     public_finalized_identity,
     public_review_progress,
     refresh_review_after_identity_mutation,
@@ -4224,6 +4225,8 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "reviewed_player_heatmaps.json",
                 "reviewed_stats_readiness.json",
                 "reviewed_identity_snapshot.json",
+                "reviewed_identity_progress.json",
+                "review_workflow_recompute_failure.json",
                 "reviewed_output_manifest.json",
                 "reviewed_video_manifest.json",
                 "reviewed_video_job.json",
@@ -4250,6 +4253,16 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 snapshot_digest=str(snapshot.get("semantic_digest") or ""),
             )
             build_reviewed_stats(path, snapshot, meta, pitch_config)
+            # The snapshot's digest is an explicit dependency of durable
+            # review progress. Re-project that read model in the same
+            # transaction, without scheduling a new operator-evidence pass.
+            # This is deliberately narrower than a workflow retry: timebase
+            # migration must not modify any review source while refreshing
+            # its purely derived progress digest.
+            progress = durable_review_progress(build_reviewed_identity_progress(path, meta))
+            progress["source_snapshot_digest"] = snapshot.get("semantic_digest")
+            progress["workflow_refresh_source"] = "timebase_migration"
+            write_identity_json_atomic(path / "reviewed_identity_progress.json", progress)
         package = build_match_package(path)
         ensure_package_publishable(package)
         package_source_id = str((package.get("match") or {}).get("id") or "")
