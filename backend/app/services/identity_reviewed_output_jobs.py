@@ -18,6 +18,7 @@ from app.services.identity_reviewed_video import (
     render_reviewed_video,
     reviewed_source_video_digest,
 )
+from app.services.video import VIDEO_TIMEBASE_SCHEMA_VERSION, fps_matches, probe_media_duration
 
 # Reviewed rendering is a local-first, single-host job. Ownership is persisted in
 # an O_EXCL filesystem lock and validated against the owner PID (plus an in-process
@@ -26,6 +27,7 @@ from app.services.identity_reviewed_video import (
 
 JOB_FILENAME = "reviewed_video_job.json"
 LOCK_FILENAME = "reviewed_video_job.lock"
+LEGACY_TIMEBASE_COMPATIBLE_RENDERERS = frozenset({"reviewed_video:v7-play-area-safety"})
 _active_job_keys: set[str] = set()
 _submission_lock = threading.Lock()
 logger = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ def rebind_reviewed_output_snapshot_provenance(
     job = _load(job_path)
     rebased_job_key: str | None = None
     if job:
+        current_match = _load(match_path / "match.json")
         if job.get("source_snapshot_digest") != previous_snapshot_digest:
             raise ValueError("Reviewed video job provenance does not match the pre-migration snapshot")
         if job.get("status") != "completed":
@@ -69,10 +72,9 @@ def rebind_reviewed_output_snapshot_provenance(
             not isinstance(options, dict)
             or not source_video_digest
             or not review_scope_digest
-            or job.get("renderer_version") != RENDERER_VERSION
+            or not _renderer_can_rebind_to_current_timebase(match_path, job, current_match)
         ):
             raise ValueError("Reviewed video job lacks exact inputs required to rebind its key")
-        current_match = _load(match_path / "match.json")
         if (
             reviewed_source_video_digest(match_path, current_match) != source_video_digest
             or identity_review_scope_digest(current_match) != review_scope_digest
@@ -118,9 +120,59 @@ def rebind_reviewed_output_snapshot_provenance(
 
     if job:
         job["source_snapshot_digest"] = snapshot_digest
+        legacy_renderer = str(job.get("renderer_version") or "")
+        if legacy_renderer != RENDERER_VERSION:
+            job["rendered_with_renderer_version"] = legacy_renderer
+            job["renderer_version"] = RENDERER_VERSION
         assert rebased_job_key is not None
         job["job_key"] = rebased_job_key
         write_identity_json_atomic(job_path, job)
+
+
+def _renderer_can_rebind_to_current_timebase(
+    match_path: Path,
+    job: dict[str, Any],
+    match_document: dict[str, Any],
+) -> bool:
+    """Allow only a proven v7 render to acquire the v8 timebase contract.
+
+    v7 predates the explicit renderer proof but its output can be safely
+    retained when the completed artifact itself proves the same canonical CFR
+    frame count and cadence.  Unknown renderer versions remain fail-closed.
+    """
+    renderer_version = str(job.get("renderer_version") or "")
+    if renderer_version == RENDERER_VERSION:
+        return True
+    if renderer_version not in LEGACY_TIMEBASE_COMPATIBLE_RENDERERS:
+        return False
+    timebase = match_document.get("video")
+    if not isinstance(timebase, dict) or timebase.get("timebase_schema_version") != VIDEO_TIMEBASE_SCHEMA_VERSION:
+        return False
+    try:
+        expected_frames = int(timebase["frame_count"])
+        expected_fps = float(timebase["fps"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if expected_frames <= 0 or expected_fps <= 0 or not _completed_output_matches(job, match_path):
+        return False
+    manifest = _load(match_path / "reviewed_video_manifest.json")
+    if (
+        manifest.get("status") != "completed"
+        or manifest.get("renderer_version") != renderer_version
+        or manifest.get("source_video_digest") != job.get("source_video_digest")
+        or manifest.get("digest") != job.get("video_digest")
+    ):
+        return False
+    try:
+        rendered_frames = int(manifest["frames"])
+        rendered_fps = float(manifest["fps"])
+        output_path = match_path / "reviewed_video.mp4"
+        rendered_duration = probe_media_duration(output_path)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if rendered_frames != expected_frames or not fps_matches(rendered_fps, expected_fps):
+        return False
+    return abs(rendered_duration - (expected_frames / expected_fps)) <= max(0.05, 2.0 / expected_fps)
 
 
 def generate_reviewed_output(

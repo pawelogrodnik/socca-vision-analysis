@@ -59,6 +59,47 @@ class ReviewedOutputContractTests(unittest.TestCase):
                 self.assertEqual(output["reviewed_identity"]["digest"], "new")
                 self.assertTrue(_reusable_job(job, expected, root))
 
+    def test_verified_v7_render_is_rekeyed_to_the_canonical_timebase_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "video.mp4").write_bytes(b"source")
+            (root / "reviewed_video.mp4").write_bytes(b"rendered")
+            options = {"include_minimap": True}
+            legacy_renderer = "reviewed_video:v7-play-area-safety"
+            old_key = _reviewed_output_job_key(
+                snapshot_digest="old", source_video_digest="video-digest", review_scope_digest="scope-digest",
+                options=options, renderer_version=legacy_renderer,
+            )
+            digest = hashlib.sha256(b"rendered").hexdigest()
+            (root / "match.json").write_text(json.dumps({"video": {
+                "timebase_schema_version": "1.0.0", "frame_count": 50, "fps": 25,
+            }}), encoding="utf-8")
+            (root / "reviewed_video_job.json").write_text(json.dumps({
+                "status": "completed", "job_key": old_key, "source_snapshot_digest": "old",
+                "source_video_digest": "video-digest", "source_review_scope_digest": "scope-digest",
+                "options": options, "renderer_version": legacy_renderer, "video_digest": digest,
+            }), encoding="utf-8")
+            (root / "reviewed_video_manifest.json").write_text(json.dumps({
+                "status": "completed", "renderer_version": legacy_renderer, "source_video_digest": "video-digest",
+                "source_snapshot_digest": "old", "digest": digest, "frames": 50, "fps": 25,
+            }), encoding="utf-8")
+            (root / "reviewed_output_manifest.json").write_text(json.dumps({
+                "job_key": old_key, "reviewed_identity": {"digest": "old"},
+                "stats": {"source_snapshot_digest": "old"}, "video": {"source_snapshot_digest": "old"},
+            }), encoding="utf-8")
+            with patch("app.services.identity_reviewed_output_jobs.reviewed_source_video_digest", return_value="video-digest"), patch(
+                "app.services.identity_reviewed_output_jobs.identity_review_scope_digest", return_value="scope-digest"
+            ), patch("app.services.identity_reviewed_output_jobs.probe_media_duration", return_value=2.0):
+                rebind_reviewed_output_snapshot_provenance(root, previous_snapshot_digest="old", snapshot_digest="new")
+            job = json.loads((root / "reviewed_video_job.json").read_text(encoding="utf-8"))
+            expected = _reviewed_output_job_key(
+                snapshot_digest="new", source_video_digest="video-digest", review_scope_digest="scope-digest",
+                options=options, renderer_version=RENDERER_VERSION,
+            )
+            self.assertEqual(job["job_key"], expected)
+            self.assertEqual(job["renderer_version"], RENDERER_VERSION)
+            self.assertEqual(job["rendered_with_renderer_version"], legacy_renderer)
+
     def test_provenance_rebind_rejects_a_mismatched_output_job_key(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
