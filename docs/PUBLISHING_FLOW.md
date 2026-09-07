@@ -361,11 +361,11 @@ PYTHONPATH=backend python backend/scripts/validate_merged_match.py \
 | --- | --- |
 | Group / canonical publication | `match-group-c3fbd48a-356d-44a0-a740-c630de69b527` / `published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4` |
 | Physical sources | `published-9c7485e4`, `published-6d8fc20c`, `published-5e62625e` (`9c7485e4`, `6d8fc20c`, `5e62625e`) |
-| Exact durations / offsets | 1156.322 s at 0.000 s; 610.376 s at 1156.322 s; 356.323 s at 1766.698 s; merged 2123.021 s |
+| Exact durations / offsets | 1156.300 s at 0.000 s; 605.578 s at 1156.300 s; 352.022 s at 1761.878 s; merged 2113.900 s |
 | Corgi movement | distance 20061.74 m, high intensity 3030.74 m, sprints 0, peak 22.55 km/h; independently reconciled as SUM/SUM/SUM/MAX |
 | Paweł player row | one stable `player_id`; distance 1465.86 m, high intensity 253.41 m, 14 sprints, peak 21.02 km/h, average 6.05 km/h recomputed from movement time |
 | Possession / passing | controlled coverage 0.2694, known coverage 0.6808; 217 completed from 471 attempts = 46.1% |
-| Timeline / momentum | all possession and momentum intervals stay within 0–2123.021 s and canonical signs remain A >= 0, B <= 0 |
+| Timeline / momentum | all possession and momentum intervals stay within 0–2113.900 s and canonical signs remain A >= 0, B <= 0 |
 | Spatial / Team Shape | unavailable by design: canonical orientation and Team Shape evidence compatibility are not proven; merged heatmaps and average positions are fail-closed |
 | Key Moments | two `ready` moments; their required bounds and production ordering tuple are independently validated |
 | Hardened reconciliation | 258 checks: 255 passed, 0 failed, 3 Reviewed Identity digest recomputations explicitly unavailable because compact source inputs retain authoritative pins but not the physical Reviewed Identity artifacts |
@@ -373,7 +373,7 @@ PYTHONPATH=backend python backend/scripts/validate_merged_match.py \
 | Longitudinal / source eligibility | longitudinal profiles read physical analysis matches, not merged publications; automated regressions preserve profile summaries and exclude `source_kind=merged` from merge sources |
 | Compactness | aggregate inputs: 207,284 bytes total; source public reports: 3,109,916 bytes total; merged public report: 354,304 bytes |
 
-### Combined-video closeout status (2026-09-06) — Refs #52
+### Combined-video closeout status (2026-09-07) — Refs #52
 
 The real physical publications now contain completed, provenance-pinned
 `reviewed_video.mp4` artifacts. A fresh disposable copy of those three
@@ -383,31 +383,24 @@ was regenerated in that copy before reconciliation, which again produced 255
 passed checks, zero failures and the same three explicitly unavailable
 Reviewed Identity recomputations.
 
-The combined-video acceptance is nevertheless **not accepted**. The production
-preflight returns `unavailable_source_video` with reason
-`source_video_duration_mismatch` before it creates a generation. Its first
-failing member is `published-6d8fc20c`.
+After canonical physical timebase migration, the same production generator
+accepted all three published Reviewed videos and atomically published an
+immutable combined generation. No tolerance, padding, trimming, stretching,
+or source-specific exception was introduced.
 
 | Published source | Logical duration used by the group | Published reviewed-video descriptor | Independent `ffprobe` duration | Absolute delta |
 | --- | ---: | ---: | ---: | ---: |
-| `published-9c7485e4` | 1156.322 s | 1156.288 s | 1156.290 s | 0.034 s |
-| `published-6d8fc20c` | 610.376 s | 605.572 s | 605.572 s | 4.804 s |
-| `published-5e62625e` | 356.323 s | 352.052 s | 352.054 s | 4.271 s |
+| `published-9c7485e4` | 1156.300 s | 1156.288 s | 1156.288 s | 0.012 s |
+| `published-6d8fc20c` | 605.578 s | 605.572 s | 605.572 s | 0.006 s |
+| `published-5e62625e` | 352.022 s | 352.052 s | 352.052 s | 0.030 s |
 
-The allowed production delta is 0.25 s. `ffprobe` agrees with the published
-reviewed-video descriptors, so the discrepancy is not introduced by
-publication copy. The two affected source MP4s also have shorter container
-durations than their logical `frame_count / fps` metadata. The logical match
-timeline therefore cannot be mapped safely onto the available video bytes.
-
-Do not widen the tolerance, pad/trim the media, rewrite descriptor durations,
-or publish a combined artifact for this group. Those changes would shift
-fragment boundaries and make the canonical report, Key Moments and player
-statistics describe different times than the video. A future remediation must
-establish and prove one source-time mapping for the affected fragments, then
-rebuild the affected projections from that mapping before attempting a new
-combined-video acceptance. Until then #52 remains open and this result must be
-referenced, not closed.
+The combined artifact is H.264/yuv420p, 1920x1080 at 25 FPS with no audio;
+its 2114.120 s container duration is 0.220 s from the 2113.900 s logical
+timeline and therefore within the unchanged 0.25 s production limit. Scene
+comparison at the start, both sides of both fragment boundaries, and every
+current Key Moment matched the owning Reviewed source (MAE <= 0.320, grayscale
+correlation >= 0.999718). The read-only merged auditor reported 255 passed,
+0 failed and 3 explicitly unavailable compact-input identity recomputations.
 
 The canonical projection intentionally omits optional identity-coverage
 presentation fields when the source contract cannot provide a reliable
@@ -437,8 +430,28 @@ roster, tracklet and decision inputs remain part of its freshness digest.
 Reviewed snapshot source descriptors are versioned: unmarked legacy snapshots
 are verified with their exact pre-timebase digest once, then successful
 migration updates only provenance to `timebase-insensitive-v2`, preserving
-human assignments. A failed rebuild restores the previous local
-timebase-derived files before returning an error.
+human assignments. The legacy exception is limited to an existing physical
+publication whose complete Reviewed Identity package digest equals the fresh
+local snapshot and whose source-video SHA is pinned either in the published
+package or by its published reviewed-render job key. Historical
+`partial_reviewed` projection is accepted only under that exact proof;
+missing, stale, blocked, or mismatched evidence never bypasses normal Review
+completion.
+A failed rebuild restores the previous local timebase-derived files before
+returning an error, including the exact `package_publish` ball-event write set:
+phase, restart, event, pass, momentum, readiness, and generation documents.
+The same rebuild also
+rechecks the derived ball-event package: a phase interval normalized by the
+new source duration makes lineage-fresh momentum stale, so it is rebuilt from
+the existing possession/pass/review artifacts (never by rerunning CV). This
+prevents terminal momentum bins outside the canonical logical timeline.
+
+Older momentum documents without `summary.duration_sec` retain their optional
+legacy compatibility. An explicit malformed or non-finite duration is never
+accepted as current and is rebuilt. Provenance-only Reviewed snapshot migration
+also rekeys a completed reviewed-video job and its output manifest from the
+same persisted source/options/scope/renderer inputs, allowing the unchanged
+video bytes to be reused without a redundant render.
 
 `media_duration_sec` records the decoded presentation span independently.
 For supported CFR media, `frame -> time` and Reviewed-video seeking are

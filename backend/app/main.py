@@ -76,6 +76,7 @@ from app.services.identity_roster_subject_review_store import (
 from app.services.identity_reviewed_output_jobs import (
     ReviewedOutputBusyError,
     generate_reviewed_output,
+    rebind_reviewed_output_snapshot_provenance,
     reviewed_output_status,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
@@ -172,6 +173,7 @@ from app.services.review_workflow_orchestrator import (
     after_video_qa_correction,
     approve_review_video_qa,
     finalize_review_for_qa,
+    durable_review_progress,
     public_finalized_identity,
     public_review_progress,
     refresh_review_after_identity_mutation,
@@ -179,6 +181,7 @@ from app.services.review_workflow_orchestrator import (
     retry_review_render,
 )
 from app.services.review_workflow_state import (
+    RECOMPUTE_FAILURE_FILENAME,
     WorkflowActionError,
     assert_workflow_action_allowed,
     build_compact_review_workflow_state,
@@ -241,6 +244,7 @@ from app.services.pass_review import load_pass_candidates_review, save_pass_cand
 from app.services.player_identity import build_player_identity_review, save_player_identity_assignments
 from app.services.player_profiles import build_player_profile_stats
 from app.services.publish import PublishError, publish_match_package
+from app.services.published_video import sha256_file
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
 from app.services.reviewed_match_report import (
     REVIEWED_PACKAGE_INPUTS,
@@ -257,6 +261,7 @@ from app.services.team_registry import get_team as registry_get_team
 from app.services.team_registry import list_teams as registry_list_teams
 from app.services.team_registry import update_team as registry_update_team
 from app.services.video import (
+    VIDEO_TIMEBASE_SCHEMA_VERSION,
     ensure_current_video_timebase,
     extract_frame,
     inspect_video_timebase,
@@ -296,6 +301,92 @@ def _assert_publish_workflow(match_path: Path) -> None:
             "code": "review_not_completed",
             "workflow": workflow,
         },
+    )
+
+
+def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: dict[str, Any]) -> None:
+    """Keep normal publish gating while allowing one safe legacy migration.
+
+    Historical physical publications predate the current workflow projection.
+    A rebuild may attach the first canonical video-timebase proof only when
+    the fresh, non-blocked Reviewed Identity snapshot is *exactly* the
+    generation embedded in the already-published package. Historical packages
+    can retain a ``partial_reviewed`` projection while still pinning a complete
+    published Reviewed-output generation. This is a migration exception, never
+    an alternate gate for incomplete current review.
+    """
+    try:
+        _assert_publish_workflow(match_path)
+        return
+    except HTTPException as error:
+        detail = error.detail
+        review_not_completed = detail == "review_not_completed" or (
+            isinstance(detail, dict) and detail.get("code") == "review_not_completed"
+        )
+        meta = read_match_meta(match_path)
+        video = meta.get("video") if isinstance(meta.get("video"), dict) else {}
+        snapshot = get_reviewed_identity_status(match_path)
+        package = existing_publication.get("package") if isinstance(existing_publication.get("package"), dict) else {}
+        published_review = reviewed_identity_package_status(package)
+        historical_timebase = video.get("timebase_schema_version") != VIDEO_TIMEBASE_SCHEMA_VERSION
+        exact_published_generation = (
+            published_review.get("ready") is True
+            and snapshot.get("status") not in {"missing", "stale", "blocked"}
+            and bool(snapshot.get("semantic_digest"))
+            and snapshot.get("semantic_digest") == published_review.get("digest")
+            and _published_source_video_matches(
+                match_path,
+                meta,
+                package,
+                reviewed_identity_digest=str(published_review.get("digest") or ""),
+            )
+        )
+        if review_not_completed and historical_timebase and exact_published_generation:
+            return
+        raise error
+
+
+def _published_source_video_matches(
+    match_path: Path,
+    match_meta: dict[str, Any],
+    package: dict[str, Any],
+    *,
+    reviewed_identity_digest: str,
+) -> bool:
+    """Require an immutable published-to-local raw-video binding for migration.
+
+    Newer packages pin the source fingerprint directly. Older packages can
+    prove the same binding through their persisted reviewed-render job key,
+    which is itself embedded in the published output manifest.  A missing or
+    mixed proof never grants the legacy workflow exception.
+    """
+    try:
+        source = resolve_match_video_path(match_path, str(match_meta.get("video_filename") or "") or None)
+    except FileNotFoundError:
+        return False
+    package_match = package.get("match") if isinstance(package.get("match"), dict) else {}
+    package_video = package_match.get("video") if isinstance(package_match.get("video"), dict) else {}
+    fingerprint = package_video.get("source_fingerprint") if isinstance(package_video.get("source_fingerprint"), dict) else {}
+    fingerprint_digest = str(fingerprint.get("sha256") or "")
+    if fingerprint_digest:
+        return sha256_file(source) == fingerprint_digest
+
+    output = package.get("reviewed_output_manifest") if isinstance(package.get("reviewed_output_manifest"), dict) else {}
+    published_job_key = str(output.get("job_key") or "")
+    output_identity = output.get("reviewed_identity") if isinstance(output.get("reviewed_identity"), dict) else {}
+    job_path = match_path / "reviewed_video_job.json"
+    try:
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        bool(published_job_key)
+        and output_identity.get("digest") == reviewed_identity_digest
+        and job.get("status") == "completed"
+        and job.get("job_key") == published_job_key
+        and job.get("source_snapshot_digest") == reviewed_identity_digest
+        and bool(job.get("source_video_digest"))
+        and sha256_file(source) == job.get("source_video_digest")
     )
 
 
@@ -4113,8 +4204,10 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             status_code=404,
             detail=f"Local source match {source_match_id} not found; publication left unchanged.",
         ) from exc
-    _assert_publish_workflow(path)
+    _assert_physical_rebuild_workflow(path, existing)
     try:
+        from app.services.ball_event_rebuild import PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES
+
         # This explicit downstream rebuild is the migration boundary for
         # historical nominal OpenCV metadata. It never reruns CV or mutates
         # Review decisions; it proves and persists the source frame timeline,
@@ -4133,6 +4226,12 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "reviewed_player_heatmaps.json",
                 "reviewed_stats_readiness.json",
                 "reviewed_identity_snapshot.json",
+                "reviewed_identity_progress.json",
+                "review_workflow_recompute_failure.json",
+                "reviewed_output_manifest.json",
+                "reviewed_video_manifest.json",
+                "reviewed_video_job.json",
+                *PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES,
             )
         }
         if source_video is not None:
@@ -4147,7 +4246,29 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             # The rollback below protects this coherent local migration from a
             # later stats/package/publication failure.
             write_match_meta(path, meta)
+            previous_snapshot_digest = str(snapshot.get("semantic_digest") or "")
             snapshot = refresh_reviewed_identity_nonidentity_metadata(path, meta)
+            rebind_reviewed_output_snapshot_provenance(
+                path,
+                previous_snapshot_digest=previous_snapshot_digest,
+                snapshot_digest=str(snapshot.get("semantic_digest") or ""),
+            )
+            # The snapshot's digest is an explicit dependency of durable
+            # review progress. Re-project that read model in the same
+            # transaction, without scheduling a new operator-evidence pass.
+            # This is deliberately narrower than a workflow retry: timebase
+            # migration must not modify any review source while refreshing
+            # its purely derived progress digest.
+            progress = durable_review_progress(build_reviewed_identity_progress(path, meta))
+            progress["source_snapshot_digest"] = snapshot.get("semantic_digest")
+            progress["workflow_refresh_source"] = "timebase_migration"
+            write_identity_json_atomic(path / "reviewed_identity_progress.json", progress)
+            _clear_pre_migration_recompute_failure(
+                path,
+                previous_snapshot_digest=previous_snapshot_digest,
+            )
+            # Stats consume durable progress for coverage readiness. The
+            # freshly reprojected progress must therefore be persisted first.
             build_reviewed_stats(path, snapshot, meta, pitch_config)
         package = build_match_package(path)
         ensure_package_publishable(package)
@@ -4180,6 +4301,20 @@ def _restore_rebuild_local_files(path: Path, previous_files: dict[str, bytes | N
             target.unlink(missing_ok=True)
         else:
             target.write_bytes(previous)
+
+
+def _clear_pre_migration_recompute_failure(path: Path, *, previous_snapshot_digest: str) -> None:
+    """Clear only a failure explicitly bound to the superseded generation."""
+    failure_path = path / RECOMPUTE_FAILURE_FILENAME
+    try:
+        failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if (
+        isinstance(failure, dict)
+        and failure.get("source_snapshot_digest") == previous_snapshot_digest
+    ):
+        failure_path.unlink(missing_ok=True)
 
 
 @app.delete("/api/published/matches/{published_match_id}")

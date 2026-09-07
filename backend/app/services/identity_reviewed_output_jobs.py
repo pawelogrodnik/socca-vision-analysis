@@ -15,9 +15,11 @@ from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_review_scope import identity_review_scope_digest
 from app.services.identity_reviewed_video import (
     RENDERER_VERSION,
+    inspect_encoded_video_timing,
     render_reviewed_video,
     reviewed_source_video_digest,
 )
+from app.services.video import VIDEO_TIMEBASE_SCHEMA_VERSION, fps_matches, probe_media_duration
 
 # Reviewed rendering is a local-first, single-host job. Ownership is persisted in
 # an O_EXCL filesystem lock and validated against the owner PID (plus an in-process
@@ -26,6 +28,7 @@ from app.services.identity_reviewed_video import (
 
 JOB_FILENAME = "reviewed_video_job.json"
 LOCK_FILENAME = "reviewed_video_job.lock"
+LEGACY_TIMEBASE_COMPATIBLE_RENDERERS = frozenset({"reviewed_video:v7-play-area-safety"})
 _active_job_keys: set[str] = set()
 _submission_lock = threading.Lock()
 logger = logging.getLogger(__name__)
@@ -33,6 +36,150 @@ logger = logging.getLogger(__name__)
 
 class ReviewedOutputBusyError(RuntimeError):
     pass
+
+
+def rebind_reviewed_output_snapshot_provenance(
+    match_path: Path,
+    *,
+    previous_snapshot_digest: str,
+    snapshot_digest: str,
+) -> None:
+    """Rebind derived render metadata after a provenance-only snapshot upgrade.
+
+    A timebase migration preserves every rendered frame and human assignment;
+    only the snapshot's source-descriptor semantics changes.  Every existing
+    reference must therefore prove it points at *exactly* the old digest before
+    it may be rebound.  Mixed or incomplete artifacts fail closed and require
+    a normal render instead.
+    """
+    if not previous_snapshot_digest or not snapshot_digest:
+        raise ValueError("Reviewed output provenance requires non-empty snapshot digests")
+    if previous_snapshot_digest == snapshot_digest:
+        return
+
+    job_path = match_path / JOB_FILENAME
+    job = _load(job_path)
+    rebased_job_key: str | None = None
+    if job:
+        current_match = _load(match_path / "match.json")
+        if job.get("source_snapshot_digest") != previous_snapshot_digest:
+            raise ValueError("Reviewed video job provenance does not match the pre-migration snapshot")
+        if job.get("status") != "completed":
+            raise ValueError("An incomplete reviewed video job cannot be rebound during migration")
+        options = job.get("options")
+        source_video_digest = str(job.get("source_video_digest") or "")
+        review_scope_digest = str(job.get("source_review_scope_digest") or "")
+        if (
+            not isinstance(options, dict)
+            or not source_video_digest
+            or not review_scope_digest
+            or not _renderer_can_rebind_to_current_timebase(match_path, job, current_match)
+        ):
+            raise ValueError("Reviewed video job lacks exact inputs required to rebind its key")
+        if (
+            reviewed_source_video_digest(match_path, current_match) != source_video_digest
+            or identity_review_scope_digest(current_match) != review_scope_digest
+        ):
+            raise ValueError("Reviewed video job inputs changed; migration cannot reuse the render")
+        rebased_job_key = _reviewed_output_job_key(
+            snapshot_digest=snapshot_digest,
+            source_video_digest=source_video_digest,
+            review_scope_digest=review_scope_digest,
+            options=options,
+            renderer_version=RENDERER_VERSION,
+        )
+
+    output_path = match_path / "reviewed_output_manifest.json"
+    output = _load(output_path)
+    if output:
+        references = [
+            (output.get("reviewed_identity"), "digest"),
+            (output.get("stats"), "source_snapshot_digest"),
+        ]
+        if isinstance(output.get("video"), dict):
+            references.append((output["video"], "source_snapshot_digest"))
+        if any(not isinstance(container, dict) or container.get(key) != previous_snapshot_digest for container, key in references):
+            raise ValueError("Reviewed output provenance does not match the pre-migration snapshot")
+        if output.get("job_key") is not None and (
+            not job or not rebased_job_key or output.get("job_key") != job.get("job_key")
+        ):
+            raise ValueError("Reviewed output job key does not match the pre-migration job")
+        for container, key in references:
+            assert isinstance(container, dict)
+            container[key] = snapshot_digest
+        if rebased_job_key:
+            output["job_key"] = rebased_job_key
+        write_identity_json_atomic(output_path, output)
+
+    video_path = match_path / "reviewed_video_manifest.json"
+    video = _load(video_path)
+    if video:
+        if video.get("source_snapshot_digest") != previous_snapshot_digest:
+            raise ValueError("Reviewed video provenance does not match the pre-migration snapshot")
+        video["source_snapshot_digest"] = snapshot_digest
+        write_identity_json_atomic(video_path, video)
+
+    if job:
+        job["source_snapshot_digest"] = snapshot_digest
+        legacy_renderer = str(job.get("renderer_version") or "")
+        if legacy_renderer != RENDERER_VERSION:
+            job["rendered_with_renderer_version"] = legacy_renderer
+            job["renderer_version"] = RENDERER_VERSION
+        assert rebased_job_key is not None
+        job["job_key"] = rebased_job_key
+        write_identity_json_atomic(job_path, job)
+
+
+def _renderer_can_rebind_to_current_timebase(
+    match_path: Path,
+    job: dict[str, Any],
+    match_document: dict[str, Any],
+) -> bool:
+    """Allow only a proven v7 render to acquire the v8 timebase contract.
+
+    v7 predates the explicit renderer proof but its output can be safely
+    retained when the completed artifact itself proves the same canonical CFR
+    frame count and cadence.  Unknown renderer versions remain fail-closed.
+    """
+    renderer_version = str(job.get("renderer_version") or "")
+    if renderer_version == RENDERER_VERSION:
+        return True
+    if renderer_version not in LEGACY_TIMEBASE_COMPATIBLE_RENDERERS:
+        return False
+    timebase = match_document.get("video")
+    if not isinstance(timebase, dict) or timebase.get("timebase_schema_version") != VIDEO_TIMEBASE_SCHEMA_VERSION:
+        return False
+    try:
+        expected_frames = int(timebase["frame_count"])
+        expected_fps = float(timebase["fps"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if expected_frames <= 0 or expected_fps <= 0 or not _completed_output_matches(job, match_path):
+        return False
+    manifest = _load(match_path / "reviewed_video_manifest.json")
+    if (
+        manifest.get("status") != "completed"
+        or manifest.get("renderer_version") != renderer_version
+        or manifest.get("source_video_digest") != job.get("source_video_digest")
+        or manifest.get("digest") != job.get("video_digest")
+    ):
+        return False
+    try:
+        manifest_frames = int(manifest["frames"])
+        manifest_fps = float(manifest["fps"])
+        output_path = match_path / "reviewed_video.mp4"
+        decoded_frames, encoded_fps = inspect_encoded_video_timing(output_path)
+        rendered_duration = probe_media_duration(output_path)
+    except (KeyError, TypeError, ValueError, RuntimeError):
+        return False
+    if (
+        decoded_frames != expected_frames
+        or not fps_matches(encoded_fps, expected_fps)
+        or manifest_frames != decoded_frames
+        or not fps_matches(manifest_fps, encoded_fps)
+    ):
+        return False
+    return abs(rendered_duration - (decoded_frames / encoded_fps)) <= max(0.05, 2.0 / encoded_fps)
 
 
 def generate_reviewed_output(
@@ -63,14 +210,12 @@ def _generate_reviewed_output(
 ) -> dict[str, Any]:
     source_video_digest = reviewed_source_video_digest(match_path, match_doc)
     review_scope_digest = identity_review_scope_digest(match_doc)
-    key = canonical_digest(
-        {
-            "snapshot": snapshot["semantic_digest"],
-            "source_video": source_video_digest,
-            "identity_review_scope": review_scope_digest,
-            "options": options,
-            "renderer_version": RENDERER_VERSION,
-        }
+    key = _reviewed_output_job_key(
+        snapshot_digest=str(snapshot["semantic_digest"]),
+        source_video_digest=source_video_digest,
+        review_scope_digest=review_scope_digest,
+        options=options,
+        renderer_version=RENDERER_VERSION,
     )
     existing = _load(match_path / JOB_FILENAME)
     if _reusable_job(existing, key, match_path):
@@ -472,6 +617,25 @@ def _reusable_job(job: dict[str, Any], key: str, match_path: Path) -> bool:
     return (
         job.get("status") == "completed"
         and _completed_output_matches(job, match_path)
+    )
+
+
+def _reviewed_output_job_key(
+    *,
+    snapshot_digest: str,
+    source_video_digest: str,
+    review_scope_digest: str,
+    options: dict[str, Any],
+    renderer_version: str,
+) -> str:
+    return canonical_digest(
+        {
+            "snapshot": snapshot_digest,
+            "source_video": source_video_digest,
+            "identity_review_scope": review_scope_digest,
+            "options": options,
+            "renderer_version": renderer_version,
+        }
     )
 
 

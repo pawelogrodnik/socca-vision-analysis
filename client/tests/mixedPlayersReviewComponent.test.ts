@@ -352,6 +352,7 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
   });
 
   await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Przypisz równoległych zawodników' })));
+  await settleConcurrentLaneResolver();
   assert.ok(view.getByRole('button', { name: /Ścieżka 1/ }));
   assert.ok(view.getByRole('button', { name: /Ścieżka 2/ }));
   assert.ok(view.getByRole('button', { name: /Ścieżka 3/ }));
@@ -367,20 +368,24 @@ test('concurrent Mixed case resolves every exact lane and saves once atomically'
     fireEvent.click(view.getByRole('button', { name: 'Corgi — zawodnik nieznany' }));
   });
   await waitFor(
-    () => assert.ok(view.getByText('1 z 3 ścieżek przypisane')),
-    { timeout: 3_000 },
+    () => {
+      assert.ok(view.getByText('1 z 3 ścieżek przypisane'));
+      assert.ok(view.getByRole('heading', { name: 'Przypisz Ścieżkę 2' }));
+    },
   );
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Verisk — zawodnik nieznany' }));
   });
   await waitFor(
-    () => assert.ok(view.getByText('2 z 3 ścieżek przypisane')),
-    { timeout: 3_000 },
+    () => {
+      assert.ok(view.getByText('2 z 3 ścieżek przypisane'));
+      assert.ok(view.getByRole('heading', { name: 'Przypisz Ścieżkę 3' }));
+    },
   );
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
   });
-  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false), { timeout: 3_000 });
+  await waitFor(() => assert.equal(save.hasAttribute('disabled'), false));
   await act(async () => { fireEvent.click(save); });
 
   assert.deepEqual(resolutions, ['concurrent_lanes']);
@@ -1080,7 +1085,10 @@ test('concurrent lane save ignores a repeated click while the atomic POST is in 
   fireEvent.click(view.getByRole('button', { name: 'Nie wiem' }));
   const save = view.getByRole('button', { name: 'Zapisz przypisania + następny' });
   fireEvent.click(save);
-  fireEvent.click(save);
+  // The mutation is scheduled asynchronously. Wait until it has actually
+  // entered the transport before asserting that the second click is ignored.
+  await waitFor(() => assert.equal(saves, 1));
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz przypisania + następny' }));
   assert.equal(saves, 1);
   await act(async () => pending.resolve({
     saved_case: concurrent,

@@ -840,12 +840,14 @@ def _persist_review_recompute_failure(
     exc: Exception,
 ) -> None:
     """Write the durable fail-closed envelope without changing exception flow."""
+    snapshot = get_reviewed_identity_status(match_path)
     write_identity_json_atomic(
         match_path / RECOMPUTE_FAILURE_FILENAME,
         {
             "schema_version": "1.0.0",
             "code": "review_recompute_failed",
             "source": source,
+            "source_snapshot_digest": snapshot.get("semantic_digest"),
             "error": f"{type(exc).__name__}: {exc}",
         },
     )

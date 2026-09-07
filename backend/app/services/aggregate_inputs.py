@@ -15,7 +15,8 @@ from app.services.public_match_report import pass_counts_for_team_label
 
 
 AGGREGATE_INPUTS_SCHEMA_VERSION = "1.0.0"
-AGGREGATION_POLICY_VERSION = "1.0.0"
+AGGREGATION_POLICY_VERSION = "1.1.0"
+REVIEWED_SAFE_TEAM_MOVEMENT_AUTHORITY = "reviewed_safe_team_observations"
 
 
 class AggregateInputsError(ValueError):
@@ -131,7 +132,11 @@ def _validated_reviewed_identity_digest(package: dict[str, Any]) -> str:
 
 def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list[dict[str, Any]]:
     team_stats = _record(package.get("team_stats"))
-    movement_by_team: dict[str, dict[str, Any]] = {}
+    reviewed_team_movement = {
+        _required_label(row.get("team_label"), "reviewed_team_movement[].team_label"): _record(row)
+        for row in _list(package.get("reviewed_team_movement"))
+    }
+    legacy_movement_by_team: dict[str, dict[str, Any]] = {}
     for raw_row in _list(team_stats.get("teams")):
         row = _record(raw_row)
         label = _required_label(row.get("team_label"), "team_stats.teams[].team_label")
@@ -139,7 +144,7 @@ def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list
         declared_team_id = row.get("team_id")
         if declared_team_id is not None and str(declared_team_id) != team_id:
             raise AggregateInputsError(f"team_stats label {label!r} disagrees with stable team_id")
-        if team_id in movement_by_team:
+        if team_id in legacy_movement_by_team:
             raise AggregateInputsError(f"team_stats has duplicate stable team_id {team_id!r}")
         movement = _numeric_fields(
             row,
@@ -152,18 +157,39 @@ def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list
             "status": "not_available",
             "reason": "canonical_team_movement_time_missing",
         }
-        movement_by_team[team_id] = movement
+        legacy_movement_by_team[team_id] = movement
 
     rows = []
     for label, team_id in sorted(team_by_label.items(), key=lambda item: item[1]):
-        movement = movement_by_team.get(team_id)
+        reviewed = reviewed_team_movement.get(label)
+        legacy_movement = legacy_movement_by_team.get(team_id, {})
+        if not _is_reviewed_safe_team_movement(reviewed):
+            movement: dict[str, Any] = {
+                "status": "not_available",
+                "reason": "reviewed_safe_team_movement_missing",
+            }
+        else:
+            assert isinstance(reviewed, dict)
+            movement = {"authority": REVIEWED_SAFE_TEAM_MOVEMENT_AUTHORITY}
+            for field in (
+                "total_distance_m",
+                "observed_distance_m",
+                "estimated_short_gap_distance_m",
+                "high_intensity_distance_m",
+            ):
+                value = _number_or_none(reviewed.get(field))
+                if value is not None:
+                    movement[field] = value
+            # The safe rollup currently does not contain these secondary
+            # metrics. They never provide the authoritative distance total.
+            for field in ("sprint_count", "peak_speed_kmh", "average_speed"):
+                if field in legacy_movement:
+                    movement[field] = legacy_movement[field]
         rows.append(
             {
                 "team_id": team_id,
                 "source_team_label": label,
-                "movement": movement
-                if movement is not None
-                else {"status": "not_available", "reason": "team_movement_row_missing"},
+                "movement": movement,
             }
         )
     return rows
@@ -409,12 +435,13 @@ def _spatial(package: dict[str, Any]) -> dict[str, Any]:
 
 def _metric_readiness(package: dict[str, Any], possession: dict[str, Any], passes: dict[str, Any]) -> dict[str, Any]:
     reviewed_readiness = _record(package.get("reviewed_stats_readiness"))
-    team_stats = _record(package.get("team_stats"))
+    reviewed_team_movement_ready = _reviewed_safe_team_movement_is_complete(package)
     return {
         "reviewed_identity": str(reviewed_readiness.get("status") or "not_available"),
         "team_movement": {
-            "status": "available" if _list(team_stats.get("teams")) else "not_available",
-            "source": team_stats.get("source"),
+            "status": "available" if reviewed_team_movement_ready else "not_available",
+            "authority": REVIEWED_SAFE_TEAM_MOVEMENT_AUTHORITY if reviewed_team_movement_ready else None,
+            "reason": None if reviewed_team_movement_ready else "reviewed_safe_team_movement_missing",
         },
         "player_movement": {"status": "available", "source": "reviewed_player_stats"},
         "possession": {
@@ -428,6 +455,29 @@ def _metric_readiness(package: dict[str, Any], possession: dict[str, Any], passe
         "spatial": "not_available",
         "team_shape": "not_available",
     }
+
+
+def _is_reviewed_safe_team_movement(row: Any) -> bool:
+    return (
+        isinstance(row, dict)
+        and row.get("movement_authority") == REVIEWED_SAFE_TEAM_MOVEMENT_AUTHORITY
+        and _number_or_none(row.get("total_distance_m")) is not None
+    )
+
+
+def _reviewed_safe_team_movement_is_complete(package: dict[str, Any]) -> bool:
+    configured_labels = {
+        _required_label(_record(row).get("team_label"), "team_config.teams[].team_label")
+        for row in _list(_record(package.get("team_config")).get("teams"))
+    }
+    reviewed_by_label = {
+        _required_label(_record(row).get("team_label"), "reviewed_team_movement[].team_label"): _record(row)
+        for row in _list(package.get("reviewed_team_movement"))
+    }
+    return bool(configured_labels) and all(
+        _is_reviewed_safe_team_movement(reviewed_by_label.get(label))
+        for label in configured_labels
+    )
 
 
 def _timing(match: dict[str, Any], stats: dict[str, Any]) -> dict[str, Any]:

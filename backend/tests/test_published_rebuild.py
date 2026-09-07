@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import shutil
 import subprocess
@@ -90,6 +91,49 @@ def write_rebuildable_reviewed_fixture(match_dir: Path) -> None:
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for rebuild endpoint tests")
 class PublishedRebuildTests(unittest.TestCase):
+    def test_legacy_migration_gate_requires_exact_complete_published_review(self) -> None:
+        from app.main import _assert_physical_rebuild_workflow
+        from fastapi import HTTPException
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            (path / "video.mp4").write_bytes(b"source")
+            source_digest = hashlib.sha256(b"source").hexdigest()
+            legacy_video = {"duration_sec": 10.0, "source_fingerprint": {"sha256": source_digest}}
+            (path / "match.json").write_text(json.dumps({"video": legacy_video}), encoding="utf-8")
+            publication = {"package": {"match": {"video": legacy_video}}}
+            failure = HTTPException(status_code=409, detail={"code": "review_not_completed"})
+            with patch("app.main._assert_publish_workflow", side_effect=failure), patch(
+                "app.main.reviewed_identity_package_status", return_value={"ready": True, "digest": "published-digest"}
+            ):
+                with patch("app.main.get_reviewed_identity_status", return_value={"status": "complete_reviewed", "semantic_digest": "published-digest"}):
+                    _assert_physical_rebuild_workflow(path, publication)
+                with patch("app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "published-digest"}):
+                    _assert_physical_rebuild_workflow(path, publication)
+                for snapshot in (
+                    {"status": "partial_reviewed", "semantic_digest": "different-digest"},
+                    {"status": "blocked", "semantic_digest": "published-digest"},
+                    {"status": "stale", "semantic_digest": "published-digest"},
+                    {"status": "complete_reviewed", "semantic_digest": "different-digest"},
+                ):
+                    with patch("app.main.get_reviewed_identity_status", return_value=snapshot):
+                        with self.assertRaises(HTTPException):
+                            _assert_physical_rebuild_workflow(path, publication)
+
+                (path / "video.mp4").write_bytes(b"changed source")
+                with patch("app.main.get_reviewed_identity_status", return_value={"status": "complete_reviewed", "semantic_digest": "published-digest"}):
+                    with self.assertRaises(HTTPException):
+                        _assert_physical_rebuild_workflow(path, publication)
+                (path / "video.mp4").write_bytes(b"source")
+
+            canonical = {"video": {"timebase_schema_version": "1.0.0", "source_fingerprint": {"sha256": source_digest}}}
+            (path / "match.json").write_text(json.dumps(canonical), encoding="utf-8")
+            with patch("app.main._assert_publish_workflow", side_effect=failure), patch(
+                "app.main.reviewed_identity_package_status", return_value={"ready": True, "digest": "published-digest"}
+            ), patch("app.main.get_reviewed_identity_status", return_value={"status": "complete_reviewed", "semantic_digest": "published-digest"}):
+                with self.assertRaises(HTTPException):
+                    _assert_physical_rebuild_workflow(path, publication)
+
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
     def test_rebuild_migrates_real_cfr_video_and_preserves_reviewed_identity(self) -> None:
         from app.main import api_rebuild_published_match, publish_local_match, read_match_meta
@@ -101,6 +145,8 @@ class PublishedRebuildTests(unittest.TestCase):
             get_reviewed_identity_status,
         )
         from app.services.identity_reviewed_stats import build_reviewed_stats
+        from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
+        from app.services.identity_review_scope import identity_review_scope_digest
 
         with self._store() as root:
             match_dir = self._local_match(root, "match-1", title="Original", reviewed=True)
@@ -112,7 +158,10 @@ class PublishedRebuildTests(unittest.TestCase):
             # This is intentionally historical nominal metadata: the endpoint
             # must inspect the source rather than trust its frame count.
             meta = read_match_meta(match_dir)
-            meta["video"] = {"fps": 25, "frame_count": 250, "duration_sec": 10, "width": 320, "height": 180}
+            meta["video"] = {
+                "fps": 25, "frame_count": 250, "duration_sec": 10, "width": 320, "height": 180,
+                "source_fingerprint": {"sha256": hashlib.sha256(source.read_bytes()).hexdigest()},
+            }
             (match_dir / "match.json").write_text(json.dumps(meta), encoding="utf-8")
             snapshot = finalize_reviewed_identity(match_dir, meta)
             build_reviewed_stats(match_dir, snapshot, meta, {})
@@ -132,11 +181,35 @@ class PublishedRebuildTests(unittest.TestCase):
             )
             (match_dir / "reviewed_identity_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-            rebuilt = api_rebuild_published_match(published["id"])
+            # Existing historical publication: the contemporary workflow
+            # projection is incomplete, but its authoritative Reviewed
+            # Identity is current. Migration may prove timebase without
+            # rerunning human Review or identity finalization.
+            from fastapi import HTTPException
+            def current_ready_progress(path: Path, document: dict) -> dict:
+                return {
+                    "schema_version": PROGRESS_SCHEMA_VERSION,
+                    "source_snapshot_digest": get_reviewed_identity_status(path)["semantic_digest"],
+                    "source_review_scope_digest": identity_review_scope_digest(document),
+                    "coverage_readiness": {"allows_finalize": True, "status": "ready"},
+                }
+
+            with patch(
+                "app.main._assert_publish_workflow",
+                side_effect=HTTPException(status_code=409, detail="review_not_completed"),
+            ), patch("app.main.build_reviewed_identity_progress", side_effect=current_ready_progress):
+                rebuilt = api_rebuild_published_match(published["id"])
             migrated = read_match_meta(match_dir)
             timing = json.loads((match_dir / "reviewed_player_stats.json").read_text(encoding="utf-8"))["video_timing"]
             identity_status = get_reviewed_identity_status(match_dir)["status"]
             migrated_snapshot = json.loads((match_dir / "reviewed_identity_snapshot.json").read_text(encoding="utf-8"))
+            migrated_progress = json.loads((match_dir / "reviewed_identity_progress.json").read_text(encoding="utf-8"))
+            migrated_readiness = json.loads((match_dir / "reviewed_stats_readiness.json").read_text(encoding="utf-8"))
+            # The migration has refreshed the derived review-progress digest,
+            # so future rebuild authorization takes the normal workflow path
+            # rather than requiring the historical-publication fallback.
+            from app.main import _assert_publish_workflow
+            _assert_publish_workflow(match_dir)
 
         self.assertEqual(rebuilt["id"], "published-match-1")
         self.assertEqual(migrated["video"]["timebase_schema_version"], "1.0.0")
@@ -146,6 +219,24 @@ class PublishedRebuildTests(unittest.TestCase):
         self.assertEqual(timing["source"], "decoded_cfr_timebase")
         self.assertNotEqual(identity_status, "stale")
         self.assertEqual(migrated_snapshot["source"]["identity_source_semantics_version"], "timebase-insensitive-v2")
+        self.assertEqual(migrated_progress["source_snapshot_digest"], migrated_snapshot["semantic_digest"])
+        self.assertEqual(migrated_readiness["source_snapshot_digest"], migrated_snapshot["semantic_digest"])
+        self.assertEqual(migrated_readiness["coverage_readiness"]["status"], "ready")
+        self.assertEqual(rebuilt["public_report"]["identity_coverage_readiness"]["status"], "ready")
+
+    def test_migration_clears_only_a_failure_bound_to_the_superseded_snapshot(self) -> None:
+        from app.main import _clear_pre_migration_recompute_failure
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)
+            failure_path = path / "review_workflow_recompute_failure.json"
+            failure_path.write_text(json.dumps({"source_snapshot_digest": "old", "error": "historical"}), encoding="utf-8")
+            _clear_pre_migration_recompute_failure(path, previous_snapshot_digest="old")
+            self.assertFalse(failure_path.exists())
+
+            failure_path.write_text(json.dumps({"source_snapshot_digest": "new", "error": "current"}), encoding="utf-8")
+            _clear_pre_migration_recompute_failure(path, previous_snapshot_digest="old")
+            self.assertTrue(failure_path.exists())
     def test_rebuild_updates_publication_preserving_stable_identity(self) -> None:
         from app.main import api_rebuild_published_match, publish_local_match
 
@@ -178,6 +269,64 @@ class PublishedRebuildTests(unittest.TestCase):
 
             fetched = get_published_match("published-match-1")
             self.assertEqual(fetched["title"], "Rebuilt title")
+
+    def test_rebuild_rolls_back_restart_candidates_when_publication_replace_fails(self) -> None:
+        from fastapi import HTTPException
+        from app.main import api_rebuild_published_match, publish_local_match
+        from app.services.ball_event_rebuild import PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES, rebuild_ball_event_artifacts
+        from app.services.publish import PublishError
+
+        with self._store() as root:
+            match_dir = self._local_match(root, "match-1", title="Original")
+            publish_local_match("match-1", replace=False)
+            old_publication = self._publication_bytes(root, "published-match-1")
+            restart_path = match_dir / "restart_candidates.json"
+            restart_path.write_bytes(b'{"candidates":[{"candidate_id":"old","setup_start_frame":3,"release_frame":8,"boundary_line":"touchline"}]}')
+            (match_dir / "contact_candidates.json").write_text(json.dumps({"candidates": [{
+                "candidate_id": "contact-a", "stable_player_id": "A01", "stable_subject_id": "A01", "team_label": "A",
+                "start_frame": 0, "end_frame": 2, "start_time_sec": 0.0, "end_time_sec": 0.1,
+                "start_ball_position_m": [10.0, 30.0], "end_ball_position_m": [10.0, 29.0], "mean_confidence": 0.9,
+            }]}), encoding="utf-8")
+            (match_dir / "possession_candidates.json").write_text(json.dumps({
+                "parameters": {"pitch_width_m": 30.0, "pitch_length_m": 47.4},
+                "frames": [{"frame": 0, "time_sec": 0.0, "status": "controlled", "team_label": "A", "ball_position_m": [10.0, 30.0], "confidence": 0.9}],
+            }), encoding="utf-8")
+            (match_dir / "possession_segments.json").write_text(json.dumps({"segments": []}), encoding="utf-8")
+            (match_dir / "match_phase_config.json").write_text(json.dumps({"periods": [{
+                "period_id": "full", "start_time_sec": 0.0, "end_time_sec": 10.0,
+                "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"},
+            }], "summary": {"needs_review": False}}), encoding="utf-8")
+            before_local = {
+                name: (match_dir / name).read_bytes() if (match_dir / name).exists() else None
+                for name in (
+                    "match.json", "reviewed_player_stats.json", "reviewed_player_timeline.json",
+                    "reviewed_player_heatmaps.json", "reviewed_stats_readiness.json", "reviewed_identity_snapshot.json",
+                    "reviewed_output_manifest.json", "reviewed_video_manifest.json", "reviewed_video_job.json",
+                    *PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES,
+                )
+            }
+            package = json.loads((root / "published" / "published-match-1" / "package.json").read_text(encoding="utf-8"))
+            normalized_restart_key = False
+
+            def write_new_derived_files(_path: Path) -> dict:
+                nonlocal normalized_restart_key
+                rebuild_ball_event_artifacts(match_dir, trigger="package_publish")
+                current_restart = json.loads(restart_path.read_text(encoding="utf-8"))
+                normalized_restart_key = str(current_restart["candidates"][0].get("candidate_key") or "").startswith("restart:v1:")
+                return package
+
+            with patch("app.main.resolve_match_video_path", side_effect=FileNotFoundError), patch(
+                "app.main.build_match_package", side_effect=write_new_derived_files
+            ), patch("app.main.import_match_package", side_effect=PublishError("forced publication failure")):
+                with self.assertRaises(HTTPException) as failure:
+                    api_rebuild_published_match("published-match-1")
+
+            self.assertEqual(failure.exception.status_code, 400)
+            self.assertTrue(normalized_restart_key)
+            for name, previous in before_local.items():
+                target = match_dir / name
+                self.assertEqual(target.read_bytes() if target.exists() else None, previous)
+            self.assertEqual(self._publication_bytes(root, "published-match-1"), old_publication)
 
     def test_rebuild_rejects_source_identity_mismatch_without_mutation(self) -> None:
         from fastapi import HTTPException
