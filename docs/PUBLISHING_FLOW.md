@@ -317,6 +317,24 @@ records the backing manifest digest; the read path (`GET
 when possible, returning an explicit conflict otherwise — so pins and the
 user-facing report can never silently split.
 
+### Static deployment mirror
+
+The canonical operational report lives in
+`backend/storage/published/matches/<published_id>/public_report.json`.
+Its client deployment mirror is
+`client/public/published/matches/<published_id>/public_report.json`, with any
+referenced `heatmaps/` files beside it. Physical and merged publications use
+the same staged, atomic promotion: a successful generation never promotes one
+without the other, and their parsed JSON must be semantically identical.
+
+Vite copies `client/public/` to the build output and Vercel deploys the files
+that are committed in that Git revision. A local backend publication or report
+regeneration materializes the mirror but cannot itself update an already
+deployed Vercel bundle. Before deploying a new or regenerated public report,
+commit only its public mirror (the JSON and referenced heatmaps), then verify
+the Vite build contains those files. Never commit the backend publication,
+source package, video, or other private storage artifacts.
+
 ### Deletion
 
 Deleting a group resolves owned `published-merged-*` IDs BEFORE the group
