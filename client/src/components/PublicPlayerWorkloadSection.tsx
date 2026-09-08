@@ -20,6 +20,11 @@ type PublicPlayerWorkloadSectionProps = {
   variant?: 'default' | 'redesigned';
 };
 
+export function redesignedWorkloadHue(intensity: number): number {
+  const clamped = Math.max(0, Math.min(1, intensity));
+  return 150 * clamped * clamped;
+}
+
 export function PublicPlayerWorkloadSection({
   players,
   teamName,
@@ -27,7 +32,10 @@ export function PublicPlayerWorkloadSection({
   variant = 'default',
 }: PublicPlayerWorkloadSectionProps) {
   const [metric, setMetric] = useState<WorkloadMetric>('distance');
-  const workloadPlayers = players.filter((player) => player.workload?.activity_windows.length);
+  const workloadPlayers = players.filter((player) => (
+    player.workload?.activity_windows.length
+    && (variant !== 'redesigned' || player.player_role !== 'goalkeeper')
+  ));
   const windows = workloadPlayers[0]?.workload?.activity_windows || [];
   const mode = workloadPresentationMode(workloadPlayers);
   const metrics = workloadMetrics(mode);
@@ -80,7 +88,11 @@ export function PublicPlayerWorkloadSection({
                         title={title}
                         className={unavailable ? 'workload-unavailable' : metric === 'detectedTime' ? 'workload-evidence-cell' : 'workload-measured'}
                         data-workload-state={unavailable ? 'unavailable' : 'measured'}
-                        style={{ '--workload-intensity': intensity, '--workload-team-color': teamColor || '#38bdf8' } as CSSProperties}
+                        style={{
+                          '--workload-intensity': intensity,
+                          '--redesign-workload-hue': variant === 'redesigned' ? redesignedWorkloadHue(intensity) : undefined,
+                          '--workload-team-color': teamColor || '#38bdf8',
+                        } as CSSProperties}
                       >
                         {windowValue(window, metric, mode)}
                       </td>
@@ -92,13 +104,13 @@ export function PublicPlayerWorkloadSection({
           </tbody>
         </table>
       </div>
-      <div className='player-workload-notes'>
+      {variant !== 'redesigned' ? <div className='player-workload-notes'>
         <p>Macierz pokazuje kolejne pięciominutowe fragmenty dostępnego nagrania. Ostatnie okno może być krótsze.</p>
         <p>Jeśli część meczu nie znajduje się w materiale, raport nie próbuje sztucznie odtwarzać brakujących minut.</p>
         <p>Kolor oznacza niższą lub wyższą zmierzoną aktywność, a nie ocenę dobrej lub złej gry.</p>
         <p>— oznacza za mało danych do wiarygodnego porównania, a nie automatycznie pobyt na ławce.</p>
         <p>Sprint jest liczony z zachowaniem ciągłości wiarygodnych obserwacji i progu dopasowanego do bezpiecznie zmierzonego tempa zawodnika.</p>
-      </div>
+      </div> : null}
     </section>
   );
 }

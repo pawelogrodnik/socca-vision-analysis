@@ -3,11 +3,14 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { RedesignedPublishedReportContent } from '../src/components/RedesignedPublishedReportContent.tsx';
+import { comparisonBarWidth, RedesignedPublishedReportContent, redesignedPossessionDataKeys } from '../src/components/RedesignedPublishedReportContent.tsx';
 import { RedesignedReportVideoMoments } from '../src/components/RedesignedReportVideoMoments.tsx';
 import { embedAtTimestamp } from '../src/components/RedesignedReportVideoMoments.tsx';
+import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
+import { redesignedWorkloadHue } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import {
   isPublishedReportId,
+  momentumDisplayBuckets,
   playerComparableValue,
 } from '../src/lib/redesignedPublicReportPresentation.ts';
 import type { PublicMatchReport, PublicReportPlayer } from '../src/types.ts';
@@ -28,7 +31,7 @@ const report = {
     { moment_id: 'one', time_sec: 202, headline: 'Mocny pressing Corgi', origin: 'manual', public_category: 'other', note: 'Odbiór wysoko.' },
     { moment_id: 'two', time_sec: 940, headline: 'Szybka akcja Verisk', origin: 'manual', public_category: 'other' },
   ] },
-  ball: { possession_timeline: [{ index: 0, minute: 5, label: '5', start_time_sec: 0, end_time_sec: 300, team_a_frames: 57, team_b_frames: 43, known_team_frames: 100, team_a_percent: 57, team_b_percent: 43, cumulative_team_a_frames: 57, cumulative_team_b_frames: 43, cumulative_known_team_frames: 100, cumulative_team_a_percent: 57, cumulative_team_b_percent: 43, free_frames: 0, unknown_frames: 0, team_a_share: 0.57, team_b_share: 0.43, controlled_coverage: 1, controlled_coverage_percent: 100, unknown_coverage: 0 }], attacking_momentum: { experimental: true, quality: 'high', warnings: [], timeline: [{ index: 0, minute: 5, label: '5–10 min', time_sec: 450, start_time_sec: 300, end_time_sec: 600, signed_score: 28, team_a_value: 28, team_b_value: 0, dominant_team_label: 'A' }] } },
+  ball: { possession_timeline: [{ index: 0, minute: 5, label: '5', start_time_sec: 0, end_time_sec: 300, team_a_frames: 57, team_b_frames: 43, known_team_frames: 100, cumulative_team_a_frames: 57, cumulative_team_b_frames: 43, cumulative_known_team_frames: 100, cumulative_team_a_percent: 57, cumulative_team_b_percent: 43, free_frames: 0, unknown_frames: 0, team_a_share: 0.57, team_b_share: 0.43, controlled_coverage: 1, controlled_coverage_percent: 100, unknown_coverage: 0 }], attacking_momentum: { experimental: true, quality: 'high', warnings: [], timeline: [{ index: 0, minute: 5, label: '5–10 min', time_sec: 450, start_time_sec: 300, end_time_sec: 600, signed_score: 28, team_a_value: 28, team_b_value: 0, dominant_team_label: 'A' }] } },
 } as PublicMatchReport;
 
 const player = {
@@ -38,7 +41,15 @@ const player = {
   heatmap: { path: 'published/matches/published-merged-test/heatmaps/kowalski.png', samples: 1, detected_samples: 1, quality: 'available', interactive: { method: 'grid', width: 360, height: 720, grid_width: 10, grid_length: 20, radius: 12, max_value: 1, points: [{ x: 120, y: 250, value: 1 }] } },
 } as PublicReportPlayer;
 
-const reportWithPlayer = { ...report, players: [player] } as PublicMatchReport;
+const goalkeeper = {
+  ...player,
+  player_id: 'keeper',
+  player_name: 'Goalkeeper',
+  player_role: 'goalkeeper',
+  heatmap: { ...player.heatmap!, path: 'published/matches/published-merged-test/heatmaps/keeper.png' },
+} as PublicReportPlayer;
+
+const reportWithPlayer = { ...report, players: [player, goalkeeper] } as PublicMatchReport;
 
 test('route dispatch only selects the redesigned report for published ids', () => {
   assert.equal(isPublishedReportId('published-9c7485e4'), true);
@@ -62,16 +73,42 @@ test('redesigned report removes repeated summaries and uses canonical facts with
   assert.doesNotMatch(html, /Panel admin|Lista meczów|legacy/i);
 });
 
-test('match flow uses a possession area and diverging momentum bars, while comparison retains canonical values', () => {
+test('match flow reads the real cumulative possession contract and uses diverging momentum bars', () => {
   const html = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
     report: reportWithPlayer, externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
   }));
   assert.match(html, /data-chart-kind="possession-area"/);
   assert.match(html, /data-chart-kind="diverging-momentum"/);
+  assert.deepEqual(redesignedPossessionDataKeys, { teamA: 'cumulative_team_a_percent', teamB: 'cumulative_team_b_percent' });
   assert.match(html, /Porównanie drużyn/);
   assert.match(html, /57%/);
   assert.match(html, /102\.6 km/);
   assert.match(html, /redesign-comparison-bar left/);
+  const attempts = html.indexOf('Próby podań');
+  const completed = html.indexOf('Podania celne');
+  const completion = html.indexOf('Skuteczność podań');
+  assert.ok(attempts < completed && completed < completion);
+});
+
+test('momentum display buckets average five-second samples into readable signed one-minute bars', () => {
+  const buckets = momentumDisplayBuckets([
+    { time_sec: 5, signed_score: 20 },
+    { time_sec: 25, signed_score: 40 },
+    { time_sec: 59, signed_score: -30 },
+    { time_sec: 61, signed_score: -18 },
+    { time_sec: 119, signed_score: -42 },
+  ]);
+  assert.deepEqual(buckets, [
+    { start_time_sec: 0, end_time_sec: 60, signed_score: 10 },
+    { start_time_sec: 60, end_time_sec: 120, signed_score: -30 },
+  ]);
+});
+
+test('percentage comparison bars retain their natural zero-to-one-hundred scale', () => {
+  assert.equal(comparisonBarWidth(38, 100), 38);
+  assert.equal(comparisonBarWidth(63, 100), 63);
+  assert.equal(comparisonBarWidth(44, 100), 44);
+  assert.equal(comparisonBarWidth(48, 100), 48);
 });
 
 test('players appear before canonical activity and heatmaps in the redesigned section order', () => {
@@ -83,6 +120,27 @@ test('players appear before canonical activity and heatmaps in the redesigned se
   const heatmaps = html.indexOf('Heatmapy zawodników');
   assert.ok(players >= 0 && players < activity && activity < heatmaps);
   assert.match(html, /redesign-workload-legend/);
+  assert.match(html, /Heatmapa Kowalski/);
+  assert.match(html, /Heatmapa Goalkeeper/);
+  assert.doesNotMatch(html, /Wybór heatmapy zawodnika/);
+});
+
+test('redesigned workload excludes canonical goalkeepers and omits verbose notes', () => {
+  const html = renderToStaticMarkup(createElement(PublicPlayerWorkloadSection, {
+    players: [player, goalkeeper],
+    variant: 'redesigned',
+  }));
+  assert.match(html, /Kowalski/);
+  assert.doesNotMatch(html, /Goalkeeper/);
+  assert.doesNotMatch(html, /Macierz pokazuje kolejne pięciominutowe|Sprint jest liczony/);
+  assert.match(html, /redesign-workload-legend/);
+});
+
+test('redesigned workload palette maps lower measured activity to red/orange and higher activity to green', () => {
+  assert.equal(redesignedWorkloadHue(0), 0);
+  assert.ok(redesignedWorkloadHue(0.35) < 30);
+  assert.ok(redesignedWorkloadHue(0.65) > 60);
+  assert.equal(redesignedWorkloadHue(1), 150);
 });
 
 test('current YouTube is embedded and every canonical moment stays in the scroll list', () => {

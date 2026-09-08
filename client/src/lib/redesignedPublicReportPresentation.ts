@@ -1,5 +1,16 @@
 import type { PublicReportPlayer, PublicReportTeam } from '../types';
 
+type MomentumSample = {
+  time_sec: number;
+  signed_score: number;
+};
+
+export type MomentumDisplayBucket = {
+  start_time_sec: number;
+  end_time_sec: number;
+  signed_score: number;
+};
+
 export function isPublishedReportId(matchId: string | undefined): boolean {
   return Boolean(matchId?.startsWith('published-'));
 }
@@ -30,6 +41,22 @@ export function formatReportSpeed(value: number | null | undefined): string {
 
 export function displayTeamName(team: PublicReportTeam | undefined, fallback: string): string {
   return team?.team_name || team?.team_label || fallback;
+}
+
+export function momentumDisplayBuckets(points: MomentumSample[]): MomentumDisplayBucket[] {
+  const buckets = new Map<number, number[]>();
+  for (const point of points) {
+    if (!Number.isFinite(point.time_sec) || !Number.isFinite(point.signed_score)) continue;
+    const startTimeSec = Math.max(0, Math.floor(point.time_sec / 60) * 60);
+    buckets.set(startTimeSec, [...(buckets.get(startTimeSec) || []), point.signed_score]);
+  }
+  return [...buckets.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([start_time_sec, scores]) => ({
+      start_time_sec,
+      end_time_sec: start_time_sec + 60,
+      signed_score: scores.reduce((total, score) => total + score, 0) / scores.length,
+    }));
 }
 
 export function teamReportColor(team: PublicReportTeam | undefined, fallback: string): string {
