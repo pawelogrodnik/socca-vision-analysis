@@ -2953,10 +2953,10 @@ export type PublicPlayerActivityWindow = {
   total_distance_m: number;
   high_intensity_distance_m: number;
   sprint_count: number;
-  rate_status: 'reportable' | 'insufficient_detected_sample' | string;
-  distance_per_5min_m: number | null;
-  high_intensity_distance_per_5min_m: number | null;
-  sprints_per_5min: number | null;
+  rate_status?: 'reportable' | 'insufficient_detected_sample' | string;
+  distance_per_5min_m?: number | null;
+  high_intensity_distance_per_5min_m?: number | null;
+  sprints_per_5min?: number | null;
 };
 
 export type PublicPlayerWorkload = {

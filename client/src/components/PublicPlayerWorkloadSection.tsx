@@ -3,8 +3,11 @@ import type { PublicReportPlayer } from '../types';
 import {
   exactWindowLabel,
   hasWorkloadMetrics,
+  isUnavailableWorkloadCell,
   metricWindowMaximum,
-  WORKLOAD_METRICS,
+  workloadCellTooltip,
+  workloadMetrics,
+  workloadPresentationMode,
   windowIntensity,
   windowValue,
   type WorkloadMetric,
@@ -24,7 +27,9 @@ export function PublicPlayerWorkloadSection({
   const [metric, setMetric] = useState<WorkloadMetric>('distance');
   const workloadPlayers = players.filter((player) => player.workload?.activity_windows.length);
   const windows = workloadPlayers[0]?.workload?.activity_windows || [];
-  const maximum = useMemo(() => metricWindowMaximum(workloadPlayers, metric), [metric, workloadPlayers]);
+  const mode = workloadPresentationMode(workloadPlayers);
+  const metrics = workloadMetrics(mode);
+  const maximum = useMemo(() => metricWindowMaximum(workloadPlayers, metric, mode), [metric, mode, workloadPlayers]);
   if (!hasWorkloadMetrics(players) || !windows.length) return null;
 
   return (
@@ -32,7 +37,7 @@ export function PublicPlayerWorkloadSection({
       <h2>Aktywność w 5-minutowych oknach{teamName ? ` — ${teamName}` : ''}</h2>
       <p className='muted'>Jak zmieniały się aktywność i obciążenie zawodników w kolejnych fragmentach dostępnego nagrania.</p>
       <div className='chart-filter-bar' aria-label='Metryka aktywności zawodników'>
-        {WORKLOAD_METRICS.map((option) => (
+        {metrics.map((option) => (
           <button
             className={`chart-filter-button${metric === option.key ? ' active' : ''}`}
             key={option.key}
@@ -62,18 +67,19 @@ export function PublicPlayerWorkloadSection({
                   <th scope='row'>{player.player_name}</th>
                   {windows.map((referenceWindow) => {
                     const window = playerWindows.find((item) => item.window_index === referenceWindow.window_index);
-                    const intensity = windowIntensity(window, metric, maximum);
-                    const title = window
-                      ? `${player.player_name}, ${exactWindowLabel(window)} materiału: czas wykryty ${windowValue(window, 'detectedTime')}, dystans ${windowValue(window, 'distance')}, wysoka intensywność ${windowValue(window, 'highIntensity')}, sprinty ${windowValue(window, 'sprints')}.`
-                      : `${player.player_name}, ${exactWindowLabel(referenceWindow)} materiału: brak potwierdzonych danych.`;
+                    const unavailable = isUnavailableWorkloadCell(window, metric, mode);
+                    const intensity = windowIntensity(window, metric, maximum, mode);
+                    const title = workloadCellTooltip(player.player_name, window, referenceWindow, metric, mode);
                     return (
                       <td
                         key={referenceWindow.window_index}
                         aria-label={title}
                         title={title}
+                        className={unavailable ? 'workload-unavailable' : metric === 'detectedTime' ? 'workload-evidence-cell' : 'workload-measured'}
+                        data-workload-state={unavailable ? 'unavailable' : 'measured'}
                         style={{ '--workload-intensity': intensity, '--workload-team-color': teamColor || '#38bdf8' } as CSSProperties}
                       >
-                        {windowValue(window, metric)}
+                        {windowValue(window, metric, mode)}
                       </td>
                     );
                   })}
@@ -86,7 +92,8 @@ export function PublicPlayerWorkloadSection({
       <div className='player-workload-notes'>
         <p>Macierz pokazuje kolejne pięciominutowe fragmenty dostępnego nagrania. Ostatnie okno może być krótsze.</p>
         <p>Jeśli część meczu nie znajduje się w materiale, raport nie próbuje sztucznie odtwarzać brakujących minut.</p>
-        <p>Puste pole oznacza brak potwierdzonych danych zawodnika w danym fragmencie, a nie automatycznie pobyt na ławce.</p>
+        <p>Kolor oznacza niższą lub wyższą zmierzoną aktywność, a nie ocenę dobrej lub złej gry.</p>
+        <p>— oznacza za mało danych do wiarygodnego porównania, a nie automatycznie pobyt na ławce.</p>
         <p>Sprint jest liczony z zachowaniem ciągłości wiarygodnych obserwacji i progu dopasowanego do bezpiecznie zmierzonego tempa zawodnika.</p>
       </div>
     </section>
