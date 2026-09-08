@@ -265,17 +265,26 @@ class MergedPublicMatchTests(unittest.TestCase):
 
                 self.assertEqual(failure.exception.code, "timeline_primitive_invalid")
 
-    def test_heatmap_orientation_not_proven_yields_no_spatial_output(self) -> None:
+    def test_heatmap_different_image_points_with_same_pitch_dimensions_is_available(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=600)
-            _write_source(root, "published-two", "physical-two", duration=300, calibration=_FLIPPED_CALIBRATION_POINTS)
+            _write_source(root, "published-two", "physical-two", duration=300, calibration=_MOVED_CAMERA_CALIBRATION_POINTS)
             group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
             report = ensure_merged_published_match(str(group["group_id"]))["report"]
             player = next(row for row in report["players"] if row["player_id"] == "player-one")
-            # Same dims but different calibration: orientation unproven → None,
-            # never points rendered against fallback dimensions.
+            self.assertEqual(report["merged_provenance"]["spatial_heatmaps"], "merged")
+            self.assertIsNotNone(player["heatmap"])
+            self.assertEqual(player["heatmap"]["samples"], 8)
+
+    def test_heatmap_dimension_mismatch_yields_no_spatial_output(self) -> None:
+        with self._store() as root:
+            _write_source(root, "published-one", "physical-one", duration=600, pitch_dimensions=(30.0, 47.4))
+            _write_source(root, "published-two", "physical-two", duration=300, pitch_dimensions=(30.0, 48.0))
+            group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+            report = ensure_merged_published_match(str(group["group_id"]))["report"]
+            player = next(row for row in report["players"] if row["player_id"] == "player-one")
             self.assertIsNone(player["heatmap"])
-            self.assertIn("unavailable", str(report["merged_provenance"].get("spatial_heatmaps")))
+            self.assertEqual(report["merged_provenance"]["spatial_heatmaps"], "unavailable:pitch_dimensions_mismatch")
 
     def test_heatmap_missing_calibration_yields_no_spatial_output(self) -> None:
         with self._store() as root:
@@ -317,7 +326,13 @@ class MergedPublicMatchTests(unittest.TestCase):
 
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=600)
-            _write_source(root, "published-two", "physical-two", duration=300)
+            _write_source(
+                root,
+                "published-two",
+                "physical-two",
+                duration=300,
+                heatmap_positions=[[20.0, 30.0], [21.0, 31.0]],
+            )
             group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
             seen: dict[str, object] = {}
 
@@ -329,10 +344,14 @@ class MergedPublicMatchTests(unittest.TestCase):
 
             with mock_patch("app.services.merged_public_match._write_player_heatmap_png", side_effect=fake_renderer):
                 ensure_merged_published_match(str(group["group_id"]))
-            # All 8 merged pitch-m samples reach the shared renderer in one call.
+            # Every source sample for this stable player reaches the shared
+            # renderer exactly once.
             merged_rows = seen["rows"]
             assert isinstance(merged_rows, list)
-            self.assertEqual(len(merged_rows), 8)
+            self.assertEqual(
+                [row["pitch_m"] for row in merged_rows],
+                [[5.0, 10.0], [6.0, 11.0], [7.0, 12.0], [8.0, 13.0], [20.0, 30.0], [21.0, 31.0]],
+            )
             merged_kwargs = seen["kwargs"]
             assert isinstance(merged_kwargs, dict)
             self.assertEqual(merged_kwargs["pitch_width_m"], 30.0)
@@ -1069,7 +1088,7 @@ class MergedPublicMatchTests(unittest.TestCase):
 
 
 _SHARED_CALIBRATION_POINTS = [[0.0, 0.0], [100.0, 0.0], [100.0, 200.0], [0.0, 200.0]]
-_FLIPPED_CALIBRATION_POINTS = [[100.0, 0.0], [0.0, 0.0], [0.0, 200.0], [100.0, 200.0]]
+_MOVED_CAMERA_CALIBRATION_POINTS = [[10.0, 5.0], [115.0, 8.0], [108.0, 210.0], [4.0, 205.0]]
 
 
 def _write_source(
@@ -1095,7 +1114,9 @@ def _write_source(
     momentum_local_b: float = -20.0,
     momentum_dominant_local: str = "A",
     calibration: list | None = _SHARED_CALIBRATION_POINTS,
+    pitch_dimensions: tuple[float, float] = (30.0, 50.0),
     heatmap_digest: str | None = "auto",
+    heatmap_positions: list[list[float]] | None = None,
     team_shape_eligible: int = 200,
     team_shape_width: float = 20.0,
     team_shape_cells: tuple[float, float] = (0.6, 0.4),
@@ -1274,12 +1295,12 @@ def _write_source(
             "possession": {"status": "ready", "windows": [{"start_time_sec": 0, "end_time_sec": duration, "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "contested_frames": contested, "free_frames": free, "unknown_frames": unknown, "frames": total_frames}]},
             "attacking_momentum": {"status": "completed", "product_readiness": "experimental", "signal_quality": "medium", "quality": "medium", "points": [{"start_time_sec": 0, "end_time_sec": duration, "team_values_by_team_id": {stable_of_local["A"]: momentum_local_a, stable_of_local["B"]: momentum_local_b}, "dominant_team_id": stable_of_local[momentum_dominant_local], "confidence": 0.9, "intensity": 0.8}]},
         },
-        "spatial": {"orientation": "unproven", "heatmaps": {"status": "not_available"}, "team_shape": {"status": "not_available"}, "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0}},
+        "spatial": {"orientation": "unproven", "heatmaps": {"status": "not_available"}, "team_shape": {"status": "not_available"}, "pitch_dimensions_m": {"width_m": pitch_dimensions[0], "length_m": pitch_dimensions[1]}},
         "metric_readiness": {"team_movement": {"status": "ready"}, "player_movement": {"status": "ready"}, "possession": {"status": "ready"}, "passes": {"status": "ready"}},
     }
     aggregate["source"]["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
     pitch_config = (
-        {"image_points": [list(point) for point in calibration], "width_m": 30.0, "length_m": 50.0, "calibration_frame_time_sec": 1.0}
+        {"image_points": [list(point) for point in calibration], "width_m": pitch_dimensions[0], "length_m": pitch_dimensions[1], "calibration_frame_time_sec": 1.0}
         if calibration is not None
         else None
     )
@@ -1289,8 +1310,8 @@ def _write_source(
     heatmaps_doc = {
         "schema_version": "1.0.0",
         "source_snapshot_digest": heatmap_digest_value,
-        "pitch_dimensions_m": {"width_m": 30.0, "length_m": 50.0},
-        "heatmaps": [{"player_id": "player-one", "positions_m": [[5.0 + index, 10.0 + index] for index in range(4)]}],
+        "pitch_dimensions_m": {"width_m": pitch_dimensions[0], "length_m": pitch_dimensions[1]},
+        "heatmaps": [{"player_id": "player-one", "positions_m": heatmap_positions or [[5.0 + index, 10.0 + index] for index in range(4)]}],
     }
     team_shape_doc = _team_shape_fixture(duration, eligible=team_shape_eligible, width=team_shape_width, cells=team_shape_cells) if team_shape_eligible else None
     package = {
