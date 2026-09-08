@@ -3432,6 +3432,11 @@ summary:focus-visible {
   background: color-mix(in srgb, var(--workload-team-color) calc(var(--workload-intensity) * 28%), #020617);
   color: #f8fafc;
 }
+.workload-matrix td.workload-unavailable,
+.workload-matrix td.workload-evidence-cell {
+  background: #111827;
+  color: #cbd5e1;
+}
 .workload-matrix tr:last-child td,
 .workload-matrix tr:last-child th {
   border-bottom: 0;
