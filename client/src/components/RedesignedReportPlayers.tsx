@@ -3,7 +3,6 @@ import type { PublicReportPlayer, PublicReportTeam } from '../types';
 import { displayJerseyNumber, publicReportPlayersForTeam, publicReportTeamKey } from '../lib/publicReportPresentation';
 import { formatRate, formatWorkloadSeconds } from '../lib/publicPlayerWorkloadPresentation';
 import { formatReportKilometers, formatReportSpeed, playerComparableValue } from '../lib/redesignedPublicReportPresentation';
-import { PublicPlayerHeatmap } from './PublicPlayerHeatmap';
 
 type SortKey = 'player_name' | 'detected_time_sec' | 'total_distance_m' | 'distance_per_5min_m' | 'high_intensity_distance_per_5min_m' | 'sprints_per_5min' | 'peak_speed_kmh';
 
@@ -54,16 +53,12 @@ type PlayersProps = {
   selectedTeam: PublicReportTeam | undefined;
   selectedTeamKey: string | null;
   onSelectTeam: (key: string) => void;
-  assetHref: (path: string) => string;
 };
 
-export function RedesignedReportPlayers({ players, teams, selectedTeam, selectedTeamKey, onSelectTeam, assetHref }: PlayersProps) {
+export function RedesignedReportPlayers({ players, teams, selectedTeam, selectedTeamKey, onSelectTeam }: PlayersProps) {
   const [sort, setSort] = useState<{ key: SortKey; direction: 'ascending' | 'descending' }>({ key: 'distance_per_5min_m', direction: 'descending' });
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const visiblePlayers = useMemo(() => publicReportPlayersForTeam(players, selectedTeam), [players, selectedTeam]);
   const sortedPlayers = useMemo(() => sortPlayers(visiblePlayers, sort.key, sort.direction), [sort, visiblePlayers]);
-  const heatmapPlayers = visiblePlayers.filter((player) => Boolean(player.heatmap?.interactive?.points.length || player.heatmap?.path));
-  const selectedHeatmap = heatmapPlayers.find((player) => player.player_id === selectedPlayerId) || heatmapPlayers[0];
   const chooseSort = (key: SortKey) => setSort((current) => ({ key, direction: current.key === key && current.direction === 'descending' ? 'ascending' : 'descending' }));
 
   return <>
@@ -82,12 +77,5 @@ export function RedesignedReportPlayers({ players, teams, selectedTeam, selected
       </div>
       <p className='redesign-note'>„Czas wykryty” opisuje tylko fragmenty, w których zawodnik został rozpoznany; nie jest czasem gry.</p>
     </section>
-    {heatmapPlayers.length ? <section className='redesign-section redesign-heatmaps-section' aria-labelledby='redesign-heatmaps-title'>
-      <div className='redesign-section-heading'><div><p className='redesign-kicker'>Pozycje na boisku</p><h2 id='redesign-heatmaps-title'>Heatmapy zawodników</h2></div></div>
-      {selectedHeatmap ? <div className='redesign-selected-heatmap'>
-        <div><h3>{playerName(selectedHeatmap)}</h3><p>{selectedTeam?.team_name || selectedTeam?.team_label || ''}</p><PublicPlayerHeatmap alt={`Heatmapa ${playerName(selectedHeatmap)}`} heatmap={selectedHeatmap.heatmap} fallbackSrc={selectedHeatmap.heatmap?.path ? assetHref(selectedHeatmap.heatmap.path) : undefined} /></div>
-        <div className='redesign-heatmap-selector' aria-label='Wybór heatmapy zawodnika'>{heatmapPlayers.map((player) => <button className={player.player_id === selectedHeatmap.player_id ? 'active' : ''} type='button' onClick={() => setSelectedPlayerId(player.player_id)} key={player.player_id}>{playerName(player)}</button>)}</div>
-      </div> : null}
-    </section> : null}
   </>;
 }

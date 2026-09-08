@@ -9,7 +9,6 @@ import { embedAtTimestamp } from '../src/components/RedesignedReportVideoMoments
 import {
   isPublishedReportId,
   playerComparableValue,
-  publicReportInsights,
 } from '../src/lib/redesignedPublicReportPresentation.ts';
 import type { PublicMatchReport, PublicReportPlayer } from '../src/types.ts';
 
@@ -29,8 +28,17 @@ const report = {
     { moment_id: 'one', time_sec: 202, headline: 'Mocny pressing Corgi', origin: 'manual', public_category: 'other', note: 'Odbiór wysoko.' },
     { moment_id: 'two', time_sec: 940, headline: 'Szybka akcja Verisk', origin: 'manual', public_category: 'other' },
   ] },
-  ball: { possession_timeline: [], attacking_momentum: { experimental: true, quality: 'high', warnings: [], timeline: [{ index: 0, minute: 5, label: '5–10 min', time_sec: 450, start_time_sec: 300, end_time_sec: 600, signed_score: 28, team_a_value: 28, team_b_value: 0, dominant_team_label: 'A' }] } },
+  ball: { possession_timeline: [{ index: 0, minute: 5, label: '5', start_time_sec: 0, end_time_sec: 300, team_a_frames: 57, team_b_frames: 43, known_team_frames: 100, team_a_percent: 57, team_b_percent: 43, cumulative_team_a_frames: 57, cumulative_team_b_frames: 43, cumulative_known_team_frames: 100, cumulative_team_a_percent: 57, cumulative_team_b_percent: 43, free_frames: 0, unknown_frames: 0, team_a_share: 0.57, team_b_share: 0.43, controlled_coverage: 1, controlled_coverage_percent: 100, unknown_coverage: 0 }], attacking_momentum: { experimental: true, quality: 'high', warnings: [], timeline: [{ index: 0, minute: 5, label: '5–10 min', time_sec: 450, start_time_sec: 300, end_time_sec: 600, signed_score: 28, team_a_value: 28, team_b_value: 0, dominant_team_label: 'A' }] } },
 } as PublicMatchReport;
+
+const player = {
+  player_id: 'kowalski', player_name: 'Kowalski', team_id: 'A', team_name: 'Corgi', playing_time_sec: 300, detected_time_sec: 300,
+  total_distance_m: 520, avg_speed_kmh: 4, peak_speed_kmh: 23, high_intensity_distance_m: 88, sprint_count: 2,
+  workload: { semantics: 'reviewed', rate_window_sec: 300, minimum_rate_sample_sec: 120, detected_time_sec: 300, distance_per_5min_m: 520, high_intensity_distance_per_5min_m: 88, sprints_per_5min: 2, high_intensity_distance_ratio: 0.17, activity_windows: [{ window_index: 0, start_time_sec: 0, end_time_sec: 300, duration_sec: 300, display_label: '0–5', detected_time_sec: 300, total_distance_m: 520, high_intensity_distance_m: 88, sprint_count: 2, rate_status: 'reportable', distance_per_5min_m: 520, high_intensity_distance_per_5min_m: 88, sprints_per_5min: 2 }], best_activity_window: null },
+  heatmap: { path: 'published/matches/published-merged-test/heatmaps/kowalski.png', samples: 1, detected_samples: 1, quality: 'available', interactive: { method: 'grid', width: 360, height: 720, grid_width: 10, grid_length: 20, radius: 12, max_value: 1, points: [{ x: 120, y: 250, value: 1 }] } },
+} as PublicReportPlayer;
+
+const reportWithPlayer = { ...report, players: [player] } as PublicMatchReport;
 
 test('route dispatch only selects the redesigned report for published ids', () => {
   assert.equal(isPublishedReportId('published-9c7485e4'), true);
@@ -39,9 +47,9 @@ test('route dispatch only selects the redesigned report for published ids', () =
   assert.equal(isPublishedReportId(undefined), false);
 });
 
-test('redesigned report uses canonical facts without score, MVP, or half language', () => {
+test('redesigned report removes repeated summaries and uses canonical facts without score, MVP, half, or provenance language', () => {
   const html = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
-    report,
+    report: reportWithPlayer,
     externalVideo: null,
     editorAllowed: false,
     onEditKeyMoments: () => undefined,
@@ -49,8 +57,32 @@ test('redesigned report uses canonical facts without score, MVP, or half languag
   assert.match(html, /Corgi vs Verisk/);
   assert.match(html, /Czas analizy: 35 min 50 s/);
   assert.match(html, /Najważniejsze momenty/);
+  assert.doesNotMatch(html, /Szybkie podsumowanie|Najważniejsze wnioski|Scalony mecz|fragmentów/);
   assert.doesNotMatch(html, /MVP|Wynik|pierwsza połowa|druga połowa|przerwa/i);
   assert.doesNotMatch(html, /Panel admin|Lista meczów|legacy/i);
+});
+
+test('match flow uses a possession area and diverging momentum bars, while comparison retains canonical values', () => {
+  const html = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: reportWithPlayer, externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  assert.match(html, /data-chart-kind="possession-area"/);
+  assert.match(html, /data-chart-kind="diverging-momentum"/);
+  assert.match(html, /Porównanie drużyn/);
+  assert.match(html, /57%/);
+  assert.match(html, /102\.6 km/);
+  assert.match(html, /redesign-comparison-bar left/);
+});
+
+test('players appear before canonical activity and heatmaps in the redesigned section order', () => {
+  const html = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: reportWithPlayer, externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  const players = html.indexOf('Statystyki zawodników');
+  const activity = html.indexOf('Aktywność w 5-minutowych oknach');
+  const heatmaps = html.indexOf('Heatmapy zawodników');
+  assert.ok(players >= 0 && players < activity && activity < heatmaps);
+  assert.match(html, /redesign-workload-legend/);
 });
 
 test('current YouTube is embedded and every canonical moment stays in the scroll list', () => {
@@ -96,13 +128,7 @@ test('a moment click has a deterministic YouTube playback URL with the logical t
   );
 });
 
-test('insights stay deterministic and unavailable player rates remain unavailable', () => {
-  const insights = publicReportInsights(report);
-  assert.deepEqual(insights.map((item) => item.title), [
-    'Corgi miało większe posiadanie',
-    'Corgi miało wyższą skuteczność podań',
-    'Największa intensywność: Corgi',
-  ]);
+test('unavailable player rates remain unavailable while measured zero remains a real value', () => {
   const unavailable = { player_id: 'p', player_name: 'P', playing_time_sec: 10, detected_time_sec: 10, total_distance_m: 4, avg_speed_kmh: 1, peak_speed_kmh: 2, high_intensity_distance_m: 0, sprint_count: 0, workload: { distance_per_5min_m: null } } as PublicReportPlayer;
   assert.equal(playerComparableValue(unavailable, 'distance_per_5min_m'), null);
   assert.equal(playerComparableValue({ ...unavailable, workload: { distance_per_5min_m: 0 } } as PublicReportPlayer, 'distance_per_5min_m'), 0);

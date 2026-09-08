@@ -17,12 +17,14 @@ type PublicPlayerWorkloadSectionProps = {
   players: PublicReportPlayer[];
   teamName?: string | null;
   teamColor?: string | null;
+  variant?: 'default' | 'redesigned';
 };
 
 export function PublicPlayerWorkloadSection({
   players,
   teamName,
   teamColor,
+  variant = 'default',
 }: PublicPlayerWorkloadSectionProps) {
   const [metric, setMetric] = useState<WorkloadMetric>('distance');
   const workloadPlayers = players.filter((player) => player.workload?.activity_windows.length);
@@ -33,7 +35,7 @@ export function PublicPlayerWorkloadSection({
   if (!hasWorkloadMetrics(players) || !windows.length) return null;
 
   return (
-    <section className='card player-workload-card'>
+    <section className={`card player-workload-card${variant === 'redesigned' ? ' redesign-workload-card' : ''}`}>
       <h2>Aktywność w 5-minutowych oknach{teamName ? ` — ${teamName}` : ''}</h2>
       <p className='muted'>Jak zmieniały się aktywność i obciążenie zawodników w kolejnych fragmentach dostępnego nagrania.</p>
       <div className='chart-filter-bar' aria-label='Metryka aktywności zawodników'>
@@ -49,6 +51,7 @@ export function PublicPlayerWorkloadSection({
           </button>
         ))}
       </div>
+      {variant === 'redesigned' ? <div className='redesign-workload-legend' aria-label='Skala intensywności'><span>Niższa</span><i /><i /><i /><i /><span>Wyższa</span></div> : null}
       <div className='workload-matrix-wrap'>
         <table className='workload-matrix'>
           <thead>
