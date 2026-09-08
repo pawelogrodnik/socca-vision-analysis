@@ -5,10 +5,12 @@ import {
   hasWorkloadMetrics,
   isUnavailableWorkloadCell,
   metricWindowMaximum,
+  metricWindowRange,
   workloadCellTooltip,
   workloadMetrics,
   workloadPresentationMode,
   windowIntensity,
+  windowRelativeIntensity,
   windowValue,
   type WorkloadMetric,
 } from '../lib/publicPlayerWorkloadPresentation';
@@ -22,7 +24,7 @@ type PublicPlayerWorkloadSectionProps = {
 
 export function redesignedWorkloadHue(intensity: number): number {
   const clamped = Math.max(0, Math.min(1, intensity));
-  return 150 * clamped * clamped;
+  return 150 * clamped;
 }
 
 export function PublicPlayerWorkloadSection({
@@ -40,6 +42,7 @@ export function PublicPlayerWorkloadSection({
   const mode = workloadPresentationMode(workloadPlayers);
   const metrics = workloadMetrics(mode);
   const maximum = useMemo(() => metricWindowMaximum(workloadPlayers, metric, mode), [metric, mode, workloadPlayers]);
+  const range = useMemo(() => metricWindowRange(workloadPlayers, metric, mode), [metric, mode, workloadPlayers]);
   if (!hasWorkloadMetrics(players) || !windows.length) return null;
 
   return (
@@ -79,7 +82,9 @@ export function PublicPlayerWorkloadSection({
                   {windows.map((referenceWindow) => {
                     const window = playerWindows.find((item) => item.window_index === referenceWindow.window_index);
                     const unavailable = isUnavailableWorkloadCell(window, metric, mode);
-                    const intensity = windowIntensity(window, metric, maximum, mode);
+                    const intensity = variant === 'redesigned'
+                      ? windowRelativeIntensity(window, metric, range, mode)
+                      : windowIntensity(window, metric, maximum, mode);
                     const title = workloadCellTooltip(player.player_name, window, referenceWindow, metric, mode);
                     return (
                       <td

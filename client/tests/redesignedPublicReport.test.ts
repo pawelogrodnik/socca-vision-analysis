@@ -138,8 +138,8 @@ test('redesigned workload excludes canonical goalkeepers and omits verbose notes
 
 test('redesigned workload palette maps lower measured activity to red/orange and higher activity to green', () => {
   assert.equal(redesignedWorkloadHue(0), 0);
-  assert.ok(redesignedWorkloadHue(0.35) < 30);
-  assert.ok(redesignedWorkloadHue(0.65) > 60);
+  assert.ok(redesignedWorkloadHue(0.35) > 45);
+  assert.ok(redesignedWorkloadHue(0.65) > 95);
   assert.equal(redesignedWorkloadHue(1), 150);
 });
 

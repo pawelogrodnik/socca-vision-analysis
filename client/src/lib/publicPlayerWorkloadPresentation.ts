@@ -4,6 +4,7 @@ export type WorkloadMetric = 'distance' | 'detectedTime' | 'highIntensity' | 'sp
 export type WorkloadPresentationMode = 'normalized' | 'legacy';
 export type ReportablePlayerWorkloadMetric = 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5';
 export type PublicPlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5' | 'peakSpeed';
+export type WorkloadMetricRange = { minimum: number; maximum: number };
 
 export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distance', label: 'Dystans / 5 min' },
@@ -137,6 +138,17 @@ export function windowIntensity(
   return maximum > 0 ? Math.min(1, value / maximum) : 0;
 }
 
+export function windowRelativeIntensity(
+  window: PublicPlayerActivityWindow | undefined,
+  metric: WorkloadMetric,
+  range: WorkloadMetricRange,
+  mode: WorkloadPresentationMode,
+): number {
+  const value = windowMetricValue(window, metric, mode);
+  if (value === null || range.maximum <= range.minimum) return 0.5;
+  return Math.max(0, Math.min(1, (value - range.minimum) / (range.maximum - range.minimum)));
+}
+
 export function metricWindowMaximum(
   players: PublicReportPlayer[],
   metric: WorkloadMetric,
@@ -149,6 +161,19 @@ export function metricWindowMaximum(
       .map((window) => windowMetricValue(window, metric, mode))
       .filter((value): value is number => value !== null),
   );
+}
+
+export function metricWindowRange(
+  players: PublicReportPlayer[],
+  metric: WorkloadMetric,
+  mode: WorkloadPresentationMode,
+): WorkloadMetricRange {
+  const values = players
+    .flatMap((player) => player.workload?.activity_windows || [])
+    .map((window) => windowMetricValue(window, metric, mode))
+    .filter((value): value is number => value !== null);
+  if (!values.length) return { minimum: 0, maximum: 0 };
+  return { minimum: Math.min(...values), maximum: Math.max(...values) };
 }
 
 export function isUnavailableWorkloadCell(

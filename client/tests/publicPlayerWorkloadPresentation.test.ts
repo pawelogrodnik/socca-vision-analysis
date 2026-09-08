@@ -14,9 +14,11 @@ import {
   hasWorkloadMetrics,
   isUnavailableWorkloadCell,
   metricWindowMaximum,
+  metricWindowRange,
   playerChartEmptyMessage,
   visiblePlayerChartMetric,
   windowIntensity,
+  windowRelativeIntensity,
   windowValue,
   workloadCellTooltip,
   workloadPresentationMode,
@@ -186,6 +188,31 @@ test('canonical activity matrix preserves reportable partial samples, unavailabl
   });
   assert.match(view.container.innerHTML, />0\.0</);
   assert.match(view.container.innerHTML, />—</);
+});
+
+test('redesigned workload intensity spans the measured range instead of grouping all high values as green', () => {
+  const lower = {
+    ...player,
+    player_id: 'lower',
+    workload: {
+      ...player.workload!,
+      activity_windows: [{ ...player.workload!.activity_windows[0], distance_per_5min_m: 300 }],
+    },
+  } as PublicReportPlayer;
+  const higher = {
+    ...player,
+    player_id: 'higher',
+    workload: {
+      ...player.workload!,
+      activity_windows: [{ ...player.workload!.activity_windows[0], distance_per_5min_m: 600 }],
+    },
+  } as PublicReportPlayer;
+  const range = metricWindowRange([lower, player, higher], 'distance', 'normalized');
+
+  assert.deepEqual(range, { minimum: 300, maximum: 600 });
+  assert.equal(windowRelativeIntensity(lower.workload!.activity_windows[0], 'distance', range, 'normalized'), 0);
+  assert.ok(windowRelativeIntensity(player.workload!.activity_windows[0], 'distance', range, 'normalized') > 0.5);
+  assert.equal(windowRelativeIntensity(higher.workload!.activity_windows[0], 'distance', range, 'normalized'), 1);
 });
 
 test('HI, sprints, and detected time use their canonical semantics', async () => {
