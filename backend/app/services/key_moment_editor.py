@@ -30,6 +30,7 @@ EDITORIAL_DIRECTORY = config.STORAGE_DIR / "editorial" / "key-moments"
 MOMENT_CATEGORIES = {
     "goal_for_us", "goal_for_opponent", "chance", "good_action", "mistake",
     "goalkeeper_intervention", "defensive_action", "tactical_note", "other",
+    "momentum_peak", "possession_dominance",
 }
 
 

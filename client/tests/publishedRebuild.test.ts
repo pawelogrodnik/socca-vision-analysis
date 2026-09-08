@@ -5,6 +5,7 @@ import React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { PublishedMatchReportPage } from '../src/components/PublishedMatchReportPage.tsx';
+import { KeyMomentsEditorModal } from '../src/components/KeyMomentsEditorModal.tsx';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -86,6 +87,30 @@ test('dev URL keeps the normal report when the Key Moments backend is unavailabl
     await waitFor(() => assert.ok(view.getAllByText('Raport').length > 0));
     assert.equal(view.queryByRole('button', { name: 'Edytuj momenty' }), null);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('Key Moments editor keeps timestamp text while typing and saves the parsed final value', async () => {
+  let saved: { moments: Array<{ time_sec: number }> } | null = null;
+  const report = publishedDetail('Raport').public_report;
+  const view = render(React.createElement(KeyMomentsEditorModal, {
+    state: {
+      key_moment_editor_allowed: true,
+      revision: 'revision-1',
+      moments: [{ moment_id: 'generated-1', time_sec: 40, category: 'momentum_peak', headline: 'Mocny okres', origin: 'generated' }],
+    },
+    report,
+    onClose: () => undefined,
+    onSave: async (draft) => { saved = draft; },
+  }));
+  const timestamp = view.getByLabelText('Czas') as HTMLInputElement;
+  fireEvent.input(timestamp, { target: { value: '' } });
+  for (const character of '12:34.5') {
+    fireEvent.input(timestamp, { target: { value: `${timestamp.value}${character}` } });
+  }
+  assert.equal(timestamp.value, '12:34.5');
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz' }));
+  await waitFor(() => assert.ok(saved));
+  assert.equal(saved?.moments[0].time_sec, 754.5);
 });
 
 test('published report rebuilds through the dedicated endpoint and shows the new report', async () => {

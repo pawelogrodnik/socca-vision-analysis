@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyMomentEditorialMoment, KeyMomentEditorState, PublicMatchReport } from '../types';
 
 type Props = {
@@ -12,7 +12,8 @@ type Props = {
 const categories = [
   ['goal_for_us', 'Gol dla nas'], ['goal_for_opponent', 'Gol dla rywali'], ['chance', 'Okazja'],
   ['good_action', 'Dobra akcja'], ['mistake', 'Błąd'], ['goalkeeper_intervention', 'Interwencja bramkarza'],
-  ['defensive_action', 'Akcja defensywna'], ['tactical_note', 'Notatka taktyczna'], ['other', 'Inne'],
+  ['defensive_action', 'Akcja defensywna'], ['tactical_note', 'Notatka taktyczna'],
+  ['momentum_peak', 'Mocny okres'], ['possession_dominance', 'Przewaga w posiadaniu'], ['other', 'Inne'],
 ];
 
 function parseTime(value: string): number | null {
@@ -31,8 +32,14 @@ function ordered(moments: KeyMomentEditorialMoment[]) {
   return [...moments].sort((left, right) => left.time_sec - right.time_sec || (left.moment_id || '').localeCompare(right.moment_id || ''));
 }
 
+function timestampKey(moment: KeyMomentEditorialMoment, index: number) {
+  return moment.moment_id || `new-${index}`;
+}
+
 export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose, onSave }: Props) {
   const [moments, setMoments] = useState<KeyMomentEditorialMoment[]>(() => state.moments || []);
+  const [timestampTexts, setTimestampTexts] = useState<Record<string, string>>({});
+  const timestampTextsRef = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const dirty = useMemo(() => JSON.stringify(ordered(moments)) !== JSON.stringify(ordered(state.moments || [])), [moments, state.moments]);
@@ -59,11 +66,36 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
     setMoments((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   }
 
+  function commitTimestamp(index: number) {
+    const key = timestampKey(moments[index], index);
+    const text = timestampTextsRef.current[key];
+    if (text === undefined) return true;
+    const parsed = parseTime(text);
+    if (parsed === null) {
+      setError('Podaj czas jako MM:SS, MM:SS.s lub liczbę sekund.');
+      return false;
+    }
+    update(index, { time_sec: parsed });
+    setTimestampTexts((values) => {
+      const { [key]: _, ...rest } = values;
+      timestampTextsRef.current = rest;
+      return rest;
+    });
+    return true;
+  }
+
   async function save() {
     if (!state.revision) return;
     setSaving(true); setError('');
     try {
-      await onSave({ expected_revision: state.revision, moments: ordered(moments) });
+      const draft = moments.map((moment, index) => {
+        const text = timestampTextsRef.current[timestampKey(moment, index)];
+        if (text === undefined) return moment;
+        const parsed = parseTime(text);
+        if (parsed === null) throw new Error('Podaj czas jako MM:SS, MM:SS.s lub liczbę sekund.');
+        return { ...moment, time_sec: parsed };
+      });
+      await onSave({ expected_revision: state.revision, moments: ordered(draft) });
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Nie udało się zapisać zmian.');
     } finally { setSaving(false); }
@@ -79,9 +111,14 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
       <div className='key-moment-editor-list'>
         {ordered(moments).map((moment) => {
           const index = moments.indexOf(moment);
+          const key = timestampKey(moment, index);
           return <article className='key-moment-editor-row' key={moment.moment_id || `new-${index}`}>
             <strong>{formatTime(moment.time_sec)}{moment.origin === 'generated' ? ' · Automatyczny' : ''}</strong>
-            <label>Czas <input value={formatTime(moment.time_sec)} onChange={(event) => { const next = parseTime(event.target.value); if (next != null) update(index, { time_sec: next }); }} /></label>
+            <label>Czas <input value={timestampTexts[key] ?? formatTime(moment.time_sec)} onInput={(event) => {
+              const value = event.currentTarget.value;
+              timestampTextsRef.current = { ...timestampTextsRef.current, [key]: value };
+              setTimestampTexts((values) => ({ ...values, [key]: value }));
+            }} onBlur={() => { void commitTimestamp(index); }} /></label>
             <label>Tytuł <input value={moment.headline} onChange={(event) => update(index, { headline: event.target.value })} /></label>
             <label>Kategoria <select value={moment.category} onChange={(event) => update(index, { category: event.target.value })}>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <label>Notatka <input value={moment.note || ''} onChange={(event) => update(index, { note: event.target.value })} /></label>
