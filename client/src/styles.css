@@ -2076,6 +2076,23 @@ summary:focus-visible {
   padding: 3px 5px;
   font-size: 11px;
 }
+.public-heatmap-published img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.public-heatmap-published-marker {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #f8fafc;
+  border: 2px solid #0f172a;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
 .public-chart {
   width: 100%;
   height: 320px;
@@ -3746,6 +3763,10 @@ summary:focus-visible {
   .public-heatmap-average-marker {
     fill: #111827;
     stroke: #ffffff;
+  }
+  .public-heatmap-published-marker {
+    background: #111827;
+    border-color: #ffffff;
   }
   .public-heatmap-average-legend {
     border: 1px solid #d1d5db;

@@ -205,3 +205,41 @@ test('unavailable player rates remain unavailable while measured zero remains a 
   assert.equal(playerComparableValue(unavailable, 'distance_per_5min_m'), null);
   assert.equal(playerComparableValue({ ...unavailable, workload: { distance_per_5min_m: 0 } } as PublicReportPlayer, 'distance_per_5min_m'), 0);
 });
+
+test('redesigned heatmaps prefer canonical published PNGs and never render the canvas instead', () => {
+  const html = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: reportWithPlayer, externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  assert.match(html, /Heatmapa Kowalski/);
+  assert.match(html, /Heatmapa Goalkeeper/);
+  assert.match(html, /published-merged-test\/heatmaps\/kowalski\.png/);
+  assert.match(html, /published-merged-test\/heatmaps\/keeper\.png/);
+  assert.doesNotMatch(html, /public-heatmap-canvas/);
+  assert.doesNotMatch(html, /Wybór heatmapy zawodnika/);
+});
+
+test('redesigned report renders Team Shape only when the canonical report carries it', () => {
+  const withoutShape = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: reportWithPlayer, externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  assert.doesNotMatch(withoutShape, /Ustawienie drużyn/);
+
+  const teamShape = {
+    available: true,
+    scope: 'all_in_play',
+    pitch_dimensions_m: { width_m: 30, length_m: 47.4 },
+    teams: ['A', 'B'].map((label) => ({
+      team_label: label,
+      team_name: label === 'A' ? 'Corgi' : 'Verisk',
+      summary: { average_width_m: 20.5, average_depth_m: 18, average_compactness_m: 7, average_block_height_percent: 56.4 },
+      average_shape: { grid: { columns: 6, rows: 10 }, cells: [{ column: 2, row: 7, value: 0.38 }] },
+      timeline: [{ label: '00:00', width_m: 20.5, depth_m: 18, compactness_m: 7, block_height_percent: 56.4 }],
+    })),
+    takeaways: [],
+  };
+  const withShape = renderToStaticMarkup(createElement(RedesignedPublishedReportContent, {
+    report: { ...reportWithPlayer, team_shape: teamShape } as PublicMatchReport,
+    externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
+  }));
+  assert.match(withShape, /Ustawienie drużyn/);
+});

@@ -25,7 +25,7 @@ export function RedesignedReportHeatmaps({ players, assetHref }: Props) {
         {heatmapPlayers.map((player) => (
           <article className='redesign-heatmap-card' key={player.player_id}>
             <h3>{playerName(player)}</h3>
-            <PublicPlayerHeatmap alt={`Heatmapa ${playerName(player)}`} heatmap={player.heatmap} fallbackSrc={player.heatmap?.path ? assetHref(player.heatmap.path) : undefined} />
+            <PublicPlayerHeatmap alt={`Heatmapa ${playerName(player)}`} heatmap={player.heatmap} fallbackSrc={player.heatmap?.path ? assetHref(player.heatmap.path) : undefined} presentation='published' />
           </article>
         ))}
       </div>
