@@ -59,8 +59,8 @@ Aggregation contract matrix (every canonical field):
                                     roles (A >= 0, B <= 0)
     possession coverage ........... controlled/total vs known/total with
                                     contested+free known-but-uncontrolled
-    heatmaps ...................... ONLY with proven calibration identity +
-                                    valid spatial lineage; merged pitch-m
+    heatmaps ...................... ONLY with valid per-fragment calibration,
+                                    matching pitch dimensions + valid spatial lineage; merged pitch-m
                                     samples → shared renderer, else None
     average position .............. RECOMPUTE from merged samples (pitch m)
     team_shape .................... evidence-weighted (eligible valid frame
@@ -1138,10 +1138,10 @@ def collect_merged_heatmap_rows(
     1. heatmap lineage: ``reviewed_player_heatmaps.source_snapshot_digest``
        equals the pinned ``reviewed_identity_digest`` (raises fail-closed
        on mismatch — see :func:`validate_spatial_lineage`);
-    2. orientation proof: byte-identical pitch calibration geometry
-       (image points + dimensions, i.e. the identical homography, hence
-       identical pitch axes/origin).  Matching dimensions alone prove
-       nothing about orientation and never enable a merge.
+    2. calibration: a valid four-point image calibration with dimensions
+       matching the reviewed heatmap payload; camera image points may differ
+       between recordings of the same pitch;
+    3. pitch dimensions: matching positive width and length in meters.
     """
 
     status = _heatmap_merge_status(sources)
@@ -1242,7 +1242,7 @@ def _heatmap_lineage_proven(source: dict[str, Any]) -> bool:
 
 
 def _heatmap_merge_status(sources: list[dict[str, Any]]) -> dict[str, Any]:
-    identities: list[str] = []
+    dimensions: list[dict[str, float]] = []
     for source in sources:
         heatmaps = _record(source["package"].get("reviewed_player_heatmaps"))
         if not isinstance(source["package"].get("reviewed_player_heatmaps"), dict):
@@ -1252,41 +1252,30 @@ def _heatmap_merge_status(sources: list[dict[str, Any]]) -> dict[str, Any]:
             # require an explicit source_snapshot_digest match.  The merge
             # itself still succeeds; only spatial output is unavailable.
             return {"status": "unavailable", "reason": "spatial_lineage_unproven"}
-        pitch = _record(heatmaps.get("pitch_dimensions_m"))
-        width = _number_or_none(pitch.get("width_m"))
-        length = _number_or_none(pitch.get("length_m"))
-        calibration = _calibration_identity(_record(source["package"].get("pitch_config")), width=width, length=length)
-        if calibration is None:
+        pitch = _heatmap_pitch_dims(source)
+        if pitch is None or not _valid_pitch_calibration(
+            _record(source["package"].get("pitch_config")),
+            width=pitch["width_m"],
+            length=pitch["length_m"],
+        ):
             return {"status": "unavailable", "reason": "canonical_orientation_not_proven"}
-        identities.append(calibration)
-    if len(set(identities)) != 1:
-        # Same dimensions do NOT imply same coordinate orientation: one
-        # fragment may be flipped/rotated relative to another.  Only an
-        # identical calibration (identical homography) proves identical
-        # pitch axes and origin.
-        first_dims = _heatmap_pitch_dims(sources[0])
-        if first_dims is not None and all(_heatmap_pitch_dims(source) == first_dims for source in sources[1:]):
-            return {"status": "unavailable", "reason": "canonical_orientation_not_proven"}
+        dimensions.append(pitch)
+    if len({(pitch["width_m"], pitch["length_m"]) for pitch in dimensions}) != 1:
         return {"status": "unavailable", "reason": "pitch_dimensions_mismatch"}
-    pitch = _heatmap_pitch_dims(sources[0]) or {"width_m": 0.0, "length_m": 0.0}
-    return {"status": "merged", "pitch_dimensions_m": pitch}
+    return {"status": "merged", "pitch_dimensions_m": dimensions[0]}
 
 
 def _heatmap_pitch_dims(source: dict[str, Any]) -> dict[str, float] | None:
     pitch = _record(_record(source["package"].get("reviewed_player_heatmaps")).get("pitch_dimensions_m"))
     width = _number_or_none(pitch.get("width_m"))
     length = _number_or_none(pitch.get("length_m"))
-    if not width or not length:
+    if width is None or length is None or width <= 0 or length <= 0:
         return None
     return {"width_m": width, "length_m": length}
 
 
-def _calibration_identity(pitch_config: dict[str, Any], *, width: float | None, length: float | None) -> str | None:
-    """Identify the exact pitch calibration geometry (the homography).
-
-    Identical image-point order + dimensions across fragments proves the
-    reviewed ``positions_m`` share identical pitch axes and origin.
-    """
+def _valid_pitch_calibration(pitch_config: dict[str, Any], *, width: float, length: float) -> bool:
+    """Validate one fragment calibration without coupling it to camera pose."""
 
     image_points = pitch_config.get("image_points")
     config_width = _number_or_none(pitch_config.get("width_m"))
@@ -1297,21 +1286,17 @@ def _calibration_identity(pitch_config: dict[str, Any], *, width: float | None, 
         or any(not isinstance(point, (list, tuple)) or len(point) < 2 for point in image_points)
         or config_width is None
         or config_length is None
-        or width is None
-        or length is None
+        or config_width <= 0
+        or config_length <= 0
         or config_width != width
         or config_length != length
     ):
-        return None
-    try:
-        geometry = {
-            "image_points": [[float(point[0]), float(point[1])] for point in image_points],
-            "width_m": config_width,
-            "length_m": config_length,
-        }
-    except (TypeError, ValueError):
-        return None
-    return canonical_json_sha256(geometry)
+        return False
+    return all(
+        _number_or_none(point[coordinate]) is not None
+        for point in image_points
+        for coordinate in (0, 1)
+    )
 
 
 def render_merged_heatmaps(
