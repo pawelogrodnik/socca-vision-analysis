@@ -2451,8 +2451,8 @@ HEATMAP_DENSITY_BASELINE_PERCENTILE = 80.0
 # hotspots to red, extreme hotspots saturate to deep red without globally
 # crushing ordinary movement (a single linear reference cannot span the
 # ~60x corridor-to-hotspot dynamic range).
-HEATMAP_DENSITY_SATURATION_RATIO = 30.0
-HEATMAP_DENSITY_GAMMA = 1.4
+HEATMAP_DENSITY_SATURATION_RATIO = 10.0
+HEATMAP_DENSITY_GAMMA = 1.1
 HEATMAP_DENSITY_EPSILON = 1e-6
 # Sigma for float Gaussian smoothing, chosen to preserve the visual footprint
 # of the previous PIL ImageFilter.GaussianBlur(radius=12) step (Pillow radius
