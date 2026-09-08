@@ -7,7 +7,7 @@ import { comparisonBarWidth, RedesignedPublishedReportContent, redesignedPossess
 import { RedesignedReportVideoMoments } from '../src/components/RedesignedReportVideoMoments.tsx';
 import { embedAtTimestamp } from '../src/components/RedesignedReportVideoMoments.tsx';
 import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
-import { redesignedWorkloadHue } from '../src/components/PublicPlayerWorkloadSection.tsx';
+import { isGoalkeeperWorkloadRow, redesignedWorkloadHue } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import {
   balancedPossessionPercentages,
   isPublishedReportId,
@@ -132,15 +132,20 @@ test('players appear before canonical activity and heatmaps in the redesigned se
   assert.doesNotMatch(html, /Wybór heatmapy zawodnika/);
 });
 
-test('redesigned workload excludes canonical goalkeepers and omits verbose notes', () => {
+test('redesigned workload keeps goalkeepers visible but gray and outside the intensity scale', () => {
   const html = renderToStaticMarkup(createElement(PublicPlayerWorkloadSection, {
     players: [player, goalkeeper],
     variant: 'redesigned',
   }));
   assert.match(html, /Kowalski/);
-  assert.doesNotMatch(html, /Goalkeeper/);
+  assert.match(html, /Goalkeeper/);
+  assert.match(html, /workload-goalkeeper-row/);
+  assert.match(html, /workload-goalkeeper-cell/);
+  assert.match(html, /Bramkarz — pominięty w skali intensywności/);
   assert.doesNotMatch(html, /Macierz pokazuje kolejne pięciominutowe|Sprint jest liczony/);
   assert.match(html, /redesign-workload-legend/);
+  assert.equal(isGoalkeeperWorkloadRow(goalkeeper), true);
+  assert.equal(isGoalkeeperWorkloadRow({ ...player, player_name: 'Mati GK' }), true);
 });
 
 test('redesigned workload palette maps lower measured activity to red/orange and higher activity to green', () => {

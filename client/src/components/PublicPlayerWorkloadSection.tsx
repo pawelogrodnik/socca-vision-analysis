@@ -27,6 +27,10 @@ export function redesignedWorkloadHue(intensity: number): number {
   return 150 * clamped;
 }
 
+export function isGoalkeeperWorkloadRow(player: PublicReportPlayer): boolean {
+  return player.player_role === 'goalkeeper' || /\bGK$/i.test(player.player_name.trim());
+}
+
 export function PublicPlayerWorkloadSection({
   players,
   teamName,
@@ -34,15 +38,15 @@ export function PublicPlayerWorkloadSection({
   variant = 'default',
 }: PublicPlayerWorkloadSectionProps) {
   const [metric, setMetric] = useState<WorkloadMetric>('distance');
-  const workloadPlayers = players.filter((player) => (
-    player.workload?.activity_windows.length
-    && (variant !== 'redesigned' || player.player_role !== 'goalkeeper')
-  ));
+  const workloadPlayers = players.filter((player) => player.workload?.activity_windows.length);
+  const gradientPlayers = variant === 'redesigned'
+    ? workloadPlayers.filter((player) => !isGoalkeeperWorkloadRow(player))
+    : workloadPlayers;
   const windows = workloadPlayers[0]?.workload?.activity_windows || [];
   const mode = workloadPresentationMode(workloadPlayers);
   const metrics = workloadMetrics(mode);
   const maximum = useMemo(() => metricWindowMaximum(workloadPlayers, metric, mode), [metric, mode, workloadPlayers]);
-  const range = useMemo(() => metricWindowRange(workloadPlayers, metric, mode), [metric, mode, workloadPlayers]);
+  const range = useMemo(() => metricWindowRange(gradientPlayers, metric, mode), [gradientPlayers, metric, mode]);
   if (!hasWorkloadMetrics(players) || !windows.length) return null;
 
   return (
@@ -76,8 +80,9 @@ export function PublicPlayerWorkloadSection({
           <tbody>
             {workloadPlayers.map((player) => {
               const playerWindows = player.workload?.activity_windows || [];
+              const goalkeeperRow = variant === 'redesigned' && isGoalkeeperWorkloadRow(player);
               return (
-                <tr key={player.player_id}>
+                <tr className={goalkeeperRow ? 'workload-goalkeeper-row' : undefined} key={player.player_id}>
                   <th scope='row'>{player.player_name}</th>
                   {windows.map((referenceWindow) => {
                     const window = playerWindows.find((item) => item.window_index === referenceWindow.window_index);
@@ -85,13 +90,13 @@ export function PublicPlayerWorkloadSection({
                     const intensity = variant === 'redesigned'
                       ? windowRelativeIntensity(window, metric, range, mode)
                       : windowIntensity(window, metric, maximum, mode);
-                    const title = workloadCellTooltip(player.player_name, window, referenceWindow, metric, mode);
+                    const title = `${workloadCellTooltip(player.player_name, window, referenceWindow, metric, mode)}${goalkeeperRow ? '\nBramkarz — pominięty w skali intensywności.' : ''}`;
                     return (
                       <td
                         key={referenceWindow.window_index}
                         aria-label={title}
                         title={title}
-                        className={unavailable ? 'workload-unavailable' : metric === 'detectedTime' ? 'workload-evidence-cell' : 'workload-measured'}
+                        className={`${unavailable ? 'workload-unavailable' : metric === 'detectedTime' ? 'workload-evidence-cell' : 'workload-measured'}${goalkeeperRow ? ' workload-goalkeeper-cell' : ''}`}
                         data-workload-state={unavailable ? 'unavailable' : 'measured'}
                         style={{
                           '--workload-intensity': intensity,

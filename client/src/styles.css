@@ -157,6 +157,8 @@ a { color: #93c5fd; }
 .redesign-workload-legend i:nth-of-type(1) { background: #ed5b4c; }.redesign-workload-legend i:nth-of-type(2) { background: #f5a742; }.redesign-workload-legend i:nth-of-type(3) { background: #d9e83b; }.redesign-workload-legend i:nth-of-type(4) { background: #2fcf85; }
 .redesigned-report .redesign-workload-card .workload-matrix td.workload-measured { background: hsl(var(--redesign-workload-hue) 78% 45%); color: #031426; font-weight: 800; }
 .redesigned-report .redesign-workload-card .workload-matrix td.workload-unavailable, .redesigned-report .redesign-workload-card .workload-matrix td.workload-evidence-cell { background: #172536; color: #9eb1c0; }
+.redesigned-report .redesign-workload-card .workload-matrix tr.workload-goalkeeper-row > th { color: #9eb1c0; }
+.redesigned-report .redesign-workload-card .workload-matrix td.workload-goalkeeper-cell { background: #172536; color: #9eb1c0; font-weight: 700; }
 .redesigned-report button:focus-visible, .redesigned-report [role='tab']:focus-visible { outline: 3px solid #f7dc6f; outline-offset: 3px; }
 
 @media (max-width: 980px) {
