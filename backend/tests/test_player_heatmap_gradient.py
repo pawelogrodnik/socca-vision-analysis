@@ -179,15 +179,18 @@ class HeatmapNormalizationTests(unittest.TestCase):
         ))[0, 0])
         self.assertEqual(pixel, DEEP_RED)
 
-    def test_blur_halo_stays_close_to_pitch_green(self) -> None:
+    def test_blur_halo_stays_below_the_yellow_density_band(self) -> None:
         normalized = _normalize_heatmap_density(_representative_blurred())
         halo_value = float(normalized[0])
 
         pixel = np.asarray(_colorize_heatmap_density(
             np.array([[halo_value]], dtype=np.float32)
         ), dtype=np.int32)[0, 0]
-        green = np.array(PITCH_GREEN, dtype=np.int32)
-        self.assertLessEqual(int(np.abs(pixel - green).max()), 30)
+        # Saturation and gamma are intentionally tuned to reveal ordinary
+        # corridor activity. A diffuse halo may now be yellow-green, but it
+        # must remain below the first yellow palette stop and green-dominant.
+        self.assertLess(halo_value, 0.15)
+        self.assertGreater(int(pixel[1]), int(pixel[0]))
 
     def test_palette_has_yellow_to_red_resolution(self) -> None:
         positions = [position for position, _ in HEATMAP_PALETTE_STOPS]
