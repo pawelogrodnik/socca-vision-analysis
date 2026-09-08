@@ -292,6 +292,22 @@ def write_reviewed_identity_fixture(match_dir: Path) -> None:
         },
     )
     write_json(
+        match_dir / "reviewed_player_workload_evidence.json",
+        {
+            "source_snapshot_digest": digest,
+            "players": [{
+                "player_id": "p1",
+                "team_label": "A",
+                "evidence": {
+                    "semantics": "reviewed_confirmed_detected_in_play",
+                    "detected_samples": [],
+                    "movement_segments": [],
+                    "sprint_events": [],
+                },
+            }],
+        },
+    )
+    write_json(
         match_dir / "reviewed_stats_readiness.json",
         {"source_snapshot_digest": digest, "status": "completed"},
     )

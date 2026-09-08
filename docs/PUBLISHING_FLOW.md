@@ -245,6 +245,15 @@ Key properties:
   timelines are REBASED to logical time, heatmaps merge
   pitch-meter samples through the shared renderer, and average positions are
   recomputed from merged samples.
+- Workload windows are rebuilt on the one logical timeline, never concatenated
+  from physical display bins. A physical publication carries a compact private
+  workload-evidence primitive (deduplicated detected samples, already accepted
+  movement segments, and already classified sprint events) in its aggregate
+  inputs. Merge rebases that evidence then uses the same workload builder as a
+  physical report to construct exact 300-second logical bins. The final
+  partial bin is labelled with its actual clock bounds. This changed the
+  aggregation policy; older physical publications must be rebuilt before they
+  can become sources for a newly generated logical report.
 - Combined video and YouTube lifecycle keep their existing semantics but
   resolve server-side from the merged published match to its backing group;
   the frontend never infers group IDs.

@@ -91,6 +91,11 @@ from app.services.match_group_aggregation import (
     build_match_group_report_candidate,
 )
 from app.services.match_group_key_moments import build_logical_match_key_moments
+from app.services.identity_reviewed_workload import (
+    WORKLOAD_SEMANTICS,
+    build_workload_from_evidence,
+    rebase_workload_evidence,
+)
 from app.services.match_groups import (
     MATCH_GROUPS_DIR,
     PUBLISHED_MATCHES_DIR,
@@ -523,6 +528,10 @@ def _merge_players(
             str(row.get("player_id") or ""): _record(row)
             for row in _list(_record(source["aggregate"]).get("players"))
         }
+        aggregate_workload = {
+            str(row.get("player_id") or ""): _record(row.get("evidence"))
+            for row in _list(_record(_record(source["aggregate"]).get("workload")).get("players"))
+        }
         for player in _list(_record(source["public"]).get("players")):
             row = _record(player)
             player_id = str(row.get("player_id") or "")
@@ -534,20 +543,26 @@ def _merge_players(
                 raise MatchGroupError("player_team_mismatch", f"A merged player {player_id!r} cannot be mapped to a stable team.")
             entry = grouped.get(player_id)
             if entry is None:
-                entry = {"team_id": stable_team, "rows": [], "movement": []}
+                entry = {"team_id": stable_team, "rows": [], "movement": [], "workload_evidence": []}
                 grouped[player_id] = entry
                 order.append(player_id)
             elif entry["team_id"] != stable_team:
                 raise MatchGroupError("player_team_mismatch", f"Stable player_id {player_id!r} maps to different stable team_ids across sources.")
             entry["rows"].append((offset, row))
             entry["movement"].append((offset, _record(aggregate_row.get("movement"))))
+            evidence = aggregate_workload.get(player_id)
+            if not evidence:
+                raise MatchGroupError(
+                    "workload_evidence_missing",
+                    f"Source workload evidence is missing for merged player {player_id!r}; rebuild the physical publication.",
+                )
+            entry["workload_evidence"].append((offset, evidence))
 
     players: list[dict[str, Any]] = []
     heatmap_jobs: list[dict[str, Any]] = []
     for player_id in sorted(order):
         entry = grouped[player_id]
         ranked = sorted(entry["rows"], key=lambda item: float(item[0]))
-        offsets = [float(offset) for offset, _ in ranked]
         rows = [row for _, row in ranked if isinstance(row, dict)]
         first = rows[0]
         canonical_label = canonical_of_stable[entry["team_id"]]
@@ -572,9 +587,9 @@ def _merge_players(
         methods = {str(row.get("playing_time_method") or "") for row in rows} - {""}
         calculations = {str(row.get("calculation_method") or "") for row in rows} - {""}
         workload = _merge_workload(
-            player_id,
             rows,
-            workload_offsets=offsets,
+            workload_evidence=entry["workload_evidence"],
+            duration_sec=duration_sec,
             detected_time_sec=detected,
             total_distance_m=distance,
             high_intensity_distance_m=high_distance,
@@ -616,18 +631,16 @@ def _merge_players(
 
 
 def _merge_workload(
-    player_id: str,
     rows: list[dict[str, Any]],
     *,
-    workload_offsets: list[float] | None = None,
+    workload_evidence: list[tuple[float, dict[str, Any]]],
+    duration_sec: float,
     detected_time_sec: float,
     total_distance_m: float,
     high_intensity_distance_m: float,
     sprint_count: int,
 ) -> dict[str, Any] | None:
-    workloads = [_record(row.get("workload")) for row in rows]
-    workloads = [item for item in workloads if item]
-    if not workloads:
+    if not workload_evidence:
         return None
     total_distance = total_distance_m
     high_distance = high_intensity_distance_m
@@ -636,58 +649,27 @@ def _merge_workload(
     sprint_distance = sum(_number(row.get("sprint_distance_m")) for row in rows)
     max_sprint = max((_number(row.get("max_sprint_speed_kmh")) for row in rows), default=0.0)
 
-    windows: list[dict[str, Any]] = []
-    offsets = list(workload_offsets) if workload_offsets else [0.0 for _ in rows]
-    for offset, row in zip(offsets, rows, strict=False):
-        for window in _list(_record(row.get("workload")).get("activity_windows")):
-            item = dict(_record(window))
-            item["start_time_sec"] = _round(_number(item.get("start_time_sec")) + offset, 3)
-            item["end_time_sec"] = _round(_number(item.get("end_time_sec")) + offset, 3)
-            windows.append(item)
-    windows.sort(key=lambda item: (_number(item.get("start_time_sec")), _number(item.get("end_time_sec"))))
-    for index, window in enumerate(windows):
-        window["window_index"] = index
-        window["display_label"] = _workload_window_label(_number(window.get("start_time_sec")), _number(window.get("end_time_sec")))
-    best = max(
-        (window for window in windows if window.get("distance_per_5min_m") is not None and _number(window.get("detected_time_sec")) >= 180.0),
-        key=lambda window: float(window.get("distance_per_5min_m") or 0.0),
-        default=None,
+    merged_evidence = {"semantics": WORKLOAD_SEMANTICS, "detected_samples": [], "movement_segments": [], "sprint_events": []}
+    for offset, evidence in workload_evidence:
+        rebased = rebase_workload_evidence(evidence, offset_sec=offset)
+        for key in ("detected_samples", "movement_segments", "sprint_events"):
+            merged_evidence[key].extend(rebased[key])
+    workload = build_workload_from_evidence(
+        merged_evidence,
+        video_duration_sec=duration_sec,
+        canonical={
+            "detected_time_sec": _round(detected_time_sec, 3),
+            "total_distance_m": _round(total_distance, 2),
+            "high_intensity_distance_m": _round(high_distance, 2),
+            "high_intensity_time_sec": _round(high_time, 3),
+            "sprint_count": sprint_count,
+            "sprint_time_sec": _round(sprint_time, 3),
+            "sprint_distance_m": _round(sprint_distance, 2),
+            "max_sprint_speed_kmh": _round(max_sprint, 2),
+        },
     )
-    return {
-        "semantics": "merged_reviewed_confirmed_detected_in_play",
-        "rate_window_sec": 300.0,
-        "minimum_rate_sample_sec": 120.0,
-        "minimum_best_window_sample_sec": 180.0,
-        "detected_time_sec": _round(detected_time_sec, 3),
-        "distance_per_5min_m": _rate(total_distance, detected_time_sec),
-        "high_intensity_distance_per_5min_m": _rate(high_distance, detected_time_sec),
-        "sprints_per_5min": _rate(sprint_count, detected_time_sec),
-        "high_intensity_distance_ratio": round(high_distance / total_distance, 4) if total_distance > 0 else None,
-        "high_intensity_time_sec": _round(high_time, 3),
-        "high_intensity_distance_m": _round(high_distance, 2),
-        "sprint_count": sprint_count,
-        "sprint_time_sec": _round(sprint_time, 3),
-        "sprint_distance_m": _round(sprint_distance, 2),
-        "max_sprint_speed_kmh": _round(max_sprint, 2),
-        "activity_windows": windows,
-        "best_activity_window": (
-            {key: best[key] for key in ("window_index", "display_label", "start_time_sec", "end_time_sec", "detected_time_sec", "total_distance_m", "distance_per_5min_m", "high_intensity_distance_m", "sprint_count") if key in best}
-            if best is not None
-            else None
-        ),
-    }
-
-
-def _workload_window_label(start_sec: float, end_sec: float) -> str:
-    start_minute = int(start_sec // 60)
-    end_minute = max(start_minute + 1, int(end_sec // 60))
-    return f"{start_minute}–{end_minute}"
-
-
-def _rate(value: float, detected_time_sec: float) -> float | None:
-    if detected_time_sec < 120.0 or detected_time_sec <= 0:
-        return None
-    return round(float(value) / detected_time_sec * 300.0, 2)
+    workload["semantics"] = "merged_reviewed_confirmed_detected_in_play"
+    return workload
 
 
 # ---------------------------------------------------------------------------

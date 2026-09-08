@@ -15,7 +15,7 @@ class AggregateInputsTests(unittest.TestCase):
         inputs = build_aggregate_inputs(_package(), public_report=_public_report(), published_id="published-match-1")
 
         self.assertEqual(inputs["schema_version"], "1.0.0")
-        self.assertEqual(inputs["aggregation_policy_version"], "1.1.0")
+        self.assertEqual(inputs["aggregation_policy_version"], "1.2.0")
         self.assertEqual(inputs["source"]["source_match_id"], "match-1")
         self.assertEqual(inputs["source"]["published_id"], "published-match-1")
         self.assertEqual(inputs["source"]["reviewed_identity_digest"], "reviewed-digest")
@@ -447,6 +447,29 @@ def _package(*, labels: dict[str, str] | None = None, swap_players: bool = False
         "reviewed_player_heatmaps": {
             "source_snapshot_digest": "reviewed-digest",
             "pitch_dimensions_m": {"width_m": 30.0, "length_m": 47.4},
+        },
+        "reviewed_player_workload_evidence": {
+            "source_snapshot_digest": "reviewed-digest",
+            "players": [
+                {
+                    "player_id": "player-corgi-1",
+                    "evidence": {
+                        "semantics": "reviewed_confirmed_detected_in_play",
+                        "detected_samples": [],
+                        "movement_segments": [],
+                        "sprint_events": [],
+                    },
+                },
+                {
+                    "player_id": "player-verisk-1",
+                    "evidence": {
+                        "semantics": "reviewed_confirmed_detected_in_play",
+                        "detected_samples": [],
+                        "movement_segments": [],
+                        "sprint_events": [],
+                    },
+                },
+            ],
         },
         "reviewed_stats_readiness": {
             "source_snapshot_digest": "reviewed-digest",

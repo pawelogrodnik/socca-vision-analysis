@@ -253,6 +253,7 @@ from app.services.published_video import sha256_file
 from app.services.resolved_player_stats import build_resolved_player_stats_from_files
 from app.services.reviewed_match_report import (
     REVIEWED_PACKAGE_INPUTS,
+    REVIEWED_WORKLOAD_EVIDENCE_INPUT,
     apply_reviewed_identity_to_report_package,
     build_reviewed_match_report,
     reviewed_identity_package_status,
@@ -744,6 +745,7 @@ PACKAGE_OPTIONAL_KEYS = [
     "analytics_readiness",
     "possession_report",
     *REVIEWED_PACKAGE_INPUTS.keys(),
+    *REVIEWED_WORKLOAD_EVIDENCE_INPUT.keys(),
 ]
 
 PACKAGE_DEBUG_KEYS = [
@@ -788,6 +790,7 @@ PACKAGE_EMBEDDED_JSON_FILES = [
     ("analytics_readiness", "analytics_readiness.json"),
     ("possession_report", "possession_report.json"),
     *REVIEWED_PACKAGE_INPUTS.items(),
+    *REVIEWED_WORKLOAD_EVIDENCE_INPUT.items(),
 ]
 
 STABLE_PLAYER_PACKAGE_FIELDS = {
@@ -3444,6 +3447,7 @@ def build_match_package(path: Path) -> dict[str, Any]:
         "reviewed_player_heatmaps": None,
         "reviewed_stats_readiness": None,
         "reviewed_output_manifest": None,
+        "reviewed_player_workload_evidence": None,
         "published_video": None,
         "identity_report_source": None,
         "reviewed_identity_digest": None,
@@ -4252,6 +4256,7 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
                 "match.json",
                 "reviewed_player_stats.json",
                 "reviewed_player_timeline.json",
+                "reviewed_player_workload_evidence.json",
                 "reviewed_player_heatmaps.json",
                 "reviewed_stats_readiness.json",
                 "reviewed_identity_snapshot.json",

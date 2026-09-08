@@ -1260,7 +1260,7 @@ def _write_source(
     }
     aggregate = {
         "schema_version": "1.0.0",
-        "aggregation_policy_version": "1.1.0",
+        "aggregation_policy_version": "1.2.0",
         "source": {
             "source_match_id": source_match_id,
             "published_id": published_id,
@@ -1286,6 +1286,24 @@ def _write_source(
                 },
             }
         ],
+        "workload": {
+            "semantics": "reviewed_confirmed_detected_in_play",
+            "players": [{
+                "player_id": "player-one",
+                "evidence": {
+                    "semantics": "reviewed_confirmed_detected_in_play",
+                    "detected_samples": [{"time_sec": 0.0, "duration_sec": detected}],
+                    "movement_segments": [{
+                        "start_time_sec": 0.0,
+                        "end_time_sec": 1.0,
+                        "distance_m": player_distance,
+                        "speed_mps": player_distance,
+                        "kind": "observed",
+                    }],
+                    "sprint_events": [{"start_time_sec": 0.0}] * (2 if duration >= 600 else 1),
+                },
+            }],
+        },
         "identity_coverage": {"status": "ready", "coverage_unit": "observations", "confirmed_observations": 15, "reliable_observations": 20, "unresolved_observations": 3, "conflicted_observations": 2},
         "ball": {
             "possession": {"status": "ready", "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "known_frames": controlled_corgi + controlled_verisk, "contested_frames": contested, "free_frames": free, "unknown_frames": unknown, "processed_frames": total_frames},

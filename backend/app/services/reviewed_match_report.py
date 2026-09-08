@@ -26,6 +26,14 @@ REVIEWED_PACKAGE_INPUTS = {
     "reviewed_output_manifest": "reviewed_output_manifest.json",
 }
 
+# This is publication-only aggregation evidence, deliberately not a required
+# input for rendering an existing physical report. Older physical reports stay
+# readable, but must be rebuilt before they can join a logical match under the
+# newer aggregation policy.
+REVIEWED_WORKLOAD_EVIDENCE_INPUT = {
+    "reviewed_player_workload_evidence": "reviewed_player_workload_evidence.json",
+}
+
 
 def build_reviewed_match_report(match_path: Path) -> dict[str, Any]:
     match = _load_required(match_path / "match.json")

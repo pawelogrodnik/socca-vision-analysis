@@ -87,6 +87,16 @@ def write_rebuildable_reviewed_fixture(match_dir: Path) -> None:
             ],
         },
     )
+    write_json(
+        match_dir / "reviewed_player_workload_evidence.json",
+        {
+            "source_snapshot_digest": "reviewed-digest",
+            "players": [
+                {"player_id": "p-a1", "evidence": {"semantics": "reviewed_confirmed_detected_in_play", "detected_samples": [], "movement_segments": [], "sprint_events": []}},
+                {"player_id": "p-b1", "evidence": {"semantics": "reviewed_confirmed_detected_in_play", "detected_samples": [], "movement_segments": [], "sprint_events": []}},
+            ],
+        },
+    )
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for rebuild endpoint tests")

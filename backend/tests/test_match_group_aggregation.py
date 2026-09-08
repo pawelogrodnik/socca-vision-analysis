@@ -367,7 +367,7 @@ def _write_source(
     }
     aggregate = {
         "schema_version": "1.0.0",
-        "aggregation_policy_version": "1.1.0",
+        "aggregation_policy_version": "1.2.0",
         "source": {
             "source_match_id": source_match_id,
             "published_id": published_id,
@@ -380,6 +380,21 @@ def _write_source(
             {"team_id": "team-verisk", "source_team_label": labels[1], "movement": {"total_distance_m": 50, "high_intensity_distance_m": 10, "sprint_count": 1, "peak_speed_kmh": peak - 1}},
         ],
         "players": player_rows,
+        "workload": {
+            "semantics": "reviewed_confirmed_detected_in_play",
+            "players": [
+                {
+                    "player_id": row["player_id"],
+                    "evidence": {
+                        "semantics": "reviewed_confirmed_detected_in_play",
+                        "detected_samples": [{"time_sec": 0.0, "duration_sec": movement_time}],
+                        "movement_segments": [],
+                        "sprint_events": [],
+                    },
+                }
+                for row in player_rows
+            ],
+        },
         "identity_coverage": {"status": "ready", "coverage_unit": "observations", "confirmed_observations": 15, "reliable_observations": 20, "unresolved_observations": 3, "conflicted_observations": 2},
         "ball": {
             "possession": {"status": possession_status, "controlled_frames_by_team_id": {"team-corgi": controlled_corgi, "team-verisk": controlled_verisk}, "known_frames": controlled_corgi + controlled_verisk, "free_frames": 0, "unknown_frames": 0},

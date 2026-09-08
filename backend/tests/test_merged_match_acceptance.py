@@ -207,7 +207,7 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
 
     def test_workload_absence_and_empty_source_windows_match_canonical_output(self) -> None:
         cases: tuple[tuple[str, Callable[[Path], None], bool], ...] = (
-            ("absent", _remove_workload, False),
+            ("absent", _remove_workload, True),
             ("empty windows", _empty_workload_windows, True),
         )
         for label, mutation, expects_object in cases:
@@ -260,7 +260,7 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
                 self.assertEqual(_status(audit_merged_match(store, merged_id), check), "fail")
 
     def test_exact_possession_momentum_and_workload_offsets_fail(self) -> None:
-        cases = (("possession_timeline", 1, "possession timeline exact source rebasing"), ("attacking_momentum", 2, "momentum timeline exact source rebasing"), ("workload", 1, "player player-one workload timeline"))
+        cases = (("possession_timeline", 1, "possession timeline exact source rebasing"), ("attacking_momentum", 2, "momentum timeline exact source rebasing"), ("workload", 0, "player player-one workload timeline"))
         for target, index, check in cases:
             with self.subTest(target=target), self._store() as store:
                 _, merged_id = self._build(store)
@@ -315,7 +315,9 @@ class MergedMatchAcceptanceTests(unittest.TestCase):
         public, aggregate = _read(directory / "public_report.json"), _read(directory / "aggregate_inputs.json")
         player = copy.deepcopy(public["players"][0]); player["player_id"] = player_id; player["player_name"] = player_id
         movement = copy.deepcopy(aggregate["players"][0]); movement["player_id"] = player_id
+        evidence = copy.deepcopy(aggregate["workload"]["players"][0]); evidence["player_id"] = player_id
         public["players"].append(player); aggregate["players"].append(movement)
+        aggregate["workload"]["players"].append(evidence)
         _write(directory / "public_report.json", public)
         _refresh_source_digests(directory, aggregate)
 

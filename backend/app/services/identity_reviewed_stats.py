@@ -20,7 +20,10 @@ from app.services.identity_reviewed_effective_observation import (
 )
 from app.services.identity_reviewed_coverage import summarize_effective_observations
 from app.services.identity_reviewed_progress import PROGRESS_SCHEMA_VERSION
-from app.services.identity_reviewed_workload import build_reviewed_player_workload
+from app.services.identity_reviewed_workload import (
+    build_reviewed_player_workload,
+    build_reviewed_player_workload_evidence,
+)
 from app.services.reviewed_sprint_policy import (
     classify_reviewed_sprints,
     reviewed_sprint_policy,
@@ -82,6 +85,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
     players = []
     heatmaps = []
     timeline = []
+    workload_evidence = []
     for player_id, rows in sorted(observations_by_player.items()):
         rows.sort(key=lambda row: (int(row.get("frame") or 0), str(row.get("tracklet_id") or "")))
         detected = [row for row in rows if row.get("pitch_m")]
@@ -114,11 +118,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             "best_rejected_sprint_candidate": sprint_result["best_rejected_sprint_candidate"],
             "sprint_detection": sprint_detection,
         })
-        workload = build_reviewed_player_workload(
-            fragments,
-            fps=fps,
-            video_duration_sec=float(video_metadata["duration_sec"]),
-            canonical={
+        workload_canonical = {
                 "detected_time_sec": detected_time_sec,
                 "total_distance_m": movement_summary.get("total_distance_m"),
                 "high_intensity_distance_m": intensity_summary.get("high_intensity_distance_m"),
@@ -128,7 +128,12 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
                 "sprint_distance_m": intensity_summary.get("sprint_distance_m"),
                 "max_sprint_speed_kmh": intensity_summary.get("max_sprint_speed_kmh"),
                 "sprint_events": sprint_result["events"],
-            },
+            }
+        workload = build_reviewed_player_workload(
+            fragments,
+            fps=fps,
+            video_duration_sec=float(video_metadata["duration_sec"]),
+            canonical=workload_canonical,
         )
         workload["sprint_detection"] = {**sprint_detection, "reference_speed_quality": sprint_reference["speed_quality"]}
         expected_movement_segments = sum(
@@ -176,6 +181,15 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         }
         players.append(player)
         timeline.append({"player_id": player_id, "player_name": player["player_name"], "team_label": player["team_label"], "observations": rows})
+        workload_evidence.append({
+            "player_id": player_id,
+            "team_label": player["team_label"],
+            "evidence": build_reviewed_player_workload_evidence(
+                fragments,
+                fps=fps,
+                canonical=workload_canonical,
+            ),
+        })
         heatmaps.append({"player_id": player_id, "team_label": player["team_label"], "samples": len(positions), "positions_m": positions, "bin_dimensions": [12, 8]})
     teams = _reviewed_team_movement(observations_by_safe_team, fps)
     snapshot_digest = str(snapshot["semantic_digest"])
@@ -194,7 +208,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
         else "incomplete_identity_coverage"
     )
     shared = {"schema_version": "1.0.0", "generated_at": datetime.now(timezone.utc).isoformat(), "source_snapshot_digest": snapshot_digest, "source_review_scope_digest": identity_review_scope_digest(match_doc), "identity_review_scope": identity_review_scope_read_model(match_doc), "video_timing": {"fps": fps, "frame_count": video_metadata["frame_count"], "duration_sec": video_metadata["duration_sec"], "source": video_metadata["source"], "filename": video_metadata["filename"]}, "safety": {"production_stats_mutated": False, "reran_yolo": False, "reran_tracking": False}}
-    documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "teams": teams, "global_coverage": coverage, "identity_coverage": identity_coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_stats_readiness.json": {**shared, "schema_version": "2.0.0" if coverage_readiness else shared["schema_version"], "status": stats_status, "global_coverage": coverage, "identity_coverage": identity_coverage, "coverage_readiness": coverage_readiness, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
+    documents = {"reviewed_player_timeline.json": {**shared, "players": timeline}, "reviewed_player_stats.json": {**shared, "players": players, "teams": teams, "global_coverage": coverage, "identity_coverage": identity_coverage}, "reviewed_player_heatmaps.json": {**shared, "pitch_dimensions_m": {"width_m": (pitch_config or {}).get("width_m"), "length_m": (pitch_config or {}).get("length_m")}, "heatmaps": heatmaps}, "reviewed_player_workload_evidence.json": {**shared, "players": workload_evidence}, "reviewed_stats_readiness.json": {**shared, "schema_version": "2.0.0" if coverage_readiness else shared["schema_version"], "status": stats_status, "global_coverage": coverage, "identity_coverage": identity_coverage, "coverage_readiness": coverage_readiness, "team_shape": {"status": "not_available", "reason": "MVP stores player positions but does not infer a formation."}, "possession": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}, "passes": {"status": "not_available", "reason": "Reviewed player attribution is not enabled in this MVP."}}}
     for name, document in documents.items(): write_identity_json_atomic(match_path / name, document)
     return documents
 

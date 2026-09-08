@@ -417,7 +417,7 @@ def _write_source(
     labels: tuple[str, str] = ("A", "B"),
     players: list[tuple[str, str]] | None = None,
     schema_version: str = "1.0.0",
-    aggregation_policy_version: str = "1.1.0",
+    aggregation_policy_version: str = "1.2.0",
     public_schema_version: str = PUBLIC_MATCH_REPORT_SCHEMA_VERSION,
     report_type: str | None = PUBLIC_MATCH_REPORT_TYPE,
     public_title: str | None = None,

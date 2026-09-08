@@ -42,7 +42,7 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
             [(row["start_time_sec"], row["end_time_sec"]) for row in workload["activity_windows"]],
             [(0.0, 300.0), (300.0, 600.0), (600.0, 900.0), (900.0, 1200.0), (1200.0, 1500.0), (1500.0, 1800.0), (1800.0, 2100.0), (2100.0, 2172.0)],
         )
-        self.assertEqual(workload["activity_windows"][-1]["display_label"], "35–36")
+        self.assertEqual(workload["activity_windows"][-1]["display_label"], "35:00–36:12")
 
     def test_partial_final_window_label_advances_the_compact_end_minute(self) -> None:
         workload = build_reviewed_player_workload(
@@ -52,7 +52,7 @@ class ReviewedPlayerWorkloadTests(unittest.TestCase):
         final_window = workload["activity_windows"][-1]
         self.assertEqual(final_window["start_time_sec"], 2100.0)
         self.assertEqual(final_window["end_time_sec"], 2147.0)
-        self.assertEqual(final_window["display_label"], "35–36")
+        self.assertEqual(final_window["display_label"], "35:00–35:47")
 
     def test_full_five_minute_window_keeps_its_exact_compact_label(self) -> None:
         workload = build_reviewed_player_workload(
