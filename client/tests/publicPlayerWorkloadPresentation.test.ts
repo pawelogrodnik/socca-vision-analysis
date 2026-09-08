@@ -10,6 +10,7 @@ import {
   exactWindowLabel,
   formatHiRatio,
   formatRate,
+  hasMeasuredDistanceInWindow,
   hasReportablePlayerChartMetric,
   hasWorkloadMetrics,
   isUnavailableWorkloadCell,
@@ -83,6 +84,7 @@ test('workload presentation preserves null versus valid zero and final partial w
   assert.equal(formatHiRatio(0.218), '22%');
   assert.equal(exactWindowLabel(window), '35:00–36:12');
   assert.equal(windowValue(window, 'sprints', 'normalized'), '—');
+  assert.equal(windowValue(player.workload!.activity_windows[0], 'distancePerMinute', 'normalized'), '95 m/min');
 });
 
 test('hidden sprint selection falls back to the available distance metric', () => {
@@ -136,8 +138,11 @@ test('activity matrix defaults to canonical normalized distance instead of raw r
 
   assert.match(html, /Aktywność w 5-minutowych oknach/);
   assert.match(html, /Dystans \/ 5 min/);
+  assert.match(html, /Śr\. dystans \/ min/);
+  assert.ok(html.indexOf('Dystans / 5 min') < html.indexOf('Śr. dystans / min'));
+  assert.ok(html.indexOf('Śr. dystans / min') < html.indexOf('Czas wykryty'));
   assert.match(html, /0–5/);
-  assert.match(html, /35–36/);
+  assert.doesNotMatch(html, /35–36/);
   assert.match(html, /475 m/);
   assert.doesNotMatch(html, />412 m</);
   assert.match(html, /dostępnego nagrania/);
@@ -171,23 +176,26 @@ test('canonical activity matrix preserves reportable partial samples, unavailabl
   assert.equal(windowIntensity(window, 'distance', 548, 'normalized'), 0);
   assert.equal(isUnavailableWorkloadCell(window, 'distance', 'normalized'), true);
   assert.match(view.container.innerHTML, />548 m</);
-  assert.match(view.container.innerHTML, /data-workload-state="unavailable"/);
-  assert.match(view.container.innerHTML, />—</);
+  assert.doesNotMatch(view.container.innerHTML, /35:00–36:12/);
+  assert.equal(hasMeasuredDistanceInWindow([reportablePartial], 7, 'normalized'), false);
 
   const distanceCell = view.getByLabelText(/Paweł, 0:00–5:00 materiału/);
   assert.match(distanceCell.getAttribute('title') || '', /Dystans \/ 5 min: 548 m/);
   assert.match(distanceCell.getAttribute('title') || '', /Dystans zarejestrowany: 274 m/);
   assert.match(distanceCell.getAttribute('title') || '', /Czas wykryty: 2:30/);
-  const unavailableCell = view.getByLabelText(/Paweł, 35:00–36:12 materiału/);
-  assert.match(unavailableCell.getAttribute('title') || '', /Za mało danych/);
-  assert.match(unavailableCell.getAttribute('title') || '', /Czas wykryty: 0:58/);
-  assert.doesNotMatch(unavailableCell.getAttribute('title') || '', /\/ 5 min: [0-9]/);
+  assert.equal(view.queryByLabelText(/Paweł, 35:00–36:12 materiału/), null);
+
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Śr. dystans / min' }));
+  });
+  assert.match(view.container.innerHTML, />110 m\/min</);
+  const averageDistanceCell = view.getByLabelText(/Paweł, 0:00–5:00 materiału/);
+  assert.match(averageDistanceCell.getAttribute('title') || '', /Śr\. dystans \/ min: 110 m\/min/);
 
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Sprinty / 5 min' }));
   });
   assert.match(view.container.innerHTML, />0\.0</);
-  assert.match(view.container.innerHTML, />—</);
 });
 
 test('redesigned workload intensity spans the measured range instead of grouping all high values as green', () => {
@@ -222,7 +230,6 @@ test('HI, sprints, and detected time use their canonical semantics', async () =>
     fireEvent.click(view.getByRole('button', { name: 'HI / 5 min' }));
   });
   assert.match(view.container.innerHTML, />96 m</);
-  assert.match(view.container.innerHTML, />—</);
 
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Sprinty / 5 min' }));

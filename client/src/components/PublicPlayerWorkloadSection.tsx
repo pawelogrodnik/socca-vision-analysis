@@ -3,6 +3,7 @@ import type { PublicReportPlayer } from '../types';
 import {
   exactWindowLabel,
   hasWorkloadMetrics,
+  hasMeasuredDistanceInWindow,
   isUnavailableWorkloadCell,
   metricWindowMaximum,
   metricWindowRange,
@@ -50,6 +51,7 @@ export function PublicPlayerWorkloadSection({
   const metrics = workloadMetrics(mode);
   const maximum = useMemo(() => metricWindowMaximum(workloadPlayers, metric, mode), [metric, mode, workloadPlayers]);
   const range = useMemo(() => metricWindowRange(gradientPlayers, metric, mode), [gradientPlayers, metric, mode]);
+  const visibleWindows = windows.filter((window) => hasMeasuredDistanceInWindow(workloadPlayers, window.window_index, mode));
   if (!hasWorkloadMetrics(players) || !windows.length) return null;
 
   return (
@@ -75,7 +77,7 @@ export function PublicPlayerWorkloadSection({
           <thead>
             <tr>
               <th scope='col'>Zawodnik</th>
-              {windows.map((window) => (
+              {visibleWindows.map((window) => (
                 <th key={window.window_index} scope='col' title={exactWindowLabel(window)}>{window.display_label}</th>
               ))}
             </tr>
@@ -87,7 +89,7 @@ export function PublicPlayerWorkloadSection({
               return (
                 <tr className={goalkeeperRow ? 'workload-goalkeeper-row' : undefined} key={player.player_id}>
                   <th scope='row'>{player.player_name}</th>
-                  {windows.map((referenceWindow) => {
+                  {visibleWindows.map((referenceWindow) => {
                     const window = playerWindows.find((item) => item.window_index === referenceWindow.window_index);
                     const unavailable = isUnavailableWorkloadCell(window, metric, mode);
                     const intensity = variant === 'redesigned'

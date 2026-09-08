@@ -1,6 +1,6 @@
 import type { PublicPlayerActivityWindow, PublicPlayerWorkload, PublicReportPlayer } from '../types';
 
-export type WorkloadMetric = 'distance' | 'detectedTime' | 'highIntensity' | 'sprints';
+export type WorkloadMetric = 'distance' | 'distancePerMinute' | 'detectedTime' | 'highIntensity' | 'sprints';
 export type WorkloadPresentationMode = 'normalized' | 'legacy';
 export type ReportablePlayerWorkloadMetric = 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5';
 export type PublicPlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' | 'highIntensityPer5' | 'sprintsPer5' | 'peakSpeed';
@@ -8,6 +8,7 @@ export type WorkloadMetricRange = { minimum: number; maximum: number };
 
 export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distance', label: 'Dystans / 5 min' },
+  { key: 'distancePerMinute', label: 'Śr. dystans / min' },
   { key: 'detectedTime', label: 'Czas wykryty' },
   { key: 'highIntensity', label: 'HI / 5 min' },
   { key: 'sprints', label: 'Sprinty / 5 min' },
@@ -15,6 +16,7 @@ export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
 
 const LEGACY_WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
   { key: 'distance', label: 'Dystans' },
+  { key: 'distancePerMinute', label: 'Śr. dystans / min' },
   { key: 'detectedTime', label: 'Czas wykryty' },
   { key: 'highIntensity', label: 'Wysoka intensywność' },
   { key: 'sprints', label: 'Sprinty' },
@@ -104,6 +106,7 @@ export function windowValue(
   if (value === null) return '—';
   if (metric === 'detectedTime') return formatWorkloadSeconds(value);
   if (metric === 'sprints') return mode === 'normalized' ? value.toFixed(1) : String(value);
+  if (metric === 'distancePerMinute') return `${Math.round(value)} m/min`;
   return `${Math.round(value)} m`;
 }
 
@@ -114,6 +117,10 @@ export function windowMetricValue(
 ): number | null {
   if (!window) return null;
   if (metric === 'detectedTime') return window.detected_time_sec;
+  if (metric === 'distancePerMinute') {
+    if (mode === 'normalized' && window.rate_status !== 'reportable') return null;
+    return window.detected_time_sec > 0 ? (window.total_distance_m / window.detected_time_sec) * 60 : null;
+  }
   if (mode === 'legacy') {
     if (window.detected_time_sec <= 0) return null;
     if (metric === 'distance') return window.total_distance_m;
@@ -176,6 +183,17 @@ export function metricWindowRange(
   return { minimum: Math.min(...values), maximum: Math.max(...values) };
 }
 
+export function hasMeasuredDistanceInWindow(
+  players: PublicReportPlayer[],
+  windowIndex: number,
+  mode: WorkloadPresentationMode,
+): boolean {
+  return players.some((player) => {
+    const window = player.workload?.activity_windows.find((item) => item.window_index === windowIndex);
+    return windowMetricValue(window, 'distance', mode) !== null;
+  });
+}
+
 export function isUnavailableWorkloadCell(
   window: PublicPlayerActivityWindow | undefined,
   metric: WorkloadMetric,
@@ -205,6 +223,9 @@ export function workloadCellTooltip(
   if (metric === 'distance') {
     const label = mode === 'normalized' ? 'Dystans / 5 min' : 'Dystans';
     return `${heading}\n${label}: ${value}\nDystans zarejestrowany: ${Math.round(window.total_distance_m)} m\n${detected}`;
+  }
+  if (metric === 'distancePerMinute') {
+    return `${heading}\nŚr. dystans / min: ${value}\nDystans zarejestrowany: ${Math.round(window.total_distance_m)} m\n${detected}`;
   }
   if (metric === 'highIntensity') {
     const label = mode === 'normalized' ? 'HI / 5 min' : 'Wysoka intensywność';
