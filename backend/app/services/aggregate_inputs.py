@@ -15,7 +15,7 @@ from app.services.public_match_report import pass_counts_for_team_label
 
 
 AGGREGATE_INPUTS_SCHEMA_VERSION = "1.0.0"
-AGGREGATION_POLICY_VERSION = "1.1.0"
+AGGREGATION_POLICY_VERSION = "1.2.0"
 REVIEWED_SAFE_TEAM_MOVEMENT_AUTHORITY = "reviewed_safe_team_observations"
 
 
@@ -45,6 +45,7 @@ def build_aggregate_inputs(
     possession = _build_possession(package, team_by_label)
     passes = _build_passes(package, team_by_label)
     timelines = _build_timelines(package, team_by_label, possession, passes)
+    workload = _workload_evidence(package, reviewed_identity_digest, roster_team_by_player)
 
     document: dict[str, Any] = {
         "schema_version": AGGREGATE_INPUTS_SCHEMA_VERSION,
@@ -64,6 +65,7 @@ def build_aggregate_inputs(
             "passes": passes,
         },
         "timelines": timelines,
+        "workload": workload,
         "spatial": _spatial(package),
         "metric_readiness": _metric_readiness(package, possession, passes),
     }
@@ -128,6 +130,34 @@ def _validated_reviewed_identity_digest(package: dict[str, Any]) -> str:
     if identity.get("status") != "fresh" or stats.get("status") != "completed" or manifest.get("stale") is True:
         raise AggregateInputsError("reviewed output manifest is not fresh and completed")
     return digest
+
+
+def _workload_evidence(
+    package: dict[str, Any],
+    reviewed_identity_digest: str,
+    roster_team_by_player: dict[str, str],
+) -> dict[str, Any]:
+    """Expose only the evidence necessary to re-bin workload after merging."""
+    document = _record(package.get("reviewed_player_workload_evidence"))
+    if document.get("source_snapshot_digest") != reviewed_identity_digest:
+        raise AggregateInputsError("reviewed_player_workload_evidence is not from the published Reviewed Identity generation")
+    rows = document.get("players")
+    if not isinstance(rows, list):
+        raise AggregateInputsError("reviewed_player_workload_evidence.players is required")
+    players: list[dict[str, Any]] = []
+    for raw in rows:
+        row = _record(raw)
+        player_id = _required_id(row.get("player_id"), "reviewed_player_workload_evidence.players[].player_id")
+        if player_id not in roster_team_by_player:
+            raise AggregateInputsError(f"workload evidence player_id {player_id!r} is absent from the source roster")
+        evidence = _record(row.get("evidence"))
+        if evidence.get("semantics") != "reviewed_confirmed_detected_in_play":
+            raise AggregateInputsError(f"workload evidence for {player_id!r} has unsupported semantics")
+        for key in ("detected_samples", "movement_segments", "sprint_events"):
+            if not isinstance(evidence.get(key), list):
+                raise AggregateInputsError(f"workload evidence for {player_id!r} is missing {key}")
+        players.append({"player_id": player_id, "evidence": evidence})
+    return {"semantics": "reviewed_confirmed_detected_in_play", "players": sorted(players, key=lambda row: row["player_id"])}
 
 
 def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list[dict[str, Any]]:

@@ -159,7 +159,7 @@ def _players(checks: list[dict[str, Any]], report: dict[str, Any], sources: list
     actual = _lookup(rows, "player_id")
     for player_id in expected_ids:
         if player_id not in actual: continue
-        public, movement, offsets = _player_parts(checks, sources, player_id)
+        public, movement, _offsets = _player_parts(checks, sources, player_id)
         for key in ("playing_time_sec", "high_intensity_time_sec", "sprint_time_sec", "sprint_distance_m"):
             _sum_check(checks, f"player {player_id} {key}", public, key, actual[player_id])
         for key in ("detected_time_sec", "total_distance_m", "high_intensity_distance_m", "sprint_count"):
@@ -173,7 +173,7 @@ def _players(checks: list[dict[str, Any]], report: dict[str, Any], sources: list
         if all(value is not None for value in playings) and duration > 0: _compare(checks, f"player {player_id} coverage_ratio", min(1.0, sum(playings) / duration), _required_number(checks, f"player {player_id} coverage actual", actual[player_id], "coverage_ratio"))
         expected_flags = sorted({flag for row in public for flag in _required_strings(checks, f"source player {player_id} quality flags", row, "quality_flags")})
         _compare(checks, f"player {player_id} quality_flags", expected_flags, _required_strings(checks, f"player {player_id} quality flags actual", actual[player_id], "quality_flags"))
-        _workload(checks, player_id, actual[player_id], public, offsets, duration)
+        _workload(checks, player_id, actual[player_id], duration)
 
 
 def _possession_and_passes(checks: list[dict[str, Any]], report: dict[str, Any], sources: list[dict[str, Any]]) -> None:
@@ -309,25 +309,14 @@ def _sum_check(checks: list[dict[str, Any]], name: str, rows: list[dict[str, Any
 def _max_check(checks: list[dict[str, Any]], name: str, rows: list[dict[str, Any]], key: str, actual: dict[str, Any]) -> None:
     values = [_required_number(checks, f"source {name}", row, key) for row in rows]
     if all(value is not None for value in values): _compare(checks, name, max(value for value in values if value is not None), _required_number(checks, f"{name} actual", actual, key))
-def _workload(checks: list[dict[str, Any]], player_id: str, actual: dict[str, Any], public: list[dict[str, Any]], offsets: list[float], duration: float) -> None:
+def _workload(checks: list[dict[str, Any]], player_id: str, actual: dict[str, Any], duration: float) -> None:
     expected = []
-    source_has_workload = False
-    for row, offset in zip(public, offsets):
-        workload = row.get("workload")
-        if not isinstance(workload, dict) or not workload:
-            continue
-        source_has_workload = True
-        windows = workload.get("activity_windows")
-        if not isinstance(windows, list):
-            continue
-        for window in windows:
-            if isinstance(window, dict):
-                start, end = _required_number(checks, f"source player {player_id} workload start", window, "start_time_sec"), _required_number(checks, f"source player {player_id} workload end", window, "end_time_sec")
-                if start is not None and end is not None: expected.append((start + offset, end + offset))
+    start = 0.0
+    while start < duration:
+        end = min(duration, start + 300.0)
+        expected.append((start, end))
+        start = end
     actual_workload = actual.get("workload")
-    if not source_has_workload:
-        _compare(checks, f"player {player_id} workload presence", None, actual_workload)
-        return
     _compare(checks, f"player {player_id} workload presence", True, isinstance(actual_workload, dict))
     workload = _required_object(checks, f"player {player_id} workload", actual, "workload") or {}
     pairs = []

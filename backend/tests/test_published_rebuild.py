@@ -87,6 +87,16 @@ def write_rebuildable_reviewed_fixture(match_dir: Path) -> None:
             ],
         },
     )
+    write_json(
+        match_dir / "reviewed_player_workload_evidence.json",
+        {
+            "source_snapshot_digest": "reviewed-digest",
+            "players": [
+                {"player_id": "p-a1", "evidence": {"semantics": "reviewed_confirmed_detected_in_play", "detected_samples": [], "movement_segments": [], "sprint_events": []}},
+                {"player_id": "p-b1", "evidence": {"semantics": "reviewed_confirmed_detected_in_play", "detected_samples": [], "movement_segments": [], "sprint_events": []}},
+            ],
+        },
+    )
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for rebuild endpoint tests")
@@ -133,6 +143,93 @@ class PublishedRebuildTests(unittest.TestCase):
             ), patch("app.main.get_reviewed_identity_status", return_value={"status": "complete_reviewed", "semantic_digest": "published-digest"}):
                 with self.assertRaises(HTTPException):
                     _assert_physical_rebuild_workflow(path, publication)
+
+    def test_workload_evidence_migration_gate_requires_exact_legacy_policy_identity_and_video(self) -> None:
+        from app.main import _assert_physical_rebuild_workflow
+        from app.services.video import VIDEO_TIMEBASE_SCHEMA_VERSION
+        from fastapi import HTTPException
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "match"
+            path.mkdir()
+            (path / "video.mp4").write_bytes(b"source")
+            digest = hashlib.sha256(b"source").hexdigest()
+            meta = {"video_filename": "video.mp4", "video": {"timebase_schema_version": VIDEO_TIMEBASE_SCHEMA_VERSION}}
+            (path / "match.json").write_text(json.dumps(meta), encoding="utf-8")
+            publication = {
+                "id": "published-match-1",
+                "source_kind": "physical",
+                "package": {"match": {"video": {"source_fingerprint": {"sha256": digest}}}},
+            }
+            aggregate_path = root / "published" / "matches" / "published-match-1" / "aggregate_inputs.json"
+            aggregate_path.parent.mkdir(parents=True)
+            aggregate_path.write_text(json.dumps({"aggregation_policy_version": "1.1.0"}), encoding="utf-8")
+            blocked = HTTPException(status_code=409, detail={"code": "review_not_completed"})
+            patches = (
+                patch("app.main._assert_publish_workflow", side_effect=blocked),
+                patch("app.main.PUBLISHED_DIR", root / "published"),
+                patch("app.main.reviewed_identity_package_status", return_value={"ready": True, "digest": "published-digest"}),
+                patch("app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "published-digest"}),
+            )
+            with patches[0], patches[1], patches[2], patches[3]:
+                self.assertTrue(_assert_physical_rebuild_workflow(path, publication))
+
+            with patches[0], patches[1], patches[2], patch(
+                "app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "different"}
+            ):
+                with self.assertRaises(HTTPException):
+                    _assert_physical_rebuild_workflow(path, publication)
+
+            (path / "video.mp4").write_bytes(b"changed")
+            with patches[0], patches[1], patches[2], patches[3]:
+                with self.assertRaises(HTTPException):
+                    _assert_physical_rebuild_workflow(path, publication)
+            (path / "video.mp4").write_bytes(b"source")
+
+            aggregate_path.write_text(json.dumps({"aggregation_policy_version": "1.2.0"}), encoding="utf-8")
+            with patches[0], patches[1], patches[2], patches[3]:
+                with self.assertRaises(HTTPException):
+                    _assert_physical_rebuild_workflow(path, publication)
+
+    def test_workload_evidence_rebuild_uses_only_the_narrow_publication_migration(self) -> None:
+        """Current-timebase incomplete QA cannot trigger a normal republish."""
+        from app.main import api_rebuild_published_match
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "match-1"
+            path.mkdir()
+            (path / "match.json").write_text(
+                json.dumps({"id": "match-1", "video_filename": "missing.mp4"}),
+                encoding="utf-8",
+            )
+            evidence = {
+                "source_snapshot_digest": "published-digest",
+                "players": [],
+            }
+            (path / "reviewed_player_workload_evidence.json").write_text(json.dumps(evidence), encoding="utf-8")
+            existing = {
+                "id": "published-match-1",
+                "source_kind": "physical",
+                "source_match_id": "match-1",
+                "package": {"match": {"id": "match-1"}},
+            }
+            migrated = {**existing, "public_report": {"id": "published-match-1"}}
+            with (
+                patch("app.main.get_published_match", return_value=existing),
+                patch("app.main.match_dir", return_value=path),
+                patch("app.main._assert_physical_rebuild_workflow", return_value=True),
+                patch("app.main.resolve_match_video_path", side_effect=FileNotFoundError),
+                patch("app.main.migrate_published_workload_evidence", return_value=migrated) as migrate,
+                patch("app.main.import_match_package") as normal_republish,
+                patch("app.main.build_match_package") as build_package,
+            ):
+                result = api_rebuild_published_match("published-match-1")
+
+            self.assertEqual(result["id"], "published-match-1")
+            migrate.assert_called_once_with("published-match-1", evidence)
+            normal_republish.assert_not_called()
+            build_package.assert_not_called()
 
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
     def test_rebuild_migrates_real_cfr_video_and_preserves_reviewed_identity(self) -> None:

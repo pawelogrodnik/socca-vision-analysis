@@ -655,7 +655,7 @@ class MatchGroupVideoTests(unittest.TestCase):
         public = {"schema_version": "0.1.0", "report_type": "public_match_report", "id": published_id, "source_match_id": source_match_id}
         public_digest = canonical_json_sha256(public)
         aggregate = {
-            "schema_version": "1.0.0", "aggregation_policy_version": "1.1.0",
+            "schema_version": "1.0.0", "aggregation_policy_version": "1.2.0",
             "source": {
                 "source_match_id": source_match_id,
                 "published_id": published_id,

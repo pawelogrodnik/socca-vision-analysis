@@ -37,7 +37,26 @@ def build_reviewed_player_workload(
     containing their start time.  This deliberately avoids copying a segment or
     sprint across a five-minute boundary.
     """
-    windows = _empty_windows(video_duration_sec)
+    evidence = build_reviewed_player_workload_evidence(fragments, fps=fps, canonical=canonical)
+    return build_workload_from_evidence(
+        evidence,
+        video_duration_sec=video_duration_sec,
+        canonical=canonical,
+    )
+
+
+def build_reviewed_player_workload_evidence(
+    fragments: list[list[dict[str, Any]]],
+    *,
+    fps: float,
+    canonical: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the compact, exact inputs needed to re-bin reviewed workload.
+
+    The physical report and the logical-match report both consume this shape.
+    It intentionally contains neither pitch positions nor identity-review rows:
+    only already accepted workload evidence and its source-local timestamps.
+    """
     fps_safe = max(float(fps), 0.001)
     rows_by_frame: dict[int, dict[str, Any]] = {}
     for fragment in fragments:
@@ -47,34 +66,74 @@ def build_reviewed_player_workload(
             if existing is None or str(row.get("tracklet_id") or "") < str(existing.get("tracklet_id") or ""):
                 rows_by_frame[frame] = row
 
-    for row in rows_by_frame.values():
-        _window_for_time(windows, _time_sec(row, fps_safe))["detected_time_sec"] += 1.0 / fps_safe
-
     accepted_segments: list[dict[str, Any]] = []
     for fragment in fragments:
         accepted_segments.extend(_accepted_segments(fragment, fps_safe))
-    for segment in accepted_segments:
-        window = _window_for_time(windows, float(segment["start_time_sec"]))
-        distance = float(segment["distance_m"])
-        if segment["kind"] == "observed":
+    return {
+        "semantics": WORKLOAD_SEMANTICS,
+        "detected_samples": [
+            {"time_sec": _time_sec(row, fps_safe), "duration_sec": 1.0 / fps_safe}
+            for _, row in sorted(rows_by_frame.items())
+        ],
+        "movement_segments": accepted_segments,
+        # The event list is supplied by the Reviewed sprint classifier.  This
+        # evidence must never re-classify sprint candidates downstream.
+        "sprint_events": [dict(event) for event in canonical.get("sprint_events") or [] if isinstance(event, dict)],
+    }
+
+
+def rebase_workload_evidence(evidence: dict[str, Any], *, offset_sec: float) -> dict[str, Any]:
+    """Move source-local workload evidence onto the merged logical clock."""
+    offset = float(offset_sec)
+    rebased = {"semantics": evidence.get("semantics") or WORKLOAD_SEMANTICS, "detected_samples": [], "movement_segments": [], "sprint_events": []}
+    for sample in evidence.get("detected_samples") or []:
+        if isinstance(sample, dict):
+            rebased["detected_samples"].append({**sample, "time_sec": float(sample.get("time_sec") or 0.0) + offset})
+    for segment in evidence.get("movement_segments") or []:
+        if isinstance(segment, dict):
+            rebased["movement_segments"].append({
+                **segment,
+                "start_time_sec": float(segment.get("start_time_sec") or 0.0) + offset,
+                "end_time_sec": float(segment.get("end_time_sec") or 0.0) + offset,
+            })
+    for event in evidence.get("sprint_events") or []:
+        if isinstance(event, dict):
+            rebased["sprint_events"].append({**event, "start_time_sec": float(event.get("start_time_sec") or 0.0) + offset})
+    return rebased
+
+
+def build_workload_from_evidence(
+    evidence: dict[str, Any],
+    *,
+    video_duration_sec: float,
+    canonical: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply the authoritative workload rules to source or logical evidence."""
+    windows = _empty_windows(video_duration_sec)
+    for sample in evidence.get("detected_samples") or []:
+        if not isinstance(sample, dict):
+            continue
+        _window_for_time(windows, float(sample.get("time_sec") or 0.0))["detected_time_sec"] += _number(sample.get("duration_sec"))
+    for segment in evidence.get("movement_segments") or []:
+        if not isinstance(segment, dict):
+            continue
+        window = _window_for_time(windows, float(segment.get("start_time_sec") or 0.0))
+        distance = _number(segment.get("distance_m"))
+        if segment.get("kind") == "observed":
             window["observed_distance_m"] += distance
         else:
             window["estimated_short_gap_distance_m"] += distance
         if (
-            segment["kind"] == "observed"
-            and float(segment["end_time_sec"]) - float(segment["start_time_sec"])
+            segment.get("kind") == "observed"
+            and _number(segment.get("end_time_sec")) - _number(segment.get("start_time_sec"))
             <= STATS_PEAK_SPEED_MAX_SEGMENT_GAP_SEC
-            and float(segment["speed_mps"]) >= HIGH_INTENSITY_THRESHOLD_KMH / 3.6
+            and _number(segment.get("speed_mps")) >= HIGH_INTENSITY_THRESHOLD_KMH / 3.6
         ):
             window["high_intensity_distance_m"] += distance
-            window["high_intensity_time_sec"] += float(segment["end_time_sec"]) - float(segment["start_time_sec"])
-
-    # The event list is supplied by the Reviewed sprint classifier.  Windows
-    # only allocate that canonical result; they must never re-classify sprints.
-    for sprint in canonical.get("sprint_events") or []:
-        if not isinstance(sprint, dict):
-            continue
-        _window_for_time(windows, float(sprint["start_time_sec"]))["sprint_count"] += 1
+            window["high_intensity_time_sec"] += _number(segment.get("end_time_sec")) - _number(segment.get("start_time_sec"))
+    for sprint in evidence.get("sprint_events") or []:
+        if isinstance(sprint, dict):
+            _window_for_time(windows, _number(sprint.get("start_time_sec")))["sprint_count"] += 1
 
     for window in windows:
         window["detected_time_sec"] = round(window["detected_time_sec"], 3)
@@ -162,10 +221,19 @@ def _empty_windows(video_duration_sec: float) -> list[dict[str, Any]]:
 
 
 def _compact_window_label(start_time_sec: float, end_time_sec: float) -> str:
-    """Return a compact minute range without collapsing a non-empty interval."""
+    """Return a compact, truthful interval label for full and partial bins."""
+    if end_time_sec - start_time_sec < RATE_WINDOW_SEC:
+        return f"{_clock_label(start_time_sec)}–{_clock_label(end_time_sec)}"
     start_minute = int(start_time_sec // 60)
-    end_minute = max(start_minute + 1, int(end_time_sec // 60))
+    end_minute = int(end_time_sec // 60)
     return f"{start_minute}–{end_minute}"
+
+
+def _clock_label(time_sec: float) -> str:
+    minutes, seconds = divmod(max(0.0, time_sec), 60.0)
+    if seconds.is_integer():
+        return f"{int(minutes)}:{int(seconds):02d}"
+    return f"{int(minutes)}:{seconds:04.1f}"
 
 
 def _window_for_time(windows: list[dict[str, Any]], time_sec: float) -> dict[str, Any]:
