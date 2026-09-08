@@ -104,7 +104,6 @@ function Hero({ report }: { report: PublicMatchReport }) {
           {report.match.match_date ? <span>{report.match.match_date}</span> : null}
           {duration ? <span>Czas analizy: {duration}</span> : null}
         </div>
-        <p>Szczegółowa analiza drużyn, zawodników i przebiegu dostępnego materiału.</p>
       </div>
     </header>
   );

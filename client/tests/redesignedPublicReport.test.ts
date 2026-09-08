@@ -69,6 +69,7 @@ test('redesigned report removes repeated summaries and uses canonical facts with
   assert.match(html, /Corgi vs Verisk/);
   assert.match(html, /Czas analizy: 35 min 50 s/);
   assert.match(html, /Najważniejsze momenty/);
+  assert.doesNotMatch(html, /Szczegółowa analiza drużyn, zawodników i przebiegu dostępnego materiału/);
   assert.doesNotMatch(html, /Szybkie podsumowanie|Najważniejsze wnioski|Scalony mecz|fragmentów/);
   assert.doesNotMatch(html, /MVP|Wynik|pierwsza połowa|druga połowa|przerwa/i);
   assert.doesNotMatch(html, /Panel admin|Lista meczów|legacy/i);
