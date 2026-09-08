@@ -143,6 +143,7 @@ test('redesigned workload keeps goalkeepers visible but gray and outside the int
   assert.match(html, /workload-goalkeeper-row/);
   assert.match(html, /workload-goalkeeper-cell/);
   assert.match(html, /Bramkarz — pominięty w skali intensywności/);
+  assert.ok(html.indexOf('Kowalski') < html.indexOf('Goalkeeper'));
   assert.doesNotMatch(html, /Macierz pokazuje kolejne pięciominutowe|Sprint jest liczony/);
   assert.match(html, /redesign-workload-legend/);
   assert.equal(isGoalkeeperWorkloadRow(goalkeeper), true);

@@ -42,6 +42,9 @@ export function PublicPlayerWorkloadSection({
   const gradientPlayers = variant === 'redesigned'
     ? workloadPlayers.filter((player) => !isGoalkeeperWorkloadRow(player))
     : workloadPlayers;
+  const orderedWorkloadPlayers = variant === 'redesigned'
+    ? [...gradientPlayers, ...workloadPlayers.filter(isGoalkeeperWorkloadRow)]
+    : workloadPlayers;
   const windows = workloadPlayers[0]?.workload?.activity_windows || [];
   const mode = workloadPresentationMode(workloadPlayers);
   const metrics = workloadMetrics(mode);
@@ -78,7 +81,7 @@ export function PublicPlayerWorkloadSection({
             </tr>
           </thead>
           <tbody>
-            {workloadPlayers.map((player) => {
+            {orderedWorkloadPlayers.map((player) => {
               const playerWindows = player.workload?.activity_windows || [];
               const goalkeeperRow = variant === 'redesigned' && isGoalkeeperWorkloadRow(player);
               return (
