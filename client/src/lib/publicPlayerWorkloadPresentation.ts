@@ -7,7 +7,7 @@ export type PublicPlayerChartMetric = 'minutes' | 'distanceKm' | 'distancePer5' 
 export type WorkloadMetricRange = { minimum: number; maximum: number };
 
 export const WORKLOAD_METRICS: Array<{ key: WorkloadMetric; label: string }> = [
-  { key: 'distance', label: 'Dystans / 5 min' },
+  { key: 'distance', label: 'Dystans' },
   { key: 'distancePerMinute', label: 'Śr. dystans / min' },
   { key: 'detectedTime', label: 'Czas wykryty' },
   { key: 'highIntensity', label: 'HI / 5 min' },
@@ -117,18 +117,17 @@ export function windowMetricValue(
 ): number | null {
   if (!window) return null;
   if (metric === 'detectedTime') return window.detected_time_sec;
+  if (metric === 'distance') return window.detected_time_sec > 0 ? window.total_distance_m : null;
   if (metric === 'distancePerMinute') {
     if (mode === 'normalized' && window.rate_status !== 'reportable') return null;
     return window.detected_time_sec > 0 ? (window.total_distance_m / window.detected_time_sec) * 60 : null;
   }
   if (mode === 'legacy') {
     if (window.detected_time_sec <= 0) return null;
-    if (metric === 'distance') return window.total_distance_m;
     if (metric === 'highIntensity') return window.high_intensity_distance_m;
     return window.sprint_count;
   }
   if (window.rate_status !== 'reportable') return null;
-  if (metric === 'distance') return window.distance_per_5min_m ?? null;
   if (metric === 'highIntensity') return window.high_intensity_distance_per_5min_m ?? null;
   return window.sprints_per_5min ?? null;
 }
@@ -190,7 +189,8 @@ export function hasMeasuredDistanceInWindow(
 ): boolean {
   return players.some((player) => {
     const window = player.workload?.activity_windows.find((item) => item.window_index === windowIndex);
-    return windowMetricValue(window, 'distance', mode) !== null;
+    if (!window || window.total_distance_m <= 0) return false;
+    return mode === 'legacy' || window.rate_status === 'reportable';
   });
 }
 
@@ -221,11 +221,10 @@ export function workloadCellTooltip(
   }
   const value = windowValue(window, metric, mode);
   if (metric === 'distance') {
-    const label = mode === 'normalized' ? 'Dystans / 5 min' : 'Dystans';
-    return `${heading}\n${label}: ${value}\nDystans zarejestrowany: ${Math.round(window.total_distance_m)} m\n${detected}`;
+    return `${heading}\nDystans: ${value}\n${detected}`;
   }
   if (metric === 'distancePerMinute') {
-    return `${heading}\nŚr. dystans / min: ${value}\nDystans zarejestrowany: ${Math.round(window.total_distance_m)} m\n${detected}`;
+    return `${heading}\nŚr. dystans / min: ${value}\nDystans: ${Math.round(window.total_distance_m)} m\n${detected}`;
   }
   if (metric === 'highIntensity') {
     const label = mode === 'normalized' ? 'HI / 5 min' : 'Wysoka intensywność';

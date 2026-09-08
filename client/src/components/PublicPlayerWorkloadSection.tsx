@@ -38,7 +38,7 @@ export function PublicPlayerWorkloadSection({
   teamColor,
   variant = 'default',
 }: PublicPlayerWorkloadSectionProps) {
-  const [metric, setMetric] = useState<WorkloadMetric>('distance');
+  const [metric, setMetric] = useState<WorkloadMetric>('distancePerMinute');
   const workloadPlayers = players.filter((player) => player.workload?.activity_windows.length);
   const gradientPlayers = variant === 'redesigned'
     ? workloadPlayers.filter((player) => !isGoalkeeperWorkloadRow(player))
