@@ -158,6 +158,9 @@ a { color: #93c5fd; }
 .redesigned-report .redesign-workload-card .workload-matrix td.workload-unavailable, .redesigned-report .redesign-workload-card .workload-matrix td.workload-evidence-cell { background: #172536; color: #9eb1c0; }
 .redesigned-report .redesign-workload-card .workload-matrix tr.workload-goalkeeper-row > th { color: #9eb1c0; }
 .redesigned-report .redesign-workload-card .workload-matrix td.workload-goalkeeper-cell { background: #172536; color: #9eb1c0; font-weight: 700; }
+.redesigned-report .redesign-workload-card .workload-matrix { border-collapse: separate; border-spacing: 4px 3px; }
+.redesigned-report .redesign-workload-card .workload-matrix th, .redesigned-report .redesign-workload-card .workload-matrix td { border: 0; }
+.redesigned-report .redesign-workload-card .workload-matrix td { border-radius: 6px; background-clip: padding-box; }
 .redesigned-report button:focus-visible, .redesigned-report [role='tab']:focus-visible { outline: 3px solid #f7dc6f; outline-offset: 3px; }
 
 @media (max-width: 980px) {
@@ -182,6 +185,7 @@ a { color: #93c5fd; }
   .redesign-comparison-row > span:not(.redesign-comparison-bar) { font-size: .67rem; }
   .redesign-heatmap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .redesign-heatmap-card { padding: 8px; }
+  .redesigned-report .redesign-workload-card .workload-matrix { border-spacing: 2px; }
 }
 
 .app { max-width: 1440px; margin: 0 auto; padding: 28px; }
