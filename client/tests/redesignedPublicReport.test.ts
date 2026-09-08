@@ -9,6 +9,7 @@ import { embedAtTimestamp } from '../src/components/RedesignedReportVideoMoments
 import { PublicPlayerWorkloadSection } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import { redesignedWorkloadHue } from '../src/components/PublicPlayerWorkloadSection.tsx';
 import {
+  balancedPossessionPercentages,
   isPublishedReportId,
   momentumDisplayBuckets,
   playerComparableValue,
@@ -109,6 +110,12 @@ test('percentage comparison bars retain their natural zero-to-one-hundred scale'
   assert.equal(comparisonBarWidth(63, 100), 63);
   assert.equal(comparisonBarWidth(44, 100), 44);
   assert.equal(comparisonBarWidth(48, 100), 48);
+});
+
+test('displayed possession shares use one balanced rounding and always total one hundred percent', () => {
+  assert.deepEqual(balancedPossessionPercentages(38, 63), { left: 38, right: 62 });
+  assert.deepEqual(balancedPossessionPercentages(57, 43), { left: 57, right: 43 });
+  assert.equal(balancedPossessionPercentages(null, 43), null);
 });
 
 test('players appear before canonical activity and heatmaps in the redesigned section order', () => {

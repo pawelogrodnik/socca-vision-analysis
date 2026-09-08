@@ -16,6 +16,7 @@ import {
 import type { MatchGroupExternalVideoStatus, PublicMatchReport, PublicReportTeam } from '../types';
 import { publicReportPlayersForTeam, publicReportTeamKey } from '../lib/publicReportPresentation';
 import {
+  balancedPossessionPercentages,
   displayTeamName,
   formatReportDuration,
   formatReportKilometers,
@@ -72,8 +73,16 @@ function TeamBadge({ team, fallback, color }: { team: PublicReportTeam | undefin
 }
 
 function comparisonRows(left: PublicReportTeam, right: PublicReportTeam): ComparisonRow[] {
+  const possession = balancedPossessionPercentages(left.possession_share_percent, right.possession_share_percent);
   return [
-    { label: 'Posiadanie', leftValue: left.possession_share_percent, rightValue: right.possession_share_percent, leftText: formatReportPercent(left.possession_share_percent), rightText: formatReportPercent(right.possession_share_percent), scale: 'percent' },
+    {
+      label: 'Posiadanie',
+      leftValue: possession?.left,
+      rightValue: possession?.right,
+      leftText: formatReportPercent(possession?.left),
+      rightText: formatReportPercent(possession?.right),
+      scale: 'percent',
+    },
     { label: 'Próby podań', leftValue: left.pass_attempts, rightValue: right.pass_attempts, leftText: left.pass_attempts == null ? '—' : String(left.pass_attempts), rightText: right.pass_attempts == null ? '—' : String(right.pass_attempts), scale: 'pair', startsGroup: true },
     { label: 'Podania celne', leftValue: left.completed_passes, rightValue: right.completed_passes, leftText: left.completed_passes == null ? '—' : String(left.completed_passes), rightText: right.completed_passes == null ? '—' : String(right.completed_passes), scale: 'pair' },
     { label: 'Skuteczność podań', leftValue: left.completion_rate, rightValue: right.completion_rate, leftText: formatReportPercent(left.completion_rate), rightText: formatReportPercent(right.completion_rate), scale: 'percent' },

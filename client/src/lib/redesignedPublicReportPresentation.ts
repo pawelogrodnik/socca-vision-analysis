@@ -35,6 +35,17 @@ export function formatReportPercent(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? '—' : `${value.toFixed(0)}%`;
 }
 
+export function balancedPossessionPercentages(
+  left: number | null | undefined,
+  right: number | null | undefined,
+): { left: number; right: number } | null {
+  if (left == null || right == null || !Number.isFinite(left) || !Number.isFinite(right)) return null;
+  const total = Math.max(0, left) + Math.max(0, right);
+  if (total <= 0) return null;
+  const normalizedLeft = Math.round((Math.max(0, left) / total) * 100);
+  return { left: normalizedLeft, right: 100 - normalizedLeft };
+}
+
 export function formatReportSpeed(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? '—' : `${value.toFixed(1)} km/h`;
 }
