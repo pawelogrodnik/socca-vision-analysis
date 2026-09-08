@@ -48,6 +48,15 @@ type ComparisonRow = {
 
 const TEAM_A_COLOR = '#39e2c3';
 const TEAM_B_COLOR = '#5499ff';
+const CHART_TOOLTIP_CONTENT_STYLE = {
+  backgroundColor: '#061c32',
+  border: '1px solid #3b7895',
+  borderRadius: 8,
+  boxShadow: '0 12px 28px rgba(0, 0, 0, .38)',
+  color: '#effaff',
+};
+const CHART_TOOLTIP_LABEL_STYLE = { color: '#f8fafc', fontWeight: 800 };
+const CHART_TOOLTIP_ITEM_STYLE = { color: '#d8f5ff', fontWeight: 700 };
 export const redesignedPossessionDataKeys = {
   teamA: 'cumulative_team_a_percent',
   teamB: 'cumulative_team_b_percent',
@@ -112,7 +121,12 @@ function MatchFlow({ report }: { report: PublicMatchReport }) {
                   <CartesianGrid stroke='#254965' strokeDasharray='3 3' vertical={false} />
                   <XAxis dataKey='label' stroke='#a8c1d2' />
                   <YAxis domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(value) => `${value}%`} stroke='#a8c1d2' />
-                  <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  <Tooltip
+                    contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
+                    labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                    itemStyle={CHART_TOOLTIP_ITEM_STYLE}
+                    formatter={(value) => `${Number(value).toFixed(1)}%`}
+                  />
                   <Legend />
                   <Area type='monotone' dataKey={redesignedPossessionDataKeys.teamA} name={displayTeamName(left, 'Drużyna A')} stackId='possession' stroke={TEAM_A_COLOR} fill={TEAM_A_COLOR} fillOpacity={0.84} />
                   <Area type='monotone' dataKey={redesignedPossessionDataKeys.teamB} name={displayTeamName(right, 'Drużyna B')} stackId='possession' stroke={TEAM_B_COLOR} fill={TEAM_B_COLOR} fillOpacity={0.84} />
@@ -132,6 +146,9 @@ function MatchFlow({ report }: { report: PublicMatchReport }) {
                   <YAxis stroke='#a8c1d2' />
                   <ReferenceLine y={0} stroke='#e4f2fa' strokeWidth={1.5} />
                   <Tooltip
+                    contentStyle={CHART_TOOLTIP_CONTENT_STYLE}
+                    labelStyle={CHART_TOOLTIP_LABEL_STYLE}
+                    itemStyle={CHART_TOOLTIP_ITEM_STYLE}
                     labelFormatter={(value) => `${Math.floor(Number(value) / 60)}–${Math.floor(Number(value) / 60) + 1} min`}
                     formatter={(value) => {
                       const signedScore = Number(value);
