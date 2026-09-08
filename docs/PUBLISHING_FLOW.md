@@ -181,6 +181,15 @@ any mismatch fails closed without touching the stored publication. Logical
 matches are never refreshed here — they observe the new snapshot through
 the explicit #94 refresh flow.
 
+There is one deliberately narrow historical exception. A physical policy-1.1
+publication that has no workload evidence may migrate to policy 1.2 despite
+an incomplete current Video QA workflow only when its local Reviewed Identity
+digest and immutable source-video proof exactly match the already published
+package. That migration stages only the newly derived workload evidence,
+`package.json`, and `aggregate_inputs.json`; it preserves the existing
+canonical public report, client-public mirror, heatmaps, and published video
+without regenerating them. It is not a general workflow or policy bypass.
+
 Deletion is intentionally hard delete for now because this panel is meant for correcting duplicate imports and bad stats snapshots during MVP development. A later production version can add soft delete/audit logs.
 
 ## Merged (logical) matches are canonical published matches
@@ -253,7 +262,10 @@ Key properties:
   physical report to construct exact 300-second logical bins. The final
   partial bin is labelled with its actual clock bounds. This changed the
   aggregation policy; older physical publications must be rebuilt before they
-  can become sources for a newly generated logical report.
+  can become sources for a newly generated logical report. The exact 1.1
+  historical case above can rebuild only its missing private evidence while
+  preserving its existing public generation; every other publication follows
+  normal Review/Video QA eligibility.
 - Combined video and YouTube lifecycle keep their existing semantics but
   resolve server-side from the merged published match to its backing group;
   the frontend never infers group IDs.

@@ -14,7 +14,7 @@ from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 
-from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISH_TARGET
+from app.config import ADMIN_IMPORT_TOKEN, APP_MODE, CORS_ORIGINS, MATCHES_DIR, PUBLISHED_DIR, PUBLISH_TARGET
 from app.logging_config import configure_application_logging
 from app.models import AnalyzePayload, BallAnalyzePayload, MatchGroupExternalVideoPayload, MatchGroupPayload, MatchMetadataPayload, PitchConfigPayload
 from app.services.analysis import analyze_match, analyze_match_ball_yolo
@@ -200,6 +200,7 @@ from app.services.json_publish_store import (
     init_publish_store,
     list_eligible_match_group_sources,
     list_published_matches,
+    migrate_published_workload_evidence,
     publish_store_health,
 )
 from app.services.match_group_aggregation import (
@@ -310,8 +311,8 @@ def _assert_publish_workflow(match_path: Path) -> None:
     )
 
 
-def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: dict[str, Any]) -> None:
-    """Keep normal publish gating while allowing one safe legacy migration.
+def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: dict[str, Any]) -> bool:
+    """Keep normal publish gating while allowing two exact derived migrations.
 
     Historical physical publications predate the current workflow projection.
     A rebuild may attach the first canonical video-timebase proof only when
@@ -323,7 +324,7 @@ def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: di
     """
     try:
         _assert_publish_workflow(match_path)
-        return
+        return False
     except HTTPException as error:
         detail = error.detail
         review_not_completed = detail == "review_not_completed" or (
@@ -347,9 +348,35 @@ def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: di
                 reviewed_identity_digest=str(published_review.get("digest") or ""),
             )
         )
-        if review_not_completed and historical_timebase and exact_published_generation:
-            return
+        if review_not_completed and exact_published_generation:
+            if historical_timebase:
+                return False
+            if _requires_workload_evidence_policy_migration(existing_publication):
+                return True
         raise error
+
+
+def _requires_workload_evidence_policy_migration(existing_publication: dict[str, Any]) -> bool:
+    """Recognize only the one reviewed workload-evidence contract upgrade.
+
+    This is deliberately not a generic aggregation-policy escape hatch. A
+    physical 1.1 publication without the private evidence primitive is the
+    only historical generation which may bypass Video QA to write derived
+    reviewed stats/package/aggregate inputs for policy 1.2.
+    """
+    published_id = str(existing_publication.get("id") or "")
+    source_kind = str(existing_publication.get("source_kind") or "physical")
+    if not published_id or source_kind != "physical":
+        return False
+    path = PUBLISHED_DIR / "matches" / published_id / "aggregate_inputs.json"
+    try:
+        aggregate = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (
+        aggregate.get("aggregation_policy_version") == "1.1.0"
+        and not isinstance(aggregate.get("workload"), dict)
+    )
 
 
 def _published_source_video_matches(
@@ -4237,7 +4264,7 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             status_code=404,
             detail=f"Local source match {source_match_id} not found; publication left unchanged.",
         ) from exc
-    _assert_physical_rebuild_workflow(path, existing)
+    workload_evidence_migration = _assert_physical_rebuild_workflow(path, existing)
     try:
         from app.services.ball_event_rebuild import PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES
 
@@ -4274,44 +4301,56 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             snapshot = get_reviewed_identity_status(path)
             if snapshot.get("status") in {"missing", "stale"}:
                 raise ValueError("Reviewed Identity must be current before rebuilding a timebase-correct publication.")
-            meta["video"] = ensure_current_video_timebase(path, meta)
             pitch_path = path / "pitch_config.json"
             pitch_config = json.loads(pitch_path.read_text(encoding="utf-8")) if pitch_path.exists() else {}
-            # The rollback below protects this coherent local migration from a
-            # later stats/package/publication failure.
-            write_match_meta(path, meta)
-            previous_snapshot_digest = str(snapshot.get("semantic_digest") or "")
-            snapshot = refresh_reviewed_identity_nonidentity_metadata(path, meta)
-            rebind_reviewed_output_snapshot_provenance(
-                path,
-                previous_snapshot_digest=previous_snapshot_digest,
-                snapshot_digest=str(snapshot.get("semantic_digest") or ""),
+            if workload_evidence_migration:
+                # The workflow state, video timebase and Reviewed Identity
+                # generation are already proven current by the migration gate.
+                # Add only the new derived workload evidence and its package
+                # projection; do not rebind or rewrite any review source.
+                build_reviewed_stats(path, snapshot, meta, pitch_config)
+            else:
+                meta["video"] = ensure_current_video_timebase(path, meta)
+                # The rollback below protects this coherent local migration from a
+                # later stats/package/publication failure.
+                write_match_meta(path, meta)
+                previous_snapshot_digest = str(snapshot.get("semantic_digest") or "")
+                snapshot = refresh_reviewed_identity_nonidentity_metadata(path, meta)
+                rebind_reviewed_output_snapshot_provenance(
+                    path,
+                    previous_snapshot_digest=previous_snapshot_digest,
+                    snapshot_digest=str(snapshot.get("semantic_digest") or ""),
+                )
+                # The snapshot's digest is an explicit dependency of durable
+                # review progress. Re-project that read model in the same
+                # transaction, without scheduling a new operator-evidence pass.
+                progress = durable_review_progress(build_reviewed_identity_progress(path, meta))
+                progress["source_snapshot_digest"] = snapshot.get("semantic_digest")
+                progress["workflow_refresh_source"] = "timebase_migration"
+                write_identity_json_atomic(path / "reviewed_identity_progress.json", progress)
+                _clear_pre_migration_recompute_failure(
+                    path,
+                    previous_snapshot_digest=previous_snapshot_digest,
+                )
+                # Stats consume durable progress for coverage readiness. The
+                # freshly reprojected progress must therefore be persisted first.
+                build_reviewed_stats(path, snapshot, meta, pitch_config)
+        if workload_evidence_migration:
+            evidence_path = path / "reviewed_player_workload_evidence.json"
+            workload_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            published = migrate_published_workload_evidence(
+                published_match_id,
+                workload_evidence,
             )
-            # The snapshot's digest is an explicit dependency of durable
-            # review progress. Re-project that read model in the same
-            # transaction, without scheduling a new operator-evidence pass.
-            # This is deliberately narrower than a workflow retry: timebase
-            # migration must not modify any review source while refreshing
-            # its purely derived progress digest.
-            progress = durable_review_progress(build_reviewed_identity_progress(path, meta))
-            progress["source_snapshot_digest"] = snapshot.get("semantic_digest")
-            progress["workflow_refresh_source"] = "timebase_migration"
-            write_identity_json_atomic(path / "reviewed_identity_progress.json", progress)
-            _clear_pre_migration_recompute_failure(
-                path,
-                previous_snapshot_digest=previous_snapshot_digest,
-            )
-            # Stats consume durable progress for coverage readiness. The
-            # freshly reprojected progress must therefore be persisted first.
-            build_reviewed_stats(path, snapshot, meta, pitch_config)
-        package = build_match_package(path)
-        ensure_package_publishable(package)
-        package_source_id = str((package.get("match") or {}).get("id") or "")
-        if package_source_id != source_match_id or f"published-{package_source_id}" != published_match_id:
-            raise ValueError(
-                "Rebuilt package source identity does not match the requested publication; rebuild refused."
-            )
-        published = import_match_package(package, replace=True)
+        else:
+            package = build_match_package(path)
+            ensure_package_publishable(package)
+            package_source_id = str((package.get("match") or {}).get("id") or "")
+            if package_source_id != source_match_id or f"published-{package_source_id}" != published_match_id:
+                raise ValueError(
+                    "Rebuilt package source identity does not match the requested publication; rebuild refused."
+                )
+            published = import_match_package(package, replace=True)
     except ValueError as exc:
         _restore_rebuild_local_files(path, locals().get("previous_files", {}))
         raise HTTPException(status_code=409, detail=str(exc)) from exc

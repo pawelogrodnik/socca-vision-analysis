@@ -315,6 +315,79 @@ def import_match_package(package: dict[str, Any], *, replace: bool = False) -> d
     return result
 
 
+def migrate_published_workload_evidence(
+    published_id: str,
+    workload_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically upgrade only a physical publication's private workload input.
+
+    This is intentionally narrower than ``import_match_package(...,
+    replace=True)``.  Historical 1.1 publications need the raw reviewed
+    workload evidence to join a logical match under policy 1.2, but rebuilding
+    their public report would create a new presentation generation.  Preserve
+    the canonical report, client mirror, heatmaps, and published video exactly
+    as they are while replacing only ``package.json`` and
+    ``aggregate_inputs.json`` in one staged publication generation.
+    """
+    init_publish_store()
+    if not isinstance(workload_evidence, dict):
+        raise ValueError("reviewed_player_workload_evidence must be a JSON object")
+
+    target_match_dir = _published_match_dir(published_id)
+    target_public_dir = public_match_report.CLIENT_PUBLIC_MATCHES_DIR / published_id
+    package_path = target_match_dir / "package.json"
+    report_path = target_match_dir / "public_report.json"
+    static_report_path = target_public_dir / "public_report.json"
+    if not target_match_dir.exists() or not target_public_dir.exists():
+        raise KeyError(published_id)
+    existing_package = _load_json_object(package_path)
+    public_report = _load_json_object(report_path)
+    if not static_report_path.is_file():
+        raise ValueError("Published static mirror is missing")
+    if _published_id_from_package(existing_package) != published_id:
+        raise ValueError("Published package source identity does not match its publication id")
+    if str(public_report.get("id") or "") != published_id:
+        raise ValueError("Published public report identity does not match its publication id")
+
+    # JSON round-tripping is a compact deep copy that also proves these values
+    # can be persisted before either target directory is touched.
+    migrated_package = json.loads(json.dumps(existing_package))
+    migrated_package["reviewed_player_workload_evidence"] = workload_evidence
+    optional = migrated_package.get("optional")
+    if isinstance(optional, dict):
+        optional["reviewed_player_workload_evidence"] = True
+    aggregate_inputs = build_aggregate_inputs(
+        migrated_package,
+        public_report=public_report,
+        published_id=published_id,
+    )
+
+    public_root = public_match_report.CLIENT_PUBLIC_MATCHES_DIR
+    staged_match_dir = _staging_directory(PUBLISHED_MATCHES_DIR.parent, name=published_id)
+    staged_public_dir = _staging_directory(public_root.parent, name=published_id)
+    try:
+        # Stage complete copies so the existing two-directory atomic promotion
+        # still protects the private publication and its public mirror as one
+        # generation.  Only the two private derived documents are replaced.
+        shutil.copytree(target_match_dir, staged_match_dir, dirs_exist_ok=True)
+        shutil.copytree(target_public_dir, staged_public_dir, dirs_exist_ok=True)
+        _atomic_write_json(staged_match_dir / "package.json", migrated_package)
+        _atomic_write_json(staged_match_dir / "aggregate_inputs.json", aggregate_inputs)
+        _commit_publication_generation(
+            staged_match_dir=staged_match_dir,
+            target_match_dir=target_match_dir,
+            staged_public_dir=staged_public_dir,
+            target_public_dir=target_public_dir,
+        )
+    finally:
+        _remove_directory(staged_match_dir)
+        _remove_directory(staged_public_dir)
+        _remove_empty_directory(staged_match_dir.parent)
+        _remove_empty_directory(staged_public_dir.parent)
+
+    return get_published_match(published_id)
+
+
 def list_published_matches() -> list[dict[str, Any]]:
     init_publish_store()
     rows = []

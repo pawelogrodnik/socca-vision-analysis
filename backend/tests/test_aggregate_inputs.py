@@ -300,6 +300,73 @@ class AggregateInputsTests(unittest.TestCase):
                 self.assertFalse(artifact.with_suffix(".json.tmp").exists())
                 _assert_no_publish_staging_artifacts(root)
 
+    def test_workload_evidence_migration_preserves_the_existing_public_generation(self) -> None:
+        """A 1.1 physical source gains only private 1.2 aggregation inputs."""
+        from app.services import json_publish_store
+        from app.services.json_publish_store import import_match_package, migrate_published_workload_evidence
+
+        package = _package()
+        evidence = package["reviewed_player_workload_evidence"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", root / "published"),
+                patch("app.services.json_publish_store.MATCHES_DIR", root / "source-matches"),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", root / "public-mirror"),
+            ):
+                import_match_package(package)
+                published_root = root / "published" / "published-match-1"
+                mirror_root = root / "public-mirror" / "published-match-1"
+
+                # Model the exact former aggregate contract: the report and
+                # client mirror already exist, but the private package has no
+                # raw workload evidence yet.
+                legacy_package = json.loads((published_root / "package.json").read_text(encoding="utf-8"))
+                legacy_package.pop("reviewed_player_workload_evidence")
+                legacy_package.get("optional", {}).pop("reviewed_player_workload_evidence", None)
+                (published_root / "package.json").write_text(json.dumps(legacy_package), encoding="utf-8")
+                legacy_aggregate = json.loads((published_root / "aggregate_inputs.json").read_text(encoding="utf-8"))
+                legacy_aggregate["aggregation_policy_version"] = "1.1.0"
+                legacy_aggregate.pop("workload")
+                (published_root / "aggregate_inputs.json").write_text(json.dumps(legacy_aggregate), encoding="utf-8")
+                # Historic physical mirrors can predate a server-only package
+                # update. The migration must preserve that public artifact,
+                # not reject it or silently regenerate its report.
+                static_report = json.loads((mirror_root / "public_report.json").read_text(encoding="utf-8"))
+                static_report["historic_static_marker"] = True
+                (mirror_root / "public_report.json").write_text(json.dumps(static_report), encoding="utf-8")
+                public_report_before = json.loads((published_root / "public_report.json").read_text(encoding="utf-8"))
+                before = _artifact_bytes(published_root, mirror_root)
+
+                migrated = migrate_published_workload_evidence("published-match-1", evidence)
+
+                after = _artifact_bytes(published_root, mirror_root)
+                self.assertEqual(migrated["id"], "published-match-1")
+                self.assertEqual(migrated["public_report"], public_report_before)
+                self.assertEqual(
+                    json.loads((published_root / "package.json").read_text(encoding="utf-8"))["reviewed_player_workload_evidence"],
+                    evidence,
+                )
+                aggregate = json.loads((published_root / "aggregate_inputs.json").read_text(encoding="utf-8"))
+                self.assertEqual(aggregate["aggregation_policy_version"], "1.2.0")
+                self.assertEqual(aggregate["workload"]["semantics"], "reviewed_confirmed_detected_in_play")
+                for path, contents in before.items():
+                    if path in {"published/package.json", "published/aggregate_inputs.json"}:
+                        self.assertNotEqual(contents, after[path], path)
+                    else:
+                        self.assertEqual(contents, after[path], path)
+                _assert_no_publish_staging_artifacts(root)
+
+                before_failed_candidate = _artifact_bytes(published_root, mirror_root)
+                with patch(
+                    "app.services.json_publish_store.build_aggregate_inputs",
+                    side_effect=AggregateInputsError("invalid workload evidence"),
+                ):
+                    with self.assertRaisesRegex(AggregateInputsError, "invalid workload evidence"):
+                        migrate_published_workload_evidence("published-match-1", evidence)
+                self.assertEqual(before_failed_candidate, _artifact_bytes(published_root, mirror_root))
+                _assert_no_publish_staging_artifacts(root)
+
     def test_invalid_first_reviewed_publish_leaves_no_authoritative_generation(self) -> None:
         from app.services import json_publish_store
         from app.services.json_publish_store import import_match_package
