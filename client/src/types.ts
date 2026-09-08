@@ -3289,7 +3289,7 @@ export type AggregateMovement = {
 };
 
 export type AggregateReportTeam = {
-  team_id: string;
+  team_id: string | null;
   team_name?: string;
   display_color?: string;
   movement: AggregateMovement;
@@ -3297,7 +3297,7 @@ export type AggregateReportTeam = {
 
 export type AggregateReportPlayer = {
   player_id: string;
-  team_id: string;
+  team_id: string | null;
   player_name?: string;
   player_number?: string;
   movement: AggregateMovement;
@@ -3404,14 +3404,19 @@ export type AggregatePublicMatchReport = {
 
 export type CanonicalKeyMoment = {
   moment_id: string;
+  origin?: 'generated' | 'manual';
+  operator_edited?: boolean;
   time_sec: number;
   window_start_sec: number;
   window_end_sec: number;
   type: 'momentum_peak' | 'possession_dominance' | string;
   team_id: string;
-  importance_score: number;
+  player_id?: string | null;
+  public_category?: string | null;
+  note?: string | null;
+  importance_score?: number;
   headline: string;
-  evidence: {
+  evidence?: {
     primary_signal: string;
     primary: {
       source: string;
@@ -3438,6 +3443,29 @@ export type CanonicalKeyMoments = {
   status: 'ready' | 'not_available' | string;
   reason?: string | null;
   moments: CanonicalKeyMoment[];
+};
+
+export type KeyMomentEditorialMoment = {
+  moment_id?: string;
+  time_sec: number;
+  category: string;
+  headline: string;
+  note?: string | null;
+  team_id?: string | null;
+  player_id?: string | null;
+  context_before_sec?: number;
+  context_after_sec?: number;
+  origin?: 'generated' | 'manual' | string;
+};
+
+export type KeyMomentEditorState = {
+  key_moment_editor_allowed: boolean;
+  reason?: string | null;
+  published_id?: string;
+  revision?: string;
+  moments?: KeyMomentEditorialMoment[];
+  has_editorial_sidecar?: boolean;
+  public_report?: PublicMatchReport;
 };
 
 export type PhysicalPublicMatchReport = PublicMatchReport & {

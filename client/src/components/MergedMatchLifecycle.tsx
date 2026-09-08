@@ -24,6 +24,9 @@ type Props = {
   mergedId: string;
   report: PublicMatchReport | null;
   onReportUpdated: (match: PublishedMatchDetail, report: PublicMatchReport | null) => void;
+  keyMomentEditorAllowed?: boolean;
+  onEditKeyMoments?: () => void;
+  onLocalVideoTimeGetter?: (getter: () => number | null) => void;
 };
 
 function duration(seconds: number): string {
@@ -43,13 +46,17 @@ function isVideoGenerationInFlight(video: MatchGroupVideoStatus | null): boolean
   return video?.status === 'generating' || video?.last_attempt?.status === 'generating';
 }
 
-export function MergedMatchLifecycle({ mergedId, report, onReportUpdated }: Props) {
+export function MergedMatchLifecycle({ mergedId, report, onReportUpdated, keyMomentEditorAllowed = false, onEditKeyMoments, onLocalVideoTimeGetter }: Props) {
   const [video, setVideo] = useState<MatchGroupVideoStatus | null>(null);
   const [externalVideo, setExternalVideo] = useState<MatchGroupExternalVideoStatus | null>(null);
   const [refreshPreview, setRefreshPreview] = useState<MatchGroupRefreshPreview | null>(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    onLocalVideoTimeGetter?.(() => localVideoRef.current?.currentTime ?? null);
+  }, [onLocalVideoTimeGetter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -212,6 +219,8 @@ export function MergedMatchLifecycle({ mergedId, report, onReportUpdated }: Prop
         video={video}
         externalVideo={externalVideo}
         onSeekLocalVideo={(timeSec) => { if (localVideoRef.current) localVideoRef.current.currentTime = timeSec; }}
+        editorAllowed={keyMomentEditorAllowed}
+        onEdit={onEditKeyMoments}
       />
     )}
 

@@ -331,6 +331,17 @@ def build_canonical_merged_report(
         ],
         "aggregate_semantic_digest": str(aggregate_report.get("aggregate_semantic_digest") or ""),
     }
+    # A saved editorial sidecar owns the final list. Without it, retain the
+    # freshly generated logical moments.
+    from app.services.key_moment_editor import apply_editorial_key_moments
+
+    editorial_key_moments = apply_editorial_key_moments(
+        report,
+        merged_published_id,
+        source_kind="merged",
+    )
+    if editorial_key_moments:
+        report["key_moments"] = editorial_key_moments
     report["_heatmap_jobs"] = heatmap_jobs
     return report
 

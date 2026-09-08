@@ -5,6 +5,7 @@ import React from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { PublishedMatchReportPage } from '../src/components/PublishedMatchReportPage.tsx';
+import { KeyMomentsEditorModal } from '../src/components/KeyMomentsEditorModal.tsx';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -37,11 +38,80 @@ function publishedDetail(title: string) {
   };
 }
 
-function renderPage() {
-  return render(React.createElement(MemoryRouter, { initialEntries: ['/published/matches/published-9c7485e4/report'] }, React.createElement(Routes, null,
+function renderPage(initialEntry = '/published/matches/published-9c7485e4/report') {
+  return render(React.createElement(MemoryRouter, { initialEntries: [initialEntry] }, React.createElement(Routes, null,
     React.createElement(Route, { path: '/published/matches/:matchId/report', element: React.createElement(PublishedMatchReportPage) }),
   )));
 }
+
+test('normal published report does not request or show the Key Moments editor', async () => {
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input); calls.push(path);
+    if (path.endsWith('/api/published/matches/published-9c7485e4')) return Response.json(publishedDetail('Raport'));
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage();
+    await waitFor(() => assert.ok(view.getAllByText('Raport').length > 0));
+    assert.equal(view.queryByRole('button', { name: 'Edytuj momenty' }), null);
+    assert.equal(calls.some((path) => path.includes('/key-moments/editor')), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('dev URL shows Key Moments editor when the backend is available', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith('/api/published/matches/published-9c7485e4')) return Response.json(publishedDetail('Raport'));
+    if (path.endsWith('/key-moments/editor')) return Response.json({ key_moment_editor_allowed: true, published_id: 'published-9c7485e4', revision: 'r1', moments: [] });
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage('/published/matches/published-9c7485e4/report?dev=1');
+    await waitFor(() => assert.ok(view.getByRole('button', { name: 'Edytuj momenty' })));
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('dev URL keeps the normal report when the Key Moments backend is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith('/api/published/matches/published-9c7485e4')) return Response.json(publishedDetail('Raport'));
+    if (path.endsWith('/key-moments/editor')) return Response.json({ detail: 'offline' }, { status: 503 });
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage('/published/matches/published-9c7485e4/report?dev=1');
+    await waitFor(() => assert.ok(view.getAllByText('Raport').length > 0));
+    assert.equal(view.queryByRole('button', { name: 'Edytuj momenty' }), null);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('Key Moments editor keeps timestamp text while typing and saves the parsed final value', async () => {
+  let saved: { moments: Array<{ time_sec: number }> } | null = null;
+  const report = publishedDetail('Raport').public_report;
+  const view = render(React.createElement(KeyMomentsEditorModal, {
+    state: {
+      key_moment_editor_allowed: true,
+      revision: 'revision-1',
+      moments: [{ moment_id: 'generated-1', time_sec: 40, category: 'momentum_peak', headline: 'Mocny okres', origin: 'generated' }],
+    },
+    report,
+    onClose: () => undefined,
+    onSave: async (draft) => { saved = draft; },
+  }));
+  const timestamp = view.getByLabelText('Czas') as HTMLInputElement;
+  fireEvent.input(timestamp, { target: { value: '' } });
+  for (const character of '12:34.5') {
+    fireEvent.input(timestamp, { target: { value: `${timestamp.value}${character}` } });
+  }
+  assert.equal(timestamp.value, '12:34.5');
+  fireEvent.click(view.getByRole('button', { name: 'Zapisz' }));
+  await waitFor(() => assert.ok(saved));
+  assert.equal(saved?.moments[0].time_sec, 754.5);
+});
 
 test('published report rebuilds through the dedicated endpoint and shows the new report', async () => {
   const calls: Array<{ path: string; method?: string }> = [];

@@ -848,6 +848,13 @@ def write_public_match_report_bundle(
         heatmap_dir=public_heatmap_dir,
         public_heatmap_base=public_heatmap_base,
     )
+    # A saved editorial sidecar is the final public list and survives an
+    # ordinary publication rebuild. Without it, preserve generated moments.
+    from app.services.key_moment_editor import apply_editorial_key_moments
+
+    editorial_key_moments = apply_editorial_key_moments(report, published_id, source_kind="physical")
+    if editorial_key_moments:
+        report["key_moments"] = editorial_key_moments
     public_dir.mkdir(parents=True, exist_ok=True)
     (public_dir / "public_report.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True),

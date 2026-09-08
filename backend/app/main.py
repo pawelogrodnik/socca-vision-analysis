@@ -79,6 +79,11 @@ from app.services.identity_reviewed_output_jobs import (
     rebind_reviewed_output_snapshot_provenance,
     reviewed_output_status,
 )
+from app.services.key_moment_editor import (
+    KeyMomentEditorError,
+    editor_state as key_moment_editor_state,
+    save_editorial_document as save_key_moment_editorial_document,
+)
 from app.services.identity_reviewed_stats import build_reviewed_stats
 from app.services.identity_reviewed_action_gate import (
     DeferredReviewActionError,
@@ -4036,6 +4041,30 @@ def api_get_published_match(published_match_id: str) -> dict[str, Any]:
                     detail={"code": "merged_projection_stale", "detail": "Merged report is stale and cannot be rebuilt safely."},
                 ) from error
     return match
+
+
+def _key_moment_editor_error_response(error: KeyMomentEditorError) -> HTTPException:
+    return HTTPException(status_code=error.status_code, detail={"code": error.code, "detail": error.detail})
+
+
+@app.get("/api/published/matches/{published_match_id}/key-moments/editor")
+def api_get_key_moment_editor(published_match_id: str) -> dict[str, Any]:
+    try:
+        return key_moment_editor_state(published_match_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except KeyMomentEditorError as error:
+        raise _key_moment_editor_error_response(error) from error
+
+
+@app.put("/api/published/matches/{published_match_id}/key-moments/editor")
+def api_save_key_moment_editor(published_match_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        return save_key_moment_editorial_document(published_match_id, payload)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail={"code": "published_match_not_found", "detail": "Published match not found."}) from error
+    except KeyMomentEditorError as error:
+        raise _key_moment_editor_error_response(error) from error
 
 
 @app.post("/api/published/matches/{published_match_id}/regenerate-report")
