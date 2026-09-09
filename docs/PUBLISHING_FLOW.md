@@ -192,28 +192,38 @@ without regenerating them. It is not a general workflow or policy bypass.
 
 ### Historical Team Shape refresh
 
-The same physical rebuild endpoint has one separate, narrower migration for a
-historical Team Shape publication. It is eligible only when all of these facts
-are true before anything is staged:
+The same physical rebuild endpoint has one separate, narrower fallback for a
+historical Team Shape publication. A normally eligible rebuild always takes the
+normal full-rebuild path first; this fallback is considered only after the
+historical Review/Video-QA gate has blocked that path. It is eligible only when
+all of these facts are true before anything is staged:
 
 - the target is its existing physical `published-<source_match_id>` record,
   with a complete Reviewed Identity package;
-- the local Reviewed Identity snapshot is fresh and its semantic digest is
-  exactly the digest embedded in that publication;
 - the immutable source-video binding is exact (source fingerprint, or the
   completed reviewed-output job key and source-video digest for legacy
   packages);
+- the ready Team Shape maps its A/B labels to exactly the stable team IDs in
+  the existing publication;
 - `team_shape.json` can be freshly derived and is `available: true` and
-  `readiness: ready`.
+  `readiness: ready`, with valid feature-specific pitch/phase/team dependency
+  lineage.
 
 When proven, the service copies both existing publication directories into
 staging, replaces only `package.json`, `public_report.json`, the client mirror
-report, and the derived aggregate inputs, validates that the public semantic
-diff is Team Shape only, then atomically promotes both directories. The package
-records direct Team Shape provenance and its pitch/phase/team dependencies.
-Published video, Video QA, heatmaps and operator identity decisions are neither
-rendered nor mutated. Any missing or mismatched proof rejects the migration;
-there is no digest override or generic QA bypass.
+report, and the two aggregate digest bindings, then atomically promotes both
+directories. The package changes only `team_shape` and
+`team_shape_publication_refresh`; the latter owns the Team Shape generation's
+pitch/phase/team dependency bundle. Existing top-level package dependencies and
+all aggregate primitives remain historical and unchanged.
+
+The migration preserves the already-published Reviewed Identity, reviewed
+video, and Video QA generation. It does not rebind that generation to the
+current Reviewed Identity snapshot, so the current digest may differ without
+being a blocker. This is feature-version composition, not a QA bypass and not
+Reviewed Identity rebinding. Published video, Video QA, heatmaps and operator
+identity decisions are neither rendered nor mutated. Any missing or mismatched
+proof rejects the migration; there is no digest override or generic QA bypass.
 
 After every required physical refresh has succeeded, refresh the already
 existing logical publication via its canonical endpoint:

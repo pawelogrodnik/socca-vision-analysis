@@ -114,23 +114,28 @@ class PublishedRebuildTests(unittest.TestCase):
                 "id": "published-match-1",
                 "source_kind": "physical",
                 "source_match_id": "match-1",
-                "package": {"identity_report_source": "reviewed_identity"},
+                "package": {
+                    "identity_report_source": "reviewed_identity",
+                    "team_config": {"teams": [{"team_label": "A", "team_id": "team-a"}, {"team_label": "B", "team_id": "team-b"}]},
+                },
             }
-            shape = {"available": True, "readiness": "ready", "generated_from": []}
+            shape = {
+                "available": True,
+                "readiness": "ready",
+                "generated_from": [],
+                "teams": [{"team_label": "A", "team_id": "team-a", "readiness": "ready"}, {"team_label": "B", "team_id": "team-b", "readiness": "ready"}],
+            }
             with (
                 patch("app.main.reviewed_identity_package_status", return_value={"ready": True, "digest": "published-digest"}),
-                patch("app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "published-digest"}),
                 patch("app.main._published_source_video_matches", return_value=True),
                 patch("app.services.team_shape.ensure_team_shape_artifact_fresh", return_value=shape),
             ):
                 proof = _team_shape_only_publication_refresh_proof(path, publication)
                 self.assertIsNotNone(proof)
                 assert proof is not None
-                self.assertEqual(proof["provenance"]["reviewed_identity_digest"], "published-digest")
+                self.assertEqual(proof["provenance"]["frozen_reviewed_identity_digest"], "published-digest")
                 self.assertEqual(proof["team_shape"], shape)
 
-                with patch("app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "changed-digest"}):
-                    self.assertIsNone(_team_shape_only_publication_refresh_proof(path, publication))
                 with patch("app.main._published_source_video_matches", return_value=False):
                     self.assertIsNone(_team_shape_only_publication_refresh_proof(path, publication))
                 with patch("app.services.team_shape.ensure_team_shape_artifact_fresh", return_value={"available": False, "readiness": "blocked"}):
@@ -138,6 +143,7 @@ class PublishedRebuildTests(unittest.TestCase):
 
     def test_team_shape_refresh_rebuild_uses_only_the_narrow_publication_migration(self) -> None:
         from app.main import api_rebuild_published_match
+        from fastapi import HTTPException
 
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "match-1"
@@ -151,13 +157,13 @@ class PublishedRebuildTests(unittest.TestCase):
             }
             proof = {
                 "team_shape": {"available": True, "readiness": "ready"},
-                "dependencies": {"pitch_config": {}, "match_phase_config": {}, "team_config": {}},
-                "provenance": {"schema_version": "team_shape_publication_refresh:v1"},
+                "provenance": {"schema_version": "team_shape_publication_refresh:v2"},
             }
             migrated = {**existing, "public_report": {"id": "published-match-1"}}
             with (
                 patch("app.main.get_published_match", return_value=existing),
                 patch("app.main.match_dir", return_value=path),
+                patch("app.main._assert_publish_workflow", side_effect=HTTPException(status_code=409, detail={"code": "review_not_completed"})),
                 patch("app.main._team_shape_only_publication_refresh_proof", return_value=proof),
                 patch("app.main.migrate_published_team_shape_only", return_value=migrated) as migrate,
                 patch("app.main._assert_physical_rebuild_workflow") as normal_gate,
@@ -170,12 +176,41 @@ class PublishedRebuildTests(unittest.TestCase):
             migrate.assert_called_once_with(
                 "published-match-1",
                 team_shape=proof["team_shape"],
-                team_shape_dependencies=proof["dependencies"],
                 provenance=proof["provenance"],
             )
             normal_gate.assert_not_called()
             render.assert_not_called()
             full_package.assert_not_called()
+
+    def test_normal_rebuild_wins_even_when_team_shape_fallback_proof_would_pass(self) -> None:
+        from app.main import api_rebuild_published_match
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "match-1"
+            path.mkdir()
+            (path / "match.json").write_text(json.dumps({"id": "match-1"}), encoding="utf-8")
+            existing = {"id": "published-match-1", "source_kind": "physical", "source_match_id": "match-1", "package": {"match": {"id": "match-1"}}}
+            proof = {"team_shape": {"available": True, "readiness": "ready"}, "provenance": {"schema_version": "team_shape_publication_refresh:v2"}}
+            package = {"match": {"id": "match-1"}}
+            published = {"id": "published-match-1"}
+            with (
+                patch("app.main.get_published_match", return_value=existing),
+                patch("app.main.match_dir", return_value=path),
+                patch("app.main._assert_publish_workflow"),
+                patch("app.main._team_shape_only_publication_refresh_proof", return_value=proof) as fallback_proof,
+                patch("app.main.migrate_published_team_shape_only") as narrow,
+                patch("app.main.build_match_package", return_value=package) as full_package,
+                patch("app.main.ensure_package_publishable"),
+                patch("app.main.import_match_package", return_value=published),
+                patch("app.main.write_match_meta", side_effect=lambda _path, meta: meta),
+                patch("app.main.resolve_match_video_path", side_effect=FileNotFoundError),
+            ):
+                result = api_rebuild_published_match("published-match-1")
+
+            self.assertEqual(result, published)
+            full_package.assert_called_once_with(path)
+            fallback_proof.assert_not_called()
+            narrow.assert_not_called()
 
     def test_legacy_migration_gate_requires_exact_complete_published_review(self) -> None:
         from app.main import _assert_physical_rebuild_workflow
