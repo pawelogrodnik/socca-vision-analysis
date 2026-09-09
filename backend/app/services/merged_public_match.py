@@ -1556,6 +1556,9 @@ def _ensure_merged_published_match_locked(group_id: str) -> dict[str, Any]:
         _validate_projection_candidate(candidate, merged_id)
         _assert_projection_source_current(group_id, manifest_digest)
         _commit_projection_candidate(group_id, merged_id, candidate)
+        from app.services.match_group_external_video import sync_match_group_external_video_public_projection
+
+        sync_match_group_external_video_public_projection(group_id)
     finally:
         _remove_staging(candidate)
     return {"merged_published_match_id": merged_id, "report": report}
@@ -1680,6 +1683,9 @@ def refresh_merged_match_to_latest(group_id: str) -> dict[str, Any]:
                 str(candidate.get("aggregate_semantic_digest") or ""),
             )
             _commit_projection_candidate(group_id, merged_id, staged)
+            from app.services.match_group_external_video import sync_match_group_external_video_public_projection
+
+            sync_match_group_external_video_public_projection(group_id)
         finally:
             _remove_staging(staged)
         return _refresh_response(get_match_group(group_id), refreshed=True, coherence={"status": "current"})
@@ -1717,7 +1723,7 @@ def regenerate_merged_match_group(group_id: str) -> dict[str, Any]:
 
 
 def _refresh_response(group: dict[str, Any], *, refreshed: bool, coherence: dict[str, Any]) -> dict[str, Any]:
-    from app.services.match_group_external_video import get_match_group_external_video
+    from app.services.match_group_external_video import sync_match_group_external_video_public_projection
     from app.services.match_group_video import get_match_group_video_status
 
     group_id = str(group["group_id"])
@@ -1726,7 +1732,7 @@ def _refresh_response(group: dict[str, Any], *, refreshed: bool, coherence: dict
         "group": group,
         "validation": validate_match_group_manifest(group),
         "video": get_match_group_video_status(group_id),
-        "external_video": get_match_group_external_video(group_id),
+        "external_video": sync_match_group_external_video_public_projection(group_id),
         "merged_published_match_id": merged_published_id_for_group(group_id),
         "merged_projection": coherence,
     }

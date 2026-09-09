@@ -242,4 +242,5 @@ test('redesigned report renders Team Shape only when the canonical report carrie
     externalVideo: null, editorAllowed: false, onEditKeyMoments: () => undefined,
   }));
   assert.match(withShape, /Ustawienie drużyn/);
+  assert.ok(withShape.indexOf('Heatmapy zawodników') < withShape.indexOf('Ustawienie drużyn'));
 });

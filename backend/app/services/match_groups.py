@@ -212,6 +212,12 @@ def update_match_group_and_generate_report(
         )
         if rebuild_canonical_projection is not None:
             rebuild_canonical_projection(normalized_group_id)
+        else:
+            # A manifest replacement can invalidate the combined-video input
+            # while an external YouTube provenance document remains preserved.
+            from app.services.match_group_external_video import sync_match_group_external_video_public_projection
+
+            sync_match_group_external_video_public_projection(normalized_group_id)
         return replacement, report
 
 

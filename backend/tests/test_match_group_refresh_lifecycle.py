@@ -25,7 +25,7 @@ from app.services.match_group_aggregation import (
     get_coherent_match_group_report,
     get_match_group_report,
 )
-from app.services.match_group_external_video import save_match_group_external_video
+from app.services.match_group_external_video import get_match_group_external_video, save_match_group_external_video
 from app.services.match_group_refresh import preview_match_group_refresh, refresh_match_group_to_latest
 from app.services.match_group_video import (
     COMBINED_VIDEO_FILENAME,
@@ -64,6 +64,8 @@ class RefreshLifecycleTests(unittest.TestCase):
             patch("app.services.match_group_video.PUBLISHED_MATCHES_DIR", root / "published"),
             patch("app.services.match_group_video.MATCH_GROUPS_DIR", root / "groups"),
             patch("app.services.match_group_external_video.MATCH_GROUPS_DIR", root / "groups"),
+            patch("app.services.match_group_external_video.CLIENT_PUBLIC_MATCHES_DIR", root / "client-public"),
+            patch("app.services.match_group_external_video.merged_published_id_for_group", return_value="published-merged-one"),
         )
 
         class StoreContext:
@@ -782,12 +784,14 @@ class RefreshLifecycleTests(unittest.TestCase):
             output_after = next((self._group_dir(root, group_id) / "video-generations").rglob("combined_match_video.mp4")).read_bytes()
             self.assertEqual(output_after, output_before)
 
-    def test_external_video_bytes_never_change_but_status_follows_video_digest(self) -> None:
+    def test_public_external_video_sidecar_tracks_refresh_without_mutating_canonical_document(self) -> None:
         with self._store() as root:
             group = self._video_group(root)
             group_id = str(group["group_id"])
             save_match_group_external_video(group_id, YOUTUBE_URL)
             external_before = (self._group_dir(root, group_id) / "external_video.json").read_bytes()
+            public_sidecar = root / "client-public" / "published-merged-one" / "external_video.json"
+            public_before = public_sidecar.read_bytes()
 
             # Report-only refresh: linked video digest unchanged -> current.
             _write_source(root, "published-one", "physical-one", player_distance=333)
@@ -795,6 +799,7 @@ class RefreshLifecycleTests(unittest.TestCase):
             self.assertEqual(result["status"], "refreshed")
             self.assertEqual((self._group_dir(root, group_id) / "external_video.json").read_bytes(), external_before)
             self.assertEqual(result["external_video"]["status"], "current")
+            self.assertEqual(public_sidecar.read_bytes(), public_before)
 
             # Video-input refresh: linked digest changed -> stale, same bytes.
             _write_source(root, "published-one", "physical-one", player_distance=444)
@@ -803,6 +808,25 @@ class RefreshLifecycleTests(unittest.TestCase):
             self.assertEqual(result["status"], "refreshed")
             self.assertEqual((self._group_dir(root, group_id) / "external_video.json").read_bytes(), external_before)
             self.assertEqual(result["external_video"]["status"], "stale")
+            self.assertFalse(public_sidecar.exists())
+
+    def test_combined_video_regeneration_with_changed_input_withdraws_public_sidecar(self) -> None:
+        with self._store() as root:
+            group = self._video_group(root)
+            group_id = str(group["group_id"])
+            save_match_group_external_video(group_id, YOUTUBE_URL)
+            canonical_sidecar = self._group_dir(root, group_id) / "external_video.json"
+            canonical_before = canonical_sidecar.read_bytes()
+            public_sidecar = root / "client-public" / "published-merged-one" / "external_video.json"
+            self.assertTrue(public_sidecar.exists())
+
+            self._write_video_files(root, "published-one", b"video-one-regenerated-source")
+            self.assertEqual(get_match_group_video_status(group_id)["status"], "stale")
+            self._render_video(group_id)
+
+            self.assertEqual(get_match_group_external_video(group_id)["status"], "stale")
+            self.assertEqual(canonical_sidecar.read_bytes(), canonical_before)
+            self.assertFalse(public_sidecar.exists())
 
     # ------------------------------------------------------------------
     # #92 Key Moments transition

@@ -193,6 +193,57 @@ test('static fallback report renders without a rebuild action', async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('static merged report renders its YouTube video and Key Moments without a backend match', async () => {
+  const id = 'published-merged-static';
+  const staticReport = {
+    ...publishedDetail('Statyczny scalony mecz').public_report,
+    id,
+    source_match_id: 'match-group-static',
+    match: { id, title: 'Statyczny scalony mecz', duration_sec: 120 },
+    merged_provenance: { group_id: 'match-group-static', merged_published_match_id: id },
+    key_moments: {
+      schema_version: '1.0.0', policy_version: 'logical-key-moments:v1', status: 'ready',
+      moments: [{
+        moment_id: 'km-static', time_sec: 83, window_start_sec: 80, window_end_sec: 86,
+        type: 'momentum_peak', team_id: 'team-a', headline: 'Mocny okres przewagi',
+      }],
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith(`/api/published/matches/${id}`)) return Response.json({ detail: 'offline' }, { status: 503 });
+    if (path.endsWith(`/published/matches/${id}/public_report.json`)) return Response.json(staticReport);
+    if (path.endsWith(`/api/published/matches/${id}/external-video`)) return Response.json({ detail: 'offline' }, { status: 503 });
+    if (path.endsWith(`/published/matches/${id}/external_video.json`)) {
+      return Response.json({
+        status: 'current',
+        external_video: {
+          provider: 'youtube',
+          video_id: 'AbCdEfGhI_1',
+          source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1',
+          embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1',
+        },
+      });
+    }
+    if (path.endsWith(`/api/published/matches/${id}/video`) || path.endsWith(`/api/published/matches/${id}/refresh-preview`)) {
+      return Response.json({ detail: 'offline' }, { status: 503 });
+    }
+    throw new Error(`Unexpected ${path}`);
+  }) as typeof fetch;
+  try {
+    const view = renderPage(`/published/matches/${id}/report`);
+    await waitFor(() => assert.ok(view.getByRole('heading', { name: 'Pełne wideo meczu' })));
+    assert.equal(view.container.querySelector('iframe')?.getAttribute('src'), 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1');
+    assert.ok(view.getByRole('link', { name: 'Otwórz na YouTube' }));
+    assert.ok(view.getByRole('heading', { name: 'Najważniejsze momenty' }));
+    assert.equal(
+      (view.getByRole('link', { name: 'Zobacz moment' }) as HTMLAnchorElement).getAttribute('href'),
+      'https://www.youtube.com/watch?v=AbCdEfGhI_1&t=83s',
+    );
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('published report keeps existing share and export actions', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (input) => {

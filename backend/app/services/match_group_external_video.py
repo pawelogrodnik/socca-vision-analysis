@@ -20,6 +20,8 @@ from urllib.parse import parse_qs, urlsplit
 from app.services.artifact_lineage import canonical_json_sha256
 from app.services.match_group_video import get_match_group_video_status
 from app.services.match_groups import MATCH_GROUPS_DIR, MatchGroupError, get_match_group
+from app.services.merged_public_match import merged_published_id_for_group
+from app.services.public_match_report import CLIENT_PUBLIC_MATCHES_DIR
 
 
 EXTERNAL_VIDEO_FILENAME = "external_video.json"
@@ -110,7 +112,9 @@ def save_match_group_external_video(group_id: str, url: str) -> dict[str, Any]:
     }
     document["document_semantic_digest"] = canonical_json_sha256(document)
     _write_existing_group_document(_group_dir(str(group["group_id"])), document)
-    return get_match_group_external_video(str(group["group_id"]))
+    state = get_match_group_external_video(str(group["group_id"]))
+    _sync_public_mirror(str(group["group_id"]), state)
+    return state
 
 
 def delete_match_group_external_video(group_id: str) -> dict[str, Any]:
@@ -122,7 +126,22 @@ def delete_match_group_external_video(group_id: str) -> dict[str, Any]:
         (group_dir / EXTERNAL_VIDEO_FILENAME).unlink()
     except FileNotFoundError:
         pass
-    return _state(group, "not_configured")
+    state = _state(group, "not_configured")
+    _sync_public_mirror(str(group["group_id"]), state)
+    return state
+
+
+def sync_match_group_external_video_public_projection(group_id: str) -> dict[str, Any]:
+    """Refresh the static projection from the canonical external-video state.
+
+    Lifecycle commits may make a preserved external-video provenance document
+    stale without modifying that canonical document. Re-evaluating here keeps
+    the public sidecar usable only while the canonical state is ``current``.
+    """
+
+    state = get_match_group_external_video(group_id)
+    _sync_public_mirror(group_id, state)
+    return state
 
 
 def _state(group: dict[str, Any], status: str, document: dict[str, Any] | None = None, *, reason: str | None = None) -> dict[str, Any]:
@@ -185,6 +204,54 @@ def _write_existing_group_document(group_dir: Path, document: dict[str, Any]) ->
         if not manifest.is_file():
             raise KeyError(group_dir.name)
         os.replace(temporary, group_dir / EXTERNAL_VIDEO_FILENAME)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _sync_public_mirror(group_id: str, state: dict[str, Any]) -> None:
+    """Atomically project a viewer-safe external-video read model when available.
+
+    The match-group document remains canonical and includes internal video
+    lineage. The static viewer only needs a current YouTube embed, so never
+    expose those provenance fields in ``client/public``.
+    """
+
+    merged_id = merged_published_id_for_group(group_id)
+    if not merged_id:
+        return
+    path = CLIENT_PUBLIC_MATCHES_DIR / merged_id / EXTERNAL_VIDEO_FILENAME
+    external = state.get("external_video") if isinstance(state.get("external_video"), dict) else None
+    if state.get("status") != "current" or external is None:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        return
+    payload = {
+        "status": "current",
+        "external_video": {
+            "provider": "youtube",
+            "video_id": external["video_id"],
+            "source_url": external["source_url"],
+            "embed_url": external["embed_url"],
+        },
+    }
+    _write_json_atomically(path, payload)
+
+
+def _write_json_atomically(path: Path, document: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(document, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
     finally:
         try:
             temporary.unlink()

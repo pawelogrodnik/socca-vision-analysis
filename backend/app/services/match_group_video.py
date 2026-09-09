@@ -298,7 +298,13 @@ def _render_generation(group: dict[str, Any], job: dict[str, Any]) -> dict[str, 
     # The pointer is the commit point.  Never roll back this immutable
     # generation because best-effort cleanup of the now-obsolete job failed.
     cleanup_job = _post_commit_cleanup(group_dir, generation_id, previous_generation_id, job, completed_at)
-    return _state("ready", group, current={"manifest": manifest, "video_path": output}, job=cleanup_job)
+    state = _state("ready", group, current={"manifest": manifest, "video_path": output}, job=cleanup_job)
+    # The external link itself stays historical, but its static projection
+    # must be withdrawn when this new generation makes it stale.
+    from app.services.match_group_external_video import sync_match_group_external_video_public_projection
+
+    sync_match_group_external_video_public_projection(str(group["group_id"]))
+    return state
 
 
 def _background_generate(group_id: str, job: dict[str, Any]) -> None:
