@@ -471,6 +471,17 @@ def _with_logical_offsets(members: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 def _compatibility(members: list[dict[str, Any]]) -> dict[str, Any]:
     reasons: list[dict[str, str]] = []
+    aggregation_policy_versions = {
+        str(member["aggregation_policy_version"])
+        for member in members
+    }
+    if len(aggregation_policy_versions) > 1:
+        reasons.append(
+            {
+                "code": "aggregation_policy_mismatch",
+                "detail": "Logical match members must use one aggregation policy version.",
+            }
+        )
     expected_team_ids: set[str] | None = None
     player_team_ids: dict[str, str] = {}
     for member in members:

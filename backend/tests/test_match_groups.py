@@ -41,6 +41,34 @@ class MatchGroupStoreTests(unittest.TestCase):
             self.assertEqual(validate_match_group(manifest["group_id"])["status"], "compatible")
             self.assertTrue((root / "groups" / manifest["group_id"] / "manifest.json").is_file())
 
+    def test_supported_aggregation_policies_must_be_homogeneous_per_logical_match(self) -> None:
+        cases = (
+            ("all-1.2", ("1.2.0", "1.2.0"), "compatible"),
+            ("all-1.3", ("1.3.0", "1.3.0"), "compatible"),
+            ("mixed-two", ("1.2.0", "1.3.0"), "aggregation_policy_mismatch"),
+            ("mixed-three", ("1.2.0", "1.3.0", "1.3.0"), "aggregation_policy_mismatch"),
+        )
+        for name, policies, expected in cases:
+            with self.subTest(name=name), self._store() as root:
+                member_ids = []
+                for index, policy in enumerate(policies, start=1):
+                    published_id = f"published-{index}"
+                    member_ids.append(published_id)
+                    _write_source(
+                        root,
+                        published_id,
+                        f"physical-{index}",
+                        aggregation_policy_version=policy,
+                    )
+                if expected == "compatible":
+                    manifest = create_match_group(member_published_ids=member_ids, metadata=_metadata())
+                    self.assertEqual(manifest["compatibility"]["status"], "compatible")
+                    self.assertEqual(validate_match_group(manifest["group_id"])["status"], "compatible")
+                else:
+                    with self.assertRaises(MatchGroupError) as error:
+                        create_match_group(member_published_ids=member_ids, metadata=_metadata())
+                    self.assertEqual(error.exception.code, expected)
+
     def test_three_fragment_offsets_are_cumulative_and_order_is_caller_owned(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=10.0)
