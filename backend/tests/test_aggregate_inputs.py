@@ -421,6 +421,118 @@ class AggregateInputsTests(unittest.TestCase):
                 self.assertEqual(before_failed_candidate, _artifact_bytes(published_root, mirror_root))
                 _assert_no_publish_staging_artifacts(root)
 
+    def test_team_shape_only_migration_changes_only_shape_lineage_and_public_projection(self) -> None:
+        from app.services import json_publish_store
+        from app.services.json_publish_store import import_match_package, migrate_published_team_shape_only
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", root / "published"),
+                patch("app.services.json_publish_store.MATCHES_DIR", root / "source-matches"),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", root / "public-mirror"),
+            ):
+                import_match_package(_package())
+                published_root = root / "published" / "published-match-1"
+                mirror_root = root / "public-mirror" / "published-match-1"
+                (published_root / "reviewed_video.mp4").write_bytes(b"already-rendered-video")
+                (published_root / "reviewed_video_manifest.json").write_text(json.dumps({"digest": "video-digest"}), encoding="utf-8")
+                (published_root / "video_qa.json").write_text(json.dumps({"status": "accepted"}), encoding="utf-8")
+                shape = _ready_team_shape()
+                before = _artifact_bytes(published_root, mirror_root)
+
+                migrated = migrate_published_team_shape_only(
+                    "published-match-1",
+                    team_shape=shape,
+                    provenance=_team_shape_refresh_provenance(),
+                )
+
+                after = _artifact_bytes(published_root, mirror_root)
+                self.assertEqual(migrated["id"], "published-match-1")
+                self.assertEqual(after["published/reviewed_video.mp4"], b"already-rendered-video")
+                self.assertEqual(
+                    canonical_json_sha256(json.loads((published_root / "public_report.json").read_text(encoding="utf-8"))),
+                    canonical_json_sha256(json.loads((mirror_root / "public_report.json").read_text(encoding="utf-8"))),
+                )
+                package = json.loads((published_root / "package.json").read_text(encoding="utf-8"))
+                self.assertEqual(package["team_shape"], shape)
+                self.assertEqual(package["team_shape_publication_refresh"]["frozen_reviewed_identity_digest"], "reviewed-digest")
+                self.assertEqual(package["pitch_config"], _package()["pitch_config"])
+                self.assertEqual(package["team_config"], _package()["team_config"])
+                report = json.loads((published_root / "public_report.json").read_text(encoding="utf-8"))
+                self.assertTrue(report["team_shape"]["available"])
+                old_aggregate = json.loads(before["published/aggregate_inputs.json"])
+                new_aggregate = json.loads(after["published/aggregate_inputs.json"])
+                from app.services.json_publish_store import _assert_team_shape_only_aggregate_change
+                _assert_team_shape_only_aggregate_change(old_aggregate, new_aggregate)
+                for path, contents in before.items():
+                    if path in {
+                        "published/package.json",
+                        "published/public_report.json",
+                        "published/aggregate_inputs.json",
+                        "mirror/public_report.json",
+                    }:
+                        self.assertNotEqual(contents, after[path], path)
+                    else:
+                        self.assertEqual(contents, after[path], path)
+                _assert_no_publish_staging_artifacts(root)
+
+    def test_team_shape_only_migration_rejects_unrelated_report_mutation(self) -> None:
+        from app.services.json_publish_store import _assert_team_shape_only_report_change
+
+        before = {"id": "published-match-1", "title": "Original", "team_shape": None}
+        after = {"id": "published-match-1", "title": "Changed", "team_shape": {"available": True}}
+        with self.assertRaisesRegex(ValueError, "unrelated public report"):
+            _assert_team_shape_only_report_change(before, after)
+
+    def test_team_shape_only_migration_rejects_unrelated_package_mutation(self) -> None:
+        from app.services.json_publish_store import _assert_team_shape_only_package_change
+
+        before = {"match": {"id": "match-1"}, "reviewed_output_manifest": {"job_key": "old"}}
+        after = {**before, "team_shape": _ready_team_shape(), "reviewed_output_manifest": {"job_key": "changed"}}
+        with self.assertRaisesRegex(ValueError, "unrelated package"):
+            _assert_team_shape_only_package_change(before, after)
+
+    def test_team_shape_only_migration_rejects_unrelated_aggregate_mutation(self) -> None:
+        from app.services.json_publish_store import _assert_team_shape_only_aggregate_change
+
+        before = build_aggregate_inputs(_package(), public_report=_public_report(), published_id="published-match-1")
+        after = json.loads(json.dumps(before))
+        after["source"]["public_report_semantic_digest"] = "sha256:new-report"
+        after["source"]["aggregation_input_semantic_digest"] = "sha256:new-aggregate"
+        after["teams"][0]["movement"]["sprint_count"] = 99
+        with self.assertRaisesRegex(ValueError, "unrelated aggregate"):
+            _assert_team_shape_only_aggregate_change(before, after)
+
+    def test_team_shape_only_migration_rolls_back_on_aggregate_guard_failure(self) -> None:
+        from app.services import json_publish_store
+        from app.services.json_publish_store import import_match_package, migrate_published_team_shape_only
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with (
+                patch.object(json_publish_store, "PUBLISHED_MATCHES_DIR", root / "published"),
+                patch("app.services.json_publish_store.MATCHES_DIR", root / "source-matches"),
+                patch("app.services.public_match_report.CLIENT_PUBLIC_MATCHES_DIR", root / "public-mirror"),
+            ):
+                import_match_package(_package())
+                published_root = root / "published" / "published-match-1"
+                mirror_root = root / "public-mirror" / "published-match-1"
+                (published_root / "reviewed_video.mp4").write_bytes(b"already-rendered-video")
+                before = _artifact_bytes(published_root, mirror_root)
+                with patch(
+                    "app.services.json_publish_store._assert_team_shape_only_aggregate_change",
+                    side_effect=ValueError("aggregate guard rejected candidate"),
+                ):
+                    with self.assertRaisesRegex(ValueError, "aggregate guard"):
+                        migrate_published_team_shape_only(
+                            "published-match-1",
+                            team_shape=_ready_team_shape(),
+                            provenance=_team_shape_refresh_provenance(),
+                        )
+                self.assertEqual(before, _artifact_bytes(published_root, mirror_root))
+                _assert_no_publish_staging_artifacts(root)
+
     def test_invalid_first_reviewed_publish_leaves_no_authoritative_generation(self) -> None:
         from app.services import json_publish_store
         from app.services.json_publish_store import import_match_package
@@ -498,6 +610,69 @@ def _assert_no_publish_staging_artifacts(root: Path) -> None:
     assert not staging_root.exists()
     assert not list(root.rglob("*.tmp"))
     assert not list(root.rglob("*.backup-*"))
+
+
+def _ready_team_shape() -> dict:
+    dependencies = _team_shape_dependencies()
+    return {
+        "available": True,
+        "readiness": "ready",
+        "pitch_dimensions_m": {"width_m": 30.0, "length_m": 47.4},
+        "generated_from": [
+            {"artifact": f"{key}.json", "sha256": canonical_json_sha256(value)}
+            for key, value in dependencies.items()
+        ],
+        "teams": [
+            {
+                "team_label": "A",
+                "team_id": "team-corgi",
+                "team_name": "Corgi",
+                "readiness": "ready",
+                "summary": {
+                    "average_width_m": 17.2,
+                    "average_depth_m": 22.5,
+                    "average_compactness_m": 8.4,
+                    "average_block_height_percent": 51.0,
+                },
+                "average_shape": {"grid": {"columns": 1, "rows": 1}, "cells": [{"column": 0, "row": 0, "value": 1.0}]},
+                "timeline": [],
+            },
+            {
+                "team_label": "B",
+                "team_id": "team-verisk",
+                "team_name": "Verisk",
+                "readiness": "ready",
+                "summary": {
+                    "average_width_m": 16.1,
+                    "average_depth_m": 20.2,
+                    "average_compactness_m": 7.9,
+                    "average_block_height_percent": 48.0,
+                },
+                "average_shape": {"grid": {"columns": 1, "rows": 1}, "cells": [{"column": 0, "row": 0, "value": 1.0}]},
+                "timeline": [],
+            },
+        ],
+        "takeaways": ["Shape is available."],
+    }
+
+
+def _team_shape_dependencies() -> dict:
+    return {
+        "pitch_config": {"width_m": 30.0, "length_m": 47.4},
+        "match_phase_config": {"phases": []},
+        "team_config": _package()["team_config"],
+    }
+
+
+def _team_shape_refresh_provenance() -> dict:
+    return {
+        "schema_version": "team_shape_publication_refresh:v2",
+        "source_match_id": "match-1",
+        "frozen_reviewed_identity_digest": "reviewed-digest",
+        "source_video_proof": "exact_published_binding",
+        "team_shape_generated_from": _ready_team_shape()["generated_from"],
+        "dependencies": _team_shape_dependencies(),
+    }
 
 
 def _package(*, labels: dict[str, str] | None = None, swap_players: bool = False) -> dict:

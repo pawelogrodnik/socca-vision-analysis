@@ -43785,6 +43785,839 @@
     "team_tracking": "named_and_anonymous_team_observations",
     "technical_debug": "excluded"
   },
+  "team_shape": {
+    "available": true,
+    "pitch_dimensions_m": {
+      "length_m": 47.4,
+      "width_m": 30.0
+    },
+    "scope": "all_in_play",
+    "takeaways": [
+      "Corgi grał średnio o 8.0 m dłuższe ustawienie niż Verisk.",
+      "Corgi utrzymywał średnio o 1.1 m mniej zwarte ustawienie niż Verisk.",
+      "Verisk ustawiał się średnio o 11 punktów procentowych wyżej niż Corgi."
+    ],
+    "teams": [
+      {
+        "average_shape": {
+          "cells": [
+            {
+              "column": 0,
+              "row": 0,
+              "value": 0.002637
+            },
+            {
+              "column": 0,
+              "row": 1,
+              "value": 0.005932
+            },
+            {
+              "column": 0,
+              "row": 2,
+              "value": 0.006507
+            },
+            {
+              "column": 0,
+              "row": 3,
+              "value": 0.00421
+            },
+            {
+              "column": 0,
+              "row": 4,
+              "value": 0.00474
+            },
+            {
+              "column": 0,
+              "row": 5,
+              "value": 0.002083
+            },
+            {
+              "column": 0,
+              "row": 6,
+              "value": 0.001522
+            },
+            {
+              "column": 0,
+              "row": 7,
+              "value": 0.001618
+            },
+            {
+              "column": 0,
+              "row": 8,
+              "value": 0.000355
+            },
+            {
+              "column": 0,
+              "row": 9,
+              "value": 0.000244
+            },
+            {
+              "column": 1,
+              "row": 0,
+              "value": 0.005263
+            },
+            {
+              "column": 1,
+              "row": 1,
+              "value": 0.016093
+            },
+            {
+              "column": 1,
+              "row": 2,
+              "value": 0.023714
+            },
+            {
+              "column": 1,
+              "row": 3,
+              "value": 0.027559
+            },
+            {
+              "column": 1,
+              "row": 4,
+              "value": 0.024305
+            },
+            {
+              "column": 1,
+              "row": 5,
+              "value": 0.012439
+            },
+            {
+              "column": 1,
+              "row": 6,
+              "value": 0.013165
+            },
+            {
+              "column": 1,
+              "row": 7,
+              "value": 0.009747
+            },
+            {
+              "column": 1,
+              "row": 8,
+              "value": 0.003059
+            },
+            {
+              "column": 1,
+              "row": 9,
+              "value": 0.000749
+            },
+            {
+              "column": 2,
+              "row": 0,
+              "value": 0.03112
+            },
+            {
+              "column": 2,
+              "row": 1,
+              "value": 0.039511
+            },
+            {
+              "column": 2,
+              "row": 2,
+              "value": 0.043125
+            },
+            {
+              "column": 2,
+              "row": 3,
+              "value": 0.030375
+            },
+            {
+              "column": 2,
+              "row": 4,
+              "value": 0.031977
+            },
+            {
+              "column": 2,
+              "row": 5,
+              "value": 0.02643
+            },
+            {
+              "column": 2,
+              "row": 6,
+              "value": 0.024483
+            },
+            {
+              "column": 2,
+              "row": 7,
+              "value": 0.021036
+            },
+            {
+              "column": 2,
+              "row": 8,
+              "value": 0.015229
+            },
+            {
+              "column": 2,
+              "row": 9,
+              "value": 0.008551
+            },
+            {
+              "column": 3,
+              "row": 0,
+              "value": 0.054765
+            },
+            {
+              "column": 3,
+              "row": 1,
+              "value": 0.066384
+            },
+            {
+              "column": 3,
+              "row": 2,
+              "value": 0.052751
+            },
+            {
+              "column": 3,
+              "row": 3,
+              "value": 0.036506
+            },
+            {
+              "column": 3,
+              "row": 4,
+              "value": 0.038425
+            },
+            {
+              "column": 3,
+              "row": 5,
+              "value": 0.033967
+            },
+            {
+              "column": 3,
+              "row": 6,
+              "value": 0.029839
+            },
+            {
+              "column": 3,
+              "row": 7,
+              "value": 0.025246
+            },
+            {
+              "column": 3,
+              "row": 8,
+              "value": 0.010634
+            },
+            {
+              "column": 3,
+              "row": 9,
+              "value": 0.00665
+            },
+            {
+              "column": 4,
+              "row": 0,
+              "value": 0.002695
+            },
+            {
+              "column": 4,
+              "row": 1,
+              "value": 0.018698
+            },
+            {
+              "column": 4,
+              "row": 2,
+              "value": 0.015553
+            },
+            {
+              "column": 4,
+              "row": 3,
+              "value": 0.025388
+            },
+            {
+              "column": 4,
+              "row": 4,
+              "value": 0.028791
+            },
+            {
+              "column": 4,
+              "row": 5,
+              "value": 0.024842
+            },
+            {
+              "column": 4,
+              "row": 6,
+              "value": 0.019281
+            },
+            {
+              "column": 4,
+              "row": 7,
+              "value": 0.017387
+            },
+            {
+              "column": 4,
+              "row": 8,
+              "value": 0.006725
+            },
+            {
+              "column": 4,
+              "row": 9,
+              "value": 0.001601
+            },
+            {
+              "column": 5,
+              "row": 0,
+              "value": 0.000348
+            },
+            {
+              "column": 5,
+              "row": 1,
+              "value": 0.002047
+            },
+            {
+              "column": 5,
+              "row": 2,
+              "value": 0.002793
+            },
+            {
+              "column": 5,
+              "row": 3,
+              "value": 0.007266
+            },
+            {
+              "column": 5,
+              "row": 4,
+              "value": 0.008541
+            },
+            {
+              "column": 5,
+              "row": 5,
+              "value": 0.004768
+            },
+            {
+              "column": 5,
+              "row": 6,
+              "value": 0.007606
+            },
+            {
+              "column": 5,
+              "row": 7,
+              "value": 0.008375
+            },
+            {
+              "column": 5,
+              "row": 8,
+              "value": 0.003302
+            },
+            {
+              "column": 5,
+              "row": 9,
+              "value": 0.001046
+            }
+          ],
+          "grid": {
+            "columns": 6,
+            "rows": 10
+          }
+        },
+        "summary": {
+          "average_block_height_percent": 40.43,
+          "average_compactness_m": 9.15,
+          "average_depth_m": 26.1,
+          "average_width_m": 14.62
+        },
+        "team_id": "team-corgi-1fc405",
+        "team_label": "A",
+        "team_name": "Corgi",
+        "timeline": [
+          {
+            "block_height_percent": 48.52,
+            "compactness_m": 9.75,
+            "depth_m": 28.46,
+            "label": "00:00",
+            "minute": 1,
+            "width_m": 15.38
+          },
+          {
+            "block_height_percent": 59.96,
+            "compactness_m": 10.28,
+            "depth_m": 34.76,
+            "label": "01:00",
+            "minute": 2,
+            "width_m": 11.83
+          },
+          {
+            "block_height_percent": 46.06,
+            "compactness_m": 8.84,
+            "depth_m": 22.61,
+            "label": "02:00",
+            "minute": 3,
+            "width_m": 16.02
+          },
+          {
+            "block_height_percent": 34.3,
+            "compactness_m": 9.42,
+            "depth_m": 26.54,
+            "label": "03:00",
+            "minute": 4,
+            "width_m": 15.24
+          },
+          {
+            "block_height_percent": 31.86,
+            "compactness_m": 8.7,
+            "depth_m": 23.48,
+            "label": "04:00",
+            "minute": 5,
+            "width_m": 14.6
+          },
+          {
+            "block_height_percent": 41.26,
+            "compactness_m": 8.91,
+            "depth_m": 27.96,
+            "label": "05:00",
+            "minute": 6,
+            "width_m": 14.52
+          },
+          {
+            "block_height_percent": 40.56,
+            "compactness_m": 9.44,
+            "depth_m": 25.83,
+            "label": "06:00",
+            "minute": 7,
+            "width_m": 14.94
+          },
+          {
+            "block_height_percent": 38.54,
+            "compactness_m": 9.14,
+            "depth_m": 25.34,
+            "label": "07:00",
+            "minute": 8,
+            "width_m": 13.17
+          },
+          {
+            "block_height_percent": 35.13,
+            "compactness_m": 9.36,
+            "depth_m": 25.31,
+            "label": "08:00",
+            "minute": 9,
+            "width_m": 15.53
+          },
+          {
+            "block_height_percent": 30.21,
+            "compactness_m": 7.94,
+            "depth_m": 21.95,
+            "label": "09:00",
+            "minute": 10,
+            "width_m": 14.91
+          },
+          {
+            "block_height_percent": 17.34,
+            "compactness_m": 6.05,
+            "depth_m": 12.72,
+            "label": "10:00",
+            "minute": 11,
+            "width_m": 15.59
+          }
+        ]
+      },
+      {
+        "average_shape": {
+          "cells": [
+            {
+              "column": 0,
+              "row": 0,
+              "value": 0.001139
+            },
+            {
+              "column": 0,
+              "row": 1,
+              "value": 0.004742
+            },
+            {
+              "column": 0,
+              "row": 2,
+              "value": 0.003807
+            },
+            {
+              "column": 0,
+              "row": 3,
+              "value": 0.009536
+            },
+            {
+              "column": 0,
+              "row": 4,
+              "value": 0.014494
+            },
+            {
+              "column": 0,
+              "row": 5,
+              "value": 0.014632
+            },
+            {
+              "column": 0,
+              "row": 6,
+              "value": 0.008239
+            },
+            {
+              "column": 0,
+              "row": 7,
+              "value": 0.010735
+            },
+            {
+              "column": 0,
+              "row": 8,
+              "value": 0.003865
+            },
+            {
+              "column": 0,
+              "row": 9,
+              "value": 0.001981
+            },
+            {
+              "column": 1,
+              "row": 0,
+              "value": 0.002077
+            },
+            {
+              "column": 1,
+              "row": 1,
+              "value": 0.011007
+            },
+            {
+              "column": 1,
+              "row": 2,
+              "value": 0.021736
+            },
+            {
+              "column": 1,
+              "row": 3,
+              "value": 0.032577
+            },
+            {
+              "column": 1,
+              "row": 4,
+              "value": 0.03725
+            },
+            {
+              "column": 1,
+              "row": 5,
+              "value": 0.033311
+            },
+            {
+              "column": 1,
+              "row": 6,
+              "value": 0.024902
+            },
+            {
+              "column": 1,
+              "row": 7,
+              "value": 0.025845
+            },
+            {
+              "column": 1,
+              "row": 8,
+              "value": 0.01997
+            },
+            {
+              "column": 1,
+              "row": 9,
+              "value": 0.002734
+            },
+            {
+              "column": 2,
+              "row": 0,
+              "value": 0.000999
+            },
+            {
+              "column": 2,
+              "row": 1,
+              "value": 0.024894
+            },
+            {
+              "column": 2,
+              "row": 2,
+              "value": 0.039591
+            },
+            {
+              "column": 2,
+              "row": 3,
+              "value": 0.04262
+            },
+            {
+              "column": 2,
+              "row": 4,
+              "value": 0.043195
+            },
+            {
+              "column": 2,
+              "row": 5,
+              "value": 0.046089
+            },
+            {
+              "column": 2,
+              "row": 6,
+              "value": 0.035574
+            },
+            {
+              "column": 2,
+              "row": 7,
+              "value": 0.035077
+            },
+            {
+              "column": 2,
+              "row": 8,
+              "value": 0.014275
+            },
+            {
+              "column": 2,
+              "row": 9,
+              "value": 0.001855
+            },
+            {
+              "column": 3,
+              "row": 0,
+              "value": 0.001247
+            },
+            {
+              "column": 3,
+              "row": 1,
+              "value": 0.012601
+            },
+            {
+              "column": 3,
+              "row": 2,
+              "value": 0.021708
+            },
+            {
+              "column": 3,
+              "row": 3,
+              "value": 0.033504
+            },
+            {
+              "column": 3,
+              "row": 4,
+              "value": 0.033489
+            },
+            {
+              "column": 3,
+              "row": 5,
+              "value": 0.036361
+            },
+            {
+              "column": 3,
+              "row": 6,
+              "value": 0.034946
+            },
+            {
+              "column": 3,
+              "row": 7,
+              "value": 0.030729
+            },
+            {
+              "column": 3,
+              "row": 8,
+              "value": 0.016802
+            },
+            {
+              "column": 3,
+              "row": 9,
+              "value": 0.003927
+            },
+            {
+              "column": 4,
+              "row": 0,
+              "value": 0.000836
+            },
+            {
+              "column": 4,
+              "row": 1,
+              "value": 0.005871
+            },
+            {
+              "column": 4,
+              "row": 2,
+              "value": 0.011565
+            },
+            {
+              "column": 4,
+              "row": 3,
+              "value": 0.016476
+            },
+            {
+              "column": 4,
+              "row": 4,
+              "value": 0.027198
+            },
+            {
+              "column": 4,
+              "row": 5,
+              "value": 0.038551
+            },
+            {
+              "column": 4,
+              "row": 6,
+              "value": 0.029399
+            },
+            {
+              "column": 4,
+              "row": 7,
+              "value": 0.024212
+            },
+            {
+              "column": 4,
+              "row": 8,
+              "value": 0.010252
+            },
+            {
+              "column": 4,
+              "row": 9,
+              "value": 0.001156
+            },
+            {
+              "column": 5,
+              "row": 0,
+              "value": 0.000374
+            },
+            {
+              "column": 5,
+              "row": 1,
+              "value": 0.00103
+            },
+            {
+              "column": 5,
+              "row": 2,
+              "value": 0.001273
+            },
+            {
+              "column": 5,
+              "row": 3,
+              "value": 0.003218
+            },
+            {
+              "column": 5,
+              "row": 4,
+              "value": 0.005887
+            },
+            {
+              "column": 5,
+              "row": 5,
+              "value": 0.01055
+            },
+            {
+              "column": 5,
+              "row": 6,
+              "value": 0.004983
+            },
+            {
+              "column": 5,
+              "row": 7,
+              "value": 0.005084
+            },
+            {
+              "column": 5,
+              "row": 8,
+              "value": 0.007146
+            },
+            {
+              "column": 5,
+              "row": 9,
+              "value": 0.000875
+            }
+          ],
+          "grid": {
+            "columns": 6,
+            "rows": 10
+          }
+        },
+        "summary": {
+          "average_block_height_percent": 51.54,
+          "average_compactness_m": 8.09,
+          "average_depth_m": 18.15,
+          "average_width_m": 15.28
+        },
+        "team_id": "team-verisk",
+        "team_label": "B",
+        "team_name": "Verisk",
+        "timeline": [
+          {
+            "block_height_percent": 39.15,
+            "compactness_m": 6.88,
+            "depth_m": 16.38,
+            "label": "00:00",
+            "minute": 1,
+            "width_m": 13.26
+          },
+          {
+            "block_height_percent": null,
+            "compactness_m": null,
+            "depth_m": null,
+            "label": "01:00",
+            "minute": 2,
+            "width_m": null
+          },
+          {
+            "block_height_percent": 54.6,
+            "compactness_m": 8.41,
+            "depth_m": 16.12,
+            "label": "02:00",
+            "minute": 3,
+            "width_m": 18.21
+          },
+          {
+            "block_height_percent": 57.26,
+            "compactness_m": 8.17,
+            "depth_m": 17.85,
+            "label": "03:00",
+            "minute": 4,
+            "width_m": 14.59
+          },
+          {
+            "block_height_percent": 56.49,
+            "compactness_m": 8.74,
+            "depth_m": 21.4,
+            "label": "04:00",
+            "minute": 5,
+            "width_m": 15.49
+          },
+          {
+            "block_height_percent": 49.01,
+            "compactness_m": 7.92,
+            "depth_m": 16.68,
+            "label": "05:00",
+            "minute": 6,
+            "width_m": 15.54
+          },
+          {
+            "block_height_percent": 47.89,
+            "compactness_m": 7.27,
+            "depth_m": 15.26,
+            "label": "06:00",
+            "minute": 7,
+            "width_m": 15.24
+          },
+          {
+            "block_height_percent": 53.28,
+            "compactness_m": 8.96,
+            "depth_m": 22.11,
+            "label": "07:00",
+            "minute": 8,
+            "width_m": 14.65
+          },
+          {
+            "block_height_percent": 54.12,
+            "compactness_m": 8.39,
+            "depth_m": 20.52,
+            "label": "08:00",
+            "minute": 9,
+            "width_m": 15.0
+          },
+          {
+            "block_height_percent": 53.65,
+            "compactness_m": 7.87,
+            "depth_m": 16.32,
+            "label": "09:00",
+            "minute": 10,
+            "width_m": 15.72
+          },
+          {
+            "block_height_percent": 71.5,
+            "compactness_m": 8.43,
+            "depth_m": 16.4,
+            "label": "10:00",
+            "minute": 11,
+            "width_m": 19.03
+          }
+        ]
+      }
+    ]
+  },
   "teams": [
     {
       "accepted_passes": 0,
