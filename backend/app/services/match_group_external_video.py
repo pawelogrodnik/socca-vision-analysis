@@ -131,6 +131,19 @@ def delete_match_group_external_video(group_id: str) -> dict[str, Any]:
     return state
 
 
+def sync_match_group_external_video_public_projection(group_id: str) -> dict[str, Any]:
+    """Refresh the static projection from the canonical external-video state.
+
+    Lifecycle commits may make a preserved external-video provenance document
+    stale without modifying that canonical document. Re-evaluating here keeps
+    the public sidecar usable only while the canonical state is ``current``.
+    """
+
+    state = get_match_group_external_video(group_id)
+    _sync_public_mirror(group_id, state)
+    return state
+
+
 def _state(group: dict[str, Any], status: str, document: dict[str, Any] | None = None, *, reason: str | None = None) -> dict[str, Any]:
     external: dict[str, Any] | None = None
     if document is not None:

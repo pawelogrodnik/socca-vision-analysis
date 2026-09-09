@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.match_group_aggregation import build_match_group_report_candidate
-from app.services.match_group_external_video import get_match_group_external_video
+from app.services.match_group_external_video import sync_match_group_external_video_public_projection
 from app.services.match_group_video import get_match_group_video_status, reserve_match_group_video_idle
 from app.services.match_group_pair_transaction import (
     finish_pair_recovery,
@@ -173,7 +173,7 @@ def _response(group: dict[str, Any], *, refreshed: bool) -> dict[str, Any]:
         "group": group,
         "validation": validate_match_group_manifest(group),
         "video": get_match_group_video_status(group_id),
-        "external_video": get_match_group_external_video(group_id),
+        "external_video": sync_match_group_external_video_public_projection(group_id),
     }
 
 
