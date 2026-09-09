@@ -1126,6 +1126,37 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             stats.assert_not_called()
             render.assert_not_called()
 
+    def test_source_stale_seeded_candidates_are_rebuilt_without_operator_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "app.services.review_workflow_orchestrator.load_fresh_seeded_assignments",
+            return_value=(
+                None,
+                {
+                    "status": "stale",
+                    "reason_codes": ["tracklets_digest_mismatch"],
+                },
+            ),
+        ), patch(
+            "app.services.review_workflow_orchestrator.rebuild_identity_seeded_candidate_assignments",
+            return_value={"summary": {}},
+        ) as rebuild_seeded, patch(
+            "app.services.review_workflow_orchestrator.finalize_reviewed_identity",
+            return_value={"semantic_digest": "identity"},
+        ), patch(
+            "app.services.review_workflow_orchestrator.build_reviewed_identity_progress",
+            return_value={"summary": {}},
+        ), patch(
+            "app.services.review_workflow_orchestrator.get_review_workflow_state",
+            return_value=ready_state(),
+        ):
+            refresh_review_after_identity_mutation(
+                Path(tmp),
+                {"id": "m1"},
+                source="canonical_source_refresh",
+            )
+
+            rebuild_seeded.assert_called_once_with(Path(tmp), {"id": "m1"})
+
     def test_fast_reproject_materializes_only_terminal_not_materialized_team_evidence(self) -> None:
         initial_progress = {
             "summary": {"important_decisions_remaining": 0},

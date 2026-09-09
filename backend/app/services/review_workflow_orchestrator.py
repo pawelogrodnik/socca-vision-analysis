@@ -43,8 +43,12 @@ from app.services.identity_reviewed_team_attribution_evidence import (
     resolve_current_team_attribution_sources,
 )
 from app.services.identity_reviewed_stats import build_reviewed_stats
-from app.services.identity_seeded_review_reduction import load_initial_audit_completion_evidence
-from app.services.identity_seeded_candidate_assignments import (    rebuild_identity_seeded_candidate_assignments,
+from app.services.identity_seeded_review_reduction import (
+    load_fresh_seeded_assignments,
+    load_initial_audit_completion_evidence,
+)
+from app.services.identity_seeded_candidate_assignments import (
+    rebuild_identity_seeded_candidate_assignments,
 )
 from app.services.review_workflow_state import (
     RECOMPUTE_FAILURE_FILENAME,
@@ -68,6 +72,13 @@ DEFAULT_RENDER_OPTIONS = {
     "include_ball": True,
     "show_roster_number": False,
 }
+SEED_ASSIGNMENT_SOURCE_STALE_REASONS = frozenset(
+    {
+        "candidate_identity_digest_mismatch",
+        "timeline_digest_mismatch",
+        "tracklets_digest_mismatch",
+    }
+)
 
 
 def refresh_review_after_identity_mutation(
@@ -168,7 +179,10 @@ def _refresh_review_after_identity_mutation_scoped_inner(
     }
     recovery_changed_durable_evidence = False
     try:
-        if rebuild_seeded_candidates:
+        if _seeded_candidates_need_source_refresh(
+            match_path,
+            rebuild_seeded_candidates=rebuild_seeded_candidates,
+        ):
             # Callers that mutate actual seed inputs may request this JSON-only
             # rebuild. Reviewed correction decisions are intentionally not a
             # semantic seeded-assignment dependency.
@@ -482,6 +496,33 @@ def _refresh_review_after_identity_mutation_scoped_inner(
         "workflow": workflow,
         "performance": timings,
     }
+
+
+def _seeded_candidates_need_source_refresh(
+    match_path: Path,
+    *,
+    rebuild_seeded_candidates: bool,
+) -> bool:
+    """Keep durable operator seeds current after a canonical source refresh.
+
+    A tracklet/timeline rebuild can stale only the derived seeded-candidate
+    projection while leaving every operator decision unchanged. Rebuilding that
+    JSON projection is safe and prevents the Initial Identity Audit from
+    incorrectly reopening with zero cases. Other stale states remain
+    fail-closed because they may represent changed or invalid operator inputs.
+    """
+    if rebuild_seeded_candidates:
+        return True
+    _seeded, freshness = load_fresh_seeded_assignments(match_path)
+    return (
+        freshness.get("status") == "stale"
+        and bool(
+            SEED_ASSIGNMENT_SOURCE_STALE_REASONS.intersection(
+                str(reason)
+                for reason in freshness.get("reason_codes") or []
+            )
+        )
+    )
 
 
 def public_finalized_identity(snapshot: dict[str, Any]) -> dict[str, Any]:
