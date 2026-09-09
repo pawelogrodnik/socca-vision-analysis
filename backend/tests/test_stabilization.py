@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,8 @@ from app.services.stabilization import (
     build_tracklets_document,
     build_tracking_quality_report,
     cluster_tracklet_teams,
+    recover_dark_field_player_team_assignments,
+    refresh_dark_field_player_team_assignments,
     split_tracklets_by_appearance_changes,
     split_tracks_into_tracklets,
 )
@@ -653,6 +656,67 @@ class StabilizationTests(unittest.TestCase):
         self.assertEqual(cluster_doc["team_color_outliers_count"], 2)
         self.assertEqual(cluster_doc["clusters"][0]["reference_tracklets_count"], 2)
         self.assertEqual(cluster_doc["clusters"][1]["reference_tracklets_count"], 2)
+
+    def test_dark_field_player_is_recovered_only_from_confirmed_team_cluster(self) -> None:
+        neutral_team = [
+            tracklet("1:1", 0.0, 2.0, [0, 0], [1, 0], [196, 194, 197]),
+            tracklet("2:1", 0.0, 2.0, [0, 1], [1, 1], [187, 186, 186]),
+        ]
+        blue_team = [
+            tracklet("3:1", 0.0, 2.0, [0, 2], [1, 2], [52, 75, 122]),
+            tracklet("4:1", 0.0, 2.0, [0, 3], [1, 3], [47, 67, 112]),
+        ]
+        shaded_blue = tracklet("5:1", 0.0, 2.0, [0, 4], [1, 4], [33, 50, 76])
+        goalkeeper = tracklet("6:1", 0.0, 2.0, [0, 5], [1, 5], [35, 45, 70])
+        goalkeeper["role"] = "goalkeeper"
+        tracklets = [*neutral_team, *blue_team, shaded_blue, goalkeeper]
+
+        clusters = cluster_tracklet_teams(tracklets, [])
+        self.assertEqual(shaded_blue["team_label"], "U")
+        self.assertEqual(goalkeeper["team_label"], "U")
+
+        recovery = recover_dark_field_player_team_assignments(tracklets, clusters)
+
+        self.assertEqual(shaded_blue["team_label"], "B")
+        self.assertEqual(shaded_blue["team_assignment_reason"], "dark_field_player_recovered_from_cluster")
+        self.assertEqual(goalkeeper["team_label"], "U")
+        self.assertEqual([item["tracklet_id"] for item in recovery["recovered_tracklets"]], ["5:1"])
+
+    def test_frozen_team_assignment_refresh_persists_only_proven_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shaded_blue = tracklet("5:1", 0.0, 2.0, [0, 4], [1, 4], [33, 50, 76])
+            shaded_blue.update(
+                team_label="U",
+                team_cluster_id=None,
+                team_confidence=0.0,
+                team_assignment_reason="team_color_outlier",
+            )
+            (root / "tracklets.json").write_text(
+                json.dumps({"tracklets": [shaded_blue]}),
+                encoding="utf-8",
+            )
+            (root / "team_clusters.json").write_text(
+                json.dumps(
+                    {
+                        "clusters": [
+                            {"cluster_id": "cluster-1", "team_label": "A", "center_rgb": [190, 190, 190]},
+                            {"cluster_id": "cluster-2", "team_label": "B", "center_rgb": [45, 55, 85]},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            recovery = refresh_dark_field_player_team_assignments(root)
+
+            persisted = json.loads((root / "tracklets.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(recovery["recovered_tracklets"]), 1)
+            self.assertEqual(persisted["tracklets"][0]["team_label"], "B")
+            self.assertEqual(
+                persisted["tracklets"][0]["team_assignment_reason"],
+                "dark_field_player_recovered_from_cluster",
+            )
 
     def test_low_confidence_link_is_reported(self) -> None:
         players = build_stable_players(
