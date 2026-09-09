@@ -1033,6 +1033,33 @@ def _tracklet_color_profile(tracklet: dict[str, Any]) -> dict[str, float] | None
     }
 
 
+def _rgb_triplet(value: Any) -> tuple[float, float, float] | None:
+    if not isinstance(value, list) or len(value) < 3:
+        return None
+    try:
+        return (float(value[0]), float(value[1]), float(value[2]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _rgb_distance(
+    left: tuple[float, float, float] | None,
+    right: tuple[float, float, float] | None,
+) -> float:
+    if left is None or right is None:
+        return math.inf
+    return math.sqrt(sum((left[index] - right[index]) ** 2 for index in range(3)))
+
+
+def _is_dark_saturated_color(tracklet: dict[str, Any]) -> bool:
+    profile = _tracklet_color_profile(tracklet)
+    return bool(
+        profile
+        and profile["value"] <= 82.0
+        and profile["saturation"] >= 80.0
+    )
+
+
 def _is_bib_color(tracklet: dict[str, Any]) -> bool:
     profile = _tracklet_color_profile(tracklet)
     if profile is None:
@@ -1084,7 +1111,7 @@ def _is_team_color_outlier(tracklet: dict[str, Any]) -> bool:
         and profile["blue"] <= 120.0
         and profile["saturation"] >= 70.0
     )
-    dark_saturated_outlier = profile["value"] <= 82.0 and profile["saturation"] >= 80.0
+    dark_saturated_outlier = _is_dark_saturated_color(tracklet)
     return green_outlier or fluorescent_outlier or dark_saturated_outlier
 
 
@@ -1250,6 +1277,97 @@ def apply_goalkeeper_role_adjustments(tracklets: list[dict[str, Any]], *, pitch_
         "review_required_tracklets": sum(1 for row in adjusted if row.get("team_label") == "U"),
         "examples": adjusted[:100],
     }
+
+
+def recover_dark_field_player_team_assignments(
+    tracklets: list[dict[str, Any]],
+    team_clusters: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover a shaded field-player kit only from an established team cluster.
+
+    Dark saturated jerseys are deliberately kept out of the initial clustering
+    pass because they can be goalkeepers or unrelated people.  Once goalkeepers
+    have been identified, a remaining field player may be restored only when
+    its observed RGB is already close to one of the two confirmed cluster
+    centers.  This is a recovery of existing colour evidence, not a fallback
+    assignment for unknown tracklets.
+    """
+    clusters = [
+        cluster
+        for cluster in team_clusters.get("clusters") or []
+        if str(cluster.get("team_label") or "") in {"A", "B"}
+        and _rgb_triplet(cluster.get("center_rgb")) is not None
+    ]
+    recovered: list[dict[str, Any]] = []
+    if len(clusters) != 2:
+        return {"recovered_tracklets": recovered}
+
+    for tracklet in tracklets:
+        if str(tracklet.get("team_assignment_reason") or "") != "team_color_outlier":
+            continue
+        if str(tracklet.get("role") or "field_player") == "goalkeeper":
+            continue
+        if not _is_dark_saturated_color(tracklet):
+            continue
+        tracklet_rgb = _rgb_triplet(tracklet.get("appearance_rgb"))
+        if tracklet_rgb is None:
+            continue
+        ranked = sorted(
+            (
+                (_rgb_distance(tracklet_rgb, _rgb_triplet(cluster["center_rgb"])), cluster)
+                for cluster in clusters
+            ),
+            key=lambda item: (item[0], str(item[1].get("cluster_id") or "")),
+        )
+        own_distance, cluster = ranked[0]
+        other_distance = ranked[1][0]
+        if own_distance > TEAM_COLOR_MAX_ASSIGNMENT_DISTANCE:
+            continue
+        separation = max(1.0, _rgb_distance(_rgb_triplet(clusters[0]["center_rgb"]), _rgb_triplet(clusters[1]["center_rgb"])))
+        confidence = max(0.0, min(1.0, 0.35 + max(0.0, other_distance - own_distance) / max(45.0, separation)))
+        if confidence < TEAM_COLOR_UNKNOWN_CONFIDENCE:
+            continue
+        tracklet.update(
+            team_cluster_id=cluster.get("cluster_id"),
+            team_label=cluster.get("team_label"),
+            team_id=cluster.get("team_id"),
+            team_name=cluster.get("team_name"),
+            team_confidence=round(confidence, 4),
+            team_assignment_reason="dark_field_player_recovered_from_cluster",
+        )
+        recovered.append(
+            {
+                "tracklet_id": tracklet.get("tracklet_id"),
+                "team_label": cluster.get("team_label"),
+                "cluster_id": cluster.get("cluster_id"),
+                "rgb_distance": round(own_distance, 3),
+                "team_confidence": round(confidence, 4),
+            }
+        )
+    return {"recovered_tracklets": recovered}
+
+
+def refresh_dark_field_player_team_assignments(match_dir: Path) -> dict[str, Any]:
+    """Apply the bounded post-stabilization team-colour recovery to frozen tracklets.
+
+    This is intentionally narrower than a video-analysis rerun: it reads the
+    existing team clusters and tracklets, changes only proven dark field-player
+    attribution, and records the exact recovery rows for auditability.
+    """
+    tracklets_path = match_dir / "tracklets.json"
+    clusters_path = match_dir / "team_clusters.json"
+    tracklets_doc = json.loads(tracklets_path.read_text(encoding="utf-8"))
+    clusters_doc = json.loads(clusters_path.read_text(encoding="utf-8"))
+    tracklets = tracklets_doc.get("tracklets") or []
+    if not isinstance(tracklets, list) or not isinstance(clusters_doc, dict):
+        raise ValueError("Frozen team-assignment artifacts are invalid")
+    recovery = recover_dark_field_player_team_assignments(tracklets, clusters_doc)
+    if recovery["recovered_tracklets"]:
+        tracklets_doc["tracklets"] = tracklets
+        clusters_doc["dark_field_player_recovery"] = recovery
+        tracklets_path.write_text(json.dumps(tracklets_doc, indent=2), encoding="utf-8")
+        clusters_path.write_text(json.dumps(clusters_doc, indent=2), encoding="utf-8")
+    return recovery
 
 
 def _goalkeeper_role_candidate(tracklet: dict[str, Any], *, pitch_length_m: float) -> dict[str, Any] | None:
@@ -4444,6 +4562,11 @@ def stabilize_match(
     )
     team_clusters = cluster_tracklet_teams(tracklets, teams)
     goalkeeper_role_summary = apply_goalkeeper_role_adjustments(tracklets, pitch_length_m=float(pitch.length_m))
+    dark_field_player_recovery = recover_dark_field_player_team_assignments(
+        tracklets,
+        team_clusters,
+    )
+    team_clusters["dark_field_player_recovery"] = dark_field_player_recovery
     tracklets_doc = build_tracklets_document(
         tracklets,
         rejected,

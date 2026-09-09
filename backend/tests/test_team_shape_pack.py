@@ -12,7 +12,9 @@ from app.services.team_shape import (
     build_team_shape_takeaways,
     calculate_frame_shape,
     ensure_team_shape_artifact_fresh,
+    observations_from_global_identity,
     observations_from_tracklets,
+    observations_with_canonical_overcap_reconciliation,
     to_team_oriented_coordinates,
 )
 from app.services.public_match_report import build_public_match_report, write_public_match_report_bundle
@@ -186,6 +188,276 @@ def test_only_canonically_trusted_tracklets_contribute_to_shape() -> None:
 
     assert result["diagnostics"]["eligible_frames"] == 1
     assert_close(result["summary"]["average_width_m"], 20.0)
+
+
+def test_global_identity_ownership_excludes_unsafe_parallel_tracklet() -> None:
+    owned_positions = POSITIONS + [[12.0, 30.0], [18.0, 34.0]]
+    owned = observations_from_global_identity(
+        {
+            "slots": [
+                {
+                    "slot_id": f"A{index:02d}",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 0,
+                            "time_sec": 0.0,
+                            "pitch_m": point,
+                            "source": "detected",
+                            "visual_trusted": True,
+                            "play_area_status": "inside_play",
+                        }
+                    ],
+                }
+                for index, point in enumerate(owned_positions, start=1)
+            ]
+        }
+    )
+    unsafe_competitor = {
+        "frame": 0,
+        "time_sec": 0.0,
+        "team_label": "A",
+        "pitch_m": [15.0, 25.0],
+        "source": "detected",
+        "trusted": True,
+        "play_area_status": "inside_play",
+    }
+
+    result = team(build(owned))
+
+    assert result["diagnostics"]["eligible_frames"] == 1
+    assert result["diagnostics"]["median_usable_players"] == 7.0
+    assert calculate_frame_shape(
+        [row["pitch_m"] for row in owned] + [unsafe_competitor["pitch_m"]],
+        "towards_y_max",
+        PITCH_WIDTH,
+        PITCH_LENGTH,
+    ) is None
+
+
+def test_conflicting_detected_positions_for_one_slot_are_excluded() -> None:
+    owned = observations_from_global_identity(
+        {
+            "slots": [
+                {
+                    "slot_id": "A01",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 100,
+                            "time_sec": 4.0,
+                            "pitch_m": [10.0, 20.0],
+                            "source": "detected",
+                            "visual_trusted": True,
+                        },
+                        {
+                            "frame": 100,
+                            "time_sec": 4.0,
+                            "pitch_m": [20.0, 30.0],
+                            "source": "detected",
+                            "visual_trusted": True,
+                        },
+                    ],
+                },
+            ]
+        }
+    )
+
+    assert owned == []
+
+
+def test_canonical_ownership_replaces_only_a_raw_overcap_frame() -> None:
+    raw_positions = POSITIONS + [[12.0, 30.0], [18.0, 34.0], [15.0, 25.0]]
+    raw_tracklets = [
+        {
+            "tracklet_id": f"raw-{index}",
+            "team_label": "A",
+            "team_cluster_id": "cluster-A",
+            "team_confidence": 1.0,
+            "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": point}],
+        }
+        for index, point in enumerate(raw_positions)
+    ]
+    global_identity = {
+        "slots": [
+            {
+                "slot_id": f"A{index:02d}",
+                "team_label": "A",
+                "overlay_positions": [
+                    {
+                        "frame": 0,
+                        "time_sec": 0.0,
+                        "pitch_m": point,
+                        "source": "detected",
+                        "visual_trusted": True,
+                        "play_area_status": "inside_play",
+                    }
+                ],
+            }
+            for index, point in enumerate(raw_positions[:7], start=1)
+        ]
+    }
+
+    reconciled = observations_with_canonical_overcap_reconciliation(
+        raw_tracklets,
+        global_identity,
+    )
+
+    assert len(reconciled) == 7
+    assert {tuple(row["pitch_m"]) for row in reconciled} == {
+        tuple(point) for point in raw_positions[:7]
+    }
+
+
+def test_canonical_reconciliation_keeps_an_overcap_without_detected_ownership() -> None:
+    raw_positions = POSITIONS + [[12.0, 30.0], [18.0, 34.0], [15.0, 25.0]]
+    raw_tracklets = [
+        {
+            "tracklet_id": f"raw-{index}",
+            "team_label": "A",
+            "team_cluster_id": "cluster-A",
+            "team_confidence": 1.0,
+            "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": point}],
+        }
+        for index, point in enumerate(raw_positions)
+    ]
+    global_identity = {
+        "slots": [
+            {
+                "slot_id": "A01",
+                "team_label": "A",
+                "overlay_positions": [
+                    {
+                        "frame": 0,
+                        "time_sec": 0.0,
+                        "pitch_m": raw_positions[0],
+                        "source": "carried",
+                        "visual_trusted": True,
+                        "play_area_status": "inside_play",
+                    }
+                ],
+            }
+        ]
+    }
+
+    reconciled = observations_with_canonical_overcap_reconciliation(
+        raw_tracklets,
+        global_identity,
+    )
+
+    assert len(reconciled) == 8
+    assert calculate_frame_shape(
+        [row["pitch_m"] for row in reconciled],
+        "towards_y_max",
+        PITCH_WIDTH,
+        PITCH_LENGTH,
+    ) is None
+
+
+def test_conflicting_slot_cannot_make_an_overcap_frame_safe() -> None:
+    raw_positions = POSITIONS + [[12.0, 30.0], [18.0, 34.0], [15.0, 25.0]]
+    raw_tracklets = [
+        {
+            "tracklet_id": f"raw-{index}",
+            "team_label": "A",
+            "team_cluster_id": "cluster-A",
+            "team_confidence": 1.0,
+            "positions_m": [{"frame": 100, "time_sec": 4.0, "pitch_m": point}],
+        }
+        for index, point in enumerate(raw_positions)
+    ]
+    global_identity = {
+        "slots": [
+            {
+                "slot_id": "A01",
+                "team_label": "A",
+                "overlay_positions": [
+                    {
+                        "frame": 100,
+                        "time_sec": 4.0,
+                        "pitch_m": [10.0, 20.0],
+                        "source": "detected",
+                        "visual_trusted": True,
+                    },
+                    {
+                        "frame": 100,
+                        "time_sec": 4.0,
+                        "pitch_m": [20.0, 30.0],
+                        "source": "detected",
+                        "visual_trusted": True,
+                    },
+                ],
+            },
+            *[
+                {
+                    "slot_id": f"A{index:02d}",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 100,
+                            "time_sec": 4.0,
+                            "pitch_m": point,
+                            "source": "detected",
+                            "visual_trusted": True,
+                        }
+                    ],
+                }
+                for index, point in enumerate(raw_positions[1:5], start=2)
+            ],
+        ]
+    }
+
+    reconciled = observations_with_canonical_overcap_reconciliation(
+        raw_tracklets,
+        global_identity,
+    )
+
+    assert len(reconciled) == 8
+    assert calculate_frame_shape(
+        [row["pitch_m"] for row in reconciled],
+        "towards_y_max",
+        PITCH_WIDTH,
+        PITCH_LENGTH,
+    ) is None
+
+
+def test_canonical_ownership_does_not_replace_a_valid_raw_frame() -> None:
+    raw_positions = POSITIONS + [[12.0, 30.0]]
+    raw_tracklets = [
+        {
+            "tracklet_id": f"raw-{index}",
+            "team_label": "A",
+            "team_cluster_id": "cluster-A",
+            "team_confidence": 1.0,
+            "positions_m": [{"frame": 0, "time_sec": 0.0, "pitch_m": point}],
+        }
+        for index, point in enumerate(raw_positions)
+    ]
+    global_identity = {
+        "slots": [
+            {
+                "slot_id": "A01",
+                "team_label": "A",
+                "overlay_positions": [
+                    {
+                        "frame": 0,
+                        "time_sec": 0.0,
+                        "pitch_m": raw_positions[0],
+                        "source": "detected",
+                        "visual_trusted": True,
+                        "play_area_status": "inside_play",
+                    }
+                ],
+            }
+        ]
+    }
+
+    reconciled = observations_with_canonical_overcap_reconciliation(
+        raw_tracklets,
+        global_identity,
+    )
+
+    assert len(reconciled) == 6
 
 
 def test_teams_are_isolated_and_invalid_observations_are_excluded() -> None:
@@ -569,6 +841,7 @@ def test_canonical_artifact_flows_into_reviewed_report_and_refreshes_team_name()
         dependencies = {entry["artifact"] for entry in generated_from}
         assert dependencies == {
             "tracklets.json",
+            "global_identity.json",
             "pitch_config.json",
             "match_phase_config.json",
             "team_config.json",
@@ -593,6 +866,7 @@ def test_incomplete_freshness_dependencies_force_rebuild() -> None:
         assert rebuilt is not None
         assert {entry["artifact"] for entry in rebuilt["generated_from"]} == {
             "tracklets.json",
+            "global_identity.json",
             "pitch_config.json",
             "match_phase_config.json",
             "team_config.json",
@@ -611,7 +885,7 @@ def test_previous_algorithm_version_forces_rebuild() -> None:
 
         rebuilt = ensure_team_shape_artifact_fresh(root)
         assert rebuilt is not None
-        assert rebuilt["algorithm_version"] == "team_shape_spatial_v1_1"
+        assert rebuilt["algorithm_version"] == "team_shape_spatial_v1_3"
 
 
 def test_match_phase_review_state_change_rebuilds_public_availability() -> None:
@@ -710,6 +984,28 @@ def _write_reviewed_shape_fixture(root: Path) -> None:
                 }
             )
     _write_json(root / "tracklets.json", {"tracklets": tracklets})
+    slots = []
+    for label, points in (("A", team_a), ("B", team_b)):
+        for index, point in enumerate(points):
+            slots.append(
+                {
+                    "slot_id": f"{label}{index + 1:02d}",
+                    "team_label": label,
+                    "team_id": f"team-{label.lower()}",
+                    "team_confidence": 1.0,
+                    "overlay_positions": [
+                        {
+                            "frame": 0,
+                            "time_sec": 0.0,
+                            "pitch_m": point,
+                            "play_area_status": "inside_play",
+                            "source": "detected",
+                            "visual_trusted": True,
+                        }
+                    ],
+                }
+            )
+    _write_json(root / "global_identity.json", {"slots": slots})
     _write_json(root / "reviewed_player_stats.json", {"source_snapshot_digest": "digest-1", "players": []})
     _write_json(
         root / "reviewed_player_heatmaps.json",
@@ -736,4 +1032,3 @@ def load_tests(_loader: unittest.TestLoader, _tests: unittest.TestSuite, _patter
         if name.startswith("test_") and callable(value):
             suite.addTest(unittest.FunctionTestCase(value, description=name))
     return suite
-

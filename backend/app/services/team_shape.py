@@ -18,7 +18,7 @@ from app.services.match_phase_config import (
 from app.services.team_assignment import is_trusted_tracklet_team_assignment
 
 
-ALGORITHM_VERSION = "team_shape_spatial_v1_1"
+ALGORITHM_VERSION = "team_shape_spatial_v1_3"
 MIN_TEAM_POSITIONS = 5
 MAX_TEAM_POSITIONS = 7
 TIMELINE_BIN_SEC = 60.0
@@ -27,6 +27,7 @@ DENSITY_COLUMNS = 6
 DENSITY_ROWS = 10
 SOURCE_ARTIFACTS = (
     "tracklets.json",
+    "global_identity.json",
     "pitch_config.json",
     "match_phase_config.json",
     "team_config.json",
@@ -135,18 +136,115 @@ def observations_from_tracklets(tracklets: list[dict[str, Any]]) -> list[dict[st
     return observations
 
 
+def observations_from_global_identity(global_identity: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only resolver-owned, visually trusted detected positions.
+
+    Team Shape describes simultaneous physical positions, rather than raw
+    tracker fragments.  The conservative global resolver is the existing
+    canonical ownership authority: it leaves ambiguous competitors out and
+    does not depend on a named-player assignment.
+    """
+    candidates_by_slot_frame: dict[tuple[str, int], list[dict[str, Any]]] = (
+        defaultdict(list)
+    )
+    for slot in global_identity.get("slots") or []:
+        team_label = str(slot.get("team_label") or "U").upper()
+        slot_id = str(slot.get("slot_id") or "").strip()
+        if team_label not in {"A", "B"} or not slot_id:
+            continue
+        for position in slot.get("overlay_positions") or []:
+            if (
+                not bool(position.get("visual_trusted"))
+                or str(position.get("source") or "") != "detected"
+            ):
+                continue
+            try:
+                frame = int(position.get("frame"))
+            except (TypeError, ValueError):
+                continue
+            candidates_by_slot_frame[(slot_id, frame)].append(
+                {
+                    "frame": frame,
+                    "time_sec": position.get("time_sec"),
+                    "team_label": team_label,
+                    "pitch_m": position.get("pitch_m"),
+                    "play_area_status": position.get("play_area_status") or "inside_play",
+                    "source": position.get("source") or "detected",
+                    "trusted": True,
+                    "team_confidence": slot.get("team_confidence"),
+                    "team_id": slot.get("team_id"),
+                    "slot_id": slot_id,
+                }
+            )
+    return [
+        row
+        for rows in candidates_by_slot_frame.values()
+        if len(rows) == 1
+        for row in rows
+    ]
+
+
+def observations_with_canonical_overcap_reconciliation(
+    tracklets: list[dict[str, Any]],
+    global_identity: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep valid raw evidence and replace only invalid over-cap frames.
+
+    A raw frame with five to seven trusted detected positions is already valid
+    Team Shape evidence, even if the identity resolver is conservative about a
+    separate ambiguous fragment.  Conversely, a raw frame with more than seven
+    cannot be truncated.  For that frame alone, use the resolver's existing
+    anonymous physical-ownership decision; if it has no owned evidence, retain
+    the raw frame so the normal over-cap rejection remains visible.
+    """
+    raw = observations_from_tracklets(tracklets)
+    owned = observations_from_global_identity(global_identity)
+    raw_by_frame = _observations_by_team_frame(raw)
+    owned_by_frame = _observations_by_team_frame(owned)
+    reconciled: list[dict[str, Any]] = []
+    for key, raw_rows in raw_by_frame.items():
+        if len(raw_rows) <= MAX_TEAM_POSITIONS:
+            reconciled.extend(raw_rows)
+            continue
+        canonical_rows = owned_by_frame.get(key) or []
+        if MIN_TEAM_POSITIONS <= len(canonical_rows) <= MAX_TEAM_POSITIONS:
+            reconciled.extend(canonical_rows)
+        else:
+            reconciled.extend(raw_rows)
+    return reconciled
+
+
+def _observations_by_team_frame(
+    observations: list[dict[str, Any]],
+) -> dict[tuple[str, int, float], list[dict[str, Any]]]:
+    grouped: dict[tuple[str, int, float], list[dict[str, Any]]] = defaultdict(list)
+    for row in observations:
+        grouped[
+            (
+                str(row.get("team_label") or "U").upper(),
+                int(row.get("frame") or 0),
+                float(row.get("time_sec") or 0.0),
+            )
+        ].append(row)
+    return grouped
+
+
 def rebuild_team_shape_artifact(match_path: Path) -> dict[str, Any] | None:
     required = {filename: _load_json(match_path / filename) for filename in SOURCE_ARTIFACTS}
     if any(document is None for document in required.values()):
         return None
     tracklets_doc = required["tracklets.json"] or {}
+    global_identity = required["global_identity.json"] or {}
     pitch_config = required["pitch_config.json"] or {}
     match_phase_config = required["match_phase_config.json"] or {}
     team_config = required["team_config.json"] or {}
     match = required["match.json"] or {}
     video = match.get("video") if isinstance(match.get("video"), dict) else {}
     document = build_team_shape_document(
-        player_observations=observations_from_tracklets(tracklets_doc.get("tracklets") or []),
+        player_observations=observations_with_canonical_overcap_reconciliation(
+            tracklets_doc.get("tracklets") or [],
+            global_identity,
+        ),
         pitch_width_m=float(pitch_config.get("width_m")),
         pitch_length_m=float(pitch_config.get("length_m")),
         match_phase_config=match_phase_config,
@@ -263,7 +361,7 @@ def build_team_shape_document(
         "schema_version": "team-shape-v1",
         "algorithm_version": ALGORITHM_VERSION,
         "generated_at": now_iso(),
-        "source": "trusted_detected_tracklet_positions",
+        "source": "trusted_detected_tracklet_positions_with_canonical_overcap_ownership",
         "scope": "all_in_play",
         "available": available,
         "readiness": "ready" if available else _document_readiness(teams),
