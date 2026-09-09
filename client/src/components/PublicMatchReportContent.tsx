@@ -478,8 +478,6 @@ export function PublicMatchReportContent({
         </p>
       </section>
 
-      <TeamShapeSection reportTeams={report.teams} teamShape={report.team_shape} />
-
       {playerReadyMomentum ? (
         <section className='card public-charts-card'>
           <AttackingMomentumChart
@@ -608,6 +606,8 @@ export function PublicMatchReportContent({
           </p>
         )}
       </section>
+
+      <TeamShapeSection reportTeams={report.teams} teamShape={report.team_shape} />
     </>
   );
 }

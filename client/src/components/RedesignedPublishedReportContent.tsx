@@ -224,10 +224,10 @@ export function RedesignedPublishedReportContent({ report, externalVideo, editor
         <RedesignedReportVideoMoments report={report} externalVideo={externalVideo} editorAllowed={editorAllowed} onEditKeyMoments={onEditKeyMoments} />
         <MatchFlow report={report} />
         <TeamComparison report={report} />
-        {report.team_shape ? <TeamShapeSection reportTeams={report.teams} teamShape={report.team_shape} /> : null}
         <RedesignedReportPlayers players={report.players} teams={report.teams} selectedTeam={selectedTeam} selectedTeamKey={selectedTeamKey} onSelectTeam={setSelectedTeamKey} />
         <PublicPlayerWorkloadSection players={selectedPlayers} teamName={selectedTeam?.team_name || selectedTeam?.team_label} teamColor={selectedTeam?.display_color} variant='redesigned' />
         <RedesignedReportHeatmaps players={selectedPlayers} assetHref={assetHref} />
+        {report.team_shape ? <TeamShapeSection reportTeams={report.teams} teamShape={report.team_shape} /> : null}
       </div>
     </div>
   );
