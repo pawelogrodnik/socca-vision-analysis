@@ -84,7 +84,7 @@ export function PublishedMatchReportPage() {
     }
   }
 
-  const isMerged = match?.source_kind === 'merged';
+  const isMerged = match?.source_kind === 'merged' || Boolean(publicReport?.merged_provenance);
   const canRebuildPhysical = Boolean(match?.package) && match?.capabilities?.rebuild_physical_publication !== false;
   const memberCount = match?.member_count ?? match?.member_published_ids?.length ?? null;
 

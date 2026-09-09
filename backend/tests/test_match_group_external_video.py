@@ -67,6 +67,32 @@ class MatchGroupExternalVideoTests(unittest.TestCase):
             external.delete_match_group_external_video("match-group-one")
             self.assertEqual(manifest.read_bytes(), before)
 
+    def test_save_and_delete_project_a_public_safe_static_mirror(self) -> None:
+        with self._store() as temporary, self._service(temporary):
+            public_root = Path(temporary) / "client-public"
+            with patch.object(external, "CLIENT_PUBLIC_MATCHES_DIR", public_root), patch.object(
+                external,
+                "merged_published_id_for_group",
+                return_value="published-merged-one",
+            ):
+                saved = external.save_match_group_external_video("match-group-one", "https://youtu.be/AbCdEfGhI_1")
+                self.assertEqual(saved["status"], "current")
+                sidecar = public_root / "published-merged-one" / external.EXTERNAL_VIDEO_FILENAME
+                self.assertEqual(
+                    json.loads(sidecar.read_text(encoding="utf-8")),
+                    {
+                        "status": "current",
+                        "external_video": {
+                            "provider": "youtube",
+                            "video_id": "AbCdEfGhI_1",
+                            "source_url": "https://www.youtube.com/watch?v=AbCdEfGhI_1",
+                            "embed_url": "https://www.youtube-nocookie.com/embed/AbCdEfGhI_1",
+                        },
+                    },
+                )
+                external.delete_match_group_external_video("match-group-one")
+                self.assertFalse(sidecar.exists())
+
     def _store(self):
         return tempfile.TemporaryDirectory()
 

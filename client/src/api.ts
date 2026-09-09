@@ -1041,7 +1041,55 @@ export async function generateMergedMatchVideo(publishedMatchId: string): Promis
 }
 
 export async function getMergedMatchExternalVideo(publishedMatchId: string): Promise<MatchGroupExternalVideoStatus> {
-  return request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`);
+  try {
+    return await request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`);
+  } catch {
+    return getStaticMergedMatchExternalVideo(publishedMatchId);
+  }
+}
+
+async function getStaticMergedMatchExternalVideo(publishedMatchId: string): Promise<MatchGroupExternalVideoStatus> {
+  const empty: MatchGroupExternalVideoStatus = {
+    group_id: publishedMatchId,
+    status: 'not_configured',
+    external_video: null,
+  };
+  let res: Response;
+  try {
+    res = await fetch(`/published/matches/${encodeURIComponent(publishedMatchId)}/external_video.json`);
+  } catch {
+    return empty;
+  }
+  if (!res.ok) return empty;
+  const contentType = res.headers.get('content-type') || '';
+  const payload = await res.text();
+  if (!contentType.toLowerCase().includes('application/json') || looksLikeHtml(payload)) return empty;
+  try {
+    const document: unknown = JSON.parse(payload);
+    if (!isStaticMergedMatchExternalVideo(document)) return empty;
+    return {
+      group_id: publishedMatchId,
+      status: 'current',
+      external_video: document.external_video,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function isStaticMergedMatchExternalVideo(value: unknown): value is {
+  status: 'current';
+  external_video: NonNullable<MatchGroupExternalVideoStatus['external_video']>;
+} {
+  if (!value || typeof value !== 'object') return false;
+  const document = value as Record<string, unknown>;
+  const external = document.external_video;
+  if (document.status !== 'current' || !external || typeof external !== 'object') return false;
+  const video = external as Record<string, unknown>;
+  if (video.provider !== 'youtube' || typeof video.video_id !== 'string') return false;
+  if (!/^[A-Za-z0-9_-]{11}$/.test(video.video_id)) return false;
+  return video.source_url === `https://www.youtube.com/watch?v=${video.video_id}`
+    && video.embed_url === `https://www.youtube-nocookie.com/embed/${video.video_id}`;
 }
 
 export async function saveMergedMatchExternalVideo(publishedMatchId: string, url: string): Promise<MatchGroupExternalVideoStatus> {

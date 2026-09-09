@@ -3265,13 +3265,13 @@ export type MatchGroupExternalVideoStatus = {
     video_id: string;
     source_url: string;
     embed_url?: string | null;
-    linked_video: {
+    linked_video?: {
       generation_id: string;
       input_semantic_digest: string;
       output_semantic_digest: string;
       timeline_span_sec: number;
     };
-    updated_at: string;
+    updated_at?: string;
   } | null;
 };
 
