@@ -27,6 +27,10 @@ from app.services.match_group_pair_transaction import (
 from app.services.public_match_report import PUBLIC_MATCH_REPORT_SCHEMA_VERSION, PUBLIC_MATCH_REPORT_TYPE
 
 
+# Policy 1.3 changes the physical team sprint authority.  Existing 1.2
+# publications remain aggregateable using their preserved legacy totals until
+# they are explicitly rebuilt; a group may therefore contain either version.
+SUPPORTED_AGGREGATION_POLICY_VERSIONS = {"1.2.0", AGGREGATION_POLICY_VERSION}
 MATCH_GROUP_MANIFEST_SCHEMA_VERSION = "1.0.0"
 MATCH_GROUPS_DIR = PUBLISHED_DIR / "match-groups"
 PUBLISHED_MATCHES_DIR = PUBLISHED_DIR / "matches"
@@ -390,7 +394,7 @@ def _authoritative_member(published_id: str, *, sequence_index: int) -> dict[str
             f"Aggregate input schema {schema_version!r} is not supported.",
             member=published_id,
         )
-    if policy_version != AGGREGATION_POLICY_VERSION:
+    if policy_version not in SUPPORTED_AGGREGATION_POLICY_VERSIONS:
         raise MatchGroupError(
             "unsupported_aggregation_policy",
             f"Aggregation policy {policy_version!r} is not supported.",
@@ -467,6 +471,17 @@ def _with_logical_offsets(members: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 def _compatibility(members: list[dict[str, Any]]) -> dict[str, Any]:
     reasons: list[dict[str, str]] = []
+    aggregation_policy_versions = {
+        str(member["aggregation_policy_version"])
+        for member in members
+    }
+    if len(aggregation_policy_versions) > 1:
+        reasons.append(
+            {
+                "code": "aggregation_policy_mismatch",
+                "detail": "Logical match members must use one aggregation policy version.",
+            }
+        )
     expected_team_ids: set[str] | None = None
     player_team_ids: dict[str, str] = {}
     for member in members:

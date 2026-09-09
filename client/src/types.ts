@@ -2873,7 +2873,7 @@ export type PublicReportTeam = {
   estimated_short_gap_distance_m?: number | null;
   movement_authority?: string | null;
   high_intensity_distance_m: number;
-  sprint_count: number;
+  sprint_count: number | null;
   avg_speed_kmh: number;
   peak_speed_kmh: number;
   possession_share_percent?: number | null;

@@ -30,7 +30,7 @@ class ReviewedMatchReportTests(unittest.TestCase):
             self.assertEqual(report["stats_semantics"]["team_time"], "source_video_duration")
             self.assertEqual(report["teams"][0]["total_distance_m"], 140.0)
             self.assertEqual(report["teams"][0]["high_intensity_distance_m"], 100.0)
-            self.assertEqual(report["teams"][0]["sprint_count"], 3)
+            self.assertEqual(report["teams"][0]["sprint_count"], 2)
             self.assertLessEqual(
                 report["teams"][0]["high_intensity_distance_m"],
                 report["teams"][0]["total_distance_m"],

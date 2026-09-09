@@ -1689,8 +1689,8 @@
           "time_sec": 347.5
         },
         {
-          "confidence": 0.3479,
-          "controlled_coverage": 0.2067,
+          "confidence": 0.5474,
+          "controlled_coverage": 0.5082,
           "dominant_team_label": "B",
           "end_time_sec": 355.0,
           "event_confidence": 0.2625,
@@ -1702,39 +1702,15 @@
             "restart_setup_bonuses": 0
           },
           "index": 70,
-          "intensity": 0.3486,
+          "intensity": 0.5285,
           "label": "5:55",
           "minute": 6,
-          "positional_confidence": 0.3567,
-          "signed_score": -34.864,
+          "positional_confidence": 0.5594,
+          "signed_score": -52.848,
           "start_time_sec": 350.0,
           "team_a_value": 0.0,
-          "team_b_value": -34.864,
+          "team_b_value": -52.848,
           "time_sec": 352.5
-        },
-        {
-          "confidence": 0.0,
-          "controlled_coverage": 0.0,
-          "dominant_team_label": null,
-          "end_time_sec": 360.0,
-          "event_confidence": 0.0,
-          "evidence": {
-            "completed_passes": 0,
-            "failed_passes": 0,
-            "progressive_passes": 0,
-            "restart_passes": 0,
-            "restart_setup_bonuses": 0
-          },
-          "index": 71,
-          "intensity": 0.249,
-          "label": "6:00",
-          "minute": 6,
-          "positional_confidence": 0.0,
-          "signed_score": -24.903,
-          "start_time_sec": 355.0,
-          "team_a_value": 0.0,
-          "team_b_value": -24.903,
-          "time_sec": 357.5
         }
       ],
       "warnings": [
@@ -2007,7 +1983,7 @@
     "restart_passes": 2,
     "same_team_pass_candidates": 41
   },
-  "generated_at": "2026-09-01T11:53:44.260765+00:00",
+  "generated_at": "2026-09-09T08:16:52.858869+00:00",
   "id": "published-5e62625e",
   "identity_coverage": {
     "confirmed_named_observations": 71389,
@@ -2142,7 +2118,7 @@
     }
   },
   "match": {
-    "duration_sec": 356.32,
+    "duration_sec": 352.02,
     "format": "7v7",
     "id": "5e62625e",
     "match_date": "2026-08-29",
@@ -2230,10 +2206,10 @@
           },
           {
             "detected_time_sec": 0.0,
-            "display_label": "5–6",
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.0,
             "high_intensity_distance_m": 0.0,
             "high_intensity_distance_per_5min_m": null,
@@ -2279,10 +2255,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 5.3,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 351.12,
+      "certain_playing_time_sec": 351.09,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 351.12,
+      "detected_time_sec": 351.09,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -5747,12 +5723,12 @@
       "player_number": "10",
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 351.12,
+      "playing_time_sec": 351.09,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 13,
       "sprint_distance_m": 66.49,
-      "sprint_time_sec": 14.15,
+      "sprint_time_sec": 14.14,
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
@@ -5760,14 +5736,14 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 299.396,
+            "detected_time_sec": 299.369,
             "display_label": "0–5",
-            "distance_per_5min_m": 414.35,
+            "distance_per_5min_m": 414.39,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.57,
             "high_intensity_distance_m": 91.19,
-            "high_intensity_distance_per_5min_m": 91.37,
+            "high_intensity_distance_per_5min_m": 91.38,
             "high_intensity_time_sec": 15.849000000000117,
             "observed_distance_m": 412.95,
             "rate_status": "reportable",
@@ -5778,11 +5754,11 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 51.724,
-            "display_label": "5–6",
+            "detected_time_sec": 51.719,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.28,
             "high_intensity_distance_m": 39.33,
             "high_intensity_distance_per_5min_m": null,
@@ -5797,9 +5773,9 @@
           }
         ],
         "best_activity_window": {
-          "detected_time_sec": 299.396,
+          "detected_time_sec": 299.369,
           "display_label": "0–5",
-          "distance_per_5min_m": 414.35,
+          "distance_per_5min_m": 414.39,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 91.19,
           "sprint_count": 9,
@@ -5807,12 +5783,12 @@
           "total_distance_m": 413.52,
           "window_index": 0
         },
-        "detected_time_sec": 351.12,
-        "distance_per_5min_m": 441.38,
+        "detected_time_sec": 351.088,
+        "distance_per_5min_m": 441.42,
         "high_intensity_distance_m": 130.52,
-        "high_intensity_distance_per_5min_m": 111.52,
+        "high_intensity_distance_per_5min_m": 111.53,
         "high_intensity_distance_ratio": 0.2527,
-        "high_intensity_time_sec": 22.68,
+        "high_intensity_time_sec": 22.679,
         "max_sprint_speed_kmh": 20.67,
         "minimum_best_window_sample_sec": 180.0,
         "minimum_rate_sample_sec": 120.0,
@@ -5830,7 +5806,7 @@
           "start_threshold_kmh": 18.0
         },
         "sprint_distance_m": 66.49,
-        "sprint_time_sec": 14.146,
+        "sprint_time_sec": 14.145,
         "sprints_per_5min": 11.11
       }
     },
@@ -5838,10 +5814,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 5.23,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 346.45,
+      "certain_playing_time_sec": 346.42,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 346.45,
+      "detected_time_sec": 346.42,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -9036,7 +9012,7 @@
       "player_number": null,
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 346.45,
+      "playing_time_sec": 346.42,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 4,
@@ -9049,9 +9025,9 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 294.457,
+            "detected_time_sec": 294.43,
             "display_label": "0–5",
-            "distance_per_5min_m": 425.12,
+            "distance_per_5min_m": 425.16,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.61,
@@ -9067,11 +9043,11 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 51.991,
-            "display_label": "5–6",
+            "detected_time_sec": 51.986,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.0,
             "high_intensity_distance_m": 12.57,
             "high_intensity_distance_per_5min_m": null,
@@ -9086,9 +9062,9 @@
           }
         ],
         "best_activity_window": {
-          "detected_time_sec": 294.457,
+          "detected_time_sec": 294.43,
           "display_label": "0–5",
-          "distance_per_5min_m": 425.12,
+          "distance_per_5min_m": 425.16,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 68.98,
           "sprint_count": 4,
@@ -9096,10 +9072,10 @@
           "total_distance_m": 417.27,
           "window_index": 0
         },
-        "detected_time_sec": 346.448,
-        "distance_per_5min_m": 435.91,
+        "detected_time_sec": 346.416,
+        "distance_per_5min_m": 435.95,
         "high_intensity_distance_m": 81.53,
-        "high_intensity_distance_per_5min_m": 70.6,
+        "high_intensity_distance_per_5min_m": 70.61,
         "high_intensity_distance_ratio": 0.162,
         "high_intensity_time_sec": 15.98,
         "max_sprint_speed_kmh": 20.59,
@@ -9127,10 +9103,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 5.57,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 344.21,
+      "certain_playing_time_sec": 344.18,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 344.21,
+      "detected_time_sec": 344.18,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -13020,7 +12996,7 @@
       "player_number": "3",
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 344.21,
+      "playing_time_sec": 344.18,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 8,
@@ -13033,14 +13009,14 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 292.221,
+            "detected_time_sec": 292.195,
             "display_label": "0–5",
-            "distance_per_5min_m": 472.11,
+            "distance_per_5min_m": 472.15,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 2.48,
             "high_intensity_distance_m": 98.12,
-            "high_intensity_distance_per_5min_m": 100.73,
+            "high_intensity_distance_per_5min_m": 100.74,
             "high_intensity_time_sec": 18.615000000000265,
             "observed_distance_m": 457.39,
             "rate_status": "reportable",
@@ -13051,11 +13027,11 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 51.991,
-            "display_label": "5–6",
+            "detected_time_sec": 51.986,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.0,
             "high_intensity_distance_m": 1.18,
             "high_intensity_distance_per_5min_m": null,
@@ -13070,9 +13046,9 @@
           }
         ],
         "best_activity_window": {
-          "detected_time_sec": 292.221,
+          "detected_time_sec": 292.195,
           "display_label": "0–5",
-          "distance_per_5min_m": 472.11,
+          "distance_per_5min_m": 472.15,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 98.12,
           "sprint_count": 8,
@@ -13080,12 +13056,12 @@
           "total_distance_m": 459.87,
           "window_index": 0
         },
-        "detected_time_sec": 344.212,
-        "distance_per_5min_m": 464.26,
+        "detected_time_sec": 344.181,
+        "distance_per_5min_m": 464.3,
         "high_intensity_distance_m": 99.31,
-        "high_intensity_distance_per_5min_m": 86.55,
+        "high_intensity_distance_per_5min_m": 86.56,
         "high_intensity_distance_ratio": 0.1864,
-        "high_intensity_time_sec": 19.013,
+        "high_intensity_time_sec": 19.012,
         "max_sprint_speed_kmh": 21.26,
         "minimum_best_window_sample_sec": 180.0,
         "minimum_rate_sample_sec": 120.0,
@@ -13103,7 +13079,7 @@
           "start_threshold_kmh": 17.43
         },
         "sprint_distance_m": 59.94,
-        "sprint_time_sec": 12.603,
+        "sprint_time_sec": 12.602,
         "sprints_per_5min": 6.97
       }
     },
@@ -13111,10 +13087,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 3.2,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 311.18,
+      "certain_playing_time_sec": 311.15,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 311.18,
+      "detected_time_sec": 311.15,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -14394,7 +14370,7 @@
       "player_number": null,
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 311.18,
+      "playing_time_sec": 311.15,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 0,
@@ -14407,9 +14383,9 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 265.726,
+            "detected_time_sec": 265.701,
             "display_label": "0–5",
-            "distance_per_5min_m": 265.05,
+            "distance_per_5min_m": 265.08,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.98,
@@ -14425,11 +14401,11 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 45.45,
-            "display_label": "5–6",
+            "detected_time_sec": 45.446,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.13,
             "high_intensity_distance_m": 2.52,
             "high_intensity_distance_per_5min_m": null,
@@ -14444,9 +14420,9 @@
           }
         ],
         "best_activity_window": {
-          "detected_time_sec": 265.726,
+          "detected_time_sec": 265.701,
           "display_label": "0–5",
-          "distance_per_5min_m": 265.05,
+          "distance_per_5min_m": 265.08,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 6.61,
           "sprint_count": 0,
@@ -14454,8 +14430,8 @@
           "total_distance_m": 234.77,
           "window_index": 0
         },
-        "detected_time_sec": 311.176,
-        "distance_per_5min_m": 266.42,
+        "detected_time_sec": 311.147,
+        "distance_per_5min_m": 266.45,
         "high_intensity_distance_m": 9.12,
         "high_intensity_distance_per_5min_m": 8.79,
         "high_intensity_distance_ratio": 0.033,
@@ -14485,10 +14461,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 5.86,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 153.67,
+      "certain_playing_time_sec": 153.66,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 153.67,
+      "detected_time_sec": 153.66,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -16873,7 +16849,7 @@
       "player_number": "26",
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 153.67,
+      "playing_time_sec": 153.66,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 4,
@@ -16886,14 +16862,14 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 153.669,
+            "detected_time_sec": 153.655,
             "display_label": "0–5",
-            "distance_per_5min_m": 487.69,
+            "distance_per_5min_m": 487.74,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.99,
             "high_intensity_distance_m": 66.08,
-            "high_intensity_distance_per_5min_m": 129.0,
+            "high_intensity_distance_per_5min_m": 129.02,
             "high_intensity_time_sec": 11.940000000000001,
             "observed_distance_m": 248.82,
             "rate_status": "reportable",
@@ -16905,10 +16881,10 @@
           },
           {
             "detected_time_sec": 0.0,
-            "display_label": "5–6",
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.0,
             "high_intensity_distance_m": 0.0,
             "high_intensity_distance_per_5min_m": null,
@@ -16923,10 +16899,10 @@
           }
         ],
         "best_activity_window": null,
-        "detected_time_sec": 153.669,
-        "distance_per_5min_m": 487.71,
+        "detected_time_sec": 153.655,
+        "distance_per_5min_m": 487.76,
         "high_intensity_distance_m": 66.07,
-        "high_intensity_distance_per_5min_m": 128.99,
+        "high_intensity_distance_per_5min_m": 129.0,
         "high_intensity_distance_ratio": 0.2645,
         "high_intensity_time_sec": 12.025,
         "max_sprint_speed_kmh": 22.04,
@@ -16952,7 +16928,7 @@
     },
     {
       "ambiguous_playing_time_sec": 0.0,
-      "avg_speed_kmh": 6.95,
+      "avg_speed_kmh": 6.96,
       "calculation_method": "reviewed_effective_observations",
       "certain_playing_time_sec": 60.83,
       "continuity_gap_time_sec": 0.0,
@@ -18153,8 +18129,8 @@
         "quality": "high",
         "samples": 1823
       },
-      "high_intensity_distance_m": 26.7,
-      "high_intensity_time_sec": 5.31,
+      "high_intensity_distance_m": 26.84,
+      "high_intensity_time_sec": 5.34,
       "max_sprint_speed_kmh": 18.14,
       "peak_speed_kmh": 18.14,
       "player_id": "team-corgi-1fc405-player-1-pawel",
@@ -18175,7 +18151,7 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 10.078,
+            "detected_time_sec": 10.077,
             "display_label": "0–5",
             "distance_per_5min_m": null,
             "duration_sec": 300.0,
@@ -18193,15 +18169,15 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 50.756,
-            "display_label": "5–6",
+            "detected_time_sec": 50.751,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.23,
-            "high_intensity_distance_m": 23.81,
+            "high_intensity_distance_m": 23.95,
             "high_intensity_distance_per_5min_m": null,
-            "high_intensity_time_sec": 4.707000000000107,
+            "high_intensity_time_sec": 4.740000000000066,
             "observed_distance_m": 91.77,
             "rate_status": "insufficient_detected_sample",
             "sprint_count": 1,
@@ -18212,12 +18188,12 @@
           }
         ],
         "best_activity_window": null,
-        "detected_time_sec": 60.834,
+        "detected_time_sec": 60.828,
         "distance_per_5min_m": null,
-        "high_intensity_distance_m": 26.7,
+        "high_intensity_distance_m": 26.84,
         "high_intensity_distance_per_5min_m": null,
-        "high_intensity_distance_ratio": 0.2273,
-        "high_intensity_time_sec": 5.308,
+        "high_intensity_distance_ratio": 0.2285,
+        "high_intensity_time_sec": 5.341,
         "max_sprint_speed_kmh": 18.14,
         "minimum_best_window_sample_sec": 180.0,
         "minimum_rate_sample_sec": 120.0,
@@ -18243,10 +18219,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 5.86,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 346.15,
+      "certain_playing_time_sec": 346.12,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 346.15,
+      "detected_time_sec": 346.12,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -21701,7 +21677,7 @@
       "player_number": "15",
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 346.15,
+      "playing_time_sec": 346.12,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 4,
@@ -21714,14 +21690,14 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 297.561,
+            "detected_time_sec": 297.534,
             "display_label": "0–5",
-            "distance_per_5min_m": 485.74,
+            "distance_per_5min_m": 485.78,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.02,
             "high_intensity_distance_m": 53.8,
-            "high_intensity_distance_per_5min_m": 54.24,
+            "high_intensity_distance_per_5min_m": 54.25,
             "high_intensity_time_sec": 10.777000000000115,
             "observed_distance_m": 481.77,
             "rate_status": "reportable",
@@ -21732,11 +21708,11 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 48.587,
-            "display_label": "5–6",
+            "detected_time_sec": 48.582,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.54,
             "high_intensity_distance_m": 10.78,
             "high_intensity_distance_per_5min_m": null,
@@ -21751,9 +21727,9 @@
           }
         ],
         "best_activity_window": {
-          "detected_time_sec": 297.561,
+          "detected_time_sec": 297.534,
           "display_label": "0–5",
-          "distance_per_5min_m": 485.74,
+          "distance_per_5min_m": 485.78,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 53.8,
           "sprint_count": 3,
@@ -21761,10 +21737,10 @@
           "total_distance_m": 481.79,
           "window_index": 0
         },
-        "detected_time_sec": 346.147,
-        "distance_per_5min_m": 488.16,
+        "detected_time_sec": 346.116,
+        "distance_per_5min_m": 488.2,
         "high_intensity_distance_m": 64.56,
-        "high_intensity_distance_per_5min_m": 55.95,
+        "high_intensity_distance_per_5min_m": 55.96,
         "high_intensity_distance_ratio": 0.1146,
         "high_intensity_time_sec": 12.833,
         "max_sprint_speed_kmh": 19.88,
@@ -21792,10 +21768,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 4.69,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 348.18,
+      "certain_playing_time_sec": 348.15,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 348.18,
+      "detected_time_sec": 348.15,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -24625,7 +24601,7 @@
       "player_number": null,
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 348.18,
+      "playing_time_sec": 348.15,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 1,
@@ -24638,9 +24614,9 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 299.63,
+            "detected_time_sec": 299.602,
             "display_label": "0–5",
-            "distance_per_5min_m": 383.63,
+            "distance_per_5min_m": 383.67,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.24,
@@ -24656,11 +24632,11 @@
             "window_index": 0
           },
           {
-            "detected_time_sec": 48.553,
-            "display_label": "5–6",
+            "detected_time_sec": 48.549,
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.69,
             "high_intensity_distance_m": 6.03,
             "high_intensity_distance_per_5min_m": null,
@@ -24675,9 +24651,9 @@
           }
         ],
         "best_activity_window": {
-          "detected_time_sec": 299.63,
+          "detected_time_sec": 299.602,
           "display_label": "0–5",
-          "distance_per_5min_m": 383.63,
+          "distance_per_5min_m": 383.67,
           "end_time_sec": 300.0,
           "high_intensity_distance_m": 16.3,
           "sprint_count": 1,
@@ -24685,12 +24661,12 @@
           "total_distance_m": 383.16,
           "window_index": 0
         },
-        "detected_time_sec": 348.183,
-        "distance_per_5min_m": 390.7,
+        "detected_time_sec": 348.151,
+        "distance_per_5min_m": 390.74,
         "high_intensity_distance_m": 22.33,
         "high_intensity_distance_per_5min_m": 19.24,
         "high_intensity_distance_ratio": 0.0492,
-        "high_intensity_time_sec": 4.671,
+        "high_intensity_time_sec": 4.67,
         "max_sprint_speed_kmh": 17.13,
         "minimum_best_window_sample_sec": 180.0,
         "minimum_rate_sample_sec": 120.0,
@@ -24716,10 +24692,10 @@
       "ambiguous_playing_time_sec": 0.0,
       "avg_speed_kmh": 7.27,
       "calculation_method": "reviewed_effective_observations",
-      "certain_playing_time_sec": 120.43,
+      "certain_playing_time_sec": 120.42,
       "continuity_gap_time_sec": 0.0,
       "coverage_ratio": 0.0,
-      "detected_time_sec": 120.43,
+      "detected_time_sec": 120.42,
       "heatmap": {
         "average_position": {
           "pitch_m": [
@@ -26994,7 +26970,7 @@
       "player_number": "6",
       "player_role": "player",
       "playing_time_method": "reviewed_confirmed_observations",
-      "playing_time_sec": 120.43,
+      "playing_time_sec": 120.42,
       "possible_playing_time_sec": 0.0,
       "quality_flags": [],
       "sprint_count": 5,
@@ -27007,14 +26983,14 @@
       "workload": {
         "activity_windows": [
           {
-            "detected_time_sec": 120.432,
+            "detected_time_sec": 120.422,
             "display_label": "0–5",
-            "distance_per_5min_m": 606.02,
+            "distance_per_5min_m": 606.07,
             "duration_sec": 300.0,
             "end_time_sec": 300.0,
             "estimated_short_gap_distance_m": 0.15,
             "high_intensity_distance_m": 61.39,
-            "high_intensity_distance_per_5min_m": 152.92,
+            "high_intensity_distance_per_5min_m": 152.94,
             "high_intensity_time_sec": 10.909999999999911,
             "observed_distance_m": 243.13,
             "rate_status": "reportable",
@@ -27026,10 +27002,10 @@
           },
           {
             "detected_time_sec": 0.0,
-            "display_label": "5–6",
+            "display_label": "5:00–5:52.0",
             "distance_per_5min_m": null,
-            "duration_sec": 56.323,
-            "end_time_sec": 356.323,
+            "duration_sec": 52.022,
+            "end_time_sec": 352.022,
             "estimated_short_gap_distance_m": 0.0,
             "high_intensity_distance_m": 0.0,
             "high_intensity_distance_per_5min_m": null,
@@ -27044,12 +27020,12 @@
           }
         ],
         "best_activity_window": null,
-        "detected_time_sec": 120.432,
-        "distance_per_5min_m": 606.02,
+        "detected_time_sec": 120.422,
+        "distance_per_5min_m": 606.07,
         "high_intensity_distance_m": 61.39,
-        "high_intensity_distance_per_5min_m": 152.92,
+        "high_intensity_distance_per_5min_m": 152.94,
         "high_intensity_distance_ratio": 0.2523,
-        "high_intensity_time_sec": 10.987,
+        "high_intensity_time_sec": 10.986,
         "max_sprint_speed_kmh": 19.5,
         "minimum_best_window_sample_sec": 180.0,
         "minimum_rate_sample_sec": 120.0,
@@ -27073,7 +27049,7 @@
     }
   ],
   "report_type": "public_match_report",
-  "reviewed_identity_digest": "6d30a9a9adbcf716a5afdc412412382ebec5ef042bbec11973b291c4228dc870",
+  "reviewed_identity_digest": "7da5def07bbfdfa165b1cb274a8c69002c92bb62009f5098e57297393c270599",
   "schema_version": "0.1.0",
   "source_match_id": "5e62625e",
   "stats_semantics": {
@@ -27094,18 +27070,18 @@
       "display_color": "#97999f",
       "estimated_short_gap_distance_m": 17.58,
       "failed_passes": 26,
-      "high_intensity_distance_m": 570.98,
+      "high_intensity_distance_m": 571.12,
       "movement_authority": "reviewed_safe_team_observations",
       "observed_distance_m": 3479.78,
       "pass_attempts": 41,
       "pass_candidates": 49,
       "peak_speed_kmh": 22.04,
-      "playing_time_sec": 356.32,
+      "playing_time_sec": 352.02,
       "possession_share_percent": 31.6,
       "progressive_pass_candidates": 8,
       "restart_passes": 1,
       "same_team_pass_candidates": 20,
-      "sprint_count": 0,
+      "sprint_count": 40,
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
@@ -27126,12 +27102,12 @@
       "pass_attempts": 39,
       "pass_candidates": 50,
       "peak_speed_kmh": 22.37,
-      "playing_time_sec": 356.32,
+      "playing_time_sec": 352.02,
       "possession_share_percent": 68.4,
       "progressive_pass_candidates": 10,
       "restart_passes": 1,
       "same_team_pass_candidates": 21,
-      "sprint_count": 0,
+      "sprint_count": null,
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",

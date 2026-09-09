@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 from app.services.identity_reviewed_stats import (
     _sprint_reference,
+    _reviewed_team_sprint_summary,
     build_reviewed_stats,
+    reviewed_team_sprint_counts,
     reviewed_team_movement_exclusion_reason,
 )
 from app.services.identity_reviewed_frame_uniqueness import (
@@ -25,6 +27,21 @@ from app.services.reviewed_match_report import build_reviewed_match_report
 
 
 class ReviewedIdentityStatsTests(unittest.TestCase):
+    def test_team_sprint_counts_deduplicate_and_reject_unsafe_or_conflicted_owners(self) -> None:
+        counts = reviewed_team_sprint_counts(
+            [
+                {"team_label": "A", "event_key": ("track-a", 10, 20)},
+                {"team_label": "A", "event_key": ("track-a", 10, 20)},
+                {"team_label": "B", "event_key": ("track-b", 30, 40)},
+                {"team_label": "U", "event_key": ("track-u", 50, 60)},
+                {"team_label": "A", "event_key": ("conflicted", 70, 80)},
+                {"team_label": "B", "event_key": ("conflicted", 70, 80)},
+                {"team_label": "A", "event_key": None},
+            ]
+        )
+
+        self.assertEqual(counts, {"A": 1, "B": 1})
+
     def test_sprint_reference_uses_the_peak_fragment_not_unrelated_low_quality_fragment(self) -> None:
         reference = _sprint_reference(
             [
@@ -243,7 +260,16 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
                 teams["B"]["high_intensity_distance_m"],
                 teams["B"]["total_distance_m"],
             )
-            self.assertNotIn("sprint_count", teams["B"])
+            self.assertIsNone(teams["B"]["sprint_count"])
+            self.assertEqual(
+                teams["B"]["sprint_authority"],
+                "reviewed_canonical_player_sprint_events_v1",
+            )
+            self.assertEqual(
+                teams["B"]["sprint_evidence_scope"],
+                "safe_named_player_events_only",
+            )
+            self.assertEqual(teams["B"]["sprint_status"], "not_available_by_scope")
             self.assertNotIn("sprint_distance_m", teams["B"])
 
     def test_team_movement_requires_safe_team_attribution_not_named_player_identity(
@@ -743,6 +769,77 @@ class ReviewedIdentityStatsTests(unittest.TestCase):
             )
 
     @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
+    def test_team_sprints_reuse_safe_named_events_and_exclude_anonymous_movement(
+        self, metadata
+    ) -> None:
+        metadata.return_value = {
+            "fps": 25.0,
+            "frame_count": 200,
+            "duration_sec": 8.0,
+            "source": "test",
+            "filename": "video.mp4",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tracklets.json").write_text(
+                json.dumps(
+                    {
+                        "tracklets": [
+                            _tracklet_with_positions(
+                                "named-runner", [(frame, frame * 0.25) for frame in range(200)]
+                            ),
+                            _tracklet_with_positions(
+                                "anonymous-runner", [(frame, frame * 0.25) for frame in range(200)]
+                            ),
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            anonymous = _assignment("anonymous-runner", "stable_anonymous", None)
+            documents = build_reviewed_stats(
+                root,
+                {
+                    "semantic_digest": "snapshot",
+                    "tracklet_assignments": [
+                        _assignment("named-runner", "confirmed", "p1"),
+                        anonymous,
+                    ],
+                    "observation_overrides": [],
+                    "observation_demotions": [],
+                    "summary": {},
+                },
+                _match_document(),
+            )
+
+            player = documents["reviewed_player_stats.json"]["players"][0]
+            team = documents["reviewed_player_stats.json"]["teams"][0]
+            self.assertGreater(player["intensity"]["sprint_count"], 0)
+            self.assertEqual(team["sprint_count"], player["intensity"]["sprint_count"])
+            self.assertEqual(team["sprint_evidence_scope"], "safe_named_player_events_only")
+            self.assertEqual(team["sprint_status"], "reportable")
+
+    def test_team_sprint_scope_controls_reportability_without_anonymous_fallback(self) -> None:
+        complete = _reviewed_team_sprint_summary(
+            {"identity_review_scope": {"teams": {"A": "complete_roster", "B": "complete_roster"}}},
+            "A",
+            0,
+        )
+        self.assertEqual(complete["sprint_count"], 0)
+        self.assertEqual(complete["sprint_status"], "reportable")
+
+        for scope in ("team_stats_only", "partial_roster", "players_of_interest"):
+            summary = _reviewed_team_sprint_summary(
+                {"identity_review_scope": {"teams": {"A": scope, "B": "complete_roster"}}},
+                "A",
+                7,
+            )
+            self.assertIsNone(summary["sprint_count"])
+            self.assertEqual(summary["sprint_status"], "not_available_by_scope")
+
+        self.assertEqual(_reviewed_team_sprint_summary({}, "A", 7), {})
+
+    @patch("app.services.identity_reviewed_stats.read_match_video_metadata")
     def test_single_frame_position_spike_does_not_leak_into_reviewed_or_public_max_speed(
         self, metadata
     ) -> None:
@@ -1000,6 +1097,9 @@ def _match_document() -> dict:
             },
             {"team_label": "B", "players": []},
         ],
+        "identity_review_scope": {
+            "teams": {"A": "complete_roster", "B": "complete_roster"},
+        },
     }
 
 

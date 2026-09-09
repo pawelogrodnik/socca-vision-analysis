@@ -289,6 +289,37 @@ class RefreshLifecycleTests(unittest.TestCase):
                     refresh_match_group_to_latest(group_id)
             self.assertEqual(self._snapshot_group_bytes(root, group_id), before)
 
+    def test_mixed_aggregation_policy_refresh_preserves_pair_until_all_sources_are_rebuilt(self) -> None:
+        with self._store() as root:
+            group = self._group(root)
+            group_id = str(group["group_id"])
+            before = self._snapshot_group_bytes(root, group_id)
+
+            self._rewrite_source_docs(
+                root,
+                "published-one",
+                aggregate_mut=lambda doc: doc.update({"aggregation_policy_version": "1.3.0"}),
+            )
+            preview = preview_match_group_refresh(group_id)
+            self.assertEqual(preview["status"], "blocked")
+            self.assertEqual(preview["blocking_reasons"][0]["code"], "aggregation_policy_mismatch")
+            with self.assertRaises(MatchGroupError) as error:
+                refresh_match_group_to_latest(group_id)
+            self.assertEqual(error.exception.code, "aggregation_policy_mismatch")
+            self.assertEqual(self._snapshot_group_bytes(root, group_id), before)
+
+            self._rewrite_source_docs(
+                root,
+                "published-two",
+                aggregate_mut=lambda doc: doc.update({"aggregation_policy_version": "1.3.0"}),
+            )
+            refreshed = refresh_match_group_to_latest(group_id)
+            self.assertEqual(refreshed["status"], "refreshed")
+            self.assertEqual(
+                {member["aggregation_policy_version"] for member in get_match_group(group_id)["members"]},
+                {"1.3.0"},
+            )
+
     def test_staging_failure_changes_no_durable_state(self) -> None:
         with self._store() as root:
             group = self._group(root)

@@ -8699,7 +8699,7 @@
     "restart_passes": 12,
     "same_team_pass_candidates": 260
   },
-  "generated_at": "2026-09-08T13:41:22.078186+00:00",
+  "generated_at": "2026-09-09T08:17:57.287942+00:00",
   "id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
   "key_moments": {
     "moments": [
@@ -8929,36 +8929,36 @@
   },
   "merged_provenance": {
     "aggregate_engine_policy_version": "1.0.0",
-    "aggregate_semantic_digest": "sha256:96dac4852adf277eadc3f80ad7878155e0d7db8a13383b93358866364b340eb5",
+    "aggregate_semantic_digest": "sha256:9a8cd0a952ca21506e845bdfa13d25a01b5a4880fc8fb36e1e1b457c051bbfff",
     "group_id": "match-group-c3fbd48a-356d-44a0-a740-c630de69b527",
     "merged_published_match_id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
     "policy_version": "1.0.0",
     "sources": [
       {
-        "aggregation_input_semantic_digest": "sha256:25c7888532b57d68338e569734ec9d56f8fa808825729409e7b4f9753f33f740",
+        "aggregation_input_semantic_digest": "sha256:f94bc4e100d11a91c70fed2a40eade538be2f6185b652bfe69daad2c43c79c03",
         "logical_end_sec": 1156.3,
         "logical_start_sec": 0.0,
-        "public_report_semantic_digest": "sha256:4ec103f534346df351eaa72bd782d8d3622b4075a60ca2700fce846045b2dee5",
+        "public_report_semantic_digest": "sha256:c4feeb2a3746c2d38b167446b787cac1d2cddd77aba37fd612633a1f6f9b9cf9",
         "published_id": "published-9c7485e4",
         "reviewed_identity_digest": "224130558025fa188875913ae6d344e7697f02156eee57fa9b22c53fb745cacc",
         "sequence_index": 0,
         "source_match_id": "9c7485e4"
       },
       {
-        "aggregation_input_semantic_digest": "sha256:e2b86d6641b9b82288a658b1c6cc934a0c3cba0d8e57f981cb2dc6c489f379f3",
+        "aggregation_input_semantic_digest": "sha256:e30d1df99764cb9774925a597e8396e6f5bca4678b963824b78d3d549f4485d8",
         "logical_end_sec": 1761.878,
         "logical_start_sec": 1156.3,
-        "public_report_semantic_digest": "sha256:93cc465b485c67cddb4a58eeede3f24457a27311e1ef897fff2881e5027c5e22",
+        "public_report_semantic_digest": "sha256:e8a036047755d2666a80a3050c58606d60788a01e79e82b1483fba90f773906a",
         "published_id": "published-6d8fc20c",
         "reviewed_identity_digest": "31af26a61105fea5a865a4c8f4b769420d51ea754e15dea57525a5ca09c67021",
         "sequence_index": 1,
         "source_match_id": "6d8fc20c"
       },
       {
-        "aggregation_input_semantic_digest": "sha256:aa73428c0b57f2471f09be681620bfe3efc37c1c85d40fdffd6dd790d7fd9b8c",
+        "aggregation_input_semantic_digest": "sha256:e8975619e8e7a2f8fa31b37a378fc76b42564b494571512a12815899f29a16dd",
         "logical_end_sec": 2113.9,
         "logical_start_sec": 1761.878,
-        "public_report_semantic_digest": "sha256:4ddf090419d80251b0b957fba3ee726b1d3b8392a975dc89a766a79976cee7a4",
+        "public_report_semantic_digest": "sha256:9597b8f7f5ec9cce54b7598b177469d7cf72af7cdd80a49a1b25c63c5c4e169b",
         "published_id": "published-5e62625e",
         "reviewed_identity_digest": "7da5def07bbfdfa165b1cb274a8c69002c92bb62009f5098e57297393c270599",
         "sequence_index": 2,
@@ -99521,7 +99521,7 @@
       "progressive_pass_candidates": 48,
       "restart_passes": 8,
       "same_team_pass_candidates": 126,
-      "sprint_count": 0,
+      "sprint_count": 195,
       "team_id": "team-corgi-1fc405",
       "team_label": "A",
       "team_name": "Corgi",
@@ -99547,7 +99547,7 @@
       "progressive_pass_candidates": 49,
       "restart_passes": 4,
       "same_team_pass_candidates": 134,
-      "sprint_count": 0,
+      "sprint_count": null,
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",

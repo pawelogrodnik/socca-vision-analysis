@@ -467,7 +467,7 @@ def _merge_teams(
             # avg speed stays duration-based and merged-defined (documented,
             # not claimed as exact physical parity).
             "high_intensity_distance_m": _round(sum(_number(movement.get("high_intensity_distance_m")) for movement in movements), 2),
-            "sprint_count": sum(_int(movement.get("sprint_count")) for movement in movements),
+            "sprint_count": _merged_team_sprint_count(movements),
             "avg_speed_kmh": _round(distance / duration_sec * 3.6, 2) if duration_sec > 0 else 0.0,
             "peak_speed_kmh": _round(max((_number(movement.get("peak_speed_kmh")) for movement in movements), default=0.0), 2),
             "possession_share_percent": possession_share,
@@ -483,6 +483,22 @@ def _merge_teams(
             "accepted_passes": accepted,
         })
     return rows
+
+
+def _merged_team_sprint_count(movements: list[dict[str, Any]]) -> int | None:
+    """Sum only complete source-team sprint totals.
+
+    Current Reviewed sources explicitly mark named-player evidence that cannot
+    represent a whole team.  A logical-match total with any such source is
+    similarly unavailable, never a partial numeric result.  Legacy sources
+    without the status keep their historic additive behaviour.
+    """
+    if any(
+        str(movement.get("sprint_status") or "") == "not_available_by_scope"
+        for movement in movements
+    ):
+        return None
+    return sum(_int(movement.get("sprint_count")) for movement in movements)
 
 
 def _primitive_team_count(part: dict[str, Any], primitive_field: str, public_field: str) -> int:

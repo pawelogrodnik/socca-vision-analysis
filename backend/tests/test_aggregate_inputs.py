@@ -15,7 +15,7 @@ class AggregateInputsTests(unittest.TestCase):
         inputs = build_aggregate_inputs(_package(), public_report=_public_report(), published_id="published-match-1")
 
         self.assertEqual(inputs["schema_version"], "1.0.0")
-        self.assertEqual(inputs["aggregation_policy_version"], "1.2.0")
+        self.assertEqual(inputs["aggregation_policy_version"], "1.3.0")
         self.assertEqual(inputs["source"]["source_match_id"], "match-1")
         self.assertEqual(inputs["source"]["published_id"], "published-match-1")
         self.assertEqual(inputs["source"]["reviewed_identity_digest"], "reviewed-digest")
@@ -156,6 +156,60 @@ class AggregateInputsTests(unittest.TestCase):
         physical = next(row for row in public_report["teams"] if row["team_id"] == "team-corgi")
         aggregate = next(row for row in inputs["teams"] if row["team_id"] == "team-corgi")
         self.assertEqual(physical["total_distance_m"], aggregate["movement"]["total_distance_m"])
+
+    def test_physical_public_report_and_aggregate_inputs_share_reviewed_team_sprints(self) -> None:
+        from app.services.public_match_report import build_public_match_report
+
+        package = _package()
+        package["reviewed_team_movement"][0].update({
+            "sprint_count": 4,
+            "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
+            "sprint_evidence_scope": "safe_named_player_events_only",
+            "sprint_status": "reportable",
+        })
+        public_report = build_public_match_report(
+            package,
+            published_id="published-match-1",
+            source_match_dir=None,
+            heatmap_dir=None,
+            public_heatmap_base="published/matches/published-match-1/heatmaps",
+        )
+        inputs = build_aggregate_inputs(package, public_report=public_report, published_id="published-match-1")
+        physical = next(row for row in public_report["teams"] if row["team_id"] == "team-corgi")
+        aggregate = next(row for row in inputs["teams"] if row["team_id"] == "team-corgi")
+        self.assertEqual(physical["sprint_count"], 4)
+        self.assertEqual(aggregate["movement"]["sprint_count"], 4)
+        self.assertEqual(
+            aggregate["movement"]["sprint_authority"],
+            "reviewed_canonical_player_sprint_events_v1",
+        )
+        self.assertEqual(aggregate["movement"]["sprint_status"], "reportable")
+
+    def test_explicit_unavailable_reviewed_sprint_does_not_fall_back_to_legacy(self) -> None:
+        from app.services.public_match_report import build_public_match_report
+
+        package = _package()
+        package["reviewed_team_movement"][1].update({
+            "sprint_count": None,
+            "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
+            "sprint_evidence_scope": "safe_named_player_events_only",
+            "sprint_status": "not_available_by_scope",
+        })
+        public_report = build_public_match_report(
+            package,
+            published_id="published-match-1",
+            source_match_dir=None,
+            heatmap_dir=None,
+            public_heatmap_base="published/matches/published-match-1/heatmaps",
+        )
+        inputs = build_aggregate_inputs(
+            package, public_report=public_report, published_id="published-match-1"
+        )
+        physical = next(row for row in public_report["teams"] if row["team_id"] == "team-verisk")
+        aggregate = next(row for row in inputs["teams"] if row["team_id"] == "team-verisk")
+        self.assertIsNone(physical["sprint_count"])
+        self.assertIsNone(aggregate["movement"]["sprint_count"])
+        self.assertEqual(aggregate["movement"]["sprint_status"], "not_available_by_scope")
 
     def test_team_movement_is_unavailable_without_reviewed_safe_authority(self) -> None:
         package = _package()
@@ -348,7 +402,7 @@ class AggregateInputsTests(unittest.TestCase):
                     evidence,
                 )
                 aggregate = json.loads((published_root / "aggregate_inputs.json").read_text(encoding="utf-8"))
-                self.assertEqual(aggregate["aggregation_policy_version"], "1.2.0")
+                self.assertEqual(aggregate["aggregation_policy_version"], "1.3.0")
                 self.assertEqual(aggregate["workload"]["semantics"], "reviewed_confirmed_detected_in_play")
                 for path, contents in before.items():
                     if path in {"published/package.json", "published/aggregate_inputs.json"}:
