@@ -15,8 +15,9 @@ from app.services.public_match_report import pass_counts_for_team_label
 
 
 AGGREGATE_INPUTS_SCHEMA_VERSION = "1.0.0"
-AGGREGATION_POLICY_VERSION = "1.2.0"
+AGGREGATION_POLICY_VERSION = "1.3.0"
 REVIEWED_SAFE_TEAM_MOVEMENT_AUTHORITY = "reviewed_safe_team_observations"
+REVIEWED_TEAM_SPRINT_AUTHORITY = "reviewed_canonical_player_sprint_events_v1"
 
 
 class AggregateInputsError(ValueError):
@@ -210,9 +211,25 @@ def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list
                 value = _number_or_none(reviewed.get(field))
                 if value is not None:
                     movement[field] = value
-            # The safe rollup currently does not contain these secondary
-            # metrics. They never provide the authoritative distance total.
-            for field in ("sprint_count", "peak_speed_kmh", "average_speed"):
+            # Reviewed team sprint evidence reuses canonical accepted player
+            # events.  Historic reviewed artifacts lack it and keep their
+            # legacy sprint value for backwards-compatible rendering.
+            reviewed_sprint_count = _number_or_none(reviewed.get("sprint_count"))
+            if reviewed_sprint_count is not None:
+                movement["sprint_count"] = reviewed_sprint_count
+                movement["sprint_authority"] = str(
+                    reviewed.get("sprint_authority")
+                    or REVIEWED_TEAM_SPRINT_AUTHORITY
+                )
+                movement["sprint_evidence_scope"] = str(
+                    reviewed.get("sprint_evidence_scope")
+                    or "safe_named_player_events_only"
+                )
+            elif "sprint_count" in legacy_movement:
+                movement["sprint_count"] = legacy_movement["sprint_count"]
+            # These secondary legacy metrics never provide the authoritative
+            # Reviewed team distance total.
+            for field in ("peak_speed_kmh", "average_speed"):
                 if field in legacy_movement:
                     movement[field] = legacy_movement[field]
         rows.append(

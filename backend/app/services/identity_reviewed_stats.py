@@ -58,6 +58,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
     )
     observations_by_player: dict[str, list[dict[str, Any]]] = defaultdict(list)
     observations_by_safe_team: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    safe_team_observation_keys: dict[str, set[tuple[str, int]]] = defaultdict(set)
     for effective in effective_observations:
         if (
             effective.get("identity_status") != "confirmed"
@@ -79,13 +80,16 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
     for effective in effective_observations:
         safe_team_position = reviewed_safe_team_movement_observation(effective)
         if safe_team_position is not None:
-            observations_by_safe_team[str(safe_team_position["team_label"])].append(
-                safe_team_position
+            team_label = str(safe_team_position["team_label"])
+            observations_by_safe_team[team_label].append(safe_team_position)
+            safe_team_observation_keys[team_label].add(
+                (str(safe_team_position.get("tracklet_id") or ""), int(safe_team_position.get("frame") or 0))
             )
     players = []
     heatmaps = []
     timeline = []
     workload_evidence = []
+    team_sprint_event_candidates: list[dict[str, Any]] = []
     for player_id, rows in sorted(observations_by_player.items()):
         rows.sort(key=lambda row: (int(row.get("frame") or 0), str(row.get("tracklet_id") or "")))
         detected = [row for row in rows if row.get("pitch_m")]
@@ -102,6 +106,12 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             detected_time_sec=detected_time_sec,
         )
         sprint_result = classify_reviewed_sprints(fragments, fps=fps, policy=sprint_detection)
+        team_sprint_event_candidates.extend(
+            _safe_team_sprint_event_candidates(
+                sprint_result["events"],
+                safe_team_observation_keys=safe_team_observation_keys,
+            )
+        )
         intensity_summary.update({
             "sprint_count": sprint_result["sprint_count"],
             "sprint_time_sec": sprint_result["sprint_time_sec"],
@@ -191,7 +201,11 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
             ),
         })
         heatmaps.append({"player_id": player_id, "team_label": player["team_label"], "samples": len(positions), "positions_m": positions, "bin_dimensions": [12, 8]})
-    teams = _reviewed_team_movement(observations_by_safe_team, fps)
+    teams = _reviewed_team_movement(
+        observations_by_safe_team,
+        fps,
+        sprint_event_candidates=team_sprint_event_candidates,
+    )
     snapshot_digest = str(snapshot["semantic_digest"])
     coverage = _coverage(snapshot)
     progress = _load(match_path / "reviewed_identity_progress.json")
@@ -297,8 +311,12 @@ def reviewed_team_movement_exclusion_reason(effective: dict[str, Any]) -> str | 
 
 
 def _reviewed_team_movement(
-    observations_by_team: dict[str, list[dict[str, Any]]], fps: float
+    observations_by_team: dict[str, list[dict[str, Any]]],
+    fps: float,
+    *,
+    sprint_event_candidates: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    sprint_counts = reviewed_team_sprint_counts(sprint_event_candidates or [])
     rows: list[dict[str, Any]] = []
     for team_label in ("A", "B"):
         seen: set[tuple[str, int]] = set()
@@ -325,9 +343,93 @@ def _reviewed_team_movement(
                 "accepted_movement_segments": summary["accepted_movement_segments"],
                 "safe_observation_count": len(positions),
                 "high_intensity_distance_m": intensity["high_intensity_distance_m"],
+                "sprint_count": sprint_counts[team_label],
+                "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
+                "sprint_evidence_scope": "safe_named_player_events_only",
             }
         )
     return rows
+
+
+def _safe_team_sprint_event_candidates(
+    events: list[dict[str, Any]],
+    *,
+    safe_team_observation_keys: dict[str, set[tuple[str, int]]],
+) -> list[dict[str, Any]]:
+    """Project accepted player sprint events onto a safely known team.
+
+    Reviewed sprint classification is currently player-relative.  We therefore
+    reuse only that accepted event stream rather than inventing a second,
+    team-level threshold policy for anonymous movement.  Every contiguous
+    observation spanned by an event must retain one certain A/B team owner.
+    """
+    candidates: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_key = _reviewed_sprint_event_key(event)
+        if event_key is None:
+            continue
+        tracklet_id, start_frame, end_frame = event_key
+        matching_teams = [
+            label
+            for label in ("A", "B")
+            if all(
+                (tracklet_id, frame) in safe_team_observation_keys.get(label, set())
+                for frame in range(start_frame, end_frame + 1)
+            )
+        ]
+        if len(matching_teams) == 1:
+            candidates.append({"team_label": matching_teams[0], "event_key": event_key})
+    return candidates
+
+
+def reviewed_team_sprint_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    """Count unique, non-conflicted canonical player sprint events by team.
+
+    The event key deliberately excludes player identity.  A stale duplicate
+    owner cannot turn one physical sprint into two team sprints, and a single
+    event presented with conflicting A/B ownership is excluded rather than
+    assigned speculatively.
+    """
+    owners_by_event: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        team_label = str(event.get("team_label") or "").upper()
+        event_key = event.get("event_key")
+        if team_label not in {"A", "B"} or not _valid_reviewed_sprint_event_key(event_key):
+            continue
+        owners_by_event[event_key].add(team_label)
+    counts = {"A": 0, "B": 0}
+    for owners in owners_by_event.values():
+        if len(owners) == 1:
+            counts[next(iter(owners))] += 1
+    return counts
+
+
+def _reviewed_sprint_event_key(event: dict[str, Any]) -> tuple[str, int, int] | None:
+    tracklet_id = str(event.get("tracklet_id") or "")
+    try:
+        start_frame = int(event.get("start_frame"))
+        end_frame = int(event.get("end_frame"))
+    except (TypeError, ValueError):
+        return None
+    if not tracklet_id or end_frame < start_frame:
+        return None
+    return tracklet_id, start_frame, end_frame
+
+
+def _valid_reviewed_sprint_event_key(value: Any) -> bool:
+    return (
+        isinstance(value, tuple)
+        and len(value) == 3
+        and isinstance(value[0], str)
+        and value[0] != ""
+        and isinstance(value[1], int)
+        and isinstance(value[2], int)
+        and value[2] >= value[1]
+    )
 
 
 def _sprint_reference(movement: list[dict[str, Any]]) -> dict[str, Any]:
