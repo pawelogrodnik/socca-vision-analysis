@@ -368,6 +368,32 @@ class MergedPublicMatchTests(unittest.TestCase):
             with self.assertRaisesRegex(MatchGroupError, "missing required team_config"):
                 ensure_merged_published_match(str(group["group_id"]))
 
+    def test_refreshed_team_shape_requires_nonempty_generated_from(self) -> None:
+        for missing in (True, False):
+            with self.subTest(generated_from="missing" if missing else "empty"), self._store() as root:
+                _write_source(root, "published-one", "physical-one", duration=600, team_shape_eligible=100)
+                _write_source(root, "published-two", "physical-two", duration=300, team_shape_eligible=100)
+                package_path = root / "published" / "published-one" / "package.json"
+                package = _read(package_path)
+                package["team_shape_publication_refresh"] = {
+                    "schema_version": "team_shape_publication_refresh:v2",
+                    "source_match_id": "physical-one",
+                    "frozen_reviewed_identity_digest": "reviewed-digest",
+                    "dependencies": {
+                        key: copy.deepcopy(package[key])
+                        for key in ("pitch_config", "match_phase_config", "team_config")
+                    },
+                }
+                if missing:
+                    package["team_shape"].pop("generated_from")
+                else:
+                    package["team_shape"]["generated_from"] = []
+                _write(package_path, package)
+                group = create_match_group(member_published_ids=["published-one", "published-two"], metadata=_metadata())
+                with self.assertRaisesRegex(MatchGroupError, "no verifiable lineage entries") as failure:
+                    ensure_merged_published_match(str(group["group_id"]))
+                self.assertEqual(failure.exception.code, "spatial_lineage_mismatch")
+
     def test_merged_heatmap_uses_shared_renderer(self) -> None:
         from unittest.mock import patch as mock_patch
 

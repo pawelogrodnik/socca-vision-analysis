@@ -1196,12 +1196,12 @@ def validate_spatial_lineage(sources: list[dict[str, Any]]) -> None:
 
 
 def _validate_team_shape_entries(package: dict[str, Any], shape: dict[str, Any], *, member: str) -> None:
-    entries = shape.get("generated_from")
-    if not isinstance(entries, list) or not entries:
-        return
     refresh = package.get("team_shape_publication_refresh")
     if refresh is not None:
         _validate_refreshed_team_shape_entries(package, shape, refresh, member=member)
+        return
+    entries = shape.get("generated_from")
+    if not isinstance(entries, list) or not entries:
         return
     embedded = {
         "pitch_config.json": package.get("pitch_config"),
@@ -1263,7 +1263,7 @@ def _validate_refreshed_team_shape_entries(
             member=member,
         )
     entries = shape.get("generated_from")
-    if not isinstance(entries, list):
+    if not isinstance(entries, list) or not entries:
         raise MatchGroupError(
             "spatial_lineage_mismatch",
             "Refreshed Team Shape has no verifiable lineage entries.",
