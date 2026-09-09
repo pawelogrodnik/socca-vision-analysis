@@ -388,6 +388,140 @@ def migrate_published_workload_evidence(
     return get_published_match(published_id)
 
 
+def migrate_published_team_shape_only(
+    published_id: str,
+    *,
+    team_shape: dict[str, Any],
+    provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically add one proven Team Shape generation to a reviewed publication.
+
+    This is not a generic publish escape hatch. The caller supplies a proof
+    that the published reviewed/video generation and source video are exact
+    matches. It stages only Team Shape, its feature-local provenance, report
+    projection, and the aggregate report/digest binding. Published video and
+    every other package/report/aggregate primitive are copied byte-for-byte.
+    """
+    init_publish_store()
+    if not isinstance(team_shape, dict) or team_shape.get("available") is not True:
+        raise ValueError("A ready Team Shape document is required")
+    if not isinstance(provenance, dict):
+        raise ValueError("Team Shape refresh requires provenance")
+    target_match_dir = _published_match_dir(published_id)
+    target_public_dir = public_match_report.CLIENT_PUBLIC_MATCHES_DIR / published_id
+    if not target_match_dir.is_dir() or not target_public_dir.is_dir():
+        raise KeyError(published_id)
+    existing_package = _load_json_object(target_match_dir / "package.json")
+    existing_report = _load_json_object(target_match_dir / "public_report.json")
+    existing_aggregate_inputs = _load_json_object(target_match_dir / "aggregate_inputs.json")
+    mirror_report = _load_json_object(target_public_dir / "public_report.json")
+    if canonical_json_sha256(existing_report) != canonical_json_sha256(mirror_report):
+        raise ValueError("Published static mirror does not match the canonical report")
+    if _published_id_from_package(existing_package) != published_id:
+        raise ValueError("Published package source identity does not match its publication id")
+
+    package = json.loads(json.dumps(existing_package))
+    package["team_shape"] = team_shape
+    package["team_shape_publication_refresh"] = provenance
+    _assert_team_shape_only_package_change(existing_package, package)
+    report = json.loads(json.dumps(existing_report))
+    projected = public_match_report.public_team_shape_from_document(
+        team_shape,
+        report.get("teams") if isinstance(report.get("teams"), list) else [],
+    )
+    if projected is None:
+        raise ValueError("Ready Team Shape cannot be projected into the published report")
+    report["team_shape"] = projected
+    _assert_team_shape_only_report_change(existing_report, report)
+    aggregate_inputs = _team_shape_only_aggregate_inputs(existing_aggregate_inputs, report)
+    _assert_team_shape_only_aggregate_change(existing_aggregate_inputs, aggregate_inputs)
+
+    public_root = public_match_report.CLIENT_PUBLIC_MATCHES_DIR
+    staged_match_dir = _staging_directory(PUBLISHED_MATCHES_DIR.parent, name=published_id)
+    staged_public_dir = _staging_directory(public_root.parent, name=published_id)
+    try:
+        shutil.copytree(target_match_dir, staged_match_dir, dirs_exist_ok=True)
+        shutil.copytree(target_public_dir, staged_public_dir, dirs_exist_ok=True)
+        _atomic_write_json(staged_match_dir / "package.json", package)
+        _atomic_write_json(staged_match_dir / "public_report.json", report)
+        _atomic_write_json(staged_match_dir / "aggregate_inputs.json", aggregate_inputs)
+        _atomic_write_json(staged_public_dir / "public_report.json", report)
+        _commit_publication_generation(
+            staged_match_dir=staged_match_dir,
+            target_match_dir=target_match_dir,
+            staged_public_dir=staged_public_dir,
+            target_public_dir=target_public_dir,
+        )
+    finally:
+        _remove_directory(staged_match_dir)
+        _remove_directory(staged_public_dir)
+        _remove_empty_directory(staged_match_dir.parent)
+        _remove_empty_directory(staged_public_dir.parent)
+    result = get_published_match(published_id)
+    result["public_report"] = report
+    return result
+
+
+def _assert_team_shape_only_report_change(before: dict[str, Any], after: dict[str, Any]) -> None:
+    """Reject a Team Shape migration if any unrelated public semantic changes."""
+    baseline = json.loads(json.dumps(before))
+    candidate = json.loads(json.dumps(after))
+    baseline.pop("team_shape", None)
+    candidate.pop("team_shape", None)
+    if canonical_json_sha256(baseline) != canonical_json_sha256(candidate):
+        raise ValueError("Team Shape-only refresh would change unrelated public report content")
+
+
+def _assert_team_shape_only_package_change(before: dict[str, Any], after: dict[str, Any]) -> None:
+    """Reject any package semantic change outside Team Shape and its inputs."""
+    allowed = {
+        "team_shape",
+        "team_shape_publication_refresh",
+    }
+    baseline = {key: value for key, value in before.items() if key not in allowed}
+    candidate = {key: value for key, value in after.items() if key not in allowed}
+    if canonical_json_sha256(baseline) != canonical_json_sha256(candidate):
+        raise ValueError("Team Shape-only refresh would change unrelated package content")
+
+
+def _team_shape_only_aggregate_inputs(
+    before: dict[str, Any],
+    public_report: dict[str, Any],
+) -> dict[str, Any]:
+    """Rebind only the canonical report digest in an existing aggregate input.
+
+    Aggregate inputs are the authority for merged movement, possession, passes
+    and timeline semantics. A feature-local Team Shape attachment must never
+    rebuild those primitives from current source configuration.
+    """
+    aggregate = json.loads(json.dumps(before))
+    source = aggregate.get("source")
+    if not isinstance(source, dict):
+        raise ValueError("Published aggregate inputs have no source binding")
+    if not isinstance(source.get("public_report_semantic_digest"), str) or not isinstance(
+        source.get("aggregation_input_semantic_digest"), str
+    ):
+        raise ValueError("Published aggregate inputs have incomplete digest bindings")
+    source["public_report_semantic_digest"] = canonical_json_sha256(public_report)
+    source.pop("aggregation_input_semantic_digest")
+    source["aggregation_input_semantic_digest"] = canonical_json_sha256(aggregate)
+    return aggregate
+
+
+def _assert_team_shape_only_aggregate_change(before: dict[str, Any], after: dict[str, Any]) -> None:
+    """Reject an aggregate refresh that changes anything but its two bindings."""
+    baseline = json.loads(json.dumps(before))
+    candidate = json.loads(json.dumps(after))
+    for document in (baseline, candidate):
+        source = document.get("source")
+        if not isinstance(source, dict):
+            raise ValueError("Published aggregate inputs have no source binding")
+        source.pop("public_report_semantic_digest", None)
+        source.pop("aggregation_input_semantic_digest", None)
+    if canonical_json_sha256(baseline) != canonical_json_sha256(candidate):
+        raise ValueError("Team Shape-only refresh would change unrelated aggregate content")
+
+
 def list_published_matches() -> list[dict[str, Any]]:
     init_publish_store()
     rows = []

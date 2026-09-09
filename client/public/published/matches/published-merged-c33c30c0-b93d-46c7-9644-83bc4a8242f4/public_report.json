@@ -8699,7 +8699,7 @@
     "restart_passes": 12,
     "same_team_pass_candidates": 260
   },
-  "generated_at": "2026-09-09T08:17:57.287942+00:00",
+  "generated_at": "2026-09-09T12:07:09.000838+00:00",
   "id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
   "key_moments": {
     "moments": [
@@ -8929,36 +8929,36 @@
   },
   "merged_provenance": {
     "aggregate_engine_policy_version": "1.0.0",
-    "aggregate_semantic_digest": "sha256:9a8cd0a952ca21506e845bdfa13d25a01b5a4880fc8fb36e1e1b457c051bbfff",
+    "aggregate_semantic_digest": "sha256:b6af6cb9da5e7eb2ffc737d68f7168ce1e66c1b4d569bd6e9338a5afd8def68f",
     "group_id": "match-group-c3fbd48a-356d-44a0-a740-c630de69b527",
     "merged_published_match_id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
     "policy_version": "1.0.0",
     "sources": [
       {
-        "aggregation_input_semantic_digest": "sha256:f94bc4e100d11a91c70fed2a40eade538be2f6185b652bfe69daad2c43c79c03",
+        "aggregation_input_semantic_digest": "sha256:4696b6a3572534f20a16720dcbabe91ee7415b43558b8da355c843357e40b49a",
         "logical_end_sec": 1156.3,
         "logical_start_sec": 0.0,
-        "public_report_semantic_digest": "sha256:c4feeb2a3746c2d38b167446b787cac1d2cddd77aba37fd612633a1f6f9b9cf9",
+        "public_report_semantic_digest": "sha256:bc608474008ebc14b7c6f1fdc003a68246454a84bd67f51ae7ec978d7d672db3",
         "published_id": "published-9c7485e4",
         "reviewed_identity_digest": "224130558025fa188875913ae6d344e7697f02156eee57fa9b22c53fb745cacc",
         "sequence_index": 0,
         "source_match_id": "9c7485e4"
       },
       {
-        "aggregation_input_semantic_digest": "sha256:e30d1df99764cb9774925a597e8396e6f5bca4678b963824b78d3d549f4485d8",
+        "aggregation_input_semantic_digest": "sha256:aed6916aa3e9becf6e8373b37fb4741ce0639f51ef51a0cb1d00e1d012c045d9",
         "logical_end_sec": 1761.878,
         "logical_start_sec": 1156.3,
-        "public_report_semantic_digest": "sha256:e8a036047755d2666a80a3050c58606d60788a01e79e82b1483fba90f773906a",
+        "public_report_semantic_digest": "sha256:afc6151e7f26e9cf200ad7a02d4addbc907f75dcafbddd0ce2a6c9a0a17e0e5d",
         "published_id": "published-6d8fc20c",
         "reviewed_identity_digest": "31af26a61105fea5a865a4c8f4b769420d51ea754e15dea57525a5ca09c67021",
         "sequence_index": 1,
         "source_match_id": "6d8fc20c"
       },
       {
-        "aggregation_input_semantic_digest": "sha256:e8975619e8e7a2f8fa31b37a378fc76b42564b494571512a12815899f29a16dd",
+        "aggregation_input_semantic_digest": "sha256:8d103f1b4bd9e483c473b7a01a4125934b9e5ba32302228a0b5c0f3896617c27",
         "logical_end_sec": 2113.9,
         "logical_start_sec": 1761.878,
-        "public_report_semantic_digest": "sha256:9597b8f7f5ec9cce54b7598b177469d7cf72af7cdd80a49a1b25c63c5c4e169b",
+        "public_report_semantic_digest": "sha256:b7f103e576ad35b2fda81ca167db203b280e574cecd3693f5f481d0f74095c5c",
         "published_id": "published-5e62625e",
         "reviewed_identity_digest": "7da5def07bbfdfa165b1cb274a8c69002c92bb62009f5098e57297393c270599",
         "sequence_index": 2,
@@ -99500,6 +99500,1255 @@
     "team_time": "source_video_duration",
     "team_tracking": "named_and_anonymous_team_observations",
     "technical_debug": "excluded"
+  },
+  "team_shape": {
+    "available": true,
+    "pitch_dimensions_m": {
+      "length_m": 47.4,
+      "width_m": 30.0
+    },
+    "scope": "all_in_play",
+    "takeaways": [
+      "Corgi grał średnio o 7.1 m dłuższe ustawienie niż Verisk.",
+      "Verisk ustawiał się średnio o 10 punktów procentowych wyżej niż Corgi.",
+      "Corgi grał średnio o 8.0 m dłuższe ustawienie niż Verisk."
+    ],
+    "teams": [
+      {
+        "average_shape": {
+          "cells": [
+            {
+              "column": 0,
+              "row": 0,
+              "value": 0.002776
+            },
+            {
+              "column": 0,
+              "row": 1,
+              "value": 0.005748
+            },
+            {
+              "column": 0,
+              "row": 2,
+              "value": 0.006477
+            },
+            {
+              "column": 0,
+              "row": 3,
+              "value": 0.0063
+            },
+            {
+              "column": 0,
+              "row": 4,
+              "value": 0.007423
+            },
+            {
+              "column": 0,
+              "row": 5,
+              "value": 0.00486
+            },
+            {
+              "column": 0,
+              "row": 6,
+              "value": 0.002918
+            },
+            {
+              "column": 0,
+              "row": 7,
+              "value": 0.001458
+            },
+            {
+              "column": 0,
+              "row": 8,
+              "value": 0.00097
+            },
+            {
+              "column": 0,
+              "row": 9,
+              "value": 0.001613
+            },
+            {
+              "column": 1,
+              "row": 0,
+              "value": 0.00771
+            },
+            {
+              "column": 1,
+              "row": 1,
+              "value": 0.016453
+            },
+            {
+              "column": 1,
+              "row": 2,
+              "value": 0.020701
+            },
+            {
+              "column": 1,
+              "row": 3,
+              "value": 0.026842
+            },
+            {
+              "column": 1,
+              "row": 4,
+              "value": 0.029791
+            },
+            {
+              "column": 1,
+              "row": 5,
+              "value": 0.014337
+            },
+            {
+              "column": 1,
+              "row": 6,
+              "value": 0.011505
+            },
+            {
+              "column": 1,
+              "row": 7,
+              "value": 0.008232
+            },
+            {
+              "column": 1,
+              "row": 8,
+              "value": 0.004616
+            },
+            {
+              "column": 1,
+              "row": 9,
+              "value": 0.001498
+            },
+            {
+              "column": 2,
+              "row": 0,
+              "value": 0.049434
+            },
+            {
+              "column": 2,
+              "row": 1,
+              "value": 0.056503
+            },
+            {
+              "column": 2,
+              "row": 2,
+              "value": 0.045172
+            },
+            {
+              "column": 2,
+              "row": 3,
+              "value": 0.039089
+            },
+            {
+              "column": 2,
+              "row": 4,
+              "value": 0.033958
+            },
+            {
+              "column": 2,
+              "row": 5,
+              "value": 0.032741
+            },
+            {
+              "column": 2,
+              "row": 6,
+              "value": 0.024736
+            },
+            {
+              "column": 2,
+              "row": 7,
+              "value": 0.020158
+            },
+            {
+              "column": 2,
+              "row": 8,
+              "value": 0.014333
+            },
+            {
+              "column": 2,
+              "row": 9,
+              "value": 0.004883
+            },
+            {
+              "column": 3,
+              "row": 0,
+              "value": 0.051998
+            },
+            {
+              "column": 3,
+              "row": 1,
+              "value": 0.057065
+            },
+            {
+              "column": 3,
+              "row": 2,
+              "value": 0.046872
+            },
+            {
+              "column": 3,
+              "row": 3,
+              "value": 0.041656
+            },
+            {
+              "column": 3,
+              "row": 4,
+              "value": 0.034524
+            },
+            {
+              "column": 3,
+              "row": 5,
+              "value": 0.02835
+            },
+            {
+              "column": 3,
+              "row": 6,
+              "value": 0.020596
+            },
+            {
+              "column": 3,
+              "row": 7,
+              "value": 0.016316
+            },
+            {
+              "column": 3,
+              "row": 8,
+              "value": 0.010474
+            },
+            {
+              "column": 3,
+              "row": 9,
+              "value": 0.004162
+            },
+            {
+              "column": 4,
+              "row": 0,
+              "value": 0.003796
+            },
+            {
+              "column": 4,
+              "row": 1,
+              "value": 0.018902
+            },
+            {
+              "column": 4,
+              "row": 2,
+              "value": 0.021325
+            },
+            {
+              "column": 4,
+              "row": 3,
+              "value": 0.024415
+            },
+            {
+              "column": 4,
+              "row": 4,
+              "value": 0.027725
+            },
+            {
+              "column": 4,
+              "row": 5,
+              "value": 0.023287
+            },
+            {
+              "column": 4,
+              "row": 6,
+              "value": 0.013678
+            },
+            {
+              "column": 4,
+              "row": 7,
+              "value": 0.009511
+            },
+            {
+              "column": 4,
+              "row": 8,
+              "value": 0.004754
+            },
+            {
+              "column": 4,
+              "row": 9,
+              "value": 0.001269
+            },
+            {
+              "column": 5,
+              "row": 0,
+              "value": 0.00018
+            },
+            {
+              "column": 5,
+              "row": 1,
+              "value": 0.001829
+            },
+            {
+              "column": 5,
+              "row": 2,
+              "value": 0.003891
+            },
+            {
+              "column": 5,
+              "row": 3,
+              "value": 0.007013
+            },
+            {
+              "column": 5,
+              "row": 4,
+              "value": 0.005355
+            },
+            {
+              "column": 5,
+              "row": 5,
+              "value": 0.00508
+            },
+            {
+              "column": 5,
+              "row": 6,
+              "value": 0.003693
+            },
+            {
+              "column": 5,
+              "row": 7,
+              "value": 0.005257
+            },
+            {
+              "column": 5,
+              "row": 8,
+              "value": 0.00247
+            },
+            {
+              "column": 5,
+              "row": 9,
+              "value": 0.001326
+            }
+          ],
+          "grid": {
+            "columns": 6,
+            "rows": 10
+          }
+        },
+        "summary": {
+          "average_block_height_percent": 38.06,
+          "average_compactness_m": 8.62,
+          "average_depth_m": 24.22,
+          "average_width_m": 14.5
+        },
+        "team_id": "team-corgi-1fc405",
+        "team_label": "A",
+        "team_name": "Corgi",
+        "timeline": [
+          {
+            "block_height_percent": 28.94,
+            "compactness_m": 6.64,
+            "depth_m": 17.02,
+            "label": "00:00",
+            "minute": 1,
+            "width_m": 14.61
+          },
+          {
+            "block_height_percent": 32.4,
+            "compactness_m": 7.1,
+            "depth_m": 20.16,
+            "label": "01:00",
+            "minute": 2,
+            "width_m": 13.74
+          },
+          {
+            "block_height_percent": 36.19,
+            "compactness_m": 8.84,
+            "depth_m": 24.14,
+            "label": "02:00",
+            "minute": 3,
+            "width_m": 17.06
+          },
+          {
+            "block_height_percent": 35.37,
+            "compactness_m": 9.14,
+            "depth_m": 23.0,
+            "label": "03:00",
+            "minute": 4,
+            "width_m": 17.03
+          },
+          {
+            "block_height_percent": 31.52,
+            "compactness_m": 7.7,
+            "depth_m": 20.18,
+            "label": "04:00",
+            "minute": 5,
+            "width_m": 14.98
+          },
+          {
+            "block_height_percent": 26.55,
+            "compactness_m": 7.03,
+            "depth_m": 17.87,
+            "label": "05:00",
+            "minute": 6,
+            "width_m": 14.71
+          },
+          {
+            "block_height_percent": 25.79,
+            "compactness_m": 8.19,
+            "depth_m": 22.38,
+            "label": "06:00",
+            "minute": 7,
+            "width_m": 14.55
+          },
+          {
+            "block_height_percent": 23.03,
+            "compactness_m": 6.63,
+            "depth_m": 17.21,
+            "label": "07:00",
+            "minute": 8,
+            "width_m": 12.34
+          },
+          {
+            "block_height_percent": 41.65,
+            "compactness_m": 9.28,
+            "depth_m": 24.73,
+            "label": "08:00",
+            "minute": 9,
+            "width_m": 15.01
+          },
+          {
+            "block_height_percent": 40.26,
+            "compactness_m": 8.8,
+            "depth_m": 26.26,
+            "label": "09:00",
+            "minute": 10,
+            "width_m": 13.12
+          },
+          {
+            "block_height_percent": 29.05,
+            "compactness_m": 7.0,
+            "depth_m": 20.21,
+            "label": "10:00",
+            "minute": 11,
+            "width_m": 11.73
+          },
+          {
+            "block_height_percent": 38.29,
+            "compactness_m": 9.31,
+            "depth_m": 27.07,
+            "label": "11:00",
+            "minute": 12,
+            "width_m": 14.23
+          },
+          {
+            "block_height_percent": 48.76,
+            "compactness_m": 9.48,
+            "depth_m": 27.04,
+            "label": "12:00",
+            "minute": 13,
+            "width_m": 16.9
+          },
+          {
+            "block_height_percent": 56.24,
+            "compactness_m": 10.24,
+            "depth_m": 30.42,
+            "label": "13:00",
+            "minute": 14,
+            "width_m": 16.3
+          },
+          {
+            "block_height_percent": 43.43,
+            "compactness_m": 9.21,
+            "depth_m": 26.77,
+            "label": "14:00",
+            "minute": 15,
+            "width_m": 14.81
+          },
+          {
+            "block_height_percent": 37.93,
+            "compactness_m": 9.14,
+            "depth_m": 23.99,
+            "label": "15:00",
+            "minute": 16,
+            "width_m": 17.06
+          },
+          {
+            "block_height_percent": 56.67,
+            "compactness_m": 9.71,
+            "depth_m": 31.16,
+            "label": "16:00",
+            "minute": 17,
+            "width_m": 13.66
+          },
+          {
+            "block_height_percent": 59.04,
+            "compactness_m": 9.0,
+            "depth_m": 28.71,
+            "label": "17:00",
+            "minute": 18,
+            "width_m": 12.25
+          },
+          {
+            "block_height_percent": 40.01,
+            "compactness_m": 9.53,
+            "depth_m": 27.78,
+            "label": "18:00",
+            "minute": 19,
+            "width_m": 15.4
+          },
+          {
+            "block_height_percent": 56.8,
+            "compactness_m": 11.19,
+            "depth_m": 30.57,
+            "label": "19:00",
+            "minute": 20,
+            "width_m": 14.79
+          },
+          {
+            "block_height_percent": 48.52,
+            "compactness_m": 9.75,
+            "depth_m": 28.46,
+            "label": "19:16",
+            "minute": 20,
+            "width_m": 15.38
+          },
+          {
+            "block_height_percent": 59.96,
+            "compactness_m": 10.28,
+            "depth_m": 34.76,
+            "label": "20:16",
+            "minute": 21,
+            "width_m": 11.83
+          },
+          {
+            "block_height_percent": 46.06,
+            "compactness_m": 8.84,
+            "depth_m": 22.61,
+            "label": "21:16",
+            "minute": 22,
+            "width_m": 16.02
+          },
+          {
+            "block_height_percent": 34.3,
+            "compactness_m": 9.42,
+            "depth_m": 26.54,
+            "label": "22:16",
+            "minute": 23,
+            "width_m": 15.24
+          },
+          {
+            "block_height_percent": 31.86,
+            "compactness_m": 8.7,
+            "depth_m": 23.48,
+            "label": "23:16",
+            "minute": 24,
+            "width_m": 14.6
+          },
+          {
+            "block_height_percent": 41.26,
+            "compactness_m": 8.91,
+            "depth_m": 27.96,
+            "label": "24:16",
+            "minute": 25,
+            "width_m": 14.52
+          },
+          {
+            "block_height_percent": 40.56,
+            "compactness_m": 9.44,
+            "depth_m": 25.83,
+            "label": "25:16",
+            "minute": 26,
+            "width_m": 14.94
+          },
+          {
+            "block_height_percent": 38.54,
+            "compactness_m": 9.14,
+            "depth_m": 25.34,
+            "label": "26:16",
+            "minute": 27,
+            "width_m": 13.17
+          },
+          {
+            "block_height_percent": 35.13,
+            "compactness_m": 9.36,
+            "depth_m": 25.31,
+            "label": "27:16",
+            "minute": 28,
+            "width_m": 15.53
+          },
+          {
+            "block_height_percent": 30.21,
+            "compactness_m": 7.94,
+            "depth_m": 21.95,
+            "label": "28:16",
+            "minute": 29,
+            "width_m": 14.91
+          },
+          {
+            "block_height_percent": 17.34,
+            "compactness_m": 6.05,
+            "depth_m": 12.72,
+            "label": "29:16",
+            "minute": 30,
+            "width_m": 15.59
+          },
+          {
+            "block_height_percent": 25.57,
+            "compactness_m": 6.15,
+            "depth_m": 16.91,
+            "label": "29:21",
+            "minute": 30,
+            "width_m": 11.06
+          },
+          {
+            "block_height_percent": 38.78,
+            "compactness_m": 8.49,
+            "depth_m": 22.7,
+            "label": "30:21",
+            "minute": 31,
+            "width_m": 14.91
+          },
+          {
+            "block_height_percent": 34.53,
+            "compactness_m": 8.55,
+            "depth_m": 23.05,
+            "label": "31:21",
+            "minute": 32,
+            "width_m": 13.78
+          },
+          {
+            "block_height_percent": 33.71,
+            "compactness_m": 8.37,
+            "depth_m": 23.61,
+            "label": "32:21",
+            "minute": 33,
+            "width_m": 15.0
+          },
+          {
+            "block_height_percent": 25.15,
+            "compactness_m": 7.43,
+            "depth_m": 18.37,
+            "label": "33:21",
+            "minute": 34,
+            "width_m": 13.59
+          },
+          {
+            "block_height_percent": 31.68,
+            "compactness_m": 8.22,
+            "depth_m": 23.4,
+            "label": "34:21",
+            "minute": 35,
+            "width_m": 13.41
+          }
+        ]
+      },
+      {
+        "average_shape": {
+          "cells": [
+            {
+              "column": 0,
+              "row": 0,
+              "value": 0.002021
+            },
+            {
+              "column": 0,
+              "row": 1,
+              "value": 0.003704
+            },
+            {
+              "column": 0,
+              "row": 2,
+              "value": 0.005965
+            },
+            {
+              "column": 0,
+              "row": 3,
+              "value": 0.008814
+            },
+            {
+              "column": 0,
+              "row": 4,
+              "value": 0.008651
+            },
+            {
+              "column": 0,
+              "row": 5,
+              "value": 0.011039
+            },
+            {
+              "column": 0,
+              "row": 6,
+              "value": 0.007246
+            },
+            {
+              "column": 0,
+              "row": 7,
+              "value": 0.008259
+            },
+            {
+              "column": 0,
+              "row": 8,
+              "value": 0.003024
+            },
+            {
+              "column": 0,
+              "row": 9,
+              "value": 0.001623
+            },
+            {
+              "column": 1,
+              "row": 0,
+              "value": 0.003723
+            },
+            {
+              "column": 1,
+              "row": 1,
+              "value": 0.009551
+            },
+            {
+              "column": 1,
+              "row": 2,
+              "value": 0.018942
+            },
+            {
+              "column": 1,
+              "row": 3,
+              "value": 0.023935
+            },
+            {
+              "column": 1,
+              "row": 4,
+              "value": 0.028781
+            },
+            {
+              "column": 1,
+              "row": 5,
+              "value": 0.030406
+            },
+            {
+              "column": 1,
+              "row": 6,
+              "value": 0.024809
+            },
+            {
+              "column": 1,
+              "row": 7,
+              "value": 0.019215
+            },
+            {
+              "column": 1,
+              "row": 8,
+              "value": 0.013626
+            },
+            {
+              "column": 1,
+              "row": 9,
+              "value": 0.004095
+            },
+            {
+              "column": 2,
+              "row": 0,
+              "value": 0.006681
+            },
+            {
+              "column": 2,
+              "row": 1,
+              "value": 0.021844
+            },
+            {
+              "column": 2,
+              "row": 2,
+              "value": 0.029015
+            },
+            {
+              "column": 2,
+              "row": 3,
+              "value": 0.034669
+            },
+            {
+              "column": 2,
+              "row": 4,
+              "value": 0.040369
+            },
+            {
+              "column": 2,
+              "row": 5,
+              "value": 0.044956
+            },
+            {
+              "column": 2,
+              "row": 6,
+              "value": 0.036451
+            },
+            {
+              "column": 2,
+              "row": 7,
+              "value": 0.030903
+            },
+            {
+              "column": 2,
+              "row": 8,
+              "value": 0.02275
+            },
+            {
+              "column": 2,
+              "row": 9,
+              "value": 0.002382
+            },
+            {
+              "column": 3,
+              "row": 0,
+              "value": 0.007609
+            },
+            {
+              "column": 3,
+              "row": 1,
+              "value": 0.024265
+            },
+            {
+              "column": 3,
+              "row": 2,
+              "value": 0.025978
+            },
+            {
+              "column": 3,
+              "row": 3,
+              "value": 0.032247
+            },
+            {
+              "column": 3,
+              "row": 4,
+              "value": 0.03648
+            },
+            {
+              "column": 3,
+              "row": 5,
+              "value": 0.035702
+            },
+            {
+              "column": 3,
+              "row": 6,
+              "value": 0.035043
+            },
+            {
+              "column": 3,
+              "row": 7,
+              "value": 0.027225
+            },
+            {
+              "column": 3,
+              "row": 8,
+              "value": 0.016328
+            },
+            {
+              "column": 3,
+              "row": 9,
+              "value": 0.002905
+            },
+            {
+              "column": 4,
+              "row": 0,
+              "value": 0.004159
+            },
+            {
+              "column": 4,
+              "row": 1,
+              "value": 0.008897
+            },
+            {
+              "column": 4,
+              "row": 2,
+              "value": 0.013699
+            },
+            {
+              "column": 4,
+              "row": 3,
+              "value": 0.02232
+            },
+            {
+              "column": 4,
+              "row": 4,
+              "value": 0.030259
+            },
+            {
+              "column": 4,
+              "row": 5,
+              "value": 0.029965
+            },
+            {
+              "column": 4,
+              "row": 6,
+              "value": 0.031378
+            },
+            {
+              "column": 4,
+              "row": 7,
+              "value": 0.024821
+            },
+            {
+              "column": 4,
+              "row": 8,
+              "value": 0.01163
+            },
+            {
+              "column": 4,
+              "row": 9,
+              "value": 0.003417
+            },
+            {
+              "column": 5,
+              "row": 0,
+              "value": 0.001088
+            },
+            {
+              "column": 5,
+              "row": 1,
+              "value": 0.002536
+            },
+            {
+              "column": 5,
+              "row": 2,
+              "value": 0.005567
+            },
+            {
+              "column": 5,
+              "row": 3,
+              "value": 0.007744
+            },
+            {
+              "column": 5,
+              "row": 4,
+              "value": 0.010997
+            },
+            {
+              "column": 5,
+              "row": 5,
+              "value": 0.012101
+            },
+            {
+              "column": 5,
+              "row": 6,
+              "value": 0.009507
+            },
+            {
+              "column": 5,
+              "row": 7,
+              "value": 0.008849
+            },
+            {
+              "column": 5,
+              "row": 8,
+              "value": 0.006999
+            },
+            {
+              "column": 5,
+              "row": 9,
+              "value": 0.002841
+            }
+          ],
+          "grid": {
+            "columns": 6,
+            "rows": 10
+          }
+        },
+        "summary": {
+          "average_block_height_percent": 50.56,
+          "average_compactness_m": 7.95,
+          "average_depth_m": 17.56,
+          "average_width_m": 15.38
+        },
+        "team_id": "team-verisk",
+        "team_label": "B",
+        "team_name": "Verisk",
+        "timeline": [
+          {
+            "block_height_percent": 58.13,
+            "compactness_m": 7.49,
+            "depth_m": 15.53,
+            "label": "00:00",
+            "minute": 1,
+            "width_m": 16.64
+          },
+          {
+            "block_height_percent": 56.51,
+            "compactness_m": 7.17,
+            "depth_m": 15.44,
+            "label": "01:00",
+            "minute": 2,
+            "width_m": 14.78
+          },
+          {
+            "block_height_percent": 51.62,
+            "compactness_m": 7.67,
+            "depth_m": 17.46,
+            "label": "02:00",
+            "minute": 3,
+            "width_m": 13.14
+          },
+          {
+            "block_height_percent": 52.41,
+            "compactness_m": 8.29,
+            "depth_m": 19.15,
+            "label": "03:00",
+            "minute": 4,
+            "width_m": 15.24
+          },
+          {
+            "block_height_percent": 55.96,
+            "compactness_m": 8.76,
+            "depth_m": 18.67,
+            "label": "04:00",
+            "minute": 5,
+            "width_m": 17.89
+          },
+          {
+            "block_height_percent": 63.4,
+            "compactness_m": 8.63,
+            "depth_m": 18.4,
+            "label": "05:00",
+            "minute": 6,
+            "width_m": 15.84
+          },
+          {
+            "block_height_percent": 63.11,
+            "compactness_m": 8.33,
+            "depth_m": 18.8,
+            "label": "06:00",
+            "minute": 7,
+            "width_m": 15.45
+          },
+          {
+            "block_height_percent": 65.61,
+            "compactness_m": 7.25,
+            "depth_m": 15.44,
+            "label": "07:00",
+            "minute": 8,
+            "width_m": 15.27
+          },
+          {
+            "block_height_percent": 45.55,
+            "compactness_m": 7.8,
+            "depth_m": 17.57,
+            "label": "08:00",
+            "minute": 9,
+            "width_m": 15.27
+          },
+          {
+            "block_height_percent": 46.09,
+            "compactness_m": 7.64,
+            "depth_m": 18.53,
+            "label": "09:00",
+            "minute": 10,
+            "width_m": 13.52
+          },
+          {
+            "block_height_percent": 51.97,
+            "compactness_m": 7.29,
+            "depth_m": 14.88,
+            "label": "10:00",
+            "minute": 11,
+            "width_m": 15.67
+          },
+          {
+            "block_height_percent": 48.82,
+            "compactness_m": 8.63,
+            "depth_m": 19.28,
+            "label": "11:00",
+            "minute": 12,
+            "width_m": 17.97
+          },
+          {
+            "block_height_percent": 36.49,
+            "compactness_m": 7.46,
+            "depth_m": 15.29,
+            "label": "12:00",
+            "minute": 13,
+            "width_m": 15.18
+          },
+          {
+            "block_height_percent": 31.53,
+            "compactness_m": 6.99,
+            "depth_m": 14.34,
+            "label": "13:00",
+            "minute": 14,
+            "width_m": 13.79
+          },
+          {
+            "block_height_percent": 41.83,
+            "compactness_m": 8.36,
+            "depth_m": 17.59,
+            "label": "14:00",
+            "minute": 15,
+            "width_m": 17.29
+          },
+          {
+            "block_height_percent": 49.87,
+            "compactness_m": 8.63,
+            "depth_m": 17.96,
+            "label": "15:00",
+            "minute": 16,
+            "width_m": 15.66
+          },
+          {
+            "block_height_percent": 28.2,
+            "compactness_m": 6.13,
+            "depth_m": 13.11,
+            "label": "16:00",
+            "minute": 17,
+            "width_m": 12.49
+          },
+          {
+            "block_height_percent": 23.2,
+            "compactness_m": 6.59,
+            "depth_m": 13.68,
+            "label": "17:00",
+            "minute": 18,
+            "width_m": 14.84
+          },
+          {
+            "block_height_percent": 49.52,
+            "compactness_m": 9.05,
+            "depth_m": 21.66,
+            "label": "18:00",
+            "minute": 19,
+            "width_m": 16.41
+          },
+          {
+            "block_height_percent": 25.27,
+            "compactness_m": 8.09,
+            "depth_m": 17.87,
+            "label": "19:00",
+            "minute": 20,
+            "width_m": 14.75
+          },
+          {
+            "block_height_percent": 39.15,
+            "compactness_m": 6.88,
+            "depth_m": 16.38,
+            "label": "19:16",
+            "minute": 20,
+            "width_m": 13.26
+          },
+          {
+            "block_height_percent": null,
+            "compactness_m": null,
+            "depth_m": null,
+            "label": "20:16",
+            "minute": 21,
+            "width_m": null
+          },
+          {
+            "block_height_percent": 54.6,
+            "compactness_m": 8.41,
+            "depth_m": 16.12,
+            "label": "21:16",
+            "minute": 22,
+            "width_m": 18.21
+          },
+          {
+            "block_height_percent": 57.26,
+            "compactness_m": 8.17,
+            "depth_m": 17.85,
+            "label": "22:16",
+            "minute": 23,
+            "width_m": 14.59
+          },
+          {
+            "block_height_percent": 56.49,
+            "compactness_m": 8.74,
+            "depth_m": 21.4,
+            "label": "23:16",
+            "minute": 24,
+            "width_m": 15.49
+          },
+          {
+            "block_height_percent": 49.01,
+            "compactness_m": 7.92,
+            "depth_m": 16.68,
+            "label": "24:16",
+            "minute": 25,
+            "width_m": 15.54
+          },
+          {
+            "block_height_percent": 47.89,
+            "compactness_m": 7.27,
+            "depth_m": 15.26,
+            "label": "25:16",
+            "minute": 26,
+            "width_m": 15.24
+          },
+          {
+            "block_height_percent": 53.28,
+            "compactness_m": 8.96,
+            "depth_m": 22.11,
+            "label": "26:16",
+            "minute": 27,
+            "width_m": 14.65
+          },
+          {
+            "block_height_percent": 54.12,
+            "compactness_m": 8.39,
+            "depth_m": 20.52,
+            "label": "27:16",
+            "minute": 28,
+            "width_m": 15.0
+          },
+          {
+            "block_height_percent": 53.65,
+            "compactness_m": 7.87,
+            "depth_m": 16.32,
+            "label": "28:16",
+            "minute": 29,
+            "width_m": 15.72
+          },
+          {
+            "block_height_percent": 71.5,
+            "compactness_m": 8.43,
+            "depth_m": 16.4,
+            "label": "29:16",
+            "minute": 30,
+            "width_m": 19.03
+          },
+          {
+            "block_height_percent": 63.14,
+            "compactness_m": 8.54,
+            "depth_m": 17.34,
+            "label": "29:21",
+            "minute": 30,
+            "width_m": 18.62
+          },
+          {
+            "block_height_percent": 47.23,
+            "compactness_m": 9.07,
+            "depth_m": 20.9,
+            "label": "30:21",
+            "minute": 31,
+            "width_m": 16.76
+          },
+          {
+            "block_height_percent": 52.14,
+            "compactness_m": 8.51,
+            "depth_m": 18.27,
+            "label": "31:21",
+            "minute": 32,
+            "width_m": 16.86
+          },
+          {
+            "block_height_percent": 55.86,
+            "compactness_m": 8.0,
+            "depth_m": 20.51,
+            "label": "32:21",
+            "minute": 33,
+            "width_m": 13.09
+          },
+          {
+            "block_height_percent": 59.71,
+            "compactness_m": 6.6,
+            "depth_m": 14.02,
+            "label": "33:21",
+            "minute": 34,
+            "width_m": 12.87
+          },
+          {
+            "block_height_percent": 58.51,
+            "compactness_m": 7.94,
+            "depth_m": 17.97,
+            "label": "34:21",
+            "minute": 35,
+            "width_m": 14.65
+          }
+        ]
+      }
+    ]
   },
   "teams": [
     {

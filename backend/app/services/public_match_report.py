@@ -315,6 +315,14 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _public_team_shape(package: dict[str, Any], public_teams: list[dict[str, Any]]) -> dict[str, Any] | None:
     document = package.get("team_shape") if isinstance(package.get("team_shape"), dict) else None
+    return public_team_shape_from_document(document, public_teams)
+
+
+def public_team_shape_from_document(
+    document: dict[str, Any] | None,
+    public_teams: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Project one ready canonical Team Shape document into a public report."""
     if not document or document.get("available") is not True or document.get("readiness") != "ready":
         return None
     source_teams = {

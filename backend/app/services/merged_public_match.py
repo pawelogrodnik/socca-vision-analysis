@@ -1196,6 +1196,10 @@ def validate_spatial_lineage(sources: list[dict[str, Any]]) -> None:
 
 
 def _validate_team_shape_entries(package: dict[str, Any], shape: dict[str, Any], *, member: str) -> None:
+    refresh = package.get("team_shape_publication_refresh")
+    if refresh is not None:
+        _validate_refreshed_team_shape_entries(package, shape, refresh, member=member)
+        return
     entries = shape.get("generated_from")
     if not isinstance(entries, list) or not entries:
         return
@@ -1219,6 +1223,75 @@ def _validate_team_shape_entries(package: dict[str, Any], shape: dict[str, Any],
             raise MatchGroupError(
                 "spatial_lineage_mismatch",
                 f"Published team_shape was not built from the packaged {artifact}.",
+                member=member,
+            )
+
+
+def _validate_refreshed_team_shape_entries(
+    package: dict[str, Any],
+    shape: dict[str, Any],
+    refresh: Any,
+    *,
+    member: str,
+) -> None:
+    """Verify v2 feature-local dependencies without trusting legacy fields.
+
+    Team Shape can be refreshed independently of the historical package
+    dependencies used by other aggregate features. Once the v2 provenance is
+    present it is authoritative: malformed data never falls back to the
+    package's top-level pitch/phase/team documents.
+    """
+    if not isinstance(refresh, dict) or refresh.get("schema_version") != "team_shape_publication_refresh:v2":
+        raise MatchGroupError(
+            "spatial_lineage_mismatch",
+            "Team Shape refresh provenance is malformed or unsupported.",
+            member=member,
+        )
+    match = _record(package.get("match"))
+    source_match_id = str(match.get("id") or "")
+    if not source_match_id or refresh.get("source_match_id") != source_match_id:
+        raise MatchGroupError(
+            "spatial_lineage_mismatch",
+            "Team Shape refresh provenance does not match the packaged source match.",
+            member=member,
+        )
+    dependencies = refresh.get("dependencies")
+    if not isinstance(dependencies, dict):
+        raise MatchGroupError(
+            "spatial_lineage_mismatch",
+            "Team Shape refresh provenance has no dependency bundle.",
+            member=member,
+        )
+    entries = shape.get("generated_from")
+    if not isinstance(entries, list) or not entries:
+        raise MatchGroupError(
+            "spatial_lineage_mismatch",
+            "Refreshed Team Shape has no verifiable lineage entries.",
+            member=member,
+        )
+    expected_entries: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise MatchGroupError("spatial_lineage_mismatch", "Team Shape lineage entry is malformed.", member=member)
+        artifact = str(entry.get("artifact") or "")
+        digest = str(entry.get("sha256") or "")
+        if artifact in expected_entries:
+            raise MatchGroupError("spatial_lineage_mismatch", "Team Shape lineage has duplicate artifacts.", member=member)
+        expected_entries[artifact] = digest
+    for key in ("pitch_config", "match_phase_config", "team_config"):
+        artifact = f"{key}.json"
+        payload = dependencies.get(key)
+        expected = expected_entries.get(artifact)
+        if not isinstance(payload, dict) or not expected:
+            raise MatchGroupError(
+                "spatial_lineage_mismatch",
+                f"Team Shape refresh is missing required {artifact} provenance.",
+                member=member,
+            )
+        if canonical_json_sha256(payload) != expected:
+            raise MatchGroupError(
+                "spatial_lineage_mismatch",
+                f"Refreshed Team Shape was not built from its proven {artifact} dependency.",
                 member=member,
             )
 
