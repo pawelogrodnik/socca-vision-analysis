@@ -18,7 +18,7 @@ from app.services.match_phase_config import (
 from app.services.team_assignment import is_trusted_tracklet_team_assignment
 
 
-ALGORITHM_VERSION = "team_shape_spatial_v1_2"
+ALGORITHM_VERSION = "team_shape_spatial_v1_3"
 MIN_TEAM_POSITIONS = 5
 MAX_TEAM_POSITIONS = 7
 TIMELINE_BIN_SEC = 60.0
@@ -144,10 +144,13 @@ def observations_from_global_identity(global_identity: dict[str, Any]) -> list[d
     canonical ownership authority: it leaves ambiguous competitors out and
     does not depend on a named-player assignment.
     """
-    observations: list[dict[str, Any]] = []
+    candidates_by_slot_frame: dict[tuple[str, int], list[dict[str, Any]]] = (
+        defaultdict(list)
+    )
     for slot in global_identity.get("slots") or []:
         team_label = str(slot.get("team_label") or "U").upper()
-        if team_label not in {"A", "B"}:
+        slot_id = str(slot.get("slot_id") or "").strip()
+        if team_label not in {"A", "B"} or not slot_id:
             continue
         for position in slot.get("overlay_positions") or []:
             if (
@@ -155,9 +158,13 @@ def observations_from_global_identity(global_identity: dict[str, Any]) -> list[d
                 or str(position.get("source") or "") != "detected"
             ):
                 continue
-            observations.append(
+            try:
+                frame = int(position.get("frame"))
+            except (TypeError, ValueError):
+                continue
+            candidates_by_slot_frame[(slot_id, frame)].append(
                 {
-                    "frame": position.get("frame"),
+                    "frame": frame,
                     "time_sec": position.get("time_sec"),
                     "team_label": team_label,
                     "pitch_m": position.get("pitch_m"),
@@ -166,10 +173,15 @@ def observations_from_global_identity(global_identity: dict[str, Any]) -> list[d
                     "trusted": True,
                     "team_confidence": slot.get("team_confidence"),
                     "team_id": slot.get("team_id"),
-                    "slot_id": slot.get("slot_id"),
+                    "slot_id": slot_id,
                 }
             )
-    return observations
+    return [
+        row
+        for rows in candidates_by_slot_frame.values()
+        if len(rows) == 1
+        for row in rows
+    ]
 
 
 def observations_with_canonical_overcap_reconciliation(
@@ -195,7 +207,7 @@ def observations_with_canonical_overcap_reconciliation(
             reconciled.extend(raw_rows)
             continue
         canonical_rows = owned_by_frame.get(key) or []
-        if canonical_rows:
+        if MIN_TEAM_POSITIONS <= len(canonical_rows) <= MAX_TEAM_POSITIONS:
             reconciled.extend(canonical_rows)
         else:
             reconciled.extend(raw_rows)

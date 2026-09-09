@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app.services.review_workflow_orchestrator import (
     ReviewWorkflowRecomputeError,
+    _seeded_candidates_need_source_refresh,
     _not_materialized_team_attribution_sources,
     _technical_retry_sources_from_current_durable_progress,
     after_video_qa_correction,
@@ -1156,6 +1157,32 @@ class ReviewWorkflowOrchestratorTests(unittest.TestCase):
             )
 
             rebuild_seeded.assert_called_once_with(Path(tmp), {"id": "m1"})
+
+    def test_operator_seed_stale_states_do_not_trigger_an_automatic_rebuild(self) -> None:
+        unsafe_freshness = [
+            {"status": "stale", "reason_codes": ["operator_seeds_digest_mismatch"]},
+            {"status": "stale", "reason_codes": ["operator_seed_selection_digest_mismatch"]},
+            {"status": "invalid", "reason_codes": []},
+            {"status": "unsafe", "reason_codes": []},
+            {"status": "missing", "reason_codes": []},
+        ]
+        for freshness in unsafe_freshness:
+            with self.subTest(freshness=freshness), patch(
+                "app.services.review_workflow_orchestrator.load_fresh_seeded_assignments",
+                return_value=(None, freshness),
+            ):
+                self.assertFalse(
+                    _seeded_candidates_need_source_refresh(
+                        Path("/tmp/m1"),
+                        rebuild_seeded_candidates=False,
+                    )
+                )
+                self.assertTrue(
+                    _seeded_candidates_need_source_refresh(
+                        Path("/tmp/m1"),
+                        rebuild_seeded_candidates=True,
+                    )
+                )
 
     def test_fast_reproject_materializes_only_terminal_not_materialized_team_evidence(self) -> None:
         initial_progress = {

@@ -196,7 +196,7 @@ def test_global_identity_ownership_excludes_unsafe_parallel_tracklet() -> None:
         {
             "slots": [
                 {
-                    "slot_id": "A01",
+                    "slot_id": f"A{index:02d}",
                     "team_label": "A",
                     "overlay_positions": [
                         {
@@ -207,9 +207,9 @@ def test_global_identity_ownership_excludes_unsafe_parallel_tracklet() -> None:
                             "visual_trusted": True,
                             "play_area_status": "inside_play",
                         }
-                        for point in owned_positions
                     ],
                 }
+                for index, point in enumerate(owned_positions, start=1)
             ]
         }
     )
@@ -233,6 +233,37 @@ def test_global_identity_ownership_excludes_unsafe_parallel_tracklet() -> None:
         PITCH_WIDTH,
         PITCH_LENGTH,
     ) is None
+
+
+def test_conflicting_detected_positions_for_one_slot_are_excluded() -> None:
+    owned = observations_from_global_identity(
+        {
+            "slots": [
+                {
+                    "slot_id": "A01",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 100,
+                            "time_sec": 4.0,
+                            "pitch_m": [10.0, 20.0],
+                            "source": "detected",
+                            "visual_trusted": True,
+                        },
+                        {
+                            "frame": 100,
+                            "time_sec": 4.0,
+                            "pitch_m": [20.0, 30.0],
+                            "source": "detected",
+                            "visual_trusted": True,
+                        },
+                    ],
+                },
+            ]
+        }
+    )
+
+    assert owned == []
 
 
 def test_canonical_ownership_replaces_only_a_raw_overcap_frame() -> None:
@@ -306,6 +337,73 @@ def test_canonical_reconciliation_keeps_an_overcap_without_detected_ownership() 
                     }
                 ],
             }
+        ]
+    }
+
+    reconciled = observations_with_canonical_overcap_reconciliation(
+        raw_tracklets,
+        global_identity,
+    )
+
+    assert len(reconciled) == 8
+    assert calculate_frame_shape(
+        [row["pitch_m"] for row in reconciled],
+        "towards_y_max",
+        PITCH_WIDTH,
+        PITCH_LENGTH,
+    ) is None
+
+
+def test_conflicting_slot_cannot_make_an_overcap_frame_safe() -> None:
+    raw_positions = POSITIONS + [[12.0, 30.0], [18.0, 34.0], [15.0, 25.0]]
+    raw_tracklets = [
+        {
+            "tracklet_id": f"raw-{index}",
+            "team_label": "A",
+            "team_cluster_id": "cluster-A",
+            "team_confidence": 1.0,
+            "positions_m": [{"frame": 100, "time_sec": 4.0, "pitch_m": point}],
+        }
+        for index, point in enumerate(raw_positions)
+    ]
+    global_identity = {
+        "slots": [
+            {
+                "slot_id": "A01",
+                "team_label": "A",
+                "overlay_positions": [
+                    {
+                        "frame": 100,
+                        "time_sec": 4.0,
+                        "pitch_m": [10.0, 20.0],
+                        "source": "detected",
+                        "visual_trusted": True,
+                    },
+                    {
+                        "frame": 100,
+                        "time_sec": 4.0,
+                        "pitch_m": [20.0, 30.0],
+                        "source": "detected",
+                        "visual_trusted": True,
+                    },
+                ],
+            },
+            *[
+                {
+                    "slot_id": f"A{index:02d}",
+                    "team_label": "A",
+                    "overlay_positions": [
+                        {
+                            "frame": 100,
+                            "time_sec": 4.0,
+                            "pitch_m": point,
+                            "source": "detected",
+                            "visual_trusted": True,
+                        }
+                    ],
+                }
+                for index, point in enumerate(raw_positions[1:5], start=2)
+            ],
         ]
     }
 
@@ -787,7 +885,7 @@ def test_previous_algorithm_version_forces_rebuild() -> None:
 
         rebuilt = ensure_team_shape_artifact_fresh(root)
         assert rebuilt is not None
-        assert rebuilt["algorithm_version"] == "team_shape_spatial_v1_2"
+        assert rebuilt["algorithm_version"] == "team_shape_spatial_v1_3"
 
 
 def test_match_phase_review_state_change_rebuilds_public_availability() -> None:
