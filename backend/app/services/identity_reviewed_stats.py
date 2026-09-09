@@ -29,6 +29,7 @@ from app.services.reviewed_sprint_policy import (
     reviewed_sprint_policy,
 )
 from app.services.identity_review_scope import (
+    COMPLETE_ROSTER,
     TEAM_STATS_ONLY,
     identity_review_scope_digest,
     identity_review_scope_read_model,
@@ -204,6 +205,7 @@ def build_reviewed_stats(match_path: Path, snapshot: dict[str, Any], match_doc: 
     teams = _reviewed_team_movement(
         observations_by_safe_team,
         fps,
+        match_doc=match_doc,
         sprint_event_candidates=team_sprint_event_candidates,
     )
     snapshot_digest = str(snapshot["semantic_digest"])
@@ -314,6 +316,7 @@ def _reviewed_team_movement(
     observations_by_team: dict[str, list[dict[str, Any]]],
     fps: float,
     *,
+    match_doc: dict[str, Any],
     sprint_event_candidates: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     sprint_counts = reviewed_team_sprint_counts(sprint_event_candidates or [])
@@ -332,8 +335,7 @@ def _reviewed_team_movement(
         movement = [calculate_movement_stats(fragment, fps) for fragment in fragments if len(fragment) >= 2]
         summary = _aggregate_movement_stats(movement)
         intensity = summary["intensity"]
-        rows.append(
-            {
+        row = {
                 "team_label": team_label,
                 "movement_authority": "reviewed_safe_team_observations",
                 "team_attribution_contract": "canonical_certain_team_without_required_player_name",
@@ -343,12 +345,39 @@ def _reviewed_team_movement(
                 "accepted_movement_segments": summary["accepted_movement_segments"],
                 "safe_observation_count": len(positions),
                 "high_intensity_distance_m": intensity["high_intensity_distance_m"],
-                "sprint_count": sprint_counts[team_label],
-                "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
-                "sprint_evidence_scope": "safe_named_player_events_only",
             }
-        )
+        row.update(_reviewed_team_sprint_summary(match_doc, team_label, sprint_counts[team_label]))
+        rows.append(row)
     return rows
+
+
+def _reviewed_team_sprint_summary(
+    match_doc: dict[str, Any], team_label: str, count: int
+) -> dict[str, Any]:
+    """State whether canonical named-player events cover this whole team.
+
+    The classifier is intentionally player-relative.  A team scope which does
+    not promise a complete named roster must therefore publish its limitation
+    rather than presenting a partial (or empty) event set as a zero total.
+    Unspecified legacy scope retains its historic contract by emitting no new
+    Reviewed sprint authority.
+    """
+    scope = team_review_scope(match_doc, team_label)
+    if scope == COMPLETE_ROSTER:
+        return {
+            "sprint_count": count,
+            "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
+            "sprint_evidence_scope": "safe_named_player_events_only",
+            "sprint_status": "reportable",
+        }
+    if scope in {TEAM_STATS_ONLY, "partial_roster", "players_of_interest"}:
+        return {
+            "sprint_count": None,
+            "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
+            "sprint_evidence_scope": "safe_named_player_events_only",
+            "sprint_status": "not_available_by_scope",
+        }
+    return {}
 
 
 def _safe_team_sprint_event_candidates(

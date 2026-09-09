@@ -165,6 +165,7 @@ class AggregateInputsTests(unittest.TestCase):
             "sprint_count": 4,
             "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
             "sprint_evidence_scope": "safe_named_player_events_only",
+            "sprint_status": "reportable",
         })
         public_report = build_public_match_report(
             package,
@@ -182,6 +183,33 @@ class AggregateInputsTests(unittest.TestCase):
             aggregate["movement"]["sprint_authority"],
             "reviewed_canonical_player_sprint_events_v1",
         )
+        self.assertEqual(aggregate["movement"]["sprint_status"], "reportable")
+
+    def test_explicit_unavailable_reviewed_sprint_does_not_fall_back_to_legacy(self) -> None:
+        from app.services.public_match_report import build_public_match_report
+
+        package = _package()
+        package["reviewed_team_movement"][1].update({
+            "sprint_count": None,
+            "sprint_authority": "reviewed_canonical_player_sprint_events_v1",
+            "sprint_evidence_scope": "safe_named_player_events_only",
+            "sprint_status": "not_available_by_scope",
+        })
+        public_report = build_public_match_report(
+            package,
+            published_id="published-match-1",
+            source_match_dir=None,
+            heatmap_dir=None,
+            public_heatmap_base="published/matches/published-match-1/heatmaps",
+        )
+        inputs = build_aggregate_inputs(
+            package, public_report=public_report, published_id="published-match-1"
+        )
+        physical = next(row for row in public_report["teams"] if row["team_id"] == "team-verisk")
+        aggregate = next(row for row in inputs["teams"] if row["team_id"] == "team-verisk")
+        self.assertIsNone(physical["sprint_count"])
+        self.assertIsNone(aggregate["movement"]["sprint_count"])
+        self.assertEqual(aggregate["movement"]["sprint_status"], "not_available_by_scope")
 
     def test_team_movement_is_unavailable_without_reviewed_safe_authority(self) -> None:
         package = _package()

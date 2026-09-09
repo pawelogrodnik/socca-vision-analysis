@@ -273,6 +273,15 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
         display_row = display.get(str(team_id or "")) or display.get(team_label) or {}
         resolved_team = resolved_names.get(team_label) or {}
         reviewed = reviewed_movement.get(team_label)
+        sprint_status = str(reviewed.get("sprint_status") or "") if reviewed else ""
+        if sprint_status == "not_available_by_scope":
+            sprint_count = None
+        elif reviewed and reviewed.get("sprint_count") is not None:
+            sprint_count = int(reviewed["sprint_count"])
+        else:
+            # Older Reviewed artifacts have no canonical sprint authority.
+            # Preserve their legacy presentation contract.
+            sprint_count = int(team.get("sprint_count") or 0)
         rows.append(
             {
                 "team_label": team_label,
@@ -294,14 +303,7 @@ def _public_teams(package: dict[str, Any]) -> list[dict[str, Any]]:
                     if reviewed and reviewed.get("high_intensity_distance_m") is not None
                     else team.get("high_intensity_distance_m")
                 ),
-                # New Reviewed artifacts project their accepted canonical
-                # player sprint events here.  Retain the historic source for
-                # existing reports which predate that evidence.
-                "sprint_count": int(
-                    reviewed.get("sprint_count")
-                    if reviewed and reviewed.get("sprint_count") is not None
-                    else team.get("sprint_count") or 0
-                ),
+                "sprint_count": sprint_count,
                 "avg_speed_kmh": _round(team.get("avg_speed_kmh") or team.get("average_speed_kmh")),
                 "peak_speed_kmh": _round(team.get("peak_sustained_speed_kmh") or team.get("top_speed_kmh")),
                 "possession_share_percent": _possession_share(package, team_label),

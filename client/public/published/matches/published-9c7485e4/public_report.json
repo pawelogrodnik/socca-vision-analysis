@@ -6097,7 +6097,7 @@
     "restart_passes": 9,
     "same_team_pass_candidates": 144
   },
-  "generated_at": "2026-09-09T07:20:35.423010+00:00",
+  "generated_at": "2026-09-09T08:15:10.210857+00:00",
   "id": "published-9c7485e4",
   "identity_coverage": {
     "confirmed_named_observations": 247114,
@@ -12376,7 +12376,7 @@
           },
           {
             "detected_time_sec": 5.339,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": null,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -19981,7 +19981,7 @@
           },
           {
             "detected_time_sec": 226.195,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 509.8,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -20000,7 +20000,7 @@
         ],
         "best_activity_window": {
           "detected_time_sec": 226.195,
-          "display_label": "15–19",
+          "display_label": "15:00–19:16.3",
           "distance_per_5min_m": 509.8,
           "end_time_sec": 1156.3,
           "high_intensity_distance_m": 71.91,
@@ -28391,7 +28391,7 @@
           },
           {
             "detected_time_sec": 245.314,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 484.63,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -36151,7 +36151,7 @@
           },
           {
             "detected_time_sec": 230.699,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 522.59,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -36170,7 +36170,7 @@
         ],
         "best_activity_window": {
           "detected_time_sec": 230.699,
-          "display_label": "15–19",
+          "display_label": "15:00–19:16.3",
           "distance_per_5min_m": 522.59,
           "end_time_sec": 1156.3,
           "high_intensity_distance_m": 77.8,
@@ -37991,7 +37991,7 @@
           },
           {
             "detected_time_sec": 224.927,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 167.23,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -44616,7 +44616,7 @@
           },
           {
             "detected_time_sec": 176.545,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 531.52,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -50551,7 +50551,7 @@
           },
           {
             "detected_time_sec": 0.0,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": null,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -58456,7 +58456,7 @@
           },
           {
             "detected_time_sec": 232.368,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 461.06,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -64736,7 +64736,7 @@
           },
           {
             "detected_time_sec": 256.092,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": 334.15,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -71871,7 +71871,7 @@
           },
           {
             "detected_time_sec": 60.061,
-            "display_label": "15–19",
+            "display_label": "15:00–19:16.3",
             "distance_per_5min_m": null,
             "duration_sec": 256.3,
             "end_time_sec": 1156.3,
@@ -71986,7 +71986,7 @@
       "progressive_pass_candidates": 24,
       "restart_passes": 3,
       "same_team_pass_candidates": 82,
-      "sprint_count": 0,
+      "sprint_count": null,
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",

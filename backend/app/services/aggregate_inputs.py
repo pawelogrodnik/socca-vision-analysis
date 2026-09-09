@@ -212,11 +212,25 @@ def _build_teams(package: dict[str, Any], team_by_label: dict[str, str]) -> list
                 if value is not None:
                     movement[field] = value
             # Reviewed team sprint evidence reuses canonical accepted player
-            # events.  Historic reviewed artifacts lack it and keep their
-            # legacy sprint value for backwards-compatible rendering.
+            # events.  An explicit scope limitation must not fall back to a
+            # legacy numeric value, while historic artifacts without this
+            # authority retain their backwards-compatible rendering.
             reviewed_sprint_count = _number_or_none(reviewed.get("sprint_count"))
-            if reviewed_sprint_count is not None:
+            reviewed_sprint_status = str(reviewed.get("sprint_status") or "")
+            if reviewed_sprint_status == "not_available_by_scope":
+                movement["sprint_count"] = None
+                movement["sprint_status"] = "not_available_by_scope"
+                movement["sprint_authority"] = str(
+                    reviewed.get("sprint_authority")
+                    or REVIEWED_TEAM_SPRINT_AUTHORITY
+                )
+                movement["sprint_evidence_scope"] = str(
+                    reviewed.get("sprint_evidence_scope")
+                    or "safe_named_player_events_only"
+                )
+            elif reviewed_sprint_count is not None:
                 movement["sprint_count"] = reviewed_sprint_count
+                movement["sprint_status"] = "reportable"
                 movement["sprint_authority"] = str(
                     reviewed.get("sprint_authority")
                     or REVIEWED_TEAM_SPRINT_AUTHORITY

@@ -21,6 +21,7 @@ from app.services.json_publish_store import (
 from app.services.match_group_aggregation import generate_match_group_report
 from app.services.match_groups import MatchGroupError, create_match_group
 from app.services.merged_public_match import (
+    _merged_team_sprint_count,
     ensure_merged_published_match,
     group_id_for_merged_published_id,
     is_merged_published_id,
@@ -33,6 +34,23 @@ from app.services.public_match_report import (
 
 
 class MergedPublicMatchTests(unittest.TestCase):
+    def test_team_sprint_merge_requires_every_source_to_be_reportable(self) -> None:
+        self.assertEqual(
+            _merged_team_sprint_count([
+                {"sprint_count": 2, "sprint_status": "reportable"},
+                {"sprint_count": 3, "sprint_status": "reportable"},
+                {"sprint_count": 4, "sprint_status": "reportable"},
+            ]),
+            9,
+        )
+        self.assertIsNone(
+            _merged_team_sprint_count([
+                {"sprint_count": 2, "sprint_status": "reportable"},
+                {"sprint_count": None, "sprint_status": "not_available_by_scope"},
+                {"sprint_count": 4, "sprint_status": "reportable"},
+            ])
+        )
+
     def test_legacy_aggregation_policy_cannot_mix_with_current_team_movement_contract(self) -> None:
         with self._store() as root:
             _write_source(root, "published-one", "physical-one", duration=60, team_distance=100, peak=20,

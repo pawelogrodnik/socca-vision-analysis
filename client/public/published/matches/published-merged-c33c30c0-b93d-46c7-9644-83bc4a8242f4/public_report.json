@@ -8699,7 +8699,7 @@
     "restart_passes": 12,
     "same_team_pass_candidates": 260
   },
-  "generated_at": "2026-09-09T07:24:46.635722+00:00",
+  "generated_at": "2026-09-09T08:17:57.287942+00:00",
   "id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
   "key_moments": {
     "moments": [
@@ -8929,36 +8929,36 @@
   },
   "merged_provenance": {
     "aggregate_engine_policy_version": "1.0.0",
-    "aggregate_semantic_digest": "sha256:11f46ba36e7e43a323af99fae73380106de260adc4023587ae39339b433e6069",
+    "aggregate_semantic_digest": "sha256:9a8cd0a952ca21506e845bdfa13d25a01b5a4880fc8fb36e1e1b457c051bbfff",
     "group_id": "match-group-c3fbd48a-356d-44a0-a740-c630de69b527",
     "merged_published_match_id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
     "policy_version": "1.0.0",
     "sources": [
       {
-        "aggregation_input_semantic_digest": "sha256:306c8849d45a9b93f46823d5dbcad4ce642e288d934dcce20c890544778e563a",
+        "aggregation_input_semantic_digest": "sha256:f94bc4e100d11a91c70fed2a40eade538be2f6185b652bfe69daad2c43c79c03",
         "logical_end_sec": 1156.3,
         "logical_start_sec": 0.0,
-        "public_report_semantic_digest": "sha256:ad52c370060402dba9b02ecd7c32688a926839876160961c998052fb81d3e91a",
+        "public_report_semantic_digest": "sha256:c4feeb2a3746c2d38b167446b787cac1d2cddd77aba37fd612633a1f6f9b9cf9",
         "published_id": "published-9c7485e4",
         "reviewed_identity_digest": "224130558025fa188875913ae6d344e7697f02156eee57fa9b22c53fb745cacc",
         "sequence_index": 0,
         "source_match_id": "9c7485e4"
       },
       {
-        "aggregation_input_semantic_digest": "sha256:de19e24c2c2c22fbba163a3e20b5aee9fb6f84127e35e88e8eee64c08eb65e80",
+        "aggregation_input_semantic_digest": "sha256:e30d1df99764cb9774925a597e8396e6f5bca4678b963824b78d3d549f4485d8",
         "logical_end_sec": 1761.878,
         "logical_start_sec": 1156.3,
-        "public_report_semantic_digest": "sha256:35388798f1f432c5ba307e3daa8bcc66e9631257d467303167f8bb5f0d556c4b",
+        "public_report_semantic_digest": "sha256:e8a036047755d2666a80a3050c58606d60788a01e79e82b1483fba90f773906a",
         "published_id": "published-6d8fc20c",
         "reviewed_identity_digest": "31af26a61105fea5a865a4c8f4b769420d51ea754e15dea57525a5ca09c67021",
         "sequence_index": 1,
         "source_match_id": "6d8fc20c"
       },
       {
-        "aggregation_input_semantic_digest": "sha256:c305251f55c017e14e716c3b0fab81ca0c74537761f2096944791f9dfa88d672",
+        "aggregation_input_semantic_digest": "sha256:e8975619e8e7a2f8fa31b37a378fc76b42564b494571512a12815899f29a16dd",
         "logical_end_sec": 2113.9,
         "logical_start_sec": 1761.878,
-        "public_report_semantic_digest": "sha256:504906251110662f6af2e3077b77b5a0f96ae43fe366bbd4f16edc72761ddd42",
+        "public_report_semantic_digest": "sha256:9597b8f7f5ec9cce54b7598b177469d7cf72af7cdd80a49a1b25c63c5c4e169b",
         "published_id": "published-5e62625e",
         "reviewed_identity_digest": "7da5def07bbfdfa165b1cb274a8c69002c92bb62009f5098e57297393c270599",
         "sequence_index": 2,
@@ -99547,7 +99547,7 @@
       "progressive_pass_candidates": 49,
       "restart_passes": 4,
       "same_team_pass_candidates": 134,
-      "sprint_count": 0,
+      "sprint_count": null,
       "team_id": "team-verisk",
       "team_label": "B",
       "team_name": "Verisk",
