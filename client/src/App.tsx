@@ -1,6 +1,5 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminPanel } from './components/AdminPanel';
-import { MatchReportPage } from './components/MatchReportPage';
 import { PlayerProfilePage } from './components/PlayerProfilePage';
 import { PublishedMatchReportPage } from './components/PublishedMatchReportPage';
 import { TeamEditPage } from './components/TeamEditPage';
@@ -11,13 +10,14 @@ import { ProductFlowBenchmarkPage } from './components/ProductFlowBenchmarkPage'
 import { BoundedH2ReIdPage } from './components/BoundedH2ReIdPage';
 import { MatchGroupsPage } from './components/MatchGroupsPage';
 import { MatchGroupReportRedirect } from './components/MatchGroupReportRedirect';
+import { PublishedReportRoute } from './components/PublishedReportRoute';
 
 function App() {
   return (
     <Routes>
       <Route path='/' element={<Viewer />} />
       <Route path='/admin-panel' element={<AdminPanel />} />
-      <Route path='/matches/:matchId/report' element={<MatchReportPage />} />
+      <Route path='/matches/:matchId/report' element={<PublishedReportRoute />} />
       <Route path='/published/matches/:matchId/report' element={<PublishedMatchReportPage />} />
       <Route path='/published/match-groups/:groupId/report' element={<MatchGroupReportRedirect />} />
       <Route path='/match-groups' element={<MatchGroupsPage />} />

@@ -5,6 +5,12 @@ type PublicPlayerHeatmapProps = {
   alt: string;
   fallbackSrc?: string;
   heatmap?: PublicReportPlayer['heatmap'];
+  /**
+   * 'interactive' preserves the legacy canvas renderer (default).
+   * 'published' prefers the canonical backend-rendered PNG when available
+   * and keeps the interactive canvas only as a fallback.
+   */
+  presentation?: 'interactive' | 'published';
 };
 
 function scaledHeatmapPoints(
@@ -46,7 +52,10 @@ function heatColor(intensity: number): [number, number, number, number] {
   return [239, 68, 68, 235];
 }
 
-export function PublicPlayerHeatmap({ alt, fallbackSrc, heatmap }: PublicPlayerHeatmapProps) {
+const PUBLISHED_HEATMAP_WIDTH = 360;
+const PUBLISHED_HEATMAP_HEIGHT = 720;
+
+export function PublicPlayerHeatmap({ alt, fallbackSrc, heatmap, presentation = 'interactive' }: PublicPlayerHeatmapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const interactive = heatmap?.interactive;
   const averagePosition = heatmap?.average_position;
@@ -125,6 +134,25 @@ export function PublicPlayerHeatmap({ alt, fallbackSrc, heatmap }: PublicPlayerH
       if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     };
   }, [interactive]);
+
+  if (presentation === 'published' && fallbackSrc) {
+    return (
+      <div className='public-heatmap-visual public-heatmap-published' role='img' aria-label={averagePosition ? `${alt}. Średnia pozycja zawodnika na podstawie potwierdzonych obserwacji.` : alt}>
+        <img src={fallbackSrc} alt='' />
+        {averagePosition && (
+          <span
+            className='public-heatmap-published-marker'
+            style={{
+              left: `${Math.max(0, Math.min(100, (averagePosition.x / PUBLISHED_HEATMAP_WIDTH) * 100))}%`,
+              top: `${Math.max(0, Math.min(100, (averagePosition.y / PUBLISHED_HEATMAP_HEIGHT) * 100))}%`,
+            }}
+            aria-hidden='true'
+          />
+        )}
+        {averagePosition && <span className='public-heatmap-average-legend'>● średnia pozycja</span>}
+      </div>
+    );
+  }
 
   if (interactive?.points.length) {
     return (

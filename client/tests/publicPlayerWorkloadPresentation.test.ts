@@ -10,13 +10,16 @@ import {
   exactWindowLabel,
   formatHiRatio,
   formatRate,
+  hasMeasuredDistanceInWindow,
   hasReportablePlayerChartMetric,
   hasWorkloadMetrics,
   isUnavailableWorkloadCell,
   metricWindowMaximum,
+  metricWindowRange,
   playerChartEmptyMessage,
   visiblePlayerChartMetric,
   windowIntensity,
+  windowRelativeIntensity,
   windowValue,
   workloadCellTooltip,
   workloadPresentationMode,
@@ -81,6 +84,7 @@ test('workload presentation preserves null versus valid zero and final partial w
   assert.equal(formatHiRatio(0.218), '22%');
   assert.equal(exactWindowLabel(window), '35:00–36:12');
   assert.equal(windowValue(window, 'sprints', 'normalized'), '—');
+  assert.equal(windowValue(player.workload!.activity_windows[0], 'distancePerMinute', 'normalized'), '95 m/min');
 });
 
 test('hidden sprint selection falls back to the available distance metric', () => {
@@ -129,14 +133,17 @@ test('normalized player-chart metric availability is specific to the selected me
   );
 });
 
-test('activity matrix defaults to canonical normalized distance instead of raw recorded distance', () => {
+test('activity matrix defaults to the understandable average distance per minute', () => {
   const html = renderToStaticMarkup(createElement(PublicPlayerWorkloadSection, { players: [player], teamName: 'Corgi' }));
 
   assert.match(html, /Aktywność w 5-minutowych oknach/);
-  assert.match(html, /Dystans \/ 5 min/);
+  assert.match(html, /Dystans/);
+  assert.match(html, /Śr\. dystans \/ min/);
+  assert.ok(html.indexOf('Dystans') < html.indexOf('Śr. dystans / min'));
+  assert.ok(html.indexOf('Śr. dystans / min') < html.indexOf('Czas wykryty'));
   assert.match(html, /0–5/);
-  assert.match(html, /35–36/);
-  assert.match(html, /475 m/);
+  assert.doesNotMatch(html, /35–36/);
+  assert.match(html, /95 m\/min/);
   assert.doesNotMatch(html, />412 m</);
   assert.match(html, /dostępnego nagrania/);
   assert.match(html, /nie próbuje sztucznie odtwarzać brakujących minut/);
@@ -165,27 +172,59 @@ test('canonical activity matrix preserves reportable partial samples, unavailabl
   const view = render(createElement(PublicPlayerWorkloadSection, { players: [reportablePartial], teamName: 'Corgi' }));
 
   assert.equal(workloadPresentationMode([reportablePartial]), 'normalized');
-  assert.equal(metricWindowMaximum([reportablePartial], 'distance', 'normalized'), 548);
-  assert.equal(windowIntensity(window, 'distance', 548, 'normalized'), 0);
-  assert.equal(isUnavailableWorkloadCell(window, 'distance', 'normalized'), true);
-  assert.match(view.container.innerHTML, />548 m</);
-  assert.match(view.container.innerHTML, /data-workload-state="unavailable"/);
-  assert.match(view.container.innerHTML, />—</);
+  assert.equal(metricWindowMaximum([reportablePartial], 'distance', 'normalized'), 9000);
+  assert.ok(windowIntensity(window, 'distance', 9000, 'normalized') > 0);
+  assert.equal(isUnavailableWorkloadCell(window, 'distance', 'normalized'), false);
+  assert.match(view.container.innerHTML, />110 m\/min</);
+  assert.doesNotMatch(view.container.innerHTML, /35:00–36:12/);
+  assert.equal(hasMeasuredDistanceInWindow([reportablePartial], 7, 'normalized'), false);
 
+  const averageDistanceCell = view.getByLabelText(/Paweł, 0:00–5:00 materiału/);
+  assert.match(averageDistanceCell.getAttribute('title') || '', /Śr\. dystans \/ min: 110 m\/min/);
+  assert.match(averageDistanceCell.getAttribute('title') || '', /Czas wykryty: 2:30/);
+  assert.equal(view.queryByLabelText(/Paweł, 35:00–36:12 materiału/), null);
+
+  await act(async () => {
+    fireEvent.click(view.getByRole('button', { name: 'Dystans' }));
+  });
+  assert.match(view.container.innerHTML, />274 m</);
   const distanceCell = view.getByLabelText(/Paweł, 0:00–5:00 materiału/);
-  assert.match(distanceCell.getAttribute('title') || '', /Dystans \/ 5 min: 548 m/);
-  assert.match(distanceCell.getAttribute('title') || '', /Dystans zarejestrowany: 274 m/);
-  assert.match(distanceCell.getAttribute('title') || '', /Czas wykryty: 2:30/);
-  const unavailableCell = view.getByLabelText(/Paweł, 35:00–36:12 materiału/);
-  assert.match(unavailableCell.getAttribute('title') || '', /Za mało danych/);
-  assert.match(unavailableCell.getAttribute('title') || '', /Czas wykryty: 0:58/);
-  assert.doesNotMatch(unavailableCell.getAttribute('title') || '', /\/ 5 min: [0-9]/);
+  assert.match(distanceCell.getAttribute('title') || '', /Dystans: 274 m/);
 
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Sprinty / 5 min' }));
   });
   assert.match(view.container.innerHTML, />0\.0</);
-  assert.match(view.container.innerHTML, />—</);
+});
+
+test('redesigned workload intensity spans the measured range instead of grouping all high values as green', () => {
+  const lower = {
+    ...player,
+    player_id: 'lower',
+    workload: {
+      ...player.workload!,
+      activity_windows: [{ ...player.workload!.activity_windows[0], total_distance_m: 300 }],
+    },
+  } as PublicReportPlayer;
+  const higher = {
+    ...player,
+    player_id: 'higher',
+    workload: {
+      ...player.workload!,
+      activity_windows: [{ ...player.workload!.activity_windows[0], total_distance_m: 600 }],
+    },
+  } as PublicReportPlayer;
+  const middle = {
+    ...player,
+    player_id: 'middle',
+    workload: { ...player.workload!, activity_windows: [player.workload!.activity_windows[0]] },
+  } as PublicReportPlayer;
+  const range = metricWindowRange([lower, middle, higher], 'distance', 'normalized');
+
+  assert.deepEqual(range, { minimum: 300, maximum: 600 });
+  assert.equal(windowRelativeIntensity(lower.workload!.activity_windows[0], 'distance', range, 'normalized'), 0);
+  assert.ok(windowRelativeIntensity(middle.workload!.activity_windows[0], 'distance', range, 'normalized') > 0.3);
+  assert.equal(windowRelativeIntensity(higher.workload!.activity_windows[0], 'distance', range, 'normalized'), 1);
 });
 
 test('HI, sprints, and detected time use their canonical semantics', async () => {
@@ -195,7 +234,6 @@ test('HI, sprints, and detected time use their canonical semantics', async () =>
     fireEvent.click(view.getByRole('button', { name: 'HI / 5 min' }));
   });
   assert.match(view.container.innerHTML, />96 m</);
-  assert.match(view.container.innerHTML, />—</);
 
   await act(async () => {
     fireEvent.click(view.getByRole('button', { name: 'Sprinty / 5 min' }));
@@ -215,7 +253,7 @@ test('HI, sprints, and detected time use their canonical semantics', async () =>
   assert.doesNotMatch(detectedCell.getAttribute('title') || '', /czas gry: [0-9]/);
 });
 
-test('legacy workload payload retains raw labels without guessing normalized rates', () => {
+test('legacy workload payload keeps a distance-per-minute default without guessing normalized rates', () => {
   const legacyPlayer = {
     ...player,
     workload: {
@@ -228,13 +266,13 @@ test('legacy workload payload retains raw labels without guessing normalized rat
   assert.equal(workloadPresentationMode([legacyPlayer]), 'legacy');
   assert.match(html, /Dystans/);
   assert.doesNotMatch(html, /Dystans \/ 5 min/);
-  assert.match(html, />412 m</);
+  assert.match(html, />95 m\/min</);
 });
 
 test('physical and merged workload rows share one canonical presentation path', () => {
   const mergedPlayer = { ...player, player_id: 'merged-pawel', player_name: 'Paweł · scalony' } as PublicReportPlayer;
-  assert.equal(windowValue(player.workload!.activity_windows[0], 'distance', workloadPresentationMode([player])), '475 m');
-  assert.equal(windowValue(mergedPlayer.workload!.activity_windows[0], 'distance', workloadPresentationMode([mergedPlayer])), '475 m');
+  assert.equal(windowValue(player.workload!.activity_windows[0], 'distance', workloadPresentationMode([player])), '412 m');
+  assert.equal(windowValue(mergedPlayer.workload!.activity_windows[0], 'distance', workloadPresentationMode([mergedPlayer])), '412 m');
   assert.equal(
     workloadCellTooltip('Paweł', player.workload!.activity_windows[1], player.workload!.activity_windows[1], 'distance', 'normalized'),
     workloadCellTooltip('Paweł', mergedPlayer.workload!.activity_windows[1], mergedPlayer.workload!.activity_windows[1], 'distance', 'normalized'),
