@@ -101,6 +101,82 @@ def write_rebuildable_reviewed_fixture(match_dir: Path) -> None:
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is required for rebuild endpoint tests")
 class PublishedRebuildTests(unittest.TestCase):
+    def test_team_shape_refresh_proof_requires_exact_identity_video_and_ready_shape(self) -> None:
+        from app.main import _team_shape_only_publication_refresh_proof
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "match-1"
+            path.mkdir()
+            (path / "match.json").write_text(json.dumps({"id": "match-1", "video_filename": "video.mp4"}), encoding="utf-8")
+            for name in ("pitch_config", "match_phase_config", "team_config"):
+                (path / f"{name}.json").write_text(json.dumps({"schema_version": "test"}), encoding="utf-8")
+            publication = {
+                "id": "published-match-1",
+                "source_kind": "physical",
+                "source_match_id": "match-1",
+                "package": {"identity_report_source": "reviewed_identity"},
+            }
+            shape = {"available": True, "readiness": "ready", "generated_from": []}
+            with (
+                patch("app.main.reviewed_identity_package_status", return_value={"ready": True, "digest": "published-digest"}),
+                patch("app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "published-digest"}),
+                patch("app.main._published_source_video_matches", return_value=True),
+                patch("app.services.team_shape.ensure_team_shape_artifact_fresh", return_value=shape),
+            ):
+                proof = _team_shape_only_publication_refresh_proof(path, publication)
+                self.assertIsNotNone(proof)
+                assert proof is not None
+                self.assertEqual(proof["provenance"]["reviewed_identity_digest"], "published-digest")
+                self.assertEqual(proof["team_shape"], shape)
+
+                with patch("app.main.get_reviewed_identity_status", return_value={"status": "partial_reviewed", "semantic_digest": "changed-digest"}):
+                    self.assertIsNone(_team_shape_only_publication_refresh_proof(path, publication))
+                with patch("app.main._published_source_video_matches", return_value=False):
+                    self.assertIsNone(_team_shape_only_publication_refresh_proof(path, publication))
+                with patch("app.services.team_shape.ensure_team_shape_artifact_fresh", return_value={"available": False, "readiness": "blocked"}):
+                    self.assertIsNone(_team_shape_only_publication_refresh_proof(path, publication))
+
+    def test_team_shape_refresh_rebuild_uses_only_the_narrow_publication_migration(self) -> None:
+        from app.main import api_rebuild_published_match
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "match-1"
+            path.mkdir()
+            (path / "match.json").write_text(json.dumps({"id": "match-1"}), encoding="utf-8")
+            existing = {
+                "id": "published-match-1",
+                "source_kind": "physical",
+                "source_match_id": "match-1",
+                "package": {"match": {"id": "match-1"}},
+            }
+            proof = {
+                "team_shape": {"available": True, "readiness": "ready"},
+                "dependencies": {"pitch_config": {}, "match_phase_config": {}, "team_config": {}},
+                "provenance": {"schema_version": "team_shape_publication_refresh:v1"},
+            }
+            migrated = {**existing, "public_report": {"id": "published-match-1"}}
+            with (
+                patch("app.main.get_published_match", return_value=existing),
+                patch("app.main.match_dir", return_value=path),
+                patch("app.main._team_shape_only_publication_refresh_proof", return_value=proof),
+                patch("app.main.migrate_published_team_shape_only", return_value=migrated) as migrate,
+                patch("app.main._assert_physical_rebuild_workflow") as normal_gate,
+                patch("app.main.generate_reviewed_output") as render,
+                patch("app.main.build_match_package") as full_package,
+            ):
+                result = api_rebuild_published_match("published-match-1")
+
+            self.assertEqual(result["id"], "published-match-1")
+            migrate.assert_called_once_with(
+                "published-match-1",
+                team_shape=proof["team_shape"],
+                team_shape_dependencies=proof["dependencies"],
+                provenance=proof["provenance"],
+            )
+            normal_gate.assert_not_called()
+            render.assert_not_called()
+            full_package.assert_not_called()
+
     def test_legacy_migration_gate_requires_exact_complete_published_review(self) -> None:
         from app.main import _assert_physical_rebuild_workflow
         from fastapi import HTTPException

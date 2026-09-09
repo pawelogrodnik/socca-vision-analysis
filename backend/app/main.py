@@ -200,6 +200,7 @@ from app.services.json_publish_store import (
     init_publish_store,
     list_eligible_match_group_sources,
     list_published_matches,
+    migrate_published_team_shape_only,
     migrate_published_workload_evidence,
     publish_store_health,
 )
@@ -354,6 +355,76 @@ def _assert_physical_rebuild_workflow(match_path: Path, existing_publication: di
             if _requires_workload_evidence_policy_migration(existing_publication):
                 return True
         raise error
+
+
+def _team_shape_only_publication_refresh_proof(
+    match_path: Path,
+    existing_publication: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the one narrow proof accepted for a historical Team Shape refresh.
+
+    This proof deliberately binds the refresh to the currently published
+    Reviewed Identity generation and raw source video.  It is not a substitute
+    for the normal Review/Video-QA publish gate: a changed identity generation,
+    missing video binding, logical publication, or non-ready Team Shape simply
+    yields no migration path.
+    """
+    published_id = str(existing_publication.get("id") or "")
+    source_match_id = str(existing_publication.get("source_match_id") or "")
+    if (
+        str(existing_publication.get("source_kind") or "physical") != "physical"
+        or not source_match_id
+        or published_id != f"published-{source_match_id}"
+    ):
+        return None
+    package = existing_publication.get("package")
+    if not isinstance(package, dict) or package.get("identity_report_source") != "reviewed_identity":
+        return None
+    published_review = reviewed_identity_package_status(package)
+    if published_review.get("ready") is not True:
+        return None
+    published_digest = str(published_review.get("digest") or "")
+    snapshot = get_reviewed_identity_status(match_path)
+    if (
+        not published_digest
+        or snapshot.get("status") in {"missing", "stale", "blocked"}
+        or snapshot.get("semantic_digest") != published_digest
+    ):
+        return None
+    meta = read_match_meta(match_path)
+    if not _published_source_video_matches(
+        match_path,
+        meta,
+        package,
+        reviewed_identity_digest=published_digest,
+    ):
+        return None
+
+    from app.services.team_shape import ensure_team_shape_artifact_fresh
+
+    team_shape = ensure_team_shape_artifact_fresh(match_path)
+    if not isinstance(team_shape, dict) or team_shape.get("available") is not True or team_shape.get("readiness") != "ready":
+        return None
+    dependencies: dict[str, dict[str, Any]] = {}
+    for key in ("pitch_config", "match_phase_config", "team_config"):
+        try:
+            value = json.loads((match_path / f"{key}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        dependencies[key] = value
+    return {
+        "team_shape": team_shape,
+        "dependencies": dependencies,
+        "provenance": {
+            "schema_version": "team_shape_publication_refresh:v1",
+            "source_match_id": source_match_id,
+            "reviewed_identity_digest": published_digest,
+            "source_video_proof": "exact_published_binding",
+            "team_shape_generated_from": team_shape.get("generated_from"),
+        },
+    }
 
 
 def _requires_workload_evidence_policy_migration(existing_publication: dict[str, Any]) -> bool:
@@ -4264,6 +4335,21 @@ def api_rebuild_published_match(published_match_id: str) -> dict[str, Any]:
             status_code=404,
             detail=f"Local source match {source_match_id} not found; publication left unchanged.",
         ) from exc
+    team_shape_refresh = _team_shape_only_publication_refresh_proof(path, existing)
+    if team_shape_refresh is not None:
+        try:
+            # The proof above pins both the existing reviewed generation and
+            # raw-video binding. This path stages only the Team Shape package
+            # primitive, its public projection, and aggregate lineage; it
+            # never opens Video QA, rerenders, or rewrites local review data.
+            return migrate_published_team_shape_only(
+                published_match_id,
+                team_shape=team_shape_refresh["team_shape"],
+                team_shape_dependencies=team_shape_refresh["dependencies"],
+                provenance=team_shape_refresh["provenance"],
+            )
+        except (ValueError, PublishError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     workload_evidence_migration = _assert_physical_rebuild_workflow(path, existing)
     try:
         from app.services.ball_event_rebuild import PACKAGE_PUBLISH_REBUILD_OUTPUT_FILENAMES

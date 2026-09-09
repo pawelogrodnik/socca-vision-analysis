@@ -190,6 +190,42 @@ package. That migration stages only the newly derived workload evidence,
 canonical public report, client-public mirror, heatmaps, and published video
 without regenerating them. It is not a general workflow or policy bypass.
 
+### Historical Team Shape refresh
+
+The same physical rebuild endpoint has one separate, narrower migration for a
+historical Team Shape publication. It is eligible only when all of these facts
+are true before anything is staged:
+
+- the target is its existing physical `published-<source_match_id>` record,
+  with a complete Reviewed Identity package;
+- the local Reviewed Identity snapshot is fresh and its semantic digest is
+  exactly the digest embedded in that publication;
+- the immutable source-video binding is exact (source fingerprint, or the
+  completed reviewed-output job key and source-video digest for legacy
+  packages);
+- `team_shape.json` can be freshly derived and is `available: true` and
+  `readiness: ready`.
+
+When proven, the service copies both existing publication directories into
+staging, replaces only `package.json`, `public_report.json`, the client mirror
+report, and the derived aggregate inputs, validates that the public semantic
+diff is Team Shape only, then atomically promotes both directories. The package
+records direct Team Shape provenance and its pitch/phase/team dependencies.
+Published video, Video QA, heatmaps and operator identity decisions are neither
+rendered nor mutated. Any missing or mismatched proof rejects the migration;
+there is no digest override or generic QA bypass.
+
+After every required physical refresh has succeeded, refresh the already
+existing logical publication via its canonical endpoint:
+
+```text
+POST /api/published/matches/{published_merged_id}/refresh-to-latest
+```
+
+That lifecycle retains the merged ID and uses the normal pinned-source,
+aggregate-digest and server/client mirror validation. A failed physical refresh
+must not be followed by a merged refresh.
+
 Deletion is intentionally hard delete for now because this panel is meant for correcting duplicate imports and bad stats snapshots during MVP development. A later production version can add soft delete/audit logs.
 
 ## Merged (logical) matches are canonical published matches
