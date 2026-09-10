@@ -98,6 +98,7 @@ a { color: #93c5fd; }
 .redesign-quiet-button { padding: 8px 11px; font-size: .85rem; }
 .redesign-note { margin: 9px 0 0; color: #a9c0d0; font-size: .84rem; }
 .redesign-video-section { padding: 17px; }
+.redesign-video-loading { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #bfdbfe; font-size: .88rem; }
 .redesign-video-layout { display: grid; grid-template-columns: minmax(0, 2.5fr) minmax(300px, 1fr); gap: 14px; }
 .redesign-video-layout.moments-only { grid-template-columns: minmax(0, 1fr); }
 .redesign-youtube-frame { align-self: stretch; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #204d68; border-radius: 12px; background: #020b17; }

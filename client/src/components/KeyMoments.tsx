@@ -59,9 +59,7 @@ export function KeyMoments({ report, video = null, externalVideo = null, onSeekL
   if (!keyMoments?.moments.length && !editorAllowed) return null;
 
   const teamNames = new Map(report.teams.map((team) => [team.team_id, team.team_name || team.team_id]));
-  const currentYouTubeVideoId = externalVideo?.status === 'current'
-    ? externalVideo.external_video?.video_id
-    : undefined;
+  const currentYouTubeVideoId = externalVideo?.external_video?.video_id;
   const localVideoReady = video?.status === 'ready' && Boolean(video.artifact_url);
 
   return <section className='panel key-moments'>

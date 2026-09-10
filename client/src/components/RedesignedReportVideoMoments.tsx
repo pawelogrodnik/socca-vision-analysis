@@ -5,6 +5,7 @@ import { formatReportClock } from '../lib/redesignedPublicReportPresentation';
 type Props = {
   report: PublicMatchReport;
   externalVideo: MatchGroupExternalVideoStatus | null;
+  externalVideoLoading?: boolean;
   editorAllowed: boolean;
   onEditKeyMoments: () => void;
 };
@@ -16,10 +17,8 @@ export function embedAtTimestamp(embedUrl: string, timeSec: number): string {
   return url.toString();
 }
 
-export function RedesignedReportVideoMoments({ report, externalVideo, editorAllowed, onEditKeyMoments }: Props) {
-  const configuredEmbedUrl = externalVideo?.status === 'current'
-    ? externalVideo.external_video?.embed_url
-    : null;
+export function RedesignedReportVideoMoments({ report, externalVideo, externalVideoLoading = false, editorAllowed, onEditKeyMoments }: Props) {
+  const configuredEmbedUrl = externalVideo?.external_video?.embed_url || null;
   const [embedUrl, setEmbedUrl] = useState<string | null>(configuredEmbedUrl || null);
   const moments = report.key_moments?.moments || [];
   const teamNames = useMemo(
@@ -27,7 +26,7 @@ export function RedesignedReportVideoMoments({ report, externalVideo, editorAllo
     [report.teams],
   );
 
-  if (!configuredEmbedUrl && !moments.length && !editorAllowed) return null;
+  if (!configuredEmbedUrl && !moments.length && !editorAllowed && !externalVideoLoading) return null;
   const playMoment = (timeSec: number) => {
     if (configuredEmbedUrl) setEmbedUrl(embedAtTimestamp(configuredEmbedUrl, timeSec));
   };
@@ -37,6 +36,7 @@ export function RedesignedReportVideoMoments({ report, externalVideo, editorAllo
       <div><p className='redesign-kicker'>Wideo i analiza</p><h2 id='redesign-moments-title'>Najważniejsze momenty</h2></div>
       {editorAllowed ? <button className='redesign-quiet-button' type='button' onClick={onEditKeyMoments}>Edytuj momenty</button> : null}
     </div>
+    {externalVideoLoading ? <p className='redesign-video-loading' role='status'><span className='spinner' aria-hidden='true' /> Sprawdzam zapisane wideo YouTube…</p> : null}
     <div className={`redesign-video-layout${configuredEmbedUrl ? '' : ' moments-only'}`}>
       {configuredEmbedUrl ? <div className='redesign-youtube-frame'>
         <iframe

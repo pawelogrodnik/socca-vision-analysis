@@ -3,8 +3,9 @@ from __future__ import annotations
 """Safe external-video metadata for logical match groups.
 
 The document is deliberately separate from the generated local-video pointer.
-An external URL never participates in rendering or report lineage; it can only
-be displayed when it is pinned to the current, ready logical-video inputs.
+Its provenance records which combined-video generation was current when an
+operator approved the YouTube link, but an approved YouTube video remains a
+public viewer asset when later local-video inputs change.
 """
 
 import copy
@@ -134,9 +135,9 @@ def delete_match_group_external_video(group_id: str) -> dict[str, Any]:
 def sync_match_group_external_video_public_projection(group_id: str) -> dict[str, Any]:
     """Refresh the static projection from the canonical external-video state.
 
-    Lifecycle commits may make a preserved external-video provenance document
-    stale without modifying that canonical document. Re-evaluating here keeps
-    the public sidecar usable only while the canonical state is ``current``.
+    Lifecycle commits may make the saved link technically ``stale`` without
+    modifying the canonical document. Re-evaluating preserves that diagnostic
+    status in the public sidecar while retaining the operator-approved video.
     """
 
     state = get_match_group_external_video(group_id)
@@ -151,7 +152,9 @@ def _state(group: dict[str, Any], status: str, document: dict[str, Any] | None =
             "provider": "youtube",
             "video_id": document["video_id"],
             "source_url": document["source_url"],
-            "embed_url": f"https://www.youtube-nocookie.com/embed/{document['video_id']}" if status == "current" else None,
+            # ``stale`` describes local combined-video provenance only. The
+            # operator-approved YouTube asset remains safe and intentional.
+            "embed_url": f"https://www.youtube-nocookie.com/embed/{document['video_id']}",
             "linked_video": copy.deepcopy(document["linked_video"]),
             "updated_at": document["updated_at"],
         }
@@ -215,8 +218,9 @@ def _sync_public_mirror(group_id: str, state: dict[str, Any]) -> None:
     """Atomically project a viewer-safe external-video read model when available.
 
     The match-group document remains canonical and includes internal video
-    lineage. The static viewer only needs a current YouTube embed, so never
-    expose those provenance fields in ``client/public``.
+    lineage. The static viewer needs the approved YouTube embed whether its
+    local-video provenance is current or stale, so never expose those lineage
+    fields in ``client/public``.
     """
 
     merged_id = merged_published_id_for_group(group_id)
@@ -224,14 +228,14 @@ def _sync_public_mirror(group_id: str, state: dict[str, Any]) -> None:
         return
     path = CLIENT_PUBLIC_MATCHES_DIR / merged_id / EXTERNAL_VIDEO_FILENAME
     external = state.get("external_video") if isinstance(state.get("external_video"), dict) else None
-    if state.get("status") != "current" or external is None:
+    if state.get("status") not in {"current", "stale"} or external is None:
         try:
             path.unlink()
         except FileNotFoundError:
             pass
         return
     payload = {
-        "status": "current",
+        "status": state["status"],
         "external_video": {
             "provider": "youtube",
             "video_id": external["video_id"],

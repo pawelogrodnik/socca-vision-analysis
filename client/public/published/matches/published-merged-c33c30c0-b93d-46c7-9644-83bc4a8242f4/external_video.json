@@ -1,9 +1,1 @@
-{
-  "status": "current",
-  "external_video": {
-    "provider": "youtube",
-    "video_id": "YYk_vB2ubPc",
-    "source_url": "https://www.youtube.com/watch?v=YYk_vB2ubPc",
-    "embed_url": "https://www.youtube-nocookie.com/embed/YYk_vB2ubPc"
-  }
-}
+{"external_video":{"embed_url":"https://www.youtube-nocookie.com/embed/YYk_vB2ubPc","provider":"youtube","source_url":"https://www.youtube.com/watch?v=YYk_vB2ubPc","video_id":"YYk_vB2ubPc"},"status":"stale"}

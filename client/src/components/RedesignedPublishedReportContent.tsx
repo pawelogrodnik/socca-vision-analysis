@@ -33,6 +33,7 @@ import { TeamShapeSection } from './TeamShapeSection';
 type Props = {
   report: PublicMatchReport;
   externalVideo: MatchGroupExternalVideoStatus | null;
+  externalVideoLoading?: boolean;
   editorAllowed: boolean;
   onEditKeyMoments: () => void;
 };
@@ -210,7 +211,7 @@ function TeamComparison({ report }: { report: PublicMatchReport }) {
   );
 }
 
-export function RedesignedPublishedReportContent({ report, externalVideo, editorAllowed, onEditKeyMoments }: Props) {
+export function RedesignedPublishedReportContent({ report, externalVideo, externalVideoLoading = false, editorAllowed, onEditKeyMoments }: Props) {
   const teamOptions = report.teams.map((team, index) => ({ key: publicReportTeamKey(team, index), team }));
   const [selectedTeamKey, setSelectedTeamKey] = useState<string | null>(teamOptions[0]?.key || null);
   const selectedTeam = teamOptions.find((item) => item.key === selectedTeamKey)?.team || teamOptions[0]?.team;
@@ -221,7 +222,7 @@ export function RedesignedPublishedReportContent({ report, externalVideo, editor
     <div className='redesigned-report'>
       <Hero report={report} />
       <div className='redesigned-report-content'>
-        <RedesignedReportVideoMoments report={report} externalVideo={externalVideo} editorAllowed={editorAllowed} onEditKeyMoments={onEditKeyMoments} />
+        <RedesignedReportVideoMoments report={report} externalVideo={externalVideo} externalVideoLoading={externalVideoLoading} editorAllowed={editorAllowed} onEditKeyMoments={onEditKeyMoments} />
         <MatchFlow report={report} />
         <TeamComparison report={report} />
         <RedesignedReportPlayers players={report.players} teams={report.teams} selectedTeam={selectedTeam} selectedTeamKey={selectedTeamKey} onSelectTeam={setSelectedTeamKey} />

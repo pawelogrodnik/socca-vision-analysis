@@ -48,7 +48,7 @@ class MatchGroupExternalVideoTests(unittest.TestCase):
             with patch.object(external, "get_match_group_video_status", return_value={**READY, "manifest": {**READY["manifest"], "input_semantic_digest": "input-b"}}):
                 stale = external.get_match_group_external_video("match-group-one")
             self.assertEqual(stale["status"], "stale")
-            self.assertIsNone(stale["external_video"]["embed_url"])
+            self.assertEqual(stale["external_video"]["embed_url"], "https://www.youtube-nocookie.com/embed/AbCdEfGhI_1")
             document["video_id"] = "wrongwrong1"
             document_path.write_text(json.dumps(document), encoding="utf-8")
             self.assertEqual(external.get_match_group_external_video("match-group-one")["status"], "invalid")
@@ -92,6 +92,33 @@ class MatchGroupExternalVideoTests(unittest.TestCase):
                 )
                 external.delete_match_group_external_video("match-group-one")
                 self.assertFalse(sidecar.exists())
+
+    def test_stale_operator_approved_link_remains_in_public_safe_static_mirror(self) -> None:
+        with self._store() as temporary, self._service(temporary):
+            public_root = Path(temporary) / "client-public"
+            with patch.object(external, "CLIENT_PUBLIC_MATCHES_DIR", public_root), patch.object(
+                external,
+                "merged_published_id_for_group",
+                return_value="published-merged-one",
+            ):
+                external.save_match_group_external_video("match-group-one", "https://youtu.be/AbCdEfGhI_1")
+                changed_input = {**READY, "manifest": {**READY["manifest"], "input_semantic_digest": "input-b"}}
+                with patch.object(external, "get_match_group_video_status", return_value=changed_input):
+                    state = external.sync_match_group_external_video_public_projection("match-group-one")
+
+                self.assertEqual(state["status"], "stale")
+                self.assertEqual(
+                    json.loads((public_root / "published-merged-one" / external.EXTERNAL_VIDEO_FILENAME).read_text(encoding="utf-8")),
+                    {
+                        "status": "stale",
+                        "external_video": {
+                            "provider": "youtube",
+                            "video_id": "AbCdEfGhI_1",
+                            "source_url": "https://www.youtube.com/watch?v=AbCdEfGhI_1",
+                            "embed_url": "https://www.youtube-nocookie.com/embed/AbCdEfGhI_1",
+                        },
+                    },
+                )
 
     def _store(self):
         return tempfile.TemporaryDirectory()

@@ -18,6 +18,7 @@ export function RedesignedPublishedMatchReportPage() {
   const devPresentation = new URLSearchParams(location.search).get('dev') === '1';
   const [report, setReport] = useState<PublicMatchReport | null>(null);
   const [externalVideo, setExternalVideo] = useState<MatchGroupExternalVideoStatus | null>(null);
+  const [externalVideoLoading, setExternalVideoLoading] = useState(true);
   const [editor, setEditor] = useState<KeyMomentEditorState | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [status, setStatus] = useState('');
@@ -35,11 +36,14 @@ export function RedesignedPublishedMatchReportPage() {
   }, [matchId]);
 
   useEffect(() => {
-    if (!matchId) return;
+    if (!matchId) { setExternalVideoLoading(false); return; }
     let cancelled = false;
+    setExternalVideo(null);
+    setExternalVideoLoading(true);
     void getMergedMatchExternalVideo(matchId)
       .then((value) => { if (!cancelled) setExternalVideo(value); })
-      .catch(() => { if (!cancelled) setExternalVideo(null); });
+      .catch(() => { if (!cancelled) setExternalVideo(null); })
+      .finally(() => { if (!cancelled) setExternalVideoLoading(false); });
     return () => { cancelled = true; };
   }, [matchId]);
 
@@ -58,6 +62,7 @@ export function RedesignedPublishedMatchReportPage() {
     {report ? <RedesignedPublishedReportContent
       report={report}
       externalVideo={externalVideo}
+      externalVideoLoading={externalVideoLoading}
       editorAllowed={Boolean(editor?.key_moment_editor_allowed)}
       onEditKeyMoments={() => setEditorOpen(true)}
     /> : null}
