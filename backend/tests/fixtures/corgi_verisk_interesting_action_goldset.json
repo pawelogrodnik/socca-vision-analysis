@@ -1,0 +1,20 @@
+{
+  "fixture_semantics": "evaluation_only_confirmed_positives_not_exhaustive",
+  "published_match_id": "published-merged-c33c30c0-b93d-46c7-9644-83bc4a8242f4",
+  "manual_windows": [
+    {"window_id": "cv-01", "start_time_sec": 146.0, "end_time_sec": 152.0, "category": "good_action", "secondary_diagnostics": {"confirmed_actor_sequence": ["Mateusz", "Patryk"]}},
+    {"window_id": "cv-02", "start_time_sec": 580.0, "end_time_sec": 598.0, "category": "goal_for_us", "secondary_diagnostics": {"uncertain_actor": ["Pawel", "Roman"], "confirmed_actor_sequence": ["Piotrek", "Krzysiek"]}},
+    {"window_id": "cv-03", "start_time_sec": 664.0, "end_time_sec": 676.0, "category": "good_action"},
+    {"window_id": "cv-04", "start_time_sec": 707.0, "end_time_sec": 717.0, "category": "good_action", "secondary_diagnostics": {"known_identity_issue": "B06 == Andrzej from Corgi"}},
+    {"window_id": "cv-05", "start_time_sec": 929.0, "end_time_sec": 946.0, "category": "good_action"},
+    {"window_id": "cv-06", "start_time_sec": 970.0, "end_time_sec": 976.0, "category": "chance", "secondary_diagnostics": {"passing_option": ["Patryk", "Mateusz"]}},
+    {"window_id": "cv-07", "start_time_sec": 1128.0, "end_time_sec": 1134.0, "category": "chance", "secondary_diagnostics": {"passing_option": ["Kuba", "Roman", "Mateusz"]}},
+    {"window_id": "cv-08", "start_time_sec": 1503.0, "end_time_sec": 1506.0, "category": "chance", "secondary_diagnostics": {"confirmed_actor_sequence": ["Pawel", "Kuba"]}},
+    {"window_id": "cv-09", "start_time_sec": 1538.0, "end_time_sec": 1544.0, "category": "other", "secondary_diagnostics": {"confirmed_actor_sequence": ["Przemek", "Roman", "Pawel"]}},
+    {"window_id": "cv-10", "start_time_sec": 1710.0, "end_time_sec": 1717.0, "category": "goal_for_opponent"},
+    {"window_id": "cv-11", "start_time_sec": 1787.0, "end_time_sec": 1793.0, "category": "chance", "secondary_diagnostics": {"confirmed_actor": ["Mateusz"]}},
+    {"window_id": "cv-12", "start_time_sec": 1968.0, "end_time_sec": 1972.0, "category": "good_action", "secondary_diagnostics": {"confirmed_actor_sequence": ["Krzysiek", "Roman"]}},
+    {"window_id": "cv-13", "start_time_sec": 2040.0, "end_time_sec": 2044.0, "category": "goal_for_opponent"},
+    {"window_id": "cv-14", "start_time_sec": 2086.0, "end_time_sec": 2101.0, "category": "goal_for_opponent"}
+  ]
+}
