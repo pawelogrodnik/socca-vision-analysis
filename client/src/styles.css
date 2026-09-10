@@ -100,6 +100,16 @@ a { color: #93c5fd; }
 .redesign-video-section { padding: 17px; }
 .redesign-video-loading { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: #bfdbfe; font-size: .88rem; }
 .redesign-video-actions { display: flex; align-items: center; gap: 8px; }
+.key-moment-operator-tabs { display: inline-flex; gap: 4px; margin: -4px 0 12px; padding: 4px; border: 1px solid #24516d; border-radius: 10px; background: rgba(2, 19, 37, .72); }
+.key-moment-operator-tabs button { border: 0; border-radius: 7px; background: transparent; color: #a9c8d9; font-size: .8rem; }
+.key-moment-operator-tabs button[aria-selected='true'] { background: #155a6d; color: #efffff; }
+.operator-key-moments-list { display: grid; gap: 0; }
+.operator-key-moments-list > .row { padding: 10px 12px; border-bottom: 1px solid #1d405b; }
+.operator-key-moments-list .muted { margin: 0; }
+.key-moment-focus-form { display: grid; gap: 10px; padding: 14px; }
+.key-moment-focus-form h3 { margin: 0 0 2px; color: #effaff; font-size: 1rem; }
+.key-moment-focus-form label { gap: 4px; font-size: .78rem; }
+.key-moment-focus-form .row.end { margin-top: 4px; }
 .redesign-expand-analysis { display: inline-grid; width: 34px; height: 34px; padding: 0; place-items: center; font-size: 1.2rem; line-height: 1; }
 .redesign-video-layout { display: grid; grid-template-columns: minmax(0, 2.5fr) minmax(300px, 1fr); gap: 14px; }
 .redesign-video-layout.moments-only { grid-template-columns: minmax(0, 1fr); }
@@ -111,6 +121,7 @@ a { color: #93c5fd; }
 .redesign-video-section.expanded .redesign-video-layout { min-height: 0; flex: 1; grid-template-columns: minmax(0, 3fr) minmax(360px, 1fr); }
 .redesign-video-section.expanded .redesign-youtube-frame { min-height: 0; }
 .redesign-video-section.expanded .redesign-moments-panel { min-height: 0; contain: none; }
+.redesign-video-section.expanded .key-moment-operator-tabs { flex: 0 0 auto; }
 .redesign-moment-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 12px; border-bottom: 1px solid #1d405b; }
 .redesign-moment-row:last-child { border-bottom: 0; }
 .redesign-moment-row time { padding: 7px 8px; border-radius: 7px; background: #103a5e; color: #d8f6ff; font-weight: 800; font-variant-numeric: tabular-nums; }

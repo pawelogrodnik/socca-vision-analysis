@@ -11,7 +11,6 @@ import {
 } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport } from '../types';
-import { KeyMomentsEditorModal } from './KeyMomentsEditorModal';
 import { RedesignedPublishedReportContent } from './RedesignedPublishedReportContent';
 
 export function RedesignedPublishedMatchReportPage() {
@@ -22,7 +21,6 @@ export function RedesignedPublishedMatchReportPage() {
   const [externalVideo, setExternalVideo] = useState<MatchGroupExternalVideoStatus | null>(null);
   const [externalVideoLoading, setExternalVideoLoading] = useState(true);
   const [editor, setEditor] = useState<KeyMomentEditorState | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
   const [status, setStatus] = useState('');
 
   useEffect(() => {
@@ -65,30 +63,21 @@ export function RedesignedPublishedMatchReportPage() {
       report={report}
       externalVideo={externalVideo}
       externalVideoLoading={externalVideoLoading}
-      editorAllowed={Boolean(editor?.key_moment_editor_allowed)}
-      onEditKeyMoments={() => setEditorOpen(true)}
-    /> : null}
-    {editorOpen && editor?.key_moment_editor_allowed && report && matchId ? <KeyMomentsEditorModal
-      state={editor}
-      report={report}
-      currentVideoTime={null}
-      onClose={() => setEditorOpen(false)}
-      onSave={async (draft) => {
+      editorState={devPresentation ? editor : null}
+      onSaveEditor={async (draft) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         const saved = await saveKeyMomentEditor(matchId, draft);
-        setEditor(saved);
-        if (saved.public_report) setReport(saved.public_report);
-        setEditorOpen(false);
+        setEditor(saved); if (saved.public_report) setReport(saved.public_report); return saved;
       }}
       onAcceptSuggestion={async (payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         const saved = await acceptKeyMomentSuggestion(matchId, payload);
-        setEditor(saved);
-        if (saved.public_report) setReport(saved.public_report);
-        return saved;
+        setEditor(saved); if (saved.public_report) setReport(saved.public_report); return saved;
       }}
       onRejectSuggestion={async (payload) => {
+        if (!matchId) throw new Error('Brak identyfikatora publikacji.');
         const saved = await rejectKeyMomentSuggestion(matchId, payload);
-        setEditor(saved);
-        return saved;
+        setEditor(saved); return saved;
       }}
     /> : null}
   </main>;
