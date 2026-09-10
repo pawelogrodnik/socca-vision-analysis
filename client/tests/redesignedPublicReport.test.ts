@@ -171,15 +171,28 @@ test('current YouTube is embedded and every canonical moment stays in the scroll
   assert.doesNotMatch(html, /Pokaż wszystkie|Zobacz wszystkie|lokalne wideo/i);
 });
 
-test('stale or absent YouTube does not introduce a local-video fallback', () => {
+test('an operator-approved stale YouTube link remains embedded', () => {
   const html = renderToStaticMarkup(createElement(RedesignedReportVideoMoments, {
     report,
     editorAllowed: false,
     onEditKeyMoments: () => undefined,
-    externalVideo: { group_id: 'group', status: 'stale', external_video: null },
+    externalVideo: { group_id: 'group', status: 'stale', external_video: { provider: 'youtube', video_id: 'abc', source_url: 'https://youtube.com/watch?v=abc', embed_url: 'https://www.youtube.com/embed/abc', linked_video: { generation_id: 'old', input_semantic_digest: 'in', output_semantic_digest: 'out', timeline_span_sec: 2150 }, updated_at: '2026-09-08T12:00:00Z' } },
   }));
-  assert.doesNotMatch(html, /<iframe|lokalne wideo|Otwórz lokalne/i);
+  assert.match(html, /youtube\.com\/embed\/abc/);
+  assert.doesNotMatch(html, /lokalne wideo|Otwórz lokalne/i);
   assert.match(html, /Mocny pressing Corgi/);
+});
+
+test('video section shows a small status while the saved YouTube link is loading', () => {
+  const html = renderToStaticMarkup(createElement(RedesignedReportVideoMoments, {
+    report: { ...report, key_moments: undefined },
+    editorAllowed: false,
+    externalVideo: null,
+    externalVideoLoading: true,
+    onEditKeyMoments: () => undefined,
+  }));
+  assert.match(html, /Sprawdzam zapisane wideo YouTube…/);
+  assert.match(html, /role="status"/);
 });
 
 test('the moment editor action is absent normally and appears only when the backend allows dev editing', () => {

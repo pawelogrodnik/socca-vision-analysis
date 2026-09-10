@@ -1042,7 +1042,15 @@ export async function generateMergedMatchVideo(publishedMatchId: string): Promis
 
 export async function getMergedMatchExternalVideo(publishedMatchId: string): Promise<MatchGroupExternalVideoStatus> {
   try {
-    return await request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`);
+    const dynamic = await request<MatchGroupExternalVideoStatus>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/external-video`);
+    // Older backends correctly preserve a stale canonical link but omit its
+    // embed URL. Prefer the public-safe sidecar in that compatibility case so
+    // an operator-approved YouTube video is not hidden by a local-video digest.
+    if (dynamic.status === 'stale' && dynamic.external_video && !dynamic.external_video.embed_url) {
+      const staticState = await getStaticMergedMatchExternalVideo(publishedMatchId);
+      if (staticState.external_video?.embed_url) return staticState;
+    }
+    return dynamic;
   } catch {
     return getStaticMergedMatchExternalVideo(publishedMatchId);
   }
@@ -1069,7 +1077,7 @@ async function getStaticMergedMatchExternalVideo(publishedMatchId: string): Prom
     if (!isStaticMergedMatchExternalVideo(document)) return empty;
     return {
       group_id: publishedMatchId,
-      status: 'current',
+      status: document.status,
       external_video: document.external_video,
     };
   } catch {
@@ -1078,13 +1086,13 @@ async function getStaticMergedMatchExternalVideo(publishedMatchId: string): Prom
 }
 
 function isStaticMergedMatchExternalVideo(value: unknown): value is {
-  status: 'current';
+  status: 'current' | 'stale';
   external_video: NonNullable<MatchGroupExternalVideoStatus['external_video']>;
 } {
   if (!value || typeof value !== 'object') return false;
   const document = value as Record<string, unknown>;
   const external = document.external_video;
-  if (document.status !== 'current' || !external || typeof external !== 'object') return false;
+  if ((document.status !== 'current' && document.status !== 'stale') || !external || typeof external !== 'object') return false;
   const video = external as Record<string, unknown>;
   if (video.provider !== 'youtube' || typeof video.video_id !== 'string') return false;
   if (!/^[A-Za-z0-9_-]{11}$/.test(video.video_id)) return false;

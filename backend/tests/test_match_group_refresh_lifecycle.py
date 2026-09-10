@@ -802,15 +802,28 @@ class RefreshLifecycleTests(unittest.TestCase):
             self.assertEqual(public_sidecar.read_bytes(), public_before)
 
             # Video-input refresh: linked digest changed -> stale, same bytes.
+            # The operator-approved YouTube link remains public; only its
+            # technical local-video provenance status changes.
             _write_source(root, "published-one", "physical-one", player_distance=444)
             self._write_video_files(root, "published-one", b"video-one-republished")
             result = refresh_match_group_to_latest(group_id)
             self.assertEqual(result["status"], "refreshed")
             self.assertEqual((self._group_dir(root, group_id) / "external_video.json").read_bytes(), external_before)
             self.assertEqual(result["external_video"]["status"], "stale")
-            self.assertFalse(public_sidecar.exists())
+            self.assertEqual(
+                json.loads(public_sidecar.read_text(encoding="utf-8")),
+                {
+                    "status": "stale",
+                    "external_video": {
+                        "provider": "youtube",
+                        "video_id": "AbCdEfGhI_1",
+                        "source_url": "https://www.youtube.com/watch?v=AbCdEfGhI_1",
+                        "embed_url": "https://www.youtube-nocookie.com/embed/AbCdEfGhI_1",
+                    },
+                },
+            )
 
-    def test_combined_video_regeneration_with_changed_input_withdraws_public_sidecar(self) -> None:
+    def test_combined_video_regeneration_with_changed_input_keeps_operator_approved_public_sidecar(self) -> None:
         with self._store() as root:
             group = self._video_group(root)
             group_id = str(group["group_id"])
@@ -826,7 +839,7 @@ class RefreshLifecycleTests(unittest.TestCase):
 
             self.assertEqual(get_match_group_external_video(group_id)["status"], "stale")
             self.assertEqual(canonical_sidecar.read_bytes(), canonical_before)
-            self.assertFalse(public_sidecar.exists())
+            self.assertEqual(json.loads(public_sidecar.read_text(encoding="utf-8"))["status"], "stale")
 
     # ------------------------------------------------------------------
     # #92 Key Moments transition

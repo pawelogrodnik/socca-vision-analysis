@@ -18,7 +18,7 @@ export function MatchGroupExternalVideoSection({ groupId, localVideo, externalVi
   return <section className='external-video-settings' aria-label='Wideo YouTube'>
     <strong>Wideo YouTube</strong>
     {externalVideo?.status === 'current' && <p className='status success'>Aktywne dla obecnej wersji łącznego wideo.</p>}
-    {externalVideo?.status === 'stale' && <p className='status'>Połączenie YouTube dotyczy starszej wersji wideo. Wygeneruj aktualne wideo i zapisz link ponownie.</p>}
+    {externalVideo?.status === 'stale' && <p className='status'>Link YouTube pozostaje publicznie widoczny. Nieaktualny jest tylko techniczny status lokalnego łącznego wideo.</p>}
     {externalVideo?.status === 'invalid' && <p className='status'>Zapisanego połączenia YouTube nie można bezpiecznie użyć. Ustaw poprawny link ponownie.</p>}
     <label>Link YouTube
       <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder='https://www.youtube.com/watch?v=…' />

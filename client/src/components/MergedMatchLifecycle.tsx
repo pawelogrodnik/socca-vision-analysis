@@ -250,7 +250,7 @@ function MergedMatchVideo({
 }) {
   const external = externalVideo?.external_video;
   const durationText = report?.match.duration_sec != null ? duration(report.match.duration_sec) : '';
-  if (externalVideo?.status === 'current' && external?.embed_url) {
+  if (external?.embed_url) {
     return <section className='panel'>
       <h2>Pełne wideo meczu</h2>
       <iframe
@@ -262,10 +262,10 @@ function MergedMatchVideo({
         referrerPolicy='strict-origin-when-cross-origin'
       />
       <p><a href={external.source_url}>Otwórz na YouTube</a>{video?.status === 'ready' && video.artifact_url && <> · <a href={video.artifact_url}>Otwórz lokalne wideo</a></>} · {durationText}</p>
+      {externalVideo?.status === 'stale' && <p className='muted'>Wideo YouTube zostało zapisane przez operatora; status „nieaktualne” dotyczy wyłącznie lokalnej wersji łącznego wideo.</p>}
     </section>;
   }
   return <>
-    {externalVideo?.status === 'stale' && <section className='panel'><p>Link YouTube dotyczy starszej wersji łącznego wideo. <a href={external?.source_url}>Otwórz poprzedni link na YouTube</a></p></section>}
     {externalVideo?.status === 'invalid' && <section className='panel'><p>Konfiguracja linku YouTube jest nieprawidłowa i nie została osadzona.</p></section>}
     {video?.status === 'ready' && video.artifact_url && <section className='panel'><h2>Pełne wideo meczu</h2><video ref={localVideoRef} key={video.generation_id ?? video.artifact_url} className='reviewed-video' controls src={video.artifact_url} /><p>{durationText}</p></section>}
     {video && video.status !== 'ready' && <section className='panel'><p>Łączne wideo: {videoMessage(video)}</p></section>}

@@ -297,7 +297,7 @@ test('old group report URL redirects to the canonical merged published match', a
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('canonical merged report embeds only the server-derived current YouTube URL and keeps local fallback', async () => {
+test('canonical merged report embeds the operator-approved YouTube URL and keeps local fallback', async () => {
   const mergedDetail = {
     id: 'published-merged-abc',
     source_match_id: 'group-1',
@@ -420,7 +420,7 @@ function keyMomentReport(): PublicMatchReport {
   };
 }
 
-test('Key Moments uses the current server-validated YouTube ID with the logical video second', () => {
+test('Key Moments uses the operator-approved YouTube ID with the logical video second', () => {
   const view = render(React.createElement(KeyMoments, {
     report: keyMomentReport(), video: { group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' },
     externalVideo: { group_id: 'group-1', status: 'current', external_video: { provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://youtu.be/AbCdEfGhI_1', linked_video: { generation_id: 'g', input_semantic_digest: 'i', output_semantic_digest: 'o', timeline_span_sec: 900 }, updated_at: 'now' } },
@@ -472,7 +472,7 @@ test('Key Moments renders direct evidence metrics instead of the ranking score',
   assert.equal(view.queryByText(/Rozpoznane posiadanie 48%/), null);
 });
 
-test('Key Moments never use stale YouTube and reuse the one ready local video seek action', () => {
+test('Key Moments use an operator-approved stale YouTube link with the logical video second', () => {
   const seeks: number[] = [];
   const view = render(React.createElement(KeyMoments, {
     report: keyMomentReport(), video: { group_id: 'group-1', status: 'ready', artifact_url: '/logical.mp4' },
@@ -480,9 +480,11 @@ test('Key Moments never use stale YouTube and reuse the one ready local video se
     onSeekLocalVideo: (timeSec) => seeks.push(timeSec),
   }));
 
-  assert.equal(view.queryByRole('link', { name: 'Zobacz moment' }), null);
-  fireEvent.click(view.getByRole('button', { name: 'Zobacz moment' }));
-  assert.deepEqual(seeks, [722.5]);
+  assert.equal(
+    (view.getByRole('link', { name: 'Zobacz moment' }) as HTMLAnchorElement).getAttribute('href'),
+    'https://www.youtube.com/watch?v=AbCdEfGhI_1&t=722s',
+  );
+  assert.deepEqual(seeks, []);
   assert.equal(view.container.querySelectorAll('video').length, 0);
 });
 

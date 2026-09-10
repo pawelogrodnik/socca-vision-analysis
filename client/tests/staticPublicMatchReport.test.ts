@@ -107,6 +107,56 @@ test('merged external video falls back to a public-safe static sidecar when the 
   assert.equal(state.external_video?.embed_url, 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1');
 });
 
+test('static fallback keeps an operator-approved stale YouTube sidecar usable', async () => {
+  const id = 'published-merged-stale';
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith(`/api/published/matches/${id}/external-video`)) {
+      return Response.json({ detail: 'offline' }, { status: 503 });
+    }
+    assert.equal(path, `/published/matches/${id}/external_video.json`);
+    return Response.json({
+      status: 'stale',
+      external_video: {
+        provider: 'youtube',
+        video_id: 'AbCdEfGhI_1',
+        source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1',
+        embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1',
+      },
+    });
+  }) as typeof fetch;
+
+  const state = await getMergedMatchExternalVideo(id);
+  assert.equal(state.status, 'stale');
+  assert.equal(state.external_video?.embed_url, 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1');
+});
+
+test('an older stale API response without an embed URL falls back to the approved static sidecar', async () => {
+  const id = 'published-merged-api-stale';
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    if (path.endsWith(`/api/published/matches/${id}/external-video`)) {
+      return Response.json({
+        group_id: 'group', status: 'stale', reason: 'combined_video_not_ready',
+        external_video: {
+          provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: null,
+        },
+      });
+    }
+    assert.equal(path, `/published/matches/${id}/external_video.json`);
+    return Response.json({
+      status: 'current',
+      external_video: {
+        provider: 'youtube', video_id: 'AbCdEfGhI_1', source_url: 'https://www.youtube.com/watch?v=AbCdEfGhI_1', embed_url: 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1',
+      },
+    });
+  }) as typeof fetch;
+
+  const state = await getMergedMatchExternalVideo(id);
+  assert.equal(state.status, 'current');
+  assert.equal(state.external_video?.embed_url, 'https://www.youtube-nocookie.com/embed/AbCdEfGhI_1');
+});
+
 test('missing static merged external-video sidecar is a normal not_configured state', async () => {
   globalThis.fetch = (async () => new Response('Not found', { status: 404 })) as typeof fetch;
   const state = await getMergedMatchExternalVideo('published-merged-missing');
