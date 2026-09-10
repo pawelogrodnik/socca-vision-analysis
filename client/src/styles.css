@@ -3834,3 +3834,45 @@ summary:focus-visible {
   overflow-y: auto;
   padding: 16px 20px 20px;
 }
+
+.key-moment-suggestions {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #334155;
+}
+
+.key-moment-suggestions h3 {
+  margin: 0 0 10px;
+}
+
+.suggested-key-moment-card {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid #475569;
+  border-radius: 10px;
+  background: #172033;
+}
+
+.suggested-key-moment-card p {
+  margin: 7px 0;
+}
+
+.suggested-key-moment-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.suggested-key-moment-form label {
+  display: grid;
+  gap: 4px;
+  font-size: .82rem;
+}
+
+.suggestion-overlap {
+  color: #fbbf24;
+}
+
+@media (max-width: 720px) {
+  .suggested-key-moment-form { grid-template-columns: 1fr; }
+}

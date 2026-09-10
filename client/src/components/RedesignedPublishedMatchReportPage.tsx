@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import {
+  acceptKeyMomentSuggestion,
   getKeyMomentEditor,
   getMergedMatchExternalVideo,
   getPublishedMatch,
   getStaticPublicMatchReport,
   saveKeyMomentEditor,
+  rejectKeyMomentSuggestion,
 } from '../api';
 import { errorMessage } from '../lib/helpers';
 import type { KeyMomentEditorState, MatchGroupExternalVideoStatus, PublicMatchReport } from '../types';
@@ -76,6 +78,17 @@ export function RedesignedPublishedMatchReportPage() {
         setEditor(saved);
         if (saved.public_report) setReport(saved.public_report);
         setEditorOpen(false);
+      }}
+      onAcceptSuggestion={async (payload) => {
+        const saved = await acceptKeyMomentSuggestion(matchId, payload);
+        setEditor(saved);
+        if (saved.public_report) setReport(saved.public_report);
+        return saved;
+      }}
+      onRejectSuggestion={async (payload) => {
+        const saved = await rejectKeyMomentSuggestion(matchId, payload);
+        setEditor(saved);
+        return saved;
       }}
     /> : null}
   </main>;
