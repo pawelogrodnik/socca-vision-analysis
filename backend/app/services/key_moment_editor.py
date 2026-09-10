@@ -122,7 +122,12 @@ def _report_team_players(report: Mapping[str, Any]) -> tuple[set[str], dict[str,
     return teams, players
 
 
-def _validate_presentation(row: Mapping[str, Any], report: Mapping[str, Any]) -> tuple[str, str, str | None, str | None, str | None]:
+def _validate_presentation(
+    row: Mapping[str, Any],
+    report: Mapping[str, Any],
+    *,
+    require_new_item_fields: bool = False,
+) -> tuple[str, str, str | None, str | None, str | None]:
     category = str(row.get("category") or row.get("public_category") or row.get("type") or "other")
     if category not in MOMENT_CATEGORIES:
         raise KeyMomentEditorError("key_moment_editor_invalid", "Nieznana kategoria momentu.")
@@ -130,6 +135,10 @@ def _validate_presentation(row: Mapping[str, Any], report: Mapping[str, Any]) ->
     if (headline is not None and not isinstance(headline, str)) or (note is not None and not isinstance(note, str)):
         raise KeyMomentEditorError("key_moment_editor_invalid", "Tytuł i notatka muszą być tekstem.")
     team_id, player_id = row.get("team_id") or None, row.get("player_id") or None
+    if require_new_item_fields and team_id is None:
+        raise KeyMomentEditorError("key_moment_team_invalid", "Nowy moment wymaga wybranej drużyny.")
+    if require_new_item_fields and (not isinstance(headline, str) or not headline.strip()):
+        raise KeyMomentEditorError("key_moment_editor_invalid", "Nowy moment wymaga niepustego tytułu.")
     teams, players = _report_team_players(report)
     if team_id is not None and str(team_id) not in teams:
         raise KeyMomentEditorError("key_moment_team_invalid", "Wybrana drużyna nie występuje w raporcie.")
@@ -137,7 +146,8 @@ def _validate_presentation(row: Mapping[str, Any], report: Mapping[str, Any]) ->
         raise KeyMomentEditorError("key_moment_player_invalid", "Wybrany zawodnik nie występuje w raporcie.")
     if team_id is not None and player_id is not None and players[str(player_id)] != str(team_id):
         raise KeyMomentEditorError("key_moment_player_invalid", "Zawodnik nie należy do wybranej drużyny.")
-    return category, str(headline or "Notatka"), str(note) if note is not None else None, str(team_id) if team_id is not None else None, str(player_id) if player_id is not None else None
+    normalized_headline = headline.strip() if require_new_item_fields else str(headline or "Notatka")
+    return category, normalized_headline, str(note) if note is not None else None, str(team_id) if team_id is not None else None, str(player_id) if player_id is not None else None
 
 
 def _generated_moments(report: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -298,7 +308,11 @@ def _candidate_moments(payload: Mapping[str, Any], report: Mapping[str, Any], cu
         time_sec = _number(raw.get("time_sec"))
         if time_sec is None or time_sec < 0 or time_sec > duration:
             raise KeyMomentEditorError("key_moment_timestamp_invalid", "Czas momentu jest poza zakresem meczu.")
-        category, headline, note, team_id, player_id = _validate_presentation(raw, report)
+        category, headline, note, team_id, player_id = _validate_presentation(
+            raw,
+            report,
+            require_new_item_fields=not supplied_id,
+        )
         previous = copy.deepcopy(existing.get(moment_id) or {})
         origin = str(previous.get("origin") or ("manual" if not supplied_id else "generated"))
         before = max(0.0, _number(previous.get("context_before_sec")) or 5.0)

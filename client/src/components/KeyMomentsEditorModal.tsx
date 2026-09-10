@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyMomentEditorialMoment, KeyMomentEditorState, PublicMatchReport } from '../types';
+import type { KeyMomentEditorialMoment, KeyMomentEditorState, PublicMatchReport, SuggestedKeyMomentCandidate } from '../types';
 import { formatKeyMomentTime, parseKeyMomentTime } from '../lib/keyMomentTime';
 import { SuggestedKeyMoments } from './SuggestedKeyMoments';
 
@@ -126,11 +126,11 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
         state={suggestions}
         report={report}
         disabled={saving || dirty}
-        onAccept={onAcceptSuggestion && (async (candidate, moment) => {
+        onAccept={onAcceptSuggestion && (async (candidate: SuggestedKeyMomentCandidate) => {
           if (!suggestions?.candidate_generation_digest || !revision) return;
           try {
             setSaving(true); setError('');
-            const saved = await onAcceptSuggestion({ expected_revision: revision, candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest, moment });
+            const saved = await onAcceptSuggestion({ expected_revision: revision, candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest, moment: { time_sec: candidate.start_time_sec, category: 'other', headline: 'Moment do weryfikacji', team_id: candidate.team_id || null, origin: 'manual' } });
             const accepted = saved.accepted_moment;
             if (accepted) setMoments((items) => [accepted, ...items]);
             setBaselineMoments(saved.moments || baselineMoments);
