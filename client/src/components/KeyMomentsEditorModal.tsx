@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyMomentEditorialMoment, KeyMomentEditorState, PublicMatchReport } from '../types';
+import { formatKeyMomentTime, parseKeyMomentTime } from '../lib/keyMomentTime';
 import { SuggestedKeyMoments } from './SuggestedKeyMoments';
 
 type Props = {
@@ -9,7 +10,7 @@ type Props = {
   onClose: () => void;
   onSave: (draft: { expected_revision: string; moments: KeyMomentEditorialMoment[] }) => Promise<void>;
   onAcceptSuggestion?: (payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string; moment: KeyMomentEditorialMoment }) => Promise<KeyMomentEditorState>;
-  onRejectSuggestion?: (payload: { candidate_id: string; candidate_generation_digest: string }) => Promise<KeyMomentEditorState>;
+  onRejectSuggestion?: (payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string }) => Promise<KeyMomentEditorState>;
 };
 
 const categories = [
@@ -18,18 +19,6 @@ const categories = [
   ['defensive_action', 'Akcja defensywna'], ['tactical_note', 'Notatka taktyczna'],
   ['momentum_peak', 'Mocny okres'], ['possession_dominance', 'Przewaga w posiadaniu'], ['other', 'Inne'],
 ];
-
-function parseTime(value: string): number | null {
-  const trimmed = value.trim();
-  if (/^\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
-  const match = /^(\d+):(\d{2}(?:\.\d+)?)$/.exec(trimmed);
-  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
-}
-
-function formatTime(value: number): string {
-  const safe = Math.max(0, value);
-  return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, '0')}.${Math.round((safe % 1) * 10)}`;
-}
 
 function ordered(moments: KeyMomentEditorialMoment[]) {
   return [...moments].sort((left, right) => left.time_sec - right.time_sec || (left.moment_id || '').localeCompare(right.moment_id || ''));
@@ -76,7 +65,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
     const key = timestampKey(moments[index], index);
     const text = timestampTextsRef.current[key];
     if (text === undefined) return true;
-    const parsed = parseTime(text);
+    const parsed = parseKeyMomentTime(text);
     if (parsed === null) {
       setError('Podaj czas jako MM:SS, MM:SS.s lub liczbę sekund.');
       return false;
@@ -97,7 +86,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
       const draft = moments.map((moment, index) => {
         const text = timestampTextsRef.current[timestampKey(moment, index)];
         if (text === undefined) return moment;
-        const parsed = parseTime(text);
+        const parsed = parseKeyMomentTime(text);
         if (parsed === null) throw new Error('Podaj czas jako MM:SS, MM:SS.s lub liczbę sekund.');
         return { ...moment, time_sec: parsed };
       });
@@ -118,8 +107,8 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
         {moments.map((moment, index) => {
           const key = timestampKey(moment, index);
           return <article className='key-moment-editor-row' key={moment.moment_id || `new-${index}`}>
-            <strong>{formatTime(moment.time_sec)}{moment.origin === 'generated' ? ' · Automatyczny' : ''}</strong>
-            <label>Czas <input value={timestampTexts[key] ?? formatTime(moment.time_sec)} onInput={(event) => {
+            <strong>{formatKeyMomentTime(moment.time_sec)}{moment.origin === 'generated' ? ' · Automatyczny' : ''}</strong>
+            <label>Czas <input value={timestampTexts[key] ?? formatKeyMomentTime(moment.time_sec)} onInput={(event) => {
               const value = event.currentTarget.value;
               timestampTextsRef.current = { ...timestampTextsRef.current, [key]: value };
               setTimestampTexts((values) => ({ ...values, [key]: value }));
@@ -138,7 +127,7 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
         report={report}
         disabled={saving || dirty}
         onAccept={onAcceptSuggestion && (async (candidate, moment) => {
-          if (!suggestions?.candidate_generation_digest) return;
+          if (!suggestions?.candidate_generation_digest || !revision) return;
           try {
             setSaving(true); setError('');
             const saved = await onAcceptSuggestion({ expected_revision: revision, candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest, moment });
@@ -151,10 +140,10 @@ export function KeyMomentsEditorModal({ state, report, currentVideoTime, onClose
           finally { setSaving(false); }
         })}
         onReject={onRejectSuggestion && (async (candidate) => {
-          if (!suggestions?.candidate_generation_digest) return;
+          if (!suggestions?.candidate_generation_digest || !revision) return;
           try {
             setSaving(true); setError('');
-            const saved = await onRejectSuggestion({ candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest });
+            const saved = await onRejectSuggestion({ expected_revision: revision, candidate_id: candidate.candidate_id, candidate_generation_digest: suggestions.candidate_generation_digest });
             setRevision(saved.revision || revision);
             setSuggestions(saved.suggestions);
           } catch (rejectError) { setError(rejectError instanceof Error ? rejectError.message : 'Nie udało się odrzucić sugestii.'); }

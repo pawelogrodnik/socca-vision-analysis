@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app import config
 from app.services.key_moment_editor import (
+    KeyMomentEditorError,
     _candidate_moments,
     _candidate_overlaps,
     _editorial_content,
@@ -154,12 +155,29 @@ class KeyMomentEditorTests(unittest.TestCase):
             with patch("app.services.key_moment_editor.EDITORIAL_DIRECTORY", Path(temporary)), patch(
                 "app.services.key_moment_editor.get_published_match", return_value={"public_report": _report(), "source_kind": "merged"},
             ), patch("app.services.suggested_key_moments.suggested_key_moment_projection", return_value={k: v for k, v in suggestion.items() if k != "overlaps"}):
-                rejected = reject_suggested_candidate("published-one", {"candidate_id": "iac-a", "candidate_generation_digest": "lineage-a"})
+                initial = editor_state("published-one")
+                rejected = reject_suggested_candidate("published-one", {"expected_revision": initial["revision"], "candidate_id": "iac-a", "candidate_generation_digest": "lineage-a"})
                 reopened = editor_state("published-one")
                 applied = apply_editorial_key_moments(_report(), "published-one", source_kind="merged")
         self.assertEqual(rejected["suggestions"]["unreviewed_count"], 0)
         self.assertEqual(reopened["suggestions"]["rejected_count"], 1)
         self.assertEqual(applied, _report()["key_moments"])
+
+    def test_stale_reject_does_not_persist_a_review_decision(self) -> None:
+        report = _report()
+        suggestion = {"status": "ready", "candidate_generation_digest": "lineage-a", "candidate_count": 1, "unreviewed_count": 1, "candidates": [{"candidate_id": "iac-a", "start_time_sec": 10, "end_time_sec": 20, "team_id": "team-a"}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); canonical = root / "published" / "published-one"; mirror = root / "client-public" / "published-one"
+            canonical.mkdir(parents=True); mirror.mkdir(parents=True)
+            (canonical / "public_report.json").write_text(json.dumps(report), encoding="utf-8"); (canonical / "provenance.json").write_text(json.dumps({}), encoding="utf-8"); (mirror / "public_report.json").write_text(json.dumps(report), encoding="utf-8")
+            with patch("app.services.key_moment_editor.EDITORIAL_DIRECTORY", root / "editorial"), patch("app.services.key_moment_editor.PUBLISHED_MATCHES_DIR", root / "published"), patch("app.services.key_moment_editor.CLIENT_PUBLIC_MATCHES_DIR", root / "client-public"), patch("app.services.key_moment_editor.get_published_match", return_value={"public_report": report, "source_kind": "merged"}), patch("app.services.suggested_key_moments.suggested_key_moment_projection", return_value=suggestion):
+                r1 = editor_state("published-one")
+                save_editorial_document("published-one", {"expected_revision": r1["revision"], "moments": r1["moments"]})
+                with self.assertRaises(KeyMomentEditorError) as failure:
+                    reject_suggested_candidate("published-one", {"expected_revision": r1["revision"], "candidate_id": "iac-a", "candidate_generation_digest": "lineage-a"})
+                persisted = load_editorial_document("published-one")
+        self.assertEqual(failure.exception.code, "key_moment_editor_revision_conflict")
+        self.assertEqual(persisted["suggested_candidate_reviews"], [])
 
     def test_accept_links_manual_moment_and_stale_lineage_does_not_reuse_review(self) -> None:
         report = _report()

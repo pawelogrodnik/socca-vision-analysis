@@ -4,6 +4,7 @@ import { JSDOM } from 'jsdom';
 import React from 'react';
 
 import { KeyMomentsEditorModal } from '../src/components/KeyMomentsEditorModal.tsx';
+import { parseKeyMomentTime } from '../src/lib/keyMomentTime.ts';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
@@ -38,9 +39,9 @@ test('timestamp edits and manual additions keep the current curated card order s
   assert.deepEqual(rows.map((row) => row?.split('.')[0]), ['0:00', '2:30', '1:20']);
 });
 
-test('suggestion is separate, prefilled with its team, warns about overlap, and appends on accept', async () => {
+test('suggestion is separate, defaults final time to candidate start, and prepends on accept', async () => {
   let accepted: unknown;
-  const acceptedMoment = { moment_id: 'manual-km-new', time_sec: 105, category: 'other', headline: 'Moment do weryfikacji', team_id: 'verisk', origin: 'manual' };
+  const acceptedMoment = { moment_id: 'manual-km-new', time_sec: 100, category: 'other', headline: 'Moment do weryfikacji', team_id: 'verisk', origin: 'manual' };
   const view = render(React.createElement(KeyMomentsEditorModal, {
     state: state(), report, onClose: () => undefined, onSave: async () => undefined,
     onAcceptSuggestion: async (payload) => { accepted = payload; return { ...state({ revision: 'r2', moments: [...state().moments, acceptedMoment], suggestions: { ...suggestion, candidates: [], unreviewed_count: 0 } }), accepted_moment: acceptedMoment }; },
@@ -52,9 +53,10 @@ test('suggestion is separate, prefilled with its team, warns about overlap, and 
   assert.equal(teamSelectors.at(-1)?.value, 'verisk');
   fireEvent.click(view.getByRole('button', { name: 'Akceptuj jako Key Moment' }));
   await waitFor(() => assert.ok(accepted));
+  assert.equal((accepted as { moment: { time_sec: number } }).moment.time_sec, 100);
   await waitFor(() => assert.equal(view.container.querySelectorAll('.key-moment-editor-row strong').length, 3));
   const rows = [...view.container.querySelectorAll('.key-moment-editor-row strong')].map((row) => row.textContent?.split('.')[0]);
-  assert.deepEqual(rows, ['1:45', '0:40', '1:20']);
+  assert.deepEqual(rows, ['1:40', '0:40', '1:20']);
   assert.ok(view.getByText('Sugerowane Key Moments (0)'));
 });
 
@@ -65,6 +67,22 @@ test('reject persists through callback and removes only that suggested candidate
     onRejectSuggestion: async (payload) => { rejected = payload; return state({ suggestions: { ...suggestion, candidates: [], unreviewed_count: 0 } }); },
   }));
   fireEvent.click(view.getByRole('button', { name: 'Odrzuć' }));
-  await waitFor(() => assert.deepEqual(rejected, { candidate_id: 'iac-verisk', candidate_generation_digest: 'lineage-a' }));
+  await waitFor(() => assert.deepEqual(rejected, { expected_revision: 'r1', candidate_id: 'iac-verisk', candidate_generation_digest: 'lineage-a' }));
   assert.ok(view.getByText('Brak nieprzejrzanych sugestii.'));
+});
+
+test('suggested Key Moment timestamp accepts the normal editor clock formats', async () => {
+  let accepted: unknown;
+  const view = render(React.createElement(KeyMomentsEditorModal, {
+    state: state(), report, onClose: () => undefined, onSave: async () => undefined,
+    onAcceptSuggestion: async (payload) => { accepted = payload; return state({ suggestions: { ...suggestion, candidates: [], unreviewed_count: 0 } }); },
+  }));
+  const timestamps = view.getAllByLabelText('Czas') as HTMLInputElement[];
+  fireEvent.change(timestamps.at(-1)!, { target: { value: '27:43.5' } });
+  fireEvent.blur(timestamps.at(-1)!);
+  fireEvent.click(view.getByRole('button', { name: 'Akceptuj jako Key Moment' }));
+  await waitFor(() => assert.equal((accepted as { moment: { time_sec: number } }).moment.time_sec, 1663.5));
+  assert.equal(parseKeyMomentTime('27:43'), 1663);
+  assert.equal(parseKeyMomentTime('1663.5'), 1663.5);
+  assert.equal(parseKeyMomentTime('bad'), null);
 });

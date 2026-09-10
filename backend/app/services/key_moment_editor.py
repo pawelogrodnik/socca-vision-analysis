@@ -372,6 +372,8 @@ def reject_suggested_candidate(published_id: str, payload: Mapping[str, Any]) ->
     match = get_published_match(published_id)
     report = _record(match.get("public_report"))
     current = load_editorial_document(published_id)
+    if str(payload.get("expected_revision") or "") != current["revision"]:
+        raise KeyMomentEditorError("key_moment_editor_revision_conflict", "Stan momentów zmienił się na serwerze. Odśwież edytor.", 409)
     current_rows = current["moments"] if current["_exists"] and current.get("curated_override", True) else _generated_moments(report)
     suggestion = _current_suggestion(published_id, current, current_rows, payload)
     reviews = _replace_review(current.get("suggested_candidate_reviews"), {

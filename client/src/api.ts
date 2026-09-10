@@ -930,7 +930,7 @@ export async function acceptKeyMomentSuggestion(
 
 export async function rejectKeyMomentSuggestion(
   publishedMatchId: string,
-  payload: { candidate_id: string; candidate_generation_digest: string },
+  payload: { expected_revision: string; candidate_id: string; candidate_generation_digest: string },
 ): Promise<KeyMomentEditorState> {
   return request<KeyMomentEditorState>(`/api/published/matches/${encodeURIComponent(publishedMatchId)}/key-moments/editor/suggestions/reject`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
