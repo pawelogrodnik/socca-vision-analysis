@@ -15,7 +15,8 @@ def benchmark_candidates(
     candidates: list[Mapping[str, Any]],
     manual_windows: list[Mapping[str, Any]],
     *,
-    start_tolerance_sec: float = 4.0,
+    max_early_start_sec: float = 4.0,
+    max_late_start_sec: float = 4.0,
     minimum_manual_coverage: float = 0.25,
 ) -> dict[str, Any]:
     """Match candidates to known positives while retaining unlabeled rows."""
@@ -25,7 +26,7 @@ def benchmark_candidates(
     matches: list[dict[str, Any]] = []
     matched_ids: set[str] = set()
     for window in normalized_windows:
-        compatible = [candidate for candidate in normalized_candidates if _matches(candidate, window, start_tolerance_sec, minimum_manual_coverage)]
+        compatible = [candidate for candidate in normalized_candidates if _matches(candidate, window, max_early_start_sec, max_late_start_sec, minimum_manual_coverage)]
         chosen = max(compatible, key=lambda candidate: (_coverage(candidate, window), -abs(candidate["start_time_sec"] - window["start_time_sec"]), candidate["interestingness_score"])) if compatible else None
         if chosen is None:
             matches.append({"manual_window": window, "matched": False, "candidate": None, "signed_start_error_sec": None, "manual_action_coverage": 0.0, "peak_inside_manual_window": None})
@@ -47,7 +48,7 @@ def benchmark_candidates(
     signed = [float(row["signed_start_error_sec"]) for row in matched]
     coverage = [float(row["manual_action_coverage"]) for row in matched]
     return {
-        "match_rule": {"start_tolerance_sec": start_tolerance_sec, "minimum_manual_coverage": minimum_manual_coverage, "requires_window_overlap": True},
+        "match_rule": {"max_early_start_sec": max_early_start_sec, "max_late_start_sec": max_late_start_sec, "minimum_manual_coverage": minimum_manual_coverage, "requires_window_overlap": True},
         "manual_matches": matches,
         "unlabeled_candidates": sorted(unmatched, key=lambda row: (-row["interestingness_score"], row["start_time_sec"])),
         "summary": {
@@ -63,11 +64,11 @@ def benchmark_candidates(
     }
 
 
-def _matches(candidate: Mapping[str, Any], window: Mapping[str, Any], tolerance: float, minimum_coverage: float) -> bool:
-    # A late candidate may still overlap a known action but it cannot start so
-    # late that it misses the build-up entirely.  The signed error remains a
-    # visible diagnostic rather than being hidden inside this tolerance.
-    return candidate["start_time_sec"] <= window["start_time_sec"] + tolerance and _coverage(candidate, window) >= minimum_coverage
+def _matches(candidate: Mapping[str, Any], window: Mapping[str, Any], max_early_start_sec: float, max_late_start_sec: float, minimum_coverage: float) -> bool:
+    # The signed error remains visible.  Bounded pre-roll preserves a useful
+    # build-up while rejecting an arbitrarily early, broad candidate window.
+    start_error = candidate["start_time_sec"] - window["start_time_sec"]
+    return -max_early_start_sec <= start_error <= max_late_start_sec and _coverage(candidate, window) >= minimum_coverage
 
 
 def _coverage(candidate: Mapping[str, Any], window: Mapping[str, Any]) -> float:

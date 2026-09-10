@@ -31,6 +31,46 @@ class InterestingActionCandidateTests(unittest.TestCase):
         self.assertEqual(candidates[0]["start_time_sec"], 10.0)
         self.assertEqual(candidates[0]["end_time_sec"], 17.0)
 
+    def test_uses_only_trusted_direction_aware_ball_progression_for_both_teams(self) -> None:
+        source = _source(offset=0.0, team="A", opponent="B", forward=0.0)
+        source["pass_candidates"] = []
+        source["possession_segments"] = [
+            {"status": "controlled", "team_label": "B", "team_id": "team-B", "start_time_sec": 0, "end_time_sec": 2, "mean_confidence": 0.8},
+            {"status": "controlled", "team_label": "A", "team_id": "team-A", "start_time_sec": 3, "end_time_sec": 7, "mean_confidence": 0.8},
+            {"status": "controlled", "team_label": "A", "team_id": "team-A", "start_time_sec": 10, "end_time_sec": 12, "mean_confidence": 0.8},
+            {"status": "controlled", "team_label": "B", "team_id": "team-B", "start_time_sec": 13, "end_time_sec": 17, "mean_confidence": 0.8},
+        ]
+        source["match_phase_periods"] = [{"start_time_sec": 0, "end_time_sec": 60, "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"}}]
+        source["possession_frames"] = [
+            {"status": "controlled", "team_id": "team-A", "time_sec": 3.1, "ball_source": "detected", "ball_confidence": 0.8, "ball_position_m": [15, 30]},
+            {"status": "controlled", "team_id": "team-A", "time_sec": 6.8, "ball_source": "detected", "ball_confidence": 0.8, "ball_position_m": [15, 22]},
+            {"status": "controlled", "team_id": "team-B", "time_sec": 13.1, "ball_source": "detected", "ball_confidence": 0.8, "ball_position_m": [15, 10]},
+            {"status": "controlled", "team_id": "team-B", "time_sec": 16.8, "ball_source": "detected", "ball_confidence": 0.8, "ball_position_m": [15, 18]},
+            {"status": "controlled", "team_id": "team-B", "time_sec": 17.0, "ball_source": "interpolated", "ball_confidence": 0.9, "ball_position_m": [15, 25]},
+        ]
+        logical = build_logical_candidate_signals([source])
+        progressions = [row for row in logical["signals"] if row["kind"] == "ball_progression"]
+        self.assertEqual({row["team_id"] for row in progressions}, {"team-A", "team-B"})
+        self.assertEqual({row["forward_progress_m"] for row in progressions}, {8.0})
+        candidates = build_interesting_action_candidates(logical, timeline_span_sec=60.0)
+        self.assertEqual({row["team_id"] for row in candidates}, {"team-A", "team-B"})
+
+    def test_untrusted_ball_positions_and_evidence_gaps_do_not_create_or_bridge_progression(self) -> None:
+        source = _source(offset=0.0, team="A", opponent="B", forward=0.0)
+        source["pass_candidates"] = []
+        source["possession_segments"] = [
+            {"status": "controlled", "team_label": "B", "team_id": "team-B", "start_time_sec": 0, "end_time_sec": 2, "mean_confidence": 0.8},
+            {"status": "controlled", "team_label": "A", "team_id": "team-A", "start_time_sec": 3, "end_time_sec": 7, "mean_confidence": 0.8},
+        ]
+        source["match_phase_periods"] = [{"start_time_sec": 0, "end_time_sec": 60, "team_attack_directions": {"A": "towards_y_min", "B": "towards_y_max"}}]
+        source["possession_frames"] = [
+            {"status": "controlled", "team_id": "team-A", "time_sec": 3.1, "ball_source": "detected", "ball_confidence": 0.49, "ball_position_m": [15, 30]},
+            {"status": "controlled", "team_id": "team-A", "time_sec": 6.8, "ball_source": "interpolated", "ball_confidence": 0.9, "ball_position_m": [15, 22]},
+        ]
+        self.assertEqual([row for row in build_logical_candidate_signals([source])["signals"] if row["kind"] == "ball_progression"], [])
+        gap = {"signals": [_signal("regain", 0, 0, "team-A"), _signal("ball_progression", 4, 8, "team-A", forward_progress_m=8)], "evidence_gaps": [(1, 3)]}
+        self.assertEqual(build_interesting_action_candidates(gap, timeline_span_sec=60.0), [])
+
     def test_unknown_gap_and_low_confidence_do_not_bridge_into_candidate(self) -> None:
         gap = {"signals": [
             _signal("regain", 10, 10, "team-A"),
@@ -59,6 +99,20 @@ class InterestingActionCandidateTests(unittest.TestCase):
         self.assertTrue(matched["peak_inside_manual_window"])
         self.assertEqual(benchmark["unlabeled_candidates"][0]["classification"], "unlabeled_candidate")
 
+    def test_benchmark_rejects_arbitrarily_early_window_but_accepts_bounded_preroll(self) -> None:
+        benchmark = benchmark_candidates(
+            [
+                {"candidate_id": "far-early", "start_time_sec": 0, "peak_time_sec": 12, "end_time_sec": 20, "interestingness_score": 0.9, "confidence": 0.8, "evidence": []},
+                {"candidate_id": "preroll", "start_time_sec": 6, "peak_time_sec": 12, "end_time_sec": 20, "interestingness_score": 0.8, "confidence": 0.7, "evidence": []},
+            ],
+            [{"window_id": "manual", "start_time_sec": 10, "end_time_sec": 18}],
+        )
+        matched = benchmark["manual_matches"][0]
+        self.assertTrue(matched["matched"])
+        self.assertEqual(matched["candidate"]["candidate_id"], "preroll")
+        self.assertEqual(matched["signed_start_error_sec"], -4.0)
+        self.assertEqual(benchmark["match_rule"]["max_early_start_sec"], 4.0)
+
 
 def _source(*, offset: float, team: str, opponent: str, forward: float) -> dict:
     return {
@@ -71,6 +125,8 @@ def _source(*, offset: float, team: str, opponent: str, forward: float) -> dict:
         "pass_candidates": [{"pass_type": "same_team_pass", "from_team_id": f"team-{team}", "start_time_sec": 4, "end_time_sec": 7, "forward_progress_m": forward, "is_progressive": True, "confidence": 0.8}],
         "restart_candidates": [],
         "momentum_points": [],
+        "possession_frames": [],
+        "match_phase_periods": [],
     }
 
 
